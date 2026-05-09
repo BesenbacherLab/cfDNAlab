@@ -1,4 +1,4 @@
-use crate::commands::cli_common::{ApplyGCArgs, ScaleGenomeArgs};
+use crate::commands::cli_common::{ApplyGCArgs, LoggingArgs, ScaleGenomeArgs};
 use crate::commands::cli_common::{ChromosomeArgs, IOCArgs, UnpairedArgs, WindowsArgs};
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use std::path::PathBuf;
@@ -138,11 +138,11 @@ pub struct WPSSharedConfig {
     /// Examples produce files like:
     ///   `<prefix>.wps.per_position.bedgraph.zst`,
     ///   `<prefix>.wps.per_position_per_window.tsv.zst`,
-    ///   `<prefix>.wps.avg.tsv.zst`, or
+    ///   `<prefix>.wps.average.tsv.zst`, or
     ///   `<prefix>.wps.total.tsv.zst`.
     #[cfg_attr(
         feature = "cli",
-        clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, help_heading = "Core")
+        clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, value_parser = crate::commands::cli_common::parse_output_prefix, help_heading = "Core")
     )]
     pub output_prefix: String,
 
@@ -230,6 +230,9 @@ pub struct WPSSharedConfig {
         )
     )]
     pub ref_2bit: Option<PathBuf>,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub logging: LoggingArgs,
 }
 
 impl WPSSharedConfig {
@@ -254,9 +257,10 @@ impl WPSSharedConfig {
             gc: ApplyGCArgs {
                 gc_file: None,
                 gc_tag: None,
-                drop_invalid_gc: false,
+                neutralize_invalid_gc: false,
             },
             ref_2bit: None,
+            logging: LoggingArgs::default(),
         }
     }
 

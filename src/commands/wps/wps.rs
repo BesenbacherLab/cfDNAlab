@@ -1,39 +1,45 @@
-use crate::commands::fcoverage::reducer::{
-    reduce_aggregates_by_size_with_cross_index_for_chr, reduce_bed_with_cross_index_for_chr,
-};
+use crate::commands::fcoverage::reducer::TileAggregateTempFiles;
 use crate::commands::fcoverage::tiling::{
-    adapt_fetch_to_extreme_windows, concat_aligned_size_tile_finals, finalize_value,
-    merge_positional_tiles,
+    TileTempFile, TileTempFileKind, adapt_fetch_to_extreme_windows, finalize_value,
+    merge_positional_tile_outputs_with_optional_scaling,
 };
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use crate::commands::fcoverage::writers::{
-    emit_bedgraph_runs, emit_windowed_runs, write_final_row,
+    write_bed_aggregate_output, write_bedgraph_runs, write_final_row, write_size_aggregate_output,
+    write_windowed_runs,
 };
 use crate::commands::gc_bias::correct::{GCCorrector, load_gc_corrector};
 use crate::commands::gc_bias::counting::build_gc_prefixes;
 use crate::commands::wps::config::{WPSConfig, WPSSharedConfig};
 use crate::shared::formatters::round_to;
 use crate::shared::fragment::minimal_fragment::Fragment;
-use crate::shared::fragment_iterator::fragments_from_bam;
+use crate::shared::fragment_iterators::fragments_from_bam;
+use crate::shared::gc_tag::ClassifiedGCTagWeight;
 use crate::shared::interval::{IndexedInterval, Interval};
 use crate::shared::io::dot_join;
 use crate::shared::progress::ProgressFactory;
 use crate::shared::read::{default_include_read_paired_end, default_include_read_unpaired};
 use crate::shared::reference::read_seq_in_range;
-use crate::shared::scale_genome::apply_scaling_to_coverage_in_place;
+use crate::shared::scale_genome::{ScalingBin, apply_scaling_to_coverage_in_place};
+use crate::shared::temp_chrom_names::TempChromNameMap;
 use crate::shared::tiled_run::{
-    Tile, TileMode, TileWindowSpan, build_tiles, make_temp_dir, overlapping_windows_for_tile,
+    TempDirGuard, Tile, TileMode, TileWindowSpan, build_tiles, overlapping_windows_for_tile,
     precompute_tile_window_spans,
 };
 use crate::shared::writers::open_zstd_auto_writer;
 use crate::{
     commands::cli_common::{
         WindowSpec, ensure_output_dir, load_blacklist_map, load_scaling_map,
-        resolve_chromosomes_and_contigs,
+        resolve_chromosomes_and_contigs, validate_output_prefix,
     },
-    commands::counters::FCoverageCounters,
+    commands::counters::WPSCounters,
+    commands::run_statistics::{
+        DEFAULT_FRAGMENT_STATISTICS_LABELS, FragmentRunStatisticsOptions, GCStatisticsSummary,
+        TILE_DOUBLE_COUNT_NOTE, print_fragment_run_statistics,
+    },
     shared::{
         bam::create_chromosome_reader, bed::load_windows_from_bed, thread_pool::init_global_pool,
+        windowing::ensure_plain_bed_windows_not_empty,
     },
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -41,7 +47,52 @@ use fxhash::FxHashMap;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::io::Write;
-use std::{sync::Arc, time::Instant};
+use std::{path::PathBuf, sync::Arc, time::Instant};
+use tracing::info;
+
+const COMMAND_TARGET: &str = "wps";
+
+#[derive(Debug, Clone)]
+struct WpsTileResult {
+    counters: WPSCounters,
+    temp_output: Option<WpsTileTempOutput>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum WpsTileTempOutput {
+    Positional {
+        chromosome: String,
+        tile_index: u32,
+        path: PathBuf,
+    },
+    AggregatesByBed {
+        chromosome: String,
+        tile_index: u32,
+        partials_path: PathBuf,
+        cross_index_path: Option<PathBuf>,
+    },
+    AggregatesBySize {
+        chromosome: String,
+        tile_index: u32,
+        partials_path: PathBuf,
+        cross_index_path: Option<PathBuf>,
+    },
+    SizeFinal {
+        chromosome: String,
+        tile_index: u32,
+        path: PathBuf,
+    },
+}
+
+impl WpsTileTempOutput {
+    fn is_bed_aggregate(&self) -> bool {
+        matches!(self, Self::AggregatesByBed { .. })
+    }
+
+    fn is_size_aggregate(&self) -> bool {
+        matches!(self, Self::AggregatesBySize { .. })
+    }
+}
 
 /// Execute the windowed protection scores pipeline end-to-end.
 ///
@@ -71,6 +122,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
         &opt.shared_args.ioc.bam.as_path(),
     )?;
     let prefix = opt.shared_args.output_prefix.trim();
+    validate_output_prefix(prefix)?;
     let window_opt = opt.shared_args.windows.resolve_windows();
     let windowed = matches!(window_opt, WindowSpec::Bed(_) | WindowSpec::Size(_));
 
@@ -94,14 +146,30 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
         opt.shared_args.window_size,
         opt.shared_args.max_fragment_length
     );
+    opt.shared_args
+        .gc
+        .validate(opt.shared_args.ref_2bit.as_deref())?;
 
     let per_window_wps_action = opt.per_window;
+
+    if let Some(action) = per_window_wps_action {
+        ensure!(
+            matches!(
+                action,
+                CoverageWindowAction::Average
+                    | CoverageWindowAction::Total
+                    | CoverageWindowAction::OnlyIncludeThesePositionsUnique
+                    | CoverageWindowAction::OnlyIncludeThesePositionsIndexed
+            ),
+            "for WPS, --per-window can only be 'average', 'total', 'unique-positions', or 'indexed-positions'"
+        );
+    }
 
     // Create output directory
     ensure_output_dir(&opt.shared_args.ioc.output_dir)?;
 
     if opt.shared_args.blacklist.is_some() {
-        println!("Start: Loading blacklists");
+        info!(target: COMMAND_TARGET, "Loading blacklists");
     }
     // We don't want WPS scores that were biased from neighbouring blacklisted regions
     // So we don't use positions where any fragments could also touch a blacklisted region
@@ -117,14 +185,18 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
-            println!("Start: Loading window coordinates");
+            info!(target: COMMAND_TARGET, "Loading window coordinates");
             let wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            ensure_plain_bed_windows_not_empty(&wds)?;
             if matches!(
                 per_window_wps_action,
                 Some(CoverageWindowAction::OnlyIncludeThesePositionsUnique)
             ) {
                 // Merge in-place to avoid double memory-usage
-                println!("Start: Merging overlapping/touching windows");
+                info!(
+                    target: COMMAND_TARGET,
+                    "Merging overlapping/touching windows"
+                );
                 // Take ownership so we can remove entries by chromosome
                 let mut wds_owned: FxHashMap<String, crate::shared::bed::Windows> = wds;
                 let mut out: FxHashMap<String, crate::shared::bed::Windows> =
@@ -150,17 +222,26 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
 
     // Load genomic scaling factors
     if opt.shared_args.scale_genome.scaling_factors.is_some() {
-        println!("Start: Loading scaling factors");
+        info!(target: COMMAND_TARGET, "Loading scaling factors");
     }
-    let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> =
-        load_scaling_map(&opt.shared_args.scale_genome, &chromosomes, &contigs)?;
+    let scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
+        &opt.shared_args.scale_genome,
+        &chromosomes,
+        &contigs,
+        crate::shared::scale_genome::scaling_gc_mode_for_run(
+            opt.shared_args.gc.gc_file.is_some(),
+            opt.shared_args.gc.gc_tag.is_some(),
+        ),
+        None,
+    )?;
 
     // Load GC correction package if specified
     if opt.shared_args.gc.gc_file.is_some() {
-        println!("Start: Loading GC correction matrix");
+        info!(target: COMMAND_TARGET, "Loading GC correction matrix");
     }
     let gc_corrector = load_gc_corrector(
         opt.shared_args.gc.gc_file.as_ref(),
+        opt.shared_args.ref_2bit.as_ref(),
         opt.shared_args.min_fragment_length,
         opt.shared_args.max_fragment_length,
     )?;
@@ -180,8 +261,9 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
     }
 
     // Build temporary directory
-    let temp_dir = make_temp_dir(&opt.shared_args.ioc.output_dir, prefix)
+    let temp_dir_guard = TempDirGuard::new(&opt.shared_args.ioc.output_dir, prefix)
         .context("create per-run temp dir")?;
+    let temp_dir = temp_dir_guard.path();
 
     // Window size when --by-size (otherwise None)
     let by_size_bp: Option<u64> = match &window_opt {
@@ -201,6 +283,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
         halo_bp,
         by_size_bp,
     )?;
+    let temp_chrom_name_map = TempChromNameMap::from_contigs(&chromosomes)?;
 
     let windows_lookup = windows_map.as_ref();
     let tile_window_spans = Arc::new(precompute_tile_window_spans(
@@ -227,7 +310,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
     // Create filenames of final outputs
     let final_bedgraph_pos_name = dot_join(&[prefix, "wps.per_position.bedgraph.zst"]);
     let final_tsv_pos_name = dot_join(&[prefix, "wps.per_position_per_window.tsv.zst"]);
-    let final_avg_name = dot_join(&[prefix, "wps.avg.tsv.zst"]);
+    let final_average_name = dot_join(&[prefix, "wps.average.tsv.zst"]);
     let final_total_name = dot_join(&[prefix, "wps.total.tsv.zst"]);
 
     let per_window_action = if windowed {
@@ -250,6 +333,9 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                     0
                 }
             }
+            _ => {
+                unreachable!("unsupported WPS per-window action must be rejected during validation")
+            }
         },
         None => {
             if has_scaling_or_correction {
@@ -269,17 +355,17 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
     // Configure global thread‐pool size
     init_global_pool(opt.shared_args.ioc.n_threads as usize)?;
 
-    let mut global_counter = FCoverageCounters::default();
+    let mut global_counter = WPSCounters::default();
 
-    println!("Start: Calculating WPS per tile");
+    info!(target: COMMAND_TARGET, "Calculating WPS per tile");
     pb.set_position(0);
 
     let tile_window_spans_for_threads = tile_window_spans.clone();
 
-    let tile_results: Vec<FCoverageCounters> = tiles
+    let tile_results: Vec<WpsTileResult> = tiles
         .par_iter()
         .enumerate()
-        .map(|(tile_idx, tile)| -> Result<FCoverageCounters> {
+        .map(|(tile_idx, tile)| -> Result<WpsTileResult> {
             let tile_span = tile_window_spans_for_threads[tile_idx];
             // Per-chrom projections
             let windows_chr: Option<&[IndexedInterval<u64>]> = windows_map
@@ -289,15 +375,18 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
-            let scaling_chr: &[(u64, u64, f32)] = scaling_map
+            let scaling_chr: &[ScalingBin] = scaling_map
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
 
-            let counter = if matches!(window_opt, WindowSpec::Bed(_))
+            let tile_result = if matches!(window_opt, WindowSpec::Bed(_))
                 && windows_chr.map_or(true, |windows| windows.is_empty())
             {
-                FCoverageCounters::default()
+                WpsTileResult {
+                    counters: WPSCounters::default(),
+                    temp_output: None,
+                }
             } else {
                 // Decide tile mode and filename
                 let (action_prefix, extensions) = if windowed {
@@ -314,16 +403,20 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                         CoverageWindowAction::Average | CoverageWindowAction::Total => {
                             (partials_prefix, "tsv.zst")
                         }
+                        _ => unreachable!(
+                            "unsupported WPS per-window action must be rejected during validation"
+                        ),
                     }
                 } else {
                     // Whole positional coverage
                     (positional_prefix, "bedgraph.zst")
                 };
 
+                let chr_token = temp_chrom_name_map.token_for(tile.chr.as_str())?;
                 let out_path = temp_dir.join(format!(
                     "{prefix}.{chr}.{idx}.{extensions}",
                     prefix = action_prefix,
-                    chr = tile.chr,
+                    chr = chr_token,
                     idx = tile.index
                 ));
 
@@ -331,19 +424,19 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                 let partials_out = temp_dir.join(format!(
                     "{prefix}.{chr}.{idx}.{extensions}",
                     prefix = partials_prefix,
-                    chr = tile.chr,
+                    chr = chr_token,
                     idx = tile.index
                 ));
                 let cross_idx_out = temp_dir.join(format!(
                     "{prefix}.cross.{chr}.{idx}.cross.zst", // Needs this extension!
                     prefix = partials_prefix,
-                    chr = tile.chr,
+                    chr = chr_token,
                     idx = tile.index
                 ));
                 let finals_out = temp_dir.join(format!(
                     "{prefix}.{chr}.{idx}.{extensions}",
                     prefix = finals_prefix,
-                    chr = tile.chr,
+                    chr = chr_token,
                     idx = tile.index
                 ));
 
@@ -405,7 +498,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                     }
                 };
 
-                let (counter, _, _) = wps_for_tile(
+                let (counters, temp_output, _, _) = wps_for_tile(
                     &opt.shared_args,
                     &opt.per_window,
                     opt.keep_zero_runs,
@@ -419,21 +512,31 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                     0,
                     false,
                 )?;
-                counter
+                WpsTileResult {
+                    counters,
+                    temp_output,
+                }
             };
             pb.inc(1);
-            Ok(counter)
+            Ok(tile_result)
         })
         .collect::<anyhow::Result<_>>()?;
 
     pb.finish_with_message("| Finished counting");
 
-    // Collect counters
-    for counter in tile_results {
-        global_counter += counter;
+    // Collect counters and the temp paths returned by tile processing.
+    let mut tile_temp_outputs = Vec::new();
+    for tile_result in tile_results {
+        global_counter += tile_result.counters;
+        if let Some(temp_output) = tile_result.temp_output {
+            tile_temp_outputs.push(temp_output);
+        }
     }
 
-    println!("Start: Merging temporary tile files to final output");
+    info!(
+        target: COMMAND_TARGET,
+        "Merging temporary tile files to final output"
+    );
 
     // Merge temporary output files and
     // reduce windows present in multiple tiles
@@ -442,220 +545,248 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
         match action {
             CoverageWindowAction::OnlyIncludeThesePositionsUnique => {
                 // Windowed positional (unique and non-indexed)
-                merge_positional_tiles(
-                    &temp_dir,
+                merge_positional_tile_outputs_with_optional_scaling(
                     &opt.shared_args.ioc.output_dir,
                     &chromosomes,
-                    positional_prefix,
+                    &wps_positional_tile_outputs(&tile_temp_outputs),
                     final_bedgraph_pos_name.as_str(),
+                    None,
+                    false,
+                    decimals_to_use,
+                    opt.shared_args.ioc.n_threads as usize,
                 )?
             }
             CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
                 // Windowed positional with orig_idx column
-                merge_positional_tiles(
-                    &temp_dir,
+                merge_positional_tile_outputs_with_optional_scaling(
                     &opt.shared_args.ioc.output_dir,
                     &chromosomes,
-                    positional_prefix,
+                    &wps_positional_tile_outputs(&tile_temp_outputs),
                     final_tsv_pos_name.as_str(),
+                    None,
+                    true,
+                    decimals_to_use,
+                    opt.shared_args.ioc.n_threads as usize,
                 )?
             }
             CoverageWindowAction::Average | CoverageWindowAction::Total => {
                 // Per-chrom reduce of partials into final aggregates
                 let final_path = opt.shared_args.ioc.output_dir.join(match action {
-                    CoverageWindowAction::Average => final_avg_name.as_str(),
+                    CoverageWindowAction::Average => final_average_name.as_str(),
                     CoverageWindowAction::Total => final_total_name.as_str(),
                     _ => unreachable!(),
                 });
 
-                // Header value-column name
-                let value_col = match action {
-                    CoverageWindowAction::Average => "avg_coverage",
-                    CoverageWindowAction::Total => "total_coverage",
-                    _ => unreachable!(),
-                };
-
-                let header = format!(
-                    "chromosome\tstart\tend\t{}\tblacklisted_positions",
-                    value_col
-                );
-
                 // Reduce by window source
                 match &window_opt {
                     WindowSpec::Bed(_) => {
-                        let mut positional_writer = open_zstd_auto_writer(
-                            &final_path,
-                            3,
-                            Some(opt.shared_args.ioc.n_threads as u32),
-                        )?;
-
-                        // Write header
-                        writeln!(positional_writer, "{}", header)?;
-
                         let win_map = windows_map
                             .as_ref()
                             .context("BED WPS reduction requires loaded windows")?;
-                        for chr in &chromosomes {
-                            if let Some(wchr) = win_map.get(chr) {
-                                reduce_bed_with_cross_index_for_chr(
-                                    chr,
-                                    &temp_dir,
-                                    partials_prefix,
-                                    wchr.as_slice(),
-                                    true,
-                                    action,
-                                    decimals_to_use,
-                                    &mut positional_writer,
-                                )?;
-                            }
-                        }
-                        positional_writer.flush()?;
+                        write_bed_aggregate_output(
+                            &final_path,
+                            &collect_wps_aggregate_tile_outputs_by_chromosome(
+                                &tile_temp_outputs,
+                                WpsTileTempOutput::is_bed_aggregate,
+                            )?,
+                            win_map,
+                            &chromosomes,
+                            true,
+                            action,
+                            decimals_to_use,
+                            opt.shared_args.ioc.n_threads as usize,
+                            None,
+                        )?;
                     }
                     WindowSpec::Size(_) => {
-                        if tile_and_window_boundaries_align {
-                            let _ = concat_aligned_size_tile_finals(
-                                &temp_dir,
-                                &opt.shared_args.ioc.output_dir,
-                                &chromosomes,
-                                finals_prefix,
-                                match action {
-                                    CoverageWindowAction::Average => final_avg_name.as_str(),
-                                    CoverageWindowAction::Total => final_total_name.as_str(),
-                                    _ => unreachable!(),
-                                },
-                                &header,
-                            )?;
-                        } else {
-                            let mut positional_writer = open_zstd_auto_writer(
-                                &final_path,
-                                3,
-                                Some(opt.shared_args.ioc.n_threads as u32),
-                            )?;
-
-                            // Write header
-                            writeln!(positional_writer, "{}", header)?;
-
-                            for chr in &chromosomes {
-                                let chrom_len = contigs
-                                    .contigs
-                                    .get(chr)
-                                    .map(|&(_, len)| len as u64)
-                                    .ok_or_else(|| {
-                                        anyhow::anyhow!(
-                                            "Chromosome '{}' not found in contig map",
-                                            chr
-                                        )
-                                    })?;
-                                reduce_aggregates_by_size_with_cross_index_for_chr(
-                                    chr,
-                                    &temp_dir,
-                                    partials_prefix,
-                                    true,
-                                    action,
-                                    chrom_len,
-                                    decimals_to_use,
-                                    &mut positional_writer,
-                                )?;
-                            }
-                            positional_writer.flush()?;
-                        }
+                        write_size_aggregate_output(
+                            &final_path,
+                            &collect_wps_aggregate_tile_outputs_by_chromosome(
+                                &tile_temp_outputs,
+                                WpsTileTempOutput::is_size_aggregate,
+                            )?,
+                            &wps_size_final_tile_outputs(&tile_temp_outputs),
+                            &chromosomes,
+                            &contigs,
+                            true,
+                            action,
+                            decimals_to_use,
+                            opt.shared_args.ioc.n_threads as usize,
+                            tile_and_window_boundaries_align,
+                            None,
+                        )?;
                     }
                     _ => unreachable!(),
                 }
 
                 final_path
             }
+            _ => {
+                unreachable!("unsupported WPS per-window action must be rejected during validation")
+            }
         }
     } else {
         // Whole-genome positional coverage
-        merge_positional_tiles(
-            &temp_dir,
+        merge_positional_tile_outputs_with_optional_scaling(
             &opt.shared_args.ioc.output_dir,
             &chromosomes,
-            positional_prefix,
+            &wps_positional_tile_outputs(&tile_temp_outputs),
             final_bedgraph_pos_name.as_str(),
+            None,
+            false,
+            decimals_to_use,
+            opt.shared_args.ioc.n_threads as usize,
         )?
     };
-    println!("Saved output to: {:?}", final_out_path);
+    info!(
+        target: COMMAND_TARGET,
+        "Saved output to: {}",
+        final_out_path.display()
+    );
 
-    let keep_temp = false; // TODO: Make cli arg behind a feature for dev purposes?
-    if !keep_temp {
-        if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
-            eprintln!(
-                "warning: failed to remove temp dir {}: {}",
-                temp_dir.display(),
-                e
-            );
-        }
-    } else {
-        eprintln!("kept temp tiles in {}", temp_dir.display());
-    }
-    println!("");
-    println!("Statistics");
-    println!("----------");
-
-    // Print summary statistics and execution time
     let elapsed = start_time.elapsed();
-    println!("  Total reads: {}", global_counter.base.total_reads);
-    println!(
-        "  Note: A few reads/fragments may be counted twice in the statistics (only) around the parallelization tiles."
+    print_fragment_run_statistics(
+        &global_counter.base,
+        elapsed,
+        FragmentRunStatisticsOptions {
+            include_section_header: true,
+            notes: &[TILE_DOUBLE_COUNT_NOTE],
+            labels: DEFAULT_FRAGMENT_STATISTICS_LABELS,
+            blacklist_excluded_fragments: None,
+            gc: (opt.shared_args.gc.gc_file.is_some() || opt.shared_args.gc.gc_tag.is_some())
+                .then_some(GCStatisticsSummary {
+                    neutralize_invalid_gc: opt.shared_args.gc.neutralize_invalid_gc,
+                    failed_fragments: global_counter.gc_failed_fragments,
+                    missing_tags: opt
+                        .shared_args
+                        .gc
+                        .gc_tag
+                        .is_some()
+                        .then_some(global_counter.gc_missing_tags),
+                    out_of_range_tags: opt
+                        .shared_args
+                        .gc
+                        .gc_tag
+                        .is_some()
+                        .then_some(global_counter.gc_out_of_range_tags),
+                }),
+        },
+        std::iter::empty::<&str>(),
     );
-    println!(
-        "  Initially accepted reads: {} ({:.2}%, forward: {}, reverse: {})",
-        global_counter.base.accepted_forward + global_counter.base.accepted_reverse,
-        (global_counter.base.accepted_forward + global_counter.base.accepted_reverse) as f64
-            / global_counter.base.total_reads as f64
-            * 100.0,
-        global_counter.base.accepted_forward,
-        global_counter.base.accepted_reverse
-    );
-    if opt.shared_args.gc.gc_file.is_some() || opt.shared_args.gc.gc_tag.is_some() {
-        let gc_fail_action = if opt.shared_args.gc.drop_invalid_gc {
-            "fragment skipped"
-        } else {
-            "fragment counted with weight 1.0"
-        };
-        println!(
-            "  GC correction failures ({}): {}",
-            gc_fail_action, global_counter.gc_failed_fragments
-        );
-    }
-    if opt.shared_args.gc.gc_tag.is_some() && global_counter.gc_out_of_range_tags > 0 {
-        println!(
-            "  GC tag values outside [0, {:.0}] treated as invalid: {}",
-            crate::shared::gc_tag::MAX_REASONABLE_GC_WEIGHT,
-            global_counter.gc_out_of_range_tags
-        );
-    }
-    println!(
-        "  Fragments counted one or more times: {}",
-        global_counter.base.counted_fragments
-    );
-    println!("----------");
-    println!("Elapsed time: {:.2?}", elapsed);
     Ok(())
 }
 
+fn wps_positional_tile_outputs(tile_outputs: &[WpsTileTempOutput]) -> Vec<TileTempFile> {
+    tile_outputs
+        .iter()
+        .filter_map(|tile_output| match tile_output {
+            WpsTileTempOutput::Positional {
+                chromosome,
+                tile_index,
+                path,
+            } => Some(TileTempFile {
+                kind: TileTempFileKind::Positional,
+                chromosome: chromosome.clone(),
+                tile_index: *tile_index,
+                path: path.clone(),
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+fn wps_size_final_tile_outputs(tile_outputs: &[WpsTileTempOutput]) -> Vec<TileTempFile> {
+    tile_outputs
+        .iter()
+        .filter_map(|tile_output| match tile_output {
+            WpsTileTempOutput::SizeFinal {
+                chromosome,
+                tile_index,
+                path,
+            } => Some(TileTempFile {
+                kind: TileTempFileKind::SizeFinal,
+                chromosome: chromosome.clone(),
+                tile_index: *tile_index,
+                path: path.clone(),
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+fn collect_wps_aggregate_tile_outputs_by_chromosome(
+    tile_outputs: &[WpsTileTempOutput],
+    include_output: fn(&WpsTileTempOutput) -> bool,
+) -> Result<FxHashMap<String, Vec<TileAggregateTempFiles>>> {
+    let mut by_chromosome: FxHashMap<String, Vec<TileAggregateTempFiles>> = FxHashMap::default();
+
+    for tile_output in tile_outputs.iter().filter(|output| include_output(output)) {
+        match tile_output {
+            WpsTileTempOutput::AggregatesByBed {
+                chromosome,
+                tile_index,
+                partials_path,
+                cross_index_path,
+            }
+            | WpsTileTempOutput::AggregatesBySize {
+                chromosome,
+                tile_index,
+                partials_path,
+                cross_index_path,
+            } => {
+                by_chromosome
+                    .entry(chromosome.clone())
+                    .or_default()
+                    .push(TileAggregateTempFiles {
+                        tile_index: *tile_index,
+                        partials_path: partials_path.clone(),
+                        cross_index_path: cross_index_path.clone(),
+                    })
+            }
+            WpsTileTempOutput::Positional { .. } | WpsTileTempOutput::SizeFinal { .. } => {}
+        }
+    }
+
+    for (chromosome, outputs) in &by_chromosome {
+        let mut tile_indices = fxhash::FxHashSet::default();
+        for output in outputs {
+            anyhow::ensure!(
+                tile_indices.insert(output.tile_index),
+                "duplicate WPS aggregate tile index {} for chromosome '{}'",
+                output.tile_index,
+                chromosome
+            );
+        }
+    }
+
+    Ok(by_chromosome)
+}
+
 /// Process one tile: pair reads, build coverage, and write/return outputs for this tile
-pub fn wps_for_tile(
+pub(crate) fn wps_for_tile(
     opt: &WPSSharedConfig,
     per_window_wps_action: &Option<CoverageWindowAction>,
     keep_zero_runs: bool,
     tile: &Tile,
     tile_window_span: Option<&TileWindowSpan>,
     blacklist_chr: &[Interval<u64>],
-    scaling_chr: &[(u64, u64, f32)],
+    scaling_chr: &[ScalingBin],
     gc_corrector_opt: Option<GCCorrector>,
     mode: TileMode,
     decimals: i32,
     extra_halo_bp: u32,
     return_wps_instead: bool, // Don't save and aggregate, just return the WPS values
-) -> Result<(FCoverageCounters, Option<Vec<f32>>, Option<Vec<u8>>)> {
+) -> Result<(
+    WPSCounters,
+    Option<WpsTileTempOutput>,
+    Option<Vec<f32>>,
+    Option<Vec<u8>>,
+)> {
     // Open a fresh BAM reader for this thread
     let (mut reader, tid_check, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
-    debug_assert!(tid_check == tile.tid as u32);
+    tile.ensure_matches_bam_tid(tid_check)?;
 
-    let mut counter = FCoverageCounters::default();
+    let mut counter = WPSCounters::default();
 
     let gc_prefixes_opt = if gc_corrector_opt.is_some() {
         let ref_2bit = match opt.ref_2bit.as_ref() {
@@ -683,7 +814,7 @@ pub fn wps_for_tile(
         opt.max_fragment_length as u64,
     )?
     else {
-        return Ok((counter, None, None));
+        return Ok((counter, None, None, None));
     };
     let (fetch_from, fetch_to) = fetch_span.try_to_i64()?.as_tuple();
 
@@ -706,12 +837,12 @@ pub fn wps_for_tile(
     let dilated_start_abs = tile.core_start().saturating_sub(context_left);
     let dilated_end_abs = ((tile.core_end() as u64) + context_right as u64).min(chrom_len) as u32;
     if dilated_start_abs >= dilated_end_abs {
-        return Ok((counter, None, None));
+        return Ok((counter, None, None, None));
     }
 
     let dilated_span_len = (dilated_end_abs - dilated_start_abs) as usize; // Length of the dilated buffer (exclusive end)
     if dilated_span_len == 0 {
-        return Ok((counter, None, None));
+        return Ok((counter, None, None, None));
     }
 
     // Offsets of the original core within the dilated span. These values are measured relative
@@ -796,24 +927,27 @@ pub fn wps_for_tile(
 
         // Get GC correction weight
         let gc_weight = if opt.gc.gc_tag.is_some() {
-            if fragment.gc_tag.had_invalid {
-                counter.gc_failed_fragments += 1;
-                if fragment.gc_tag.was_out_of_range {
-                    counter.gc_out_of_range_tags += 1;
+            match fragment.gc_tag.classify()? {
+                ClassifiedGCTagWeight::Usable(weight) => weight as f64,
+                ClassifiedGCTagWeight::Missing => {
+                    counter.gc_failed_fragments += 1;
+                    counter.gc_missing_tags += 1;
+                    if opt.gc.neutralize_invalid_gc {
+                        1.0
+                    } else {
+                        continue;
+                    }
                 }
-                if opt.gc.drop_invalid_gc {
-                    continue;
-                } else {
-                    1.0
-                }
-            } else if let Some(tag_w) = fragment.gc_tag.weight {
-                tag_w as f64
-            } else {
-                counter.gc_failed_fragments += 1;
-                if opt.gc.drop_invalid_gc {
-                    continue;
-                } else {
-                    1.0
+                ClassifiedGCTagWeight::Invalid { out_of_range } => {
+                    counter.gc_failed_fragments += 1;
+                    if out_of_range {
+                        counter.gc_out_of_range_tags += 1;
+                    }
+                    if opt.gc.neutralize_invalid_gc {
+                        1.0
+                    } else {
+                        continue;
+                    }
                 }
             }
         } else {
@@ -823,10 +957,10 @@ pub fn wps_for_tile(
                 (None, true) => {
                     // Tried but failed to make a GC correction weight
                     counter.gc_failed_fragments += 1;
-                    if opt.gc.drop_invalid_gc {
-                        continue;
-                    } else {
+                    if opt.gc.neutralize_invalid_gc {
                         1.0
+                    } else {
+                        continue;
                     }
                 }
                 (None, false) => 1.0, // No correction
@@ -897,14 +1031,14 @@ pub fn wps_for_tile(
     counter.add_from_snapshot(iter.counters_snapshot());
 
     if return_wps_instead {
-        return Ok((counter, Some(wps_values), mask));
+        return Ok((counter, None, Some(wps_values), mask));
     }
 
     let mut prefix_all_cache: Option<Vec<f64>> = None;
     let mut prefix_allowed_cache: Option<Vec<f64>> = None;
     let mut prefix_allowed_cnt_cache: Option<Vec<u32>> = None;
 
-    match mode {
+    let temp_output = match mode {
         TileMode::Positional {
             windows,
             out_path,
@@ -914,7 +1048,7 @@ pub fn wps_for_tile(
 
             match windows {
                 None => {
-                    emit_bedgraph_runs(
+                    write_bedgraph_runs(
                         &tile.chr,
                         &wps_values,
                         mask_slice,
@@ -945,7 +1079,7 @@ pub fn wps_for_tile(
                         };
 
                         if indexed {
-                            emit_windowed_runs(
+                            write_windowed_runs(
                                 &tile.chr,
                                 &wps_values,
                                 mask_slice,
@@ -958,7 +1092,7 @@ pub fn wps_for_tile(
                                 &mut positional_writer,
                             )?;
                         } else {
-                            emit_windowed_runs(
+                            write_windowed_runs(
                                 &tile.chr,
                                 &wps_values,
                                 mask_slice,
@@ -976,6 +1110,11 @@ pub fn wps_for_tile(
             }
 
             positional_writer.flush()?;
+            WpsTileTempOutput::Positional {
+                chromosome: tile.chr.clone(),
+                tile_index: tile.index,
+                path: out_path,
+            }
         }
 
         TileMode::AggregatesByBed {
@@ -1054,6 +1193,12 @@ pub fn wps_for_tile(
 
             partials_writer.flush()?;
             cross_index_writer.flush()?;
+            WpsTileTempOutput::AggregatesByBed {
+                chromosome: tile.chr.clone(),
+                tile_index: tile.index,
+                partials_path: partials_out,
+                cross_index_path: Some(cross_idx_out),
+            }
         }
 
         TileMode::AggregatesBySize {
@@ -1141,6 +1286,11 @@ pub fn wps_for_tile(
                 }
 
                 finals_writer.flush()?;
+                WpsTileTempOutput::SizeFinal {
+                    chromosome: tile.chr.clone(),
+                    tile_index: tile.index,
+                    path: finals_out,
+                }
             } else {
                 let mut partials_writer = open_zstd_auto_writer(&partials_out, 3, None)?;
                 let mut cross_index_writer = open_zstd_auto_writer(&cross_idx_out, 3, None)?;
@@ -1185,11 +1335,17 @@ pub fn wps_for_tile(
 
                 partials_writer.flush()?;
                 cross_index_writer.flush()?;
+                WpsTileTempOutput::AggregatesBySize {
+                    chromosome: tile.chr.clone(),
+                    tile_index: tile.index,
+                    partials_path: partials_out,
+                    cross_index_path: Some(cross_idx_out),
+                }
             }
         }
-    }
+    };
 
-    return Ok((counter, None, None));
+    Ok((counter, Some(temp_output), None, None))
 }
 
 // TODO: Add title to docstring
@@ -1374,4 +1530,9 @@ fn clip_window_to_core_and_localize(
         local_end_idx: local_end,
         clipped_abs_interval: Interval::new(start, end)?,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    include!("wps_tests.rs");
 }

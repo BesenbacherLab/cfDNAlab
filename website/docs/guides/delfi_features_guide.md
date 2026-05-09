@@ -64,7 +64,7 @@ cfdna gc-bias \
 
 ## 2. Fragment lengths
 
-With the GC-bias correction ready, it is time to count the fragment lengths in 5Mb windows. DELFI defines short and long fragment lengths as 100-150bp and 151-220bp, respectively, so we only need to count in the 100-220bp range:
+With the GC-bias correction ready, it is time to count the fragment lengths in 5Mb windows. DELFI defines short and long fragment lengths as 100-150bp and 151-220bp, respectively, so we can count those two bins directly:
 
 [TODO: Figure out exactly what the DELFI settings are]
 [TODO: How do DELFI actually use GC correction on lengths? Do they?]
@@ -76,8 +76,7 @@ cfdna lengths \
   --output-prefix "$SAMPLE_ID" \
   --n-threads $N_CORES \
   --by-size 5000000 \
-  --min-fragment-length 100 \
-  --max-fragment-length 220 \
+  --length-bins 100 151 221 \
   --ref-2bit "$REF_2BIT" \
   --blacklist "$BLACKLIST" \
   --gc-file "$GC_FILE"
@@ -108,19 +107,17 @@ cfdna fcoverage \
 
 To calculate the short/long fragment length ratios, we take the following steps:
 
-1) Load the length counts from the saved NumPy array (shape: `(# windows, # fragment lengths)`) along with the minimum length described in the save JSON file.
-2) Calculate the sum of counts separately for short (100-150bp) and long (151-220bp) fragments.
-3) Calculate the ratios of those sums per 5Mb window.
+1) Load the length counts from the saved NumPy array (shape: `(# windows, 2)`).
+2) Read short (100-150bp) and long (151-220bp) counts from the two length-bin columns.
+3) Calculate the ratios of those counts per 5Mb window.
 
 
 ```bash
 LEN_COUNTS="$LEN_DIR/$SAMPLE_ID.length_counts.npy"
-LEN_SETTINGS="$LEN_DIR/$SAMPLE_ID.fragment_length_settings.json"
 DELFI_LENGTHS="$LEN_DIR/$SAMPLE_ID.delfi_short_long.npy"
 ```
 
 ```python
-import json
 from pathlib import Path
 import numpy as np
 
@@ -129,21 +126,13 @@ import numpy as np
 sample_id = "sample_01"
 len_dir = Path.home() / "delfi_features" / "output" / sample_id / "lengths"
 
-# Load lengths and meta data
+# Load lengths and extract short/long columns
+# Column 0 is [100,151), column 1 is [151,221)
 length_counts = np.load(len_dir / f"{sample_id}.length_counts.npy")
-length_settings = json.loads(
-    (len_dir / f"{sample_id}.fragment_length_settings.json").read_text()
-)
+short_counts = length_counts[:, 0]
+long_counts = length_counts[:, 1]
 
-# Calculate the split index for short and long
-minimum_length = length_settings["min_fragment_length"]
-cutoff_idx = (151-minimum_length)
-
-# Extract and sum the short and long counts separately
-short_counts = length_counts[:, :cutoff_idx].sum(axis=1)
-long_counts = length_counts[:, cutoff_idx:].sum(axis=1)
-
-# Divide the two sets of sums across all windows
+# Divide the two count vectors across all windows
 # Some windows might have little coverage due to the blacklisting
 # so we ensure 0-divisions become NaN instead of raising an error
 short_long_ratio = np.divide(

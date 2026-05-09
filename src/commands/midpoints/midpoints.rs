@@ -1,8 +1,9 @@
+use crate::shared::gc_tag::ClassifiedGCTagWeight;
 use crate::{
     commands::{
         cli_common::{
             ensure_output_dir, load_blacklist_map, load_scaling_map,
-            resolve_chromosomes_and_contigs,
+            resolve_chromosomes_and_contigs, validate_output_prefix,
         },
         counters::ProfileGroupsCounters,
         gc_bias::{
@@ -10,8 +11,13 @@ use crate::{
             counting::build_gc_prefixes,
         },
         midpoints::{
-            config::MidpointsConfig, counting_by_group::ProfileGroupsCounts,
+            config::MidpointsConfig,
+            counting_by_group::{ProfileGroupsCounts, SparseProfileGroupsCounts},
             windows::ensure_uniform_window_len,
+        },
+        run_statistics::{
+            DEFAULT_FRAGMENT_STATISTICS_LABELS, FragmentRunStatisticsOptions, GCStatisticsSummary,
+            TILE_DOUBLE_COUNT_NOTE, print_fragment_run_statistics,
         },
     },
     shared::{
@@ -19,20 +25,23 @@ use crate::{
         bed::{load_grouped_windows_from_bed, write_group_idx_to_name_tsv},
         blacklist::is_blacklisted,
         fragment::minimal_fragment::Fragment,
-        fragment_iterator::fragments_from_bam,
+        fragment_iterators::fragments_from_bam,
         interval::{IndexedInterval, Interval},
         io::dot_join,
-        midpoint::midpoint_random_even_with_thread_rng,
+        length_axis::LengthAxis,
+        midpoint::midpoint_random_even_for_fragment,
         overlaps::find_overlapping_windows,
         progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq_in_range,
-        scale_genome::compute_window_scaling_over_fragment,
+        scale_genome::{ScalingBin, compute_per_window_scaling_over_fragment},
+        temp_chrom_names::TempChromNameMap,
         thread_pool::init_global_pool,
         tiled_run::{
-            Tile, TileWindowSpan, build_tiles, clamp_fetch_to_window_span, make_temp_dir,
+            TempDirGuard, Tile, TileWindowSpan, build_tiles, clamp_fetch_to_window_span,
             overlapping_windows_for_tile, precompute_tile_window_spans,
         },
+        window_fetch::window_derived_fetch_extent_for_core_overlap,
     },
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -41,26 +50,40 @@ use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::{path::PathBuf, sync::Arc, time::Instant};
+use tracing::info;
+
+const COMMAND_TARGET: &str = "midpoints";
 
 // Handle deletions?
 
 /// Execute the grouped midpoint profiling pipeline end-to-end.
 ///
+/// The command produces dense midpoint profiles for grouped BED intervals. Internally, tile
+/// workers count into sparse accumulators and write sparse `.npz` temporary files. After all tiles
+/// finish, those sparse partial files are merged into one dense `ProfileGroupsCounts` and written
+/// as the public `.midpoint_profiles.npy` output with axes `(group, length_bin, position)`.
+///
 /// Implementation details:
+///
 /// - Resolves chromosomes, loads grouped BED windows, and prepares optional blacklist and scaling
 ///   data before spawning parallel tiles.
-/// - Streams fragments through per-tile accumulators, writing temporary `.npy` slices that are
-///   merged into a final 3D array and companion group index.
+/// - Streams fragments through per-tile accumulators, writing sparse temporary partial files that
+///   are merged into a final 3D array and companion group index.
 /// - Applies fragment length, blacklist, and scaling filters during aggregation so downstream tools
 ///   can consume ready-to-use profiles.
 ///
-/// Parameters:
-/// - `opt`: Fully resolved configuration for the `profile-groups` command.
+/// Parameters
+/// ----------
+/// - `opt`:
+///     Fully resolved configuration for the `profile-groups` command.
 ///
-/// Returns:
-/// - `Ok(())` when the output `npy` and group-index files are written successfully.
+/// Returns
+/// -------
+/// - `Ok(())`:
+///     The output `npy` and group-index files were written successfully.
 ///
-/// Errors:
+/// Errors
+/// ------
 /// - Returns an error if any input cannot be read, the grouped BED is invalid, or writing the
 ///   outputs fails.
 pub fn run(opt: &MidpointsConfig) -> Result<()> {
@@ -68,16 +91,18 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
+    opt.gc.validate(opt.ref_2bit.as_deref())?;
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     let prefix = opt.output_prefix.trim();
+    validate_output_prefix(prefix)?;
 
     // Create output directory
     ensure_output_dir(&opt.ioc.output_dir)?;
 
     // Load blacklist intervals if provided
     if opt.blacklist.is_some() {
-        println!("Start: Loading blacklists");
+        info!(target: COMMAND_TARGET, "Loading blacklists");
     }
     let blacklist_map = load_blacklist_map(
         opt.blacklist.as_ref(),
@@ -86,8 +111,8 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         &chromosomes,
     )?;
 
-    // Load sites from BED file
-    println!("Start: Loading fixed-size intervals");
+    // Load grouped fixed-size windows from BED
+    info!(target: COMMAND_TARGET, "Loading fixed-size intervals");
     let (windows_map, group_idx_to_name) = load_grouped_windows_from_bed(
         opt.intervals.clone(),
         Some(chromosomes.as_slice()),
@@ -96,8 +121,9 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     )?;
     let num_groups = group_idx_to_name.len();
     let total_windows: usize = windows_map.values().map(|gw| gw.len()).sum();
-    println!(
-        "       Num. chromosomes: {:?} | Num. windows: {:?} | Num. groups: {:?}",
+    info!(
+        target: COMMAND_TARGET,
+        "  Num. chromosomes: {:?} | Num. windows: {:?} | Num. groups: {:?}",
         windows_map.keys().len(),
         total_windows,
         num_groups,
@@ -105,41 +131,53 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
 
     // Ensure all windows have the same length
     let window_size = ensure_uniform_window_len(&windows_map)?;
-    let mut indexed_windows_map: FxHashMap<String, Vec<IndexedInterval<u64>>> =
-        FxHashMap::default();
-    for (chromosome, grouped_windows) in &windows_map {
-        indexed_windows_map.insert(chromosome.clone(), grouped_windows.as_slice().to_vec());
-    }
+    // The grouped BED loader preserves group ids in IndexedInterval.idx. Moving the inner vectors
+    // avoids cloning millions of intervals before tiling
+    let indexed_windows_map: FxHashMap<String, Vec<IndexedInterval<u64>>> = windows_map
+        .into_iter()
+        .map(|(chromosome, grouped_windows)| (chromosome, grouped_windows.into_inner()))
+        .collect();
 
-    // Parse and validate fragment-length bins once so all tiles use the same edges
-    let length_bins = opt.resolve_length_bins()?;
-    let num_length_bins = length_bins.len();
-    let min_fragment_length = length_bins[0];
-    let max_fragment_length = length_bins[num_length_bins - 1] - 1;
+    // Parse and validate fragment length bins once so all tiles share one lookup table
+    let length_axis = Arc::new(LengthAxis::new(opt.resolve_length_bins()?)?);
+    let min_fragment_length = length_axis.min_fragment_length();
+    let max_fragment_length = length_axis.max_fragment_length();
 
     // Load genomic scaling factors
     if opt.scale_genome.scaling_factors.is_some() {
-        println!("Start: Loading scaling factors");
+        info!(target: COMMAND_TARGET, "Loading scaling factors");
     }
-    let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> =
-        load_scaling_map(&opt.scale_genome, &chromosomes, &contigs)?;
+    let scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
+        &opt.scale_genome,
+        &chromosomes,
+        &contigs,
+        crate::shared::scale_genome::scaling_gc_mode_for_run(
+            opt.gc.gc_file.is_some(),
+            opt.gc.gc_tag.is_some(),
+        ),
+        None,
+    )?;
 
     // Load GC correction package if specified
     if opt.gc.gc_file.is_some() {
-        println!("Start: Loading GC correction matrix");
+        info!(target: COMMAND_TARGET, "Loading GC correction matrix");
     }
     let gc_corrector = load_gc_corrector(
         opt.gc.gc_file.as_ref(),
+        opt.ref_2bit.as_ref(),
         min_fragment_length,
         max_fragment_length,
     )?;
 
     // Build temporary directory
-    let temp_dir = make_temp_dir(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
+    let temp_dir_guard =
+        TempDirGuard::new(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
+    let temp_dir = temp_dir_guard.path();
 
-    // Build tiles
+    // Build tiles with a pairing halo wide enough for any accepted fragment
     let halo_bp: u32 = max_fragment_length; // Safe halo for pairing
     let (tiles, _) = build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp, None)?;
+    let temp_chrom_name_map = TempChromNameMap::from_contigs(&chromosomes)?;
     let total_tiles = tiles.len();
 
     let windows_lookup = &indexed_windows_map;
@@ -150,7 +188,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         0,
     ));
 
-    // Where per-tile files go
+    // Per-tile sparse partial files live in the temp directory
     let tmp_prefix = dot_join(&[prefix, "midpoint_profiles.tile"]);
     let tmp_prefix = tmp_prefix.as_str();
 
@@ -167,13 +205,10 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     let progress = ProgressFactory::new();
     let pb = Arc::new(progress.default_bar(total_tiles as u64));
 
-    // Configure global thread‐pool size
+    // Configure global thread-pool size
     init_global_pool(opt.ioc.n_threads)?;
 
-    // Prepare per-bin counts and metadata
-    let mut global_counter = ProfileGroupsCounters::default();
-
-    println!("Start: Counting per chromosome");
+    info!(target: COMMAND_TARGET, "Counting per chromosome");
 
     pb.set_position(0);
 
@@ -185,7 +220,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         .enumerate()
         .map(|(tile_idx, tile)| -> Result<(_, _)> {
             let tile_span = tile_window_spans_for_threads[tile_idx];
-            // Per-chrom projections
+            // Borrow chromosome-local data for this tile worker
             let windows_chr: &[IndexedInterval<u64>] = indexed_windows_map
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
@@ -194,16 +229,17 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
-            let scaling_chr: &[(u64, u64, f32)] = scaling_map
+            let scaling_chr: &[ScalingBin] = scaling_map
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
 
-            // Windowed tmp outputs for faster reducer later on
+            // Sparse tile partial file path. Empty tiles skip writing this file
+            let chr_token = temp_chrom_name_map.token_for(tile.chr.as_str())?;
             let tile_counts_out = temp_dir.join(format!(
-                "{prefix}.{chr}.{idx}.npy",
+                "{prefix}.{chr}.{idx}.npz",
                 prefix = tmp_prefix,
-                chr = tile.chr,
+                chr = chr_token,
                 idx = tile.index
             ));
 
@@ -213,7 +249,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
                 tile_counts_out,
                 window_size,
                 num_groups,
-                &length_bins,
+                Arc::clone(&length_axis),
                 windows_chr,
                 tile_span.as_ref(),
                 blacklist_chr,
@@ -228,8 +264,11 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
 
     pb.finish_with_message("| Finished counting");
 
+    // Initialize global counter for accumulation across tiles
+    let mut global_counter = ProfileGroupsCounters::default();
+
+    // Collect temp paths and counters after Rayon returns to the main thread
     let mut all_tmp_count_paths: Vec<PathBuf> = Vec::with_capacity(total_tiles);
-    // Collect results (in chromosome order) back into the global vectors
     for (counter, tmp_counts_path) in tile_results {
         if let Some(tmp_path) = tmp_counts_path {
             all_tmp_count_paths.push(tmp_path);
@@ -237,116 +276,148 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         global_counter += counter;
     }
 
-    println!("Start: Merging temporary tile files to final output");
+    info!(
+        target: COMMAND_TARGET,
+        "Merging temporary tile files to final output"
+    );
 
-    // Initialize count array and load+fill with tmp counts
-    let mut all_counts = ProfileGroupsCounts::new(window_size, num_groups, length_bins.to_vec());
-    all_counts.add_from_npy_1d_files_parallel(all_tmp_count_paths)?;
+    // Allocate the single final dense profile and merge sparse tile partial files into it
+    let mut all_counts =
+        ProfileGroupsCounts::new(window_size, num_groups, Arc::clone(&length_axis));
+    all_counts.add_from_sparse_npz_files_parallel(all_tmp_count_paths)?;
     let all_counts_3d_arr = all_counts.view_ndarray3_group_len_pos();
 
-    println!("Start: Writing final counts to: {:?}", &final_counts_path);
+    info!(
+        target: COMMAND_TARGET,
+        "Writing final counts to {}",
+        final_counts_path.display()
+    );
     // Write final counts to output_dir
     write_npy(&final_counts_path, &all_counts_3d_arr).context("Write final fail")?;
 
-    println!("Start: Writing group index to: {:?}", &map_path);
+    info!(
+        target: COMMAND_TARGET,
+        "Writing group index to {}",
+        map_path.display()
+    );
     write_group_idx_to_name_tsv(map_path, &group_idx_to_name)?;
 
     #[cfg(feature = "plotters")]
     {
         use crate::commands::midpoints::plotting::plot_midpoint_profiles;
 
-        println!("Start: Plotting selected groups' midpoint profiles");
+        info!(
+            target: COMMAND_TARGET,
+            "Plotting selected groups' midpoint profiles"
+        );
 
         plot_midpoint_profiles(
             prefix,
             &opt.ioc.output_dir,
             &opt.plot_groups,
-            &length_bins,
+            length_axis.edges(),
             &group_idx_to_name,
             all_counts_3d_arr,
         )?;
     }
 
-    let keep_temp = false; // TODO: Make cli arg behind a feature for dev purposes?
-    if !keep_temp {
-        if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
-            eprintln!(
-                "warning: failed to remove temp dir {}: {}",
-                temp_dir.display(),
-                e
-            );
-        }
-    } else {
-        eprintln!("kept temp tiles in {}", temp_dir.display());
-    }
-
-    println!();
-    println!("Statistics");
-    println!("----------");
-    println!(
-        "  Note: A few reads/fragments may be counted twice in the statistics (only) around the parallelization tiles."
-    );
-
-    // Print summary statistics and execution time
     let elapsed = start_time.elapsed();
-    println!("  Total reads: {}", global_counter.base.total_reads);
-    println!(
-        "  Initially accepted reads: {} ({:.2}%, forward: {}, reverse: {})",
-        global_counter.base.accepted_forward + global_counter.base.accepted_reverse,
-        (global_counter.base.accepted_forward + global_counter.base.accepted_reverse) as f64
-            / global_counter.base.total_reads as f64
-            * 100.0,
-        global_counter.base.accepted_forward,
-        global_counter.base.accepted_reverse
+    print_fragment_run_statistics(
+        &global_counter.base,
+        elapsed,
+        FragmentRunStatisticsOptions {
+            include_section_header: true,
+            notes: &[TILE_DOUBLE_COUNT_NOTE],
+            labels: DEFAULT_FRAGMENT_STATISTICS_LABELS,
+            blacklist_excluded_fragments: Some(global_counter.blacklisted_fragments),
+            gc: (opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some()).then_some(
+                GCStatisticsSummary {
+                    neutralize_invalid_gc: opt.gc.neutralize_invalid_gc,
+                    failed_fragments: global_counter.gc_failed_fragments,
+                    missing_tags: opt
+                        .gc
+                        .gc_tag
+                        .is_some()
+                        .then_some(global_counter.gc_missing_tags),
+                    out_of_range_tags: opt
+                        .gc
+                        .gc_tag
+                        .is_some()
+                        .then_some(global_counter.gc_out_of_range_tags),
+                },
+            ),
+        },
+        std::iter::empty::<&str>(),
     );
-    println!(
-        "  Blacklist-excluded fragments: {}",
-        global_counter.blacklisted_fragments
-    );
-    if opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some() {
-        let gc_fail_action = if opt.gc.drop_invalid_gc {
-            "fragment skipped"
-        } else {
-            "fragment counted with weight 1.0"
-        };
-        println!(
-            "  GC correction failures ({}): {}",
-            gc_fail_action, global_counter.gc_failed_fragments
-        );
-        if opt.gc.gc_tag.is_some() && global_counter.gc_out_of_range_tags > 0 {
-            println!(
-                "  GC tag values outside [0, {:.0}] treated as invalid: {}",
-                crate::shared::gc_tag::MAX_REASONABLE_GC_WEIGHT,
-                global_counter.gc_out_of_range_tags
-            );
-        }
-    }
-    println!(
-        "  Fragments counted one or more times: {}",
-        global_counter.base.counted_fragments
-    );
-    println!("----------");
-    println!("Elapsed time: {:.2?}", elapsed);
     Ok(())
 }
 
+/// Count midpoint contributions for one genomic tile.
+///
+/// This function is the per-tile worker body used by the parallel `run` loop. It opens a
+/// chromosome-scoped BAM reader, narrows the fetch span to windows that can contribute to this
+/// tile, streams fragments, and writes one sparse midpoint partial file when the tile has nonzero
+/// counts.
+///
+/// The main counting flow is:
+///
+/// 1. Build per-tile helper state, including optional GC prefixes and scaling intervals.
+/// 2. Narrow the BAM fetch to the extrema of windows overlapping the tile core.
+/// 3. Stream paired or unpaired fragments from the BAM reader.
+/// 4. Apply blacklist, midpoint-core, GC, and optional scaling filters.
+/// 5. Convert each midpoint to a window-relative position and group index.
+/// 6. Accumulate weighted counts in `SparseProfileGroupsCounts`.
+/// 7. Write a sorted sparse `.npz` partial file, unless the tile had no counts.
+///
+/// Parameters
+/// ----------
+/// - `opt`:
+///     Command configuration. The worker reads filters, IO paths, and correction options from it.
+/// - `tile`:
+///     Genomic tile whose core owns midpoint counts and whose fetch band includes pairing halo.
+/// - `tile_counts_out`:
+///     Destination path for the sparse tile partial file if the tile produces any counts.
+/// - `window_size`:
+///     Number of midpoint positions per grouped BED window.
+/// - `num_groups`:
+///     Number of group ids represented in the grouped BED input.
+/// - `length_axis`:
+///     Shared length-bin lookup used by the sparse accumulator.
+/// - `windows`:
+///     Chromosome-local grouped windows, sorted by coordinate.
+/// - `tile_window_span`:
+///     Optional precomputed slice range for windows that can overlap this tile.
+/// - `blacklist_intervals`:
+///     Chromosome-local blacklist intervals used before midpoint counting.
+/// - `scaling_chr`:
+///     Chromosome-local genomic scaling bins. Empty means no scaling is applied.
+/// - `gc_corrector_opt`:
+///     Optional file-based GC corrector for fragment-level weights.
+/// - `gc_tag`:
+///     Optional BAM tag name for tag-based GC weights.
+///
+/// Returns
+/// -------
+/// - `out`:
+///     Tile-local run counters and an optional sparse temp-file path. The path is `None` when the
+///     tile had no overlapping windows or no counted midpoint cells.
 fn process_tile(
     opt: &MidpointsConfig,
     tile: &Tile,
     tile_counts_out: PathBuf,
     window_size: usize,
     num_groups: usize,
-    length_bins: &[u32],
+    length_axis: Arc<LengthAxis>,
     windows: &[IndexedInterval<u64>],
     tile_window_span: Option<&TileWindowSpan>,
     blacklist_intervals: &[Interval<u64>],
-    scaling_chr: &[(u64, u64, f32)],
+    scaling_chr: &[ScalingBin],
     gc_corrector_opt: Option<GCCorrector>,
     gc_tag: Option<&str>,
 ) -> anyhow::Result<(ProfileGroupsCounters, Option<PathBuf>)> {
     // Open a fresh BAM reader for this thread
     let (mut reader, _tid_check, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
-    debug_assert!(_tid_check == tile.tid as u32);
+    tile.ensure_matches_bam_tid(_tid_check)?;
 
     // Initialize counters (default -> 0s)
     let mut counter = ProfileGroupsCounters::default();
@@ -359,7 +430,7 @@ fn process_tile(
         let seq_bytes = read_seq_in_range(
             ref_2bit,
             &tile.chr,
-            // NOTE: Need for full fetch span to get GC of overlapping fragments!
+            // NOTE: Need the full fetch span to get GC of overlapping fragments!
             (tile.fetch_start() as usize)..(tile.fetch_end() as usize),
         )?;
         Some(build_gc_prefixes(&seq_bytes))
@@ -367,26 +438,26 @@ fn process_tile(
         None
     };
 
-    // The overlap finder only needs checked BED-like intervals here.
+    // The overlap finder only needs checked BED-like intervals here
     //
     // In BED mode, `find_overlapping_windows(...)` stores the scan position in the supplied slice
-    // as `OverlappingWindow.idx`; it does not read `IndexedInterval.idx`. Because this temporary
+    // as `OverlappingWindow.idx`. It does not read `IndexedInterval.idx`. Because this temporary
     // list is built in the same order as `scaling_chr`, those scan positions already line up with
-    // the chromosome-local indices used later to index back into `scaling_chr`.
+    // the chromosome-local indices used later to index back into `scaling_chr`
     //
-    // So the carried `IndexedInterval.idx` value is intentionally a placeholder.
+    // So the carried `IndexedInterval.idx` value is intentionally a placeholder
     let scaling_with_bin_idx: Vec<IndexedInterval<u64>> = scaling_chr
         .iter()
-        .map(|(start, end, _)| IndexedInterval::new(*start, *end, 0_u64))
-        .collect::<crate::Result<_>>()?;
+        .map(|b| IndexedInterval::from_interval(b.interval, 0_u64))
+        .collect();
 
     // Extract min/max fragment lengths once so fetch shrinking and fragment filtering share the
-    // same bounds.
-    let min_fragment_length = length_bins[0];
-    let max_fragment_length = length_bins[length_bins.len() - 1] - 1;
+    // same bounds
+    let min_fragment_length = length_axis.min_fragment_length();
+    let max_fragment_length = length_axis.max_fragment_length();
 
-    // Adapt the fetch coordinates to the present windows
-    // When no windows are present, skip this tile
+    // Narrow the BAM fetch to windows that overlap the tile core. Tiles without contributing
+    // windows return immediately and do not produce a sparse temp file
     let Some((core_overlapping_windows, fetch_span)) =
         get_overlapping_sites_and_adapt_fetch_to_extremes(
             windows,
@@ -415,14 +486,13 @@ fn process_tile(
         }
     };
 
-    // Initialize count array
-    let mut counts = ProfileGroupsCounts::new(window_size, num_groups, length_bins.to_vec());
+    // Initialize sparse count map
+    let mut counts = SparseProfileGroupsCounts::new(window_size, num_groups, length_axis);
 
-    // Streaming pointers
+    // Streaming pointers let sorted interval scans resume near the previous fragment
     let mut bl_ptr = 0; // Blacklist interval
-    let mut wd_ptr = tile_window_span
-        .and_then(|span| (!span.is_empty()).then_some(span.first_idx))
-        .unwrap_or(0);
+    // `core_overlapping_windows` is compacted per tile, so this pointer is tile-local
+    let mut wd_ptr = 0;
     let mut sf_ptr = 0; // Scaling factor bin
 
     // Create fragment iterator
@@ -456,6 +526,7 @@ fn process_tile(
     let get_gc_weight = {
         let gc_corrector = gc_corrector_opt.as_ref();
         let gc_prefixes = gc_prefixes_opt.as_ref();
+        // File-based GC correction shifts fragment coordinates into the fetched reference slice
         move |fragment: &Fragment, fetch_start: u32| -> Result<Option<f64>> {
             match (gc_corrector, gc_prefixes) {
                 (Some(corrector), Some(prefixes)) => {
@@ -473,7 +544,7 @@ fn process_tile(
     let correct_gc_from_file = opt.gc.gc_file.is_some();
     let fetch_start = tile.fetch_start();
 
-    // Iterate fragments and add coverage
+    // Iterate fragments and count up midpoints
     for fragment_res in iter.by_ref() {
         let fragment = fragment_res.context("reading fragment")?;
         let fragment_length = fragment.len();
@@ -491,11 +562,12 @@ fn process_tile(
             continue;
         }
 
-        // Determine fragment midpoint
-        // Uses random rounding for even-sized fragments to avoid bias
-        let midpoint = midpoint_random_even_with_thread_rng(fragment.start(), fragment_length);
+        // Determine fragment midpoint. Even-sized fragments use deterministic coordinate-derived
+        // random rounding so tie positions are not always rounded in the same direction
+        let midpoint =
+            midpoint_random_even_for_fragment(&tile.chr, fragment.start(), fragment_length);
 
-        // Only keep fragments with midpoints within the tile
+        // Keep only the fragments with midpoints within the tile
         if midpoint < tile.core_start() || midpoint >= tile.core_end() {
             continue;
         }
@@ -503,25 +575,27 @@ fn process_tile(
         // Get GC correction weight
         // NOTE: Must come after filtering for midpoints lying within the core!
         let gc_weight = if gc_tag.is_some() {
-            // Tag mode: trust tag if valid, otherwise treat as failure
-            if fragment.gc_tag.had_invalid {
-                counter.gc_failed_fragments += 1;
-                if fragment.gc_tag.was_out_of_range {
-                    counter.gc_out_of_range_tags += 1;
+            match fragment.gc_tag.classify()? {
+                ClassifiedGCTagWeight::Usable(weight) => weight as f64,
+                ClassifiedGCTagWeight::Missing => {
+                    counter.gc_failed_fragments += 1;
+                    counter.gc_missing_tags += 1;
+                    if opt.gc.neutralize_invalid_gc {
+                        1.0
+                    } else {
+                        continue;
+                    }
                 }
-                if opt.gc.drop_invalid_gc {
-                    continue;
-                } else {
-                    1.0
-                }
-            } else if let Some(tag_w) = fragment.gc_tag.weight {
-                tag_w as f64
-            } else {
-                counter.gc_failed_fragments += 1;
-                if opt.gc.drop_invalid_gc {
-                    continue;
-                } else {
-                    1.0
+                ClassifiedGCTagWeight::Invalid { out_of_range } => {
+                    counter.gc_failed_fragments += 1;
+                    if out_of_range {
+                        counter.gc_out_of_range_tags += 1;
+                    }
+                    if opt.gc.neutralize_invalid_gc {
+                        1.0
+                    } else {
+                        continue;
+                    }
                 }
             }
         } else {
@@ -531,10 +605,10 @@ fn process_tile(
                 (Some(w), true) => w,
                 (None, true) => {
                     counter.gc_failed_fragments += 1;
-                    if opt.gc.drop_invalid_gc {
-                        continue;
-                    } else {
+                    if opt.gc.neutralize_invalid_gc {
                         1.0
+                    } else {
+                        continue;
                     }
                 }
                 (None, false) => 1.0, // No correction
@@ -583,7 +657,7 @@ fn process_tile(
                 .collect();
 
             // Calculate the weight per overlapping count-window
-            let overlap_weights = compute_window_scaling_over_fragment(
+            let overlap_weights = compute_per_window_scaling_over_fragment(
                 fragment.interval.try_to_u64()?,
                 &overlapping_windows,
                 &overlapping_scaling_bin_indices,
@@ -591,7 +665,9 @@ fn process_tile(
             )?;
 
             // Count up the weight per overlapping count-window
-            for (overlapped_window_idx, scaling_weight, _) in overlap_weights {
+            for window_scaling in overlap_weights {
+                let overlapped_window_idx = window_scaling.window_idx;
+                let scaling_weight = window_scaling.scaling_weight;
                 let window = core_overlapping_windows[overlapped_window_idx];
                 let window_start = window.start();
                 let window_end = window.end();
@@ -614,7 +690,7 @@ fn process_tile(
                 )?;
             }
         } else {
-            // When no scaling, increment counter by the overlap fraction for each window / bin
+            // When no scaling, increment counter by the GC weight for each window / bin
             for overlapped_window in overlapping_windows.windows {
                 let overlapped_window_idx = overlapped_window.idx;
                 let window = core_overlapping_windows[overlapped_window_idx];
@@ -641,12 +717,19 @@ fn process_tile(
         }
     }
 
-    // Write tile counts to temp dir
-    let arr1 = counts.as_ndarray1();
-    write_npy(&tile_counts_out, &arr1).context("Write final fail")?;
-
-    // Get counters from iterator
+    // Add read and pairing counters captured by the fragment iterator
     counter.add_from_snapshot(iter.counters_snapshot());
+
+    // Empty sparse accumulators do not produce temp files. The final merge only receives paths for
+    // tiles with at least one observed midpoint cell
+    if counts.is_empty() {
+        return Ok((counter, None));
+    }
+
+    // Write a sorted sparse partial file to the temporary directory
+    counts
+        .write_npz(&tile_counts_out)
+        .context("Write midpoint tile counts fail")?;
 
     Ok((counter, Some(tile_counts_out)))
 }
@@ -693,18 +776,15 @@ pub fn get_overlapping_sites_and_adapt_fetch_to_extremes(
         .unwrap_or(0)
         .min(windows.len());
     let mut overlapping_sites = Vec::with_capacity(reserve_hint);
-    let mut min_site_start = u64::MAX;
-    let mut max_site_end = 0u64;
     for site in overlapping_windows_for_tile(windows, tile, tile_span) {
-        min_site_start = min_site_start.min(site.start());
-        max_site_end = max_site_end.max(site.end());
         overlapping_sites.push(*site);
     }
     if overlapping_sites.is_empty() {
         return Ok(None);
     }
 
-    let window_span = Interval::new(min_site_start, max_site_end)?;
+    let window_span = window_derived_fetch_extent_for_core_overlap(windows, tile, tile_span)?
+        .context("midpoint helper found overlapping sites but no core-overlap window extent")?;
 
     let Some(fetch_span) =
         clamp_fetch_to_window_span(tile, chrom_len as u64, window_span, halo_bp)?

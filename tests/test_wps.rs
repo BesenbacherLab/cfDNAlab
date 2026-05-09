@@ -3,13 +3,15 @@
 mod fixtures;
 
 use anyhow::{Context, Result, ensure};
-use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs, WindowsArgs};
+use cfdnalab::commands::cli_common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, WindowsArgs};
 use cfdnalab::commands::fcoverage::window_results::CoverageWindowAction;
 use cfdnalab::commands::wps::config::WPSConfig;
 use cfdnalab::commands::wps::wps::run as run_fn;
+use cfdnalab::shared::reference::twobit_contig_footprint;
 use fixtures::{
-    BamFixture, FragmentSpec, ReadSpec, bam_from_specs, long_fragment_bam, read_zst_to_string,
-    write_bed,
+    BamFixture, FragmentSpec, ReadSpec, bam_from_specs, late_origin_gc_reference_sequence,
+    long_fragment_bam, read_zst_to_string, twobit_from_sequences, write_bed,
+    write_two_bin_gc_package,
 };
 use std::cmp::max;
 use std::fs::File;
@@ -215,8 +217,57 @@ fn run_wps_with_chrom(cfg: &WPSConfig) -> Result<Vec<WpsRun>> {
 }
 
 #[test]
+fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -> Result<()> {
+    // Arrange:
+    // - The fragment spans [900,961), and the reported WPS centers are restricted to [925,936).
+    // - The reference is shorter than the BAM chromosome, but long enough for the narrowed
+    //   window-derived fetch span. Reading the full tile reference would overrun the reference.
+    // - The fragment interval [900,961) is all C, so it lands in the high-GC correction bin with
+    //   weight 7.0. Using prefix-local origin 0 would see A-only sequence instead.
+    // - A 10 bp WPS window around every center in [925,936) lies fully inside the fragment and
+    //   contains neither endpoint, so the unweighted score is +1 throughout.
+    // - The GC package therefore makes the full run +7.
+    let bam = make_fixture("wps_late_tile_gc_origin", &[(900, 961)])?;
+    let reference = twobit_from_sequences(
+        "wps_late_tile_gc_origin_ref",
+        vec![("chr1".to_string(), late_origin_gc_reference_sequence())],
+    )?;
+    let out_dir = TempDir::new()?;
+    let bed_path = out_dir.path().join("late_window.bed");
+    let gc_path = out_dir.path().join("two_bin_gc_package.npz");
+    write_bed(&bed_path, &[("chr1", 925, 936, "late")])?;
+    write_two_bin_gc_package(
+        &gc_path,
+        61,
+        2.0,
+        7.0,
+        twobit_contig_footprint(&reference.path)?,
+    )?;
+
+    let mut cfg = make_config(10, false, &bam.bam, out_dir.path(), "late_gc");
+    cfg.set_windows(WindowsArgs {
+        by_size: None,
+        by_bed: Some(bed_path),
+    });
+    cfg.set_min_fragment_length(61);
+    cfg.set_max_fragment_length(61);
+    cfg.set_gc(ApplyGCArgs {
+        gc_file: Some(gc_path),
+        gc_tag: None,
+        neutralize_invalid_gc: false,
+    });
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+
+    // Act
+    let actual = run_wps(&cfg)?;
+
+    // Assert
+    assert_runs_equal(&actual, &[wps_run("chr1", 925, 936, 7.0)]);
+    Ok(())
+}
+
+#[test]
 fn single_fragment_produces_central_plateau() -> Result<()> {
-    // Human verification status: unverified
     let fixture = make_fixture("wps_single_fragment", &[(10, 22)])?;
     let out_dir = TempDir::new()?;
     let cfg = make_config(4, false, &fixture.bam, out_dir.path(), "single_fragment");
@@ -243,7 +294,6 @@ fn single_fragment_produces_central_plateau() -> Result<()> {
 
 #[test]
 fn overlapping_fragments_stack_scores() -> Result<()> {
-    // Human verification status: unverified
     let fixture = make_fixture("wps_overlapping", &[(0, 20), (4, 12)])?;
     let out_dir = TempDir::new()?;
     let cfg = make_config(4, false, &fixture.bam, out_dir.path(), "overlapping");
@@ -260,7 +310,7 @@ fn overlapping_fragments_stack_scores() -> Result<()> {
     //     * [2, 3) at +1 from the long fragment.
     //     * [6, 11) at +2 where both fragments span the window.
     //     * [13, 19) at +1 once only the long fragment remains.
-    //     * [19, 21) at -1 from the long fragment’s right endpoint.
+    //     * [19, 21) at -1 from the long fragment's right endpoint.
     let expected = vec![
         wps_run("chr1", 2, 3, 1.0),
         wps_run("chr1", 6, 11, 2.0),
@@ -276,7 +326,6 @@ fn overlapping_fragments_stack_scores() -> Result<()> {
 
 #[test]
 fn keep_zero_runs_emits_flat_segments() -> Result<()> {
-    // Human verification status: unverified
     let fixture = make_fixture("wps_keep_zero", &[(10, 22)])?;
     let out_dir = TempDir::new()?;
     let cfg = make_config(4, true, &fixture.bam, out_dir.path(), "keep_zero");
@@ -302,7 +351,6 @@ fn keep_zero_runs_emits_flat_segments() -> Result<()> {
 
 #[test]
 fn fragment_equal_to_window_removes_central_signal() -> Result<()> {
-    // Human verification status: unverified
     let fixture = make_fixture("wps_equal_window", &[(10, 14)])?;
     let out_dir = TempDir::new()?;
     let cfg = make_config(4, false, &fixture.bam, out_dir.path(), "equal_window");
@@ -327,7 +375,6 @@ fn fragment_equal_to_window_removes_central_signal() -> Result<()> {
 
 #[test]
 fn fragment_equal_to_window_with_zero_runs_emits_shoulders() -> Result<()> {
-    // Human verification status: unverified
     let fixture = make_fixture("wps_equal_window_zero_runs", &[(10, 14)])?;
     let out_dir = TempDir::new()?;
     let cfg = make_config(
@@ -359,7 +406,6 @@ fn fragment_equal_to_window_with_zero_runs_emits_shoulders() -> Result<()> {
 
 #[test]
 fn empty_bam_emits_single_zero_run_per_chromosome() -> Result<()> {
-    // Human verification status: unverified
     // Chromosomes long enough to admit two tiles each.
     let chrom_defs = vec![("chr1".to_string(), 400u32), ("chr2".to_string(), 400u32)];
     let tile_bp = 200u32;
@@ -402,7 +448,6 @@ fn empty_bam_emits_single_zero_run_per_chromosome() -> Result<()> {
 
 #[test]
 fn empty_bam_without_keep_zero_runs_outputs_nothing() -> Result<()> {
-    // Human verification status: unverified
     let chrom_defs = vec![("chr1".to_string(), 400u32), ("chr2".to_string(), 400u32)];
     let fixture = bam_from_specs(
         chrom_defs.clone(),
@@ -434,7 +479,6 @@ fn empty_bam_without_keep_zero_runs_outputs_nothing() -> Result<()> {
 
 #[test]
 fn long_fragment_fixture_produces_expected_wps_runs() -> Result<()> {
-    // Human verification status: unverified
     let fixture = long_fragment_bam("wps_long_fragment_fixture")?;
     let out_dir = TempDir::new()?;
     let mut cfg = make_config(
@@ -482,7 +526,6 @@ fn long_fragment_fixture_produces_expected_wps_runs() -> Result<()> {
 
 #[test]
 fn global_mode_handles_three_chromosomes() -> Result<()> {
-    // Human verification status: unverified
     let fixture =
         make_three_chrom_fixture("wps_three_chr_global", &[(10, 22), (10, 22), (10, 22)])?;
     let out_dir = TempDir::new()?;
@@ -516,7 +559,6 @@ fn global_mode_handles_three_chromosomes() -> Result<()> {
 
 #[test]
 fn by_size_total_handles_three_chromosomes() -> Result<()> {
-    // Human verification status: unverified
     let fixture =
         make_three_chrom_fixture("wps_three_chr_by_size", &[(10, 22), (10, 22), (10, 22)])?;
     let out_dir = TempDir::new()?;
@@ -557,7 +599,6 @@ fn by_size_total_handles_three_chromosomes() -> Result<()> {
 
 #[test]
 fn by_size_total_non_aligned_tiles_reduce_crossing_bins_by_logical_start() -> Result<()> {
-    // Human verification status: unverified
     let fixture = bam_from_specs(
         vec![("chr1".to_string(), 300u32)],
         Vec::new(),
@@ -607,7 +648,6 @@ fn by_size_total_non_aligned_tiles_reduce_crossing_bins_by_logical_start() -> Re
 
 #[test]
 fn by_bed_total_handles_three_chromosomes() -> Result<()> {
-    // Human verification status: unverified
     let fixture =
         make_three_chrom_fixture("wps_three_chr_by_bed", &[(10, 22), (10, 22), (10, 22)])?;
     let out_dir = TempDir::new()?;
@@ -653,7 +693,6 @@ fn by_bed_total_handles_three_chromosomes() -> Result<()> {
 
 #[test]
 fn by_bed_total_skips_chromosomes_without_windows_and_keeps_later_chromosomes() -> Result<()> {
-    // Human verification status: unverified
     let fixture = bam_from_specs(
         vec![("chr1".to_string(), 100), ("chr2".to_string(), 100)],
         vec![

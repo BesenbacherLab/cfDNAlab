@@ -1,7 +1,19 @@
 use crate::shared::bam::Contigs;
 use crate::shared::interval::{IndexedInterval, Interval};
 use crate::shared::io::dot_join;
+use anyhow::{Context, ensure};
 use rand::{Rng, distr::Alphanumeric};
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
+use std::process;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
+use tracing::warn;
+
+const TEMP_DIR_CLEANUP_TARGET: &str = "temp-dir-cleanup";
+static TEMP_DIR_CTRL_C_CLEANUP_STARTED: AtomicBool = AtomicBool::new(false);
+static TEMP_DIR_CTRL_C_HANDLER_INSTALLED: OnceLock<()> = OnceLock::new();
+static TEMP_DIR_CTRL_C_REGISTRY: OnceLock<Mutex<Vec<PathBuf>>> = OnceLock::new();
 
 /// A processing tile for one chromosome
 #[derive(Debug, Clone)]
@@ -73,6 +85,24 @@ impl Tile {
     #[inline]
     pub fn fetch_end(&self) -> u32 {
         self.fetch.end()
+    }
+
+    /// Ensure a BAM reader opened for this tile resolved the same chromosome tid.
+    ///
+    /// `Tile::tid` is stored as `i32` because it follows the tiling inputs, while
+    /// rust-htslib returns BAM tids as `u32`. Keep the conversion and comparison
+    /// together so callers cannot accidentally wrap negative tids with `as u32`.
+    pub fn ensure_matches_bam_tid(&self, bam_tid: u32) -> anyhow::Result<()> {
+        let tile_tid =
+            u32::try_from(self.tid).context("tile tid is negative for BAM tid comparison")?;
+        ensure!(
+            bam_tid == tile_tid,
+            "BAM tid mismatch for chromosome {}: tile tid is {}, BAM tid is {}",
+            self.chr,
+            tile_tid,
+            bam_tid
+        );
+        Ok(())
     }
 }
 
@@ -155,19 +185,8 @@ where
             let left_bound = core_start.saturating_sub(left_halo);
             let right_bound = core_end.saturating_add(right_halo);
 
-            // Discard windows that end before the left bound (core minus halo)
-            while w_left < windows_len && windows[w_left].end() <= left_bound {
-                w_left += 1;
-            }
-
-            if w_right < w_left {
-                w_right = w_left;
-            }
-
-            // Extend to cover every window whose start lies inside the right bound (core plus halo)
-            while w_right < windows_len && windows[w_right].start() < right_bound {
-                w_right += 1;
-            }
+            (w_left, w_right) =
+                advance_window_span_bounds(windows, w_left, w_right, left_bound, right_bound);
 
             if w_left == windows_len {
                 // No windows remain for this chromosome, so the rest of the tiles cannot overlap
@@ -188,8 +207,10 @@ where
                 continue;
             }
 
-            // The iterator helpers perform the precise overlap check (end > core_start &&
-            // start < core_end) so the recorded range only needs to bound the candidate windows
+            // Some commands consume this cached span directly as their production candidate set
+            // (`lengths`, `ends`, `gc_bias`), while core-overlap commands tighten it later with
+            // iterator-level overlap checks. So the half-open boundary logic here must itself stay
+            // correct; later filtering is model-dependent and not universal.
             spans[idx] = Some(TileWindowSpan {
                 first_idx: w_left,
                 last_idx_exclusive: w_right,
@@ -254,13 +275,54 @@ fn span_bounds_without_cache(
     core_start: u64,
     core_end: u64,
 ) -> (usize, usize) {
-    let mut left = 0usize;
-    while left < windows.len() && windows[left].end() <= core_start {
+    advance_window_span_bounds(windows, 0, 0, core_start, core_end)
+}
+
+/// Advance cached half-open window-span bounds through a start-sorted window list.
+///
+/// The caller supplies previously valid `left` and `right` scan positions from an earlier tile on
+/// the same chromosome. Because tiles are processed left-to-right and the requested bounds move
+/// monotonically forward, those positions are safe lower bounds for the next scan. The function
+/// advances them just far enough to satisfy the new half-open bounds:
+///
+/// - advance `left` while windows end at or before `left_bound`
+/// - advance `right` while windows start before `right_bound`
+///
+/// Passing `left = 0` and `right = 0` reproduces the uncached single-tile scan used by
+/// `span_bounds_without_cache(...)`.
+///
+/// Parameters
+/// ----------
+/// - `windows`:
+///   Start-sorted window triples `(start, end, idx)` for one chromosome
+/// - `left`:
+///   Previous lower-bound scan position for the first surviving candidate window
+/// - `right`:
+///   Previous lower-bound scan position for the exclusive right edge of the candidate span
+/// - `left_bound`:
+///   New inclusive left pruning bound. Windows with `end <= left_bound` are discarded
+/// - `right_bound`:
+///   New exclusive right inclusion bound. Windows with `start < right_bound` stay in the span
+///
+/// Returns
+/// -------
+/// - `(usize, usize)`:
+///   Updated half-open candidate-window index span `(left, right)`
+fn advance_window_span_bounds(
+    windows: &[IndexedInterval<u64>],
+    mut left: usize,
+    mut right: usize,
+    left_bound: u64,
+    right_bound: u64,
+) -> (usize, usize) {
+    while left < windows.len() && windows[left].end() <= left_bound {
         left += 1;
     }
 
-    let mut right = left;
-    while right < windows.len() && windows[right].start() < core_end {
+    if right < left {
+        right = left;
+    }
+    while right < windows.len() && windows[right].start() < right_bound {
         right += 1;
     }
 
@@ -301,41 +363,73 @@ pub fn overlapping_windows_for_tile<'a>(
     }
 }
 
-/// Finds the extreme start and end among windows that overlap the tile core.
+/// Return the cached candidate-window span for a core-overlap tile/window model.
 ///
-/// The function iterates over the overlapping windows (using the cached span when provided) and
-/// tracks the minimum start and maximum end, yielding `None` when no windows intersect the core.
+/// Coordinate space:
+/// - consumes BED window coordinates
+/// - returns a BED-window index span
 ///
-/// # Parameters
-/// - `windows`: Start-sorted window triples `(start, end, idx)` for the chromosome.
-/// - `tile`: Tile whose core is used for overlap checks.
-/// - `span`: Optional cached span for fast window access.
+/// Fragment ownership rule:
+/// - none; this helper does not reason about fragment ownership
 ///
-/// # Returns
-/// `Some(interval)` spanning the leftmost and rightmost overlapping window when at
-/// least one window overlaps, otherwise `None`.
-pub fn tile_window_min_max(
+/// Counting or assignment interval assumption:
+/// - none; relevance is defined only by BED/core overlap
+///
+/// Aligned fetch narrowing:
+/// - not performed here
+///
+/// This helper answers only:
+/// - which BED windows overlap the tile core?
+///
+/// It is not valid for fragment-reach commands such as `lengths`, `ends`, or `gc_bias`.
+pub fn candidate_window_span_for_tile_core_overlap(
     windows: &[IndexedInterval<u64>],
     tile: &Tile,
-    span: Option<&TileWindowSpan>,
-) -> crate::Result<Option<Interval<u64>>> {
-    let mut iter = overlapping_windows_for_tile(windows, tile, span);
-    let Some(first) = iter.next() else {
-        return Ok(None);
-    };
-    let mut min_start = first.start();
-    let mut max_end = first.end();
+) -> Option<TileWindowSpan> {
+    let core_start = tile.core_start() as u64;
+    let core_end = tile.core_end() as u64;
+    let (first_idx, last_idx_exclusive) = span_bounds_without_cache(windows, core_start, core_end);
+    (first_idx < last_idx_exclusive).then_some(TileWindowSpan {
+        first_idx,
+        last_idx_exclusive,
+    })
+}
 
-    for window in iter {
-        if window.start() < min_start {
-            min_start = window.start();
-        }
-        if window.end() > max_end {
-            max_end = window.end();
-        }
-    }
-
-    Ok(Some(Interval::new(min_start, max_end)?))
+/// Return the cached candidate-window span for a fragment-reach tile/window model.
+///
+/// Coordinate space:
+/// - consumes BED window coordinates
+/// - returns a BED-window index span
+///
+/// Fragment ownership rule:
+/// - fragment is owned iff its aligned start lies in the tile core
+///
+/// Counting or assignment interval assumption:
+/// - the caller must choose the left and right reach values that correspond to the command's
+///   actual counting or assignment interval
+///
+/// Aligned fetch narrowing:
+/// - not performed here
+///
+/// This helper answers only:
+/// - which BED windows could receive counts from tile-owned fragments under the supplied reach?
+///
+/// It is not valid for future commands that use a different ownership rule, such as "fragment end
+/// lies in the tile core", unless they define a separate helper or prove the same reach model.
+pub fn candidate_window_span_for_tile_fragment_reach(
+    windows: &[IndexedInterval<u64>],
+    tile: &Tile,
+    left_reach_bp: u64,
+    right_reach_bp: u64,
+) -> Option<TileWindowSpan> {
+    let left_bound = (tile.core_start() as u64).saturating_sub(left_reach_bp);
+    let right_bound = (tile.core_end() as u64).saturating_add(right_reach_bp);
+    let (first_idx, last_idx_exclusive) =
+        span_bounds_without_cache(windows, left_bound, right_bound);
+    (first_idx < last_idx_exclusive).then_some(TileWindowSpan {
+        first_idx,
+        last_idx_exclusive,
+    })
 }
 
 /// Tightens a tile's fetch bounds to the observed window span while respecting halos.
@@ -560,14 +654,11 @@ fn random_suffix(n: usize) -> String {
 ///
 /// # Parameters
 /// - `base_out`: Root directory that should contain the temporary directory.
-/// - `prefix`: Human-readable prefix used when building the directory name.
+/// - `prefix`: User-readable prefix used when building the directory name.
 ///
 /// # Returns
 /// Path to the created temporary directory.
-pub fn make_temp_dir(
-    base_out: &std::path::Path,
-    prefix: &str,
-) -> anyhow::Result<std::path::PathBuf> {
+pub fn make_temp_dir(base_out: &Path, prefix: &str) -> anyhow::Result<PathBuf> {
     // Try a few times just in case
     for _ in 0..8 {
         let suffix = random_suffix(10);
@@ -582,4 +673,148 @@ pub fn make_temp_dir(
     let p = base_out.join(dot_join(&["tmp", prefix, &ts.to_string()]));
     std::fs::create_dir_all(&p)?;
     Ok(p)
+}
+
+/// Guard for per-run temporary directories.
+///
+/// Commands keep this value in scope for as long as tile files may be needed. The directory is
+/// removed when the guard is dropped, so early returns clean up the same way as successful runs.
+/// Call `remove()` when cleanup failure should be reported on the normal success path.
+pub struct TempDirGuard {
+    path: PathBuf,
+    removed: bool,
+}
+
+impl TempDirGuard {
+    /// Creates and guards a unique temporary directory inside `base_out`.
+    pub fn new(base_out: &Path, prefix: &str) -> anyhow::Result<Self> {
+        install_temp_dir_ctrl_c_cleanup_handler();
+        let path = make_temp_dir(base_out, prefix)?;
+        Ok(Self::from_existing_path(path))
+    }
+
+    /// Guards an existing temporary directory path.
+    pub fn from_existing_path(path: PathBuf) -> Self {
+        install_temp_dir_ctrl_c_cleanup_handler();
+        register_temp_dir_for_ctrl_c_cleanup(&path);
+        Self {
+            path,
+            removed: false,
+        }
+    }
+
+    /// Returns the guarded temporary directory path.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Removes the guarded directory and disables drop-time cleanup after success.
+    pub fn remove(&mut self) -> anyhow::Result<()> {
+        if self.removed {
+            return Ok(());
+        }
+
+        match std::fs::remove_dir_all(&self.path) {
+            Ok(()) => {
+                self.removed = true;
+                unregister_temp_dir_for_ctrl_c_cleanup(&self.path);
+                Ok(())
+            }
+            Err(err) if err.kind() == ErrorKind::NotFound => {
+                self.removed = true;
+                unregister_temp_dir_for_ctrl_c_cleanup(&self.path);
+                Ok(())
+            }
+            Err(err) => Err(err.into()),
+        }
+    }
+}
+
+impl Drop for TempDirGuard {
+    fn drop(&mut self) {
+        if self.removed {
+            return;
+        }
+
+        match std::fs::remove_dir_all(&self.path) {
+            Ok(()) => {
+                self.removed = true;
+                unregister_temp_dir_for_ctrl_c_cleanup(&self.path);
+            }
+            Err(err) if err.kind() == ErrorKind::NotFound => {
+                self.removed = true;
+                unregister_temp_dir_for_ctrl_c_cleanup(&self.path);
+            }
+            Err(err) => {
+                warn!(
+                    target: TEMP_DIR_CLEANUP_TARGET,
+                    "warning: failed to remove temp dir {}: {}",
+                    self.path.display(),
+                    err
+                );
+            }
+        }
+    }
+}
+
+fn temp_dir_ctrl_c_registry() -> &'static Mutex<Vec<PathBuf>> {
+    TEMP_DIR_CTRL_C_REGISTRY.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn install_temp_dir_ctrl_c_cleanup_handler() {
+    TEMP_DIR_CTRL_C_HANDLER_INSTALLED.get_or_init(|| {
+        if let Err(err) = ctrlc::set_handler(|| {
+            if TEMP_DIR_CTRL_C_CLEANUP_STARTED.swap(true, Ordering::SeqCst) {
+                return;
+            }
+
+            let paths = match temp_dir_ctrl_c_registry().lock() {
+                Ok(paths) => paths.clone(),
+                Err(poisoned) => poisoned.into_inner().clone(),
+            };
+            for path in paths {
+                match std::fs::remove_dir_all(&path) {
+                    Ok(()) => {}
+                    Err(err) if err.kind() == ErrorKind::NotFound => {}
+                    Err(err) => {
+                        // Write directly to stderr because the handler exits immediately after cleanup
+                        eprintln!(
+                            "Warning: failed to remove temporary directory {}: {}",
+                            path.display(),
+                            err
+                        );
+                    }
+                }
+            }
+
+            process::exit(130);
+        }) {
+            warn!(
+                target: TEMP_DIR_CLEANUP_TARGET,
+                "warning: failed to install Ctrl+C temp-dir cleanup handler: {}",
+                err
+            );
+        }
+    });
+}
+
+fn register_temp_dir_for_ctrl_c_cleanup(path: &Path) {
+    let mut paths = match temp_dir_ctrl_c_registry().lock() {
+        Ok(paths) => paths,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    paths.push(path.to_path_buf());
+}
+
+fn unregister_temp_dir_for_ctrl_c_cleanup(path: &Path) {
+    let mut paths = match temp_dir_ctrl_c_registry().lock() {
+        Ok(paths) => paths,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    paths.retain(|registered_path| registered_path != path);
+}
+
+#[cfg(test)]
+mod tests {
+    include!("tiled_run_tests.rs");
 }

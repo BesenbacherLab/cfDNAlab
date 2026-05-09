@@ -4,10 +4,14 @@
 
 use crate::commands::cli_common::{
     WindowSpec, ensure_output_dir, load_blacklist_map, load_scaling_map,
-    resolve_chromosomes_and_contigs,
+    resolve_chromosomes_and_contigs, validate_output_prefix,
 };
-use crate::commands::counters::FCoverageCounters;
+use crate::commands::counters::WPSPeaksCounters;
 use crate::commands::gc_bias::correct::{GCCorrector, load_gc_corrector};
+use crate::commands::run_statistics::{
+    DEFAULT_FRAGMENT_STATISTICS_LABELS, FragmentRunStatisticsOptions, GCStatisticsSummary,
+    TILE_DOUBLE_COUNT_NOTE, print_fragment_run_statistics,
+};
 use crate::commands::wps::wps::wps_for_tile;
 use crate::commands::wps_peaks::call_peaks::{PeakCall, call_peaks};
 use crate::commands::wps_peaks::config::WPSPeaksConfig;
@@ -18,23 +22,28 @@ use crate::shared::bed::load_windows_from_bed;
 use crate::shared::interval::{IndexedInterval, Interval};
 use crate::shared::io::dot_join;
 use crate::shared::progress::ProgressFactory;
+use crate::shared::scale_genome::ScalingBin;
+use crate::shared::temp_chrom_names::TempChromNameMap;
 use crate::shared::thread_pool::init_global_pool;
 use crate::shared::tiled_run::{
-    Tile, TileMode, TileWindowSpan, build_tiles, make_temp_dir, precompute_tile_window_spans,
+    TempDirGuard, Tile, TileMode, TileWindowSpan, build_tiles, precompute_tile_window_spans,
 };
+use crate::shared::windowing::ensure_plain_bed_windows_not_empty;
 use crate::shared::writers::open_zstd_auto_writer;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use fxhash::FxHashMap;
 use rayon::prelude::*;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
-use std::fs::{File, remove_dir_all};
+use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
+use tracing::info;
 
 const EXTRA_PEAK_HALO_BP: u32 = 450;
+const COMMAND_TARGET: &str = "wps-peaks";
 
 /// Execute the Snyder-style peak calling pipeline on top of windowed protection scores.
 ///
@@ -62,6 +71,7 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
         &opt.shared_args.ioc.bam.as_path(),
     )?;
     let prefix = opt.shared_args.output_prefix.trim();
+    validate_output_prefix(prefix)?;
     let window_opt = opt.shared_args.windows.resolve_windows();
     let windowed = matches!(window_opt, WindowSpec::Bed(_) | WindowSpec::Size(_));
 
@@ -84,12 +94,15 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
         opt.shared_args.window_size,
         opt.shared_args.max_fragment_length
     );
+    opt.shared_args
+        .gc
+        .validate(opt.shared_args.ref_2bit.as_deref())?;
 
     // Create output directory if needed
     ensure_output_dir(&opt.shared_args.ioc.output_dir)?;
 
     if opt.shared_args.blacklist.is_some() {
-        println!("Start: Loading blacklists");
+        info!(target: COMMAND_TARGET, "Loading blacklists");
     }
     // Dilate blacklists so fragments that could reach them do not affect the WPS baseline
     let blacklist_halo =
@@ -110,14 +123,18 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
-            println!("Start: Loading window coordinates");
+            info!(target: COMMAND_TARGET, "Loading window coordinates");
             let wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            ensure_plain_bed_windows_not_empty(&wds)?;
             if matches!(
                 opt.per_window,
                 Some(PeaksWindowAction::OnlyIncludeThesePositionsUnique)
             ) {
                 // Merge in-place to avoid double memory-usage
-                println!("Start: Merging overlapping/touching windows");
+                info!(
+                    target: COMMAND_TARGET,
+                    "Merging overlapping/touching windows"
+                );
                 // Take ownership so we can remove entries by chromosome
                 let mut wds_owned: FxHashMap<String, crate::shared::bed::Windows> = wds;
                 let mut out: FxHashMap<String, crate::shared::bed::Windows> =
@@ -143,17 +160,26 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
 
     // Load genomic scaling factors
     if opt.shared_args.scale_genome.scaling_factors.is_some() {
-        println!("Start: Loading scaling factors");
+        info!(target: COMMAND_TARGET, "Loading scaling factors");
     }
-    let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> =
-        load_scaling_map(&opt.shared_args.scale_genome, &chromosomes, &contigs)?;
+    let scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
+        &opt.shared_args.scale_genome,
+        &chromosomes,
+        &contigs,
+        crate::shared::scale_genome::scaling_gc_mode_for_run(
+            opt.shared_args.gc.gc_file.is_some(),
+            opt.shared_args.gc.gc_tag.is_some(),
+        ),
+        None,
+    )?;
 
     // Load GC correction package if specified
     if opt.shared_args.gc.gc_file.is_some() {
-        println!("Start: Loading GC correction matrix");
+        info!(target: COMMAND_TARGET, "Loading GC correction matrix");
     }
     let gc_corrector = load_gc_corrector(
         opt.shared_args.gc.gc_file.as_ref(),
+        opt.shared_args.ref_2bit.as_ref(),
         opt.shared_args.min_fragment_length,
         opt.shared_args.max_fragment_length,
     )?;
@@ -177,6 +203,7 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
             _ => None,
         },
     )?;
+    let temp_chrom_name_map = TempChromNameMap::from_contigs(&chromosomes)?;
 
     let windows_lookup = windows_map.as_ref();
     let tile_window_spans = Arc::new(precompute_tile_window_spans(
@@ -193,13 +220,14 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
     let total_tiles = tiles.len();
     let progress = ProgressFactory::new();
     let pb = Arc::new(progress.default_bar(total_tiles as u64));
-    println!("Start: Calling peaks per tile");
+    info!(target: COMMAND_TARGET, "Calling peaks per tile");
 
     // Configure global thread‐pool size
     init_global_pool(opt.shared_args.ioc.n_threads as usize)?;
 
-    let temp_dir = make_temp_dir(&opt.shared_args.ioc.output_dir, prefix)
+    let temp_dir_guard = TempDirGuard::new(&opt.shared_args.ioc.output_dir, prefix)
         .context("create per-run temp dir for peaks")?;
+    let temp_dir = temp_dir_guard.path();
     let tile_window_spans_for_threads = tile_window_spans.clone();
     let stats_mode = matches!(opt.per_window, Some(PeaksWindowAction::Stats));
 
@@ -261,7 +289,7 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
                 None
             };
 
-            let path = tile_peaks_path(&temp_dir, prefix, tile, tile_idx);
+            let path = tile_peaks_path(temp_dir, prefix, tile, tile_idx, &temp_chrom_name_map)?;
             if peaks.is_empty() {
                 File::create(&path).context("create empty tile peak file")?;
             } else {
@@ -293,7 +321,7 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
 
     pb.finish_with_message("| Finished peak calling");
 
-    let mut total_counter = FCoverageCounters::default();
+    let mut total_counter = WPSPeaksCounters::default();
     match opt.per_window {
         None => {
             let mut writer = GlobalWriter::new(
@@ -355,55 +383,35 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
         }
     }
 
-    if let Err(e) = remove_dir_all(&temp_dir) {
-        eprintln!(
-            "warning: failed to remove temp dir {}: {}",
-            temp_dir.display(),
-            e
-        );
-    }
-
-    println!();
-    println!("Statistics");
-    println!("----------");
-    println!(
-        "  Note: A few reads/fragments may be counted twice in the statistics (only) around the parallelization tiles."
-    );
     let elapsed = start_time.elapsed();
-    println!("  Total reads: {}", total_counter.base.total_reads);
-    println!(
-        "  Initially accepted reads: {} ({:.2}%, forward: {}, reverse: {})",
-        total_counter.base.accepted_forward + total_counter.base.accepted_reverse,
-        (total_counter.base.accepted_forward + total_counter.base.accepted_reverse) as f64
-            / total_counter.base.total_reads as f64
-            * 100.0,
-        total_counter.base.accepted_forward,
-        total_counter.base.accepted_reverse
+    print_fragment_run_statistics(
+        &total_counter.base,
+        elapsed,
+        FragmentRunStatisticsOptions {
+            include_section_header: true,
+            notes: &[TILE_DOUBLE_COUNT_NOTE],
+            labels: DEFAULT_FRAGMENT_STATISTICS_LABELS,
+            blacklist_excluded_fragments: None,
+            gc: (opt.shared_args.gc.gc_file.is_some() || opt.shared_args.gc.gc_tag.is_some())
+                .then_some(GCStatisticsSummary {
+                    neutralize_invalid_gc: opt.shared_args.gc.neutralize_invalid_gc,
+                    failed_fragments: total_counter.gc_failed_fragments,
+                    missing_tags: opt
+                        .shared_args
+                        .gc
+                        .gc_tag
+                        .is_some()
+                        .then_some(total_counter.gc_missing_tags),
+                    out_of_range_tags: opt
+                        .shared_args
+                        .gc
+                        .gc_tag
+                        .is_some()
+                        .then_some(total_counter.gc_out_of_range_tags),
+                }),
+        },
+        std::iter::empty::<&str>(),
     );
-    if opt.shared_args.gc.gc_file.is_some() || opt.shared_args.gc.gc_tag.is_some() {
-        let gc_fail_action = if opt.shared_args.gc.drop_invalid_gc {
-            "fragment skipped"
-        } else {
-            "fragment counted with weight 1.0"
-        };
-        println!(
-            "  GC correction failures ({}): {}",
-            gc_fail_action, total_counter.gc_failed_fragments
-        );
-    }
-    if opt.shared_args.gc.gc_tag.is_some() && total_counter.gc_out_of_range_tags > 0 {
-        println!(
-            "  GC tag values outside [0, {:.0}] treated as invalid: {}",
-            crate::shared::gc_tag::MAX_REASONABLE_GC_WEIGHT,
-            total_counter.gc_out_of_range_tags
-        );
-    }
-    println!(
-        "  Fragments counted one or more times: {}",
-        total_counter.base.counted_fragments
-    );
-    println!("----------");
-    println!("Elapsed time: {:.2?}", elapsed);
     Ok(())
 }
 
@@ -427,13 +435,13 @@ impl GlobalWriter {
 
     fn finish(&mut self) -> Result<()> {
         self.writer.flush()?;
-        println!("Saved peaks to: {}", self.path.display());
+        info!(target: COMMAND_TARGET, "Saved peaks to: {}", self.path.display());
         Ok(())
     }
 }
 
 pub struct TileResult {
-    pub counter: FCoverageCounters,
+    pub counter: WPSPeaksCounters,
     pub peak_file_path: PathBuf,
     pub stats: Option<Vec<WindowStatsContribution>>,
 }
@@ -450,14 +458,20 @@ pub struct WindowStatsContribution {
     pub distance_histogram: BTreeMap<u32, u32>,
 }
 
-pub fn tile_peaks_path(root: &Path, prefix: &str, tile: &Tile, tile_idx: usize) -> PathBuf {
-    let safe_chr = tile.chr.replace('/', "_");
-    root.join(format!(
+pub fn tile_peaks_path(
+    root: &Path,
+    prefix: &str,
+    tile: &Tile,
+    tile_idx: usize,
+    temp_chrom_name_map: &TempChromNameMap,
+) -> Result<PathBuf> {
+    let chr_token = temp_chrom_name_map.token_for(tile.chr.as_str())?;
+    Ok(root.join(format!(
         "{prefix}.tile.{safe_chr}.{tile_idx:05}.peaks.tmp",
         prefix = prefix,
-        safe_chr = safe_chr,
+        safe_chr = chr_token,
         tile_idx = tile_idx
-    ))
+    )))
 }
 
 pub fn stream_tile_peaks<F>(path: &Path, mut handler: F) -> Result<()>
@@ -877,9 +891,13 @@ impl WindowOutputWriter {
         self.writer.flush()?;
         match self.mode {
             WindowOutputMode::Stats => {
-                println!("Saved window stats to: {}", self.path.display());
+                info!(
+                    target: COMMAND_TARGET,
+                    "Saved window stats to: {}",
+                    self.path.display()
+                );
             }
-            _ => println!("Saved peaks to: {}", self.path.display()),
+            _ => info!(target: COMMAND_TARGET, "Saved peaks to: {}", self.path.display()),
         }
         Ok(())
     }
@@ -907,11 +925,11 @@ pub fn peaks_for_tile(
     tile_span: Option<&TileWindowSpan>,
     windows: Option<&[IndexedInterval<u64>]>,
     blacklist_chr: &[Interval<u64>],
-    scaling_chr: &[(u64, u64, f32)],
+    scaling_chr: &[ScalingBin],
     gc_corrector_opt: Option<GCCorrector>,
     extra_halo: u32,
     min_peak_height: f32,
-) -> Result<(FCoverageCounters, Vec<PeakCall>)> {
+) -> Result<(WPSPeaksCounters, Vec<PeakCall>)> {
     let dummy_path = PathBuf::new();
     let tile_mode = TileMode::Positional {
         windows,
@@ -919,7 +937,7 @@ pub fn peaks_for_tile(
         indexed: false,
     };
 
-    let (counter, wps_opt, mask_opt) = wps_for_tile(
+    let (counter, _, wps_opt, mask_opt) = wps_for_tile(
         &opt.shared_args,
         &None, // Ignored
         false, // Ignored
@@ -933,6 +951,7 @@ pub fn peaks_for_tile(
         extra_halo,
         true,
     )?;
+    let counter: WPSPeaksCounters = counter.into();
 
     let wps_values = match wps_opt {
         Some(v) => v,

@@ -17,6 +17,22 @@ cfdna lengths \
   --by-size 1000000
 ```
 
+### Use length bins
+
+...
+
+The default length bins are specified as `--length-bins 30:1001:1`, which gives us the full single-bp resolution fragment length distribution between 30bp and 1000bp.
+
+```bash
+cfdna lengths \
+  ... \
+  # Bin every 10bp from 30-500bp
+  --length-bins 30:500:10
+  # OR Specify edges directly (last end is exclusive)
+  --length-bins 100 151 221
+
+```
+
 ## GC-bias correction example
 
 ```bash
@@ -26,7 +42,6 @@ cfdna lengths \
   --output-prefix <sample_id> \
   --n-threads 12 \
   --blacklist <path>/hg38-blacklist.v2.bed \
-  --blacklist <path>/<another_blacklist>.bed \
   --by-size 1000000 \
   --gc-file <sample_directory>/gc_bias/gc_bias_correction.npz \
   --ref-2bit <path>/hg38.2bit
@@ -41,7 +56,6 @@ cfdna lengths \
   --output-prefix <sample_id> \
   --n-threads 12 \
   --blacklist <path>/hg38-blacklist.v2.bed \
-  --blacklist <path>/<another_blacklist>.bed \
   --by-size 1000000 \
   --scaling-factors <sample_directory>/coverage_weights/<sample_id>.scaling_factors.tsv
 ```
@@ -55,7 +69,6 @@ cfdna lengths \
   --output-prefix <sample_id> \
   --n-threads 12 \
   --blacklist <path>/hg38-blacklist.v2.bed \
-  --blacklist <path>/<another_blacklist>.bed \
   --by-size 1000000 \
   --gc-file <sample_directory>/gc_bias/gc_bias_correction.npz \
   --ref-2bit <path>/hg38.2bit \

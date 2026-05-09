@@ -3,11 +3,12 @@
 //! The intended positional selection logic is specified in the
 //! `positional_selection_logic.md` document.
 
+use crate::shared::gc_tag::ClassifiedGCTagWeight;
 use crate::{
     commands::{
         cli_common::{
             WindowSpec, ensure_output_dir, load_blacklist_map, load_scaling_map,
-            resolve_chromosomes_and_contigs,
+            resolve_chromosomes_and_contigs, validate_output_prefix,
         },
         counters::FragmentKmersCounters,
         fragment_kmers::{
@@ -18,11 +19,14 @@ use crate::{
             positions::*,
             selection::{SelectionDecision, evaluate_selection},
             tiling::*,
-            windows::*,
         },
         gc_bias::{
             correct::{GCCorrector, load_gc_corrector},
             counting::build_gc_prefixes,
+        },
+        run_statistics::{
+            DEFAULT_FRAGMENT_STATISTICS_LABELS, FragmentRunStatisticsOptions, GCStatisticsSummary,
+            TILE_DOUBLE_COUNT_NOTE, print_fragment_run_statistics,
         },
     },
     shared::{
@@ -30,22 +34,29 @@ use crate::{
         bed::load_windows_from_bed,
         blacklist::{apply_blacklist_mask_to_seq, apply_mask::BLACKLIST_BYTE, is_blacklisted},
         fragment::segment_kmer_fragment::FragmentWithKmerSegments,
-        fragment_iterator::fragments_with_kmer_segments_from_bam,
+        fragment_iterators::fragments_with_kmer_segments_from_bam,
         interval::Interval,
-        io::create_text_writer,
+        io::dot_join,
         kmers::{
             kmer_codec::{KmerCodes, KmerSpec, build_kmer_specs, build_left_aligned_codes_per_k},
             process_counts::{DecodedCounts, prepare_decoded_counts, split_and_decode_counts},
             write::write_decoded_counts_matrix,
         },
         overlaps::find_overlapping_windows,
+        positioning::{BasesFrom, ReferenceFrame},
         progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq_in_range,
-        scale_genome::apply_scaling_to_coverage_in_place,
+        scale_genome::{ScalingBin, apply_scaling_to_coverage_in_place},
+        temp_chrom_names::TempChromNameMap,
         thread_pool::init_global_pool,
         tiled_run::{
-            Tile, TileWindowSpan, build_tiles, make_temp_dir, precompute_tile_window_spans,
+            TempDirGuard, Tile, TileWindowSpan, build_tiles, precompute_tile_window_spans,
+        },
+        window_fetch::{BedFetchPolicy, fetch_span_for_tile},
+        windowing::{
+            WindowContext, build_bin_info, compute_window_offsets,
+            ensure_plain_bed_windows_not_empty, write_bin_info_tsv,
         },
     },
 };
@@ -53,7 +64,10 @@ use anyhow::{Context, Result, bail};
 use fxhash::FxHashMap;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
-use std::{convert::TryInto, io::Write, path::Path, sync::Arc, time::Instant};
+use std::{convert::TryInto, path::Path, sync::Arc, time::Instant};
+use tracing::info;
+
+const COMMAND_TARGET: &str = "fragment-kmers";
 
 /// Execute the fragment kmers counting pipeline end-to-end.
 ///
@@ -62,7 +76,7 @@ use std::{convert::TryInto, io::Write, path::Path, sync::Arc, time::Instant};
 ///   each chromosome in parallel tiles using Rayon.
 /// - Streams fragments through per-window accumulators, enumerating the requested k-mers inside
 ///   every counted window and writing dense (or optional sparse) count matrices plus motif lists.
-/// - Applies fragment-length, blacklist, indel, scaling, and strand handling policies consistently
+/// - Applies fragment length, blacklist, indel, scaling, and strand handling policies consistently
 ///   across threads.
 ///
 /// Parameters:
@@ -76,61 +90,60 @@ use std::{convert::TryInto, io::Write, path::Path, sync::Arc, time::Instant};
 ///   the first failure.
 pub fn run(opt: &FragmentKmersConfig) -> Result<()> {
     let start_time = Instant::now();
+    opt.shared_args.fragment_lengths.validate()?;
+    opt.shared_args
+        .gc
+        .validate(Some(opt.shared_args.ref_genome.ref_2bit.as_path()))?;
+    validate_output_prefix(opt.shared_args.output_prefix.trim())?;
     let global_counter = run_inner(opt)?;
-
-    if !opt.shared_args.quiet {
-        println!();
-        println!("Statistics");
-        println!("----------");
-        println!(
-            "  Note: A few reads/fragments may be counted twice in the statistics (only) around the parallelization tiles."
-        );
-
-        // Print summary statistics and execution time
-        let elapsed = start_time.elapsed();
-        println!("  Total reads: {}", global_counter.base.total_reads);
-        println!(
-            "  Initially accepted reads: {} ({:.2}%, forward: {}, reverse: {})",
-            global_counter.base.accepted_forward + global_counter.base.accepted_reverse,
-            (global_counter.base.accepted_forward + global_counter.base.accepted_reverse) as f64
-                / global_counter.base.total_reads as f64
-                * 100.0,
-            global_counter.base.accepted_forward,
-            global_counter.base.accepted_reverse
-        );
-        println!(
-            "  Blacklist-excluded fragments: {}",
-            global_counter.blacklisted_fragments
-        );
-        if opt.shared_args.gc.gc_file.is_some() || opt.shared_args.gc.gc_tag.is_some() {
-            let gc_fail_action = if opt.shared_args.gc.drop_invalid_gc {
-                "fragment skipped"
-            } else {
-                "fragment counted with weight 1.0"
-            };
-            println!(
-                "  GC correction failures ({}): {}",
-                gc_fail_action, global_counter.gc_failed_fragments
-            );
-            if opt.shared_args.gc.gc_tag.is_some() && global_counter.gc_out_of_range_tags > 0 {
-                println!(
-                    "  GC tag values outside [0, {:.0}] treated as invalid: {}",
-                    crate::shared::gc_tag::MAX_REASONABLE_GC_WEIGHT,
-                    global_counter.gc_out_of_range_tags
-                );
-            }
-        }
-        println!(
-            "  Fragments counted one or more times: {}",
-            global_counter.base.counted_fragments
-        );
-        println!("----------");
-        println!("Elapsed time: {:.2?}", elapsed);
-    }
+    let elapsed = start_time.elapsed();
+    print_fragment_run_statistics(
+        &global_counter.base,
+        elapsed,
+        FragmentRunStatisticsOptions {
+            include_section_header: true,
+            notes: &[TILE_DOUBLE_COUNT_NOTE],
+            labels: DEFAULT_FRAGMENT_STATISTICS_LABELS,
+            blacklist_excluded_fragments: Some(global_counter.blacklisted_fragments),
+            gc: (opt.shared_args.gc.gc_file.is_some() || opt.shared_args.gc.gc_tag.is_some())
+                .then_some(GCStatisticsSummary {
+                    neutralize_invalid_gc: opt.shared_args.gc.neutralize_invalid_gc,
+                    failed_fragments: global_counter.gc_failed_fragments,
+                    missing_tags: opt
+                        .shared_args
+                        .gc
+                        .gc_tag
+                        .is_some()
+                        .then_some(global_counter.gc_missing_tags),
+                    out_of_range_tags: opt
+                        .shared_args
+                        .gc
+                        .gc_tag
+                        .is_some()
+                        .then_some(global_counter.gc_out_of_range_tags),
+                }),
+        },
+        std::iter::empty::<&str>(),
+    );
     Ok(())
 }
 
 pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
+    run_inner_with_reporting(opt, true)
+}
+
+pub fn run_inner_silent(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
+    run_inner_with_reporting(opt, false)
+}
+
+fn run_inner_with_reporting(
+    opt: &FragmentKmersConfig,
+    show_progress_and_status: bool,
+) -> Result<FragmentKmersCounters> {
+    opt.shared_args.fragment_lengths.validate()?;
+    opt.shared_args
+        .gc
+        .validate(Some(opt.shared_args.ref_genome.ref_2bit.as_path()))?;
     if opt.shared_args.unpaired.reads_are_fragments && opt.shared_args.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
@@ -145,14 +158,14 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
         .clone()
         .into_positional_specs()?;
     let prefix = opt.shared_args.output_prefix.trim();
-    let quiet = opt.shared_args.quiet;
+    validate_output_prefix(prefix)?;
 
     // Create output directory
     ensure_output_dir(&opt.shared_args.ioc.output_dir)?;
 
     // Load blacklist intervals if provided
-    if opt.shared_args.blacklist.is_some() && !quiet {
-        println!("Start: Loading blacklists");
+    if opt.shared_args.blacklist.is_some() && show_progress_and_status {
+        info!(target: COMMAND_TARGET, "Loading blacklists");
     }
     let blacklist_map = load_blacklist_map(
         opt.shared_args.blacklist.as_ref(),
@@ -164,15 +177,12 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
-            if !quiet {
-                println!("Start: Loading window coordinates");
+            if show_progress_and_status {
+                info!(target: COMMAND_TARGET, "Loading window coordinates");
             }
-            Some(load_windows_from_bed(
-                bed,
-                Some(chromosomes.as_slice()),
-                None,
-                None,
-            )?)
+            let windows = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            ensure_plain_bed_windows_not_empty(&windows)?;
+            Some(windows)
         }
         _ => None,
     };
@@ -200,24 +210,33 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
     };
 
     // Load genomic scaling factors
-    if opt.shared_args.scale_genome.scaling_factors.is_some() && !quiet {
-        println!("Start: Loading scaling factors");
+    if opt.shared_args.scale_genome.scaling_factors.is_some() && show_progress_and_status {
+        info!(target: COMMAND_TARGET, "Loading scaling factors");
     }
-    let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> =
-        load_scaling_map(&opt.shared_args.scale_genome, &chromosomes, &contigs)?;
+    let scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
+        &opt.shared_args.scale_genome,
+        &chromosomes,
+        &contigs,
+        crate::shared::scale_genome::scaling_gc_mode_for_run(
+            opt.shared_args.gc.gc_file.is_some(),
+            opt.shared_args.gc.gc_tag.is_some(),
+        ),
+        Some(opt.shared_args.ignore_gap),
+    )?;
 
     // Load GC correction package if specified
     if opt.shared_args.gc.gc_file.is_some() {
-        println!("Start: Loading GC correction matrix");
+        info!(target: COMMAND_TARGET, "Loading GC correction matrix");
     }
     let gc_corrector = load_gc_corrector(
         opt.shared_args.gc.gc_file.as_ref(),
+        Some(&opt.shared_args.ref_genome.ref_2bit),
         opt.shared_args.fragment_lengths.min_fragment_length,
         opt.shared_args.fragment_lengths.max_fragment_length,
     )?;
 
     // Build temporary directory
-    let temp_dir = make_temp_dir(&opt.shared_args.ioc.output_dir, prefix)
+    let temp_dir_guard = TempDirGuard::new(&opt.shared_args.ioc.output_dir, prefix)
         .context("create per-run temp dir")?;
 
     // Window size when --by-size (otherwise None)
@@ -235,6 +254,7 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
         halo_bp,
         by_size_bp,
     )?;
+    let temp_chrom_name_map = TempChromNameMap::from_contigs(&chromosomes)?;
 
     let windows_lookup = windows_map.as_ref();
     let tile_window_spans = Arc::new(precompute_tile_window_spans(
@@ -256,17 +276,17 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
     let chr_offsets = Arc::new(chr_offsets_map);
 
     let total_tiles = tiles.len();
-    let temp_dir = Arc::new(temp_dir);
+    let temp_dir = Arc::new(temp_dir_guard.path().to_path_buf());
 
     // Create progress bar
-    let progress = ProgressFactory::with_enabled(!quiet);
+    let progress = ProgressFactory::with_enabled(show_progress_and_status);
     let pb = Arc::new(progress.default_bar(total_tiles as u64));
 
     // Configure global thread‐pool size
     init_global_pool(opt.shared_args.ioc.n_threads)?;
 
-    if !quiet {
-        println!("Start: Counting per chromosome");
+    if show_progress_and_status {
+        info!(target: COMMAND_TARGET, "Counting per chromosome");
     }
 
     pb.set_position(0);
@@ -279,10 +299,11 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
         .enumerate()
         .map(|(tile_idx, tile)| -> Result<TileResult> {
             let tile_span = tile_window_spans_for_threads[tile_idx];
+            let chr_token = temp_chrom_name_map.token_for(tile.chr.as_str())?;
             let counts_path = temp_dir.join(format!(
                 "{prefix}.{chr}.{idx}.counts.bin",
                 prefix = prefix,
-                chr = tile.chr.as_str(),
+                chr = chr_token,
                 idx = tile.index
             ));
 
@@ -321,14 +342,14 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
         })
         .collect::<Result<_>>()?; // short-circuits on the first Err
 
-    if !quiet {
+    if show_progress_and_status {
         pb.finish_with_message("| Finished counting");
     } else {
         pb.finish_and_clear();
     }
 
-    if !quiet {
-        println!("Start: Reducing per-tile counts");
+    if show_progress_and_status {
+        info!(target: COMMAND_TARGET, "Reducing per-tile counts");
     }
 
     let mut global_counter = FragmentKmersCounters::default();
@@ -387,8 +408,8 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
 
         let (_, motifs_by_k) = prepare_decoded_counts(&flattened, opt.canonical, &kmer_specs);
 
-        if !quiet {
-            println!("Start: Writing positional counts to disk");
+        if show_progress_and_status {
+            info!(target: COMMAND_TARGET, "Writing positional counts to disk");
         }
         write_positional_output(
             &positional_decoded,
@@ -406,8 +427,8 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
             prepare_decoded_counts(&all_bins, opt.canonical, &kmer_specs);
 
         // Write final counts to output_dir
-        if !quiet {
-            println!("Start: Writing counts to disk");
+        if show_progress_and_status {
+            info!(target: COMMAND_TARGET, "Writing counts to disk");
         }
         write_decoded_counts_matrix(
             &prepared_counts,
@@ -429,19 +450,17 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
         chr_offsets.as_ref(),
     )?;
 
-    // Write window coordinates as BED file to output_dir
-    // Write bins BED file
+    // Write window coordinates plus overlap metadata as TSV to output_dir
     if !matches!(window_opt, WindowSpec::Global) {
-        if !quiet {
-            println!("Start: Writing window coordinates to disk");
+        if show_progress_and_status {
+            info!(target: COMMAND_TARGET, "Writing window coordinates to disk");
         }
-        let bins_path = opt.shared_args.ioc.output_dir.join("bins.bed");
-        let mut bed_writer = create_text_writer(&bins_path).context("Create bed fail")?;
-        for (chr, start, end, _, overlap_perc) in &bin_info {
-            writeln!(bed_writer, "{}\t{}\t{}\t{}", chr, start, end, overlap_perc)
-                .context("Write bed line fail")?;
-        }
-        bed_writer.finish().context("Finalize bins.bed writer")?;
+        let bins_path = opt
+            .shared_args
+            .ioc
+            .output_dir
+            .join(dot_join(&[prefix, "bins.tsv"]));
+        write_bin_info_tsv(bins_path, &bin_info)?;
     }
 
     Ok(global_counter)
@@ -456,7 +475,7 @@ fn process_tile(
     window_ctx: &WindowContext,
     tile_window_span: Option<&TileWindowSpan>,
     blacklist_intervals: &[Interval<u64>],
-    scaling_chr: &[(u64, u64, f32)],
+    scaling_chr: &[ScalingBin],
     gc_corrector_opt: Option<GCCorrector>,
     counts_path: &Path,
 ) -> anyhow::Result<TileResult> {
@@ -482,12 +501,14 @@ fn process_tile(
         None
     };
 
-    let Some(fetch_span) = determine_fetch_span(
+    let Some(fetch_span) = fetch_span_for_tile(
         tile,
-        window_ctx,
         tile_window_span,
+        window_ctx.windows_slice(),
+        window_ctx.spec,
         chrom_len,
         opt.shared_args.fragment_lengths.max_fragment_length as u64,
+        BedFetchPolicy::CoreOverlap,
     )?
     else {
         return Ok(TileResult {
@@ -629,24 +650,27 @@ fn process_tile(
 
         // Get GC correction weight
         let gc_weight = if opt.shared_args.gc.gc_tag.is_some() {
-            if fragment.gc_tag.had_invalid {
-                counter.gc_failed_fragments += 1;
-                if fragment.gc_tag.was_out_of_range {
-                    counter.gc_out_of_range_tags += 1;
+            match fragment.gc_tag.classify()? {
+                ClassifiedGCTagWeight::Usable(weight) => weight as f64,
+                ClassifiedGCTagWeight::Missing => {
+                    counter.gc_failed_fragments += 1;
+                    counter.gc_missing_tags += 1;
+                    if opt.shared_args.gc.neutralize_invalid_gc {
+                        1.0
+                    } else {
+                        continue;
+                    }
                 }
-                if opt.shared_args.gc.drop_invalid_gc {
-                    continue;
-                } else {
-                    1.0
-                }
-            } else if let Some(tag_w) = fragment.gc_tag.weight {
-                tag_w as f64
-            } else {
-                counter.gc_failed_fragments += 1;
-                if opt.shared_args.gc.drop_invalid_gc {
-                    continue;
-                } else {
-                    1.0
+                ClassifiedGCTagWeight::Invalid { out_of_range } => {
+                    counter.gc_failed_fragments += 1;
+                    if out_of_range {
+                        counter.gc_out_of_range_tags += 1;
+                    }
+                    if opt.shared_args.gc.neutralize_invalid_gc {
+                        1.0
+                    } else {
+                        continue;
+                    }
                 }
             }
         } else {
@@ -656,10 +680,10 @@ fn process_tile(
                 (None, true) => {
                     // Tried but failed to make a GC correction weight
                     counter.gc_failed_fragments += 1;
-                    if opt.shared_args.gc.drop_invalid_gc {
-                        continue;
-                    } else {
+                    if opt.shared_args.gc.neutralize_invalid_gc {
                         1.0
+                    } else {
+                        continue;
                     }
                 }
                 (None, false) => 1.0, // No correction

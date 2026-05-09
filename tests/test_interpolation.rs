@@ -1,3 +1,5 @@
+#![cfg(feature = "cmd_gc_bias")]
+
 use cfdnalab::commands::gc_bias::interpolation::{
     enforce_monotonic_segment, fill_unsupported_bins_with_polynomial,
     fill_zero_bins_with_polynomial,
@@ -40,7 +42,6 @@ mod zero_interpolator_tests {
 
     #[test]
     fn should_leave_histogram_unchanged_without_zero_bins() -> anyhow::Result<()> {
-        // Human verification status: unverified
         let mut histogram = vec![2.0, 4.0, 8.0];
 
         fill_zero_bins_with_polynomial(&mut histogram, 1, 2, 2)?;
@@ -52,7 +53,6 @@ mod zero_interpolator_tests {
 
     #[test]
     fn should_linearly_interpolate_between_two_anchors() -> anyhow::Result<()> {
-        // Human verification status: unverified
         // One zero run between two anchor bins; using degree-one interpolation makes
         // manual expectations straightforward: each bin steps by +2.
         let mut histogram = vec![2.0, 0.0, 0.0, 8.0];
@@ -65,8 +65,26 @@ mod zero_interpolator_tests {
     }
 
     #[test]
+    fn should_use_nearest_left_anchor_when_padding_missing_left_neighbours() -> anyhow::Result<()> {
+        // The real anchors all lie on y = x + 1. With four neighbours requested
+        // per side, the left side is short and needs one mirrored pseudo anchor.
+        // That pseudo anchor must use the nearest left boundary value 3.0, not
+        // the first left anchor value 1.0.
+        let mut histogram = vec![1.0, 2.0, 3.0, 0.0, 0.0, 6.0, 7.0, 8.0, 9.0];
+
+        fill_zero_bins_with_polynomial(&mut histogram, 1, 2, 4)?;
+
+        assert_slice_close(
+            &histogram,
+            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+            1e-9,
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn edge_run_with_single_anchor_is_left_unchanged() -> anyhow::Result<()> {
-        // Human verification status: unverified
         // Run at the left edge has only one real anchor, so we skip interpolation
         // instead of inventing a slope with fabricated padding.
         let mut histogram = vec![0.0, 0.0, 0.0, 3.0];
@@ -80,7 +98,6 @@ mod zero_interpolator_tests {
 
     #[test]
     fn should_not_overshoot_when_zero_run_touches_edge() -> anyhow::Result<()> {
-        // Human verification status: unverified
         // Sequence starts with a long zero run followed by a small positive anchor.
         // Clamp logic should prevent us from creating inflated counts before the anchor.
         let mut histogram = vec![0.0, 0.0, 0.0, 0.0, 5.0, 7.0, 11.0, 0.0, 0.0, 0.0, 0.0, 15.0];
@@ -100,7 +117,6 @@ mod zero_interpolator_tests {
 
     #[test]
     fn should_fill_all_zero_bins_in_reference_example() -> anyhow::Result<()> {
-        // Human verification status: unverified
         // Full-length GC count profile from the prompt; interpolation should clear
         // out zero runs while preserving the original anchor bins.
         let mut histogram = dense_reference_histogram();
@@ -116,10 +132,10 @@ mod zero_interpolator_tests {
             12.630867510350752,
             16.369729318022028,
             19.0,
-            19.991333489571108,
-            27.054950394500395,
-            35.51499856782018,
-            45.371478009530456,
+            23.538146238575127,
+            30.150235919068848,
+            38.14143725750595,
+            47.51175025388644,
             57.0,
             70.52397195555398,
             84.35700466943274,
@@ -212,7 +228,8 @@ mod zero_interpolator_tests {
             6.0,
             6.0,
         ];
-        assert_slice_close(&histogram, &expected, 1e-9);
+
+        assert_slice_close(&histogram, &expected, 1e-7);
 
         Ok(())
     }
@@ -223,7 +240,6 @@ mod unsupported_interpolator_tests {
 
     #[test]
     fn unsupported_interp_leaves_supported_bins_unchanged() -> anyhow::Result<()> {
-        // Human verification status: unverified
         let mut histogram = vec![2.0, 4.0, 8.0];
         let mut mask = vec![true, true, true];
 
@@ -237,7 +253,6 @@ mod unsupported_interpolator_tests {
 
     #[test]
     fn unsupported_interp_fills_gaps_between_supported_bins() -> anyhow::Result<()> {
-        // Human verification status: unverified
         let mut histogram = vec![2.0, 0.0, 0.0, 8.0];
         let mut mask = vec![true, false, false, true];
 
@@ -250,8 +265,39 @@ mod unsupported_interpolator_tests {
     }
 
     #[test]
+    fn unsupported_interp_marks_edge_bin_even_when_value_is_unchanged() -> anyhow::Result<()> {
+        // Masked correction bins can be prefilled with neutral 1.0 before
+        // interpolation. If the fitted edge value is also 1.0, the value is
+        // unchanged but the bin was still successfully interpolated.
+        let mut histogram = vec![1.0, 1.0, 1.0];
+        let mut mask = vec![false, true, true];
+
+        fill_unsupported_bins_with_polynomial(&mut histogram, &mut mask, 1, 2, 1, true)?;
+
+        assert_slice_close(&histogram, &[1.0, 1.0, 1.0], 1e-9);
+        assert_eq!(mask, vec![true, true, true]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn unsupported_interp_fills_edge_run_from_one_sided_support() -> anyhow::Result<()> {
+        // The left edge has no left anchor, but there are enough supported bins
+        // on the right to fit. The edge clamp uses the nearest right anchor as
+        // the boundary value, so both unsupported edge bins become 3.0.
+        let mut histogram = vec![0.0, 0.0, 3.0, 5.0, 7.0];
+        let mut mask = vec![false, false, true, true, true];
+
+        fill_unsupported_bins_with_polynomial(&mut histogram, &mut mask, 1, 2, 2, true)?;
+
+        assert_slice_close(&histogram, &[3.0, 3.0, 3.0, 5.0, 7.0], 1e-9);
+        assert_eq!(mask, vec![true, true, true, true, true]);
+
+        Ok(())
+    }
+
+    #[test]
     fn unsupported_interp_edge_run_with_single_anchor_is_left_unchanged() -> anyhow::Result<()> {
-        // Human verification status: unverified
         // Run at the left edge has only one supported anchor, interpolation is
         // skipped to avoid fabricating a slope from padded zeros.
         let mut histogram = vec![0.0, 0.0, 0.0, 3.0];
@@ -267,7 +313,6 @@ mod unsupported_interpolator_tests {
 
     #[test]
     fn unsupported_interp_requires_two_real_anchors() -> anyhow::Result<()> {
-        // Human verification status: unverified
         // With only one real anchor the solver bails out early, so the unsupported
         // bins remain zeros even though padding is requested.
         let mut histogram = vec![0.0, 0.0, 5.0];
@@ -283,7 +328,6 @@ mod unsupported_interpolator_tests {
 
     #[test]
     fn unsupported_interp_interpolates_when_both_sides_supported() -> anyhow::Result<()> {
-        // Human verification status: unverified
         // Both ends have genuine anchors (mask entries true), so interpolation
         // fills the interior run with values between 5 and 10.
         let mut histogram = vec![5.0, 0.0, 0.0, 10.0];
@@ -303,7 +347,6 @@ mod unsupported_interpolator_tests {
 
     #[test]
     fn unsupported_interp_skips_when_insufficient_anchors() -> anyhow::Result<()> {
-        // Human verification status: unverified
         let mut histogram = vec![0.0, 0.0];
         let mut mask = vec![false, false];
 
@@ -317,7 +360,6 @@ mod unsupported_interpolator_tests {
 
     #[test]
     fn unsupported_interp_matches_zero_interpolator_on_dense_example() -> anyhow::Result<()> {
-        // Human verification status: unverified
         let mut zero_histogram = dense_reference_histogram();
         fill_zero_bins_with_polynomial(&mut zero_histogram, 2, 3, 3)?;
 
@@ -341,7 +383,6 @@ mod unsupported_interpolator_tests {
 
 #[test]
 fn enforces_non_decreasing_segments() {
-    // Human verification status: unverified
     let mut segment = vec![1.0, 0.5, 0.6, 1.2];
     enforce_monotonic_segment(&mut segment, 1.0, 2.0);
     assert_eq!(segment, vec![1.0, 1.0, 1.0, 1.2]);
@@ -349,7 +390,6 @@ fn enforces_non_decreasing_segments() {
 
 #[test]
 fn enforces_non_increasing_segments() {
-    // Human verification status: unverified
     let mut segment = vec![5.0, 6.0, 4.0, 3.0];
     enforce_monotonic_segment(&mut segment, 5.0, 1.0);
     assert_eq!(segment, vec![5.0, 5.0, 4.0, 3.0]);

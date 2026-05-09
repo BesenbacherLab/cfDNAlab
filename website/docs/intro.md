@@ -2,7 +2,7 @@
 
 Welcome to the user documentation for `cfDNAlab`. 
 
-`cfDNAlab` contains a set of ultra-fast command-line tools for analysis of cell-free DNA. They allow you to extract **fragment coverage**, **midpoint coverage**, and **fragment lengths** across the whole genome (or in windows) in mere seconds or minutes. 
+`cfDNAlab` contains a set of ultra-fast command-line tools for analysis of cell-free DNA. They allow you to extract **fragment coverage**, **midpoint coverage**, **fragment end- and breakpoint motifs**, and **fragment lengths** across the whole genome (or in windows) in mere seconds or minutes. 
 
 The commands are specifically optimized for WGS cfDNA and work directly on cfDNA **fragments** from either *paired-end* sequencing data or unpaired data where each read represents a full fragment. 
 

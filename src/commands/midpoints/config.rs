@@ -1,16 +1,21 @@
 use crate::{
     commands::cli_common::{
-        ApplyGCArgs, ChromosomeArgs, IOCArgs, ScaleGenomeArgs, UnpairedArgs, parse_length_bins,
+        ApplyGCArgs, ChromosomeArgs, IOCArgs, LoggingArgs, ScaleGenomeArgs, UnpairedArgs,
+        resolve_length_bin_edges,
     },
-    shared::blacklist::BlacklistStrategy,
+    shared::{
+        blacklist::BlacklistStrategy,
+        constants::{MAX_SUPPORTED_FRAGMENT_LENGTH, MIN_ACGT_BASES_FOR_GC_FRACTION},
+    },
 };
-use anyhow::{Context, Result, ensure};
+use anyhow::Result;
 use std::path::PathBuf;
 
 /// Count positional fragment **midpoint** coverage in groups of genomic windows.
 ///
 /// **Midpoints**: The center of the fragment span, with ties (in even-sized fragments)
-/// randomly assigned to either the left or right mid-position to reduce rounding bias.
+/// randomly (but reproducibly) assigned to the left or right mid-position to avoid bias
+/// from always rounding in the same direction.
 ///
 /// **Groups**: The coverage profiles are "collapsed" (summed per position) for all windows in a group.
 /// E.g., groups can be transcription factors with windows being binding sites. We then
@@ -21,6 +26,8 @@ use std::path::PathBuf;
 /// **Paired-end**: `[forward.pos, reverse.end)`.
 ///
 /// **Unpaired** where each read is a fragment: `[read.pos, read.end)`.
+///
+/// The utilized fragment length range is specified via `--length-bins`.
 ///
 /// ## Always-on exclusion criteria
 ///
@@ -52,7 +59,7 @@ pub struct MidpointsConfig {
     ///   `<prefix>.midpoint_profiles.npy`.
     #[cfg_attr(
         feature = "cli",
-        clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, help_heading = "Core")
+        clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, value_parser = crate::commands::cli_common::parse_output_prefix, help_heading = "Core")
     )]
     pub output_prefix: String,
 
@@ -79,6 +86,8 @@ pub struct MidpointsConfig {
     pub intervals: PathBuf,
 
     /// Edges of fragment length bins to count in `[string(s)]`
+    ///
+    /// This also defines the min and max fragment lengths.
     ///
     /// Accepted forms:
     ///
@@ -107,7 +116,7 @@ pub struct MidpointsConfig {
     /// Chromosomes are processed in tiles of this size to reduce memory usage.
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "63000000", value_parser = clap::value_parser!(u32).range(1000000..), help_heading="Core"))]
+        clap(long, default_value = "20000000", value_parser = clap::value_parser!(u32).range(1000000..), help_heading="Core"))]
     pub tile_size: u32,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
@@ -125,6 +134,9 @@ pub struct MidpointsConfig {
     /// Only count properly paired reads `[flag]`
     ///
     /// This is **NOT** recommended by default as it trims the tails of the length distribution.
+    ///
+    /// Note, that we only keep inward-directed fragments within the specified length range, so
+    /// there's no real need for proper-pair filtering.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
     pub require_proper_pair: bool,
 
@@ -202,6 +214,9 @@ pub struct MidpointsConfig {
         )
     )]
     pub plot_groups: Vec<usize>,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub logging: LoggingArgs,
 }
 
 impl MidpointsConfig {
@@ -225,10 +240,11 @@ impl MidpointsConfig {
             gc: ApplyGCArgs {
                 gc_file: None,
                 gc_tag: None,
-                drop_invalid_gc: false,
+                neutralize_invalid_gc: false,
             },
             ref_2bit: None,
             plot_groups: vec![0],
+            logging: LoggingArgs::default(),
         }
     }
 
@@ -249,33 +265,11 @@ impl MidpointsConfig {
     }
 
     pub fn resolve_length_bins(&self) -> Result<Vec<u32>> {
-        if self.length_bins.len() == 1 {
-            let raw_spec = self.length_bins[0].trim();
-            if raw_spec.contains(':') || raw_spec.contains('-') || raw_spec.contains(',') {
-                let parsed = parse_length_bins(Some(raw_spec), 10, u32::MAX - 1)?;
-                return Ok(parsed.to_edges());
-            }
-        }
-
-        let mut edges = Vec::with_capacity(self.length_bins.len());
-        for raw_edge in &self.length_bins {
-            let edge = raw_edge
-                .trim()
-                .parse::<u32>()
-                .with_context(|| format!("failed parsing length bin edge '{}'", raw_edge))?;
-            ensure!(edge >= 10, "length bin edges must be >= 10");
-            edges.push(edge);
-        }
-
-        ensure!(
-            edges.len() >= 2,
-            "length bin edges must contain at least two values"
-        );
-        ensure!(
-            edges.windows(2).all(|window| window[0] < window[1]),
-            "length bin edges must be strictly increasing"
-        );
-        Ok(edges)
+        resolve_length_bin_edges(
+            &self.length_bins,
+            MIN_ACGT_BASES_FOR_GC_FRACTION,
+            MAX_SUPPORTED_FRAGMENT_LENGTH,
+        )
     }
 
     pub fn set_tile_size(&mut self, tile_size: u32) {
@@ -301,4 +295,9 @@ impl MidpointsConfig {
     pub fn set_ref_2bit(&mut self, ref_2bit: Option<PathBuf>) {
         self.ref_2bit = ref_2bit;
     }
+}
+
+#[cfg(test)]
+mod tests {
+    include!("config_tests.rs");
 }

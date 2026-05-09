@@ -1,37 +1,83 @@
-use std::io::{BufWriter, Write};
+use std::io::{BufRead, BufWriter, Write};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 
 use crate::{
+    commands::cli_common::WindowSpec,
     commands::fcoverage::window_results::CoverageWindowAction,
+    shared::coverage::Coverage,
+    shared::formatters::{CompactNumber, round_to},
     shared::interval::Interval,
-    shared::tiled_run::{
-        Tile, TileMode, TileWindowSpan, clamp_fetch_to_window_span, parse_tile_index,
-        tile_window_min_max,
+    shared::io::open_text_reader,
+    shared::tiled_run::{Tile, TileMode, TileWindowSpan, clamp_fetch_to_window_span},
+    shared::window_fetch::{
+        BedFetchPolicy, fetch_span_for_tile, full_tile_fetch_span,
+        window_derived_fetch_extent_for_core_overlap,
     },
+    shared::writers::open_zstd_auto_writer,
 };
 
-/// Concatenates per-tile positional files into a single merged output.
+/// Kind of simple tile temp file returned by tile processing.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum TileTempFileKind {
+    Positional,
+    SizeFinal,
+}
+
+/// Returned path for one simple tile output.
 ///
-/// The routine scans each chromosome, orders the matching tile files by index, and stream-copies
-/// their contents into the destination writer without re-encoding, allowing pre-compressed chunks
-/// to remain untouched.
+/// The merge code uses this explicit path instead of inferring files from temporary directory
+/// names. `kind` keeps positional outputs and already-finalized fixed-size outputs distinct while
+/// sharing the same carrier fields. Final order is still requested chromosome order, then tile
+/// index within chromosome.
+#[derive(Debug, Clone)]
+pub(crate) struct TileTempFile {
+    pub kind: TileTempFileKind,
+    pub chromosome: String,
+    pub tile_index: u32,
+    pub path: PathBuf,
+}
+
+fn sorted_tile_outputs_for_chromosome<'a>(
+    tile_outputs: &'a [TileTempFile],
+    kind: TileTempFileKind,
+    chromosome: &str,
+) -> Vec<&'a TileTempFile> {
+    let mut chromosome_outputs = tile_outputs
+        .iter()
+        .filter(|output| output.kind == kind && output.chromosome == chromosome)
+        .collect::<Vec<_>>();
+    chromosome_outputs.sort_by_key(|output| output.tile_index);
+    chromosome_outputs
+}
+
+/// Concatenates returned positional tile outputs into one final positional file.
 ///
-/// # Parameters
-/// - `temp_dir`: Directory containing the per-tile files.
-/// - `out_dir`: Directory where the merged file should be written.
-/// - `chromosomes`: Chromosome names that determine merge order.
-/// - `per_tile_prefix`: Prefix used in the per-tile filenames.
-/// - `final_name`: Filename for the merged output.
+/// The function streams tile frames in requested chromosome order and tile-index order. It never
+/// scans the temp directory, so decoys or stale files with matching names cannot affect the final
+/// output. Without restore-mean scaling, compressed tile frames are copied byte-for-byte.
 ///
-/// # Returns
-/// Path to the merged file on success.
-pub fn merge_positional_tiles(
-    temp_dir: &std::path::Path,
+/// Parameters
+/// ----------
+/// - `out_dir`:
+///     Directory where the merged file is written.
+/// - `chromosomes`:
+///     Requested chromosome order for the final output.
+/// - `tile_outputs`:
+///     Returned positional tile paths from tile processing.
+/// - `final_name`:
+///     Filename for the merged output.
+///
+/// Returns
+/// -------
+/// - `PathBuf`:
+///     Path to the merged final output.
+fn merge_positional_tile_outputs(
     out_dir: &std::path::Path,
     chromosomes: &[String],
-    per_tile_prefix: &str, // e.g. "coverage.pos" (whole-genome) or "coverage.pos.win" (windowed)
-    final_name: &str,      // e.g. "coverage.per_position.tsv"
+    tile_outputs: &[TileTempFile],
+    final_name: &str,
 ) -> Result<std::path::PathBuf> {
     let final_path = out_dir.join(final_name);
     let mut out = BufWriter::new(
@@ -39,37 +85,18 @@ pub fn merge_positional_tiles(
             .with_context(|| format!("Creating merged output: {}", final_path.display()))?,
     );
 
-    for chr in chromosomes {
-        // Collect tile files for this chromosome from temp_dir
-        let mut chr_files: Vec<(u32, std::path::PathBuf)> = Vec::new();
-        for entry in std::fs::read_dir(temp_dir)
-            .with_context(|| format!("Listing temp_dir: {}", temp_dir.display()))?
-        {
-            let path = entry?.path();
-            if !path.is_file() {
-                continue;
-            }
-            let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-            // Expect "{per_tile_prefix}.{chr}.{index}.tsv"
-            if fname.starts_with(per_tile_prefix)
-                && fname.contains(&format!(".{chr}."))
-                && let Some(idx) = parse_tile_index(fname)
-            {
-                chr_files.push((idx, path));
-            }
-        }
-
-        // Sort by tile index to preserve genomic order within chr
-        chr_files.sort_by_key(|(i, _)| *i);
-
-        // Stream copy each tile into the final file
-        for (_idx, path) in chr_files {
-            let mut f = std::fs::File::open(&path)
-                .with_context(|| format!("Opening tile file: {}", path.display()))?;
-            std::io::copy(&mut f, &mut out).with_context(|| {
+    for chromosome in chromosomes {
+        for output in sorted_tile_outputs_for_chromosome(
+            tile_outputs,
+            TileTempFileKind::Positional,
+            chromosome,
+        ) {
+            let mut tile_file = std::fs::File::open(&output.path)
+                .with_context(|| format!("Opening tile file: {}", output.path.display()))?;
+            std::io::copy(&mut tile_file, &mut out).with_context(|| {
                 format!(
                     "Copying from {} into {}",
-                    path.display(),
+                    output.path.display(),
                     final_path.display()
                 )
             })?;
@@ -80,28 +107,168 @@ pub fn merge_positional_tiles(
     Ok(final_path)
 }
 
-/// Joins already-compressed per-tile final outputs while preserving frame boundaries.
-///
-/// A compressed header frame is written first, followed by each tile frame in genomic order, so
-/// the resulting file stays a valid zstd concatenation stream suitable for downstream tools.
-///
-/// # Parameters
-/// - `temp_dir`: Directory containing the compressed per-tile final files.
-/// - `out_dir`: Directory where the merged file will be placed.
-/// - `chromosomes`: Chromosome names that dictate processing order.
-/// - `per_tile_prefix`: Prefix shared by the per-tile files.
-/// - `final_name`: Filename of the merged artifact.
-/// - `header_line`: Plain-text header to encode as its own compressed frame.
-///
-/// # Returns
-/// Path to the merged file on success.
-pub fn concat_aligned_size_tile_finals(
-    temp_dir: &std::path::Path,
+fn merge_scaled_positional_tile_outputs(
     out_dir: &std::path::Path,
     chromosomes: &[String],
-    per_tile_prefix: &str, // e.g., "<prefix>.fin"
-    final_name: &str,      // e.g., "<prefix>.avg.tsv.zst"
-    header_line: &str,     // single header line without trailing newline
+    tile_outputs: &[TileTempFile],
+    final_name: &str,
+    multiplier: f64,
+    indexed: bool,
+    decimals: i32,
+    n_threads: usize,
+) -> Result<std::path::PathBuf> {
+    let final_path = out_dir.join(final_name);
+    let mut out = open_zstd_auto_writer(&final_path, 3, Some(n_threads as u32))?;
+    let mut line = String::new();
+
+    for chromosome in chromosomes {
+        for output in sorted_tile_outputs_for_chromosome(
+            tile_outputs,
+            TileTempFileKind::Positional,
+            chromosome,
+        ) {
+            let mut reader = open_text_reader(&output.path)?;
+            loop {
+                line.clear();
+                if reader.read_line(&mut line)? == 0 {
+                    break;
+                }
+
+                let raw = line.trim_end_matches('\n').trim_end_matches('\r');
+                if raw.is_empty() {
+                    continue;
+                }
+
+                let mut cols = raw.split('\t');
+                let chr_col = cols.next().ok_or_else(|| {
+                    anyhow::anyhow!("Missing chromosome column in {}", output.path.display())
+                })?;
+                let start_col = cols.next().ok_or_else(|| {
+                    anyhow::anyhow!("Missing start column in {}", output.path.display())
+                })?;
+                let end_col = cols.next().ok_or_else(|| {
+                    anyhow::anyhow!("Missing end column in {}", output.path.display())
+                })?;
+                let value_col = cols.next().ok_or_else(|| {
+                    anyhow::anyhow!("Missing value column in {}", output.path.display())
+                })?;
+                let value = value_col.parse::<f64>().with_context(|| {
+                    format!(
+                        "Parsing positional value '{}' in {}",
+                        value_col,
+                        output.path.display()
+                    )
+                })?;
+                let scaled_value = round_to(value * multiplier, decimals);
+
+                if indexed {
+                    let idx_col = cols.next().ok_or_else(|| {
+                        anyhow::anyhow!("Missing window index column in {}", output.path.display())
+                    })?;
+                    anyhow::ensure!(
+                        cols.next().is_none(),
+                        "Unexpected extra columns in indexed positional tile {}",
+                        output.path.display()
+                    );
+                    writeln!(
+                        out,
+                        "{}\t{}\t{}\t{}\t{}",
+                        chr_col,
+                        start_col,
+                        end_col,
+                        CompactNumber {
+                            v: scaled_value,
+                            decimals
+                        },
+                        idx_col
+                    )?;
+                } else {
+                    anyhow::ensure!(
+                        cols.next().is_none(),
+                        "Unexpected extra columns in positional tile {}",
+                        output.path.display()
+                    );
+                    writeln!(
+                        out,
+                        "{}\t{}\t{}\t{}",
+                        chr_col,
+                        start_col,
+                        end_col,
+                        CompactNumber {
+                            v: scaled_value,
+                            decimals
+                        }
+                    )?;
+                }
+            }
+        }
+    }
+
+    out.flush()
+        .context("Flushing scaled merged positional output")?;
+    Ok(final_path)
+}
+
+/// Merge positional tile outputs, optionally applying the late restore-mean multiplier.
+///
+/// Restore-mean is a final merge concern because the multiplier is only known after all tiles have
+/// been counted. Row identity, chromosome order, tile order, and indexed positional columns stay
+/// the same as the unscaled positional merge.
+pub(crate) fn merge_positional_tile_outputs_with_optional_scaling(
+    out_dir: &std::path::Path,
+    chromosomes: &[String],
+    tile_outputs: &[TileTempFile],
+    final_name: &str,
+    restore_mean_multiplier: Option<f64>,
+    indexed: bool,
+    decimals: i32,
+    n_threads: usize,
+) -> Result<std::path::PathBuf> {
+    if let Some(multiplier) = restore_mean_multiplier {
+        merge_scaled_positional_tile_outputs(
+            out_dir,
+            chromosomes,
+            tile_outputs,
+            final_name,
+            multiplier,
+            indexed,
+            decimals,
+            n_threads,
+        )
+    } else {
+        merge_positional_tile_outputs(out_dir, chromosomes, tile_outputs, final_name)
+    }
+}
+
+/// Joins returned aligned fixed-size final outputs while preserving compressed frame boundaries.
+///
+/// A compressed header frame is written first, followed by each returned tile frame in genomic
+/// order. The tile payloads are copied verbatim so the final file stays a valid zstd frame
+/// concatenation and does not re-derive values that were already finalized during tile processing.
+///
+/// Parameters
+/// ----------
+/// - `out_dir`:
+///     Directory where the merged file is written.
+/// - `chromosomes`:
+///     Requested chromosome order for the final output.
+/// - `tile_outputs`:
+///     Returned final tile paths from aligned fixed-size tile processing.
+/// - `final_name`:
+///     Filename for the merged artifact.
+/// - `header_line`:
+///     Plain-text header to encode as its own compressed frame.
+///
+/// Returns
+/// -------
+/// - `PathBuf`:
+///     Path to the merged final output.
+pub(crate) fn concat_aligned_size_tile_final_outputs(
+    out_dir: &std::path::Path,
+    chromosomes: &[String],
+    tile_outputs: &[TileTempFile],
+    final_name: &str,
+    header_line: &str,
 ) -> Result<std::path::PathBuf> {
     let final_path = out_dir.join(final_name);
     let mut out = BufWriter::new(
@@ -116,33 +283,20 @@ pub fn concat_aligned_size_tile_finals(
         zstd::encode_all(&header_bytes[..], 3).context("Compressing header frame")?;
     out.write_all(&header_frame)?;
 
-    // Then append each tile's compressed frame in genomic order
-    for chr in chromosomes {
-        // Collect tile files for this chromosome
-        let mut chr_files: Vec<(u32, std::path::PathBuf)> = Vec::new();
-        for entry in std::fs::read_dir(temp_dir)
-            .with_context(|| format!("Listing {}", temp_dir.display()))?
-        {
-            let path = entry?.path();
-            if !path.is_file() {
-                continue;
-            }
-            let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-            if fname.starts_with(per_tile_prefix)
-                && fname.contains(&format!(".{chr}."))
-                && let Some(idx) = parse_tile_index(fname)
-            {
-                chr_files.push((idx, path));
-            }
-        }
-        chr_files.sort_by_key(|(i, _)| *i);
-
-        // Copy bytes verbatim (frame concatenation)
-        for (_i, p) in chr_files {
-            let mut f =
-                std::fs::File::open(&p).with_context(|| format!("Opening {}", p.display()))?;
-            std::io::copy(&mut f, &mut out).with_context(|| {
-                format!("Copying {} into {}", p.display(), final_path.display())
+    for chromosome in chromosomes {
+        for output in sorted_tile_outputs_for_chromosome(
+            tile_outputs,
+            TileTempFileKind::SizeFinal,
+            chromosome,
+        ) {
+            let mut tile_file = std::fs::File::open(&output.path)
+                .with_context(|| format!("Opening {}", output.path.display()))?;
+            std::io::copy(&mut tile_file, &mut out).with_context(|| {
+                format!(
+                    "Copying {} into {}",
+                    output.path.display(),
+                    final_path.display()
+                )
             })?;
         }
     }
@@ -179,17 +333,16 @@ pub fn adapt_fetch_to_extreme_windows(
     // Decide the fetch interval based on mode/windows.
     // For whole-genome positional: use the full tile fetch band.
     // For windowed runs: restrict to the overlapping window span widened by a fragment-sized halo,
-    // then intersect it with the tile’s existing fetch band.
+    // then intersect it with the tile's existing fetch band.
     match mode {
-        TileMode::Positional { windows: None, .. } => Ok(Some(Interval::new(
-            tile.fetch_start() as u64,
-            tile.fetch_end() as u64,
-        )?)),
+        TileMode::Positional { windows: None, .. } => full_tile_fetch_span(tile, chrom_len_u64),
         TileMode::Positional {
             windows: Some(wchr),
             ..
         } => {
-            let Some(window_span) = tile_window_min_max(wchr, tile, tile_span)? else {
+            let Some(window_span) =
+                window_derived_fetch_extent_for_core_overlap(wchr, tile, tile_span)?
+            else {
                 return Ok(None);
             };
             Ok(clamp_fetch_to_window_span(
@@ -200,7 +353,9 @@ pub fn adapt_fetch_to_extreme_windows(
             )?)
         }
         TileMode::AggregatesByBed { windows: wchr, .. } => {
-            let Some(window_span) = tile_window_min_max(wchr, tile, tile_span)? else {
+            let Some(window_span) =
+                window_derived_fetch_extent_for_core_overlap(wchr, tile, tile_span)?
+            else {
                 return Ok(None);
             };
             Ok(clamp_fetch_to_window_span(
@@ -210,25 +365,15 @@ pub fn adapt_fetch_to_extreme_windows(
                 halo_bp,
             )?)
         }
-        TileMode::AggregatesBySize { window_bp, .. } => {
-            let core_start = tile.core_start() as u64;
-            let core_end = tile.core_end() as u64;
-            if core_start >= chrom_len_u64 {
-                return Ok(None);
-            }
-            let window_size_bp = *window_bp;
-            let first_window_idx = core_start / window_size_bp;
-            let last_window_idx = (core_end.saturating_sub(1)) / window_size_bp;
-            let min_window_start = first_window_idx * window_size_bp;
-            let max_window_end = ((last_window_idx + 1) * window_size_bp).min(chrom_len_u64);
-            let window_span = Interval::new(min_window_start, max_window_end)?;
-            Ok(clamp_fetch_to_window_span(
-                tile,
-                chrom_len_u64,
-                window_span,
-                halo_bp,
-            )?)
-        }
+        TileMode::AggregatesBySize { window_bp, .. } => fetch_span_for_tile(
+            tile,
+            None,
+            None,
+            &WindowSpec::Size(*window_bp),
+            chrom_len_u64,
+            halo_bp,
+            BedFetchPolicy::CoreOverlap,
+        ),
     }
 }
 
@@ -295,10 +440,161 @@ pub fn coverage_sum_and_counts(
     (sum, allowed, blacklisted)
 }
 
+/// Prefix arrays used to derive summary statistics over coverage slices.
+#[derive(Debug, Clone)]
+pub struct CoverageSummaryPrefixes {
+    pub sum_of_squares_all: Vec<f64>,
+    pub sum_of_squares_unmasked: Option<Vec<f64>>,
+    pub nonzero_all: Vec<u64>,
+    pub nonzero_unmasked: Option<Vec<u64>>,
+}
+
+pub fn build_summary_prefixes(cp: &Coverage) -> Result<CoverageSummaryPrefixes> {
+    let coverage = cp.coverage().ok_or_else(|| {
+        anyhow::anyhow!("coverage must remain available while building summary-stat prefixes")
+    })?;
+    let mask = cp.blacklist_mask();
+
+    let mut sum_of_squares_all = Vec::with_capacity(coverage.len() + 1);
+    let mut nonzero_all = Vec::with_capacity(coverage.len() + 1);
+    let mut sum_of_squares_unmasked = None;
+    let mut nonzero_unmasked = None;
+
+    sum_of_squares_all.push(0.0);
+    nonzero_all.push(0);
+
+    let mut running_sum_of_squares_all = 0.0;
+    let mut running_nonzero_all = 0u64;
+
+    if let Some(mask) = mask {
+        let mut sum_of_squares_unmasked_prefix = Vec::with_capacity(coverage.len() + 1);
+        let mut nonzero_unmasked_prefix = Vec::with_capacity(coverage.len() + 1);
+        sum_of_squares_unmasked_prefix.push(0.0);
+        nonzero_unmasked_prefix.push(0);
+
+        let mut running_sum_of_squares_unmasked = 0.0;
+        let mut running_nonzero_unmasked = 0u64;
+
+        for (index, &value_f32) in coverage.iter().enumerate() {
+            let value = value_f32 as f64;
+            let squared_value = value * value;
+            let is_nonzero = value > 0.0;
+
+            running_sum_of_squares_all += squared_value;
+            if is_nonzero {
+                running_nonzero_all += 1;
+            }
+
+            if mask[index] == 0 {
+                running_sum_of_squares_unmasked += squared_value;
+                if is_nonzero {
+                    running_nonzero_unmasked += 1;
+                }
+            }
+
+            sum_of_squares_all.push(running_sum_of_squares_all);
+            nonzero_all.push(running_nonzero_all);
+            sum_of_squares_unmasked_prefix.push(running_sum_of_squares_unmasked);
+            nonzero_unmasked_prefix.push(running_nonzero_unmasked);
+        }
+
+        sum_of_squares_unmasked = Some(sum_of_squares_unmasked_prefix);
+        nonzero_unmasked = Some(nonzero_unmasked_prefix);
+    } else {
+        for &value_f32 in coverage {
+            let value = value_f32 as f64;
+            let squared_value = value * value;
+
+            running_sum_of_squares_all += squared_value;
+            if value > 0.0 {
+                running_nonzero_all += 1;
+            }
+
+            sum_of_squares_all.push(running_sum_of_squares_all);
+            nonzero_all.push(running_nonzero_all);
+        }
+    }
+
+    Ok(CoverageSummaryPrefixes {
+        sum_of_squares_all,
+        sum_of_squares_unmasked,
+        nonzero_all,
+        nonzero_unmasked,
+    })
+}
+
+/// Raw summary statistics over one tile-local slice.
+#[derive(Debug, Clone, Copy)]
+pub struct CoverageSummarySliceStats {
+    pub coverage_sum: f64,
+    pub eligible_positions: u64,
+    pub blacklisted_positions: u64,
+    pub nonzero_positions: u64,
+    pub coverage_sum_of_squares: f64,
+}
+
+/// Compute raw summary statistics over a tile-local range.
+///
+/// This extends `coverage_sum_and_counts` with the second raw moment and the count of eligible
+/// nonzero bases so later reducers can derive variance, SD, coverage fraction, and grouped
+/// correlations without revisiting per-base coverage.
+#[inline]
+pub fn coverage_summary_and_counts(
+    local_start_idx: usize,
+    local_end_idx: usize,
+    masked: bool,
+    ps_all: &[f64],
+    ps_allow: Option<&[f64]>,
+    cnt_allow: Option<&[u32]>,
+    mask: Option<&[u8]>,
+    summary_prefixes: &CoverageSummaryPrefixes,
+) -> CoverageSummarySliceStats {
+    let (coverage_sum, eligible_positions, blacklisted_positions) = coverage_sum_and_counts(
+        local_start_idx,
+        local_end_idx,
+        masked,
+        ps_all,
+        ps_allow,
+        cnt_allow,
+        mask,
+    );
+
+    let coverage_sum_of_squares = if masked {
+        if let Some(prefix) = summary_prefixes.sum_of_squares_unmasked.as_ref() {
+            prefix[local_end_idx] - prefix[local_start_idx]
+        } else {
+            summary_prefixes.sum_of_squares_all[local_end_idx]
+                - summary_prefixes.sum_of_squares_all[local_start_idx]
+        }
+    } else {
+        summary_prefixes.sum_of_squares_all[local_end_idx]
+            - summary_prefixes.sum_of_squares_all[local_start_idx]
+    };
+
+    let nonzero_positions = if masked {
+        if let Some(prefix) = summary_prefixes.nonzero_unmasked.as_ref() {
+            prefix[local_end_idx] - prefix[local_start_idx]
+        } else {
+            summary_prefixes.nonzero_all[local_end_idx]
+                - summary_prefixes.nonzero_all[local_start_idx]
+        }
+    } else {
+        summary_prefixes.nonzero_all[local_end_idx] - summary_prefixes.nonzero_all[local_start_idx]
+    };
+
+    CoverageSummarySliceStats {
+        coverage_sum,
+        eligible_positions,
+        blacklisted_positions,
+        nonzero_positions,
+        coverage_sum_of_squares,
+    }
+}
+
 /// Converts accumulated coverage statistics into a final window value.
 ///
-/// Depending on the requested action the result is either an average (over allowed or full span)
-/// or the raw total; zero denominators yield zero to avoid NaNs.
+/// Depending on the requested action the result is either an average over eligible positions or
+/// the raw total. Averages with no eligible positions are undefined and return `NaN`.
 ///
 /// # Parameters
 /// - `sum`: Accumulated coverage sum.
@@ -318,22 +614,25 @@ pub fn finalize_value(
     mode: &CoverageWindowAction,
 ) -> f64 {
     match mode {
-        CoverageWindowAction::Average => {
+        CoverageWindowAction::Average | CoverageWindowAction::AverageOnUniqueBases => {
             if masked {
                 if allowed_positions == 0 {
-                    0.0
+                    f64::NAN
                 } else {
                     sum / allowed_positions as f64
                 }
             } else {
                 if unmasked_span_bp == 0 {
-                    0.0
+                    f64::NAN
                 } else {
                     sum / unmasked_span_bp as f64
                 }
             }
         }
-        CoverageWindowAction::Total => sum,
+        CoverageWindowAction::Total | CoverageWindowAction::TotalOnUniqueBases => sum,
+        CoverageWindowAction::SummaryStats | CoverageWindowAction::SummaryStatsOnUniqueBases => {
+            unreachable!("summary-stats uses raw aggregate rows instead of finalize_value()")
+        }
         _ => unreachable!(),
     }
 }
@@ -375,4 +674,9 @@ pub fn clip_interval_to_core_and_localize(
         local_end_idx,
         clipped_abs_interval,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    include!("tiling_tests.rs");
 }

@@ -1,3 +1,0 @@
-
-## Before refactoring
-Treat this as scientific code. Before editing, list the behavioral invariants and identify any semantic boundaries. Do not change file formats, grouping keys, merge identities, clipping semantics, or averaging denominators without explicit approval. If a change might affect behavior, stop and explain with a hand-worked example first. Make the smallest patch that fixes the issue, then run the most targeted verification possible.

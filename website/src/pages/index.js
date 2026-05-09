@@ -20,14 +20,18 @@ function HeroButtons() {
 }
 
 export default function Home() {
-  const logoUrl = useBaseUrl('/img/cfdnalab_logo_400x255_144dpi.png');
+  const logoUrl = useBaseUrl('/img/cfdnalab_logo_750x500_150dpi.png');
+  const backgroundLogoUrl = useBaseUrl('/img/cfdnalab_logo_background.png');
 
   return (
     <Layout
       title="cfDNAlab"
       description="Fast and transparent cfDNA command-line analysis"
     >
-      <main className={clsx('heroSection')}>
+      <main
+        className={clsx('heroSection')}
+        style={{ '--hero-background-logo': `url(${backgroundLogoUrl})` }}
+      >
         <div className="heroInner">
           <img
             src={logoUrl}

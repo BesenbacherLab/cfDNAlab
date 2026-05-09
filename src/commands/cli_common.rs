@@ -1,16 +1,100 @@
-use crate::commands::fragment_kmers::positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
 use crate::shared::bam::bam_header_contigs;
 use crate::shared::bam::{Contigs, bam_contigs_info};
 use crate::shared::blacklist::load_blacklists;
+use crate::shared::constants::{MAX_SUPPORTED_FRAGMENT_LENGTH, MIN_ACGT_BASES_FOR_GC_FRACTION};
 use crate::shared::interval::Interval;
+use crate::shared::positioning::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
+use crate::shared::reference::{load_chrom_sizes_with_order, twobit_contig_names};
 use crate::shared::scale_genome::load_scaling_factors_tsv;
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::FxHashMap;
-use std::path::Path;
-use std::{path::PathBuf, str::FromStr};
+use std::{path::Path, path::PathBuf, str::FromStr};
 
-/// Minimum ACGT bases required when estimating GC fraction for sample reads.
-pub const MIN_ACGT_BASES_FOR_GC_FRACTION: u32 = 10;
+pub use crate::shared::logging::{LogSpec, LoggingArgs};
+
+/// Parse a CLI output prefix into the exact filename stem prefix used by commands.
+///
+/// Empty prefixes are allowed because commands use them to write unprefixed output names. Non-empty
+/// prefixes are restricted to ASCII letters, numbers, `.`, `_`, and `-`, with no `..` sequence.
+/// That keeps prefix parsing separate from filename assembly helpers such as `dot_join()`.
+pub fn parse_output_prefix(raw_value: &str) -> std::result::Result<String, String> {
+    let prefix = raw_value.trim();
+    validate_output_prefix(prefix).map_err(|error| error.to_string())?;
+    Ok(prefix.to_string())
+}
+
+/// Parse a SAM/BAM AUX tag name supplied on the command line.
+///
+/// BAM stores exactly two bytes for each AUX tag key. Validating here keeps typos
+/// such as `GCP` from being interpreted by the lower-level BAM API as `GC`.
+pub fn parse_sam_aux_tag_name(raw_value: &str) -> std::result::Result<String, String> {
+    let tag = raw_value.trim();
+    validate_sam_aux_tag_name(tag).map_err(|error| error.to_string())?;
+    Ok(tag.to_string())
+}
+
+/// Validate an already parsed SAM/BAM AUX tag name.
+///
+/// Programmatic configs can bypass clap parsing, so command startup validation
+/// should call this before passing tag bytes to rust-htslib.
+pub fn validate_sam_aux_tag_name(tag: &str) -> Result<()> {
+    ensure!(
+        tag.len() == 2,
+        "SAM/BAM AUX tag names must be exactly two ASCII bytes, got `{}`",
+        tag
+    );
+    let mut bytes = tag.bytes();
+    let first = bytes
+        .next()
+        .expect("length was checked before reading first AUX tag byte");
+    let second = bytes
+        .next()
+        .expect("length was checked before reading second AUX tag byte");
+    ensure!(
+        first.is_ascii_alphabetic(),
+        "SAM/BAM AUX tag `{}` is invalid: first character must be an ASCII letter",
+        tag
+    );
+    ensure!(
+        second.is_ascii_alphanumeric(),
+        "SAM/BAM AUX tag `{}` is invalid: second character must be an ASCII letter or digit",
+        tag
+    );
+    Ok(())
+}
+
+/// Validate an already parsed output prefix.
+///
+/// Programmatic configs can bypass clap parsing, so command startup validation should call this
+/// before creating output paths or temporary directories.
+pub fn validate_output_prefix(prefix: &str) -> Result<()> {
+    let prefix = prefix.trim();
+    if prefix.is_empty() {
+        return Ok(());
+    }
+
+    ensure!(
+        !prefix.contains(".."),
+        "--output-prefix cannot contain '..'"
+    );
+    ensure!(
+        !prefix.contains('/') && !prefix.contains('\\'),
+        "--output-prefix cannot contain path separators"
+    );
+
+    for character in prefix.chars() {
+        ensure!(
+            character.is_ascii_alphanumeric()
+                || character == '.'
+                || character == '_'
+                || character == '-',
+            "--output-prefix contains invalid character '{}'. Use ASCII letters, numbers, '.', '_', or '-'",
+            character
+        );
+    }
+
+    Ok(())
+}
 
 /// Args for in-/output and core (threads).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
@@ -59,11 +143,10 @@ pub struct IOCArgs {
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone)]
 pub struct UnpairedArgs {
-    /// The input has one read per fragment and the **read spans exactly the full fragment** (e.g. Nanopore) `[flag]`
+    /// The input has one read per fragment and the **read spans the full aligned fragment** (e.g. Nanopore) `[flag]`
     ///
     /// Each aligned read is treated as a fragment spanning its aligned reference interval
-    /// `[pos, reference_end)`. This uses the mapped span only
-    /// (soft clips excluded).
+    /// `[pos, reference_end)`. Some commands allow expanding this to include soft clipped bases.
     ///
     /// Cannot be combined with `--require-proper-pair` (when available).
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
@@ -119,13 +202,13 @@ pub struct FragmentLengthArgs {
     /// Minimum fragment length to include `[integer]`
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "30", value_parser = clap::value_parser!(u32).range(MIN_ACGT_BASES_FOR_GC_FRACTION as i64..), help_heading="Filtering"))]
+        clap(long, default_value = "30", value_parser = clap::value_parser!(u32).range(MIN_ACGT_BASES_FOR_GC_FRACTION as i64..=MAX_SUPPORTED_FRAGMENT_LENGTH as i64), help_heading="Filtering"))]
     pub min_fragment_length: u32,
 
     /// Maximum fragment length to include `[integer]`
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "1000", value_parser = clap::value_parser!(u32).range(MIN_ACGT_BASES_FOR_GC_FRACTION as i64..), help_heading="Filtering"))]
+        clap(long, default_value = "1000", value_parser = clap::value_parser!(u32).range(MIN_ACGT_BASES_FOR_GC_FRACTION as i64..=MAX_SUPPORTED_FRAGMENT_LENGTH as i64), help_heading="Filtering"))]
     pub max_fragment_length: u32,
 }
 
@@ -136,6 +219,41 @@ impl FragmentLengthArgs {
             max_fragment_length: 1000,
         }
     }
+
+    /// Validate the configured inclusive fragment length range.
+    ///
+    /// Clap enforces these constraints for CLI parsing, but commands and tests can also build
+    /// configs directly. Validate at command startup so invalid ranges fail before IO or output
+    /// side effects.
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.min_fragment_length >= MIN_ACGT_BASES_FOR_GC_FRACTION,
+            "--min-fragment-length ({}) must be >= {}",
+            self.min_fragment_length,
+            MIN_ACGT_BASES_FOR_GC_FRACTION
+        );
+        ensure!(
+            self.max_fragment_length >= MIN_ACGT_BASES_FOR_GC_FRACTION,
+            "--max-fragment-length ({}) must be >= {}",
+            self.max_fragment_length,
+            MIN_ACGT_BASES_FOR_GC_FRACTION
+        );
+        ensure!(
+            self.min_fragment_length <= self.max_fragment_length,
+            "--min-fragment-length ({}) must be <= --max-fragment-length ({})",
+            self.min_fragment_length,
+            self.max_fragment_length
+        );
+        ensure!(
+            self.max_fragment_length <= MAX_SUPPORTED_FRAGMENT_LENGTH,
+            "--max-fragment-length ({}) must be <= {}",
+            self.max_fragment_length,
+            MAX_SUPPORTED_FRAGMENT_LENGTH
+        );
+
+        Ok(())
+    }
+
     /// Check whether a fragment length is within the configured inclusive range.
     pub fn contains(&self, len: u32) -> bool {
         len >= self.min_fragment_length && len <= self.max_fragment_length
@@ -169,7 +287,7 @@ pub enum WindowSpec {
 pub struct WindowsArgs {
     /// Window definition: a fixed window size `[integer]`
     ///
-    /// Default is one global window.
+    /// When no windowing is specified, the default is one global window.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -203,6 +321,106 @@ impl WindowsArgs {
             WindowSpec::Bed(p)
         } else {
             WindowSpec::Global
+        }
+    }
+}
+
+/// The windowing options including a GroupedBed variant `[ENUM]`
+///
+/// Whether to perform a command globally (1 overall genomic window)
+/// or in windows specified with a BED file or a fixed window size.
+#[derive(Debug, Clone)]
+pub enum DistributionWindowSpec {
+    Global,
+    Size(u64),
+    Bed(PathBuf),
+    GroupedBed(PathBuf),
+}
+
+#[cfg_attr(feature = "cli", derive(clap::Args))]
+#[cfg_attr(
+    feature = "cli",
+    clap(
+        // At most one of the three flags. If none -> Global in `resolve()`
+        group = clap::ArgGroup::new("windows")
+            .args(&["by_size", "by_bed", "by_grouped_bed"])
+            .multiple(false)
+    )
+)]
+#[derive(Debug, Clone, Default)]
+pub struct DistributionWindowsArgs {
+    /// Window definition: a fixed window size `[integer]`
+    ///
+    /// When no windowing is specified, the default is one global window.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            value_parser,
+            group = "windows",
+            help_heading = "Windows (select max. one arg.)"
+        )
+    )]
+    pub by_size: Option<u64>,
+
+    /// Window definition: a BED file of windows `[path]`
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            value_parser,
+            group = "windows",
+            help_heading = "Windows (select max. one arg.)"
+        )
+    )]
+    pub by_bed: Option<PathBuf>,
+
+    /// Window definition: a BED file of grouped windows `[path]`
+    ///
+    /// Requires a fourth BED column with the group name.
+    ///
+    /// Windows with the same group name are aggregated together in the final output.
+    /// The exact per-group output shape depends on the command.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            value_parser,
+            group = "windows",
+            help_heading = "Windows (select max. one arg.)"
+        )
+    )]
+    pub by_grouped_bed: Option<PathBuf>,
+}
+
+impl DistributionWindowsArgs {
+    /// If neither flag is set, default to `Global`.
+    pub fn resolve_windows(&self) -> DistributionWindowSpec {
+        if let Some(n) = self.by_size {
+            DistributionWindowSpec::Size(n)
+        } else if let Some(p) = self.by_bed.clone() {
+            DistributionWindowSpec::Bed(p)
+        } else if let Some(p) = self.by_grouped_bed.clone() {
+            DistributionWindowSpec::GroupedBed(p)
+        } else {
+            DistributionWindowSpec::Global
+        }
+    }
+}
+
+impl DistributionWindowSpec {
+    /// Convert grouped-distribution window selection into the BED coordinates used by fetch and
+    /// overlap helpers.
+    ///
+    /// Grouped BED behaves like ordinary BED coordinates for fetch narrowing and overlap lookup;
+    /// only the downstream row identity changes from window index to group index.
+    pub fn as_fetch_window_spec(&self) -> WindowSpec {
+        match self {
+            DistributionWindowSpec::Global => WindowSpec::Global,
+            DistributionWindowSpec::Size(bp) => WindowSpec::Size(*bp),
+            DistributionWindowSpec::Bed(path) | DistributionWindowSpec::GroupedBed(path) => {
+                WindowSpec::Bed(path.clone())
+            }
         }
     }
 }
@@ -333,8 +551,9 @@ pub struct AssignToWindowArgs {
     ///
     /// Example of proportion: `--assign-by proportion=0.2` (no space around `=`)
     ///
-    /// Midpoints for even-sized fragments are randomly selected as either the left or right base
-    /// to avoid bias.
+    /// Midpoints for even-sized fragments use a deterministic coordinate-derived random seed to
+    /// select either the left or right base. Duplicate fragments with the same coordinates get the
+    /// same choice. This avoids fixed rounding bias while keeping repeated runs reproducible.
     ///
     /// **NOTE**: In the rare case where windows are smaller than fragments, it's still
     /// the proportion of the fragment positions that overlap that is considered. If the window
@@ -371,10 +590,8 @@ pub struct ChromosomeArgs {
     ///
     /// When no chromosomes are specified, it defaults to `chr1..chr22`.
     ///
-    /// Specify `"all"` *as the only string* to use all present chromosomes.
-    /// For BAM-backed commands this uses the BAM header order.
-    /// For commands that read chromosome order from their input,
-    /// this may use the input order or some other order.
+    /// Specify `"all"` *as the only string* to use all chromosomes from the
+    /// command's configured contig source.
     #[cfg_attr(
         feature = "cli", clap(
             long, num_args = 1..,
@@ -397,6 +614,44 @@ pub struct ChromosomeArgs {
     pub chromosomes_file: Option<PathBuf>,
 }
 
+/// Source used to expand `--chromosomes all`.
+#[derive(Debug, Clone, Copy)]
+pub enum ContigSourceKind {
+    Bam,
+    Ref2Bit,
+    ChromSizes,
+}
+
+/// Path and format for the contig source used by chromosome resolution.
+#[derive(Debug, Clone)]
+pub struct ContigSource {
+    pub path: PathBuf,
+    pub kind: ContigSourceKind,
+}
+
+impl ContigSource {
+    pub fn bam(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            kind: ContigSourceKind::Bam,
+        }
+    }
+
+    pub fn ref_2bit(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            kind: ContigSourceKind::Ref2Bit,
+        }
+    }
+
+    pub fn chrom_sizes(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            kind: ContigSourceKind::ChromSizes,
+        }
+    }
+}
+
 impl ChromosomeArgs {
     /// Returns the final chromosome list, in priority order:
     /// 1) from `--chromosomes-file`
@@ -404,7 +659,7 @@ impl ChromosomeArgs {
     /// 3) default `chr1`..`chr22`
     pub fn resolve_chromosomes(
         &self,
-        bam_path: Option<&std::path::Path>,
+        contig_source: Option<ContigSource>,
     ) -> anyhow::Result<Vec<String>> {
         if let Some(file) = &self.chromosomes_file {
             let text: String = std::fs::read_to_string(file)
@@ -418,12 +673,17 @@ impl ChromosomeArgs {
             Ok(list)
         } else if let Some(chrs) = &self.chromosomes {
             if chrs.len() == 1 && chrs[0].eq_ignore_ascii_case("all") {
-                let Some(bam) = bam_path else {
-                    bail!(
-                        "`--chromosomes all` requires `--bam <file>` to read contigs from the BAM header"
-                    );
+                let Some(source) = contig_source else {
+                    bail!("`--chromosomes all` requires a contig source");
                 };
-                return bam_header_contigs(bam);
+                return match source.kind {
+                    ContigSourceKind::Bam => bam_header_contigs(&source.path),
+                    ContigSourceKind::Ref2Bit => twobit_contig_names(&source.path),
+                    ContigSourceKind::ChromSizes => {
+                        let (chromosome_order, _) = load_chrom_sizes_with_order(&source.path)?;
+                        Ok(chromosome_order)
+                    }
+                };
             }
             Ok(chrs.clone())
         } else {
@@ -437,9 +697,11 @@ impl ChromosomeArgs {
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone, Default)]
 pub struct ScaleGenomeArgs {
-    /// Optional path to *non-negative* scaling factors for normalizing/smoothing the genome `[path]`
+    /// Optional path to non-negative scaling factors for normalizing/smoothing the genome `[path]`
     ///
-    /// `.tsv` file as produced by `cfdna coverage-weights` containing a scaling factor to *multiply* by per **scaling-bin**.
+    /// `.tsv` file as produced by `cfdna fragment-count-weights` or `cfdna coverage-weights` containing a scaling factor to *multiply* by per **scaling-bin**.
+    ///
+    /// Files may start with comment metadata lines from `cfdna coverage-weights/fragment-count-weights`, such as `# gc_mode=corrected_tag`.
     ///
     /// The scaling-bin-overlapping parts of the fragments are counted as the scaling factor of the bin (`w=sf`).
     ///
@@ -451,17 +713,17 @@ pub struct ScaleGenomeArgs {
     ///
     /// Coordinates are 0-based, half-open `[start, end)`.
     ///
-    /// `scaling_factor` must be finite and strictly >= 0.
+    /// Scaling factors must be finite and non-negative.
     ///
     /// Bins are filtered to the provided `chromosomes`.
     ///
     /// For every chromosome in `chromosomes`, bins must:
     ///
-    ///   - start at 0
+    ///   - start at the 0-coordinate
     ///
     ///   - be perfectly contiguous (no gaps, no overlaps)
     ///
-    ///   - end exactly at that chromosome’s length
+    ///   - end exactly at that chromosome's length
     #[cfg_attr(
         feature = "cli",
         clap(long, value_parser, help_heading = "Normalization")
@@ -496,38 +758,57 @@ pub struct ApplyGCArgs {
 
     /// Optional aux tag to get GC weight from when using external GC correction packages `[string]`
     ///
+    /// The tag name must be exactly two ASCII characters matching the SAM/BAM AUX tag format:
+    /// first character is a letter, second character is a letter or digit.
+    ///
     /// Packages like `GCParagon` and `GCfix` allow saving GC weights directly to the reads
     /// in a BAM file. They often assign a "GC" aux tag.
     ///
     /// The average per-read weight is used to count the fragment. When any of the reads have a zero-weight,
-    /// the fragment gets a zero-weight.
+    /// the fragment gets a zero-weight. If only one mate has a usable tag, that single usable
+    /// weight is reused for the fragment.
     #[cfg_attr(
         feature = "cli",
         clap(
             long,
-            value_parser,
+            value_parser = parse_sam_aux_tag_name,
             group = "gc_correction",
             help_heading = "GC Correction (select max. one source)"
         )
     )]
     pub gc_tag: Option<String>,
 
-    /// Whether to drop fragments where the GC correction could not be calculated `[flag]`
+    /// Keep fragments with unusable GC weights and weight them as `1.0` `[flag]`
     ///
-    /// If a GC correction weight could not be computed/retrieved for a fragment,
-    /// the default is to weight it as `1.0` (no correction). If you prefer to
-    /// exclude it instead, set this flag.
+    /// By default, fragments are skipped when the GC correction is missing, cannot be
+    /// computed, or resolves to an unusable value. Set this flag to keep them instead
+    /// and count them with neutral weight `1.0`.
     #[cfg_attr(
         feature = "cli",
         clap(long, help_heading = "GC Correction (select max. one source)")
     )]
-    pub drop_invalid_gc: bool,
+    pub neutralize_invalid_gc: bool,
+}
+
+impl ApplyGCArgs {
+    /// Validate combinations that clap already rejects on the CLI, so programmatic configs fail
+    /// the same way instead of depending on branch order deeper in the command logic.
+    pub fn validate(&self, ref_2bit: Option<&Path>) -> Result<()> {
+        if self.gc_file.is_some() && self.gc_tag.is_some() {
+            bail!("--gc-file and --gc-tag cannot be used together");
+        }
+        if let Some(gc_tag) = &self.gc_tag {
+            validate_sam_aux_tag_name(gc_tag)?;
+        }
+        validate_gc_file_reference(self.gc_file.as_deref(), ref_2bit)?;
+        Ok(())
+    }
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone, Default)]
 pub struct ApplyGCArgFileOnly {
-    /// Optional path to GC correction file *made from the same BAM file* with `gc-bias` `[path]`
+    /// Optional path to GC correction file *made from the same BAM file* with `cfdna gc-bias` `[path]`
     ///
     /// The file is usually called `gc_bias_correction.npz`.
     ///
@@ -538,13 +819,28 @@ pub struct ApplyGCArgFileOnly {
     )]
     pub gc_file: Option<PathBuf>,
 
-    /// Whether to drop fragments where the GC correction could not be calculated `[flag]`
+    /// Keep fragments with unusable GC weights and weight them as `1.0` `[flag]`
     ///
-    /// If a GC correction weight could not be computed for a fragment,
-    /// the default is to weight it as `1.0` (no correction). If you prefer to
-    /// exclude it instead, set this flag.
+    /// By default, fragments are skipped when the GC correction cannot be
+    /// computed or resolves to an unusable value. Set this flag to keep them
+    /// instead and count them with neutral weight `1.0`.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "GC Correction"))]
-    pub drop_invalid_gc: bool,
+    pub neutralize_invalid_gc: bool,
+}
+
+impl ApplyGCArgFileOnly {
+    /// Validate GC-file settings that are shared by commands without `--gc-tag`.
+    pub fn validate(&self, ref_2bit: Option<&Path>) -> Result<()> {
+        validate_gc_file_reference(self.gc_file.as_deref(), ref_2bit)
+    }
+}
+
+fn validate_gc_file_reference(gc_file: Option<&Path>, ref_2bit: Option<&Path>) -> Result<()> {
+    ensure!(
+        gc_file.is_none() || ref_2bit.is_some(),
+        "--gc-file requires --ref-2bit"
+    );
+    Ok(())
 }
 
 // TODO: Is "nearest" clear enough in all usecases?
@@ -791,7 +1087,7 @@ pub fn resolve_chromosomes_and_contigs(
     bam_path: &Path,
 ) -> Result<(Vec<String>, Contigs)> {
     let chromosomes = chrom_args
-        .resolve_chromosomes(Some(bam_path))
+        .resolve_chromosomes(Some(ContigSource::bam(bam_path)))
         .context("resolve chromosomes")?;
     let contigs = bam_contigs_info(bam_path, &chromosomes).context("fetch contig metadata")?;
     Ok((chromosomes, contigs))
@@ -853,6 +1149,8 @@ pub fn load_blacklist_map(
 /// Implementation details:
 /// - Uses `load_scaling_factors_tsv` to parse the command-line TSV into a
 ///   chromosome keyed map of `(start, end, factor)` tuples.
+/// - Checks scaling-file metadata so known raw-vs-corrected mismatches fail
+///   early instead of silently continuing.
 /// - Returns an empty map when no scaling factors were supplied, avoiding
 ///   unnecessary allocations inside the calling code.
 ///
@@ -860,6 +1158,10 @@ pub fn load_blacklist_map(
 /// - `scale_args`: Normalisation argument bundle.
 /// - `chromosomes`: Chromosome ordering requested by the command.
 /// - `contigs`: BAM target metadata, used to validate the TSV content.
+/// - `current_gc_mode`: Whether the current command run uses raw coverage,
+///   file-based GC correction, or tag-based GC correction.
+/// - `current_ignore_gap`: Whether the current command omits inter-mate gaps from fragment
+///   coverage. Use `None` for commands where that concept is not part of scaling compatibility.
 ///
 /// Returns:
 /// - A scaling factor map ready for lookups by chromosome.
@@ -871,15 +1173,29 @@ pub fn load_scaling_map(
     scale_args: &ScaleGenomeArgs,
     chromosomes: &[String],
     contigs: &Contigs,
-) -> Result<FxHashMap<String, Vec<(u64, u64, f32)>>> {
+    current_gc_mode: crate::shared::scale_genome::ScalingGCMode,
+    current_ignore_gap: Option<bool>,
+) -> Result<FxHashMap<String, Vec<crate::shared::scale_genome::ScalingBin>>> {
     if let Some(path) = &scale_args.scaling_factors {
-        load_scaling_factors_tsv(path, chromosomes, contigs).context("load scaling factors")
+        let loaded =
+            load_scaling_factors_tsv(path, chromosomes, contigs).context("load scaling factors")?;
+        crate::shared::scale_genome::ensure_scaling_gc_compatibility(
+            path,
+            loaded.metadata,
+            current_gc_mode,
+        )?;
+        crate::shared::scale_genome::warn_on_scaling_ignore_gap_mismatch(
+            path,
+            loaded.metadata,
+            current_ignore_gap,
+        );
+        Ok(loaded.bins_by_chromosome)
     } else {
         Ok(FxHashMap::with_hasher(Default::default()))
     }
 }
 
-/// A single fragment-length bin.
+/// A single fragment length bin.
 ///
 /// Bins are half-open intervals `[start, end)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -889,10 +1205,11 @@ pub struct LengthBin {
     pub label: String,
 }
 
-/// A validated, ordered set of fragment-length bins.
+/// A validated, ordered set of fragment length bins.
 ///
 /// Bins must be strictly increasing and contiguous so they can be converted
-/// to a unique edge vector (`[e0, e1, ..., eN]`) used by midpoint counting.
+/// to a unique edge vector (`[e0, e1, ..., eN]`) shared by commands that need
+/// fragment length strata.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LengthBins {
     bins: Vec<LengthBin>,
@@ -925,7 +1242,7 @@ impl LengthBins {
         Ok(Self { bins })
     }
 
-    /// Convert bins into the edge vector expected by midpoint counting.
+    /// Convert bins into the edge vector expected by length-binned commands.
     ///
     /// Example:
     /// - `[30,80), [80,150), [150,220)` -> `[30, 80, 150, 220]`
@@ -939,10 +1256,21 @@ impl LengthBins {
     }
 }
 
+fn parse_length_bin_number(raw_value: &str, field_name: &str) -> Result<u64> {
+    let trimmed = raw_value.trim();
+    ensure!(
+        !trimmed.is_empty() && trimmed.chars().all(|character| character.is_ascii_digit()),
+        "length-bins {field_name} must be a positive whole number"
+    );
+    trimmed
+        .parse::<u64>()
+        .with_context(|| format!("length-bins {field_name} is too large"))
+}
+
 /// Parse the `--length-bins` CLI string into validated `LengthBins`.
 ///
 /// Accepted forms:
-/// * `start:end:step` for regular bins.
+/// * `start:end:step` for bins that can be described by a range and step size.
 /// * `None` -> 1-bp bins spanning `[min_length, max_length]`.
 pub fn parse_length_bins(
     raw: Option<&str>,
@@ -960,6 +1288,13 @@ pub fn parse_length_bins(
             max_length
         );
     }
+    if max_length > MAX_SUPPORTED_FRAGMENT_LENGTH {
+        bail!(
+            "max fragment length ({}) must be <= {}",
+            max_length,
+            MAX_SUPPORTED_FRAGMENT_LENGTH
+        );
+    }
 
     let bins = if let Some(raw) = raw {
         let raw = raw.trim();
@@ -972,19 +1307,43 @@ pub fn parse_length_bins(
             if parts.len() != 3 {
                 bail!("length bins range must be start:end:step");
             }
-            let start: u32 = parts[0].trim().parse().context("parse length-bins start")?;
-            let end: u32 = parts[1].trim().parse().context("parse length-bins end")?;
-            let step: u32 = parts[2].trim().parse().context("parse length-bins step")?;
+            let start = parse_length_bin_number(parts[0], "start")?;
+            let end = parse_length_bin_number(parts[1], "end")?;
+            let step = parse_length_bin_number(parts[2], "step")?;
             if step == 0 {
                 bail!("length-bins step must be > 0");
+            }
+            if step > u64::from(max_length) {
+                bail!(
+                    "length-bins step ({}) must be <= max fragment length ({})",
+                    step,
+                    max_length
+                );
             }
             if start >= end {
                 bail!("length-bins start must be < end");
             }
+            if start < u64::from(min_length) {
+                bail!(
+                    "length-bins start ({}) must be >= min fragment length ({})",
+                    start,
+                    min_length
+                );
+            }
+            if end > u64::from(max_edge) {
+                bail!(
+                    "length-bins end ({}) must be <= max fragment length + 1 ({})",
+                    end,
+                    max_edge
+                );
+            }
+            let start = start as u32;
+            let end = end as u32;
+            let step = step as u32;
             let mut bins = Vec::new();
             let mut pos = start;
             while pos < end {
-                let next = (pos + step).min(end);
+                let next = pos.saturating_add(step).min(end);
                 bins.push(LengthBin {
                     start: pos,
                     end: next,
@@ -1025,4 +1384,83 @@ pub fn parse_length_bins(
     }
 
     LengthBins::new(bins)
+}
+
+/// Resolve raw `--length-bins` values into strictly increasing bin edges.
+///
+/// Commands use different defaults, but the accepted syntax should stay shared:
+/// a single compact range spec like `30:1001:1`, or multiple integer edge
+/// values like `30 80 150 1001`.
+///
+/// Parameters
+/// ----------
+/// - `raw_values`:
+///   Raw CLI/config values.
+/// - `min_allowed_length`:
+///   Minimum allowed fragment length edge.
+/// - `max_supported_fragment_length`:
+///   Maximum supported inclusive fragment length. The final exclusive edge may
+///   be this value plus one.
+///
+/// Returns
+/// -------
+/// - `edges`:
+///   Strictly increasing half-open bin edges.
+pub fn resolve_length_bin_edges(
+    raw_values: &[String],
+    min_allowed_length: u32,
+    max_supported_fragment_length: u32,
+) -> Result<Vec<u32>> {
+    ensure!(
+        !raw_values.is_empty(),
+        "length bin edges must contain at least two values"
+    );
+
+    let max_edge = max_supported_fragment_length
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("max fragment length too large to build bin edges"))?;
+
+    if raw_values.len() == 1 {
+        let raw_spec = raw_values[0].trim();
+        if raw_spec.contains(':') || raw_spec.contains('-') || raw_spec.contains(',') {
+            let parsed = parse_length_bins(
+                Some(raw_spec),
+                min_allowed_length,
+                max_supported_fragment_length,
+            )?;
+            return Ok(parsed.to_edges());
+        }
+    }
+
+    let mut edges = Vec::with_capacity(raw_values.len());
+    for raw_edge in raw_values {
+        let edge = parse_length_bin_number(raw_edge, "edge")?;
+        ensure!(
+            edge >= u64::from(min_allowed_length),
+            "length bin edges must be >= {}",
+            min_allowed_length
+        );
+        ensure!(
+            edge <= u64::from(max_edge),
+            "length bin edges must be <= {}",
+            max_edge
+        );
+        edges.push(edge as u32);
+    }
+
+    ensure!(
+        edges.len() >= 2,
+        "length bin edges must contain at least two values"
+    );
+    ensure!(
+        edges.windows(2).all(|window| window[0] < window[1]),
+        "length bin edges must be strictly increasing"
+    );
+
+    Ok(edges)
+}
+
+#[cfg(test)]
+mod tests {
+    include!("cli_common_tests.rs");
 }

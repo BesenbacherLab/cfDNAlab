@@ -1,40 +1,10 @@
 use anyhow::{Result, bail};
 use fxhash::{FxHashMap, FxHashSet};
-use serde::{Deserialize, Serialize};
 use std::num::NonZeroUsize;
-use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
-
-#[cfg(feature = "cli")]
-use clap::ValueEnum;
 
 use crate::commands::fragment_kmers::parse::PositionalSelectionSpec;
-use crate::commands::visualize_positions::Track;
-use crate::commands::visualize_positions::model::AxisBounds;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PositionOrientation {
-    Forward,
-    Reverse,
-}
-
-impl PositionOrientation {
-    /// Get PositionOrientation from PositionGroup
-    ///
-    /// Left/Mid => forward, right => reverse
-    pub fn from_position_group(group: PositionGroup) -> PositionOrientation {
-        match group {
-            PositionGroup::Left | PositionGroup::Mid => PositionOrientation::Forward,
-            PositionGroup::Right => PositionOrientation::Reverse,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub enum PositionGroup {
-    Left,
-    Right,
-    Mid,
-}
+use crate::shared::positioning::{PositionGroup, PositionOrientation, ReferenceFrame};
+use crate::shared::visualization::{AxisBounds, Track};
 
 /// The position specification tagged to allow frame-specific dispatch.
 /// Each variant has range and step size
@@ -100,76 +70,6 @@ pub enum LinearRange {
     ToHalf { minus: u32 },
     /// Range starting at a fixed offset up to the fragment half (`A..half[-K]`).
     FromToHalf { start: u32, minus: u32 },
-}
-
-/// How to resolve overlapping read mismatches when choosing read-backed bases.
-#[cfg_attr(feature = "cli", derive(ValueEnum))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum MismatchBasesFrom {
-    #[default]
-    NearestRead,
-    BaseQuality,
-    Reference,
-}
-
-impl MismatchBasesFrom {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            MismatchBasesFrom::NearestRead => "nearest-read",
-            MismatchBasesFrom::BaseQuality => "base-quality",
-            MismatchBasesFrom::Reference => "reference",
-        }
-    }
-}
-
-/// Whether the user wants to reason about read or reference coordinates.
-#[cfg_attr(feature = "cli", derive(ValueEnum))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum BasesFrom {
-    /// Always use reference positions regardless of read coverage.
-    #[default]
-    Reference,
-    /// Prefer observed read coordinates, but fall back to the reference span when a read is missing.
-    PreferReads,
-    /// Only include positions covered by either read. Inferred mate gaps are skipped.
-    Reads,
-    /// Clamp to the read nearest to the frame origin.
-    NearestRead,
-}
-
-impl BasesFrom {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            BasesFrom::Reference => "reference",
-            BasesFrom::PreferReads => "prefer-reads",
-            BasesFrom::Reads => "reads",
-            BasesFrom::NearestRead => "nearest-read",
-        }
-    }
-}
-
-/// Enumeration of the available coordinate frames used to interpret positional selections.
-#[cfg_attr(feature = "cli", derive(ValueEnum))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash, EnumCountMacro, EnumIter)]
-pub enum ReferenceFrame {
-    #[default]
-    Left,
-    Right,
-    PerEnd,
-    Nearest,
-    Mid,
-}
-
-impl ReferenceFrame {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            ReferenceFrame::Left => "left",
-            ReferenceFrame::Right => "right",
-            ReferenceFrame::PerEnd => "per-end",
-            ReferenceFrame::Nearest => "nearest",
-            ReferenceFrame::Mid => "mid",
-        }
-    }
 }
 
 /* Final windows */
@@ -322,7 +222,7 @@ impl PositionSelectionCache {
                     offset_sets.push(set_start_values);
                 }
 
-                // Intersect offsets and keep first spec’s PositionSelection for survivors
+                // Intersect offsets and keep first spec's PositionSelection for survivors
                 let surviving_offsets: FxHashSet<u32> = intersect_all(&offset_sets);
 
                 let mut intersected_values: Vec<PositionSelection> = first_pairs

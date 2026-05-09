@@ -5,10 +5,9 @@ use anyhow::Result;
 
 use crate::commands::{
     cli_common::UnparsedPositionalSelectionSpec,
-    fragment_kmers::positions::{
-        LinearRange, MidRange, NearestRange, PositionsSpec, ReferenceFrame,
-    },
+    fragment_kmers::positions::{LinearRange, MidRange, NearestRange, PositionsSpec},
 };
+use crate::shared::positioning::ReferenceFrame;
 const LINEAR_EXAMPLE: &str = "--positions 1..10";
 const NEAREST_EXAMPLE: &str = "--positions ..half";
 const MID_EXAMPLE: &str = "--positions -10..10";

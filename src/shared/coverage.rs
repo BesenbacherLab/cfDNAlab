@@ -20,7 +20,7 @@ enum Stage {
 /// ```rust
 /// use cfdnalab::shared::coverage::Coverage;
 /// use cfdnalab::shared::fragment::minimal_fragment::Fragment;
-/// use cfdnalab::shared::gc_tag::GcTagValue;
+/// use cfdnalab::shared::gc_tag::GCTagValue;
 /// use cfdnalab::shared::interval::Interval;
 ///
 /// # use anyhow::Result;
@@ -32,7 +32,7 @@ enum Stage {
 /// cp.add_fragment(Fragment {
 ///     tid: 0,
 ///     interval: Interval::new(100, 200)?,
-///     gc_tag: GcTagValue::default(),
+///     gc_tag: GCTagValue::default(),
 /// })?;
 ///
 /// // GC-weighted fragment
@@ -40,7 +40,7 @@ enum Stage {
 ///     Fragment {
 ///         tid: 0,
 ///         interval: Interval::new(150, 250)?,
-///         gc_tag: GcTagValue::default(),
+///         gc_tag: GCTagValue::default(),
 ///     },
 ///     0.87,
 /// )?;
@@ -66,7 +66,7 @@ enum Stage {
 #[derive(Debug, Clone)]
 pub struct Coverage {
     length: u32,                // Total sequence length in bases (e.g., chrom_len)
-    delta: Vec<f32>,            // +w at start, -w at end, length = length + 1 (last is sentinel)
+    delta: Vec<f64>,            // +w at start, -w at end, length = length + 1 (last is sentinel)
     coverage: Option<Vec<f32>>, // Per-base coverage after finalize_coverage, length = length
     bl_mask: Option<Vec<u8>>, // Per-base blacklist mask after finalize_blacklist_prefix, 1 = blacklisted
 
@@ -76,6 +76,19 @@ pub struct Coverage {
     psum_unmasked_count: Option<Vec<u32>>, // Σ 1 over non-blacklisted positions
 
     cov_stage: Stage, // Lifecycle for coverage
+}
+
+/// Clamp finite coverage values below `floor` to exact zero.
+///
+/// Coverage is semantically nonnegative, so this also clamps any negative
+/// floating-point artefacts to `0.0`.
+pub(crate) fn clamp_finite_coverage_below_to_zero(values: &mut [f32], floor: f32) {
+    let floor = floor as f64;
+    for value in values.iter_mut() {
+        if value.is_finite() && (*value as f64) < floor {
+            *value = 0.0;
+        }
+    }
 }
 
 impl Coverage {
@@ -93,7 +106,7 @@ impl Coverage {
     pub fn new(length: u32) -> Self {
         Self {
             length,
-            delta: vec![0.0; length as usize + 1],
+            delta: vec![0.0_f64; length as usize + 1],
             coverage: None,
             bl_mask: None,
             psum_all: None,
@@ -123,7 +136,7 @@ impl Coverage {
     /// - weight:
     ///     Weight to add, must be finite and >= 0.
     #[inline]
-    pub fn add_fragment_weighted(&mut self, frag: Fragment, weight: f32) -> Result<()> {
+    pub fn add_fragment_weighted(&mut self, frag: Fragment, weight: f64) -> Result<()> {
         if !self.prefix_available() {
             anyhow::bail!(
                 "prefix was dropped; cannot add fragments. Rebuild or create a new Coverage"
@@ -177,7 +190,7 @@ impl Coverage {
     pub fn add_fragment_with_segments(
         &mut self,
         frag: FragmentWithSegments,
-        weight: f32,
+        weight: f64,
     ) -> anyhow::Result<()> {
         if !self.prefix_available() {
             anyhow::bail!(
@@ -200,7 +213,7 @@ impl Coverage {
                 let base = Fragment {
                     tid: frag.tid,
                     interval: frag.interval,
-                    gc_tag: crate::shared::gc_tag::GcTagValue::default(),
+                    gc_tag: crate::shared::gc_tag::GCTagValue::default(),
                 };
                 self.add_fragment_weighted(base, weight)
             }
@@ -243,7 +256,7 @@ impl Coverage {
         // Cumulative sum over delta
         let mut run = 0.0_f64;
         for i in 0..=self.length as usize {
-            run += self.delta[i] as f64;
+            run += self.delta[i];
             if i < self.length as usize {
                 cov[i] = run as f32;
             }
@@ -891,4 +904,10 @@ impl Coverage {
     pub fn has_blacklist(&self) -> bool {
         self.bl_mask.is_some()
     }
+}
+
+#[cfg(test)]
+mod tests {
+    include!("coverage_tests.rs");
+    include!("test_coverage_correlation.rs");
 }

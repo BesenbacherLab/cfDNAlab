@@ -1,19 +1,17 @@
 use fxhash::FxHashMap;
 use rust_htslib::bam::ext::BamRecordExtensions; // reference_end()
-use rust_htslib::bam::record::{Cigar, Record};
+use rust_htslib::bam::record::Record;
 
 use crate::Result;
+use crate::shared::clip_mode::ClipMode;
+use crate::shared::fragment::cigar_counts::{inspect_cigar_edges, inspect_cigar_indels};
 use crate::shared::fragment::minimal_fragment::{
     PairOrientable, is_inwards_oriented, oriented_pair_from_read_info,
 };
-use crate::shared::interval::{Interval, TouchingMergePolicy, merge_sorted_intervals};
+use crate::shared::indel_mode::IndelMode;
+use crate::shared::interval::Interval;
 
-/// Insertion anchored at one reference position with a positive inserted length.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub struct InsertionAnchor {
-    pub reference_position: u32,
-    pub inserted_length: u32,
-}
+pub use crate::shared::fragment::cigar_counts::InsertionAnchor;
 
 /// Compact per-read info with extracted indel events.
 #[derive(Debug, Clone)]
@@ -21,6 +19,8 @@ pub struct IndelReadInfo {
     pub tid: i32,
     pub interval: Interval<u32>, // Aligned reference span [start: pos(), end: reference_end())
     pub is_reverse: bool,
+    pub left_soft_clip_bp: u32,
+    pub right_soft_clip_bp: u32,
     /// Deletions (and ref-skips if present) as reference intervals [start, end)
     pub deletions: Vec<Interval<u32>>,
     /// Insertions anchored at one reference position with their inserted length.
@@ -32,62 +32,17 @@ impl TryFrom<&Record> for IndelReadInfo {
 
     #[inline]
     fn try_from(r: &Record) -> Result<Self> {
-        let mut deletions: Vec<Interval<u32>> = Vec::new();
-        let mut insertions: Vec<InsertionAnchor> = Vec::new();
-
-        // Walk the CIGAR in reference coordinates
-        let mut ref_pos: u32 = r.pos() as u32;
-
-        for op in r.cigar().iter() {
-            match *op {
-                Cigar::Match(l) | Cigar::Equal(l) | Cigar::Diff(l) => {
-                    ref_pos = ref_pos.saturating_add(l);
-                }
-                Cigar::Del(l) => {
-                    let deletion_start = ref_pos;
-                    let deletion_end = ref_pos.saturating_add(l);
-                    if let Ok(deletion) = Interval::new(deletion_start, deletion_end) {
-                        deletions.push(deletion);
-                    }
-                    ref_pos = deletion_end; // D consumes reference
-                }
-                Cigar::RefSkip(l) => {
-                    // Rare in cfDNA; treat as a deletion on the reference
-                    let skipped_start = ref_pos;
-                    let skipped_end = ref_pos.saturating_add(l);
-                    if let Ok(skipped_interval) = Interval::new(skipped_start, skipped_end) {
-                        deletions.push(skipped_interval);
-                    }
-                    ref_pos = skipped_end; // N consumes reference
-                }
-                Cigar::Ins(l) => {
-                    // Insertion anchored at current ref_pos
-                    if l > 0 {
-                        insertions.push(InsertionAnchor {
-                            reference_position: ref_pos,
-                            inserted_length: l,
-                        });
-                    }
-                    // I does not consume reference
-                }
-                Cigar::SoftClip(_) | Cigar::HardClip(_) | Cigar::Pad(_) => {
-                    // Ignore: do not consume reference, and clips are not molecule
-                }
-            }
-        }
-
-        // Merge adjacent/overlapping deletion intervals to normalize
-        if deletions.len() > 1 {
-            deletions.sort_unstable_by_key(|deletion| deletion.start());
-            deletions = merge_sorted_intervals(deletions, TouchingMergePolicy::MergeTouching);
-        }
+        let edge_info = inspect_cigar_edges(r);
+        let indel_info = inspect_cigar_indels(r);
 
         Ok(IndelReadInfo {
             tid: r.tid(),
             interval: Interval::new(r.pos() as u32, r.reference_end() as u32)?,
             is_reverse: r.is_reverse(),
-            deletions,
-            insertions,
+            left_soft_clip_bp: edge_info.left_soft_clip_bp,
+            right_soft_clip_bp: edge_info.right_soft_clip_bp,
+            deletions: indel_info.deletions,
+            insertions: indel_info.insertions,
         })
     }
 }
@@ -137,6 +92,8 @@ impl PairOrientable for IndelReadInfo {
 pub struct FragmentWithIndelCounts {
     pub tid: i32,
     pub interval: Interval<u32>, // forward.pos .. reverse.end
+    pub left_soft_clip_bp: u32,
+    pub right_soft_clip_bp: u32,
 
     // Totals accumulated under the "pair-supported in overlap" policy:
     pub deletions_nonoverlap: u32,
@@ -164,13 +121,82 @@ impl FragmentWithIndelCounts {
         self.interval.len()
     }
 
-    /// Indel-aware length: len_ref + inserts_total - deletions_total (saturating at 0).
+    /// Adjusted length after applying the requested indel mode and clip mode.
+    ///
+    /// The aligned reference length is adjusted for indels by adding inserts and subtracting deletions.
+    /// Then the number of clipped bases are added.
     #[inline]
-    pub fn len_indel_adjusted(&self) -> u32 {
-        let ins = (self.insertions_nonoverlap as u64) + (self.insertions_overlap_supported as u64);
-        let del = (self.deletions_nonoverlap as u64) + (self.deletions_overlap_supported as u64);
-        let base = self.len_ref() as u64;
-        base.saturating_add(ins).saturating_sub(del) as u32
+    pub fn adjusted_len(&self, indel_mode: IndelMode, clip_mode: ClipMode) -> u32 {
+        let mut length = self.len_ref() as u64;
+
+        // Adjust for indels
+        length = match indel_mode {
+            IndelMode::Adjust => {
+                let ins = (self.insertions_nonoverlap as u64)
+                    + (self.insertions_overlap_supported as u64);
+                let del =
+                    (self.deletions_nonoverlap as u64) + (self.deletions_overlap_supported as u64);
+                length.saturating_add(ins).saturating_sub(del)
+            }
+            IndelMode::Ignore | IndelMode::Skip => length,
+        };
+
+        // Adjust for soft clips
+        match clip_mode {
+            ClipMode::Aligned | ClipMode::Skip => length as u32,
+            ClipMode::Adjust => length
+                .saturating_add(self.left_soft_clip_bp as u64)
+                .saturating_add(self.right_soft_clip_bp as u64)
+                as u32,
+        }
+    }
+
+    /// Whether either relevant fragment end has any soft clipping.
+    #[inline]
+    pub fn has_soft_clipping(&self) -> bool {
+        self.left_soft_clip_bp > 0 || self.right_soft_clip_bp > 0
+    }
+
+    /// Whether both relevant fragment ends satisfy the configured soft-clip limit.
+    #[inline]
+    pub fn soft_clips_within_limit(&self, max_soft_clips: u32) -> bool {
+        self.left_soft_clip_bp <= max_soft_clips && self.right_soft_clip_bp <= max_soft_clips
+    }
+
+    /// Number of reference bases removed by deletion-like CIGAR operations.
+    ///
+    /// The stored deletion fields already follow the fragment-level support policy used for length
+    /// adjustment. This includes `D` and `N` operations seen by the reads.
+    #[inline]
+    pub fn deletion_bases(&self) -> u32 {
+        self.deletions_nonoverlap
+            .saturating_add(self.deletions_overlap_supported)
+    }
+
+    /// Whether the fragment satisfies the configured deletion-base limit.
+    #[inline]
+    pub fn deletion_bases_within_limit(&self, max_deletion_bases: u32) -> bool {
+        self.deletion_bases() <= max_deletion_bases
+    }
+
+    /// Window-assignment interval after applying the requested clip mode.
+    ///
+    /// This only changes the fragment coordinates for soft clipping. Indel-aware length changes do
+    /// not alter the reference interval stored here.
+    #[inline]
+    pub fn assignment_interval_with_clip_mode(
+        &self,
+        clip_mode: ClipMode,
+    ) -> crate::Result<Interval<u64>> {
+        let start = match clip_mode {
+            ClipMode::Adjust => self.start().saturating_sub(self.left_soft_clip_bp) as u64,
+            ClipMode::Aligned | ClipMode::Skip => self.start() as u64,
+        };
+        let end = match clip_mode {
+            ClipMode::Adjust => self.end().saturating_add(self.right_soft_clip_bp) as u64,
+            ClipMode::Aligned | ClipMode::Skip => self.end() as u64,
+        };
+        Ok(Interval::new(start, end)?)
     }
 }
 
@@ -240,19 +266,6 @@ fn partition_insertion_by_aligned_overlap(
     }
 }
 
-/// Build a `FragmentWithIndelCounts` from two `Record`s.
-#[inline]
-pub fn collect_fragment_with_indel_counts_from_records(
-    a: &Record,
-    b: &Record,
-    skip_indels: bool,
-    count_indels: bool,
-) -> Option<FragmentWithIndelCounts> {
-    let ai = IndelReadInfo::try_from(a).ok()?;
-    let bi = IndelReadInfo::try_from(b).ok()?;
-    collect_fragment_with_indel_counts(&ai, &bi, skip_indels, count_indels)
-}
-
 /// Build a `FragmentWithIndelCounts` from a single read.
 ///
 /// The fragment span is the aligned reference span of the read `[pos, reference_end)`.
@@ -275,6 +288,8 @@ pub fn collect_fragment_with_indel_counts_from_single_read(
         return Some(FragmentWithIndelCounts {
             tid: read.tid,
             interval: fragment_interval,
+            left_soft_clip_bp: read.left_soft_clip_bp,
+            right_soft_clip_bp: read.right_soft_clip_bp,
             deletions_nonoverlap: 0,
             insertions_nonoverlap: 0,
             deletions_overlap_supported: 0,
@@ -288,6 +303,8 @@ pub fn collect_fragment_with_indel_counts_from_single_read(
     Some(FragmentWithIndelCounts {
         tid: read.tid,
         interval: fragment_interval,
+        left_soft_clip_bp: read.left_soft_clip_bp,
+        right_soft_clip_bp: read.right_soft_clip_bp,
         deletions_nonoverlap: deletions_bp,
         insertions_nonoverlap: insertions_bp,
         deletions_overlap_supported: 0,
@@ -300,10 +317,10 @@ pub fn collect_fragment_with_indel_counts_from_single_read(
 ///
 /// Concept
 /// -------
-/// 1) Require same contig, opposite strands, and **inward** geometry
+/// 1) Require same contig, opposite strands, and **inward-facing** read coordinates
 ///    (`forward.pos <= reverse.pos`). The fragment span is
 ///    `[forward.pos, reverse.end)` (end-exclusive).
-/// 2) Split each read’s indels into:
+/// 2) Split each read's indels into:
 ///    - **Non-overlap** (bases covered by only one mate): count fully per read
 ///      * Deletions/RefSkips (D/N) add to `deletions_nonoverlap`.
 ///      * Insertions (I)           add to `insertions_nonoverlap`.
@@ -314,9 +331,9 @@ pub fn collect_fragment_with_indel_counts_from_single_read(
 ///        add `min(len_a, len_b)` at each shared reference position
 ///        -> `insertions_overlap_supported`.
 ///
-/// The **indel-adjusted** length can then be derived as:
-/// `len_indel_adjusted = (end - start) + insertions_total - deletions_total`,
-/// where totals are the sums of non-overlap and supported-overlap components.
+/// The fragment length can then be adjusted from the aligned reference span using the summed
+/// insertion and deletion contributions, with optional soft-clip handling applied later by the
+/// caller.
 ///
 /// Parameters
 /// ----------
@@ -358,6 +375,8 @@ pub fn collect_fragment_with_indel_counts(
         return Some(FragmentWithIndelCounts {
             tid: forward.tid,
             interval: fragment_interval,
+            left_soft_clip_bp: forward.left_soft_clip_bp,
+            right_soft_clip_bp: reverse.right_soft_clip_bp,
             deletions_nonoverlap: 0,
             insertions_nonoverlap: 0,
             deletions_overlap_supported: 0,
@@ -449,6 +468,8 @@ pub fn collect_fragment_with_indel_counts(
     Some(FragmentWithIndelCounts {
         tid: forward.tid,
         interval: fragment_interval,
+        left_soft_clip_bp: forward.left_soft_clip_bp,
+        right_soft_clip_bp: reverse.right_soft_clip_bp,
         deletions_nonoverlap: deletions_nonoverlap_bp,
         insertions_nonoverlap: insertions_nonoverlap_bp,
         deletions_overlap_supported: deletions_overlap_supported_bp,

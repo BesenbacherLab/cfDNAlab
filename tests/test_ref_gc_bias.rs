@@ -1,3 +1,5 @@
+#![cfg(feature = "cmd_ref_gc_bias")]
+
 use anyhow::Result;
 use ndarray::array;
 use ndarray_npy::NpzReader;
@@ -5,7 +7,7 @@ use std::path::Path;
 use tempfile::TempDir;
 
 use cfdnalab::{
-    commands::cli_common::ChromosomeArgs,
+    commands::cli_common::{ChromosomeArgs, LoggingArgs},
     commands::gc_bias::counting::{
         GCCounts, build_gc_prefixes, count_reference_gc_and_length_by_window,
         get_gc_integer_percentage_for_window,
@@ -15,6 +17,7 @@ use cfdnalab::{
     shared::{
         blacklist::apply_blacklist_mask_to_seq,
         interval::{IndexedInterval, Interval},
+        reference::{ContigFootprintEntry, twobit_contig_footprint},
     },
 };
 mod fixtures;
@@ -43,7 +46,6 @@ fn load_ref_gc_package_arrays(
 
 #[test]
 fn gc_prefix_helpers_return_prefix_differences_for_checked_intervals() -> Result<()> {
-    // Human verification status: unverified
     // Sequence A C N G T A:
     // - [1,5) = C N G T -> GC=2, ACGT=3
     // - [2,4) = N G     -> GC=1, ACGT=1
@@ -62,7 +64,6 @@ fn gc_prefix_helpers_return_prefix_differences_for_checked_intervals() -> Result
 
 #[test]
 fn gc_prefix_helpers_error_when_interval_exceeds_prefix_bounds() -> Result<()> {
-    // Human verification status: unverified
     // Sequence A C G T has prefix length 5, so the largest valid half-open interval end is 4.
     // Asking for [1,5) should therefore fail before any subtraction is attempted.
     let seq = b"ACGT".to_vec();
@@ -93,7 +94,6 @@ fn gc_prefix_helpers_error_when_interval_exceeds_prefix_bounds() -> Result<()> {
 
 #[test]
 fn gc_integer_percentage_window_returns_some_none_and_error() -> Result<()> {
-    // Human verification status: unverified
     // Sequence A C N G T:
     // - [0,5) = A C N G T -> GC=2, ACGT=4, so GC% = round(200/4) = 50
     // - [1,4) = C N G     -> GC=2, ACGT=2, so this stays valid when min_acgt_count=2
@@ -126,7 +126,6 @@ fn gc_integer_percentage_window_returns_some_none_and_error() -> Result<()> {
 
 #[test]
 fn counts_gc_for_each_window_with_end_offset() -> Result<()> {
-    // Human verification status: unverified
     // Arrange: Two windows of equal size with start positions seeded at each window start
     // End offset trims one base on each side so GC is counted on the inner span.
     let seq = b"ACGTACGTACGT".to_vec();
@@ -197,8 +196,46 @@ fn counts_gc_for_each_window_with_end_offset() -> Result<()> {
 }
 
 #[test]
+fn reference_gc_counts_use_tile_local_prefix_coordinates_after_late_sequence_load() -> Result<()> {
+    // This mirrors ref-gc-bias after loading a late reference slice, e.g. absolute [900,964).
+    // The count helper receives tile-local coordinates, so absolute window [930,941) is [30,41)
+    // and absolute start 930 is local start 30.
+    //
+    // In the ACGT repeat, local [30,41) is:
+    //   G T A C G T A C G T A
+    // This has 5 GC bases and 11 ACGT bases, so length 11 / GC count 5 gets one count.
+    let seq = b"ACGT".repeat(16);
+    let prefixes = build_gc_prefixes(&seq);
+    let windows = IndexedInterval::from_tuples(&[(30, 41, 0)])?;
+    let starts = vec![30usize];
+    let mut counts_by_bin = vec![GCCounts::new(11, 11, 0, (0, 0))?];
+
+    // Act
+    count_reference_gc_and_length_by_window(
+        &mut counts_by_bin,
+        &prefixes,
+        (11, 12),
+        windows.as_slice(),
+        starts.as_slice(),
+        seq.len() as u64,
+        1.0,
+        1,
+        0,
+    )?;
+
+    // Assert
+    assert_eq!(counts_by_bin[0].sum(), 1.0);
+    assert_eq!(
+        counts_by_bin[0]
+            .get(11, 5)
+            .expect("length 11 / GC count 5 should be in range"),
+        1.0
+    );
+    Ok(())
+}
+
+#[test]
 fn skips_counts_after_blacklist_removes_acgt_support() -> Result<()> {
-    // Human verification status: unverified
     // Arrange: Blacklist the middle of the fragment so only half the bases remain ACGT
     let mut seq = b"ACGT".to_vec();
     let blacklist_intervals = Interval::from_tuples(&[(1, 3)])?;
@@ -228,7 +265,6 @@ fn skips_counts_after_blacklist_removes_acgt_support() -> Result<()> {
 
 #[test]
 fn support_threshold_per_mb_steps_at_hundred_million_positions() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Use exactly 1 Mb of valid ACGT positions so the absolute threshold equals `threshold_per_mb`.
     // The row values are chosen so each threshold step changes exactly one additional support bit.
@@ -267,7 +303,6 @@ fn support_threshold_per_mb_steps_at_hundred_million_positions() -> Result<()> {
 
 #[test]
 fn ref_gc_bias_run_writes_expected_prefixed_package_metadata_and_shapes() -> Result<()> {
-    // Human verification status: unverified
     let reference = fixtures::simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
     let output_prefix = "unit_ref_gc";
@@ -297,6 +332,7 @@ fn ref_gc_bias_run_writes_expected_prefixed_package_metadata_and_shapes() -> Res
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 1_000_000,
+        logging: LoggingArgs::default(),
     };
     cfg.check_smoothing_settings()?;
 
@@ -331,6 +367,19 @@ fn ref_gc_bias_run_writes_expected_prefixed_package_metadata_and_shapes() -> Res
     let smoothing_radius: ndarray::Array1<u32> = npz.by_name("smoothing_radius")?;
     let smoothing_sigma: ndarray::Array1<f64> = npz.by_name("smoothing_sigma")?;
     let skip_smoothing: ndarray::Array1<bool> = npz.by_name("skip_smoothing")?;
+    let chromosomes_json: ndarray::Array1<u8> = npz.by_name("chromosomes_json")?;
+    let reference_contig_footprint_json: ndarray::Array1<u8> =
+        npz.by_name("reference_contig_footprint_json")?;
+    let reference_contig_footprint: Vec<ContigFootprintEntry> = serde_json::from_slice(
+        reference_contig_footprint_json
+            .as_slice()
+            .expect("reference_contig_footprint_json should be contiguous"),
+    )?;
+    let chromosomes: Vec<String> = serde_json::from_slice(
+        chromosomes_json
+            .as_slice()
+            .expect("chromosomes_json should be contiguous"),
+    )?;
 
     assert_eq!(counts.dim(), (3, 101));
     assert_eq!(support_unobservables.dim(), (3, 101));
@@ -339,7 +388,7 @@ fn ref_gc_bias_run_writes_expected_prefixed_package_metadata_and_shapes() -> Res
 
     assert_eq!(
         version.to_vec(),
-        vec![cfdnalab::commands::gc_bias::GC_CORRECTION_SCHEMA_VERSION]
+        vec![cfdnalab::shared::constants::GC_CORRECTION_SCHEMA_VERSION]
     );
     assert_eq!(length_range.to_vec(), vec![10, 12]);
     assert_eq!(end_offset.to_vec(), vec![0]);
@@ -347,6 +396,11 @@ fn ref_gc_bias_run_writes_expected_prefixed_package_metadata_and_shapes() -> Res
     assert_eq!(smoothing_radius.to_vec(), vec![2]);
     assert_eq!(smoothing_sigma.to_vec(), vec![0.55]);
     assert_eq!(skip_smoothing.to_vec(), vec![true]);
+    assert_eq!(chromosomes, vec!["chr1".to_string()]);
+    assert_eq!(
+        reference_contig_footprint,
+        twobit_contig_footprint(&reference.path)?
+    );
 
     let expected_theoretical_bins = [
         vec![0_usize, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
@@ -413,7 +467,6 @@ fn ref_gc_bias_run_writes_expected_prefixed_package_metadata_and_shapes() -> Res
 
 #[test]
 fn ref_gc_bias_run_counts_expected_two_bin_reference_distribution() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Build a 200 bp chromosome with two pure regions:
     // - chr1[0,100)   = all A
@@ -493,6 +546,7 @@ fn ref_gc_bias_run_counts_expected_two_bin_reference_distribution() -> Result<()
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 1_000_000,
+        logging: LoggingArgs::default(),
     };
 
     // Act
@@ -555,7 +609,6 @@ fn ref_gc_bias_run_counts_expected_two_bin_reference_distribution() -> Result<()
 
 #[test]
 fn ref_gc_bias_run_blacklist_removes_exactly_the_overlapping_start_positions() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Start from the same exact-count setup as the previous test:
     // - chr1[0,100)   = all A
@@ -627,6 +680,7 @@ fn ref_gc_bias_run_blacklist_removes_exactly_the_overlapping_start_positions() -
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 1_000_000,
+        logging: LoggingArgs::default(),
     };
 
     // Act
@@ -691,7 +745,6 @@ fn ref_gc_bias_run_blacklist_removes_exactly_the_overlapping_start_positions() -
 
 #[test]
 fn ref_gc_bias_run_end_offset_counts_expected_trimmed_two_bin_distribution() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Build the same 200 bp pure-reference setup:
     // - chr1[0,100)   = all A
@@ -775,6 +828,7 @@ fn ref_gc_bias_run_end_offset_counts_expected_trimmed_two_bin_distribution() -> 
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 1_000_000,
+        logging: LoggingArgs::default(),
     };
 
     // Act
@@ -837,7 +891,6 @@ fn ref_gc_bias_run_end_offset_counts_expected_trimmed_two_bin_distribution() -> 
 
 #[test]
 fn ref_gc_bias_run_blacklist_with_end_offset_drops_only_trimmed_overlaps() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Reuse the trimmed-span setup from the previous test:
     // - chr1[0,100)   = all A
@@ -909,6 +962,7 @@ fn ref_gc_bias_run_blacklist_with_end_offset_drops_only_trimmed_overlaps() -> Re
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 1_000_000,
+        logging: LoggingArgs::default(),
     };
 
     // Act
@@ -1053,6 +1107,7 @@ fn ref_gc_bias_run_smoothing_enabled_spreads_three_gc_anchors_by_known_kernel() 
         smoothing_radius: 1,
         skip_smoothing: false,
         tile_size: 1_000_000,
+        logging: LoggingArgs::default(),
     };
 
     // Act
@@ -1169,6 +1224,7 @@ fn ref_gc_bias_run_interpolation_enabled_fills_between_equal_supported_anchors()
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 1_000_000,
+        logging: LoggingArgs::default(),
     };
 
     // Act
@@ -1202,7 +1258,6 @@ fn ref_gc_bias_run_interpolation_enabled_fills_between_equal_supported_anchors()
 
 #[test]
 fn overlapping_and_touching_bed_windows_match_explicitly_merged_ref_gc_bias_run() -> Result<()> {
-    // Human verification status: unverified
     let reference = fixtures::simple_reference_twobit()?;
     let split_out_dir = TempDir::new()?;
     let merged_out_dir = TempDir::new()?;
@@ -1239,6 +1294,7 @@ fn overlapping_and_touching_bed_windows_match_explicitly_merged_ref_gc_bias_run(
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 1_000_000,
+        logging: LoggingArgs::default(),
     };
 
     // Manual expectations:
@@ -1280,7 +1336,6 @@ fn overlapping_and_touching_bed_windows_match_explicitly_merged_ref_gc_bias_run(
 #[test]
 fn overlapping_and_touching_bed_windows_with_blacklist_match_explicitly_merged_ref_gc_bias_run()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // `ref-gc-bias` flattens overlapping and touching BED intervals to unique positions before
     // counting. That flattening must stay correct even when a blacklist removes part of the
@@ -1333,6 +1388,7 @@ fn overlapping_and_touching_bed_windows_with_blacklist_match_explicitly_merged_r
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 80,
+        logging: LoggingArgs::default(),
     };
 
     // Act
@@ -1365,7 +1421,6 @@ fn overlapping_and_touching_bed_windows_with_blacklist_match_explicitly_merged_r
 
 #[test]
 fn full_chromosome_bed_window_matches_global_ref_gc_bias_run() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // `ref-gc-bias` samples candidate fragment starts independently of windowing, then counts only
     // starts that land inside the configured windows. A single BED window spanning the whole
@@ -1405,6 +1460,7 @@ fn full_chromosome_bed_window_matches_global_ref_gc_bias_run() -> Result<()> {
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 80,
+        logging: LoggingArgs::default(),
     };
     let make_bed_cfg = |output_dir: &Path| RefGCBiasConfig {
         windows: cfdnalab::commands::ref_gc_bias::config::RefGCWindowsArgs {
@@ -1439,7 +1495,6 @@ fn full_chromosome_bed_window_matches_global_ref_gc_bias_run() -> Result<()> {
 
 #[test]
 fn full_chromosome_bed_window_with_blacklist_matches_global_ref_gc_bias_run() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // `ref-gc-bias` samples start positions first, then counts only the sampled starts that land
     // inside the configured logical region after blacklist masking. A single BED window spanning
@@ -1488,6 +1543,7 @@ fn full_chromosome_bed_window_with_blacklist_matches_global_ref_gc_bias_run() ->
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 80,
+        logging: LoggingArgs::default(),
     };
     let make_bed_cfg = |output_dir: &Path| RefGCBiasConfig {
         windows: cfdnalab::commands::ref_gc_bias::config::RefGCWindowsArgs {
@@ -1523,7 +1579,6 @@ fn full_chromosome_bed_window_with_blacklist_matches_global_ref_gc_bias_run() ->
 #[test]
 fn multiple_blacklist_files_with_touching_intervals_match_single_merged_ref_gc_bias_run()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // `ref-gc-bias` uses the shared blacklist loader with:
     // - `min_size = 1`
@@ -1575,6 +1630,7 @@ fn multiple_blacklist_files_with_touching_intervals_match_single_merged_ref_gc_b
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 80,
+        logging: LoggingArgs::default(),
     };
 
     // Act
@@ -1610,7 +1666,6 @@ fn multiple_blacklist_files_with_touching_intervals_match_single_merged_ref_gc_b
 
 #[test]
 fn rejects_n_positions_when_sampling_density_would_exceed_one() -> Result<()> {
-    // Human verification status: unverified
     let reference = fixtures::simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
 
@@ -1645,6 +1700,7 @@ fn rejects_n_positions_when_sampling_density_would_exceed_one() -> Result<()> {
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 1_000_000,
+        logging: LoggingArgs::default(),
     };
 
     let err = run(&cfg).expect_err("sampling density above 1.0 should fail");
@@ -1659,7 +1715,6 @@ fn rejects_n_positions_when_sampling_density_would_exceed_one() -> Result<()> {
 
 #[test]
 fn fixed_seed_ref_gc_bias_is_invariant_to_thread_count() -> Result<()> {
-    // Human verification status: unverified
     let reference = fixtures::simple_reference_twobit()?;
     let single_thread_out = TempDir::new()?;
     let two_thread_out = TempDir::new()?;
@@ -1689,6 +1744,7 @@ fn fixed_seed_ref_gc_bias_is_invariant_to_thread_count() -> Result<()> {
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 80,
+        logging: LoggingArgs::default(),
     };
 
     // Manual expectations:
@@ -1722,7 +1778,6 @@ fn fixed_seed_ref_gc_bias_is_invariant_to_thread_count() -> Result<()> {
 
 #[test]
 fn fixed_seed_ref_gc_bias_with_blacklist_and_bed_is_invariant_to_thread_count() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // With a fixed seed, changing only thread count must not change the logical sampled starts or
     // the merged reference package, even when the command simultaneously has to:
@@ -1768,6 +1823,7 @@ fn fixed_seed_ref_gc_bias_with_blacklist_and_bed_is_invariant_to_thread_count() 
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 80,
+        logging: LoggingArgs::default(),
     };
 
     // Act
@@ -1825,6 +1881,7 @@ fn fixed_seed_ref_gc_bias_is_deterministic_for_same_tile_size() -> Result<()> {
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 80,
+        logging: LoggingArgs::default(),
     };
 
     // Manual expectations:

@@ -40,7 +40,6 @@ fn scored_windows(entries: &[(u64, u64, u64, f64)]) -> Vec<ScoredInterval<u64>> 
 
 #[test]
 fn should_keep_only_whitelisted_chromosomes_when_loading_bed() -> Result<()> {
-    // Human verification status: unverified
     // Arrange
     let bed = write_bed(&["chr1\t0\t10", "chr2\t5\t15", "chr1\t20\t30"])?;
     let whitelist = vec!["chr1".to_string()];
@@ -70,7 +69,6 @@ fn should_keep_only_whitelisted_chromosomes_when_loading_bed() -> Result<()> {
 
 #[test]
 fn should_filter_windows_by_predicate_when_loading_bed() -> Result<()> {
-    // Human verification status: unverified
     // Arrange
     let bed = write_bed(&["chr1\t0\t5", "chr1\t10\t25", "chr1\t30\t33"])?;
     let keep_large = |_: &str, start: u64, end: u64| (end - start) >= 10;
@@ -86,7 +84,6 @@ fn should_filter_windows_by_predicate_when_loading_bed() -> Result<()> {
 
 #[test]
 fn should_load_gzipped_bed() -> Result<()> {
-    // Human verification status: unverified
     let gz = tempfile::Builder::new().suffix(".bed.gz").tempfile()?;
 
     {
@@ -105,7 +102,6 @@ fn should_load_gzipped_bed() -> Result<()> {
 
 #[test]
 fn should_validate_expected_window_count_with_whitelist() -> Result<()> {
-    // Human verification status: unverified
     // Arrange
     let bed = write_bed(&["chr1\t0\t4", "chr2\t4\t8", "chr2\t8\t12"])?;
     let whitelist = vec!["chr2".to_string()];
@@ -130,7 +126,6 @@ fn should_validate_expected_window_count_with_whitelist() -> Result<()> {
 
 #[test]
 fn should_error_on_invalid_windows_even_with_expected_count() -> Result<()> {
-    // Human verification status: unverified
     // Arrange: second line has end <= start, so it should error regardless of exp_num_windows
     let bed = write_bed(&["chr1\t0\t5", "chr1\t5\t4", "chr2\t10\t20"])?;
 
@@ -147,7 +142,6 @@ fn should_error_on_invalid_windows_even_with_expected_count() -> Result<()> {
 
 #[test]
 fn should_sort_grouped_windows_and_reuse_group_indices_when_loading_bed() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // - Group indices are assigned when each group name is first seen in file order.
     // - "beta" appears first, so it must get group_idx 0.
@@ -181,7 +175,6 @@ fn should_sort_grouped_windows_and_reuse_group_indices_when_loading_bed() -> Res
 
 #[test]
 fn should_filter_scored_windows_but_preserve_original_indices_and_sorting() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // - Original line indices are 0:[30,40) score 0.5, 1:[10,15) score 2.0, 2:[20,25) score 3.5.
     // - Filtering keeps only scores >= 2.0, so lines 1 and 2 survive.
@@ -210,7 +203,6 @@ fn should_filter_scored_windows_but_preserve_original_indices_and_sorting() -> R
 
 #[test]
 fn should_keep_only_whitelisted_chromosomes_when_loading_grouped_bed() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // - Whitelist keeps only chr2, but group indices are assigned in original file order.
     // - "alpha" appears first on chr1 -> group_idx 0 would be tempting, but the grouped loader
@@ -241,7 +233,6 @@ fn should_keep_only_whitelisted_chromosomes_when_loading_grouped_bed() -> Result
 
 #[test]
 fn should_error_when_grouped_bed_is_missing_group_name() -> Result<()> {
-    // Human verification status: unverified
     let bed = write_bed(&["chr1\t0\t10"])?;
 
     let error = load_grouped_windows_from_bed(bed.path(), None, None, None)
@@ -253,7 +244,6 @@ fn should_error_when_grouped_bed_is_missing_group_name() -> Result<()> {
 
 #[test]
 fn should_keep_original_indices_when_loading_scored_bed_with_whitelist() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // - File order gives original indices 0:[0,4), 1:[9,12), 2:[4,8).
     // - Whitelisting chr2 removes line 0 but must keep the surviving original indices 1 and 2.
@@ -280,7 +270,6 @@ fn should_keep_original_indices_when_loading_scored_bed_with_whitelist() -> Resu
 
 #[test]
 fn should_error_when_scored_bed_is_missing_score() -> Result<()> {
-    // Human verification status: unverified
     let bed = write_bed(&["chr1\t0\t10"])?;
 
     let error = load_scored_windows_from_bed(bed.path(), None, None, None)
@@ -292,7 +281,6 @@ fn should_error_when_scored_bed_is_missing_score() -> Result<()> {
 
 #[test]
 fn should_error_when_scored_bed_has_invalid_score() -> Result<()> {
-    // Human verification status: unverified
     let bed = write_bed(&["chr1\t0\t10\tnot_a_float"])?;
 
     let error = load_scored_windows_from_bed(bed.path(), None, None, None)
@@ -304,7 +292,6 @@ fn should_error_when_scored_bed_has_invalid_score() -> Result<()> {
 
 #[test]
 fn should_write_group_index_tsv_sorted_and_sanitized() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // - Output rows are written in increasing numeric group index order, so 0 must precede 2.
     // - Embedded newlines are replaced with spaces, and tabs are expanded so the TSV stays
@@ -327,7 +314,6 @@ fn should_write_group_index_tsv_sorted_and_sanitized() -> Result<()> {
 
 #[test]
 fn should_detect_header_after_comments_and_blank_lines() -> Result<()> {
-    // Human verification status: unverified
     // The detector should skip comments and empty lines, so the first meaningful line here is the
     // literal header "chrom\tstart\tend".
     let bed = write_bed(&["# comment", "", "chrom\tstart\tend", "chr1\t0\t10"])?;
@@ -338,7 +324,6 @@ fn should_detect_header_after_comments_and_blank_lines() -> Result<()> {
 
 #[test]
 fn should_detect_coordinate_lines_without_header() {
-    // Human verification status: unverified
     // "chr1\t0\t10" has numeric coordinate columns and is therefore data, not a header.
     // The literal column names and comment lines should be treated as header-like.
     assert!(!line_looks_like_header("chr1\t0\t10", '\t'));

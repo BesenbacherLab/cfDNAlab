@@ -4,10 +4,14 @@ use crate::commands::bam_to_bam::config::BamToBamConfig;
 use crate::commands::bam_to_frag::config::BamToFragConfig;
 #[cfg(feature = "cmd_coverage_weights")]
 use crate::commands::coverage_weights::config::CoverageWeightsConfig;
+#[cfg(feature = "cmd_ends")]
+use crate::commands::ends::config::EndsConfig;
 #[cfg(feature = "cmd_fcoverage")]
 use crate::commands::fcoverage::config::FCoverageConfig;
 #[cfg(feature = "cmd_frag_to_bam")]
 use crate::commands::frag_to_bam::config::FragToBamConfig;
+#[cfg(feature = "cmd_fragment_count_weights")]
+use crate::commands::fragment_count_weights::config::FragmentCountWeightsConfig;
 #[cfg(feature = "cmd_fragment_kmers")]
 use crate::commands::fragment_kmers::config::FragmentKmersConfig;
 #[cfg(feature = "cmd_gc_bias")]
@@ -20,6 +24,8 @@ use crate::commands::midpoints::config::MidpointsConfig;
 use crate::commands::prepare_windows::config::PrepareConfig;
 #[cfg(feature = "cmd_ref_gc_bias")]
 use crate::commands::ref_gc_bias::config::RefGCBiasConfig;
+#[cfg(feature = "cmd_transitions")]
+use crate::commands::transitions::config::TransitionsConfig;
 #[cfg(feature = "cmd_visualize_positions")]
 use crate::commands::visualize_positions::config::VisualizePositionsConfig;
 #[cfg(feature = "cmd_wps")]
@@ -29,6 +35,8 @@ use crate::commands::wps_peaks::config::WPSPeaksConfig;
 use clap::CommandFactory;
 use clap::builder::styling::{AnsiColor, Style, Styles};
 
+pub const CLI_SEPARATOR_WIDTH: usize = 48;
+
 #[cfg(all(
     feature = "cli",
     not(any(
@@ -36,6 +44,8 @@ use clap::builder::styling::{AnsiColor, Style, Styles};
         feature = "cmd_bam_to_frag",
         feature = "cmd_frag_to_bam",
         feature = "cmd_coverage_weights",
+        feature = "cmd_fragment_count_weights",
+        feature = "cmd_ends",
         feature = "cmd_fcoverage",
         feature = "cmd_fragment_kmers",
         feature = "cmd_gc_bias",
@@ -43,6 +53,7 @@ use clap::builder::styling::{AnsiColor, Style, Styles};
         feature = "cmd_prepare_windows",
         feature = "cmd_midpoints",
         feature = "cmd_ref_gc_bias",
+        feature = "cmd_transitions",
         feature = "cmd_visualize_positions",
         feature = "cmd_wps",
         feature = "cmd_wps_peaks"
@@ -51,7 +62,7 @@ use clap::builder::styling::{AnsiColor, Style, Styles};
 compile_error!("Building the CLI requires enabling at least one cmd_* feature.");
 
 #[cfg_attr(feature = "cli", derive(clap::Parser))]
-#[command(name = "cfdna", version)]
+#[command(name = "cfdna", version, about = env!("CARGO_PKG_DESCRIPTION"))]
 pub struct Cli {
     #[command(subcommand)]
     pub cmd: Cmd,
@@ -63,8 +74,14 @@ pub enum Cmd {
     GCBias(GCConfig),
     #[cfg(feature = "cmd_ref_gc_bias")]
     RefGcBias(RefGCBiasConfig),
+    #[cfg(feature = "cmd_transitions")]
+    Transitions(TransitionsConfig),
     #[cfg(feature = "cmd_coverage_weights")]
     CoverageWeights(CoverageWeightsConfig),
+    #[cfg(feature = "cmd_fragment_count_weights")]
+    FragmentCountWeights(FragmentCountWeightsConfig),
+    #[cfg(feature = "cmd_ends")]
+    Ends(EndsConfig),
     #[cfg(feature = "cmd_lengths")]
     Lengths(LengthsConfig),
     #[cfg(feature = "cmd_fcoverage")]
@@ -101,7 +118,7 @@ pub fn build_terminal_command() -> clap::Command {
         .help_template("{name} {version}\n{about}\n\n{usage-heading} {usage}\n\n{all-args}\n")
         .styles(styles);
     command = sanitize_command(command);
-    let signature = make_signature();
+    let signature = terminal_signature();
     add_signature(command, &signature)
 }
 
@@ -300,13 +317,22 @@ fn sanitize_command(mut command: clap::Command) -> clap::Command {
     command
 }
 
-/// Build a first-line terminal signature
-fn make_signature() -> String {
+/// Build the branded terminal signature shown in CLI help and command banners.
+pub fn terminal_signature() -> String {
     let accent = Style::new().bold();
+    terminal_signature_with_bars(&format!("{accent}"), &format!("{accent:#}"))
+}
+
+/// Build the plain-text terminal signature for non-terminal sinks such as log files.
+pub fn plain_terminal_signature() -> String {
+    terminal_signature_with_bars("", "")
+}
+
+fn terminal_signature_with_bars(style_on: &str, style_off: &str) -> String {
     let title = "cfDNAlab";
-    let bar1 = "_".repeat(48);
-    let bar2 = "─".repeat(48);
-    format!("\n{accent}{bar1}\n\n  {title}\n\n{bar2}{accent:#}\n")
+    let bar1 = "_".repeat(CLI_SEPARATOR_WIDTH);
+    let bar2 = "─".repeat(CLI_SEPARATOR_WIDTH);
+    format!("\n{style_on}{bar1}\n\n  {title}\n\n{bar2}{style_off}\n")
 }
 
 /// Apply signature to command and all subcommands

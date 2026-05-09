@@ -1,27 +1,28 @@
-use std::{fs::File, path::Path};
+use std::{
+    fs::File,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result, ensure};
 use ndarray::{Array1, Array2, ArrayView1};
 use ndarray_npy::{NpzReader, NpzWriter, ReadNpyExt};
 
-use crate::shared::interval::{IndexedInterval, Interval};
 use crate::{
-    commands::{cli_common::WindowSpec, lengths::counting::LengthCounts},
-    shared::tiled_run::{
-        Tile, TileWindowSpan, clamp_fetch_to_window_span, parse_tile_index, tile_window_min_max,
-    },
+    commands::lengths::counting::LengthCounts, shared::temp_chrom_names::TempChromNameMap,
 };
 
 /// Write per-tile partial length counts as an NPZ archive.
 ///
 /// The archive stores two arrays:
 /// - `window_idx_chr` (u64): Zero-based window index within the current chromosome.
-/// - `counts` (f64): Matrix with one row per window and one column per fragment length.
+/// - `counts` (f64): Matrix with one row per window and one column per
+///   fragment length.
 pub fn write_partials_npz(
     temp_dir: &Path,
     prefix: &str,
     chr: &str,
     tile_idx: u32,
+    temp_chrom_name_map: &TempChromNameMap,
     window_idxs_chr: &[u64],
     contained_flags: &[bool],
     counts: &[LengthCounts],
@@ -37,7 +38,7 @@ pub fn write_partials_npz(
     for c in counts {
         ensure!(
             c.counts.len() == counts_len,
-            "All count rows must have identical length"
+            "All count vectors (rows) must have identical length"
         );
     }
 
@@ -47,8 +48,15 @@ pub fn write_partials_npz(
         chr,
         tile_idx
     );
+    ensure!(
+        counts.len() == window_idxs_chr.len(),
+        "counts length mismatch for tile {} {}",
+        chr,
+        tile_idx
+    );
 
-    let path = temp_dir.join(format!("{prefix}.{chr}.{tile_idx}.npz"));
+    let chr_token = temp_chrom_name_map.token_for(chr)?;
+    let path = temp_dir.join(format!("{prefix}.{chr_token}.{tile_idx}.npz"));
     let file = File::create(&path)?;
     let mut npz = NpzWriter::new(file);
 
@@ -76,12 +84,14 @@ pub fn write_cross_npy(
     prefix: &str,
     chr: &str,
     tile_idx: u32,
+    temp_chrom_name_map: &TempChromNameMap,
     crossing_window_idxs_chr: &[u64],
 ) -> Result<Option<std::path::PathBuf>> {
     if crossing_window_idxs_chr.is_empty() {
         return Ok(None);
     }
-    let path = temp_dir.join(format!("{prefix}.{chr}.{tile_idx}.npy"));
+    let chr_token = temp_chrom_name_map.token_for(chr)?;
+    let path = temp_dir.join(format!("{prefix}.{chr_token}.{tile_idx}.npy"));
     let arr = Array1::from(crossing_window_idxs_chr.to_vec());
     ndarray_npy::write_npy(&path, &arr)?;
     Ok(Some(path))
@@ -92,9 +102,8 @@ pub fn write_cross_npy(
 /// `n_windows` must equal the total number of window indices for the chromosome (scan order).
 pub fn reduce_partials_for_chr(
     chr: &str,
-    temp_dir: &Path,
-    partials_prefix: &str,
-    cross_prefix: &str,
+    partial_paths: &[PathBuf],
+    cross_paths: &[PathBuf],
     n_windows: usize,
     template: &LengthCounts,
 ) -> Result<Vec<LengthCounts>> {
@@ -108,24 +117,9 @@ pub fn reduce_partials_for_chr(
         .collect();
 
     // First accumulate contributions from crossing windows
-    for entry in
-        std::fs::read_dir(temp_dir).with_context(|| format!("Listing {}", temp_dir.display()))?
-    {
-        let path = entry?.path();
-        if !path.is_file() {
-            continue;
-        }
-        let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        if !fname.starts_with(cross_prefix) || !fname.contains(&format!(".{chr}.")) {
-            continue;
-        }
-        // Skip files that do not carry a numeric tile index suffix
-        if parse_tile_index(fname).is_none() {
-            continue;
-        }
-
+    for path in cross_paths {
         let file =
-            File::open(&path).with_context(|| format!("Opening cross file {}", path.display()))?;
+            File::open(path).with_context(|| format!("Opening cross file {}", path.display()))?;
         let arr: Array1<u64> = Array1::read_npy(file)
             .with_context(|| format!("Reading cross file {}", path.display()))?;
         for idx in arr.iter() {
@@ -141,24 +135,9 @@ pub fn reduce_partials_for_chr(
     }
 
     // Then sum partial counts
-    for entry in
-        std::fs::read_dir(temp_dir).with_context(|| format!("Listing {}", temp_dir.display()))?
-    {
-        let path = entry?.path();
-        if !path.is_file() {
-            continue;
-        }
-        let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        if !fname.starts_with(partials_prefix) || !fname.contains(&format!(".{chr}.")) {
-            continue;
-        }
-        // Skip files that do not carry a numeric tile index suffix
-        if parse_tile_index(fname).is_none() {
-            continue;
-        }
-
+    for path in partial_paths {
         let file =
-            File::open(&path).with_context(|| format!("Opening partials {}", path.display()))?;
+            File::open(path).with_context(|| format!("Opening partials {}", path.display()))?;
         let mut npz =
             NpzReader::new(file).with_context(|| format!("Reading partials {}", path.display()))?;
         let idxs: Array1<u64> = npz
@@ -228,85 +207,4 @@ pub fn reduce_partials_for_chr(
     );
 
     Ok(counts_by_idx)
-}
-
-/// Determine the fetch span for a tile based on the active window strategy.
-///
-/// Global mode: the full tile fetch range is used.
-///
-/// Fixed-size window mode: the span is defined as the first and last bin that
-/// touches the tile core, clamped to the chromosome length.
-///
-/// BED mode: uses the precomputed window bounds for the tile to avoid fetching
-/// unrelated regions and returns `None` when the tile does not intersect any
-/// BED windows.
-///
-/// Parameters
-/// ----------
-///
-/// - `tile`: Tile describing the chromosome, core span, and fetch span.
-///
-/// - `tile_window_span`: Cached min and max window bounds for the tile (BED mode).
-///
-/// - `windows_chr`: Chromosome BED windows as `(start, end, idx)` tuples (BED mode).
-///
-/// - `window_opt`: Window specification selecting global, fixed-size, or BED mode.
-///
-/// - `chrom_len`: Chromosome length used to clamp fetch coordinates.
-///
-/// - `halo_bp`: Extra bases to keep on both sides of the active window span before clamping back
-///   onto the tile fetch interval.
-///
-/// Returns
-/// - Checked absolute fetch interval, or `None` when no windows apply.
-pub fn fetch_span_for_tile(
-    tile: &Tile,
-    tile_window_span: Option<&TileWindowSpan>,
-    windows_chr: Option<&[IndexedInterval<u64>]>,
-    window_opt: &WindowSpec,
-    chrom_len: u64,
-    halo_bp: u64,
-) -> Result<Option<Interval<u64>>> {
-    match window_opt {
-        WindowSpec::Global => {
-            let fetch_start = tile.fetch_start() as u64;
-            let fetch_end = (tile.fetch_end().min(chrom_len as u32)) as u64;
-            if fetch_start >= fetch_end {
-                return Ok(None);
-            }
-            Ok(Some(Interval::new(fetch_start, fetch_end)?))
-        }
-        WindowSpec::Size(window_bp) => {
-            let core_start = tile.core_start() as u64;
-            let core_end = (tile.core_end() as u64).min(chrom_len);
-            if core_start >= chrom_len || core_end == 0 {
-                return Ok(None);
-            }
-            let window_idx_start = core_start / window_bp;
-            let window_idx_end = (core_end.saturating_sub(1)) / window_bp;
-            let window_start = window_idx_start * window_bp;
-            let window_end = ((window_idx_end + 1) * window_bp).min(chrom_len);
-            let window_span = Interval::new(window_start, window_end)?;
-            Ok(clamp_fetch_to_window_span(
-                tile,
-                chrom_len,
-                window_span,
-                halo_bp,
-            )?)
-        }
-        WindowSpec::Bed(_) => {
-            let Some(wchr) = windows_chr else {
-                return Ok(None);
-            };
-            let Some(window_span) = tile_window_min_max(wchr, tile, tile_window_span)? else {
-                return Ok(None);
-            };
-            Ok(clamp_fetch_to_window_span(
-                tile,
-                chrom_len,
-                window_span,
-                halo_bp,
-            )?)
-        }
-    }
 }

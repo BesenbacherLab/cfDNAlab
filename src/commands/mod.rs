@@ -6,11 +6,15 @@ pub mod cli_common;
 mod counters;
 #[cfg(feature = "cmd_coverage_weights")]
 pub mod coverage_weights;
+#[cfg(feature = "cmd_ends")]
 pub mod ends;
 #[cfg(feature = "cmd_fcoverage")]
 pub mod fcoverage;
 #[cfg(feature = "cmd_frag_to_bam")]
 pub mod frag_to_bam;
+#[cfg(feature = "cmd_fragment_count_weights")]
+pub mod fragment_count_weights;
+#[cfg(feature = "cmd_fragment_kmers")]
 pub mod fragment_kmers;
 #[cfg(feature = "cmd_gc_bias")]
 pub mod gc_bias;
@@ -22,9 +26,10 @@ pub mod midpoints;
 pub mod prepare_windows;
 #[cfg(feature = "cmd_ref_gc_bias")]
 pub mod ref_gc_bias;
-#[cfg(feature = "cmd_ref_gc_counts")]
-pub mod ref_gc_counts;
+mod run_statistics;
+#[cfg(feature = "cmd_transitions")]
 pub mod transitions;
+#[cfg(feature = "cmd_visualize_positions")]
 pub mod visualize_positions;
 #[cfg(feature = "cmd_wps")]
 pub mod wps;

@@ -101,7 +101,7 @@ pub fn parse_md_tag(md_tag: &str, offset: u32) -> (Vec<u32>, Vec<u32>) {
     // `pos` is our “cursor” along the reference sequence (0-based)
     let mut pos = 0u32;
 
-    // `in_run` tells us whether we’re currently inside a stretch of mismatches
+    // `in_run` tells us whether we're currently inside a stretch of mismatches
     let mut in_run = false;
 
     // Get a byte‐slice of the string, so we can inspect one ASCII code at a time
@@ -116,7 +116,7 @@ pub fn parse_md_tag(md_tag: &str, offset: u32) -> (Vec<u32>, Vec<u32>) {
         // Digit?  (a run of matching bases)
         // ───────────────────────────────────────────────
         if b.is_ascii_digit() {
-            // We’ll build up the full number (e.g. “123” -> 123) in `num`
+            // We'll build up the full number (e.g. “123” -> 123) in `num`
             let mut num: u32 = 0;
 
             // As long as the next byte is also a digit, keep consuming
@@ -167,7 +167,7 @@ pub fn parse_md_tag(md_tag: &str, offset: u32) -> (Vec<u32>, Vec<u32>) {
         // Uppercase letter?  (single‐base mismatch)
         // ───────────────────────────────────────────────
         } else if (b as char).is_ascii_uppercase() {
-            // If we’re not already in a mismatch run, start one here:
+            // If we're not already in a mismatch run, start one here:
             if !in_run {
                 starts.push(pos);
                 in_run = true;

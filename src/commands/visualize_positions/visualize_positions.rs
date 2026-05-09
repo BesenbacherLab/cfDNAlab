@@ -2,15 +2,14 @@ use crate::commands::cli_common::{
     ChromosomeArgs, FragmentPositionSelectionArgs, IOCArgs, Ref2BitRequiredArgs, WindowsArgs,
 };
 use crate::commands::fragment_kmers::config::FragmentKmersConfig;
-use crate::commands::fragment_kmers::fragment_kmers::run_inner;
-use crate::commands::fragment_kmers::positions::{BasesFrom, PositionGroup, ReferenceFrame};
+use crate::commands::fragment_kmers::fragment_kmers::run_inner_silent;
 use crate::commands::visualize_positions::config::VisualizePositionsConfig;
-use crate::commands::visualize_positions::model::{
-    AxisBounds, LengthVisualization, Style, Track, VizConfig,
-};
+use crate::commands::visualize_positions::model::{LengthVisualization, Style, VizConfig};
 use crate::commands::visualize_positions::select::ReadClamp;
 use crate::commands::visualize_positions::{render_ascii, render_svg};
 use crate::shared::interval::Interval;
+use crate::shared::positioning::{BasesFrom, PositionGroup, ReferenceFrame};
+use crate::shared::visualization::{AxisBounds, Track};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use ndarray::Array3;
 use ndarray_npy::read_npy;
@@ -230,7 +229,7 @@ fn write_bam(temp_dir: &Path, reference: &[u8], fragments: &[FragmentSpec]) -> R
             .start()
             .checked_add(fragment_length)
             .and_then(|end| end.checked_sub(reverse_len))
-            .ok_or_else(|| anyhow!("invalid fragment geometry"))?;
+            .ok_or_else(|| anyhow!("invalid fragment coordinates"))?;
 
         let fragment_size = (fragment_length as i64).max(1);
         let qname = format!("frag{}_{}", idx, fragment.start());
@@ -447,9 +446,7 @@ fn run_fragment_kmers(
     let mut windows_args = WindowsArgs::default();
     windows_args.by_bed = Some(inputs.bed.clone());
     cfg.set_windows(windows_args);
-    cfg.set_quiet(true);
-
-    run_inner(&cfg).context("running fragment-kmers for visualize-positions")?;
+    run_inner_silent(&cfg).context("running fragment-kmers for visualize-positions")?;
     Ok(())
 }
 

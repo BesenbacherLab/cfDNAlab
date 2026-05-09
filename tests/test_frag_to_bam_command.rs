@@ -24,13 +24,16 @@ use cfdnalab::commands::frag_to_bam::{
     config::FragToBamConfig, frag_to_bam::run as run_frag_to_bam,
 };
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
-use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage};
+use cfdnalab::commands::gc_bias::package::GCCorrectionPackage;
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_lengths"))]
 use cfdnalab::commands::lengths::{config::LengthsConfig, lengths::run as run_lengths};
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
 use cfdnalab::commands::midpoints::{config::MidpointsConfig, midpoints::run as run_midpoints};
 use cfdnalab::shared::blacklist::BlacklistStrategy;
+use cfdnalab::shared::constants::GC_CORRECTION_SCHEMA_VERSION;
 use cfdnalab::shared::io::dot_join;
+#[cfg(feature = "cmd_bam_to_frag")]
+use cfdnalab::shared::reference::twobit_contig_footprint;
 #[cfg(feature = "cmd_bam_to_frag")]
 use flate2::read::MultiGzDecoder;
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
@@ -78,7 +81,8 @@ struct BamRow {
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct AuxTags {
     gc_weight: Option<f32>,
-    scaling_weight: Option<f32>,
+    coverage_scaling_weight: Option<f32>,
+    count_scaling_weight: Option<f32>,
     fragment_length: Option<u32>,
 }
 
@@ -162,10 +166,11 @@ fn make_config(
     let mut config = FragToBamConfig::new(frag_path, output_dir, chromosomes, chrom_sizes_path);
     config.set_output_prefix("restored");
     // Keep non-length tests independent from the production defaults (30..=1000).
+    // Still respect the shared minimum included fragment length of 10.
     // Individual tests that validate length behavior override this explicitly.
     {
         let fragment_lengths = config.fragment_lengths_mut();
-        fragment_lengths.min_fragment_length = 1;
+        fragment_lengths.min_fragment_length = 10;
         fragment_lengths.max_fragment_length = 1_000;
     }
     config
@@ -242,21 +247,74 @@ fn read_aux_tags(path: &Path) -> Result<Vec<AuxTags>> {
             Ok(Aux::Float(value)) => Some(value),
             _ => None,
         };
-        let scaling_weight = match record.aux(b"COV") {
+        let coverage_scaling_weight = match record.aux(b"cw") {
             Ok(Aux::Float(value)) => Some(value),
             _ => None,
         };
-        let fragment_length = match record.aux(b"FLEN") {
+        let count_scaling_weight = match record.aux(b"nw") {
+            Ok(Aux::Float(value)) => Some(value),
+            _ => None,
+        };
+        let fragment_length = match record.aux(b"fl") {
             Ok(Aux::U32(value)) => Some(value),
             _ => None,
         };
         tags.push(AuxTags {
             gc_weight,
-            scaling_weight,
+            coverage_scaling_weight,
+            count_scaling_weight,
             fragment_length,
         });
     }
     Ok(tags)
+}
+
+fn assert_first_record_has_exact_aux_tags(path: &Path, expected_tags: &[&[u8; 2]]) -> Result<()> {
+    let aux_tags = read_first_record_aux_tag_names(path)?;
+    for expected_tag in expected_tags {
+        assert!(
+            aux_tags
+                .iter()
+                .any(|observed_tag| observed_tag.as_slice() == expected_tag.as_slice()),
+            "expected first record in {} to contain exact AUX tag {:?}, observed {:?}",
+            path.display(),
+            std::str::from_utf8(expected_tag.as_slice()).unwrap(),
+            aux_tags
+        );
+    }
+    Ok(())
+}
+
+fn assert_first_record_lacks_aux_tags(path: &Path, unexpected_tags: &[&[u8; 2]]) -> Result<()> {
+    let aux_tags = read_first_record_aux_tag_names(path)?;
+    for unexpected_tag in unexpected_tags {
+        assert!(
+            !aux_tags
+                .iter()
+                .any(|observed_tag| observed_tag.as_slice() == unexpected_tag.as_slice()),
+            "first record in {} should not contain old truncated AUX tag {:?}, observed {:?}",
+            path.display(),
+            std::str::from_utf8(unexpected_tag.as_slice()).unwrap(),
+            aux_tags
+        );
+    }
+    Ok(())
+}
+
+fn read_first_record_aux_tag_names(path: &Path) -> Result<Vec<Vec<u8>>> {
+    let mut reader = bam::Reader::from_path(path)?;
+    let record = reader
+        .records()
+        .next()
+        .context("expected BAM to contain at least one record")??;
+    record
+        .aux_iter()
+        .map(|aux_result| {
+            aux_result
+                .map(|(tag, _aux_value)| tag.to_vec())
+                .map_err(Into::into)
+        })
+        .collect()
 }
 
 fn assert_optional_f32_eq(actual: Option<f32>, expected: Option<f32>, label: &str) {
@@ -349,7 +407,7 @@ fn run_blacklist_strategy_case(strategy: BlacklistStrategy) -> Result<Vec<u64>> 
     config.set_min_mapq(0);
     {
         let fragment_lengths = config.fragment_lengths_mut();
-        fragment_lengths.min_fragment_length = 1;
+        fragment_lengths.min_fragment_length = 10;
         fragment_lengths.max_fragment_length = 100;
     }
 
@@ -362,19 +420,18 @@ fn run_blacklist_strategy_case(strategy: BlacklistStrategy) -> Result<Vec<u64>> 
 
 #[test]
 fn given_valid_frag_when_run_then_writes_expected_unpaired_bam_records() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Two fragments in input order chr1 then chr2.
     // Chrom sizes order is intentionally chr2 then chr1.
     // The writer iterates chrom-sizes order in the second pass, so output row order should be:
-    //   1) chr2 fragment [5,9), mapq=30, strand='-'
+    //   1) chr2 fragment [5,15), mapq=30, strand='-'
     //   2) chr1 fragment [10,20), mapq=60, strand='+'
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
     let chrom_sizes_path = input_dir.path().join("chrom.sizes");
 
-    write_frag_file(&frag_path, &["chr1\t10\t20\t60\t+", "chr2\t5\t9\t30\t-"])?;
+    write_frag_file(&frag_path, &["chr1\t10\t20\t60\t+", "chr2\t5\t15\t30\t-"])?;
     write_chrom_sizes(&chrom_sizes_path, &[("chr2", 100), ("chr1", 100)])?;
 
     let config = make_config(
@@ -391,7 +448,7 @@ fn given_valid_frag_when_run_then_writes_expected_unpaired_bam_records() -> Resu
 
     // Assert
     assert_eq!(rows.len(), 2);
-    assert_unpaired_full_match_record(&rows[0], "chr2", 5, 9, 30, '-', "fragment_1");
+    assert_unpaired_full_match_record(&rows[0], "chr2", 5, 15, 30, '-', "fragment_1");
     assert_unpaired_full_match_record(&rows[1], "chr1", 10, 20, 60, '+', "fragment_2");
 
     Ok(())
@@ -399,11 +456,10 @@ fn given_valid_frag_when_run_then_writes_expected_unpaired_bam_records() -> Resu
 
 #[test]
 fn given_filters_and_extra_columns_when_run_then_only_expected_fragments_remain() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // - Keep chromosomes: chr1 only.
     // - Keep mapq >= 20.
-    // - Keep fragment length in [5, 25].
+    // - Keep fragment length in [10, 25].
     // Expected keeps:
     // - chr1 [0,20) mapq 60
     // - chr1 [40,50) mapq 60 with extra trailing columns (ignored by parser)
@@ -433,7 +489,7 @@ fn given_filters_and_extra_columns_when_run_then_only_expected_fragments_remain(
     config.set_min_mapq(20);
     {
         let fragment_lengths = config.fragment_lengths_mut();
-        fragment_lengths.min_fragment_length = 5;
+        fragment_lengths.min_fragment_length = 10;
         fragment_lengths.max_fragment_length = 25;
     }
 
@@ -453,7 +509,6 @@ fn given_filters_and_extra_columns_when_run_then_only_expected_fragments_remain(
 #[test]
 fn given_length_bounds_when_run_then_only_fragments_within_inclusive_range_are_kept() -> Result<()>
 {
-    // Human verification status: unverified
     // Arrange:
     // Fragment lengths are:
     // - [0,9)   -> 9   (below min, excluded)
@@ -507,10 +562,10 @@ fn given_length_bounds_when_run_then_only_fragments_within_inclusive_range_are_k
 #[test]
 fn given_inline_header_with_unsupported_extra_column_when_run_then_returns_clear_error()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // The header contains one extra column `gc`.
-    // Only these extra names are supported: gc_weight, scaling_weight, flen.
+    // Only these extra names are supported: gc_weight, coverage_scaling_weight,
+    // count_scaling_weight, and flen.
     // Expected behavior is a validation error before conversion starts.
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
@@ -543,7 +598,7 @@ fn given_inline_header_with_unsupported_extra_column_when_run_then_returns_clear
         "unexpected error: {error}"
     );
     assert!(
-        error_text.contains("gc_weight, scaling_weight, or flen"),
+        error_text.contains("gc_weight, coverage_scaling_weight, count_scaling_weight, or flen"),
         "unexpected error: {error}"
     );
 
@@ -553,12 +608,11 @@ fn given_inline_header_with_unsupported_extra_column_when_run_then_returns_clear
 #[test]
 fn given_unsupported_extra_columns_and_ignore_extras_when_run_then_conversion_succeeds_without_aux_tags()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Same unsupported header as the previous test, but `--ignore-extras` is enabled.
     // Hand-derived expectation:
     // - The fragment [10,20) passes all filters and becomes one BAM record.
-    // - Extra column `gc` is ignored, so GC/COV/FLEN tags are absent.
+    // - Extra column `gc` is ignored, so GC/cw/fl tags are absent.
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
@@ -593,7 +647,7 @@ fn given_unsupported_extra_columns_and_ignore_extras_when_run_then_conversion_su
 
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
     assert_eq!(aux_tags[0].fragment_length, None);
 
     Ok(())
@@ -602,13 +656,12 @@ fn given_unsupported_extra_columns_and_ignore_extras_when_run_then_conversion_su
 #[test]
 fn given_inline_header_with_unknown_extra_and_allow_unknown_extras_when_run_then_known_extras_are_still_transferred()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Inline header has unknown `gc` and known `flen`.
     // Hand-derived expectation:
     // - Unknown `gc` is ignored
-    // - Known `flen` still maps to FLEN=30
-    // - GC and COV tags are absent
+    // - Known `flen` still maps to fl=30
+    // - GC and cw tags are absent
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
@@ -642,7 +695,7 @@ fn given_inline_header_with_unknown_extra_and_allow_unknown_extras_when_run_then
     assert_unpaired_full_match_record(&rows[0], "chr1", 10, 40, 60, '+', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
     assert_eq!(aux_tags[0].fragment_length, Some(30));
 
     Ok(())
@@ -651,12 +704,11 @@ fn given_inline_header_with_unknown_extra_and_allow_unknown_extras_when_run_then
 #[test]
 fn given_supported_extra_column_names_when_run_then_gc_cov_and_flen_are_transferred_to_aux_tags()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Header uses the three supported extra names exactly.
     // Hand-derived tag expectations:
-    // Row 1 -> GC=0.25, COV=1.5, FLEN=10
-    // Row 2 -> GC=None ("na"), COV=None ("."), FLEN=11
+    // Row 1 -> GC=0.25, cw=1.5, fl=10
+    // Row 2 -> GC=None ("na"), cw=None ("."), fl=11
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
@@ -665,7 +717,7 @@ fn given_supported_extra_column_names_when_run_then_gc_cov_and_flen_are_transfer
     write_frag_file(
         &frag_path,
         &[
-            "chromosome\tstart\tend\tmapq\tstrand\tgc_weight\tscaling_weight\tflen",
+            "chromosome\tstart\tend\tmapq\tstrand\tgc_weight\tcoverage_scaling_weight\tflen",
             "chr1\t0\t10\t60\t+\t0.25\t1.5\t10",
             "chr1\t20\t31\t40\t-\tna\t.\t11",
         ],
@@ -692,11 +744,121 @@ fn given_supported_extra_column_names_when_run_then_gc_cov_and_flen_are_transfer
 
     assert_eq!(aux_tags.len(), 2);
     assert_optional_f32_eq(aux_tags[0].gc_weight, Some(0.25), "GC");
-    assert_optional_f32_eq(aux_tags[0].scaling_weight, Some(1.5), "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, Some(1.5), "cw");
     assert_eq!(aux_tags[0].fragment_length, Some(10));
     assert_optional_f32_eq(aux_tags[1].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[1].scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[1].coverage_scaling_weight, None, "cw");
     assert_eq!(aux_tags[1].fragment_length, Some(11));
+    assert_first_record_has_exact_aux_tags(&output_bam_path, &[b"GC", b"cw", b"fl"])?;
+    assert_first_record_lacks_aux_tags(&output_bam_path, &[b"CO", b"FL"])?;
+
+    Ok(())
+}
+
+#[test]
+fn given_fragment_count_scaling_column_when_run_then_cnt_aux_tag_is_written() -> Result<()> {
+    // Arrange:
+    // Header includes the new recognized fragment-count scaling column.
+    // Hand-derived tag expectations:
+    // Row 1 -> cw=1.5, nw=0.5, fl=10
+    // Row 2 -> cw=None, nw=2.0, fl=11
+    let input_dir = TempDir::new()?;
+    let output_dir = TempDir::new()?;
+    let frag_path = input_dir.path().join("input.frag.tsv");
+    let chrom_sizes_path = input_dir.path().join("chrom.sizes");
+
+    write_frag_file(
+        &frag_path,
+        &[
+            "chromosome\tstart\tend\tmapq\tstrand\tcoverage_scaling_weight\tcount_scaling_weight\tflen",
+            "chr1\t0\t10\t60\t+\t1.5\t0.5\t10",
+            "chr1\t20\t31\t40\t-\t.\t2.0\t11",
+        ],
+    )?;
+    write_chrom_sizes(&chrom_sizes_path, &[("chr1", 100)])?;
+
+    let config = make_config(
+        frag_path,
+        output_dir.path().to_path_buf(),
+        chrom_sizes_path,
+        base_chromosomes(&["chr1"]),
+    );
+
+    // Act
+    run_frag_to_bam(&config)?;
+    let output_bam_path = output_bam_path(output_dir.path(), "restored");
+    let rows = read_bam_rows(&output_bam_path)?;
+    let aux_tags = read_aux_tags(&output_bam_path)?;
+
+    // Assert
+    assert_eq!(rows.len(), 2);
+    assert_unpaired_full_match_record(&rows[0], "chr1", 0, 10, 60, '+', "fragment_1");
+    assert_unpaired_full_match_record(&rows[1], "chr1", 20, 31, 40, '-', "fragment_2");
+
+    assert_eq!(aux_tags.len(), 2);
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, Some(1.5), "cw");
+    assert_optional_f32_eq(aux_tags[0].count_scaling_weight, Some(0.5), "nw");
+    assert_eq!(aux_tags[0].fragment_length, Some(10));
+    assert_optional_f32_eq(aux_tags[1].coverage_scaling_weight, None, "cw");
+    assert_optional_f32_eq(aux_tags[1].count_scaling_weight, Some(2.0), "nw");
+    assert_eq!(aux_tags[1].fragment_length, Some(11));
+    assert_first_record_has_exact_aux_tags(&output_bam_path, &[b"cw", b"nw", b"fl"])?;
+    assert_first_record_lacks_aux_tags(&output_bam_path, &[b"CO", b"CN", b"FL"])?;
+
+    Ok(())
+}
+
+#[test]
+fn given_inline_header_with_only_count_scaling_when_run_then_only_cnt_aux_tag_is_written()
+-> Result<()> {
+    // Arrange:
+    // Inline header defines only the count-scaling extra column.
+    // Hand-derived expectations:
+    // - Row 1 -> nw=0.5
+    // - Row 2 -> nw absent because value is "."
+    // - GC, cw, and fl remain absent for both rows
+    let input_dir = TempDir::new()?;
+    let output_dir = TempDir::new()?;
+    let frag_path = input_dir.path().join("input.frag.tsv");
+    let chrom_sizes_path = input_dir.path().join("chrom.sizes");
+
+    write_frag_file(
+        &frag_path,
+        &[
+            "chromosome\tstart\tend\tmapq\tstrand\tcount_scaling_weight",
+            "chr1\t0\t10\t60\t+\t0.5",
+            "chr1\t20\t31\t40\t-\t.",
+        ],
+    )?;
+    write_chrom_sizes(&chrom_sizes_path, &[("chr1", 100)])?;
+
+    let config = make_config(
+        frag_path,
+        output_dir.path().to_path_buf(),
+        chrom_sizes_path,
+        base_chromosomes(&["chr1"]),
+    );
+
+    // Act
+    run_frag_to_bam(&config)?;
+    let output_bam_path = output_bam_path(output_dir.path(), "restored");
+    let rows = read_bam_rows(&output_bam_path)?;
+    let aux_tags = read_aux_tags(&output_bam_path)?;
+
+    // Assert
+    assert_eq!(rows.len(), 2);
+    assert_unpaired_full_match_record(&rows[0], "chr1", 0, 10, 60, '+', "fragment_1");
+    assert_unpaired_full_match_record(&rows[1], "chr1", 20, 31, 40, '-', "fragment_2");
+
+    assert_eq!(aux_tags.len(), 2);
+    assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
+    assert_optional_f32_eq(aux_tags[0].count_scaling_weight, Some(0.5), "nw");
+    assert_eq!(aux_tags[0].fragment_length, None);
+    assert_optional_f32_eq(aux_tags[1].gc_weight, None, "GC");
+    assert_optional_f32_eq(aux_tags[1].coverage_scaling_weight, None, "cw");
+    assert_optional_f32_eq(aux_tags[1].count_scaling_weight, None, "nw");
+    assert_eq!(aux_tags[1].fragment_length, None);
 
     Ok(())
 }
@@ -704,7 +866,6 @@ fn given_supported_extra_column_names_when_run_then_gc_cov_and_flen_are_transfer
 #[test]
 fn given_no_header_and_extra_columns_when_run_then_extra_columns_are_ignored_and_no_aux_tags_are_written()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // No inline header is present, no explicit header is configured, and no companion
     // header file exists for this filename. The parser therefore uses fixed 5-column
@@ -713,7 +874,7 @@ fn given_no_header_and_extra_columns_when_run_then_extra_columns_are_ignored_and
     // Hand-derived expectation:
     // - One fragment [10,20) is converted to one BAM record
     // - Trailing values `0.25 1.5 10` are ignored
-    // - GC, COV, and FLEN tags are absent
+    // - GC, cw, and fl tags are absent
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.tsv");
@@ -740,7 +901,7 @@ fn given_no_header_and_extra_columns_when_run_then_extra_columns_are_ignored_and
     assert_unpaired_full_match_record(&rows[0], "chr1", 10, 20, 60, '+', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
     assert_eq!(aux_tags[0].fragment_length, None);
 
     Ok(())
@@ -748,13 +909,12 @@ fn given_no_header_and_extra_columns_when_run_then_extra_columns_are_ignored_and
 
 #[test]
 fn given_inline_header_with_only_flen_when_run_then_only_flen_aux_tag_is_written() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Inline header defines only one supported extra column (`flen`).
     // Hand-derived expectation:
-    // - Row 1 has flen=80 so FLEN=80 is written
-    // - Row 2 has flen="." so FLEN is absent
-    // - GC and COV remain absent for both rows
+    // - Row 1 has flen=80 so fl=80 is written
+    // - Row 2 has flen="." so fl is absent
+    // - GC and cw remain absent for both rows
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
@@ -790,10 +950,10 @@ fn given_inline_header_with_only_flen_when_run_then_only_flen_aux_tag_is_written
 
     assert_eq!(aux_tags.len(), 2);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
     assert_eq!(aux_tags[0].fragment_length, Some(80));
     assert_optional_f32_eq(aux_tags[1].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[1].scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[1].coverage_scaling_weight, None, "cw");
     assert_eq!(aux_tags[1].fragment_length, None);
 
     Ok(())
@@ -801,12 +961,11 @@ fn given_inline_header_with_only_flen_when_run_then_only_flen_aux_tag_is_written
 
 #[test]
 fn given_explicit_header_with_only_flen_when_run_then_only_flen_aux_tag_is_written() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Frag file has no inline header. We pass an explicit header file that maps column 6 to `flen`.
     // Hand-derived expectation:
-    // - One fragment [10,60) with FLEN=50
-    // - GC and COV remain absent
+    // - One fragment [10,60) with fl=50
+    // - GC and cw remain absent
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
@@ -839,7 +998,7 @@ fn given_explicit_header_with_only_flen_when_run_then_only_flen_aux_tag_is_writt
     assert_unpaired_full_match_record(&rows[0], "chr1", 10, 60, 42, '+', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
     assert_eq!(aux_tags[0].fragment_length, Some(50));
 
     Ok(())
@@ -848,7 +1007,6 @@ fn given_explicit_header_with_only_flen_when_run_then_only_flen_aux_tag_is_writt
 #[test]
 fn given_explicit_header_with_unsupported_extra_column_when_run_then_returns_clear_error()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Explicit header is chosen first and contains unsupported extra name `gc`.
     // Hand-derived expectation is a validation error with the unsupported name.
@@ -883,7 +1041,7 @@ fn given_explicit_header_with_unsupported_extra_column_when_run_then_returns_cle
         "unexpected error: {error}"
     );
     assert!(
-        error_text.contains("gc_weight, scaling_weight, or flen"),
+        error_text.contains("gc_weight, coverage_scaling_weight, count_scaling_weight, or flen"),
         "unexpected error: {error}"
     );
 
@@ -893,13 +1051,12 @@ fn given_explicit_header_with_unsupported_extra_column_when_run_then_returns_cle
 #[test]
 fn given_explicit_header_with_unsupported_extra_column_and_ignore_extras_when_run_then_conversion_succeeds_without_aux_tags()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Explicit header includes unsupported extra name `gc`.
     // With --ignore-extras, the header is accepted and only the core five columns are used.
     // Hand-derived expectation:
     // - One fragment [10,20) is written
-    // - GC, COV, and FLEN tags are absent
+    // - GC, cw, and fl tags are absent
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
@@ -933,7 +1090,7 @@ fn given_explicit_header_with_unsupported_extra_column_and_ignore_extras_when_ru
     assert_unpaired_full_match_record(&rows[0], "chr1", 10, 20, 60, '+', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
     assert_eq!(aux_tags[0].fragment_length, None);
 
     Ok(())
@@ -942,12 +1099,11 @@ fn given_explicit_header_with_unsupported_extra_column_and_ignore_extras_when_ru
 #[test]
 fn given_explicit_header_with_unknown_extra_and_allow_unknown_extras_when_run_then_known_extras_are_still_transferred()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Explicit header has unknown `gc` and known `flen`.
     // Hand-derived expectation:
     // - Unknown `gc` is ignored
-    // - Known `flen` maps to FLEN=30
+    // - Known `flen` maps to fl=30
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
@@ -981,7 +1137,7 @@ fn given_explicit_header_with_unknown_extra_and_allow_unknown_extras_when_run_th
     assert_unpaired_full_match_record(&rows[0], "chr1", 5, 35, 60, '-', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
     assert_eq!(aux_tags[0].fragment_length, Some(30));
 
     Ok(())
@@ -990,13 +1146,12 @@ fn given_explicit_header_with_unknown_extra_and_allow_unknown_extras_when_run_th
 #[test]
 fn given_companion_header_with_only_flen_when_run_then_only_flen_aux_tag_is_written() -> Result<()>
 {
-    // Human verification status: unverified
     // Arrange:
     // No explicit header is configured and frag has no inline header.
     // The companion header path is auto-detected from `<prefix>.frag.tsv`.
     // Hand-derived expectation:
-    // - One record [20,70) with FLEN=50 from the 6th column
-    // - GC and COV remain absent
+    // - One record [20,70) with fl=50 from the 6th column
+    // - GC and cw remain absent
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("sample.frag.tsv");
@@ -1028,8 +1183,55 @@ fn given_companion_header_with_only_flen_when_run_then_only_flen_aux_tag_is_writ
     assert_unpaired_full_match_record(&rows[0], "chr1", 20, 70, 39, '-', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
     assert_eq!(aux_tags[0].fragment_length, Some(50));
+
+    Ok(())
+}
+
+#[test]
+fn given_companion_header_with_only_count_scaling_when_run_then_only_cnt_aux_tag_is_written()
+-> Result<()> {
+    // Arrange:
+    // No explicit header and no inline header. The companion header therefore defines the
+    // count-scaling column.
+    // Hand-derived expectations:
+    // - one fragment [20,70) gets nw=0.5
+    // - GC, cw, and fl remain absent
+    let input_dir = TempDir::new()?;
+    let output_dir = TempDir::new()?;
+    let frag_path = input_dir.path().join("sample.frag.tsv");
+    let companion_header_path = input_dir.path().join("sample.frag.header.tsv");
+    let chrom_sizes_path = input_dir.path().join("chrom.sizes");
+
+    write_frag_file(&frag_path, &["chr1\t20\t70\t39\t-\t0.5"])?;
+    write_frag_file(
+        &companion_header_path,
+        &["chromosome\tstart\tend\tmapq\tstrand\tcount_scaling_weight"],
+    )?;
+    write_chrom_sizes(&chrom_sizes_path, &[("chr1", 500)])?;
+
+    let config = make_config(
+        frag_path,
+        output_dir.path().to_path_buf(),
+        chrom_sizes_path,
+        base_chromosomes(&["chr1"]),
+    );
+
+    // Act
+    run_frag_to_bam(&config)?;
+    let output_bam_path = output_bam_path(output_dir.path(), "restored");
+    let rows = read_bam_rows(&output_bam_path)?;
+    let aux_tags = read_aux_tags(&output_bam_path)?;
+
+    // Assert
+    assert_eq!(rows.len(), 1);
+    assert_unpaired_full_match_record(&rows[0], "chr1", 20, 70, 39, '-', "fragment_1");
+    assert_eq!(aux_tags.len(), 1);
+    assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
+    assert_optional_f32_eq(aux_tags[0].count_scaling_weight, Some(0.5), "nw");
+    assert_eq!(aux_tags[0].fragment_length, None);
 
     Ok(())
 }
@@ -1037,13 +1239,12 @@ fn given_companion_header_with_only_flen_when_run_then_only_flen_aux_tag_is_writ
 #[test]
 fn given_companion_header_with_unsupported_extra_column_and_ignore_extras_when_run_then_conversion_succeeds_without_aux_tags()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Companion header includes unsupported extra name `gc`.
     // With --ignore-extras, conversion should continue using only core columns.
     // Hand-derived expectation:
     // - One fragment [10,20) is written
-    // - GC, COV, and FLEN tags are absent
+    // - GC, cw, and fl tags are absent
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("sample.frag.tsv");
@@ -1076,7 +1277,7 @@ fn given_companion_header_with_unsupported_extra_column_and_ignore_extras_when_r
     assert_unpaired_full_match_record(&rows[0], "chr1", 10, 20, 60, '+', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
     assert_eq!(aux_tags[0].fragment_length, None);
 
     Ok(())
@@ -1085,12 +1286,11 @@ fn given_companion_header_with_unsupported_extra_column_and_ignore_extras_when_r
 #[test]
 fn given_companion_header_with_unknown_extra_and_allow_unknown_extras_when_run_then_known_extras_are_still_transferred()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Companion header has unknown `gc` and known `flen`.
     // Hand-derived expectation:
     // - Unknown `gc` is ignored
-    // - Known `flen` maps to FLEN=30
+    // - Known `flen` maps to fl=30
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("sample.frag.tsv");
@@ -1123,7 +1323,7 @@ fn given_companion_header_with_unknown_extra_and_allow_unknown_extras_when_run_t
     assert_unpaired_full_match_record(&rows[0], "chr1", 5, 35, 60, '-', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
     assert_eq!(aux_tags[0].fragment_length, Some(30));
 
     Ok(())
@@ -1132,7 +1332,6 @@ fn given_companion_header_with_unknown_extra_and_allow_unknown_extras_when_run_t
 #[test]
 fn given_companion_header_with_unsupported_extra_column_when_run_then_returns_clear_error()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // No explicit header is set. Companion header is therefore selected.
     // Companion header contains unsupported extra name `gc`, so validation must fail.
@@ -1166,7 +1365,7 @@ fn given_companion_header_with_unsupported_extra_column_when_run_then_returns_cl
         "unexpected error: {error}"
     );
     assert!(
-        error_text.contains("gc_weight, scaling_weight, or flen"),
+        error_text.contains("gc_weight, coverage_scaling_weight, count_scaling_weight, or flen"),
         "unexpected error: {error}"
     );
 
@@ -1175,7 +1374,6 @@ fn given_companion_header_with_unsupported_extra_column_when_run_then_returns_cl
 
 #[test]
 fn given_companion_and_inline_headers_when_run_then_returns_header_conflict_error() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Both a companion header file and an inline header are present.
     // Hand-derived expectation:
@@ -1226,13 +1424,12 @@ fn given_companion_and_inline_headers_when_run_then_returns_header_conflict_erro
 #[test]
 fn given_explicit_and_companion_headers_when_run_then_explicit_header_takes_precedence()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Companion header is core-only. Explicit header maps the 6th column to flen.
     // Priority order uses explicit `--frag-header` first.
     //
     // Hand-derived expectation:
-    // - Fragment converts and FLEN=30 is written
+    // - Fragment converts and fl=30 is written
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("sample.frag.tsv");
@@ -1271,14 +1468,13 @@ fn given_explicit_and_companion_headers_when_run_then_explicit_header_takes_prec
     assert_eq!(aux_tags.len(), 1);
     assert_eq!(aux_tags[0].fragment_length, Some(30));
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
 
     Ok(())
 }
 
 #[test]
 fn given_explicit_and_inline_headers_when_run_then_returns_header_conflict_error() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Both --frag-header and inline header are present.
     // Hand-derived expectation:
@@ -1329,7 +1525,6 @@ fn given_explicit_and_inline_headers_when_run_then_returns_header_conflict_error
 
 #[test]
 fn given_blacklist_any_when_run_then_any_overlap_is_excluded() -> Result<()> {
-    // Human verification status: unverified
     // Any overlap excludes [5,15), [10,20), and [15,25), so only [0,10) remains.
     let kept_starts = run_blacklist_strategy_case(BlacklistStrategy::Any)?;
     assert_eq!(kept_starts, vec![0]);
@@ -1338,7 +1533,6 @@ fn given_blacklist_any_when_run_then_any_overlap_is_excluded() -> Result<()> {
 
 #[test]
 fn given_blacklist_all_when_run_then_only_fully_overlapped_fragments_are_excluded() -> Result<()> {
-    // Human verification status: unverified
     // Full overlap excludes only [10,20).
     let kept_starts = run_blacklist_strategy_case(BlacklistStrategy::All)?;
     assert_eq!(kept_starts, vec![0, 5, 15]);
@@ -1347,7 +1541,6 @@ fn given_blacklist_all_when_run_then_only_fully_overlapped_fragments_are_exclude
 
 #[test]
 fn given_blacklist_midpoint_when_run_then_midpoint_overlap_controls_exclusion() -> Result<()> {
-    // Human verification status: unverified
     // Midpoints:
     // - [5,15) midpoint=10 -> excluded
     // - [10,20) midpoint=15 -> excluded
@@ -1359,7 +1552,6 @@ fn given_blacklist_midpoint_when_run_then_midpoint_overlap_controls_exclusion() 
 
 #[test]
 fn given_blacklist_proportion_when_run_then_threshold_controls_exclusion() -> Result<()> {
-    // Human verification status: unverified
     // Overlap fractions are [0.0, 0.5, 1.0, 0.5] for the four fragments.
     // With threshold 0.6, only [10,20) is excluded.
     let kept_starts = run_blacklist_strategy_case(BlacklistStrategy::Proportion(0.6))?;
@@ -1370,7 +1562,6 @@ fn given_blacklist_proportion_when_run_then_threshold_controls_exclusion() -> Re
 #[test]
 fn given_touching_short_blacklists_in_separate_files_when_min_size_exceeds_each_then_filter_happens_before_merge()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // One fragment spans [0,10).
     //
@@ -1415,7 +1606,7 @@ fn given_touching_short_blacklists_in_separate_files_when_min_size_exceeds_each_
     config.set_min_mapq(0);
     {
         let fragment_lengths = config.fragment_lengths_mut();
-        fragment_lengths.min_fragment_length = 1;
+        fragment_lengths.min_fragment_length = 10;
         fragment_lengths.max_fragment_length = 100;
     }
 
@@ -1434,7 +1625,6 @@ fn given_touching_short_blacklists_in_separate_files_when_min_size_exceeds_each_
 #[test]
 fn given_same_blacklist_premerged_in_one_file_when_min_size_is_met_then_fragment_is_excluded()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Use the same logical masked region as the previous test, but this time pre-merge it in the
     // BED itself:
@@ -1468,7 +1658,7 @@ fn given_same_blacklist_premerged_in_one_file_when_min_size_is_met_then_fragment
     config.set_min_mapq(0);
     {
         let fragment_lengths = config.fragment_lengths_mut();
-        fragment_lengths.min_fragment_length = 1;
+        fragment_lengths.min_fragment_length = 10;
         fragment_lengths.max_fragment_length = 100;
     }
 
@@ -1491,7 +1681,6 @@ fn given_same_blacklist_premerged_in_one_file_when_min_size_is_met_then_fragment
 
 #[test]
 fn given_unsorted_fragments_within_chromosome_when_run_then_returns_order_error() -> Result<()> {
-    // Human verification status: unverified
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
@@ -1517,7 +1706,6 @@ fn given_unsorted_fragments_within_chromosome_when_run_then_returns_order_error(
 
 #[test]
 fn given_chromosome_reappears_when_run_then_returns_order_error() -> Result<()> {
-    // Human verification status: unverified
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
@@ -1550,7 +1738,6 @@ fn given_chromosome_reappears_when_run_then_returns_order_error() -> Result<()> 
 
 #[test]
 fn given_fragment_exceeds_chromosome_when_run_then_returns_bounds_error() -> Result<()> {
-    // Human verification status: unverified
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
@@ -1576,7 +1763,6 @@ fn given_fragment_exceeds_chromosome_when_run_then_returns_bounds_error() -> Res
 
 #[test]
 fn given_invalid_strand_when_run_then_returns_parse_error() -> Result<()> {
-    // Human verification status: unverified
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
@@ -1602,7 +1788,6 @@ fn given_invalid_strand_when_run_then_returns_parse_error() -> Result<()> {
 
 #[test]
 fn given_all_fragments_fail_mapq_when_run_then_writes_empty_bam() -> Result<()> {
-    // Human verification status: unverified
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
@@ -1632,7 +1817,6 @@ fn given_all_fragments_fail_mapq_when_run_then_writes_empty_bam() -> Result<()> 
 
 #[test]
 fn default_min_mapq_matches_explicit_zero_and_differs_from_explicit_twenty() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // `frag-to-bam` intentionally defaults to `min_mapq = 0`.
     // Use two frag rows on chr1:
@@ -1715,7 +1899,6 @@ fn default_min_mapq_matches_explicit_zero_and_differs_from_explicit_twenty() -> 
 
 #[test]
 fn given_all_fragments_fail_chromosome_selection_when_run_then_returns_clear_error() -> Result<()> {
-    // Human verification status: unverified
     // The command raises "No fragments passed filters; no BAM to write" when
     // no chromosome survives selection and therefore no chromosome is observed.
     let input_dir = TempDir::new()?;
@@ -1744,7 +1927,6 @@ fn given_all_fragments_fail_chromosome_selection_when_run_then_returns_clear_err
 
 #[test]
 fn given_chromosomes_all_when_run_then_header_and_output_follow_chrom_sizes_order() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // `--chromosomes all` in this command resolves to chrom-sizes order.
     // Chrom sizes file order: chr2, chr1, chr3.
@@ -1757,7 +1939,7 @@ fn given_chromosomes_all_when_run_then_header_and_output_follow_chrom_sizes_orde
     let frag_path = input_dir.path().join("input.frag.tsv");
     let chrom_sizes_path = input_dir.path().join("chrom.sizes");
 
-    write_frag_file(&frag_path, &["chr1\t10\t20\t60\t+", "chr2\t5\t9\t30\t-"])?;
+    write_frag_file(&frag_path, &["chr1\t10\t20\t60\t+", "chr2\t5\t15\t30\t-"])?;
     write_chrom_sizes(
         &chrom_sizes_path,
         &[("chr2", 100), ("chr1", 100), ("chr3", 100)],
@@ -1910,7 +2092,6 @@ fn roundtrip_single_paired_fragment_to_unpaired_bam(
 #[test]
 fn given_bam_to_frag_then_frag_to_bam_when_roundtrip_then_restores_all_available_fields()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // We create two inward fragments whose restorable fields are hand-derived:
     //
@@ -2066,7 +2247,6 @@ fn given_bam_to_frag_then_frag_to_bam_when_roundtrip_then_restores_all_available
 #[test]
 fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_then_roundtrip_matches_original()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // `simple_inward_bam` contains exactly one inward fragment on chr1:
     // - forward read covers [20, 40)
@@ -2100,11 +2280,7 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_then_roundtrip_match
     original_cfg.set_min_mapq(0);
     original_cfg.set_require_proper_pair(false);
     original_cfg.set_window_assignment(AssignToWindowArgs::default());
-    {
-        let fragment_lengths = original_cfg.fragment_lengths_mut();
-        fragment_lengths.min_fragment_length = 10;
-        fragment_lengths.max_fragment_length = 100;
-    }
+    original_cfg.set_per_bp_length_bins(10, 100);
 
     let mut restored_cfg = LengthsConfig::new(
         IOCArgs {
@@ -2118,11 +2294,7 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_then_roundtrip_match
     restored_cfg.unpaired.reads_are_fragments = true;
     restored_cfg.set_require_proper_pair(false);
     restored_cfg.set_window_assignment(AssignToWindowArgs::default());
-    {
-        let fragment_lengths = restored_cfg.fragment_lengths_mut();
-        fragment_lengths.min_fragment_length = 10;
-        fragment_lengths.max_fragment_length = 100;
-    }
+    restored_cfg.set_per_bp_length_bins(10, 100);
 
     // Act
     run_lengths(&original_cfg)?;
@@ -2164,7 +2336,6 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_then_roundtrip_match
 #[test]
 fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_with_blacklist_then_roundtrip_matches_original()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // `simple_inward_bam()` contains one fragment spanning [20, 80), length 60.
     // We apply a blacklist interval [25, 35), which overlaps that fragment.
@@ -2196,11 +2367,7 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_with_blacklist_then_
     original_cfg.set_require_proper_pair(false);
     original_cfg.set_window_assignment(AssignToWindowArgs::default());
     original_cfg.blacklist = Some(vec![blacklist_path.clone()]);
-    {
-        let fragment_lengths = original_cfg.fragment_lengths_mut();
-        fragment_lengths.min_fragment_length = 10;
-        fragment_lengths.max_fragment_length = 100;
-    }
+    original_cfg.set_per_bp_length_bins(10, 100);
 
     let mut restored_cfg = LengthsConfig::new(
         IOCArgs {
@@ -2215,11 +2382,7 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_with_blacklist_then_
     restored_cfg.set_require_proper_pair(false);
     restored_cfg.set_window_assignment(AssignToWindowArgs::default());
     restored_cfg.blacklist = Some(vec![blacklist_path]);
-    {
-        let fragment_lengths = restored_cfg.fragment_lengths_mut();
-        fragment_lengths.min_fragment_length = 10;
-        fragment_lengths.max_fragment_length = 100;
-    }
+    restored_cfg.set_per_bp_length_bins(10, 100);
 
     // Act
     run_lengths(&original_cfg)?;
@@ -2250,7 +2413,6 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_with_blacklist_then_
 #[test]
 fn given_bam_to_frag_then_frag_to_bam_when_counting_coverage_then_roundtrip_matches_original()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // The same `simple_inward_bam` roundtrip represents exactly one fragment/read spanning [20, 80).
     //
@@ -2329,7 +2491,6 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_coverage_then_roundtrip_matc
 #[test]
 fn given_bam_to_frag_then_frag_to_bam_when_counting_coverage_with_blacklist_then_roundtrip_matches_original()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // `simple_inward_bam()` roundtrips to one unpaired fragment/read span [20, 80).
     // We blacklist [25, 35), which lies inside that covered span.
@@ -2411,13 +2572,17 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_coverage_with_blacklist_then
 
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_bam_to_bam"))]
 #[test]
-fn given_bam_to_frag_then_frag_to_bam_when_running_bam_to_bam_then_roundtrip_preserves_fragment_tags_for_same_span()
--> Result<()> {
-    // Human verification status: unverified
+fn bam_frag_bam_roundtrip_preserves_coverage_tags_for_same_span() -> Result<()> {
     // Arrange:
-    // `simple_inward_bam()` contains one paired fragment spanning [20, 80), length 60.
-    // The roundtrip helper converts that to one unpaired BAM record spanning the same [20, 80)
-    // interval in `reads_are_fragments` mode.
+    // This test compares the same physical fragment represented in two different ways:
+    // - the original paired BAM from `simple_inward_bam()`
+    // - a restored unpaired BAM after BAM -> FRAG -> BAM roundtrip
+    //
+    // We test this because FRAG does not preserve pair structure, so the restored BAM will have
+    // one unpaired record instead of two mates. Even so, downstream fragment-level tags should
+    // stay identical when the underlying span is the same.
+    //
+    // In both cases the fragment span is [20, 80), length 60.
     //
     // We then run `bam-to-bam` on both representations with a non-uniform scaling TSV:
     // - [0, 40)  factor 2.0  -> contributes 20 bp over [20, 40)
@@ -2429,8 +2594,8 @@ fn given_bam_to_frag_then_frag_to_bam_when_running_bam_to_bam_then_roundtrip_pre
     //
     // `bam-to-bam` always tags each emitted record with fragment-level values, so the scientific
     // contract is:
-    // - original paired BAM -> 2 records, each with COV = 4/3 and FLEN = 60
-    // - restored unpaired BAM -> 1 record, with COV = 4/3 and FLEN = 60
+    // - original paired BAM -> 2 records, each with cw = 4/3 and fl = 60
+    // - restored unpaired BAM -> 1 record, with cw = 4/3 and fl = 60
     //
     // Record counts differ because pair structure is not representable through FRAG, but the
     // fragment tags must stay identical for the same physical span.
@@ -2453,8 +2618,7 @@ fn given_bam_to_frag_then_frag_to_bam_when_running_bam_to_bam_then_roundtrip_pre
         original_out.clone(),
         base_chromosomes(&["chr1"]),
     );
-    original_cfg.skip_chromosome_sort = true;
-    original_cfg.scale_genome.scaling_factors = Some(scaling_path.clone());
+    original_cfg.set_coverage_scaling_factors(Some(scaling_path.clone()));
     original_cfg.min_mapq = 0;
     {
         let fragment_lengths = original_cfg.fragment_lengths_mut();
@@ -2467,8 +2631,7 @@ fn given_bam_to_frag_then_frag_to_bam_when_running_bam_to_bam_then_roundtrip_pre
         restored_out.clone(),
         base_chromosomes(&["chr1"]),
     );
-    restored_cfg.skip_chromosome_sort = true;
-    restored_cfg.scale_genome.scaling_factors = Some(scaling_path);
+    restored_cfg.set_coverage_scaling_factors(Some(scaling_path));
     restored_cfg.min_mapq = 0;
     restored_cfg.unpaired.reads_are_fragments = true;
     {
@@ -2489,14 +2652,113 @@ fn given_bam_to_frag_then_frag_to_bam_when_running_bam_to_bam_then_roundtrip_pre
     assert_eq!(original_tags.len(), 2);
     assert_eq!(restored_tags.len(), 1);
     for tags in &original_tags {
-        assert_optional_f32_eq(tags.scaling_weight, expected_cov, "paired COV");
+        assert_optional_f32_eq(tags.coverage_scaling_weight, expected_cov, "paired cw");
         assert_optional_f32_eq(tags.gc_weight, None, "paired GC");
         assert_eq!(tags.fragment_length, Some(60));
     }
     assert_optional_f32_eq(
-        restored_tags[0].scaling_weight,
+        restored_tags[0].coverage_scaling_weight,
         expected_cov,
-        "restored COV",
+        "restored cw",
+    );
+    assert_optional_f32_eq(restored_tags[0].gc_weight, None, "restored GC");
+    assert_eq!(restored_tags[0].fragment_length, Some(60));
+
+    Ok(())
+}
+
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_bam_to_bam"))]
+#[test]
+fn bam_frag_bam_roundtrip_preserves_count_tags_for_same_span() -> Result<()> {
+    // Arrange:
+    // This is the count-scaling mirror of the coverage-scaling roundtrip test above.
+    // It again compares the same physical fragment represented as:
+    // - the original paired BAM
+    // - a restored unpaired BAM after BAM -> FRAG -> BAM
+    //
+    // We test this because FRAG roundtrips intentionally collapse pair structure, but count
+    // scaling in downstream `bam-to-bam` should still depend only on the fragment span itself.
+    //
+    // In both inputs the fragment span is [20, 80), length 60.
+    //
+    // Use a non-uniform count-scaling TSV:
+    // - [0, 40)  factor 2.0  -> contributes 20 bp over [20, 40)
+    // - [40, 80) factor 1.0  -> contributes 40 bp over [40, 80)
+    //
+    // Hand-derived full-fragment average over [20, 80):
+    //   (20 * 2.0 + 40 * 1.0) / 60 = 4/3
+    //
+    // The scientific contract is therefore:
+    // - original paired BAM -> 2 records, each with nw = 4/3 and fl = 60
+    // - restored unpaired BAM -> 1 record, with nw = 4/3 and fl = 60
+    // - cw stays absent in both outputs because only count scaling is configured
+    let (source_bam, _restored_dir, restored_bam_path) = roundtrip_simple_inward_to_unpaired_bam()?;
+    let work = TempDir::new()?;
+    let original_out = work.path().join("original_count_tagged.bam");
+    let restored_out = work.path().join("restored_count_tagged.bam");
+    let scaling_path = work.path().join("piecewise_count_scaling.tsv");
+    write_scaling_tsv(
+        &scaling_path,
+        &[
+            ("chr1", 0, 40, 2.0),
+            ("chr1", 40, 80, 1.0),
+            ("chr1", 80, 200, 1.0),
+        ],
+    )?;
+
+    let mut original_cfg = BamToBamConfig::new(
+        source_bam.bam.clone(),
+        original_out.clone(),
+        base_chromosomes(&["chr1"]),
+    );
+    original_cfg.set_count_scaling_factors(Some(scaling_path.clone()));
+    original_cfg.min_mapq = 0;
+    {
+        let fragment_lengths = original_cfg.fragment_lengths_mut();
+        fragment_lengths.min_fragment_length = 10;
+        fragment_lengths.max_fragment_length = 100;
+    }
+
+    let mut restored_cfg = BamToBamConfig::new(
+        restored_bam_path,
+        restored_out.clone(),
+        base_chromosomes(&["chr1"]),
+    );
+    restored_cfg.set_count_scaling_factors(Some(scaling_path));
+    restored_cfg.min_mapq = 0;
+    restored_cfg.unpaired.reads_are_fragments = true;
+    {
+        let fragment_lengths = restored_cfg.fragment_lengths_mut();
+        fragment_lengths.min_fragment_length = 10;
+        fragment_lengths.max_fragment_length = 100;
+    }
+
+    // Act
+    run_bam_to_bam(&original_cfg)?;
+    run_bam_to_bam(&restored_cfg)?;
+
+    // Assert
+    let original_tags = read_aux_tags(&original_out)?;
+    let restored_tags = read_aux_tags(&restored_out)?;
+    let expected_cnt = Some(4.0_f32 / 3.0_f32);
+
+    assert_eq!(original_tags.len(), 2);
+    assert_eq!(restored_tags.len(), 1);
+    for tags in &original_tags {
+        assert_optional_f32_eq(tags.count_scaling_weight, expected_cnt, "paired nw");
+        assert_optional_f32_eq(tags.coverage_scaling_weight, None, "paired cw");
+        assert_optional_f32_eq(tags.gc_weight, None, "paired GC");
+        assert_eq!(tags.fragment_length, Some(60));
+    }
+    assert_optional_f32_eq(
+        restored_tags[0].count_scaling_weight,
+        expected_cnt,
+        "restored nw",
+    );
+    assert_optional_f32_eq(
+        restored_tags[0].coverage_scaling_weight,
+        None,
+        "restored cw",
     );
     assert_optional_f32_eq(restored_tags[0].gc_weight, None, "restored GC");
     assert_eq!(restored_tags[0].fragment_length, Some(60));
@@ -2508,7 +2770,6 @@ fn given_bam_to_frag_then_frag_to_bam_when_running_bam_to_bam_then_roundtrip_pre
 #[test]
 fn given_bam_to_frag_then_frag_to_bam_when_counting_midpoints_then_roundtrip_matches_original()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // We use one odd-length fragment so the midpoint is deterministic across both
     // representations:
@@ -2588,7 +2849,6 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_midpoints_then_roundtrip_mat
 #[test]
 fn given_bam_to_frag_gc_weights_then_frag_to_bam_then_midpoints_gc_tag_matches_original_gc_file_weighting()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Start from one odd-length paired fragment spanning [20, 81), length 61. Its midpoint is
     // deterministic:
@@ -2637,6 +2897,7 @@ fn given_bam_to_frag_gc_weights_then_frag_to_bam_then_midpoints_gc_tag_matches_o
         length_edges: vec![61, 62],
         gc_edges: vec![0, 101],
         length_bin_frequencies: array![1.0_f64],
+        reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![[3.0_f64]],
     };
     package.write_npz(&gc_path)?;
@@ -2653,7 +2914,7 @@ fn given_bam_to_frag_gc_weights_then_frag_to_bam_then_midpoints_gc_tag_matches_o
     bam_to_frag_cfg.set_min_mapq(0);
     bam_to_frag_cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(gc_path.clone()),
-        drop_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     bam_to_frag_cfg.set_ref_2bit(Some(reference.path.clone()));
     {
@@ -2679,7 +2940,7 @@ fn given_bam_to_frag_gc_weights_then_frag_to_bam_then_midpoints_gc_tag_matches_o
     original_midpoints_cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path.clone()),
         gc_tag: None,
-        drop_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     original_midpoints_cfg.set_ref_2bit(Some(reference.path.clone()));
 
@@ -2723,7 +2984,7 @@ fn given_bam_to_frag_gc_weights_then_frag_to_bam_then_midpoints_gc_tag_matches_o
     restored_midpoints_cfg.set_gc(ApplyGCArgs {
         gc_file: None,
         gc_tag: Some("GC".to_string()),
-        drop_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     run_midpoints(&restored_midpoints_cfg)?;
 
@@ -2754,7 +3015,6 @@ fn given_bam_to_frag_gc_weights_then_frag_to_bam_then_midpoints_gc_tag_matches_o
 #[test]
 fn given_bam_to_frag_real_non_neutral_gc_then_frag_to_bam_then_midpoints_gc_tag_matches_original_gc_file_weighting()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Use a real non-neutral `ref-gc-bias -> gc-bias` package rather than a handcrafted constant
     // matrix.
@@ -2849,7 +3109,7 @@ fn given_bam_to_frag_real_non_neutral_gc_then_frag_to_bam_then_midpoints_gc_tag_
     bam_to_frag_cfg.set_min_mapq(0);
     bam_to_frag_cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(gc_path.clone()),
-        drop_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     bam_to_frag_cfg.set_ref_2bit(Some(reference.path.clone()));
     {
@@ -2875,7 +3135,7 @@ fn given_bam_to_frag_real_non_neutral_gc_then_frag_to_bam_then_midpoints_gc_tag_
     original_midpoints_cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path.clone()),
         gc_tag: None,
-        drop_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     original_midpoints_cfg.set_ref_2bit(Some(reference.path.clone()));
 
@@ -2919,7 +3179,7 @@ fn given_bam_to_frag_real_non_neutral_gc_then_frag_to_bam_then_midpoints_gc_tag_
     restored_midpoints_cfg.set_gc(ApplyGCArgs {
         gc_file: None,
         gc_tag: Some("GC".to_string()),
-        drop_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     run_midpoints(&restored_midpoints_cfg)?;
 
@@ -2963,7 +3223,6 @@ fn given_bam_to_frag_real_non_neutral_gc_then_frag_to_bam_then_midpoints_gc_tag_
 #[test]
 fn given_bam_to_frag_with_real_gc_and_scaling_outputs_when_frag_to_bam_runs_then_companion_header_restores_both_aux_tags()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // `simple_inward_bam()` contains one paired fragment spanning [20, 80), length 60.
     //
@@ -2974,12 +3233,12 @@ fn given_bam_to_frag_with_real_gc_and_scaling_outputs_when_frag_to_bam_runs_then
     // Hand-derived expectations:
     // - `bam-to-frag` writes exactly one FRAG row for [20, 80)
     // - the companion header must advertise both extra columns:
-    //     gc_weight, scaling_weight
+    //     gc_weight, coverage_scaling_weight
     // - `frag-to-bam` auto-detects that companion header and restores one unpaired BAM record
     //   with:
     //     GC   = 3.0
-    //     COV  = 2.0
-    //     FLEN absent (because `bam-to-frag` does not emit a `flen` column)
+    //     cw  = 2.0
+    //     fl absent (because `bam-to-frag` does not emit a `flen` column)
     let source_bam = fixtures::simple_inward_bam()?;
     let reference = simple_reference_twobit()?;
     let bam_to_frag_out = TempDir::new()?;
@@ -2997,6 +3256,7 @@ fn given_bam_to_frag_with_real_gc_and_scaling_outputs_when_frag_to_bam_runs_then
         length_edges: vec![60, 61],
         gc_edges: vec![0, 101],
         length_bin_frequencies: array![1.0_f64],
+        reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![[3.0_f64]],
     };
     package.write_npz(&gc_path)?;
@@ -3011,12 +3271,10 @@ fn given_bam_to_frag_with_real_gc_and_scaling_outputs_when_frag_to_bam_runs_then
     );
     bam_to_frag_cfg.set_output_prefix("weighted");
     bam_to_frag_cfg.set_min_mapq(0);
-    bam_to_frag_cfg.set_scale_genome(cfdnalab::commands::cli_common::ScaleGenomeArgs {
-        scaling_factors: Some(scaling_path),
-    });
+    bam_to_frag_cfg.set_coverage_scaling_factors(Some(scaling_path));
     bam_to_frag_cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(gc_path),
-        drop_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     bam_to_frag_cfg.set_ref_2bit(Some(reference.path.clone()));
     {
@@ -3053,13 +3311,96 @@ fn given_bam_to_frag_with_real_gc_and_scaling_outputs_when_frag_to_bam_runs_then
     // Assert
     assert_eq!(
         header_text.trim(),
-        "chromosome\tstart\tend\tmin_mapq\tread1_strand\tgc_weight\tscaling_weight"
+        "chromosome\tstart\tend\tmin_mapq\tread1_strand\tgc_weight\tcoverage_scaling_weight"
     );
     assert_eq!(rows.len(), 1);
     assert_unpaired_full_match_record(&rows[0], "chr1", 20, 80, 60, '+', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, Some(3.0), "GC");
-    assert_optional_f32_eq(aux_tags[0].scaling_weight, Some(2.0), "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, Some(2.0), "cw");
+    assert_eq!(aux_tags[0].fragment_length, None);
+
+    Ok(())
+}
+
+#[cfg(feature = "cmd_bam_to_frag")]
+#[test]
+fn given_bam_to_frag_with_count_scaling_output_when_frag_to_bam_runs_then_companion_header_restores_cnt_aux_tag()
+-> Result<()> {
+    // Arrange:
+    // `simple_inward_bam()` contains one paired fragment spanning [20, 80), length 60.
+    //
+    // We generate the FRAG input with the released producer `bam-to-frag` using only a
+    // chromosome-wide count-scaling TSV with factor 0.5.
+    //
+    // Hand-derived expectations:
+    // - `bam-to-frag` writes one FRAG row for [20, 80)
+    // - the companion header advertises `count_scaling_weight`
+    // - `frag-to-bam` auto-detects that companion header and restores one unpaired BAM record
+    //   with nw = 0.5
+    // - GC, cw, and fl stay absent
+    let source_bam = fixtures::simple_inward_bam()?;
+    let bam_to_frag_out = TempDir::new()?;
+    let frag_to_bam_out = TempDir::new()?;
+    let work = TempDir::new()?;
+    let scaling_path = work.path().join("uniform_count_scaling.tsv");
+    let chrom_sizes_path = frag_to_bam_out.path().join("chrom.sizes");
+    write_chrom_sizes(&chrom_sizes_path, &[("chr1", 200)])?;
+    write_scaling_tsv(&scaling_path, &[("chr1", 0, 200, 0.5)])?;
+
+    let mut bam_to_frag_cfg = BamToFragConfig::new(
+        IOCArgs {
+            bam: source_bam.bam.clone(),
+            output_dir: bam_to_frag_out.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1"]),
+    );
+    bam_to_frag_cfg.set_output_prefix("weighted");
+    bam_to_frag_cfg.set_min_mapq(0);
+    bam_to_frag_cfg.set_count_scaling_factors(Some(scaling_path));
+    {
+        let fragment_lengths = bam_to_frag_cfg.fragment_lengths_mut();
+        fragment_lengths.min_fragment_length = 60;
+        fragment_lengths.max_fragment_length = 60;
+    }
+
+    // Act 1: real producer writes FRAG row plus companion header.
+    run_bam_to_frag(&bam_to_frag_cfg)?;
+    let frag_path = bam_to_frag_out.path().join("weighted.frag.tsv.gz");
+    let header_path = bam_to_frag_out.path().join("weighted.frag.header.tsv");
+    let header_text = fs::read_to_string(&header_path)?;
+
+    let mut frag_to_bam_cfg = make_config(
+        frag_path,
+        frag_to_bam_out.path().to_path_buf(),
+        chrom_sizes_path,
+        base_chromosomes(&["chr1"]),
+    );
+    frag_to_bam_cfg.set_min_mapq(0);
+    {
+        let fragment_lengths = frag_to_bam_cfg.fragment_lengths_mut();
+        fragment_lengths.min_fragment_length = 60;
+        fragment_lengths.max_fragment_length = 60;
+    }
+
+    // Act 2: companion header is auto-detected and restored to BAM AUX tags.
+    run_frag_to_bam(&frag_to_bam_cfg)?;
+    let output_bam = output_bam_path(frag_to_bam_out.path(), "restored");
+    let rows = read_bam_rows(&output_bam)?;
+    let aux_tags = read_aux_tags(&output_bam)?;
+
+    // Assert
+    assert_eq!(
+        header_text.trim(),
+        "chromosome\tstart\tend\tmin_mapq\tread1_strand\tcount_scaling_weight"
+    );
+    assert_eq!(rows.len(), 1);
+    assert_unpaired_full_match_record(&rows[0], "chr1", 20, 80, 60, '+', "fragment_1");
+    assert_eq!(aux_tags.len(), 1);
+    assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
+    assert_optional_f32_eq(aux_tags[0].count_scaling_weight, Some(0.5), "nw");
     assert_eq!(aux_tags[0].fragment_length, None);
 
     Ok(())

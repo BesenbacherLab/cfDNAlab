@@ -1,7 +1,6 @@
 use crate::commands::fragment_kmers::nearest_frame_guard::NearestFrameGuard;
-use crate::commands::fragment_kmers::positions::{
-    AllowedWindows, PositionOrientation, PositionSelection, in_any_run,
-};
+use crate::commands::fragment_kmers::positions::{AllowedWindows, PositionSelection, in_any_run};
+use crate::shared::positioning::PositionOrientation;
 
 #[derive(Debug, Clone)]
 pub enum SelectionDecision {

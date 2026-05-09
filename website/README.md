@@ -4,6 +4,12 @@ This folder contains the Docusaurus website for cfDNAlab documentation.
 
 ## Local development
 
+0. Stand in the website directory.
+
+```bash
+cd website
+```
+
 1. Install dependencies:
 
 ```bash

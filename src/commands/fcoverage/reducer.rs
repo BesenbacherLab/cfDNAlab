@@ -2,216 +2,408 @@ use anyhow::{Context, Result};
 use fxhash::{FxBuildHasher, FxHashMap};
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
-use std::io::{BufRead, BufReader, Write};
+use std::fmt::Display;
+use std::io::BufRead;
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
-use crate::commands::fcoverage::tiling::finalize_value;
-use crate::commands::fcoverage::window_results::CoverageWindowAction;
-use crate::commands::fcoverage::writers::write_final_row;
-use crate::shared::formatters::round_to;
 use crate::shared::interval::{IndexedInterval, Interval};
+use crate::shared::io::open_text_reader;
 
-/// Row parsed from a per-tile partials file
-struct PartialsRow {
-    orig_idx: u64,
-    sum: f64,
-    allowed_positions: u64,
-    blacklisted_positions: u64,
+type StreamHeap = BinaryHeap<Reverse<(u64, usize)>>;
+
+/// Returned aggregate temp paths for one tile.
+///
+/// `partials_path` points at tile-local contribution rows, not BED records. The row identity
+/// depends on the reducer family. BED rows are keyed by stable `orig_idx`, and fixed-size rows are
+/// keyed by the logical full-bin start. `cross_index_path` is optional because aligned single-tile
+/// contributions use the reducer rule that missing cross-index entries mean one contribution.
+#[derive(Debug, Clone)]
+pub(crate) struct TileAggregateTempFiles {
+    pub tile_index: u32,
+    pub partials_path: PathBuf,
+    pub cross_index_path: Option<PathBuf>,
 }
 
-/// Lightweight reader over a compressed or plain per-tile partials file
+/// Parse one tab-delimited column with consistent missing/invalid diagnostics.
+///
+/// The field names still stay explicit at each call site, but the repetitive parse scaffolding no
+/// longer has to be copied into every schema branch. This is the main low-risk parser cleanup from
+/// the refactor plan.
+fn parse_col<T: FromStr>(
+    cols: &mut std::str::Split<'_, char>,
+    field_name: &str,
+    partials_label: &str,
+    chr: &str,
+    tile_index: u32,
+    line_number: u64,
+) -> Result<T>
+where
+    T::Err: Display,
+{
+    cols.next()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Missing {} in {} for chromosome '{}' tile {} line {}",
+                field_name,
+                partials_label,
+                chr,
+                tile_index,
+                line_number
+            )
+        })?
+        .parse()
+        .map_err(|parse_error| {
+            anyhow::anyhow!(
+                "Invalid {} in chromosome '{}' tile {} line {}: {}",
+                field_name,
+                chr,
+                tile_index,
+                line_number,
+                parse_error
+            )
+        })
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum PartialsSchema {
+    BedBasic,
+    BedSummary,
+    SizeBasic,
+    SizeSummary,
+}
+
+impl PartialsSchema {
+    fn partials_label(self) -> &'static str {
+        match self {
+            Self::BedBasic | Self::BedSummary => "partials",
+            Self::SizeBasic | Self::SizeSummary => "size partials",
+        }
+    }
+
+    /// Return whether this schema carries the summary-only raw moment columns.
+    ///
+    /// This affects only the on-disk column layout. BED vs size row identity stays separate and is
+    /// still handled explicitly in `parse_row`.
+    fn is_summary(self) -> bool {
+        matches!(self, Self::BedSummary | Self::SizeSummary)
+    }
+}
+
+/// Parsed row from one partials line, normalized into the reducer's shared in-memory shape.
+///
+/// BED rows keep `interval: None` because BED partial files only persist the stable `orig_idx`.
+/// The BED merge engine still has to recover the final interval from `coords_by_idx`.
+///
+/// Size rows carry `interval: Some(full_bin_interval)` because the fixed-size partial files
+/// already persist the full bin coordinates, even when one tile wrote only a clipped overlap.
+///
+/// Basic temp files stay narrow on disk. Their summary-only fields are filled with zeroes only
+/// after parsing so the in-memory reducer field set matches the summary reducer and grouped fold.
+#[derive(Debug, Clone, Copy)]
+struct ParsedPartialRow {
+    key: u64,
+    interval: Option<Interval<u64>>,
+    coverage_sum: f64,
+    eligible_positions: u64,
+    blacklisted_positions: u64,
+    nonzero_positions: u64,
+    coverage_sum_of_squares: f64,
+}
+
+/// Shared streaming reader for all four partial schemas.
+///
+/// The IO mechanics are identical across BED/size and basic/summary partials:
+/// - open plain or zstd-compressed files
+/// - skip blank lines
+/// - keep line numbers for diagnostics
+/// - parse the current schema into one normalized row shape
 struct PartialsStream {
-    reader: BufReader<Box<dyn std::io::Read + Send>>,
+    reader: Box<dyn BufRead>,
     line_buf: String,
     chr: String,
     line_number: u64,
-    tile_index: u32, // For diagnostics
+    tile_index: u32,
+    schema: PartialsSchema,
 }
 
 impl PartialsStream {
-    fn open(path: &std::path::Path, chr: &str, tile_index: u32) -> Result<Self> {
-        let file = std::fs::File::open(path)
-            .with_context(|| format!("Opening partials file {}", path.display()))?;
-        // Detect zstd by extension; allow plain TSV for tests
-        let boxed: Box<dyn std::io::Read + Send> = if path
-            .extension()
-            .and_then(|s| s.to_str())
-            .map(|e| e.eq_ignore_ascii_case("zst"))
-            .unwrap_or(false)
-        {
-            Box::new(zstd::Decoder::new(file).context("Opening zstd decoder")?)
-        } else {
-            Box::new(file)
-        };
+    fn open(path: &Path, chr: &str, tile_index: u32, schema: PartialsSchema) -> Result<Self> {
         Ok(Self {
-            reader: BufReader::new(boxed),
+            reader: open_text_reader(path)
+                .with_context(|| format!("Opening partials file {}", path.display()))?,
             line_buf: String::new(),
             chr: chr.to_string(),
             line_number: 0,
             tile_index,
+            schema,
         })
     }
 
-    /// Read next row, or Ok(None) on EOF
-    fn next_row(&mut self) -> Result<Option<PartialsRow>> {
-        self.line_buf.clear();
-        let next_line_number = self.line_number + 1;
-        let bytes_read = self.reader.read_line(&mut self.line_buf).with_context(|| {
-            format!(
-                "Reading partials for chromosome '{}' tile {} line {}",
-                self.chr, self.tile_index, next_line_number
-            )
-        })?;
-        if bytes_read == 0 {
-            return Ok(None);
+    /// Read the next non-blank parsed row, or `Ok(None)` on EOF.
+    fn next_row(&mut self) -> Result<Option<ParsedPartialRow>> {
+        loop {
+            self.line_buf.clear();
+            let next_line_number = self.line_number + 1;
+            let bytes_read = self.reader.read_line(&mut self.line_buf).with_context(|| {
+                format!(
+                    "Reading {} for chromosome '{}' tile {} line {}",
+                    self.schema.partials_label(),
+                    self.chr,
+                    self.tile_index,
+                    next_line_number
+                )
+            })?;
+            if bytes_read == 0 {
+                return Ok(None);
+            }
+
+            self.line_number = next_line_number;
+            let raw = self.line_buf.trim_end_matches('\n').trim_end_matches('\r');
+            if raw.is_empty() {
+                continue;
+            }
+
+            return self.parse_row(raw).map(Some);
         }
-        self.line_number = next_line_number;
-        let raw = self.line_buf.trim_end_matches('\n');
-        if raw.is_empty() {
-            return self.next_row(); // Skip blank lines
-        }
+    }
+
+    /// Parse one non-blank partials line into the shared reducer row shape.
+    ///
+    /// The function keeps the two real schema families visible:
+    /// - BED partials, keyed by stable `orig_idx`
+    /// - fixed-size partials, keyed by full bin `start` and carrying full bin coordinates
+    ///
+    /// Within each family, basic and summary schemas share the leading columns and differ only by
+    /// the summary-only tail. That is why the code splits first by BED vs size, then gates the
+    /// extra raw moment columns behind `summary`.
+    fn parse_row(&self, raw: &str) -> Result<ParsedPartialRow> {
         let mut cols = raw.split('\t');
+        let partials_label = self.schema.partials_label();
+        let summary = self.schema.is_summary();
 
-        // Expected columns in per-tile partials
-        //   orig_idx   sum   allowed   blacklisted
-        let orig_idx: u64 = cols
-            .next()
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Missing orig_idx in partials for chromosome '{}' tile {} line {}",
-                    self.chr,
+        match self.schema {
+            PartialsSchema::BedBasic | PartialsSchema::BedSummary => {
+                // Expected columns in BED partials:
+                //   orig_idx   sum   allowed   blacklisted
+                //   [summary-only] nonzero_positions   coverage_sum_of_squares
+                let key: u64 = parse_col(
+                    &mut cols,
+                    "orig_idx",
+                    partials_label,
+                    &self.chr,
                     self.tile_index,
-                    self.line_number
-                )
-            })?
-            .parse()
-            .with_context(|| {
-                format!(
-                    "Invalid orig_idx in chromosome '{}' tile {} line {}",
-                    self.chr, self.tile_index, self.line_number
-                )
-            })?;
-        let sum: f64 = cols
-            .next()
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Missing sum in partials for chromosome '{}' tile {} line {}",
-                    self.chr,
+                    self.line_number,
+                )?;
+                let coverage_sum: f64 = parse_col(
+                    &mut cols,
+                    "sum",
+                    partials_label,
+                    &self.chr,
                     self.tile_index,
-                    self.line_number
-                )
-            })?
-            .parse()
-            .with_context(|| {
-                format!(
-                    "Invalid sum in chromosome '{}' tile {} line {}",
-                    self.chr, self.tile_index, self.line_number
-                )
-            })?;
-        let allowed_positions: u64 = cols
-            .next()
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Missing allowed in partials for chromosome '{}' tile {} line {}",
-                    self.chr,
+                    self.line_number,
+                )?;
+                let eligible_positions: u64 = parse_col(
+                    &mut cols,
+                    "allowed",
+                    partials_label,
+                    &self.chr,
                     self.tile_index,
-                    self.line_number
-                )
-            })?
-            .parse()
-            .with_context(|| {
-                format!(
-                    "Invalid allowed in chromosome '{}' tile {} line {}",
-                    self.chr, self.tile_index, self.line_number
-                )
-            })?;
-        let blacklisted_positions: u64 = cols
-            .next()
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Missing blacklisted in partials for chromosome '{}' tile {} line {}",
-                    self.chr,
+                    self.line_number,
+                )?;
+                let blacklisted_positions: u64 = parse_col(
+                    &mut cols,
+                    "blacklisted",
+                    partials_label,
+                    &self.chr,
                     self.tile_index,
-                    self.line_number
-                )
-            })?
-            .parse()
-            .with_context(|| {
-                format!(
-                    "Invalid blacklisted in chromosome '{}' tile {} line {}",
-                    self.chr, self.tile_index, self.line_number
-                )
-            })?;
+                    self.line_number,
+                )?;
+                let (nonzero_positions, coverage_sum_of_squares) = if summary {
+                    (
+                        parse_col(
+                            &mut cols,
+                            "nonzero_positions",
+                            partials_label,
+                            &self.chr,
+                            self.tile_index,
+                            self.line_number,
+                        )?,
+                        parse_col(
+                            &mut cols,
+                            "coverage_sum_of_squares",
+                            partials_label,
+                            &self.chr,
+                            self.tile_index,
+                            self.line_number,
+                        )?,
+                    )
+                } else {
+                    // Basic temp files deliberately do not carry summary-only columns.
+                    (0, 0.0)
+                };
 
-        Ok(Some(PartialsRow {
-            orig_idx,
-            sum,
-            allowed_positions,
-            blacklisted_positions,
-        }))
+                Ok(ParsedPartialRow {
+                    key,
+                    interval: None,
+                    coverage_sum,
+                    eligible_positions,
+                    blacklisted_positions,
+                    nonzero_positions,
+                    coverage_sum_of_squares,
+                })
+            }
+            PartialsSchema::SizeBasic | PartialsSchema::SizeSummary => {
+                // Expected columns in size partials:
+                //   start   end   sum   allowed   blacklisted
+                //   [summary-only] nonzero_positions   coverage_sum_of_squares
+                let start: u64 = parse_col(
+                    &mut cols,
+                    "start",
+                    partials_label,
+                    &self.chr,
+                    self.tile_index,
+                    self.line_number,
+                )?;
+                let end: u64 = parse_col(
+                    &mut cols,
+                    "end",
+                    partials_label,
+                    &self.chr,
+                    self.tile_index,
+                    self.line_number,
+                )?;
+                let coverage_sum: f64 = parse_col(
+                    &mut cols,
+                    "sum",
+                    partials_label,
+                    &self.chr,
+                    self.tile_index,
+                    self.line_number,
+                )?;
+                let eligible_positions: u64 = parse_col(
+                    &mut cols,
+                    "allowed",
+                    partials_label,
+                    &self.chr,
+                    self.tile_index,
+                    self.line_number,
+                )?;
+                let blacklisted_positions: u64 = parse_col(
+                    &mut cols,
+                    "blacklisted",
+                    partials_label,
+                    &self.chr,
+                    self.tile_index,
+                    self.line_number,
+                )?;
+                let (nonzero_positions, coverage_sum_of_squares) = if summary {
+                    (
+                        parse_col(
+                            &mut cols,
+                            "nonzero_positions",
+                            partials_label,
+                            &self.chr,
+                            self.tile_index,
+                            self.line_number,
+                        )?,
+                        parse_col(
+                            &mut cols,
+                            "coverage_sum_of_squares",
+                            partials_label,
+                            &self.chr,
+                            self.tile_index,
+                            self.line_number,
+                        )?,
+                    )
+                } else {
+                    // Basic temp files deliberately do not carry summary-only columns.
+                    (0, 0.0)
+                };
+
+                Ok(ParsedPartialRow {
+                    key: start,
+                    interval: Some(Interval::new(start, end)?),
+                    coverage_sum,
+                    eligible_positions,
+                    blacklisted_positions,
+                    nonzero_positions,
+                    coverage_sum_of_squares,
+                })
+            }
+        }
     }
 }
 
-/// Accumulator for a window across all contributing tiles
-#[derive(Default)]
-struct WindowAccum {
-    sum: f64,
-    allowed_positions: u64,
+/// Shared additive accumulator for one BED row keyed by `orig_idx` or one fixed-size bin keyed by
+/// full bin `start`.
+///
+/// The summary-only fields are intentionally present even in basic-mode reduction. They remain
+/// zero there, which keeps the reducer output shape aligned with grouped folding and summary
+/// writers without widening the temp-file schema.
+#[derive(Debug, Clone, Copy, Default)]
+struct AggregateAccum {
+    coverage_sum: f64,
+    eligible_positions: u64,
     blacklisted_positions: u64,
+    nonzero_positions: u64,
+    coverage_sum_of_squares: f64,
     seen_contributions: u32,
 }
 
-/// Reduce aggregates for one chromosome using:
-///  * Per-tile **partials** files: rows are sorted by `orig_idx`
-///  * Per-tile **cross-index** files: list `orig_idx` that are NOT fully contained in that tile core
-///
-/// Goal
-///  * Produce final rows strictly in **increasing `orig_idx`** order without
-///    buffering all windows or scanning every window
-///
-/// How ordering is guaranteed
-///  * Each tile’s partials are sorted by `orig_idx`
-///  * We open all tile streams and perform a **K-way merge** on `orig_idx`
-///
-/// What is a K-way merge and why use `BinaryHeap<Reverse<...>>`
-///  * A K-way merge picks the smallest next key across K sorted inputs
-///  * A binary heap is a priority queue. In Rust, `BinaryHeap` is a max-heap by default
-///  * Wrapping keys in `Reverse(..)` flips the order so the heap behaves like a **min-heap**
-///    (smallest key at the top), ideal for always extracting the lowest `orig_idx` next
-///
-/// Cross-index logic
-///  * For windows fully contained in a single tile core: they appear in exactly one partials file
-///    and are absent from all cross-index files -> expected contributions = 1
-///  * For windows that cross tile core boundaries: the window appears in each overlapped tile’s
-///    partials file and is listed in each of those tiles’ cross-index files -> expected contributions
-///    equals the total number of tiles it overlaps
-///
-/// Requirements
-///  * `windows_chr` must be start-sorted and must have `orig_idx == start-sorted rank`
-///    so that per-tile partials are naturally sorted by `orig_idx` with no extra work
-///
-/// Output columns already have their header written by the caller:
-/// `chromosome  start  end  value  blacklisted_positions`
-pub fn reduce_bed_with_cross_index_for_chr<W: Write>(
-    chr: &str,
-    temp_dir: &std::path::Path,
-    partials_prefix: &str,
-    windows_chr: &[IndexedInterval<u64>], // reindexed to 0..n-1
-    masked: bool,
-    mode: CoverageWindowAction, // Average | Total
-    decimals: i32,
-    final_writer: &mut W,
-) -> Result<()> {
-    anyhow::ensure!(
-        matches!(
-            mode,
-            CoverageWindowAction::Average | CoverageWindowAction::Total
-        ),
-        "Reducer supports only 'average' or 'total'"
-    );
+impl AggregateAccum {
+    fn add_row(&mut self, row: ParsedPartialRow) {
+        self.coverage_sum += row.coverage_sum;
+        self.eligible_positions += row.eligible_positions;
+        self.blacklisted_positions += row.blacklisted_positions;
+        self.nonzero_positions += row.nonzero_positions;
+        self.coverage_sum_of_squares += row.coverage_sum_of_squares;
+        self.seen_contributions += 1;
+    }
 
-    // Map original BED/window index -> interval so we can compute averages
-    // without storing coordinates in partial rows. BED original indices are not
-    // guaranteed to equal the start-sorted rank, so this must stay an explicit map.
+    fn into_reduced_row(self, idx: u64, interval: Interval<u64>) -> ReducedAggregateRow {
+        ReducedAggregateRow {
+            idx,
+            interval,
+            coverage_sum: self.coverage_sum,
+            eligible_positions: self.eligible_positions,
+            blacklisted_positions: self.blacklisted_positions,
+            nonzero_positions: self.nonzero_positions,
+            coverage_sum_of_squares: self.coverage_sum_of_squares,
+        }
+    }
+}
+
+/// Final raw aggregate row after cross-tile reduction.
+///
+/// This is the contract between reducer code and writer code:
+/// - reducers stop at exact additive raw values
+/// - writers derive `average`, `total`, variance, SD, CV, and other presentation-layer fields
+///
+/// BED and fixed-size reducers both produce this same row shape, even though they recover the
+/// interval differently.
+#[derive(Debug, Clone, Copy)]
+pub struct ReducedAggregateRow {
+    pub idx: u64,
+    pub interval: Interval<u64>,
+    pub coverage_sum: f64,
+    pub eligible_positions: u64,
+    pub blacklisted_positions: u64,
+    pub nonzero_positions: u64,
+    pub coverage_sum_of_squares: f64,
+}
+
+/// Build the BED interval lookup keyed by stable original row index.
+///
+/// BED partial rows intentionally keep only `orig_idx` on disk, so interval recovery has to stay
+/// explicit in the BED reducer rather than being hidden inside the parsed row shape.
+fn build_bed_coords_by_idx(
+    chr: &str,
+    windows_chr: &[IndexedInterval<u64>],
+) -> Result<FxHashMap<u64, Interval<u64>>> {
+    // Keep a direct lookup from the stable BED row id to genomic coordinates.
+    // The reducer only sees `orig_idx` in the partial rows, so it needs this side map to rebuild
+    // the final interval once all contributions for one window have been merged.
     let mut coords_by_idx: FxHashMap<u64, Interval<u64>> =
         FxHashMap::with_capacity_and_hasher(windows_chr.len(), FxBuildHasher::default());
     for window in windows_chr {
@@ -224,143 +416,248 @@ pub fn reduce_bed_with_cross_index_for_chr<W: Write>(
             chr
         );
     }
+    Ok(coords_by_idx)
+}
 
-    // Extract files from temp dir
-    let files_by_tile = discover_tile_files_for_chr(temp_dir, chr, partials_prefix)?;
-
-    // Compute expected contribution counts per orig_idx from cross-index files
-    // Windows not present in any cross-index file implicitly expect exactly 1 contribution
-    let mut expected_contribs: FxHashMap<u64, u32> =
+/// Count the expected number of tile contributions for each reducer row key.
+///
+/// Cross-index sidecars list only boundary-crossing rows. Any key missing from every sidecar still
+/// expects exactly one contribution, but this helper deliberately returns only the explicit counts.
+/// The reducer applies the `default = 1` policy at the read point so that rule stays obvious.
+///
+/// Key meaning depends on reducer family:
+/// - BED reducers use stable `orig_idx`
+/// - fixed-size reducers use full bin `start`
+fn load_expected_contributions(
+    files_by_tile: &FxHashMap<u32, TileFiles>,
+) -> Result<FxHashMap<u64, u32>> {
+    let mut expected_contributions: FxHashMap<u64, u32> =
         FxHashMap::with_hasher(FxBuildHasher::default());
-    for (_tile_idx, tfs) in files_by_tile.iter() {
-        if let Some(cross_path) = &tfs.cross_index_path {
-            let f = std::fs::File::open(cross_path)
-                .with_context(|| format!("Opening cross-index {}", cross_path.display()))?;
-            let reader: Box<dyn std::io::Read + Send> =
-                if cross_path.extension().and_then(|s| s.to_str()) == Some("zst") {
-                    Box::new(zstd::Decoder::new(f)?)
-                } else {
-                    Box::new(f)
-                };
-            let mut r = BufReader::new(reader);
-            let mut line = String::new();
-            loop {
-                line.clear();
-                if r.read_line(&mut line)? == 0 {
-                    break;
-                }
-                let raw = line.trim_end_matches('\n');
-                if raw.is_empty() {
-                    continue;
-                }
-                let idx: u64 = raw
-                    .parse()
-                    .with_context(|| format!("Invalid orig_idx in {}", cross_path.display()))?;
-                *expected_contribs.entry(idx).or_insert(0) += 1;
-            }
-        }
-    }
-    // Note: Missing => 1, Present => exact number of overlapping tiles
-    let expected_for = |idx: u64| -> u32 { *expected_contribs.get(&idx).unwrap_or(&1) };
 
-    // Prepare K-way merge across all per-tile partials streams
-    //
-    // Data structure choice
-    //  * `BinaryHeap` is a priority queue; by wrapping the key in `Reverse((key, id))` we
-    //    make it behave as a min-heap, so `pop()` always returns the smallest `orig_idx`
-    //
-    // Invariant
-    //  * Each stream yields rows in ascending `orig_idx` order
-    let mut streams: Vec<PartialsStream> = Vec::new();
-    let mut current_row: Vec<Option<PartialsRow>> = Vec::new();
-    let mut heap: BinaryHeap<Reverse<(u64, usize)>> = BinaryHeap::new(); // Reverse to get min-heap behavior
-
-    // Open streams and push their first row into the heap
-    for (tile_idx, tfs) in files_by_tile.iter() {
-        let Some(partials_path) = &tfs.partials_path else {
+    for tile_files in files_by_tile.values() {
+        let Some(cross_path) = &tile_files.cross_index_path else {
             continue;
         };
-        let mut ps = PartialsStream::open(partials_path, chr, *tile_idx)?;
-        if let Some(row) = ps.next_row()? {
-            let stream_id = streams.len();
-            streams.push(ps);
-            current_row.push(Some(row));
-            let key = current_row[stream_id].as_ref().unwrap().orig_idx;
-            heap.push(Reverse((key, stream_id)));
+
+        let mut reader = open_text_reader(cross_path)
+            .with_context(|| format!("Opening cross-index {}", cross_path.display()))?;
+        let mut line = String::new();
+        loop {
+            line.clear();
+            if reader.read_line(&mut line)? == 0 {
+                break;
+            }
+
+            let raw = line.trim_end_matches('\n').trim_end_matches('\r');
+            if raw.is_empty() {
+                continue;
+            }
+
+            let key: u64 = raw
+                .parse()
+                .with_context(|| format!("Invalid cross-index key in {}", cross_path.display()))?;
+            *expected_contributions.entry(key).or_insert(0) += 1;
         }
     }
 
-    // Accumulators for indices currently “in flight”
-    let mut accum_by_idx: FxHashMap<u64, WindowAccum> =
+    Ok(expected_contributions)
+}
+
+#[inline]
+/// Return how many tile rows must be seen before one reduced row is complete.
+///
+/// Keys missing from all cross-index sidecars default to one contribution because they stayed
+/// inside one tile core and therefore produced exactly one partial row.
+fn expected_contribution_count(expected_contributions: &FxHashMap<u64, u32>, key: u64) -> u32 {
+    *expected_contributions.get(&key).unwrap_or(&1)
+}
+
+/// Open one partials stream per tile and seed the merge heap with the current visible row.
+///
+/// The returned heap is keyed only by the next visible row key. It is not a completeness proof.
+/// Final correctness still comes from the stable row identity plus the expected
+/// contribution counts loaded from the cross-index sidecars.
+fn open_partials_streams(
+    chr: &str,
+    files_by_tile: &FxHashMap<u32, TileFiles>,
+    schema: PartialsSchema,
+) -> Result<(
+    Vec<PartialsStream>,
+    Vec<Option<ParsedPartialRow>>,
+    StreamHeap,
+)> {
+    // Open one stream per partials file and keep only that stream's current row in memory.
+    // The heap chooses the smallest visible row key across those rows.
+    //
+    // `BinaryHeap` is a max-heap, so `Reverse((key, stream_id))` turns it into a min-heap.
+    //
+    // The heap does not prove that a BED row or fixed-size bin is complete. It only picks the
+    // next stream to read from. Final correctness still comes from the stable row identity plus
+    // the expected contribution count loaded from the cross-index sidecars.
+    let mut streams: Vec<PartialsStream> = Vec::new();
+    let mut current_rows: Vec<Option<ParsedPartialRow>> = Vec::new();
+    let mut heap: StreamHeap = BinaryHeap::new();
+
+    for (tile_index, tile_files) in files_by_tile {
+        let Some(partials_path) = &tile_files.partials_path else {
+            continue;
+        };
+
+        let mut stream = PartialsStream::open(partials_path, chr, *tile_index, schema)?;
+        if let Some(row) = stream.next_row()? {
+            let stream_id = streams.len();
+            streams.push(stream);
+            current_rows.push(Some(row));
+            heap.push(Reverse((row.key, stream_id)));
+        }
+    }
+
+    Ok((streams, current_rows, heap))
+}
+
+fn files_by_tile_from_outputs(
+    tile_outputs: &[TileAggregateTempFiles],
+) -> Result<FxHashMap<u32, TileFiles>> {
+    let mut files_by_tile: FxHashMap<u32, TileFiles> =
         FxHashMap::with_hasher(FxBuildHasher::default());
 
-    // Emit helper
-    let mut emit_idx = |orig_idx: u64, acc: WindowAccum| -> Result<()> {
-        let interval = *coords_by_idx.get(&orig_idx).ok_or_else(|| {
-            anyhow::anyhow!(
-                "Reducer is missing interval coordinates for chromosome '{}' orig_idx {}",
-                chr,
-                orig_idx
-            )
-        })?;
-        let unmasked_span_bp = interval.len();
-        let value = finalize_value(
-            acc.sum,
-            acc.allowed_positions,
-            unmasked_span_bp,
-            masked,
-            &mode,
+    for output in tile_outputs {
+        let previous = files_by_tile.insert(
+            output.tile_index,
+            TileFiles {
+                partials_path: Some(output.partials_path.clone()),
+                cross_index_path: output.cross_index_path.clone(),
+            },
         );
-        let value = round_to(value, decimals);
-        write_final_row(
-            final_writer,
-            chr,
-            interval,
-            value,
-            acc.blacklisted_positions,
-            decimals,
-        )?;
-        Ok(())
-    };
+        anyhow::ensure!(
+            previous.is_none(),
+            "duplicate tile index {} in explicit aggregate tile outputs",
+            output.tile_index
+        );
+    }
 
-    // Merge loop: always take the smallest available orig_idx across streams
+    Ok(files_by_tile)
+}
+
+/// Advance one stream after its current row was consumed and push the next visible row into the heap.
+///
+/// Keeping this as a tiny helper makes the merge loops read as "consume current row, maybe emit,
+/// then advance that same stream" instead of repeating the stream bookkeeping in every reducer.
+fn push_next_row_for_stream(
+    streams: &mut [PartialsStream],
+    current_rows: &mut [Option<ParsedPartialRow>],
+    heap: &mut StreamHeap,
+    stream_id: usize,
+) -> Result<()> {
+    if let Some(next_row) = streams[stream_id].next_row()? {
+        current_rows[stream_id] = Some(next_row);
+        heap.push(Reverse((next_row.key, stream_id)));
+    }
+    Ok(())
+}
+
+/// Reduce BED partial rows for one chromosome into complete raw aggregate rows.
+///
+/// The reducer consumes the exact tile paths returned by tile processing. It does not discover
+/// files from a temp directory, so stale or decoy files cannot enter the reduction.
+///
+/// The row identity rule is unchanged by explicit paths. BED reduction always groups by stable
+/// `orig_idx`, then recovers the final interval from `windows_chr` after every expected tile
+/// contribution has arrived.
+///
+/// About ordering:
+/// - the merge heap reads the smallest visible `orig_idx` from the open streams
+/// - final emission waits for the expected number of contributions for that `orig_idx`
+/// - correctness does not depend on every partials stream being globally sorted
+/// - ordinary BED windows keep their original file indices, so callers must not assume final
+///   output is coordinate-sorted unless the windows were explicitly reindexed upstream
+///
+/// Cross-index logic:
+/// - sidecars list only boundary-crossing rows
+/// - windows fully contained in one tile are absent from all sidecars, so the reducer expects one
+///   contribution
+/// - boundary windows appear in each crossed tile's sidecar, and that sidecar count is the
+///   expected number of partial rows
+///
+/// This engine intentionally stays separate from the fixed-size engine. Both engines share the
+/// same high-level merge pattern, but BED reduction has one BED-specific responsibility that size
+/// reduction does not: recover the final interval from `orig_idx` after reduction.
+///
+/// Parameters
+/// ----------
+/// - `chr`:
+///     Chromosome label used in diagnostics.
+/// - `tile_outputs`:
+///     Returned partial and optional cross-index paths for this chromosome.
+/// - `windows_chr`:
+///     BED windows with the same `orig_idx` identities written in the partial rows.
+/// - `summary`:
+///     Selects the on-disk partial schema only. It does not change row identity.
+/// - `on_row`:
+///     Callback receiving exact additive raw rows.
+pub(crate) fn reduce_bed_rows(
+    chr: &str,
+    tile_outputs: &[TileAggregateTempFiles],
+    windows_chr: &[IndexedInterval<u64>],
+    summary: bool,
+    mut on_row: impl FnMut(ReducedAggregateRow) -> Result<()>,
+) -> Result<()> {
+    let coords_by_idx = build_bed_coords_by_idx(chr, windows_chr)?;
+    let files_by_tile = files_by_tile_from_outputs(tile_outputs)?;
+    let expected_contributions = load_expected_contributions(&files_by_tile)?;
+    let schema = if summary {
+        PartialsSchema::BedSummary
+    } else {
+        PartialsSchema::BedBasic
+    };
+    let (mut streams, mut current_rows, mut heap) =
+        open_partials_streams(chr, &files_by_tile, schema)?;
+
+    // One accumulator per BED row that has started receiving tile contributions but is not yet
+    // complete.
+    let mut accum_by_idx: FxHashMap<u64, AggregateAccum> =
+        FxHashMap::with_hasher(FxBuildHasher::default());
+
     while let Some(Reverse((_, stream_id))) = heap.pop() {
-        let row = current_row[stream_id].take().ok_or_else(|| {
+        let row = current_rows[stream_id].take().ok_or_else(|| {
             anyhow::anyhow!(
                 "Reducer heap and current_row fell out of sync for chromosome '{}' stream {}",
                 chr,
                 stream_id
             )
         })?;
+        let key = row.key;
 
-        // Accumulate this contribution
-        let entry = accum_by_idx.entry(row.orig_idx).or_default();
-        entry.sum += row.sum;
-        entry.allowed_positions += row.allowed_positions;
-        entry.blacklisted_positions += row.blacklisted_positions;
-        entry.seen_contributions += 1;
+        // Add this tile's contribution into the running totals for the BED row keyed by stable
+        // `orig_idx`.
+        let entry = accum_by_idx.entry(key).or_default();
+        entry.add_row(row);
 
-        // If we have collected all expected contributions for this window, emit immediately
-        if entry.seen_contributions == expected_for(row.orig_idx) {
-            let done = accum_by_idx.remove(&row.orig_idx).ok_or_else(|| {
+        // Write the row only once the cross-index says every tile contribution has arrived.
+        // Windows that never appear in any cross-index file default to one expected contribution.
+        if entry.seen_contributions == expected_contribution_count(&expected_contributions, key) {
+            let done = accum_by_idx.remove(&key).ok_or_else(|| {
                 anyhow::anyhow!(
                     "Reducer lost accumulated window state for chromosome '{}' orig_idx {}",
                     chr,
-                    row.orig_idx
+                    key
                 )
             })?;
-            emit_idx(row.orig_idx, done)?;
+            let interval = *coords_by_idx.get(&key).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Reducer is missing interval coordinates for chromosome '{}' orig_idx {}",
+                    chr,
+                    key
+                )
+            })?;
+            on_row(done.into_reduced_row(key, interval))?;
         }
 
-        // Advance this stream and re-insert into the heap
-        if let Some(next_row) = streams[stream_id].next_row()? {
-            let next_key = next_row.orig_idx;
-            current_row[stream_id] = Some(next_row);
-            heap.push(Reverse((next_key, stream_id)));
-        }
+        // Advance only the stream we just consumed from, then push its next visible row back into
+        // the heap. Memory stays bounded by the number of open tile files.
+        push_next_row_for_stream(&mut streams, &mut current_rows, &mut heap, stream_id)?;
     }
 
-    // Safety check
     anyhow::ensure!(
         accum_by_idx.is_empty(),
         "Incomplete windows remain for {}: {}",
@@ -373,323 +670,109 @@ pub fn reduce_bed_with_cross_index_for_chr<W: Write>(
 
 /* By-size reducer (when windows don't align) */
 
-/// One row from a size-based partials file.
-struct SizePartialsRow {
-    interval: Interval<u64>,
-    sum: f64,
-    allowed_positions: u64,
-    blacklisted_positions: u64,
-}
-
-/// Lightweight streaming reader for partials (compressed or plain).
-struct SizePartialsStream {
-    reader: BufReader<Box<dyn std::io::Read + Send>>,
-    line_buf: String,
-    chr: String,
-    line_number: u64,
-    tile_index: u32,
-}
-
-impl SizePartialsStream {
-    fn open(path: &std::path::Path, chr: &str, tile_index: u32) -> Result<Self> {
-        let f = std::fs::File::open(path)
-            .with_context(|| format!("Opening partials file {}", path.display()))?;
-        let boxed: Box<dyn std::io::Read + Send> = if path
-            .extension()
-            .and_then(|s| s.to_str())
-            .map(|e| e.eq_ignore_ascii_case("zst"))
-            .unwrap_or(false)
-        {
-            Box::new(zstd::Decoder::new(f).context("Opening zstd decoder")?)
-        } else {
-            Box::new(f)
-        };
-        Ok(Self {
-            reader: BufReader::new(boxed),
-            line_buf: String::new(),
-            chr: chr.to_string(),
-            line_number: 0,
-            tile_index,
-        })
-    }
-
-    fn next_row(&mut self) -> Result<Option<SizePartialsRow>> {
-        self.line_buf.clear();
-        let next_line_number = self.line_number + 1;
-        let bytes_read = self.reader.read_line(&mut self.line_buf).with_context(|| {
-            format!(
-                "Reading size partials for chromosome '{}' tile {} line {}",
-                self.chr, self.tile_index, next_line_number
-            )
-        })?;
-        if bytes_read == 0 {
-            return Ok(None);
-        }
-        self.line_number = next_line_number;
-        let raw = self.line_buf.trim_end_matches('\n');
-        if raw.is_empty() {
-            return self.next_row();
-        }
-        let mut it = raw.split('\t');
-        let start: u64 = it
-            .next()
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Missing start in size partials for chromosome '{}' tile {} line {}",
-                    self.chr,
-                    self.tile_index,
-                    self.line_number
-                )
-            })?
-            .parse()
-            .with_context(|| {
-                format!(
-                    "Invalid start in chromosome '{}' tile {} line {}",
-                    self.chr, self.tile_index, self.line_number
-                )
-            })?;
-        let end: u64 = it
-            .next()
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Missing end in size partials for chromosome '{}' tile {} line {}",
-                    self.chr,
-                    self.tile_index,
-                    self.line_number
-                )
-            })?
-            .parse()
-            .with_context(|| {
-                format!(
-                    "Invalid end in chromosome '{}' tile {} line {}",
-                    self.chr, self.tile_index, self.line_number
-                )
-            })?;
-        let sum: f64 = it
-            .next()
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Missing sum in size partials for chromosome '{}' tile {} line {}",
-                    self.chr,
-                    self.tile_index,
-                    self.line_number
-                )
-            })?
-            .parse()
-            .with_context(|| {
-                format!(
-                    "Invalid sum in chromosome '{}' tile {} line {}",
-                    self.chr, self.tile_index, self.line_number
-                )
-            })?;
-        let allowed_positions: u64 = it
-            .next()
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Missing allowed in size partials for chromosome '{}' tile {} line {}",
-                    self.chr,
-                    self.tile_index,
-                    self.line_number
-                )
-            })?
-            .parse()
-            .with_context(|| {
-                format!(
-                    "Invalid allowed in chromosome '{}' tile {} line {}",
-                    self.chr, self.tile_index, self.line_number
-                )
-            })?;
-        let blacklisted_positions: u64 = it
-            .next()
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Missing blacklisted in size partials for chromosome '{}' tile {} line {}",
-                    self.chr,
-                    self.tile_index,
-                    self.line_number
-                )
-            })?
-            .parse()
-            .with_context(|| {
-                format!(
-                    "Invalid blacklisted in chromosome '{}' tile {} line {}",
-                    self.chr, self.tile_index, self.line_number
-                )
-            })?;
-        Ok(Some(SizePartialsRow {
-            interval: Interval::new(start, end)?,
-            sum,
-            allowed_positions,
-            blacklisted_positions,
-        }))
-    }
-}
-
-/// Accumulator per fixed-size bin.
-#[derive(Default)]
-struct BinAccum {
-    sum: f64,
-    allowed_positions: u64,
-    blacklisted_positions: u64,
-    seen_contributions: u32,
-}
-
-/// Reduce `--by-size` partials for one chromosome in strictly ascending `start` order.
+/// Reduce fixed-size partial rows for one chromosome into complete raw bin rows.
 ///
-/// Ordering is guaranteed by a K-way merge across sorted per-tile partials.
-/// A priority queue (`BinaryHeap`) is used as a min-heap via `Reverse((start, stream_id))`:
-/// the smallest start is popped first. This keeps peak memory low while preserving order.
+/// The reducer consumes the exact tile paths returned by tile processing. It does not discover
+/// files from a temp directory.
 ///
-/// The cross-index counts how many tiles contribute to each logical bin start:
-/// - If a bin is not listed in any cross-index file, we expect exactly 1 contribution.
-/// - If it appears N times, we wait for N contributions before writing that bin.
+/// The row identity rule stays fixed. Size reduction groups by the logical full-bin `start`, not
+/// by any clipped tile-local overlap. Partial rows must therefore carry the full `bin_start` and
+/// `bin_end`. Changing those bounds to clipped pieces would break cross-tile merging.
 ///
-/// Important
-/// - The partial rows must carry the logical `bin_start` and `bin_end`, not the clipped
-///   tile-local overlap for that bin. The reducer keys on `start`, so changing the
-///   partial row bounds to clipped pieces will silently break cross-tile merging.
+/// Cross-index sidecars count how many tiles contribute to each full bin start. If a bin is not
+/// listed in any cross-index file, the reducer expects exactly one contribution. Missing
+/// cross-index files are valid for aligned single-contribution partials.
 ///
-/// The final bin is truncated to the chromosome end; it may be shorter than window_bp.
-pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
+/// Ordering comes from the same streaming heap as the BED reducer. `BinaryHeap` is a max-heap, so
+/// the reader heap stores `Reverse((start, stream_id))` to read the smallest visible logical bin
+/// start first.
+///
+/// The final fixed-size bin can extend past chromosome end. The reducer clips that interval after
+/// all contributions have been combined so downstream writers see the true genomic span.
+///
+/// This engine intentionally stays separate from the BED engine. Both engines share the same
+/// merge rhythm, but fixed-size reduction has one size-specific responsibility that BED reduction
+/// does not: clip the final bin after reduction using the true chromosome end.
+///
+/// Parameters
+/// ----------
+/// - `chr`:
+///     Chromosome label used in diagnostics.
+/// - `tile_outputs`:
+///     Returned partial and optional cross-index paths for this chromosome.
+/// - `chrom_len`:
+///     True chromosome length used to clip the final bin.
+/// - `summary`:
+///     Selects the on-disk partial schema only. It does not change row identity.
+/// - `on_row`:
+///     Callback receiving exact additive raw rows.
+pub(crate) fn reduce_size_rows(
     chr: &str,
-    temp_dir: &std::path::Path,
-    partials_prefix: &str,
-    masked: bool,
-    mode: CoverageWindowAction, // Average | Total
+    tile_outputs: &[TileAggregateTempFiles],
     chrom_len: u64,
-    decimals: i32,
-    out: &mut W,
+    summary: bool,
+    mut on_row: impl FnMut(ReducedAggregateRow) -> Result<()>,
 ) -> Result<()> {
-    anyhow::ensure!(
-        matches!(
-            mode,
-            CoverageWindowAction::Average | CoverageWindowAction::Total
-        ),
-        "Reducer supports only 'average' or 'total'"
-    );
-
-    // Extract files from temp dir
-    let files_by_tile = discover_tile_files_for_chr(temp_dir, chr, partials_prefix)?;
-
-    // Build expected contribution counts per logical bin start from cross-index files
-    let mut expected_contribs: FxHashMap<u64, u32> =
-        FxHashMap::with_hasher(FxBuildHasher::default());
-    for (_idx, tfs) in files_by_tile.iter() {
-        if let Some(cross_path) = &tfs.cross_index_path {
-            let f = std::fs::File::open(cross_path)
-                .with_context(|| format!("Opening cross-index {}", cross_path.display()))?;
-            let reader: Box<dyn std::io::Read + Send> =
-                if cross_path.extension().and_then(|s| s.to_str()) == Some("zst") {
-                    Box::new(zstd::Decoder::new(f)?)
-                } else {
-                    Box::new(f)
-                };
-            let mut r = BufReader::new(reader);
-            let mut line = String::new();
-            loop {
-                line.clear();
-                if r.read_line(&mut line)? == 0 {
-                    break;
-                }
-                let raw = line.trim_end_matches('\n');
-                if raw.is_empty() {
-                    continue;
-                }
-                let start: u64 = raw
-                    .parse()
-                    .with_context(|| format!("Invalid start in {}", cross_path.display()))?;
-                *expected_contribs.entry(start).or_insert(0) += 1;
-            }
-        }
-    }
-    let expected_for = |start: u64| -> u32 { *expected_contribs.get(&start).unwrap_or(&1) };
-
-    // Prepare the merge structures
-    let mut streams: Vec<SizePartialsStream> = Vec::new();
-    let mut current_row: Vec<Option<SizePartialsRow>> = Vec::new();
-    let mut heap: BinaryHeap<Reverse<(u64, usize)>> = BinaryHeap::new(); // Min-heap by start
-
-    // Open each partials stream and seed the heap with its first row
-    for (tile_idx, tfs) in files_by_tile.iter() {
-        let Some(partials_path) = &tfs.partials_path else {
-            continue;
-        };
-        let mut ps = SizePartialsStream::open(partials_path, chr, *tile_idx)?;
-        if let Some(row) = ps.next_row()? {
-            let sid = streams.len();
-            streams.push(ps);
-            current_row.push(Some(row));
-            let start_key = current_row[sid].as_ref().unwrap().interval.start();
-            heap.push(Reverse((start_key, sid)));
-        }
-    }
-
-    // Accumulate contributions per logical bin until the expected count is reached
-    let mut accum_by_start: FxHashMap<u64, BinAccum> =
-        FxHashMap::with_hasher(FxBuildHasher::default());
-
-    // Emit helper for one completed bin
-    let mut emit_bin = |interval: Interval<u64>, acc: BinAccum| -> Result<()> {
-        let unmasked_span_bp = interval.len();
-        debug_assert!(unmasked_span_bp >= 1);
-        let value = finalize_value(
-            acc.sum,
-            acc.allowed_positions,
-            unmasked_span_bp,
-            masked,
-            &mode,
-        );
-        let value = round_to(value, decimals);
-        write_final_row(
-            out,
-            chr,
-            interval,
-            value,
-            acc.blacklisted_positions,
-            decimals,
-        )?;
-        Ok(())
+    let files_by_tile = files_by_tile_from_outputs(tile_outputs)?;
+    let expected_contributions = load_expected_contributions(&files_by_tile)?;
+    let schema = if summary {
+        PartialsSchema::SizeSummary
+    } else {
+        PartialsSchema::SizeBasic
     };
+    let (mut streams, mut current_rows, mut heap) =
+        open_partials_streams(chr, &files_by_tile, schema)?;
 
-    // K-way merge loop
-    while let Some(Reverse((_, sid))) = heap.pop() {
-        let row = current_row[sid].take().ok_or_else(|| {
+    // One accumulator per full bin start that has begun receiving tile contributions but is not
+    // complete yet.
+    let mut accum_by_start: FxHashMap<u64, AggregateAccum> =
+        FxHashMap::with_hasher(FxBuildHasher::default());
+
+    while let Some(Reverse((_, stream_id))) = heap.pop() {
+        let row = current_rows[stream_id].take().ok_or_else(|| {
             anyhow::anyhow!(
                 "Reducer heap and current_row fell out of sync for chromosome '{}' stream {}",
                 chr,
-                sid
+                stream_id
             )
         })?;
+        let key = row.key;
+        let full_interval = row.interval.ok_or_else(|| {
+            anyhow::anyhow!(
+                "Size reducer row for chromosome '{}' start {} is missing its full bin interval",
+                chr,
+                key
+            )
+        })?;
+        debug_assert_eq!(full_interval.start(), key);
 
-        let entry = accum_by_start.entry(row.interval.start()).or_default();
-        entry.sum += row.sum;
-        entry.allowed_positions += row.allowed_positions;
-        entry.blacklisted_positions += row.blacklisted_positions;
-        entry.seen_contributions += 1;
+        // Add this tile contribution into the running totals for the fixed-size bin keyed by full
+        // bin `start`.
+        let entry = accum_by_start.entry(key).or_default();
+        entry.add_row(row);
 
-        // Emit when we have all expected contributions for this logical bin start
-        if entry.seen_contributions == expected_for(row.interval.start()) {
-            let done = accum_by_start
-                .remove(&row.interval.start())
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Reducer lost accumulated size-bin state for chromosome '{}' start {}",
-                        chr,
-                        row.interval.start()
-                    )
-                })?;
-            // Use the interval from the last seen row, clipping the final bin at the chromosome end
-            let clipped_interval =
-                Interval::new(row.interval.start(), row.interval.end().min(chrom_len))?;
-            emit_bin(clipped_interval, done)?;
+        if entry.seen_contributions == expected_contribution_count(&expected_contributions, key) {
+            let done = accum_by_start.remove(&key).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Reducer lost accumulated size-bin state for chromosome '{}' start {}",
+                    chr,
+                    key
+                )
+            })?;
+            // The final fixed-size bin can overrun the chromosome end. Clip it here so downstream
+            // writers see the true genomic interval length for the last row.
+            let clipped_interval = full_interval.clip_upper(chrom_len).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Size reducer produced an empty clipped interval for chromosome '{}' start {} with chrom_len {}",
+                    chr,
+                    key,
+                    chrom_len
+                )
+            })?;
+            on_row(done.into_reduced_row(key, clipped_interval))?;
         }
 
-        // Advance this stream and push next row if present
-        if let Some(next_row) = streams[sid].next_row()? {
-            let next_key = next_row.interval.start();
-            current_row[sid] = Some(next_row);
-            heap.push(Reverse((next_key, sid)));
-        }
+        push_next_row_for_stream(&mut streams, &mut current_rows, &mut heap, stream_id)?;
     }
 
     anyhow::ensure!(
@@ -705,45 +788,11 @@ pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
 /// Sidecar type information for one tile
 #[derive(Default, Clone)]
 struct TileFiles {
-    pub partials_path: Option<std::path::PathBuf>,
-    pub cross_index_path: Option<std::path::PathBuf>,
+    pub partials_path: Option<PathBuf>,
+    pub cross_index_path: Option<PathBuf>,
 }
 
-/// Find per-tile files for a chromosome
-///
-/// Definitions
-/// - **Partials**: the per-tile contributions for windows/bins (tsv or tsv.zst)
-/// - **Cross-index**: a side list that marks which windows/bins cross tile core boundaries
-///   The reducer uses it to know how many tile contributions to expect for each window/bin
-///
-/// Filenames
-/// - Must start with `per_tile_prefix` and contain `.{chr}.`
-/// - We detect `.cross.` in the name to classify the sidecar
-fn discover_tile_files_for_chr(
-    temp_dir: &std::path::Path,
-    chr: &str,
-    per_tile_prefix: &str,
-) -> anyhow::Result<FxHashMap<u32, TileFiles>> {
-    let mut files_by_tile: FxHashMap<u32, TileFiles> =
-        FxHashMap::with_hasher(FxBuildHasher::default());
-
-    for entry in std::fs::read_dir(temp_dir)? {
-        let path = entry?.path();
-        if !path.is_file() {
-            continue;
-        }
-        let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        if !fname.starts_with(per_tile_prefix) || !fname.contains(&format!(".{chr}.")) {
-            continue;
-        }
-        if let Some(tile_idx) = crate::shared::tiled_run::parse_tile_index(fname) {
-            // Recognize cross files by the marker in the name (simple and robust)
-            if fname.contains(".cross.") {
-                files_by_tile.entry(tile_idx).or_default().cross_index_path = Some(path);
-            } else if fname.ends_with(".tsv") || fname.ends_with(".tsv.zst") {
-                files_by_tile.entry(tile_idx).or_default().partials_path = Some(path);
-            }
-        }
-    }
-    Ok(files_by_tile)
+#[cfg(test)]
+mod tests {
+    include!("reducer_tests.rs");
 }

@@ -1,20 +1,33 @@
 use crate::{
     commands::{
         cli_common::{
-            ApplyGCArgFileOnly, AssignToWindowArgs, ChromosomeArgs, FragmentLengthArgs, IOCArgs,
-            ScaleGenomeArgs, UnpairedArgs, WindowsArgs,
+            ApplyGCArgFileOnly, AssignToWindowArgs, ChromosomeArgs, DistributionWindowsArgs,
+            IOCArgs, LoggingArgs, ScaleGenomeArgs, UnpairedArgs, resolve_length_bin_edges,
         },
-        gc_bias::correct::MarginalizeLengthsWeightingScheme,
+        gc_bias::correct::{GCLengthRange, MarginalizeLengthsWeightingScheme},
     },
-    shared::{blacklist::BlacklistStrategy, indel_mode::IndelMode},
+    shared::{
+        blacklist::BlacklistStrategy,
+        clip_mode::ClipMode,
+        constants::{
+            DEFAULT_MAX_SOFT_CLIPS, MAX_MAX_SOFT_CLIPS, MAX_SUPPORTED_FRAGMENT_LENGTH,
+            MIN_ACGT_BASES_FOR_GC_FRACTION,
+        },
+        indel_mode::IndelMode,
+    },
 };
+use anyhow::Result;
 use std::path::PathBuf;
 
-// TODO: Add length bins to enable e.g. short/long in much smaller windows without exploding RAM
+pub const DEFAULT_MAX_DELETION_BASES: u16 = 100;
+pub const MAX_DELETION_BASES: u16 = 256;
 
 /// Count fragment lengths in a BAM-file.
 ///
-/// Writes an `.npy` file with shape (# windows, # lengths).
+/// Writes a two-dimensional `.npy` count matrix. The first dimension contains
+/// count vectors: one global vector, one vector per window, or one vector per
+/// grouped-BED group depending on the selected windowing mode. The second
+/// dimension contains fragment length bins.
 ///
 /// ## Fragment length definition
 ///
@@ -22,16 +35,19 @@ use std::path::PathBuf;
 ///
 /// **Unpaired** where each read is a fragment: `end(read) - start(read)`.
 ///
-/// See also `--indel-mode` for adjusting the length to present indels.
+/// See also `--indel-mode` and `--clip-mode` for adjusting the length to the
+/// present indels and soft clips. When enabled, fragment length filtering is based
+/// on the adjusted length.
 ///
 /// ## GC correction
 ///
 /// Weight the contribution of each fragment based on their GC contents.
 ///
-/// Note: The GC percentage is calculated from the full genomic coordinates (does not consider `--indel-mode`).
+/// The length-dimension of the original correction matrix is averaged out over
+/// `--gc-length-range` with a specifiable weighting scheme (see `--gc-length-weighting`).
 ///
-/// The length-dimension of the original correction matrix is averaged out with
-/// a specifiable weighting scheme (`--gc-length-weighting`).
+/// The GC percentage is calculated from the **aligned** reference span.
+/// It does not consider `--indel-mode` or `--clip-mode`.
 ///
 /// ## Genomic smoothing (--scaling-factors)
 ///
@@ -39,7 +55,7 @@ use std::path::PathBuf;
 /// influence of copy number alterations. This weights the contribution of each fragment
 /// by region-wise precomputed scaling factors.
 ///
-/// Can be precomputed with `cfdna coverage-weights`.
+/// Can be precomputed with `cfdna fragment-count-weights` (recommended) or `cfdna coverage-weights`.
 ///
 /// ## Window assignment
 ///
@@ -50,12 +66,12 @@ use std::path::PathBuf;
 /// For consecutive non-overlapping windows, this conserves the total mass, as an edge-overlapping
 /// fragment will count `f` in one window and `1-f` in the other window.
 ///
-/// To get base-weighted counts (i.e. coverage in the window), you can multiply the output
-/// counts by their lengths (`C'[L] = L * C[L]`; Remember to account for the minimum fragment
-/// length offset).
+/// With the default width-1 length bins, you can convert counts to base-weighted counts
+/// (i.e., the coverage in the window) by multiplying each column by the fragment length
+/// it represents. Remember to account for the minimum fragment length offset.
 ///
-/// Other options include counting the full fragment if the *fragment midpoint* or a given
-/// *proportion* of positions overlaps the window.
+/// Other options include counting the full fragment if the **fragment midpoint** or a given
+/// **proportion** of positions overlaps the window.
 ///
 /// ## Blacklisting
 ///
@@ -91,7 +107,7 @@ pub struct LengthsConfig {
     ///   `<prefix>.length_counts.npy`
     #[cfg_attr(
         feature = "cli",
-        clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, help_heading = "Core")
+        clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, value_parser = crate::commands::cli_common::parse_output_prefix, help_heading = "Core")
     )]
     pub output_prefix: String,
 
@@ -118,8 +134,8 @@ pub struct LengthsConfig {
     ///     
     ///   Insertions: add the shortest insertion length per position.
     ///
-    ///   **NOTE**: Blacklist exclusion and calculation of scaling weights (--scaling-factors)
-    ///   use the full reference span.
+    ///   **NOTE**: Blacklist exclusion, GC correction, and calculation of scaling weights
+    ///   (--scaling-factors) use the aligned reference span.
     ///
     /// - `"skip"`:
     ///   Skip fragments with any insertion or deletion present.
@@ -129,10 +145,77 @@ pub struct LengthsConfig {
             long,
             default_value = "ignore",
             ignore_case = true,
-            help_heading = "Core"
+            help_heading = "Indels and clipping"
         )
     )]
     pub indel_mode: IndelMode,
+
+    /// Skip fragments with more deleted reference bases than this **when using** `--indel-mode adjust` `[integer]`
+    ///
+    /// Both `D` and `N` CIGAR operations count as deletion bases.
+    ///
+    /// **NOTE**: This cap is only used with `--indel-mode adjust`.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            default_value_t = DEFAULT_MAX_DELETION_BASES,
+            value_parser = clap::value_parser!(u16).range(0..=MAX_DELETION_BASES as i64),
+            help_heading = "Indels and clipping"
+        )
+    )]
+    pub max_deletion_bases: u16,
+
+    /// How to handle soft clipping in fragment ends `[string]`
+    ///
+    /// When you believe soft clipping in the fragment ends is mostly due
+    /// to alignment difficulties instead of technical artefacts, you can
+    /// include the clipped bases in the fragment length.
+    ///
+    /// Possible values:
+    ///
+    /// - `"aligned"`:
+    ///   Ignore clipped bases and use the aligned positions.
+    ///
+    /// - `"adjust"`:
+    ///   Adjust the fragment length by the observed soft clipped bases in the fragment ends.
+    ///
+    ///   For paired-end data, the clipping is only considered
+    ///   for the 5' ends (start(forward), end(reverse)).
+    ///
+    ///   **NOTE**: Blacklist exclusion, GC correction, and scaling weights
+    ///   (--scaling-factors) use the aligned reference span.
+    ///   When `--assign-by count-overlap`, clipped-only window contributions use
+    ///   the nearest aligned reference base for scaling.
+    ///   
+    ///
+    /// - `"skip"`:
+    ///   Skip fragments with any clipping.
+    ///
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            default_value = "aligned",
+            ignore_case = true,
+            help_heading = "Indels and clipping"
+        )
+    )]
+    pub clip_mode: ClipMode,
+
+    /// Skip fragments where one or both ends have more soft-clipped bases than this `[integer]`
+    ///
+    /// Use `--clip-mode skip` to discard all soft-clipped fragments.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            default_value_t = DEFAULT_MAX_SOFT_CLIPS,
+            value_parser = clap::value_parser!(u16).range(0..=MAX_MAX_SOFT_CLIPS as i64),
+            help_heading = "Indels and clipping"
+        )
+    )]
+    pub max_soft_clips: u16,
 
     /// Size of tiles to parallelize over `[integer]`
     ///
@@ -143,7 +226,7 @@ pub struct LengthsConfig {
     pub tile_size: u32,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
-    pub windows: WindowsArgs,
+    pub windows: DistributionWindowsArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub window_assignment: AssignToWindowArgs,
@@ -154,8 +237,35 @@ pub struct LengthsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub scale_genome: ScaleGenomeArgs,
 
-    #[cfg_attr(feature = "cli", clap(flatten))]
-    pub fragment_lengths: FragmentLengthArgs,
+    /// Edges of fragment length bins to count in `[string(s)]`
+    ///
+    /// This also defines the minimum and maximum included fragment lengths.
+    ///
+    /// Bins are half-open. For example, `--length-bins 10 151 221` creates
+    /// bins `[10,151)` and `[151,221)`.
+    ///
+    /// Accepted forms:
+    ///
+    /// - A single value with `start:end:step`:
+    ///   Creates contiguous bins from `start` to `end` in `step` increments.
+    ///   Example: The default `30:1001:1` creates one column per length from 30 through 1000.
+    ///
+    /// - Multiple integer values interpreted as bin edges:
+    ///   Example: `--length-bins 30 80 151 221` creates bins `[30,80)`,
+    ///   `[80,151)`, and `[151,221)`.
+    ///
+    /// **NOTE**: Memory consumption increases linearly with the number of bins.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            value_parser,
+            num_args = 1..,
+            default_values_t = [String::from("30:1001:1")],
+            help_heading = "Core"
+        )
+    )]
+    pub length_bins: Vec<String>,
 
     /// Minimum mapping quality to include `[integer]`
     #[cfg_attr(
@@ -166,6 +276,9 @@ pub struct LengthsConfig {
     /// Only count properly paired reads `[flag]`
     ///
     /// This is **NOT** recommended by default as it trims the tails of the length distribution.
+    ///
+    /// Note, that we only keep inward-directed fragments within the specified length range, so
+    /// there's no real need for proper-pair filtering.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
     pub require_proper_pair: bool,
 
@@ -207,33 +320,47 @@ pub struct LengthsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub gc: ApplyGCArgFileOnly,
 
-    /// How to weight the fragment length bins when estimating the global GC bias correction `[string]`
+    /// How to weight the GC-package fragment length bins when estimating the
+    /// length-agnostic GC correction `[string]`
     ///
-    /// To GC correct a fragment length distribution, the correction weights should be **length-agnostic**.
+    /// The default GC correction package stores a `fragment length x GC` matrix with
+    /// one normalized GC correction curve per fragment length bin. **NOTE**: These
+    /// fragment length bins are independent of those specified on `--length-bins`
+    /// and are referred to as **GC length bins**.
     ///
-    /// The default `fragment-length x GC` matrix has one correction curve per length bin,
-    /// so using it would preserve the original length distribution (assuming we're correcting the
-    /// same fragments seen by `cfdna gc-bias`).
+    /// When estimating the fragment length distribution itself, using those normalized
+    /// correction curves directly would just preserve the original length distribution
+    /// (when applied to the same fragments seen by `cfdna gc-bias`).
     ///
-    /// We therefore average out the fragment length dimension to get a single, length-agnostic GC bias curve.
+    /// We therefore average out the fragment length dimension to get a single, length-agnostic GC correction curve.
     ///
-    /// We have three weighting options when averaging the fragment-length-wise correction curves:
-    ///     
-    /// - `"equal"` weighting (default): Weight every length bin the same.
+    /// First, `--gc-length-range` selects which GC length bins to use. Then,
+    /// `--gc-length-trim-rare` can exclude a fraction of the selected bins
+    /// with the lowest frequencies in the length distribution used to build
+    /// the GC correction package. Finally, `--gc-length-weighting` controls
+    /// how the retained correction curves are collapsed.
     ///
-    ///   Keeps the correction independent of the distribution we are trying to estimate.
+    /// We have three weighting options:
     ///
-    ///   Downside: Rare fragment length bins contribute the same as the most present fragment lengths.
+    /// - `"equal"` weighting (default): Weight every GC length bin the same.
+    ///
+    ///   Keeps the correction independent of the length distribution we are trying to estimate.
+    ///
+    ///   Downside: Rare GC length bins contribute the same as the most common GC length bins.
     ///   
-    ///   For low-coverage BAM files, this *could* make the correction more volatile to outliers.
+    ///   For low-coverage BAM files, this could make the correction more volatile to outliers.
+    ///   To reduce this effect, `--gc-length-trim-rare` allows filtering out a fraction of the rarest bins.
     ///
-    /// - `"coverage"`-based weighting: Weight lengths by how often they were observed in `cfdna gc-bias`.
+    /// - `"frequency"` weighting: Weight GC length bins by their frequencies in the length distribution
+    ///   used to build the GC package.
     ///
-    ///   This should work better for the majority of the observed fragments **BUT**:
+    ///   This makes the collapsed curve represent the fragments most often seen in the package.
     ///
     ///   Downside: **Biases** the correction based on the length distribution we are trying to estimate.
+    ///   This is **circular**: the length signal is partly used to correct itself.
     ///
-    /// - `"max-coverage"` weighting: Use the GC curve for the most-observed fragment length bin.
+    /// - `"max-frequency"` weighting: Use the GC correction curve for the GC length bin with highest
+    ///   frequency in the length distribution used to build the GC package.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -244,6 +371,54 @@ pub struct LengthsConfig {
         )
     )]
     pub gc_length_weighting: MarginalizeLengthsWeightingScheme,
+
+    /// Which GC-package fragment length bins to use when averaging out the GC correction matrix `[string]`
+    ///
+    /// The GC correction package stores one GC correction curve per fragment length bin
+    /// (separate from `--length-bins` and referred to as **GC length bins**).
+    /// This option controls which GC length bins `--gc-length-weighting`
+    /// collapses to a single length-agnostic GC curve.
+    ///
+    /// Possible values:
+    ///
+    /// - `"requested"`: Use GC length bins that overlap the range requested by
+    ///   `--length-bins`.
+    ///
+    /// - `"package"`: Use all GC length bins in the GC correction package.
+    ///   Useful for repeated calls with different length ranges that you wish to compare downstream.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            default_value = "requested",
+            ignore_case = true,
+            help_heading = "GC Correction"
+        )
+    )]
+    pub gc_length_range: GCLengthRange,
+
+    /// Exclude low-frequency selected GC length bins up to this cumulative fraction `[float]`
+    ///
+    /// After selecting the GC length bins with `--gc-length-range`,
+    /// this excludes the least frequent GC length bins while keeping
+    /// at least a `1 - fraction` total frequency fraction.
+    ///
+    /// Conservative: GC length bins with practically the same frequency are grouped,
+    /// and the whole group is excluded only if the retained sum of frequencies
+    /// is at least `1 - fraction` of the selected total.
+    ///
+    /// Use this with `--gc-length-weighting equal` when almost-unobserved
+    /// GC length bins make the length-agnostic GC correction too noisy.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            default_value = "0.0",
+            value_parser = parse_gc_length_trim_rare,
+            help_heading = "GC Correction"
+        )
+    )]
+    pub gc_length_trim_rare: f64,
 
     /// 2bit reference genome file [path]
     ///
@@ -261,6 +436,9 @@ pub struct LengthsConfig {
         )
     )]
     pub ref_2bit: Option<PathBuf>,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub logging: LoggingArgs,
 }
 
 impl LengthsConfig {
@@ -269,11 +447,14 @@ impl LengthsConfig {
             ioc,
             output_prefix: String::new(),
             indel_mode: IndelMode::Ignore,
-            windows: WindowsArgs::default(),
+            clip_mode: ClipMode::Aligned,
+            max_soft_clips: DEFAULT_MAX_SOFT_CLIPS,
+            max_deletion_bases: DEFAULT_MAX_DELETION_BASES,
+            windows: DistributionWindowsArgs::default(),
             window_assignment: AssignToWindowArgs::default(),
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),
-            fragment_lengths: FragmentLengthArgs::default(),
+            length_bins: vec!["30:1001:1".to_string()],
             unpaired: UnpairedArgs {
                 reads_are_fragments: false,
             },
@@ -285,10 +466,13 @@ impl LengthsConfig {
             blacklist_strategy: BlacklistStrategy::default(),
             gc: ApplyGCArgFileOnly {
                 gc_file: None,
-                drop_invalid_gc: false,
+                neutralize_invalid_gc: false,
             },
             gc_length_weighting: MarginalizeLengthsWeightingScheme::Equal,
+            gc_length_range: GCLengthRange::Requested,
+            gc_length_trim_rare: 0.0,
             ref_2bit: None,
+            logging: LoggingArgs::default(),
         }
     }
 
@@ -296,7 +480,7 @@ impl LengthsConfig {
         self.indel_mode = mode;
     }
 
-    pub fn set_windows(&mut self, windows: WindowsArgs) {
+    pub fn set_windows(&mut self, windows: DistributionWindowsArgs) {
         self.windows = windows;
     }
 
@@ -304,8 +488,36 @@ impl LengthsConfig {
         self.window_assignment = assign;
     }
 
-    pub fn fragment_lengths_mut(&mut self) -> &mut FragmentLengthArgs {
-        &mut self.fragment_lengths
+    pub fn set_length_bins(&mut self, edges: Vec<u32>) {
+        assert!(
+            edges.len() >= 2,
+            "length bin edges must contain at least two values"
+        );
+        self.length_bins = edges.into_iter().map(|edge| edge.to_string()).collect();
+    }
+
+    pub fn set_length_bins_spec<S: Into<String>>(&mut self, spec: S) {
+        self.length_bins = vec![spec.into()];
+    }
+
+    /// Set exact one-base output bins for an inclusive length range.
+    ///
+    /// This is a programmatic convenience for tests and callers that want the
+    /// old per-length distribution over `min_length..=max_length`.
+    pub fn set_per_bp_length_bins(&mut self, min_length: u32, max_length: u32) {
+        assert!(min_length <= max_length, "min length must be <= max length");
+        let exclusive_end = max_length
+            .checked_add(1)
+            .expect("max length too large to build length-bin range");
+        self.set_length_bins_spec(format!("{min_length}:{exclusive_end}:1"));
+    }
+
+    pub fn resolve_length_bins(&self) -> Result<Vec<u32>> {
+        resolve_length_bin_edges(
+            &self.length_bins,
+            MIN_ACGT_BASES_FOR_GC_FRACTION,
+            MAX_SUPPORTED_FRAGMENT_LENGTH,
+        )
     }
 
     pub fn set_unpaired(&mut self, unpaired: UnpairedArgs) {
@@ -339,7 +551,36 @@ impl LengthsConfig {
         self.gc_length_weighting = gc_length_weighting;
     }
 
+    pub fn set_gc_length_range(&mut self, gc_length_range: GCLengthRange) {
+        self.gc_length_range = gc_length_range;
+    }
+
+    pub fn set_gc_length_trim_rare(&mut self, gc_length_trim_rare: f64) {
+        self.gc_length_trim_rare = gc_length_trim_rare;
+    }
+
     pub fn set_ref_2bit(&mut self, ref_2bit: Option<PathBuf>) {
         self.ref_2bit = ref_2bit;
     }
+}
+
+fn parse_gc_length_trim_rare(raw_value: &str) -> std::result::Result<f64, String> {
+    let value = raw_value
+        .parse::<f64>()
+        .map_err(|_| "--gc-length-trim-rare must be a number".to_string())?;
+    validate_gc_length_trim_rare(value).map_err(|error| error.to_string())?;
+    Ok(value)
+}
+
+pub(super) fn validate_gc_length_trim_rare(value: f64) -> Result<()> {
+    anyhow::ensure!(
+        value.is_finite() && (0.0..1.0).contains(&value),
+        "--gc-length-trim-rare must be finite and within [0, 1)"
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    include!("config_tests.rs");
 }

@@ -4,9 +4,8 @@ use std::path::PathBuf;
 use clap::ValueEnum;
 
 use crate::commands::fragment_kmers::parse::PositionalSelectionSpec;
-pub use crate::commands::fragment_kmers::positions::{
-    BasesFrom, MismatchBasesFrom, ReferenceFrame,
-};
+use crate::shared::positioning::{BasesFrom, MismatchBasesFrom};
+use crate::shared::visualization::Track;
 
 /// Available rendering backends for the CLI.
 #[cfg_attr(feature = "cli", derive(ValueEnum))]
@@ -22,40 +21,6 @@ impl Style {
             Style::Ascii => "ascii",
             Style::Svg => "svg",
         }
-    }
-}
-
-/// Axis bounds used for rendering a track.
-///
-/// The axis is inclusive on both ends because the selections operate over
-/// discrete base indices.
-#[derive(Debug, Clone)]
-pub struct AxisBounds {
-    pub start: i32,
-    pub end: i32,
-}
-
-impl AxisBounds {
-    pub fn new(start: i32, end: i32) -> Self {
-        Self { start, end }
-    }
-
-    pub fn length(&self) -> i32 {
-        self.end - self.start
-    }
-}
-
-/// A single visualization track (one logical coordinate system).
-#[derive(Debug, Clone)]
-pub struct Track {
-    pub name: String,
-    pub axis: AxisBounds,
-    pub selected_indices: Vec<i32>,
-}
-
-impl Track {
-    pub fn is_empty(&self) -> bool {
-        self.selected_indices.is_empty()
     }
 }
 

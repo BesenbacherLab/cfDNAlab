@@ -12,13 +12,18 @@ use cfdnalab::commands::cli_common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, Scale
 use cfdnalab::commands::coverage_weights::{
     config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
 };
-use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage};
+use cfdnalab::commands::gc_bias::package::GCCorrectionPackage;
 use cfdnalab::commands::midpoints::config::MidpointsConfig;
 use cfdnalab::commands::midpoints::midpoints::run;
+use cfdnalab::shared::{
+    constants::GC_CORRECTION_SCHEMA_VERSION,
+    reference::{ContigFootprintEntry, twobit_contig_footprint},
+};
 use fixtures::{
     FragmentSpec, ReadSpec, bam_from_specs, bam_from_specs_strict_identity,
-    build_real_neutral_gc_package, build_real_non_neutral_gc_package, complex_bam_fixture,
-    simple_reference_twobit, twobit_from_sequences, write_bed,
+    build_real_neutral_gc_package, build_real_neutral_gc_package_for_range,
+    build_real_non_neutral_gc_package, complex_bam_fixture, late_origin_gc_reference_sequence,
+    simple_reference_twobit, twobit_from_sequences, write_bed, write_two_bin_gc_package,
 };
 use ndarray::Array3;
 use ndarray::array;
@@ -195,7 +200,10 @@ fn read_group_index_map(path: &std::path::Path) -> Result<HashMap<String, usize>
     Ok(out)
 }
 
-fn write_minimal_gc_package_excluding_length_61(path: &std::path::Path) -> Result<()> {
+fn write_minimal_gc_package_excluding_length_61(
+    path: &std::path::Path,
+    reference_contig_footprint: Vec<ContigFootprintEntry>,
+) -> Result<()> {
     // Smallest possible valid GC package that only covers fragment lengths 10..=60 and a single
     // GC bin spanning 0..=100.
     let package = GCCorrectionPackage {
@@ -205,6 +213,7 @@ fn write_minimal_gc_package_excluding_length_61(path: &std::path::Path) -> Resul
         gc_edges: vec![0, 101],
         correction_matrix: array![[1.0_f64]],
         length_bin_frequencies: array![1.0_f64],
+        reference_contig_footprint,
     };
     package.write_npz(path)?;
     Ok(())
@@ -238,7 +247,6 @@ fn make_simple_coverage_weights_config(
 
 #[test]
 fn length_bin_range_spec_matches_brace_expansion_edges() -> Result<()> {
-    // Human verification status: unverified
     // Arrange: Hand-derived expected edges for 100..220 with step 10.
     // The end is an edge (not a counted length), so we expect:
     // 100, 110, 120, ..., 220.
@@ -267,7 +275,6 @@ fn length_bin_range_spec_matches_brace_expansion_edges() -> Result<()> {
 #[test]
 fn midpoints_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero() -> Result<()>
 {
-    // Human verification status: unverified
     // Arrange:
     // Count one group over one 11 bp window [45, 56). Use three identical 61 bp fragments
     // with midpoint exactly 50, so each accepted fragment contributes one count at profile
@@ -358,7 +365,6 @@ fn midpoints_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_
 
 #[test]
 fn unpaired_single_read_matches_paired_midpoint_profile_for_same_span() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Compare two representations of the same physical fragment span [20, 81):
     // - paired fragment of length 61
@@ -419,6 +425,172 @@ fn unpaired_single_read_matches_paired_midpoint_profile_for_same_span() -> Resul
     assert_eq!(paired_arr[[0, 0, 5]], 1.0);
     assert_eq!(paired_arr.sum(), 1.0);
 
+    Ok(())
+}
+
+#[test]
+fn bed_sites_mixed_core_and_halo_rows_keep_only_the_core_midpoint_count_across_tile_sizes()
+-> Result<()> {
+    // Arrange:
+    // - one unpaired fragment span [5,16), so the deterministic midpoint is 10
+    // - BED site [10,11) is the true core-overlap site and should receive one count at position 0
+    // - BED site [22,23) is downstream and should stay zero
+    // - with tile_size=10 the two sites fall in different tiles; with tile_size=1000 they do not
+    // - the final grouped midpoint profiles must therefore be identical across tile sizes
+    let bam = single_read_fragment_bam("midpoints_mixed_core_and_halo_rows", 5, 11)?;
+    let tile_sizes = [10_u32, 1_000_u32];
+    let mut outputs = Vec::new();
+
+    for tile_size in tile_sizes {
+        let temp = TempDir::new()?;
+        let bed_path = temp.path().join(format!("sites_{tile_size}.bed"));
+        write_bed(
+            &bed_path,
+            &[
+                ("chr1", 10, 11, "group_core"),
+                ("chr1", 22, 23, "group_halo"),
+            ],
+        )?;
+
+        let mut cfg = MidpointsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: temp.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+            bed_path,
+        );
+        cfg.set_output_prefix("sites");
+        cfg.set_length_bins(vec![11, 12]);
+        cfg.set_tile_size(tile_size);
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.unpaired.reads_are_fragments = true;
+
+        run(&cfg)?;
+
+        let counts_path = temp.path().join("sites.midpoint_profiles.npy");
+        let arr: Array3<f32> = read_npy(&counts_path)?;
+        let map_path = temp.path().join("sites.group_index.tsv");
+        let group_to_idx = read_group_index_map(&map_path)?;
+
+        outputs.push((arr, group_to_idx));
+    }
+
+    let (small_tile_arr, small_tile_groups) = &outputs[0];
+    let (large_tile_arr, large_tile_groups) = &outputs[1];
+
+    assert_eq!(small_tile_groups, large_tile_groups);
+    assert_eq!(small_tile_arr, large_tile_arr);
+    assert_eq!(small_tile_arr.shape(), &[2, 1, 1]);
+    assert_eq!(small_tile_arr[[small_tile_groups["group_core"], 0, 0]], 1.0);
+    assert_eq!(small_tile_arr[[small_tile_groups["group_halo"], 0, 0]], 0.0);
+    assert_eq!(small_tile_arr.sum(), 1.0);
+
+    Ok(())
+}
+
+#[test]
+fn later_tile_site_keeps_midpoint_count_when_window_span_starts_after_zero() -> Result<()> {
+    // Arrange:
+    // - Two one-base sites are present on the chromosome, so the later tile's cached span starts
+    //   at chromosome-wide window index 1.
+    // - The unpaired fragment spans [37,48), has length 11, and has deterministic midpoint 42.
+    // - With tile_size=20, the midpoint belongs to tile [40,60), where the tile-local window list
+    //   contains only [42,43). The window scan must therefore start at local index 0.
+    // - With tile_size=1000, both sites are in one tile. The final profiles must match the
+    //   multi-tile run exactly.
+    let bam = single_read_fragment_bam("midpoints_later_tile_window_span_pointer", 37, 11)?;
+    let tile_sizes = [20_u32, 1_000_u32];
+    let mut outputs = Vec::new();
+
+    for tile_size in tile_sizes {
+        let temp = TempDir::new()?;
+        let bed_path = temp.path().join(format!("sites_{tile_size}.bed"));
+        write_bed(
+            &bed_path,
+            &[
+                ("chr1", 10, 11, "group_early"),
+                ("chr1", 42, 43, "group_late"),
+            ],
+        )?;
+
+        let mut cfg = MidpointsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: temp.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+            bed_path,
+        );
+        cfg.set_output_prefix("sites");
+        cfg.set_length_bins(vec![11, 12]);
+        cfg.set_tile_size(tile_size);
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.unpaired.reads_are_fragments = true;
+
+        run(&cfg)?;
+
+        let counts_path = temp.path().join("sites.midpoint_profiles.npy");
+        let arr: Array3<f32> = read_npy(&counts_path)?;
+        let map_path = temp.path().join("sites.group_index.tsv");
+        let group_to_idx = read_group_index_map(&map_path)?;
+
+        outputs.push((arr, group_to_idx));
+    }
+
+    let (small_tile_arr, small_tile_groups) = &outputs[0];
+    let (large_tile_arr, large_tile_groups) = &outputs[1];
+
+    assert_eq!(small_tile_groups, large_tile_groups);
+    assert_eq!(small_tile_arr, large_tile_arr);
+    assert_eq!(small_tile_arr.shape(), &[2, 1, 1]);
+    assert_eq!(
+        small_tile_arr[[small_tile_groups["group_early"], 0, 0]],
+        0.0
+    );
+    assert_eq!(small_tile_arr[[small_tile_groups["group_late"], 0, 0]], 1.0);
+    assert_eq!(small_tile_arr.sum(), 1.0);
+
+    Ok(())
+}
+
+#[test]
+fn core_overlap_bed_site_is_kept_for_midpoints() -> Result<()> {
+    // Arrange:
+    // - one unpaired fragment span [5,16), so the deterministic midpoint is 10
+    // - BED site [10,11) overlaps that midpoint and must receive one count
+    let bam = single_read_fragment_bam("midpoints_core_site", 5, 11)?;
+    let temp = TempDir::new()?;
+    let bed_path = temp.path().join("sites.bed");
+    write_bed(&bed_path, &[("chr1", 10, 11, "group_core")])?;
+
+    let mut cfg = MidpointsConfig::new(
+        IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: temp.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1"]),
+        bed_path,
+    );
+    cfg.set_output_prefix("sites");
+    cfg.set_length_bins(vec![11, 12]);
+    cfg.set_tile_size(10);
+    cfg.set_min_mapq(0);
+    cfg.set_require_proper_pair(false);
+    cfg.unpaired.reads_are_fragments = true;
+
+    run(&cfg)?;
+
+    let arr: Array3<f32> = read_npy(temp.path().join("sites.midpoint_profiles.npy"))?;
+    let group_to_idx = read_group_index_map(&temp.path().join("sites.group_index.tsv"))?;
+    assert_eq!(arr.shape(), &[1, 1, 1]);
+    assert_eq!(arr[[group_to_idx["group_core"], 0, 0]], 1.0);
+    assert_eq!(arr.sum(), 1.0);
     Ok(())
 }
 
@@ -565,7 +737,6 @@ fn blacklist_midpoint_filtering_uses_floor_midpoint_even_when_profile_placement_
 
 #[test]
 fn length_bin_start_end_list_format_is_rejected() {
-    // Human verification status: unverified
     // Arrange: This format was intentionally removed.
     let mut config = base_midpoints_config_for_length_bins();
     config.set_length_bins_spec("30-80,80-150");
@@ -584,7 +755,6 @@ fn length_bin_start_end_list_format_is_rejected() {
 
 #[test]
 fn midpoint_profiles_written_with_group_index() -> Result<()> {
-    // Human verification status: unverified
     let bam = complex_bam_fixture()?;
     let temp = TempDir::new()?;
     let bed_path = temp.path().join("windows.bed");
@@ -632,7 +802,6 @@ fn midpoint_profiles_written_with_group_index() -> Result<()> {
 
 #[test]
 fn group_index_axis_matches_first_group_encounter_order_and_collapsed_counts() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // BED rows are sorted by chromosome/start as required, but group names are intentionally
     // interleaved:
@@ -739,7 +908,6 @@ fn group_index_axis_matches_first_group_encounter_order_and_collapsed_counts() -
 #[test]
 fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_midpoints() -> Result<()>
 {
-    // Human verification status: unverified
     // Arrange:
     // Use one odd-length fragment so midpoint placement is deterministic rather than randomly
     // split across the two central bases of an even-length fragment.
@@ -789,7 +957,7 @@ fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_midpo
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
-        drop_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(reference.path.clone()));
 
@@ -817,8 +985,73 @@ fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_midpo
 }
 
 #[test]
+fn gc_file_late_tile_site_uses_reference_coordinates_after_fetch_narrowing() -> Result<()> {
+    // Arrange:
+    // - The only site is [925,936), well inside a tile whose fetch origin is still 0.
+    // - The reference is shorter than the BAM chromosome, but long enough for the narrowed
+    //   window-derived fetch span. Reading the full tile reference would overrun the reference.
+    // - The fragment [900,961) has deterministic midpoint 930, so it lands at position 5.
+    // - The fragment interval [900,961) is all C, so it lands in the high-GC correction bin with
+    //   weight 7.0. Using prefix-local origin 0 would see A-only sequence instead.
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 1_500)],
+        vec![paired_fragment_on_tid(0, 900, 61, 20)],
+        Vec::new(),
+        "midpoints_late_tile_gc_origin",
+    )?;
+    let reference = twobit_from_sequences(
+        "midpoints_late_tile_gc_origin_ref",
+        vec![("chr1".to_string(), late_origin_gc_reference_sequence())],
+    )?;
+    let temp = TempDir::new()?;
+    let bed_path = temp.path().join("late_site.bed");
+    let gc_path = temp.path().join("two_bin_gc_package.npz");
+    write_bed(&bed_path, &[("chr1", 925, 936, "late")])?;
+    write_two_bin_gc_package(
+        &gc_path,
+        61,
+        2.0,
+        7.0,
+        twobit_contig_footprint(&reference.path)?,
+    )?;
+
+    let mut cfg = MidpointsConfig::new(
+        IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: temp.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1"]),
+        bed_path,
+    );
+    cfg.set_output_prefix("sites");
+    cfg.set_length_bins(vec![61, 62]);
+    cfg.set_tile_size(1_000);
+    cfg.set_min_mapq(0);
+    cfg.set_require_proper_pair(false);
+    cfg.set_gc(ApplyGCArgs {
+        gc_file: Some(gc_path),
+        gc_tag: None,
+        neutralize_invalid_gc: false,
+    });
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+
+    // Act
+    run(&cfg)?;
+    let arr: Array3<f32> = read_npy(temp.path().join("sites.midpoint_profiles.npy"))?;
+
+    // Assert
+    assert_eq!(arr.shape(), &[1, 1, 11]);
+    assert_eq!(
+        arr.slice(ndarray::s![0, 0, ..]).to_vec(),
+        vec![0.0, 0.0, 0.0, 0.0, 0.0, 7.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    );
+    assert_eq!(arr.sum(), 7.0);
+    Ok(())
+}
+
+#[test]
 fn real_ref_gc_bias_then_gc_bias_package_changes_midpoints_in_expected_direction() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Build a real non-neutral GC package, then consume it through `midpoints`.
     //
@@ -928,7 +1161,7 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_midpoints_in_expected_direction
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
-        drop_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(reference.path.clone()));
 
@@ -959,9 +1192,8 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_midpoints_in_expected_direction
 
 #[test]
 fn midpoints_rejects_gc_package_when_length_bins_are_outside_supported_range() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
-    // The midpoint command resolves its fragment-length range from the configured bin edges:
+    // The midpoint command resolves its fragment length range from the configured bin edges:
     //   [61, 62] -> counted fragment lengths are exactly 61 bp.
     //
     // We then hand-build the smallest valid GC package that only covers lengths 10..=60.
@@ -978,7 +1210,10 @@ fn midpoints_rejects_gc_package_when_length_bins_are_outside_supported_range() -
     let bed_path = temp.path().join("windows.bed");
     write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
     let gc_path = temp.path().join("too_short_gc_package.npz");
-    write_minimal_gc_package_excluding_length_61(&gc_path)?;
+    write_minimal_gc_package_excluding_length_61(
+        &gc_path,
+        twobit_contig_footprint(&reference.path)?,
+    )?;
 
     let mut cfg = MidpointsConfig::new(
         IOCArgs {
@@ -998,7 +1233,7 @@ fn midpoints_rejects_gc_package_when_length_bins_are_outside_supported_range() -
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
-        drop_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(reference.path.clone()));
 
@@ -1017,7 +1252,6 @@ fn midpoints_rejects_gc_package_when_length_bins_are_outside_supported_range() -
 
 #[test]
 fn midpoints_rejects_gc_package_with_schema_version_mismatch() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Build the smallest valid GC correction package shape, but with an intentionally
     // incompatible schema version. `midpoints` should fail while loading the package, before
@@ -1035,6 +1269,7 @@ fn midpoints_rejects_gc_package_with_schema_version_mismatch() -> Result<()> {
         gc_edges: vec![0, 101],
         correction_matrix: array![[1.0_f64]],
         length_bin_frequencies: array![1.0_f64],
+        reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
     };
     package.write_npz(&gc_path)?;
 
@@ -1056,7 +1291,7 @@ fn midpoints_rejects_gc_package_with_schema_version_mismatch() -> Result<()> {
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
-        drop_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(reference.path.clone()));
 
@@ -1077,7 +1312,6 @@ fn midpoints_rejects_gc_package_with_schema_version_mismatch() -> Result<()> {
 #[test]
 fn coverage_weights_tsv_changes_midpoints_by_full_fragment_average_not_window_overlap() -> Result<()>
 {
-    // Human verification status: unverified
     // Arrange:
     // Producer BAM:
     // - `simple_inward_bam()` has exactly one fragment [20, 80) on a 200 bp chromosome.
@@ -1125,7 +1359,7 @@ fn coverage_weights_tsv_changes_midpoints_by_full_fragment_average_not_window_ov
 
     // Act
     run_coverage_weights(&scaling_cfg)?;
-    let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
+    let scaling_path = weights_out_dir.join("coverage.coverage.scaling_factors.tsv");
 
     let mut midpoints_cfg = MidpointsConfig::new(
         IOCArgs {
@@ -1169,7 +1403,6 @@ fn coverage_weights_tsv_changes_midpoints_by_full_fragment_average_not_window_ov
 #[test]
 fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_midpoints() -> Result<()>
 {
-    // Human verification status: unverified
     // Arrange:
     // Build a real multi-chromosome scaling artifact, then consume it through `midpoints`.
     //
@@ -1281,7 +1514,7 @@ fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_midpo
 
     // Act
     run_coverage_weights(&scaling_cfg)?;
-    let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
+    let scaling_path = weights_out_dir.join("coverage.coverage.scaling_factors.tsv");
 
     let mut midpoints_cfg = MidpointsConfig::new(
         IOCArgs {
@@ -1326,7 +1559,6 @@ fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_midpo
 
 #[test]
 fn gc_tag_pair_average_sets_midpoint_profile_weight() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // - One paired fragment spans [20, 81), length 61, so the midpoint is deterministic:
     //     20 + floor(61 / 2) = 50.
@@ -1370,7 +1602,7 @@ fn gc_tag_pair_average_sets_midpoint_profile_weight() -> Result<()> {
     cfg.set_gc(ApplyGCArgs {
         gc_file: None,
         gc_tag: Some("GC".to_string()),
-        drop_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
 
     // Act
@@ -1395,11 +1627,14 @@ fn gc_tag_pair_average_sets_midpoint_profile_weight() -> Result<()> {
 #[cfg(feature = "cmd_coverage_weights")]
 #[test]
 fn gc_file_and_scaling_tsv_weights_multiply_in_midpoints() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Producer BAM:
     // - `simple_inward_bam()` contains one fragment [20, 80) on chr1.
-    // - With `bin_size = stride = 20`, the written scaling TSV is the identity profile:
+    // - Run `coverage-weights` with a neutral real GC package over its full configured
+    //   fragment length range so the written scaling TSV is GC-compatible with the consumer
+    //   command, but the numerical scaling profile stays unchanged.
+    // - With `bin_size = stride = 20`, the written scaling TSV is therefore still the identity
+    //   profile:
     //     [20,40): 1
     //     [40,60): 1
     //     [60,80): 1
@@ -1444,8 +1679,15 @@ fn gc_file_and_scaling_tsv_weights_multiply_in_midpoints() -> Result<()> {
     let temp = TempDir::new()?;
     let weights_out_dir = temp.path().join("coverage_weights");
     std::fs::create_dir_all(&weights_out_dir)?;
-    let scaling_cfg = make_simple_coverage_weights_config(&weights_out_dir, &producer_bam.bam);
-    let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
+    let mut scaling_cfg = make_simple_coverage_weights_config(&weights_out_dir, &producer_bam.bam);
+    let weights_gc_path = build_real_neutral_gc_package_for_range(
+        &producer_bam.bam,
+        &reference.path,
+        temp.path(),
+        10,
+        200,
+    )?;
+    let scaling_path = weights_out_dir.join("coverage.coverage.scaling_factors.tsv");
     let gc_path = temp.path().join("constant_gc_pkg.npz");
     let bed_path = temp.path().join("windows.bed");
     write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
@@ -1456,9 +1698,16 @@ fn gc_file_and_scaling_tsv_weights_multiply_in_midpoints() -> Result<()> {
         length_edges: vec![61, 62],
         gc_edges: vec![0, 101],
         length_bin_frequencies: array![1.0_f64],
+        reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![[3.0_f64]],
     };
     package.write_npz(&gc_path)?;
+    scaling_cfg.set_gc(ApplyGCArgs {
+        gc_file: Some(weights_gc_path),
+        gc_tag: None,
+        neutralize_invalid_gc: false,
+    });
+    scaling_cfg.set_ref_2bit(Some(reference.path.clone()));
 
     // Act
     run_coverage_weights(&scaling_cfg)?;
@@ -1483,7 +1732,7 @@ fn gc_file_and_scaling_tsv_weights_multiply_in_midpoints() -> Result<()> {
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
-        drop_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(reference.path.clone()));
 
@@ -1509,7 +1758,6 @@ fn gc_file_and_scaling_tsv_weights_multiply_in_midpoints() -> Result<()> {
 #[cfg(feature = "cmd_bam_to_bam")]
 #[test]
 fn bam_to_bam_gc_file_output_drives_midpoints_gc_tag_same_as_original_gc_file() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // One paired fragment spans [20, 81), length 61, so the midpoint is deterministic:
     //   20 + floor(61 / 2) = 50
@@ -1550,6 +1798,7 @@ fn bam_to_bam_gc_file_output_drives_midpoints_gc_tag_same_as_original_gc_file() 
         length_edges: vec![61, 62],
         gc_edges: vec![0, 101],
         length_bin_frequencies: array![1.0_f64],
+        reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![[3.0_f64]],
     };
     package.write_npz(&gc_path)?;
@@ -1559,11 +1808,10 @@ fn bam_to_bam_gc_file_output_drives_midpoints_gc_tag_same_as_original_gc_file() 
         tagged_out_bam.clone(),
         base_chromosomes(&["chr1"]),
     );
-    bam_to_bam_cfg.skip_chromosome_sort = true;
     bam_to_bam_cfg.min_mapq = 0;
     bam_to_bam_cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
         gc_file: Some(gc_path.clone()),
-        drop_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     bam_to_bam_cfg.set_ref_2bit(Some(reference.path.clone()));
     {
@@ -1589,7 +1837,7 @@ fn bam_to_bam_gc_file_output_drives_midpoints_gc_tag_same_as_original_gc_file() 
     original_cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
-        drop_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     original_cfg.set_ref_2bit(Some(reference.path.clone()));
 
@@ -1617,7 +1865,7 @@ fn bam_to_bam_gc_file_output_drives_midpoints_gc_tag_same_as_original_gc_file() 
     tagged_cfg.set_gc(ApplyGCArgs {
         gc_file: None,
         gc_tag: Some("GC".to_string()),
-        drop_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     run(&tagged_cfg)?;
 
@@ -1640,7 +1888,6 @@ fn bam_to_bam_gc_file_output_drives_midpoints_gc_tag_same_as_original_gc_file() 
 
 #[test]
 fn scaling_tsv_must_cover_requested_chromosome_end_in_midpoints() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // `simple_inward_bam()` uses chr1 length 200.
     // `midpoints` loads scaling factors through the same shared TSV contract as the other
@@ -1696,7 +1943,6 @@ fn scaling_tsv_must_cover_requested_chromosome_end_in_midpoints() -> Result<()> 
 #[test]
 fn midpoint_fetch_narrowing_preserves_tile_halo_near_chromosome_end_on_three_chromosomes()
 -> Result<()> {
-    // Human verification status: unverified
     let bam = bam_from_specs(
         vec![
             ("chr1".to_string(), 95),
@@ -1774,7 +2020,6 @@ fn midpoint_fetch_narrowing_preserves_tile_halo_near_chromosome_end_on_three_chr
 #[test]
 fn midpoint_fetch_narrowing_reads_all_eligible_fragments_near_chromosome_end_on_three_chromosomes()
 -> Result<()> {
-    // Human verification status: unverified
     let bam = bam_from_specs(
         vec![
             ("chr1".to_string(), 95),

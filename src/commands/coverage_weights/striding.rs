@@ -3,18 +3,37 @@ use fxhash::FxHashMap;
 
 use crate::shared::interval::Interval;
 
-/// Represents a single stride bin with coverage and its overlapping mega-bin average coverage.
+/// Treat support smaller than this as zero so tiny numerical residues do not participate
+/// in the global mean or blow up during inversion
+const SUPPORT_FLOOR: f64 = 1e-10;
+
+/// Represents a single stride bin and its triangularly smoothed value.
+///
+/// The smoothed value is the weighted average of the centered stride value and its
+/// surrounding stride values under the triangular kernel used by `fill_triangular_overlap`.
+/// The same field can represent smoothed average coverage or a smoothed
+/// fragment count, depending on which command produced the raw stride value.
 #[derive(Debug, Clone, Copy)]
 pub struct StrideBin {
     /// Checked genomic span of the stride-bin
     pub interval: Interval<u32>,
-    /// Average fragment coverage for the stride-bin
-    pub avg_coverage: f32,
-    /// Average coverage of overlapping mega-bins
-    pub avg_overlap_coverage: f32,
-    /// Scaling factor for normalizing coverage
-    /// across the genome. Normalized across
-    /// all stride-bins for a mean of 1.0.
+    /// Number of non-blacklisted bases that support the stride-bin value
+    pub eligible_positions: u32,
+    /// Eligible support as a fraction of the configured stride.
+    ///
+    /// This is precomputed when stride bins are loaded so smoothing can weight
+    /// short final bins and partly blacklisted bins without recalculating it
+    /// for every overlapping kernel position.
+    pub support_ratio: f64,
+    /// Raw command-specific value for this stride bin.
+    ///
+    /// This is average coverage for `coverage-weights` and a fractional  
+    /// fragment count for `fragment-count-weights`.
+    pub stride_value: f32,
+    /// Triangular weighted average of the stride values from the center and
+    /// surrounding stride bins
+    pub smoothed_value: f32,
+    /// Multiplicative scaling factor for normalizing across the genome
     pub scaling_factor: f32,
 }
 
@@ -35,6 +54,11 @@ impl StrideBin {
     pub fn size(&self) -> u32 {
         self.interval.len()
     }
+}
+
+#[inline]
+fn is_effectively_zero(value: f64) -> bool {
+    value.abs() < SUPPORT_FLOOR
 }
 
 /// Build the triangular integer weights, centered in the kernel.
@@ -61,13 +85,18 @@ fn triangular_weights(half_window: usize) -> Vec<usize> {
     weights
 }
 
-/// Fill `bins[i].avg_overlap_coverage` with a *triangularly weighted* average
-/// of neighboring stride-bin averages around `i`.
+/// Fill `bins[i].smoothed_value` with a triangularly weighted average
+/// of the center stride value and surrounding stride values.
 ///
-/// Goal: For each stride-bin `i`, approximate the average coverage of all overlapping
-/// "megabins" (large windows of size `bin_size`) *without* explicitly enumerating them.
-/// Instead, use a fixed triangular kernel whose integer weights encode:
-///   “How many megabins include this neighbor when centered at i?”
+/// Each triangular kernel weight is multiplied by the bin's `support_ratio`, so short final bins
+/// and partly blacklisted bins contribute less than full, unmasked stride bins.
+///
+/// Goal: For each stride-bin `i`, approximate the average value across all overlapping
+/// "megabins" (large windows of size `bin_size`) **without** explicitly enumerating them.
+///
+/// The triangular kernel is aligned so its center weight lands on stride bin `i`.
+/// Each kernel weight for the surrounding positions counts how many megabins, that overlap
+/// `i`, also overlap the stride bin at that relative position.
 ///
 /// Key quantities:
 /// - `half_window = (bin_size / stride) - 1`
@@ -84,19 +113,25 @@ fn triangular_weights(half_window: usize) -> Vec<usize> {
 /// - Near the left edge, there are fewer neighbors to the left of `i`. We *truncate*
 ///   the kernel on the left and start using it from some offset `w_start`.
 /// - Near the right edge, we similarly truncate on the right.
-/// - In both cases we still align the kernel’s center to the current `i`.
+/// - In both cases we still align the kernel's center to the current `i`.
 ///
 /// Implementation outline per `i`:
 /// 1) Pick the slice of bins we can actually use: `[start_i .. end_i)`
 /// 2) Compute `w_start`, the index into `weights` that aligns the first usable bin with
-///    the correct kernel position (so the kernel’s center still targets `i`).
-/// 3) Accumulate `sum( avg_coverage[j] * weight[j] )` and `sum(weights)`
-/// 4) Normalize: `avg_overlap_coverage[i] = weighted_sum / sum_weights`.
+///    the correct kernel position (so the kernel's center still targets `i`).
+/// 3) Accumulate `sum(stride_value[j] * weight[j])` and `sum(weights)`.
+///    Non-finite values are missing measurements and do not contribute to either sum.
+///    The weight includes the triangular kernel weight and eligible-base support.
+/// 4) Normalize: `smoothed_value[i] = weighted_sum / sum_weights`.
+///    If no finite neighbor is available, the smoothed value is `NaN`.
 ///
 /// Parameters
 /// ----------
 /// - bins:
-///     Stride bins with `avg_coverage` set to per-base averages (mask-adjusted if desired).
+///     Stride bins with `stride_value` set to the command-specific value:
+///     average coverage for `coverage-weights` and fragment count for
+///     `fragment-count-weights`.
+///     `support_ratio` controls how much each stride contributes to smoothing.
 /// - bin_size:
 ///     Large window size; used only to derive the kernel radius.
 /// - stride:
@@ -106,9 +141,9 @@ pub fn fill_triangular_overlap(bins: &mut Vec<StrideBin>, bin_size: u32, stride:
     // If radius is 0, no neighbors -> identity
     let half_window = (bin_size / stride).saturating_sub(1) as usize;
     if half_window == 0 {
-        // No overlap region: each bin’s average = its coverage
+        // No overlap region: each bin keeps its raw stride value
         for b in bins.iter_mut() {
-            b.avg_overlap_coverage = b.avg_coverage;
+            b.smoothed_value = b.stride_value;
         }
         return;
     }
@@ -144,85 +179,47 @@ pub fn fill_triangular_overlap(bins: &mut Vec<StrideBin>, bin_size: u32, stride:
         //             We use weights[2..] = [3,2,1].
         let w_start = half_window.saturating_sub(i - start_i);
 
-        let mut sum_cov = 0.0_f32; // Weighted sum of coverage densities
-        let mut sum_w = 0usize; // Sum of integer weights actually used
+        let mut weighted_value_sum = 0.0_f64;
+        let mut weight_sum = 0.0_f64;
 
-        // Sum avg_coverage * weight, and the weights
+        // Sum stride value * weight, and the weights
         for j in 0..slice_len {
-            let w = weights[w_start + j];
-            // Last stride-bin may be shorter, so weight by length (most == 1.0)
-            let len_ratio = (bin_slice[j].size() as f32) / (stride as f32);
-            sum_cov += bin_slice[j].avg_coverage * (w as f32) * len_ratio;
-            sum_w += w;
+            let mut w = weights[w_start + j] as f64;
+            let stride_value = bin_slice[j].stride_value as f64;
+            if !stride_value.is_finite() {
+                continue;
+            }
+            // Eligible support handles both short final bins and blacklist-masked bases
+            if bin_slice[j].support_ratio == 0.0 {
+                continue;
+            }
+            w *= bin_slice[j].support_ratio;
+            weighted_value_sum += stride_value * w;
+            weight_sum += w;
         }
-        bins[i].avg_overlap_coverage = if sum_w > 0 {
-            sum_cov / (sum_w as f32)
+        bins[i].smoothed_value = if weight_sum > 0.0 {
+            (weighted_value_sum / weight_sum) as f32
         } else {
-            0.0
+            f32::NAN
         };
     }
 }
 
-// /// Get depth normalization scalar for the overlapping megabin
-// /// Updates start idx for the chromosome
-// pub fn get_overlapping_normalization<'a>(
-//     normalization_depths_per_chromosome: &'a Option<FxHashMap<String, Vec<StrideBin>>>,
-//     normalization_start_indices: &mut Option<FxHashMap<String, usize>>,
-//     chrom: &str,
-//     midpoint: u32,
-//     max_fragment_length: u32,
-// ) -> Result<Option<f32>, Box<dyn Error>> {
-//     if let (Some(depths_map), Some(indices_map)) = (
-//         normalization_depths_per_chromosome.as_ref(),
-//         normalization_start_indices.as_mut(),
-//     ) {
-//         // Get normalization depths for the current chromosome
-//         let normalization_depths = depths_map
-//             .get(chrom)
-//             .ok_or_else(|| format!("Chromosome '{}' not found in normalization depths!", chrom))?;
-
-//         // Get the start index for the current chromosome
-//         let start_idx = indices_map.get(chrom).copied().unwrap_or(0);
-
-//         // Find overlapping normalization depths
-//         let (overlapping_bins, new_start_idx) = get_overlapping_sites(
-//             normalization_depths,
-//             midpoint,
-//             start_idx,
-//             max_fragment_length,
-//         );
-
-//         // Update the start index for the chromosome
-//         indices_map.insert(chrom.to_string(), new_start_idx);
-
-//         // Return the first overlapping normalization bin, if it exists
-//         if let Some(bin) = overlapping_bins.get(0) {
-//             return Ok(Some(bin.avg_overlap_coverage));
-//         } else {
-//             println!(
-//                 "get_overlapping_normalization error: chrom: {}, midpoint: {}, start_idx: {}, new_start_idx: {}",
-//                 chrom, midpoint, start_idx, new_start_idx
-//             );
-//             return Err("No overlapping normalization bin found!".into());
-//         }
-//     }
-
-//     Ok(None) // No normalization logic is applied
-// }
-
-/// Calculate the `StrideBin::scaling_factor` by dividing `StrideBin::avg_overlap_coverage`
-/// across all chromosomes.
+/// Calculate `StrideBin::scaling_factor` from each bin's smoothed value.
 ///
-/// Computes a global mean of `avg_overlap_coverage` across all non-zero bins in `bins_by_chr`
-/// and divides every bin’s `avg_overlap_coverage` by that mean so the new global mean is ~1.0.
-/// Optionally weight the mean by bin length to better approximate a base-weighted genome mean.
+/// Here, "smoothed value" means the triangular weighted average already stored in
+/// `StrideBin::smoothed_value` by `fill_triangular_overlap`.
+///
+/// This function computes a global mean across all supported bins in `bins_by_chr` and divides every
+/// bin's smoothed value by that mean so the new global mean is ~1.0. Optionally weight the
+/// mean by eligible bases to better approximate a base-weighted genome mean.
 ///
 /// Parameters
 /// ----------
 /// - bins_by_chr:
 ///     Map from chromosome to its stride bins
 /// - length_weighted:
-///     If true, weight each bin by its length; if false, weight all bins equally
+///     If true, weight each bin by eligible positions; if false, weight all bins equally
 /// - invert:
 ///     Invert the final scaling factor (1/x).
 ///     **NOTE**: Zero-values remain zero.
@@ -231,23 +228,35 @@ pub fn fill_triangular_overlap(bins: &mut Vec<StrideBin>, bin_size: u32, stride:
 /// -------
 /// - mean_before:
 ///     The global mean used for normalization (before scaling)
-pub fn normalize_avg_overlap_by_global_mean(
+pub fn normalize_weighted_average_overlap_by_global_mean(
     bins_by_chr: &mut FxHashMap<String, Vec<StrideBin>>,
     length_weighted: bool,
     invert: bool,
 ) -> Result<f32> {
     let mut sum = 0.0_f64;
     let mut wsum = 0.0_f64;
+    let mut total_bins = 0usize;
+    let mut usable_bins = 0usize;
 
-    // Compute global mean over all chromosomes
+    // Compute global mean over all chromosomes.
+    // A smoothed value can be finite even when the raw stride value is missing because smoothing
+    // can interpolate across masked bins. Those rows are useful in the output, but they should not
+    // define the global mean or receive a usable scaling factor.
     for bins in bins_by_chr.values() {
         for b in bins {
-            let v = b.avg_overlap_coverage as f64;
-            if !v.is_finite() || v == 0.0 {
-                continue; // Skip NaN/inf and zero-coverage
+            total_bins += 1;
+            let raw_value = b.stride_value as f64;
+            let smoothed_value = b.smoothed_value as f64;
+            if !raw_value.is_finite()
+                || !smoothed_value.is_finite()
+                || is_effectively_zero(smoothed_value)
+                || b.eligible_positions == 0
+            {
+                continue; // Skip NaN/inf and bins without real support
             }
+            usable_bins += 1;
             let w = if length_weighted {
-                b.size() as f64
+                b.eligible_positions as f64
             } else {
                 1.0
             };
@@ -255,13 +264,25 @@ pub fn normalize_avg_overlap_by_global_mean(
             if w == 0.0 {
                 continue;
             }
-            sum += v * w;
+            sum += smoothed_value * w;
             wsum += w;
         }
     }
 
     if wsum == 0.0 {
-        anyhow::bail!("no bins to normalize or all had length 0");
+        if total_bins == 0 {
+            anyhow::bail!("no stride bins were available to normalize");
+        }
+        if usable_bins == 0 {
+            anyhow::bail!(
+                "no usable finite non-zero smoothed fragment mass after filtering across {} stride bins. Check --chromosomes, --min-mapq, fragment length filters, blacklist, and GC correction inputs",
+                total_bins
+            );
+        }
+        anyhow::bail!(
+            "internal error: total sum of 0 but found {} usable bins. Should be impossible, please report",
+            usable_bins
+        );
     }
 
     let mean = sum / wsum;
@@ -271,18 +292,24 @@ pub fn normalize_avg_overlap_by_global_mean(
 
     // Calculate the scaling factors
     let inv_mean = 1.0_f64 / mean;
-    let inverter = if invert {
-        |x: f64| match x {
-            0.0 => 0.0,
-            _ => 1. / x,
-        }
-    } else {
-        |x: f64| x
-    };
     for bins in bins_by_chr.values_mut() {
         for b in bins.iter_mut() {
-            let v = b.avg_overlap_coverage as f64;
-            b.scaling_factor = inverter(v * inv_mean) as f32;
+            let raw_value = b.stride_value as f64;
+            let smoothed_value = b.smoothed_value as f64;
+            b.scaling_factor = if !raw_value.is_finite()
+                || !smoothed_value.is_finite()
+                || is_effectively_zero(smoothed_value)
+                || b.eligible_positions == 0
+            {
+                0.0
+            } else {
+                let normalized = smoothed_value * inv_mean;
+                if invert {
+                    (1.0 / normalized) as f32
+                } else {
+                    normalized as f32
+                }
+            };
         }
     }
 

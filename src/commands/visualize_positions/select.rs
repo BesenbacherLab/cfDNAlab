@@ -1,12 +1,14 @@
 use fxhash::FxHashMap;
 
-use super::model::{AxisBounds, LengthVisualization, Track};
+use super::model::LengthVisualization;
 use crate::commands::fragment_kmers::nearest_frame_guard::NearestFrameGuard;
 use crate::commands::fragment_kmers::parse::PositionalSelectionSpec;
 use crate::commands::fragment_kmers::positions::{
-    AllowedWindows, PositionGroup, PositionSelection, PositionSelectionCache, ReferenceFrame,
+    AllowedWindows, PositionSelection, PositionSelectionCache,
 };
 use crate::commands::fragment_kmers::selection::{SelectionDecision, evaluate_selection};
+use crate::shared::positioning::{PositionGroup, ReferenceFrame};
+use crate::shared::visualization::{AxisBounds, Track};
 
 /// How aggressively the visualization should clamp selections to read coverage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

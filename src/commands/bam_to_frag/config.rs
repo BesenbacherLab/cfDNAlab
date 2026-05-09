@@ -1,6 +1,6 @@
 use crate::commands::cli_common::{
-    ApplyGCArgFileOnly, ChromosomeArgs, FragmentLengthArgs, IOCArgs, ScaleGenomeArgs, UnpairedArgs,
-    WindowSpec,
+    ApplyGCArgFileOnly, ChromosomeArgs, FragmentLengthArgs, IOCArgs, LoggingArgs, ScaleGenomeArgs,
+    UnpairedArgs, WindowSpec,
 };
 use crate::shared::blacklist::BlacklistStrategy;
 use std::path::PathBuf;
@@ -19,15 +19,17 @@ use std::path::PathBuf;
 ///
 ///  - **Strand**: The strand alignment of read1
 ///
-/// AND, when either/both `--gc-file` and `--scaling-factors` are specified:
+/// AND, when one or more of `--gc-file`, `--coverage-scaling-factors`, and
+/// `--count-scaling-factors` are specified:
 ///
 ///  - **GC Weight**: The multiplicative weight needed to correct for GC bias.
 ///
-///  - **Scaling Weight**: The multiplicative weight needed to perform genomic smoothing.
+///  - **Coverage-based scaling weight**: The multiplicative weight needed to perform fragment coverage-based genomic smoothing.
 ///
-/// Note: When GC correction is not specified but genomic scaling is, the sixth column is the scaling weight.
+///  - **Count-based scaling weight**: The multiplicative weight needed to perform fragment count-based genomic smoothing.
 ///
-/// The accompanying `*.frag.header.tsv` file has the matching column names.
+/// The accompanying `*.frag.header.tsv` file has the matching column names:
+/// `gc_weight`, `coverage_scaling_weight`, and `count_scaling_weight`.
 ///
 /// Fragments are sorted by `(chromosome, start, end)`, using the chromosome order in `--chromosomes`.
 ///
@@ -58,25 +60,37 @@ pub struct BamToFragConfig {
     /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
     ///
     /// Examples produce files like:
-    ///   `<prefix>.frag.tsv.gz`,
+    ///   `<prefix>.frag.tsv.gz`
     #[cfg_attr(
         feature = "cli",
-        clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, help_heading = "Core")
+        clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, value_parser = crate::commands::cli_common::parse_output_prefix, help_heading = "Core")
     )]
     pub output_prefix: String,
 
     /// Intervals to keep overlapping fragments from `[path]`
-    #[cfg_attr(
-        feature = "cli",
-        clap(long = "by-bed", value_parser, help_heading = "Windows")
-    )]
+    #[cfg_attr(feature = "cli", clap(long, value_parser, help_heading = "Windows"))]
     pub by_bed: Option<PathBuf>,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub chromosomes: ChromosomeArgs,
 
-    #[cfg_attr(feature = "cli", clap(flatten))]
-    pub scale_genome: ScaleGenomeArgs,
+    /// Optional path to coverage-based scaling factors `[path]`
+    ///
+    /// `.tsv` file as produced by `cfdna coverage-weights`.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, value_parser, help_heading = "Normalization")
+    )]
+    pub coverage_scaling_factors: Option<PathBuf>,
+
+    /// Optional path to fragment count-based scaling factors `[path]`
+    ///
+    /// `.tsv` file as produced by `cfdna fragment-count-weights`.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, value_parser, help_heading = "Normalization")
+    )]
+    pub count_scaling_factors: Option<PathBuf>,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub fragment_lengths: FragmentLengthArgs,
@@ -94,7 +108,7 @@ pub struct BamToFragConfig {
     /// This is **NOT** recommended by default, as it trims the tails of the length distribution.
     /// It may be useful to match the files in FinaleDB.
     ///
-    /// Note, that we only keep inward-directed fragments within a specified length range, so
+    /// Note, that we only keep inward-directed fragments within the specified length range, so
     /// there's no real need for proper-pair filtering.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
     pub require_proper_pair: bool,
@@ -153,6 +167,9 @@ pub struct BamToFragConfig {
         )
     )]
     pub ref_2bit: Option<PathBuf>,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub logging: LoggingArgs,
 }
 
 impl BamToFragConfig {
@@ -165,7 +182,8 @@ impl BamToFragConfig {
             output_prefix: String::new(),
             by_bed: None,
             chromosomes,
-            scale_genome: ScaleGenomeArgs::default(),
+            coverage_scaling_factors: None,
+            count_scaling_factors: None,
             fragment_lengths: FragmentLengthArgs::default(),
             min_mapq: 0,
             require_proper_pair: false,
@@ -174,9 +192,10 @@ impl BamToFragConfig {
             blacklist_strategy: BlacklistStrategy::Any,
             gc: ApplyGCArgFileOnly {
                 gc_file: None,
-                drop_invalid_gc: false,
+                neutralize_invalid_gc: false,
             },
             ref_2bit: None,
+            logging: LoggingArgs::default(),
         }
     }
 
@@ -197,8 +216,24 @@ impl BamToFragConfig {
         self.by_bed = by_bed;
     }
 
-    pub fn set_scale_genome(&mut self, scale_genome: ScaleGenomeArgs) {
-        self.scale_genome = scale_genome;
+    pub fn set_coverage_scaling_factors(&mut self, coverage_scaling_factors: Option<PathBuf>) {
+        self.coverage_scaling_factors = coverage_scaling_factors;
+    }
+
+    pub fn set_count_scaling_factors(&mut self, count_scaling_factors: Option<PathBuf>) {
+        self.count_scaling_factors = count_scaling_factors;
+    }
+
+    pub fn coverage_scale_genome_args(&self) -> ScaleGenomeArgs {
+        ScaleGenomeArgs {
+            scaling_factors: self.coverage_scaling_factors.clone(),
+        }
+    }
+
+    pub fn count_scale_genome_args(&self) -> ScaleGenomeArgs {
+        ScaleGenomeArgs {
+            scaling_factors: self.count_scaling_factors.clone(),
+        }
     }
 
     pub fn fragment_lengths_mut(&mut self) -> &mut FragmentLengthArgs {

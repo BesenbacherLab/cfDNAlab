@@ -98,7 +98,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_parse_compose_specs_and_resolve_keys() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let schema = build_schema(&["core=input,bin", "report=core,win-direction"])?;
 
@@ -114,7 +113,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_reject_compose_name_input_keyword() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let specs = ["input=input"];
 
@@ -128,7 +126,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_reject_compose_name_none_keyword() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let specs = ["none=input"];
 
@@ -142,7 +139,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_reject_compose_name_near_side_keyword() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let specs = ["win-direction=input"];
 
@@ -156,7 +152,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_reject_compose_name_near_name_keyword() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let specs = ["near-name=input"];
 
@@ -170,7 +165,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_reject_compose_name_bin_keyword() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let specs = ["bin=input"];
 
@@ -184,7 +178,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_reject_compose_name_cluster_keyword() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let specs = ["cluster=input"];
 
@@ -198,7 +191,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_parse_exclude_rules_for_atomic_and_composition_keys() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let schema = build_schema(&["core=input,bin"])?;
         let available_parts = all_available_parts();
@@ -221,7 +213,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_reject_unknown_exclude_keys() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let schema = build_schema(&["core=input,bin"])?;
         let available_parts = all_available_parts();
@@ -237,7 +228,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_reject_exclude_rules_with_unavailable_parts() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let schema = build_schema(&[])?;
         let available_parts = input_only_parts();
@@ -253,7 +243,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_reject_exclude_rules_with_unavailable_composition_parts() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let schema = build_schema(&["core=input,win-direction"])?;
         let available_parts = input_only_parts();
@@ -269,7 +258,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_reject_compose_with_unavailable_parts() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let schema = build_schema(&["core=input,win-direction"])?;
         let available_parts = input_only_parts();
@@ -284,7 +272,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_collect_min_per_values_when_rejections_and_missing_values_present() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let input_state = MinPerKeyRuleState::new(LabelKey::Atomic(AtomicLabelPart::Input), 1);
         let mut bin_state = MinPerKeyRuleState::new(LabelKey::Atomic(AtomicLabelPart::Bin), 1);
@@ -326,7 +313,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_collect_composition_values_when_composition_rule_present() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let schema = build_schema(&["core=input,bin"])?;
         let mut composition_state = MinPerKeyRuleState::new(LabelKey::Composition(0), 1);
@@ -359,7 +345,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_return_empty_values_when_window_has_no_tuples() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let input_state = MinPerKeyRuleState::new(LabelKey::Atomic(AtomicLabelPart::Input), 1);
         let bin_state = MinPerKeyRuleState::new(LabelKey::Atomic(AtomicLabelPart::Bin), 1);
@@ -381,7 +366,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_reject_exclude_rules_with_wrong_composition_parts() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let schema = build_schema(&["core=input,bin"])?;
         let available_parts = all_available_parts();
@@ -397,7 +381,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_reject_exclude_rules_with_wrong_nested_composition_parts() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let schema = build_schema(&["core=input,bin", "report=core,win-direction"])?;
         let available_parts = all_available_parts();
@@ -413,7 +396,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_accept_exclude_rules_with_correct_nested_composition_parts() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let schema = build_schema(&["core=input,bin", "report=core,win-direction"])?;
         let available_parts = all_available_parts();
@@ -431,7 +413,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_parse_min_per_rules_for_atomic_and_composition_keys() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let schema = build_schema(&["core=input,bin"])?;
         let available_parts = all_available_parts();
@@ -454,7 +435,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_reject_non_numeric_min_per_counts() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let schema = build_schema(&[])?;
         let available_parts = all_available_parts();
@@ -470,7 +450,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_reject_min_per_rules_with_unavailable_parts() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let schema = build_schema(&[])?;
         let available_parts = input_only_parts();
@@ -486,7 +465,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_reject_out_labels_with_unavailable_parts() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let schema = build_schema(&[])?;
         let available_parts = input_only_parts();
@@ -502,7 +480,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_reject_merge_key_with_unavailable_parts() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let schema = build_schema(&[])?;
         let available_parts = input_only_parts();
@@ -523,7 +500,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_normalize_min_per_rules_by_key_and_zero_minimum() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let schema = build_schema(&[])?;
         let available_parts = all_available_parts();
@@ -549,7 +525,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_normalize_min_per_rules_by_membership_ignoring_order() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let schema = build_schema(&["core=input,bin", "swap=bin,input"])?;
         let available_parts = all_available_parts();
@@ -568,7 +543,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_normalize_min_per_rules_by_membership_across_atomic_and_composition() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let schema = build_schema(&["inputonly=input"])?;
         let available_parts = all_available_parts();
@@ -590,7 +564,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_reject_compose_name_with_underscore() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let specs = ["input_only=input"];
 
@@ -604,7 +577,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_normalize_min_per_rules_by_membership_for_nested_compositions() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let schema = build_schema(&[
             "core=input,bin",
@@ -627,7 +599,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_keep_tail_for_merge_gap_zero() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         // Merge gap zero still allows overlaps across chunk boundaries
         // Even with only two windows, the last window must stay in the tail
@@ -660,7 +631,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_keep_tail_for_min_distance_zero() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         // Minimum distance zero still requires checking the next chunk for overlaps
         // Even with only two windows, the last window must stay in the tail
@@ -693,7 +663,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_keep_tail_for_cluster_overlap() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         // Clustering depends on overlap depth, so the last window must carry forward
         // Even with only two windows, the last window must stay in the tail
@@ -726,7 +695,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_keep_tail_for_cross_chunk_merge_gap_zero() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         // Gap zero still allows a merge at the chunk boundary
         // Only groups whose final span reaches the boundary must stay in the tail
@@ -760,7 +728,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_keep_merge_chain_in_tail_when_gap_zero() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         // Gap zero keeps the whole touching chain that reaches the boundary
         // Group A ends well before the boundary, so it is safe to write
@@ -795,7 +762,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_load_near_without_strand_column() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         // Missing strand column should default to '+' for every near interval
         let mut file = NamedTempFile::new()?;
@@ -827,7 +793,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_drop_windows_without_near_when_distance_max_set() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         // No near intervals means no hit, so --distance-max drops windows
         let windows = vec![build_window_with_tuple("chr1", 10, 20)];
@@ -846,7 +811,6 @@ mod tests_prepare_windows_helpers {
 
     #[test]
     fn should_label_no_near_when_bins_set_and_distance_max_unset() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         // No near intervals should emit [NO-NEAR] bin and [NONE] labels
         let windows = vec![build_window_with_tuple("chr1", 10, 20)];

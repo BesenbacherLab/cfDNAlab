@@ -1,9 +1,10 @@
 use std::cmp::Ordering;
 use std::fmt::Write;
 
-use crate::commands::fragment_kmers::positions::ReferenceFrame;
+use crate::shared::positioning::ReferenceFrame;
+use crate::shared::visualization::Track;
 
-use super::model::{LengthVisualization, Track, VizConfig};
+use super::model::{LengthVisualization, VizConfig};
 
 const CHAR_WIDTH: f64 = 7.0;
 const MARKER_BAND: f64 = 12.0;
