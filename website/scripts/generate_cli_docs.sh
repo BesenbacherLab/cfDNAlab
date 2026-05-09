@@ -9,4 +9,4 @@ cargo run --bin gen_cli_docs \
   --out-dir "${repo_root}/website/docs/generated/cli" \
   --scope release
 
-"${repo_root}/scripts/docs/generate_release_notes.sh"
+"${repo_root}/website/scripts/generate_release_notes.sh"

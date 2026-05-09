@@ -1345,6 +1345,8 @@ mod tests_wps_peaks_command {
             .join("three_chr_by_size.wps.peaks.stats.tsv.zst");
         let text = read_zst_to_string(&stats_path)?;
         let lines: Vec<_> = text.lines().collect();
+        // Fixed-size window indices are global across the requested chromosome order. Each 1kb
+        // chromosome has one [0, 1000) bin, so chr1/chr2/chr3 get indices 0/1/2.
         assert_eq!(
             lines,
             vec![
