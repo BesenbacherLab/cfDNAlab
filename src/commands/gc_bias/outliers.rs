@@ -102,7 +102,7 @@ pub fn interpolated_quantile(sorted: &[f32], p: f32) -> f32 {
 }
 
 /// Compute outlier bounds for `vals` per the rule. Ignores NaNs.
-/// Returns `None` if rule is `None` or there’s not enough data.
+/// Returns `None` if rule is `None` or there's not enough data.
 pub fn outlier_bounds(vals: &[f32], rule: OutlierRule) -> Option<(f32, f32)> {
     let mut sorted_values: Vec<f32> = vals.iter().copied().filter(|x| x.is_finite()).collect();
     if sorted_values.len() < 2 || matches!(rule, OutlierRule::None) {

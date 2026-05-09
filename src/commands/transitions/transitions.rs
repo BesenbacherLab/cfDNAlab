@@ -1,10 +1,14 @@
 use crate::{
     commands::{
-        cli_common::ensure_output_dir,
+        cli_common::{ensure_output_dir, validate_output_prefix},
         fragment_kmers::{config::*, fragment_kmers},
+        run_statistics::{
+            DEFAULT_FRAGMENT_STATISTICS_LABELS, FragmentRunStatisticsOptions, GCStatisticsSummary,
+            TILE_DOUBLE_COUNT_NOTE, print_fragment_run_statistics,
+        },
         transitions::config::TransitionsConfig,
     },
-    shared::{io::dot_join, tiled_run::make_temp_dir},
+    shared::{io::dot_join, tiled_run::TempDirGuard},
 };
 use anyhow::{Context, Result, ensure};
 use fxhash::FxHashMap;
@@ -127,15 +131,18 @@ pub fn compute_transition_frequencies(
 ///   the first failure.
 pub fn run(opt: &TransitionsConfig) -> Result<()> {
     let start_time = Instant::now();
+    opt.shared_args.fragment_lengths.validate()?;
 
     let prefix = opt.shared_args.output_prefix.trim();
+    validate_output_prefix(prefix)?;
 
     // Create output directory
     ensure_output_dir(&opt.shared_args.ioc.output_dir)?;
 
     // Build temporary directory
-    let temp_root = make_temp_dir(&opt.shared_args.ioc.output_dir, prefix)
+    let mut temp_root_guard = TempDirGuard::new(&opt.shared_args.ioc.output_dir, prefix)
         .context("create per-run temp dir")?;
+    let temp_root = temp_root_guard.path().to_path_buf();
 
     let mut tmp_ioc = opt.shared_args.ioc.clone();
     tmp_ioc.output_dir = temp_root.join("kmer_counts");
@@ -154,7 +161,7 @@ pub fn run(opt: &TransitionsConfig) -> Result<()> {
     };
     fk_cfg.set_output_prefix(prefix.to_string());
 
-    let global_counter = fragment_kmers::run_inner(&fk_cfg)?;
+    let global_counter = fragment_kmers::run_inner_silent(&fk_cfg)?;
 
     let counts_dir = fk_cfg.shared_args.ioc.output_dir.as_path();
     let final_dir = &opt.shared_args.ioc.output_dir;
@@ -222,54 +229,38 @@ pub fn run(opt: &TransitionsConfig) -> Result<()> {
     }
 
     // Remove temporary staging directory once final outputs are written
-    fs::remove_dir_all(&temp_root).context("remove transitions temp directory")?;
+    temp_root_guard
+        .remove()
+        .context("remove transitions temp directory")?;
 
-    println!();
-    println!("Statistics");
-    println!("----------");
-    println!(
-        "  Note: A few reads/fragments may be counted twice in the statistics (only) around the parallelization tiles."
-    );
-
-    // Print summary statistics and execution time
     let elapsed = start_time.elapsed();
-    println!("  Total reads: {}", global_counter.base.total_reads);
-    println!(
-        "  Initially accepted reads: {} ({:.2}%, forward: {}, reverse: {})",
-        global_counter.base.accepted_forward + global_counter.base.accepted_reverse,
-        (global_counter.base.accepted_forward + global_counter.base.accepted_reverse) as f64
-            / global_counter.base.total_reads as f64
-            * 100.0,
-        global_counter.base.accepted_forward,
-        global_counter.base.accepted_reverse
+    print_fragment_run_statistics(
+        &global_counter.base,
+        elapsed,
+        FragmentRunStatisticsOptions {
+            include_section_header: true,
+            notes: &[TILE_DOUBLE_COUNT_NOTE],
+            labels: DEFAULT_FRAGMENT_STATISTICS_LABELS,
+            blacklist_excluded_fragments: Some(global_counter.blacklisted_fragments),
+            gc: (opt.shared_args.gc.gc_file.is_some() || opt.shared_args.gc.gc_tag.is_some())
+                .then_some(GCStatisticsSummary {
+                    neutralize_invalid_gc: opt.shared_args.gc.neutralize_invalid_gc,
+                    failed_fragments: global_counter.gc_failed_fragments,
+                    missing_tags: opt
+                        .shared_args
+                        .gc
+                        .gc_tag
+                        .is_some()
+                        .then_some(global_counter.gc_missing_tags),
+                    out_of_range_tags: opt
+                        .shared_args
+                        .gc
+                        .gc_tag
+                        .is_some()
+                        .then_some(global_counter.gc_out_of_range_tags),
+                }),
+        },
+        std::iter::empty::<&str>(),
     );
-    println!(
-        "  Blacklist-excluded fragments: {}",
-        global_counter.blacklisted_fragments
-    );
-    if opt.shared_args.gc.gc_file.is_some() || opt.shared_args.gc.gc_tag.is_some() {
-        let gc_fail_action = if opt.shared_args.gc.drop_invalid_gc {
-            "fragment skipped"
-        } else {
-            "fragment counted with weight 1.0"
-        };
-        println!(
-            "  GC correction failures ({}): {}",
-            gc_fail_action, global_counter.gc_failed_fragments
-        );
-        if opt.shared_args.gc.gc_tag.is_some() && global_counter.gc_out_of_range_tags > 0 {
-            println!(
-                "  GC tag values outside [0, {:.0}] treated as invalid: {}",
-                crate::shared::gc_tag::MAX_REASONABLE_GC_WEIGHT,
-                global_counter.gc_out_of_range_tags
-            );
-        }
-    }
-    println!(
-        "  Fragments counted one or more times: {}",
-        global_counter.base.counted_fragments
-    );
-    println!("----------");
-    println!("Elapsed time: {:.2?}", elapsed);
     Ok(())
 }

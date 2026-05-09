@@ -1,8 +1,15 @@
 use anyhow::{Context, Result};
 use fxhash::{FxHashMap, FxHashSet};
+use serde::{Deserialize, Serialize};
 use std::io::BufRead;
 use std::{fs::File, io::BufReader, ops::RangeBounds, path::Path};
 use twobit::TwoBitFile;
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ContigFootprintEntry {
+    pub name: String,
+    pub size: u64,
+}
 
 /// Load reference genome sequence for
 /// a single chromosome from a 2bit file.
@@ -49,6 +56,39 @@ pub fn twobit_contig_lengths<P: AsRef<Path>>(
         }
     }
     Ok(name_to_size)
+}
+
+/// Return contig names from a .2bit file in reference order.
+pub fn twobit_contig_names<P: AsRef<Path>>(path: P) -> Result<Vec<String>> {
+    let path = path.as_ref();
+    let tb =
+        TwoBitFile::open(path).with_context(|| format!("opening 2bit reference {:?}", path))?;
+    Ok(tb.chrom_names())
+}
+
+/// Return a stable footprint from 2bit contig names and lengths.
+///
+/// GC correction packages depend on the reference contig set used when they were built.
+/// This records the exact contig names and sizes so downstream commands can warn when a package
+/// is applied with a different `--ref-2bit`.
+///
+/// The footprint intentionally excludes file paths and sequence content. It sorts contigs by
+/// `(name, size)` so the value does not depend on the order stored in the 2bit header.
+pub fn twobit_contig_footprint<P: AsRef<Path>>(path: P) -> Result<Vec<ContigFootprintEntry>> {
+    let tb = TwoBitFile::open(path)?;
+    let mut entries: Vec<ContigFootprintEntry> = tb
+        .chrom_names()
+        .into_iter()
+        .zip(tb.chrom_sizes())
+        .map(|(name, size)| ContigFootprintEntry {
+            name,
+            size: size as u64,
+        })
+        .collect();
+    entries.sort_unstable_by(|left, right| {
+        left.name.cmp(&right.name).then(left.size.cmp(&right.size))
+    });
+    Ok(entries)
 }
 
 /// Load chromosome sizes from a two-column sizes file or .fai.

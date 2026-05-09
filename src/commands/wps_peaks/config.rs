@@ -140,17 +140,14 @@ pub struct WPSPeaksConfig {
     /// Windows with fewer valid bases yield `NaN` after normalization.
     #[cfg_attr(
         feature = "cli",
-        clap(long = "min-unmasked", default_value = "400", value_parser = clap::value_parser!(u32).range(1..), help_heading = "Core")
+        clap(long, default_value = "400", value_parser = clap::value_parser!(u32).range(1..), help_heading = "Core")
     )]
     pub min_unmasked: u32,
 
     /// Disable Savitzky-Golay smoothing of the WPS signal `[flag]`
     ///
     /// Smoothing is enabled by default to reproduce Snyder et al.
-    #[cfg_attr(
-        feature = "cli",
-        clap(long = "no-smoothing", action, help_heading = "Core")
-    )]
+    #[cfg_attr(feature = "cli", clap(long, action, help_heading = "Core"))]
     pub no_smoothing: bool,
 
     // TODO: revisit default after empirical tuning
@@ -165,7 +162,7 @@ pub struct WPSPeaksConfig {
     #[cfg_attr(
         feature = "cli",
         clap(
-            long = "min-peak-height",
+            long,
             default_value = "5.0",
             value_parser = parse_nonnegative_f32,
             help_heading = "Core"

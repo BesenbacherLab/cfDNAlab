@@ -31,7 +31,7 @@ pub enum Error {
         chrom_len: u64,
     },
     /// An overlap fraction fell outside the inclusive range `[0.0, 1.0]`.
-    OverlapFractionOutOfBounds { overlap_fraction: f32 },
+    OverlapFractionOutOfBounds { overlap_fraction: f64 },
     /// A tile fetch range did not fully cover the tile core.
     TileFetchDoesNotCoverCore,
 }

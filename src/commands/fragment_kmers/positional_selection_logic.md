@@ -17,11 +17,11 @@ This document explains how we turn the selection specs into the exact positions 
    Turn the surviving bases into **contiguous windows** ("runs"), e.g. `[start ... end]`.
 
 4. **Final step (k-independent):**
-   Apply a single `--step` **after** intersection, using the **first spec’s frame** as the stepping origin. This does not change the runs, it only marks every Nth eligible base as a candidate count site: in forward orientation the k-mer starts at that base; in reverse orientation the k-mer spans backward from that base by k−1 bases.
+   Apply a single `--step` **after** intersection, using the **first spec's frame** as the stepping origin. This does not change the runs, it only marks every Nth eligible base as a candidate count site: in forward orientation the k-mer starts at that base; in reverse orientation the k-mer spans backward from that base by k−1 bases.
    <br />Still no k-mer length involved.
 
 5. **k-mer fit (k-dependent):**
-   For each requested k, count only if the full k-mer fits **entirely inside a run** and **inside the fragment’s current segment and tile**. This is the only k-dependent stage.
+   For each requested k, count only if the full k-mer fits **entirely inside a run** and **inside the fragment's current segment and tile**. This is the only k-dependent stage.
 
 This "filter -> make runs -> final step -> check k-mer fit" model keeps behavior predictable.
 
@@ -115,9 +115,9 @@ Runs encode all frame constraints and are respected by the final step and by the
 
 ## Final `--step` (after intersection)
 
-`--step N` is applied **once**, after runs are formed, using the **first spec’s frame** as the origin. We:
+`--step N` is applied **once**, after runs are formed, using the **first spec's frame** as the origin. We:
 
-* Determine the stepping origin from the first frame (`Left`: index 0, `Right`’s right-origin, `Mid`’s offset 0 with symmetry, `Nearest`’s zero-distance mirrored, `Per-end`’s per-side origin).
+* Determine the stepping origin from the first frame (`Left`: index 0, `Right`'s right-origin, `Mid`'s offset 0 with symmetry, `Nearest`'s zero-distance mirrored, `Per-end`'s per-side origin).
 * Do not alter the runs. Instead, within those runs, treat only the bases that land on the step lattice as candidate count start site positions.
 
 Why one final step instead of per-spec steps?
@@ -141,8 +141,8 @@ For each k-mer size:
 
 A convenient way to check this in code:
 
-* For **forward**, temporarily shrink each run’s **right edge** by `(k − 1)`; then a start is valid if it lies inside the shrunk run.
-* For **reverse**, temporarily shrink each run’s **left edge** by `(k − 1)`; then an anchor is valid if it lies inside the shrunk run.
+* For **forward**, temporarily shrink each run's **right edge** by `(k − 1)`; then a start is valid if it lies inside the shrunk run.
+* For **reverse**, temporarily shrink each run's **left edge** by `(k − 1)`; then an anchor is valid if it lies inside the shrunk run.
 
 This guarantees k-mers never cross **breakpoints** between disjoint regions and never cross segment/tile boundaries.
 
@@ -166,7 +166,7 @@ Command:
    * `Left`: bases at least 10bp from both ends.
 2. **Intersection:** keep only bases present in **both** sets; typically two lobes near the middle.
 3. **Runs:** compress those lobes into `[start ... end]` windows.
-4. **Final step:** first frame is `Mid`, mark every Nth base (using `Mid`’s origin, symmetrically) as a candidate counting site: in forward orientation the k-mer starts at that base; in reverse orientation the k-mer spans backward from that base by k−1 bases.
+4. **Final step:** first frame is `Mid`, mark every Nth base (using `Mid`'s origin, symmetrically) as a candidate counting site: in forward orientation the k-mer starts at that base; in reverse orientation the k-mer spans backward from that base by k−1 bases.
 5. **k-mer fit:** for k=5, we trim 4 bases from forward run ends (since `Mid` counts in the forward direction). The **runs themselves do not change** with k. We further ensure the k-mer span fits inside the segment/tile.
 
 ---
@@ -204,8 +204,8 @@ For odd lengths, the exact middle base may be excluded by the `Nearest` rules (b
    a. For each spec, compute **eligible bases** (set of left-based indices).
    b. Intersect across specs.
    c. Compress to **runs**.
-   d. Apply the **final** `--step` using the first frame’s origin; keep the stepped bases.
-   e. Keep the **first spec’s** `PositionSelection`s filtered to those bases (so orientation/group come from the first spec). Optionally store the runs for fast k-mer fit checks.
+   d. Apply the **final** `--step` using the first frame's origin; keep the stepped bases.
+   e. Keep the **first spec's** `PositionSelection`s filtered to those bases (so orientation/group come from the first spec). Optionally store the runs for fast k-mer fit checks.
 
 2. At count time (per fragment, per k):
    a. Clip to segment/tile.

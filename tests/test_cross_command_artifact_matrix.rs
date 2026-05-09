@@ -14,8 +14,8 @@ use anyhow::Result;
 use cfdnalab::commands::{
     bam_to_bam::{bam_to_bam::run_inner as run_bam_to_bam, config::BamToBamConfig},
     cli_common::{
-        ApplyGCArgFileOnly, ApplyGCArgs, AssignToWindowArgs, ChromosomeArgs, IOCArgs,
-        ScaleGenomeArgs, WindowsArgs,
+        ApplyGCArgFileOnly, ApplyGCArgs, AssignToWindowArgs, ChromosomeArgs,
+        DistributionWindowsArgs, IOCArgs, ScaleGenomeArgs,
     },
     coverage_weights::{
         config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
@@ -26,13 +26,15 @@ use cfdnalab::commands::{
 };
 use cfdnalab::shared::{indel_mode::IndelMode, io::dot_join};
 use fixtures::{
-    BamFixture, TwoBitFixture, bam_from_specs, build_real_neutral_gc_package, paired_fragment,
-    read_zst_to_string, simple_inward_bam, simple_reference_twobit, write_bed,
+    BamFixture, TwoBitFixture, bam_from_specs, build_real_neutral_gc_package,
+    build_real_neutral_gc_package_for_range, paired_fragment, read_zst_to_string,
+    simple_inward_bam, simple_reference_twobit, write_bed,
 };
 use ndarray::{Array2, Array3};
 use ndarray_npy::read_npy;
 use rust_htslib::bam::{Read, Reader, record::Aux};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use tempfile::TempDir;
 
 const F64_TOL: f64 = 1e-6;
@@ -71,56 +73,125 @@ fn make_real_scaling_config(output_dir: &Path, bam_path: &Path) -> CoverageWeigh
 #[derive(Debug)]
 struct SharedRealArtifacts {
     tempdir: TempDir,
-    consumer_bam: BamFixture,
-    reference: TwoBitFixture,
+    consumer_bam: PathBuf,
+    reference_path: PathBuf,
     scaling_path: PathBuf,
     gc_path: PathBuf,
     bed_path: PathBuf,
 }
 
+#[derive(Debug)]
+struct SharedRealArtifactCache {
+    _producer_bam: BamFixture,
+    _consumer_bam_fixture: BamFixture,
+    _reference_fixture: TwoBitFixture,
+    _fixture_root: TempDir,
+    consumer_bam: PathBuf,
+    reference_path: PathBuf,
+    scaling_path: PathBuf,
+    gc_path: PathBuf,
+    bed_path: PathBuf,
+}
+
+fn shared_real_artifact_cache() -> Result<&'static SharedRealArtifactCache> {
+    static CACHE: OnceLock<std::result::Result<SharedRealArtifactCache, String>> = OnceLock::new();
+    let cache_result = CACHE.get_or_init(|| {
+        (|| -> Result<SharedRealArtifactCache> {
+            let scaling_producer_bam = simple_inward_bam()?;
+            let consumer_bam = bam_from_specs(
+                vec![("chr1".to_string(), 200)],
+                vec![paired_fragment(20, 61, 20)],
+                Vec::new(),
+                "shared_real_artifacts_consumer",
+            )?;
+            let reference = simple_reference_twobit()?;
+            let fixture_root = TempDir::new()?;
+            let weights_out_dir = fixture_root.path().join("coverage_weights");
+            std::fs::create_dir_all(&weights_out_dir)?;
+            let scaling_gc_path = build_real_neutral_gc_package_for_range(
+                &scaling_producer_bam.bam,
+                &reference.path,
+                fixture_root.path(),
+                10,
+                200,
+            )?;
+
+            // Shared fixture reasoning:
+            // - The scaling producer is the standard one-fragment fixture [20,80).
+            // - Its neutral real GC package is built from the same BAM and repeated ACGT reference with
+            //   the same length range that `coverage-weights` is configured to consume, 10..200.
+            // - Within that broader package, the only accepted 60 bp fragment still receives GC weight
+            //   1.0, so the coverage profile stays the same while the GC path is exercised honestly.
+            // - `coverage-weights --gc-file <neutral package>` with bin_size=40 and stride=20 therefore
+            //   writes the already hand-derived scaling profile:
+            //     [0,20):   37/20
+            //     [20,40):  37/45
+            //     [40,60):  37/60
+            //     [60,80):  37/45
+            //     [80,100): 37/15
+            // - The consumer is one 61 bp fragment [20,81) on the same repeated ACGT reference.
+            // - The real `ref-gc-bias -> gc-bias` chain is neutral for that consumer:
+            //   all GC-by-length mass lands in one shared cell, so the final GC weight is exactly 1.0.
+            // - Fragment-average consumers therefore see only the scaling average:
+            //     (20*(37/45) + 20*(37/60) + 20*(37/45) + 1*(37/15)) / 61 = 2146/2745.
+            let mut scaling_cfg =
+                make_real_scaling_config(&weights_out_dir, &scaling_producer_bam.bam);
+            scaling_cfg.set_gc(ApplyGCArgs {
+                gc_file: Some(scaling_gc_path),
+                gc_tag: None,
+                neutralize_invalid_gc: false,
+            });
+            scaling_cfg.set_ref_2bit(Some(reference.path.clone()));
+            run_coverage_weights(&scaling_cfg)?;
+
+            let scaling_path = weights_out_dir.join("coverage.coverage.scaling_factors.tsv");
+            let gc_path = build_real_neutral_gc_package(
+                &consumer_bam.bam,
+                &reference.path,
+                fixture_root.path(),
+                61,
+            )?;
+            let bed_path = fixture_root.path().join("windows.bed");
+            write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
+
+            Ok(SharedRealArtifactCache {
+                _producer_bam: scaling_producer_bam,
+                _consumer_bam_fixture: consumer_bam,
+                _reference_fixture: reference,
+                _fixture_root: fixture_root,
+                consumer_bam: PathBuf::new(),
+                reference_path: PathBuf::new(),
+                scaling_path,
+                gc_path,
+                bed_path,
+            })
+            .map(|mut cache| {
+                cache.consumer_bam = cache._consumer_bam_fixture.bam.clone();
+                cache.reference_path = cache._reference_fixture.path.clone();
+                cache
+            })
+        })()
+        .map_err(|err| format!("{err:#}"))
+    });
+    match cache_result {
+        Ok(cache) => Ok(cache),
+        Err(err) => Err(anyhow::anyhow!(
+            "failed to build shared real artifact cache: {err}"
+        )),
+    }
+}
+
 fn build_shared_real_artifacts() -> Result<SharedRealArtifacts> {
-    let scaling_producer_bam = simple_inward_bam()?;
-    let consumer_bam = bam_from_specs(
-        vec![("chr1".to_string(), 200)],
-        vec![paired_fragment(20, 61, 20)],
-        Vec::new(),
-        "shared_real_artifacts_consumer",
-    )?;
-    let reference = simple_reference_twobit()?;
+    let cache = shared_real_artifact_cache()?;
     let tempdir = TempDir::new()?;
-    let weights_out_dir = tempdir.path().join("coverage_weights");
-    std::fs::create_dir_all(&weights_out_dir)?;
-
-    // Shared fixture reasoning:
-    // - The scaling producer is the standard one-fragment fixture [20,80).
-    // - `coverage-weights` with bin_size=40 and stride=20 therefore writes the already
-    //   hand-derived scaling profile:
-    //     [0,20):   37/20
-    //     [20,40):  37/45
-    //     [40,60):  37/60
-    //     [60,80):  37/45
-    //     [80,100): 37/15
-    // - The consumer is one 61 bp fragment [20,81) on the same repeated ACGT reference.
-    // - The real `ref-gc-bias -> gc-bias` chain is neutral for that consumer:
-    //   all GC-by-length mass lands in one shared cell, so the final GC weight is exactly 1.0.
-    // - Fragment-average consumers therefore see only the scaling average:
-    //     (20*(37/45) + 20*(37/60) + 20*(37/45) + 1*(37/15)) / 61 = 2146/2745.
-    let scaling_cfg = make_real_scaling_config(&weights_out_dir, &scaling_producer_bam.bam);
-    run_coverage_weights(&scaling_cfg)?;
-
-    let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
-    let gc_path =
-        build_real_neutral_gc_package(&consumer_bam.bam, &reference.path, tempdir.path(), 61)?;
-    let bed_path = tempdir.path().join("windows.bed");
-    write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
 
     Ok(SharedRealArtifacts {
         tempdir,
-        consumer_bam,
-        reference,
-        scaling_path,
-        gc_path,
-        bed_path,
+        consumer_bam: cache.consumer_bam.clone(),
+        reference_path: cache.reference_path.clone(),
+        scaling_path: cache.scaling_path.clone(),
+        gc_path: cache.gc_path.clone(),
+        bed_path: cache.bed_path.clone(),
     })
 }
 
@@ -133,11 +204,11 @@ fn read_bam_tags(path: &Path) -> Result<Vec<(Option<f32>, Option<f32>, Option<u3
             Ok(Aux::Float(value)) => Some(value),
             _ => None,
         };
-        let cov = match record.aux(b"COV") {
+        let cov = match record.aux(b"cw") {
             Ok(Aux::Float(value)) => Some(value),
             _ => None,
         };
-        let flen = match record.aux(b"FLEN") {
+        let flen = match record.aux(b"fl") {
             Ok(Aux::U32(value)) => Some(value),
             _ => None,
         };
@@ -162,7 +233,6 @@ fn assert_close_f32(actual: f32, expected: f32, context: &str) {
 
 #[test]
 fn bam_to_bam_consumes_shared_real_artifacts_with_expected_fragment_tags() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // The shared builder gives us:
     // - one real neutral GC package with weight 1.0 for the only accepted fragment
@@ -170,24 +240,23 @@ fn bam_to_bam_consumes_shared_real_artifacts_with_expected_fragment_tags() -> Re
     //
     // `bam-to-bam` writes fragment-level metadata on both mates, so the expected output is:
     // - two records
-    // - each tagged with GC=1.0, COV=2146/2745, FLEN=61
+    // - each tagged with GC=1.0, cw=2146/2745, fl=61
     let artifacts = build_shared_real_artifacts()?;
     let out_bam = artifacts.tempdir.path().join("tagged.bam");
 
     let mut cfg = BamToBamConfig::new(
-        artifacts.consumer_bam.bam.clone(),
+        artifacts.consumer_bam.clone(),
         out_bam.clone(),
         base_chromosomes(&["chr1"]),
     );
-    cfg.skip_chromosome_sort = true;
     cfg.set_min_mapq(0);
     cfg.set_require_proper_pair(false);
-    cfg.scale_genome.scaling_factors = Some(artifacts.scaling_path.clone());
+    cfg.set_coverage_scaling_factors(Some(artifacts.scaling_path.clone()));
     cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(artifacts.gc_path.clone()),
-        drop_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
-    cfg.set_ref_2bit(Some(artifacts.reference.path.clone()));
+    cfg.set_ref_2bit(Some(artifacts.reference_path.clone()));
     {
         let fragment_lengths = cfg.fragment_lengths_mut();
         fragment_lengths.min_fragment_length = 61;
@@ -203,11 +272,11 @@ fn bam_to_bam_consumes_shared_real_artifacts_with_expected_fragment_tags() -> Re
     for (mate_index, (gc, cov, flen)) in tags.into_iter().enumerate() {
         assert_eq!(gc, Some(1.0), "mate {mate_index} GC tag");
         assert_close_f32(
-            cov.expect("COV tag should be present"),
+            cov.expect("cw tag should be present"),
             EXPECTED_FRAGMENT_AVERAGE as f32,
-            &format!("mate {mate_index} COV tag"),
+            &format!("mate {mate_index} cw tag"),
         );
-        assert_eq!(flen, Some(61), "mate {mate_index} FLEN tag");
+        assert_eq!(flen, Some(61), "mate {mate_index} fl tag");
     }
 
     Ok(())
@@ -215,7 +284,6 @@ fn bam_to_bam_consumes_shared_real_artifacts_with_expected_fragment_tags() -> Re
 
 #[test]
 fn lengths_consumes_shared_real_artifacts_with_expected_weighted_count() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // The shared real artifacts define exactly one accepted 61 bp fragment.
     // The real GC package is neutral, so `lengths` should only apply the real scaling average:
@@ -226,28 +294,24 @@ fn lengths_consumes_shared_real_artifacts_with_expected_weighted_count() -> Resu
 
     let mut cfg = LengthsConfig::new(
         IOCArgs {
-            bam: artifacts.consumer_bam.bam.clone(),
+            bam: artifacts.consumer_bam.clone(),
             output_dir: out_dir.clone(),
             n_threads: 1,
         },
         base_chromosomes(&["chr1"]),
     );
     cfg.set_indel_mode(IndelMode::Ignore);
-    cfg.set_windows(WindowsArgs::default());
+    cfg.set_windows(DistributionWindowsArgs::default());
     cfg.set_window_assignment(AssignToWindowArgs::default());
     cfg.set_min_mapq(0);
     cfg.set_require_proper_pair(false);
     cfg.set_scaling_factors(Some(artifacts.scaling_path.clone()));
     cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(artifacts.gc_path.clone()),
-        drop_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
-    cfg.set_ref_2bit(Some(artifacts.reference.path.clone()));
-    {
-        let fragment_lengths = cfg.fragment_lengths_mut();
-        fragment_lengths.min_fragment_length = 61;
-        fragment_lengths.max_fragment_length = 61;
-    }
+    cfg.set_ref_2bit(Some(artifacts.reference_path.clone()));
+    cfg.set_per_bp_length_bins(61, 61);
 
     // Act
     run_lengths(&cfg)?;
@@ -267,7 +331,6 @@ fn lengths_consumes_shared_real_artifacts_with_expected_weighted_count() -> Resu
 
 #[test]
 fn midpoints_consumes_shared_real_artifacts_with_expected_profile_mass() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // The shared consumer fragment is [20,81), so its midpoint is:
     //   20 + floor(61 / 2) = 50
@@ -280,7 +343,7 @@ fn midpoints_consumes_shared_real_artifacts_with_expected_profile_mass() -> Resu
 
     let mut cfg = MidpointsConfig::new(
         IOCArgs {
-            bam: artifacts.consumer_bam.bam.clone(),
+            bam: artifacts.consumer_bam.clone(),
             output_dir: out_dir.clone(),
             n_threads: 1,
         },
@@ -300,9 +363,9 @@ fn midpoints_consumes_shared_real_artifacts_with_expected_profile_mass() -> Resu
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(artifacts.gc_path.clone()),
         gc_tag: None,
-        drop_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
-    cfg.set_ref_2bit(Some(artifacts.reference.path.clone()));
+    cfg.set_ref_2bit(Some(artifacts.reference_path.clone()));
 
     // Act
     run_midpoints(&cfg)?;
@@ -330,7 +393,6 @@ fn midpoints_consumes_shared_real_artifacts_with_expected_profile_mass() -> Resu
 
 #[test]
 fn fcoverage_consumes_shared_real_artifacts_with_expected_per_base_profile() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // `fcoverage` is intentionally different from the fragment-average consumers.
     // It applies the same real scaling artifact per covered base in place, not as one fragment
@@ -345,7 +407,7 @@ fn fcoverage_consumes_shared_real_artifacts_with_expected_per_base_profile() -> 
 
     let mut cfg = FCoverageConfig::new(
         IOCArgs {
-            bam: artifacts.consumer_bam.bam.clone(),
+            bam: artifacts.consumer_bam.clone(),
             output_dir: out_dir.clone(),
             n_threads: 1,
         },
@@ -365,9 +427,9 @@ fn fcoverage_consumes_shared_real_artifacts_with_expected_per_base_profile() -> 
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(artifacts.gc_path.clone()),
         gc_tag: None,
-        drop_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
-    cfg.set_ref_2bit(Some(artifacts.reference.path.clone()));
+    cfg.set_ref_2bit(Some(artifacts.reference_path.clone()));
     {
         let fragment_lengths = cfg.fragment_lengths_mut();
         fragment_lengths.min_fragment_length = 61;

@@ -1,5 +1,9 @@
+#![cfg(feature = "cmd_lengths")]
+
+use cfdnalab::shared::clip_mode::ClipMode;
 use cfdnalab::shared::fragment::indel_counting_fragment::FragmentWithIndelCounts;
-use cfdnalab::shared::fragment_iterator::fragments_with_indel_counts_from_bam;
+use cfdnalab::shared::fragment_iterators::fragments_with_indel_counts_from_bam;
+use cfdnalab::shared::indel_mode::IndelMode;
 use rust_htslib::bam;
 use rust_htslib::bam::record::Cigar;
 
@@ -17,7 +21,6 @@ fn make_record(qname: &[u8], pos: i64, len: u32, is_reverse: bool) -> bam::Recor
 
 #[test]
 fn yields_unpaired_fragments_and_respects_filter() {
-    // Human verification status: unverified
     // Arrange
     let records = vec![
         Ok(make_record(b"r1", 5, 5, false)),  // length 5
@@ -29,7 +32,7 @@ fn yields_unpaired_fragments_and_respects_filter() {
         include_read,
         cfdnalab::shared::indel_mode::IndelMode::Ignore,
         // Filter out anything shorter than 5 (none here) and longer than 5 (none here)
-        |f: &FragmentWithIndelCounts| f.len_indel_adjusted() <= 5,
+        |f: &FragmentWithIndelCounts| f.adjusted_len(IndelMode::Ignore, ClipMode::Aligned) <= 5,
         true,
     )
     .with_local_counters();
@@ -39,7 +42,10 @@ fn yields_unpaired_fragments_and_respects_filter() {
 
     // Assert
     assert_eq!(frags.len(), 2);
-    let lengths: Vec<u32> = frags.iter().map(|f| f.len_indel_adjusted()).collect();
+    let lengths: Vec<u32> = frags
+        .iter()
+        .map(|f| f.adjusted_len(IndelMode::Ignore, ClipMode::Aligned))
+        .collect();
     assert_eq!(lengths, vec![5, 5]);
     let snap = iter.counters_snapshot();
     assert_eq!(snap.incoming_reads, 2);
@@ -48,7 +54,6 @@ fn yields_unpaired_fragments_and_respects_filter() {
 
 #[test]
 fn pairs_reads_and_yields_single_fragment() {
-    // Human verification status: unverified
     // Arrange
     let forward = Ok(make_record(b"r1", 10, 5, false)); // end 15
     let reverse = Ok(make_record(b"r1", 20, 5, true)); // end 25
@@ -68,7 +73,10 @@ fn pairs_reads_and_yields_single_fragment() {
 
     // Assert
     assert_eq!(frags.len(), 1);
-    assert_eq!(frags[0].len_indel_adjusted(), 15); // end(reverse) - start(forward)
+    assert_eq!(
+        frags[0].adjusted_len(IndelMode::Ignore, ClipMode::Aligned),
+        15
+    ); // end(reverse) - start(forward)
     let snap = iter.counters_snapshot();
     assert_eq!(snap.incoming_reads, 2);
     assert_eq!(snap.produced_fragments, 1);

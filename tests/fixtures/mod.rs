@@ -3,14 +3,18 @@
 use anyhow::{Context, Result, anyhow};
 use cfdnalab::commands::cli_common::{BaseSelectionArgs, FragmentPositionSelectionArgs};
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
-use cfdnalab::commands::cli_common::{ChromosomeArgs, GCWindowsArgs, IOCArgs, Ref2BitRequiredArgs};
-use cfdnalab::commands::fragment_kmers::positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
+use cfdnalab::commands::cli_common::{
+    ChromosomeArgs, GCWindowsArgs, IOCArgs, LoggingArgs, Ref2BitRequiredArgs,
+};
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
 use cfdnalab::commands::gc_bias::{config::GCConfig, gc_bias::run as run_gc_bias};
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
 use cfdnalab::commands::ref_gc_bias::{
     config::RefGCBiasConfig, ref_gc_bias::run as run_ref_gc_bias,
 };
+use cfdnalab::shared::positioning::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
+#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+use cfdnalab::shared::reference::twobit_contig_lengths;
 use rust_htslib::bam::{self, header::HeaderRecord, record::Cigar, record::CigarString};
 use std::{
     fs::{File, OpenOptions},
@@ -221,12 +225,32 @@ fn configure_gc_bias_common(gc_cfg: &mut GCConfig) {
 ///
 /// In other words, "neutral" here means "safe default real artifact for downstream consumers",
 /// not "mathematically forced to exactly weight 1.0 everywhere".
-pub fn build_real_neutral_gc_package(
+pub fn build_real_neutral_gc_package_for_range(
     bam_path: &Path,
     reference_path: &Path,
     out_dir: &Path,
-    fragment_length: u32,
+    min_fragment_length: u32,
+    max_fragment_length: u32,
 ) -> Result<PathBuf> {
+    let chromosomes = vec!["chr1".to_string()];
+    let chrom_lengths = twobit_contig_lengths(reference_path, &chromosomes)?;
+    let total_possible_starts: usize = chrom_lengths
+        .values()
+        .map(|&chrom_len| {
+            chrom_len
+                .checked_sub(max_fragment_length as usize)
+                .map(|remaining| remaining + 1)
+                .unwrap_or(0)
+        })
+        .sum();
+    let n_positions = total_possible_starts.min(100);
+    anyhow::ensure!(
+        n_positions > 0,
+        "neutral GC fixture has no valid reference start positions for fragment length range {}-{}",
+        min_fragment_length,
+        max_fragment_length
+    );
+
     let ref_gc_dir = TempDir::new()?;
     let ref_cfg = RefGCBiasConfig {
         ref_genome: Ref2BitRequiredArgs {
@@ -235,19 +259,18 @@ pub fn build_real_neutral_gc_package(
         output_dir: ref_gc_dir.path().to_path_buf(),
         output_prefix: String::new(),
         n_threads: 1,
-        // `simple_reference_twobit()` is 256 bp long. For the current neutral-package tests we
-        // only need a deterministic but valid sample of start positions, so 100 stays safely below
-        // both:
-        //   length 60 -> 256 - 60 + 1 = 197 valid starts
-        //   length 61 -> 256 - 61 + 1 = 196 valid starts
-        n_positions: 100,
+        // Use a deterministic but valid number of sampled starts, capped at 100 while still
+        // respecting the number of positions where the maximum fragment length fits in the
+        // reference. Wider fixture length ranges can make the old fixed sample count invalid on
+        // the tiny 256 bp test reference.
+        n_positions,
         seed: Some(7),
         windows: Default::default(),
         chromosomes: base_chromosomes(&["chr1"]),
         blacklist: None,
         fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
-            min_fragment_length: fragment_length,
-            max_fragment_length: fragment_length,
+            min_fragment_length,
+            max_fragment_length,
         },
         end_offset: 0,
         skip_interpolation: true,
@@ -255,10 +278,14 @@ pub fn build_real_neutral_gc_package(
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 1_000_000,
+        logging: LoggingArgs::default(),
     };
     run_ref_gc_bias(&ref_cfg)?;
 
-    let gc_out_dir = out_dir.join(format!("real_gc_bias_neutral_len_{fragment_length}"));
+    let gc_out_dir = out_dir.join(format!(
+        "real_gc_bias_neutral_len_{}-{}",
+        min_fragment_length, max_fragment_length
+    ));
     std::fs::create_dir_all(&gc_out_dir)?;
     let mut gc_cfg = GCConfig::new(
         IOCArgs {
@@ -271,9 +298,74 @@ pub fn build_real_neutral_gc_package(
         base_chromosomes(&["chr1"]),
     );
     configure_gc_bias_common(&mut gc_cfg);
+    // Keep sparse length ranges valid in tiny real-artifact fixtures. Tests that use this helper
+    // often exercise only a few observed lengths but still need the package to honestly cover a
+    // broader configured length range.
+    gc_cfg.set_min_length_bin_mass(0.0);
+    gc_cfg.set_min_length_bin_width(1);
     run_gc_bias(&gc_cfg)?;
 
     Ok(gc_out_dir.join("gc_bias_correction.npz"))
+}
+
+#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+pub fn build_real_neutral_gc_package(
+    bam_path: &Path,
+    reference_path: &Path,
+    out_dir: &Path,
+    fragment_length: u32,
+) -> Result<PathBuf> {
+    build_real_neutral_gc_package_for_range(
+        bam_path,
+        reference_path,
+        out_dir,
+        fragment_length,
+        fragment_length,
+    )
+}
+
+#[cfg(feature = "cmd_gc_bias")]
+pub fn write_constant_gc_package(path: &Path, fragment_length: u32, weight: f64) -> Result<()> {
+    let package = cfdnalab::commands::gc_bias::package::GCCorrectionPackage {
+        version: cfdnalab::shared::constants::GC_CORRECTION_SCHEMA_VERSION,
+        end_offset: 0,
+        length_edges: vec![fragment_length, fragment_length + 1],
+        gc_edges: vec![0, 101],
+        length_bin_frequencies: ndarray::array![1.0_f64],
+        reference_contig_footprint: Vec::new(),
+        correction_matrix: ndarray::array![[weight]],
+    };
+    package.write_npz(path)?;
+    Ok(())
+}
+
+#[cfg(feature = "cmd_gc_bias")]
+pub fn write_two_bin_gc_package(
+    path: &Path,
+    fragment_length: u32,
+    low_gc_weight: f64,
+    high_gc_weight: f64,
+    reference_contig_footprint: Vec<cfdnalab::shared::reference::ContigFootprintEntry>,
+) -> Result<()> {
+    let package = cfdnalab::commands::gc_bias::package::GCCorrectionPackage {
+        version: cfdnalab::shared::constants::GC_CORRECTION_SCHEMA_VERSION,
+        end_offset: 0,
+        length_edges: vec![fragment_length, fragment_length + 1],
+        gc_edges: vec![0, 51, 101],
+        length_bin_frequencies: ndarray::array![1.0_f64],
+        reference_contig_footprint,
+        correction_matrix: ndarray::array![[low_gc_weight, high_gc_weight]],
+    };
+    package.write_npz(path)?;
+    Ok(())
+}
+
+pub fn late_origin_gc_reference_sequence() -> String {
+    let mut sequence = String::with_capacity(1_022);
+    sequence.push_str(&"A".repeat(900));
+    sequence.push_str(&"C".repeat(61));
+    sequence.push_str(&"A".repeat(61));
+    sequence
 }
 
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
@@ -329,6 +421,7 @@ pub fn build_real_non_neutral_gc_package(
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 1_000_000,
+        logging: LoggingArgs::default(),
     };
     run_ref_gc_bias(&ref_cfg)?;
 
@@ -679,6 +772,61 @@ pub fn bam_from_specs(
     let bam_path = tempdir.path().join(format!("{name}.bam"));
 
     write_bam(&chroms, &fragments, &singles, &bam_path)?;
+    let bai = build_index(&bam_path)?;
+    Ok(BamFixture::new(tempdir, bam_path, bai))
+}
+
+pub fn single_read_bam_with_qualities(
+    name: &str,
+    pos: i64,
+    cigar_ops: Vec<(char, u32)>,
+    seq: &[u8],
+    qualities: &[u8],
+) -> Result<BamFixture> {
+    if seq.len() != qualities.len() {
+        return Err(anyhow!(
+            "seq length ({}) must match qualities length ({})",
+            seq.len(),
+            qualities.len()
+        ));
+    }
+
+    let tempdir = TempDir::new()?;
+    let bam_path = tempdir.path().join(format!("{name}.bam"));
+    let chrom_len = (pos.max(0) as u32)
+        .saturating_add(seq.len() as u32)
+        .saturating_add(100)
+        .max(256);
+
+    let mut header = bam::Header::new();
+    header.push_record(
+        HeaderRecord::new(b"HD")
+            .push_tag(b"VN", &"1.6")
+            .push_tag(b"SO", &"coordinate"),
+    );
+    header.push_record(
+        HeaderRecord::new(b"SQ")
+            .push_tag(b"SN", &"chr1")
+            .push_tag(b"LN", chrom_len),
+    );
+
+    let mut writer = bam::Writer::from_path(&bam_path, &header, bam::Format::Bam)
+        .with_context(|| format!("create bam at {}", bam_path.display()))?;
+
+    let mut record = bam::Record::new();
+    record.set_tid(0);
+    record.set_pos(pos);
+    record.set_mapq(60);
+    record.set(
+        b"single_custom_qualities",
+        Some(&cigar(&cigar_ops)),
+        seq,
+        qualities,
+    );
+    record.set_flags(0);
+    writer.write(&record)?;
+
+    drop(writer);
     let bai = build_index(&bam_path)?;
     Ok(BamFixture::new(tempdir, bam_path, bai))
 }

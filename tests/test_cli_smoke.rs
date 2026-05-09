@@ -3,6 +3,7 @@
 mod fixtures;
 
 use anyhow::{Context, Result, bail};
+use serde_json::Value;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -101,7 +102,6 @@ fn path_text(path: &Path) -> String {
 
 #[test]
 fn help_text_is_available_for_all_enabled_release_commands() -> Result<()> {
-    // Human verification status: unverified
     let mut release_commands = Vec::new();
     #[cfg(feature = "cmd_gc_bias")]
     release_commands.push("gc-bias");
@@ -109,6 +109,8 @@ fn help_text_is_available_for_all_enabled_release_commands() -> Result<()> {
     release_commands.push("ref-gc-bias");
     #[cfg(feature = "cmd_coverage_weights")]
     release_commands.push("coverage-weights");
+    #[cfg(feature = "cmd_fragment_count_weights")]
+    release_commands.push("fragment-count-weights");
     #[cfg(feature = "cmd_lengths")]
     release_commands.push("lengths");
     #[cfg(feature = "cmd_fcoverage")]
@@ -149,10 +151,36 @@ fn help_text_is_available_for_all_enabled_release_commands() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "cmd_ends")]
+#[test]
+fn ends_help_only_shows_collapse_complements_when_experimental_feature_is_enabled() -> Result<()> {
+    let output = command_output("ends", &["--help"])?;
+    let stdout_text = String::from_utf8_lossy(&output.stdout);
+    let stderr_text = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "Expected cfdna ends --help to succeed.\nstdout:\n{stdout_text}\nstderr:\n{stderr_text}"
+    );
+
+    if cfg!(feature = "ends_experimental") {
+        assert!(
+            stdout_text.contains("--collapse-complement"),
+            "Expected experimental ends help to show --collapse-complement.\nstdout:\n{stdout_text}"
+        );
+    } else {
+        assert!(
+            !stdout_text.contains("--collapse-complement"),
+            "Expected default ends help to hide --collapse-complement.\nstdout:\n{stdout_text}"
+        );
+    }
+
+    Ok(())
+}
+
 #[cfg(feature = "cmd_lengths")]
 #[test]
 fn lengths_cli_minimal_invocation_writes_output_files_with_expected_prefix() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // The command contract says lengths writes:
     // - <prefix>.length_counts.npy
@@ -178,10 +206,8 @@ fn lengths_cli_minimal_invocation_writes_output_files_with_expected_prefix() -> 
             "1",
             "--min-mapq",
             "0",
-            "--min-fragment-length",
-            "10",
-            "--max-fragment-length",
-            "200",
+            "--length-bins",
+            "10:201:1",
             "--output-prefix",
             output_prefix,
         ],
@@ -208,14 +234,19 @@ fn lengths_cli_minimal_invocation_writes_output_files_with_expected_prefix() -> 
     );
 
     let settings_text = std::fs::read_to_string(&settings_path)?;
-    assert!(
-        settings_text.contains("\"min_fragment_length\":10"),
-        "Expected settings file to include min fragment length"
+    let settings: Value =
+        serde_json::from_str(&settings_text).context("settings JSON should parse")?;
+    assert_eq!(settings["length_axis"]["min_fragment_length"], 10);
+    assert_eq!(settings["length_axis"]["max_fragment_length"], 200);
+    assert_eq!(settings["length_axis"]["n_bins"], 191);
+    assert_eq!(
+        settings["length_axis"]["bin_definition"]["kind"],
+        "stepped_range"
     );
-    assert!(
-        settings_text.contains("\"max_fragment_length\":200"),
-        "Expected settings file to include max fragment length"
-    );
+    assert_eq!(settings["length_axis"]["bin_definition"]["start"], 10);
+    assert_eq!(settings["length_axis"]["bin_definition"]["end"], 201);
+    assert_eq!(settings["length_axis"]["bin_definition"]["step"], 1);
+    assert!(settings["length_axis"].get("edges").is_none());
 
     Ok(())
 }
@@ -223,9 +254,9 @@ fn lengths_cli_minimal_invocation_writes_output_files_with_expected_prefix() -> 
 #[cfg(feature = "cmd_coverage_weights")]
 #[test]
 fn coverage_weights_cli_minimal_invocation_writes_scaling_tsv() -> Result<()> {
-    // Human verification status: unverified
     // Arrange: simple_inward_bam has chr1 length 200 and one fragment spanning [20,80).
-    // With stride 20 this yields exactly 10 stride bins -> 11 TSV lines including header.
+    // With stride 20 this yields exactly 10 stride bins -> 13 TSV lines including two metadata
+    // lines and one header line.
     let bam_fixture = fixtures::simple_inward_bam()?;
     let out_dir = TempDir::new()?;
     let output_prefix = "cli_smoke_covweights";
@@ -263,19 +294,92 @@ fn coverage_weights_cli_minimal_invocation_writes_scaling_tsv() -> Result<()> {
     // Assert
     let scaling_path = out_dir
         .path()
-        .join(format!("{output_prefix}.scaling_factors.tsv"));
+        .join(format!("{output_prefix}.coverage.scaling_factors.tsv"));
     assert!(scaling_path.exists(), "Expected {}", scaling_path.display());
 
     let content = std::fs::read_to_string(&scaling_path)?;
     let lines: Vec<&str> = content.lines().collect();
     assert_eq!(
         lines.first().copied().unwrap_or_default(),
-        "chromosome\tstart\tend\tavg_pos_cov\tavg_overlapping_pos_cov\tscaling_factor"
+        "# gc_mode=uncorrected"
+    );
+    assert_eq!(
+        lines.get(1).copied().unwrap_or_default(),
+        "# ignore_gap=false"
+    );
+    assert_eq!(
+        lines.get(2).copied().unwrap_or_default(),
+        "chromosome\tstart\tend\tstride_average_coverage\tsmoothed_coverage\tscaling_factor"
     );
     assert_eq!(
         lines.len(),
-        11,
-        "Expected 1 header + 10 stride-bin rows for chr1 length 200 with stride 20"
+        13,
+        "Expected 2 metadata lines + 1 header + 10 stride-bin rows for chr1 length 200 with stride 20"
+    );
+
+    Ok(())
+}
+
+#[cfg(feature = "cmd_fragment_count_weights")]
+#[test]
+fn fragment_count_weights_cli_minimal_invocation_writes_scaling_tsv() -> Result<()> {
+    // Arrange: simple_inward_bam has chr1 length 200 and one fragment spanning [20,80).
+    // With stride 20 this yields exactly 10 stride bins -> 12 TSV lines including one metadata
+    // line and one header line.
+    let bam_fixture = fixtures::simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+    let output_prefix = "cli_smoke_fragcountweights";
+    let bam_path = path_text(&bam_fixture.bam);
+    let out_path = path_text(out_dir.path());
+
+    // Act
+    let output = command_output(
+        "fragment-count-weights",
+        &[
+            "--bam",
+            bam_path.as_str(),
+            "--output-dir",
+            out_path.as_str(),
+            "--chromosomes",
+            "chr1",
+            "--n-threads",
+            "1",
+            "--bin-size",
+            "40",
+            "--stride",
+            "20",
+            "--min-mapq",
+            "0",
+            "--min-fragment-length",
+            "10",
+            "--max-fragment-length",
+            "200",
+            "--output-prefix",
+            output_prefix,
+        ],
+    )?;
+    assert_success_with_logs(&output, "cfdna fragment-count-weights minimal invocation");
+
+    // Assert
+    let scaling_path = out_dir.path().join(format!(
+        "{output_prefix}.fragment_counts.scaling_factors.tsv"
+    ));
+    assert!(scaling_path.exists(), "Expected {}", scaling_path.display());
+
+    let content = std::fs::read_to_string(&scaling_path)?;
+    let lines: Vec<&str> = content.lines().collect();
+    assert_eq!(
+        lines.first().copied().unwrap_or_default(),
+        "# gc_mode=uncorrected"
+    );
+    assert_eq!(
+        lines.get(1).copied().unwrap_or_default(),
+        "chromosome\tstart\tend\tstride_fragment_mass\tsmoothed_fragment_mass\tscaling_factor"
+    );
+    assert_eq!(
+        lines.len(),
+        12,
+        "Expected 1 metadata line + 1 header + 10 stride-bin rows for chr1 length 200 with stride 20"
     );
 
     Ok(())
@@ -284,7 +388,6 @@ fn coverage_weights_cli_minimal_invocation_writes_scaling_tsv() -> Result<()> {
 #[cfg(feature = "cmd_fcoverage")]
 #[test]
 fn fcoverage_cli_minimal_invocation_writes_expected_positional_run() -> Result<()> {
-    // Human verification status: unverified
     // Arrange: simple_inward_bam has one fragment spanning [20,80) on chr1.
     // In plain positional mode without correction, expected run is coverage 1 on [20,80).
     let bam_fixture = fixtures::simple_inward_bam()?;
@@ -339,8 +442,7 @@ fn fcoverage_cli_minimal_invocation_writes_expected_positional_run() -> Result<(
 #[cfg(feature = "cmd_midpoints")]
 #[test]
 fn midpoints_cli_minimal_invocation_writes_profiles_and_group_index() -> Result<()> {
-    // Human verification status: unverified
-    // Arrange: one window in one group with one fragment-length bin.
+    // Arrange: one window in one group with one fragment length bin.
     let bam_fixture = fixtures::simple_inward_bam()?;
     let out_dir = TempDir::new()?;
     let intervals_path = out_dir.path().join("intervals.bed");
@@ -401,7 +503,6 @@ fn midpoints_cli_minimal_invocation_writes_profiles_and_group_index() -> Result<
 #[cfg(feature = "cmd_bam_to_bam")]
 #[test]
 fn bam_to_bam_cli_minimal_invocation_writes_output_bam() -> Result<()> {
-    // Human verification status: unverified
     // Arrange
     let bam_fixture = fixtures::simple_inward_bam()?;
     let out_dir = TempDir::new()?;
@@ -440,7 +541,6 @@ fn bam_to_bam_cli_minimal_invocation_writes_output_bam() -> Result<()> {
 #[cfg(feature = "cmd_bam_to_frag")]
 #[test]
 fn bam_to_frag_cli_minimal_invocation_writes_frag_and_header_files() -> Result<()> {
-    // Human verification status: unverified
     // Arrange
     let bam_fixture = fixtures::simple_inward_bam()?;
     let out_dir = TempDir::new()?;
@@ -486,7 +586,6 @@ fn bam_to_frag_cli_minimal_invocation_writes_frag_and_header_files() -> Result<(
 #[cfg(feature = "cmd_frag_to_bam")]
 #[test]
 fn frag_to_bam_cli_minimal_invocation_writes_output_bam() -> Result<()> {
-    // Human verification status: unverified
     // Arrange: one valid frag row and one matching chrom.sizes entry.
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
@@ -533,7 +632,6 @@ fn frag_to_bam_cli_minimal_invocation_writes_output_bam() -> Result<()> {
 #[cfg(feature = "cmd_ref_gc_bias")]
 #[test]
 fn ref_gc_bias_cli_minimal_invocation_writes_reference_package() -> Result<()> {
-    // Human verification status: unverified
     // Arrange: Use tiny deterministic reference and conservative settings.
     // With `--output-prefix`, the command contract says the package should be written as
     // `<prefix>.ref_gc_package.npz`.
@@ -587,7 +685,6 @@ fn ref_gc_bias_cli_minimal_invocation_writes_reference_package() -> Result<()> {
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
 #[test]
 fn gc_bias_cli_minimal_invocation_writes_correction_package() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // 1) Build reference package from tiny deterministic reference.
     // 2) Run gc-bias on tiny deterministic BAM against that reference package.

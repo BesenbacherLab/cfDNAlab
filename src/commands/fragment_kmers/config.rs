@@ -1,15 +1,16 @@
 use std::path::PathBuf;
 
 use crate::{
-    commands::{
-        cli_common::{
-            ApplyGCArgs, BaseSelectionArgs, ChromosomeArgs, FragmentLengthArgs,
-            FragmentPositionSelectionArgs, IOCArgs, Ref2BitRequiredArgs, ScaleGenomeArgs,
-            UnpairedArgs, WindowsArgs,
-        },
-        fragment_kmers::positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame},
+    commands::cli_common::{
+        ApplyGCArgs, BaseSelectionArgs, ChromosomeArgs, FragmentLengthArgs,
+        FragmentPositionSelectionArgs, IOCArgs, LoggingArgs, Ref2BitRequiredArgs, ScaleGenomeArgs,
+        UnpairedArgs, WindowsArgs,
     },
-    shared::{blacklist::BlacklistStrategy, indel_mode::IndelMode},
+    shared::{
+        blacklist::BlacklistStrategy,
+        indel_mode::IndelMode,
+        positioning::{BasesFrom, MismatchBasesFrom, ReferenceFrame},
+    },
 };
 
 /// Commands that are shared with `transitions``
@@ -41,6 +42,7 @@ pub struct FragmentKmersSharedArgs {
             short = 'x',
             default_value_t = String::new(),
             hide_default_value = true,
+            value_parser = crate::commands::cli_common::parse_output_prefix,
             help_heading = "Core"
         )
     )]
@@ -54,6 +56,7 @@ pub struct FragmentKmersSharedArgs {
         clap(long, default_value = "20000000", value_parser = clap::value_parser!(u32).range(1000000..), help_heading="Core"))]
     pub tile_size: u32,
 
+    // TODO: Align with `cfdna ends` ("adjust" makes no sense here)
     // TODO: Is it still correct that scaling weights use the full reference span? 5th last line
     /// How to handle insertions and deletions in fragments `[string]`
     ///
@@ -114,10 +117,6 @@ pub struct FragmentKmersSharedArgs {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub fragment_lengths: FragmentLengthArgs,
 
-    /// Suppress progress reporting and status messages. [internal]
-    #[cfg_attr(feature = "cli", clap(skip))]
-    pub quiet: bool,
-
     /// Minimum mapping quality to include `[integer]`
     #[cfg_attr(
         feature = "cli",
@@ -127,6 +126,9 @@ pub struct FragmentKmersSharedArgs {
     /// Only count properly paired reads `[flag]`
     ///
     /// This is **NOT** recommended by default as it trims the tails of the length distribution.
+    ///
+    /// Note, that we only keep inward-directed fragments within the specified length range, so
+    /// there's no real need for proper-pair filtering.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
     pub require_proper_pair: bool,
 
@@ -171,6 +173,9 @@ pub struct FragmentKmersSharedArgs {
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub gc: ApplyGCArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub logging: LoggingArgs,
 }
 
 impl FragmentKmersSharedArgs {
@@ -203,7 +208,6 @@ impl FragmentKmersSharedArgs {
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),
             fragment_lengths: FragmentLengthArgs::default(),
-            quiet: false,
             min_mapq: 30,
             require_proper_pair: false,
             blacklist: None,
@@ -212,8 +216,9 @@ impl FragmentKmersSharedArgs {
             gc: ApplyGCArgs {
                 gc_file: None,
                 gc_tag: None,
-                drop_invalid_gc: false,
+                neutralize_invalid_gc: false,
             },
+            logging: LoggingArgs::default(),
         }
     }
 
@@ -318,10 +323,14 @@ pub struct FragmentKmersConfig {
         clap(short = 'k', long, num_args = 1.., value_parser = clap::value_parser!(u8).range(1..28), required=true, help_heading="Core"))]
     pub kmer_sizes: Vec<u8>,
 
+    // TODO: Re-audit whether reverse-complement collapse is the right biological contract here.
+    // `ends` intentionally decodes to a final orientation first and then compares against the
+    // same-orientation complement, but `fragment-kmers` may still want true reverse-complement
+    // collapse. Decide that explicitly before adding more contract-level tests or docs here.
     /// Collapse each kmer with its reverse-complement. [flag]
     ///
-    /// Odd-sized k-mers are collapsed such that the middle base is `A` or `C`.
-    /// Even-sized k-mers are collapsed to the lexicographically lowest motif.
+    /// Each k-mer is compared with its reverse complement and the lexicographically smaller
+    /// motif is kept.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
     pub canonical: bool,
 
@@ -422,10 +431,6 @@ impl FragmentKmersConfig {
 
     pub fn fragment_lengths_mut(&mut self) -> &mut FragmentLengthArgs {
         self.shared_args.fragment_lengths_mut()
-    }
-
-    pub fn set_quiet(&mut self, quiet: bool) {
-        self.shared_args.quiet = quiet;
     }
 
     pub fn set_min_mapq(&mut self, min_mapq: u8) {

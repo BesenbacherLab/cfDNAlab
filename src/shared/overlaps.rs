@@ -15,7 +15,7 @@ pub struct OverlappingWindow {
     /// Window interval as a checked half-open span.
     pub interval: Interval<u64>,
     /// Overlap fraction (overlap_bp / fragment_length_bp)
-    pub overlap_fraction: f32,
+    pub overlap_fraction: f64,
 }
 
 impl OverlappingWindow {
@@ -37,7 +37,7 @@ impl OverlappingWindow {
     /// -------
     /// - `out`:
     ///   A validated overlap record.
-    pub fn new(idx: usize, interval: Interval<u64>, overlap_fraction: f32) -> Result<Self> {
+    pub fn new(idx: usize, interval: Interval<u64>, overlap_fraction: f64) -> Result<Self> {
         if !(0.0..=1.0).contains(&overlap_fraction) {
             return Err(Error::OverlapFractionOutOfBounds { overlap_fraction });
         }
@@ -81,7 +81,7 @@ impl OverlappingWindow {
     /// -------
     /// - `out`:
     ///   `Ok(())` when the fraction is valid.
-    pub fn set_overlap_fraction(&mut self, new_fraction: f32) -> Result<()> {
+    pub fn set_overlap_fraction(&mut self, new_fraction: f64) -> Result<()> {
         if !(0.0..=1.0).contains(&new_fraction) {
             return Err(Error::OverlapFractionOutOfBounds {
                 overlap_fraction: new_fraction,
@@ -256,7 +256,7 @@ pub fn find_overlapping_windows(
             }
             let window_interval = Interval::new(window_start, window_end)?;
             let overlap_proportion = fraction_overlap_of_a(query_interval, window_interval);
-            if (overlap_proportion as f64) < min_overlap_fraction {
+            if overlap_proportion < min_overlap_fraction {
                 continue;
             }
             overlaps.windows.push(OverlappingWindow::new(
@@ -288,7 +288,7 @@ pub fn find_overlapping_windows(
             let window_interval = Interval::new(win_start, win_end)?;
             if half_open_intervals_overlap(query_interval, window_interval) {
                 let overlap_proportion = fraction_overlap_of_a(query_interval, window_interval);
-                if (overlap_proportion as f64) >= min_overlap_fraction {
+                if overlap_proportion >= min_overlap_fraction {
                     overlaps.windows.push(OverlappingWindow::new(
                         bin_idx,
                         window_interval,
@@ -333,10 +333,10 @@ pub fn find_overlapping_windows(
 /// - `out`:
 ///   Fraction of `interval_a` covered by `interval_b`, in `[0.0, 1.0]`.
 #[inline]
-pub fn fraction_overlap_of_a(interval_a: Interval<u64>, interval_b: Interval<u64>) -> f32 {
+pub fn fraction_overlap_of_a(interval_a: Interval<u64>, interval_b: Interval<u64>) -> f64 {
     let overlap_bp = overlap_len(interval_a, interval_b) as f64;
     let interval_a_len = interval_a.len() as f64;
-    (overlap_bp / interval_a_len) as f32
+    overlap_bp / interval_a_len
 }
 
 /// Compute the number of overlapping bases shared by two intervals.

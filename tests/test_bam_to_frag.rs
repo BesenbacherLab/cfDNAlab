@@ -10,11 +10,12 @@ mod tests_bam_to_frag {
     use ndarray::array;
     use rust_htslib::bam::index;
     use rust_htslib::bam::{
-        self, Format, HeaderView, Read, Writer,
+        self, Format, HeaderView, Writer,
         header::Header,
         record::{Cigar, CigarString, Record},
     };
     use std::{
+        collections::HashMap,
         fs::{self, File},
         io::Read as _,
         path::Path,
@@ -23,23 +24,37 @@ mod tests_bam_to_frag {
 
     // Bring your crate items into scope.
     use super::fixtures::{
-        bam_from_specs, build_real_neutral_gc_package, build_real_non_neutral_gc_package,
-        paired_fragment, simple_inward_bam, simple_reference_twobit,
+        bam_from_specs, paired_fragment, simple_inward_bam, simple_reference_twobit,
     };
+    #[cfg(feature = "cmd_bam_to_bam")]
+    use super::fixtures::{build_real_neutral_gc_package, build_real_non_neutral_gc_package};
+    #[cfg(feature = "cmd_bam_to_bam")]
     use cfdnalab::commands::bam_to_bam::{
         bam_to_bam::run_inner as run_bam_to_bam, config::BamToBamConfig,
     };
     use cfdnalab::commands::bam_to_frag::{bam_to_frag::run_inner, config::BamToFragConfig};
     use cfdnalab::commands::cli_common::{ApplyGCArgFileOnly, ChromosomeArgs, IOCArgs};
+    #[cfg(feature = "cmd_coverage_weights")]
     use cfdnalab::commands::coverage_weights::{
         config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
     };
-    use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage};
+    #[cfg(feature = "cmd_fragment_count_weights")]
+    use cfdnalab::commands::fragment_count_weights::{
+        config::FragmentCountWeightsConfig,
+        fragment_count_weights::run as run_fragment_count_weights,
+    };
+    use cfdnalab::commands::gc_bias::package::GCCorrectionPackage;
+    use cfdnalab::shared::{
+        constants::GC_CORRECTION_SCHEMA_VERSION,
+        reference::{ContigFootprintEntry, twobit_contig_footprint},
+    };
+    #[cfg(feature = "cmd_bam_to_bam")]
+    use rust_htslib::bam::Read;
+    #[cfg(feature = "cmd_bam_to_bam")]
     use rust_htslib::bam::record::Aux;
 
     #[test]
     fn bam_to_frag_smoke_two_chroms() -> Result<()> {
-        // Human verification status: unverified
         // Temp working dir
         let work = tempdir().context("tempdir")?;
         let work_path = work.path();
@@ -135,7 +150,6 @@ mod tests_bam_to_frag {
 
     #[test]
     fn bam_to_frag_global_handles_three_chromosomes() -> Result<()> {
-        // Human verification status: unverified
         let work = tempdir().context("tempdir")?;
         let bam_path = work.path().join("three_chr_global.bam");
         let out_dir = work.path().join("out_global");
@@ -179,7 +193,6 @@ mod tests_bam_to_frag {
 
     #[test]
     fn global_selection_matches_single_full_chromosome_bed_window() -> Result<()> {
-        // Human verification status: unverified
         // Arrange:
         // `simple_inward_bam()` contains one fragment spanning [20, 80) on chr1.
         //
@@ -245,7 +258,6 @@ mod tests_bam_to_frag {
 
     #[test]
     fn by_bed_excludes_chromosomes_without_any_windows() -> Result<()> {
-        // Human verification status: unverified
         // Arrange:
         // Build one fragment on each of two chromosomes:
         // - chr1: [20, 80)
@@ -328,7 +340,6 @@ mod tests_bam_to_frag {
 
     #[test]
     fn chromosomes_all_follows_bam_header_order_not_lexicographic_order() -> Result<()> {
-        // Human verification status: unverified
         // Arrange:
         // Build a BAM whose header order is intentionally non-lexicographic:
         //   chr2, chr10, chr1
@@ -499,7 +510,6 @@ mod tests_bam_to_frag {
 
     #[test]
     fn explicit_chromosome_order_controls_frag_row_order() -> Result<()> {
-        // Human verification status: unverified
         // Arrange:
         // Use the same intentionally non-lexicographic BAM header:
         //   chr2, chr10, chr1
@@ -674,7 +684,6 @@ mod tests_bam_to_frag {
 
     #[test]
     fn default_min_mapq_matches_explicit_zero_and_differs_from_explicit_thirty() -> Result<()> {
-        // Human verification status: unverified
         // Arrange:
         // Reuse the small two-chromosome BAM fixture:
         // - pair A has min MAPQ 60
@@ -758,7 +767,6 @@ mod tests_bam_to_frag {
 
     #[test]
     fn bam_to_frag_bed_handles_three_chromosomes() -> Result<()> {
-        // Human verification status: unverified
         let work = tempdir().context("tempdir")?;
         let bam_path = work.path().join("three_chr_bed.bam");
         let out_dir = work.path().join("out_bed");
@@ -802,8 +810,7 @@ mod tests_bam_to_frag {
     }
 
     #[test]
-    fn bam_to_frag_gc_file_fallback_writes_weight_one_and_keeps_row() -> Result<()> {
-        // Human verification status: unverified
+    fn bam_to_frag_gc_file_neutralize_invalid_writes_weight_one_and_keeps_row() -> Result<()> {
         let bam = simple_inward_bam()?;
         let ref_twobit = simple_reference_twobit()?;
         let work = tempdir().context("tempdir")?;
@@ -811,7 +818,7 @@ mod tests_bam_to_frag {
         std::fs::create_dir_all(&out_dir)?;
 
         let gc_path = out_dir.join("gc_pkg.npz");
-        build_gc_package(&gc_path, 26)?;
+        build_gc_package(&gc_path, 26, twobit_contig_footprint(&ref_twobit.path)?)?;
 
         let ioc = IOCArgs {
             bam: bam.bam.clone(),
@@ -828,7 +835,7 @@ mod tests_bam_to_frag {
         cfg.set_require_proper_pair(false);
         cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path),
-            drop_invalid_gc: false,
+            neutralize_invalid_gc: true,
         });
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
         {
@@ -842,7 +849,7 @@ mod tests_bam_to_frag {
         // - The fixture contains one paired fragment spanning [20, 80), length 60.
         // - The GC package uses end_offset=26, leaving only 8 effective bases.
         // - The GC corrector requires at least 10 A/C/G/T bases, so the lookup fails.
-        // - `bam-to-frag` does not drop the fragment here; it writes `gc_weight=1.0`,
+        // - With `neutralize_invalid_gc=true`, `bam-to-frag` keeps the fragment and writes `gc_weight=1.0`,
         //   increments `gc_failed_fragments`, and still emits the GC column in the header.
         let counters = run_inner(&cfg)?;
 
@@ -864,11 +871,71 @@ mod tests_bam_to_frag {
     }
 
     #[test]
+    fn bam_to_frag_gc_file_default_behavior_skips_invalid_fragment() -> Result<()> {
+        let bam = simple_inward_bam()?;
+        let ref_twobit = simple_reference_twobit()?;
+        let work = tempdir().context("tempdir")?;
+        let out_dir = work.path().join("out_gc_default_skip");
+        std::fs::create_dir_all(&out_dir)?;
+
+        let gc_path = out_dir.join("gc_pkg.npz");
+        build_gc_package(&gc_path, 26, twobit_contig_footprint(&ref_twobit.path)?)?;
+
+        let ioc = IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: out_dir.clone(),
+            n_threads: 1,
+        };
+        let chromosomes = ChromosomeArgs {
+            chromosomes: Some(vec!["chr1".to_string()]),
+            chromosomes_file: None,
+        };
+        let mut cfg = BamToFragConfig::new(ioc, chromosomes);
+        cfg.set_output_prefix("gc_default_skip");
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_gc(ApplyGCArgFileOnly {
+            gc_file: Some(gc_path),
+            neutralize_invalid_gc: false,
+        });
+        cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 53;
+            frag.max_fragment_length = 200;
+        }
+
+        // Manual expectations:
+        // - The one fixture fragment again fails GC lookup because only 8 effective A/C/G/T bases remain.
+        // - With the default GC behavior, unusable GC information makes the fragment get skipped.
+        // - The converter still writes the header with the GC column because GC correction was requested.
+        let counters = run_inner(&cfg)?;
+
+        assert_eq!(counters.base.counted_fragments, 0);
+        assert_eq!(counters.gc_failed_fragments, 1);
+
+        let frag_path = out_dir.join("gc_default_skip.frag.tsv.gz");
+        let frag_rows = read_frag_gz(&frag_path)?;
+        assert!(
+            frag_rows.is_empty(),
+            "default GC handling should skip the only fragment"
+        );
+
+        let header_path = out_dir.join("gc_default_skip.frag.header.tsv");
+        let header_text = std::fs::read_to_string(&header_path)?;
+        assert_eq!(
+            header_text,
+            "chromosome\tstart\tend\tmin_mapq\tread1_strand\tgc_weight\n"
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn bam_to_frag_gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range()
     -> Result<()> {
-        // Human verification status: unverified
         // Arrange:
-        // The fixture contributes one fragment of length 60. We keep the accepted fragment-length
+        // The fixture contributes one fragment of length 60. We keep the accepted fragment length
         // range at exactly 60, then provide a GC package that only covers 10..=59.
         //
         // Because `bam-to-frag` validates the package before conversion starts, the correct
@@ -886,6 +953,7 @@ mod tests_bam_to_frag {
             length_edges: vec![10, 59],
             gc_edges: vec![0, 101],
             length_bin_frequencies: array![1.0_f64],
+            reference_contig_footprint: twobit_contig_footprint(&ref_twobit.path)?,
             correction_matrix: array![[1.0_f64]],
         };
         package.write_npz(&gc_path)?;
@@ -905,7 +973,7 @@ mod tests_bam_to_frag {
         cfg.set_require_proper_pair(false);
         cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path),
-            drop_invalid_gc: false,
+            neutralize_invalid_gc: false,
         });
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
         {
@@ -929,7 +997,6 @@ mod tests_bam_to_frag {
 
     #[test]
     fn gc_file_rejects_package_with_schema_version_mismatch() -> Result<()> {
-        // Human verification status: unverified
         // Arrange:
         // Build the smallest valid GC correction package shape, but make the schema version
         // incompatible. `bam-to-frag` should fail while loading the package, before writing any
@@ -947,6 +1014,7 @@ mod tests_bam_to_frag {
             length_edges: vec![10, 200],
             gc_edges: vec![0, 101],
             length_bin_frequencies: array![1.0_f64],
+            reference_contig_footprint: twobit_contig_footprint(&ref_twobit.path)?,
             correction_matrix: array![[1.0_f64]],
         };
         package.write_npz(&gc_path)?;
@@ -966,7 +1034,7 @@ mod tests_bam_to_frag {
         cfg.set_require_proper_pair(false);
         cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path),
-            drop_invalid_gc: false,
+            neutralize_invalid_gc: false,
         });
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
 
@@ -984,8 +1052,58 @@ mod tests_bam_to_frag {
     }
 
     #[test]
-    fn bam_to_frag_and_bam_to_bam_encode_same_scaling_weight() -> Result<()> {
-        // Human verification status: unverified
+    fn gc_file_rejects_directory_with_clear_error() -> Result<()> {
+        // Arrange:
+        // Point `--gc-file` at a directory instead of the expected `.npz` package file.
+        // The command should reject that immediately during GC package loading.
+        let bam = simple_inward_bam()?;
+        let ref_twobit = simple_reference_twobit()?;
+        let work = tempdir().context("tempdir")?;
+        let out_dir = work.path().join("out_gc_directory_error");
+        std::fs::create_dir_all(&out_dir)?;
+
+        let gc_dir = out_dir.join("gc_package_dir");
+        std::fs::create_dir_all(&gc_dir)?;
+
+        let ioc = IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: out_dir.clone(),
+            n_threads: 1,
+        };
+        let chromosomes = ChromosomeArgs {
+            chromosomes: Some(vec!["chr1".to_string()]),
+            chromosomes_file: None,
+        };
+        let mut cfg = BamToFragConfig::new(ioc, chromosomes);
+        cfg.set_output_prefix("gc_directory_error");
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_gc(ApplyGCArgFileOnly {
+            gc_file: Some(gc_dir.clone()),
+            neutralize_invalid_gc: false,
+        });
+        cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
+
+        // Act
+        let err = run_inner(&cfg).expect_err("directory-valued GC package path should fail");
+
+        // Assert
+        let msg = err.to_string();
+        assert!(
+            msg.contains("GC correction package path must point to an existing .npz file"),
+            "unexpected error message: {msg}"
+        );
+        assert!(
+            msg.contains("gc_package_dir"),
+            "unexpected error message: {msg}"
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "cmd_bam_to_bam")]
+    #[test]
+    fn bam_to_frag_and_bam_to_bam_encode_same_coverage_scaling_weight() -> Result<()> {
         let bam = simple_inward_bam()?;
         let work = tempdir().context("tempdir")?;
         let scaling_path = work.path().join("shared_scaling.tsv");
@@ -998,7 +1116,7 @@ mod tests_bam_to_frag {
         // - The fixture contains one paired fragment spanning [20, 80).
         // - The scaling TSV has one chromosome-wide factor of 2.0.
         // - `bam-to-frag` averages scaling over the full fragment span, which stays 2.0.
-        // - `bam-to-bam` writes the same full-fragment scaling as the `COV` tag on both mates.
+        // - `bam-to-bam` writes the same full-fragment scaling as the `cw` tag on both mates.
         // - So the two released transformers should encode the same weight for the same fragment.
 
         let frag_out_dir = work.path().join("frag_out");
@@ -1018,7 +1136,7 @@ mod tests_bam_to_frag {
         frag_cfg.set_require_proper_pair(false);
         let mut frag_scale = cfdnalab::commands::cli_common::ScaleGenomeArgs::default();
         frag_scale.scaling_factors = Some(scaling_path.clone());
-        frag_cfg.set_scale_genome(frag_scale);
+        frag_cfg.set_coverage_scaling_factors(frag_scale.scaling_factors);
 
         run_inner(&frag_cfg)?;
         let frag_rows = read_frag_gz(&frag_out_dir.join("scaled.frag.tsv.gz"))?;
@@ -1026,21 +1144,20 @@ mod tests_bam_to_frag {
 
         let bam_out = work.path().join("scaled.bam");
         let mut bam_cfg = BamToBamConfig::new(bam.bam.clone(), bam_out.clone(), chroms);
-        bam_cfg.skip_chromosome_sort = true;
         bam_cfg.set_min_mapq(0);
         bam_cfg.set_require_proper_pair(false);
         let mut bam_scale = cfdnalab::commands::cli_common::ScaleGenomeArgs::default();
         bam_scale.scaling_factors = Some(scaling_path);
-        bam_cfg.set_scale_genome(bam_scale);
+        bam_cfg.set_coverage_scaling_factors(bam_scale.scaling_factors);
 
         run_bam_to_bam(&bam_cfg)?;
         let mut reader = rust_htslib::bam::Reader::from_path(&bam_out)?;
         let mut cov_tags = Vec::new();
         for record in reader.records() {
             let record = record?;
-            match record.aux(b"COV") {
+            match record.aux(b"cw") {
                 Ok(Aux::Float(value)) => cov_tags.push(value),
-                other => panic!("expected COV float tag on every mate, got {other:?}"),
+                other => panic!("expected cw float tag on every mate, got {other:?}"),
             }
         }
         assert_eq!(cov_tags, vec![2.0_f32, 2.0_f32]);
@@ -1048,9 +1165,177 @@ mod tests_bam_to_frag {
         Ok(())
     }
 
+    #[cfg(feature = "cmd_bam_to_bam")]
+    #[test]
+    fn bam_to_frag_and_bam_to_bam_encode_same_count_scaling_weight() -> Result<()> {
+        let bam = simple_inward_bam()?;
+        let work = tempdir().context("tempdir")?;
+        let scaling_path = work.path().join("shared_count_scaling.tsv");
+        std::fs::write(
+            &scaling_path,
+            "chromosome\tstart\tend\tscaling_factor\nchr1\t0\t200\t0.5\n",
+        )?;
+
+        // Manual expectations:
+        // - The fixture contains one paired fragment spanning [20, 80).
+        // - The count-scaling TSV has one chromosome-wide factor of 0.5.
+        // - `bam-to-frag` averages count scaling over the full fragment span, which stays 0.5.
+        // - `bam-to-bam` writes the same full-fragment count scaling as the `nw` tag on both mates.
+        let frag_out_dir = work.path().join("frag_out");
+        std::fs::create_dir_all(&frag_out_dir)?;
+        let frag_ioc = IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: frag_out_dir.clone(),
+            n_threads: 1,
+        };
+        let chroms = ChromosomeArgs {
+            chromosomes: Some(vec!["chr1".to_string()]),
+            chromosomes_file: None,
+        };
+        let mut frag_cfg = BamToFragConfig::new(frag_ioc, chroms.clone());
+        frag_cfg.set_output_prefix("scaled");
+        frag_cfg.set_min_mapq(0);
+        frag_cfg.set_require_proper_pair(false);
+        frag_cfg.set_count_scaling_factors(Some(scaling_path.clone()));
+
+        run_inner(&frag_cfg)?;
+        let frag_rows = read_frag_gz(&frag_out_dir.join("scaled.frag.tsv.gz"))?;
+        let frag_header = std::fs::read_to_string(frag_out_dir.join("scaled.frag.header.tsv"))?;
+        assert_eq!(
+            frag_header,
+            "chromosome\tstart\tend\tmin_mapq\tread1_strand\tcount_scaling_weight\n"
+        );
+        assert_eq!(frag_rows, vec!["chr1\t20\t80\t60\t+\t0.5"]);
+
+        let bam_out = work.path().join("scaled.bam");
+        let mut bam_cfg = BamToBamConfig::new(bam.bam.clone(), bam_out.clone(), chroms);
+        bam_cfg.set_min_mapq(0);
+        bam_cfg.set_require_proper_pair(false);
+        bam_cfg.set_count_scaling_factors(Some(scaling_path));
+
+        run_bam_to_bam(&bam_cfg)?;
+        let mut reader = rust_htslib::bam::Reader::from_path(&bam_out)?;
+        let mut cnt_tags = Vec::new();
+        for record in reader.records() {
+            let record = record?;
+            match record.aux(b"nw") {
+                Ok(Aux::Float(value)) => cnt_tags.push(value),
+                other => panic!("expected nw float tag on every mate, got {other:?}"),
+            }
+        }
+        assert_eq!(cnt_tags, vec![0.5_f32, 0.5_f32]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn bam_to_frag_writes_coverage_and_fragment_count_scaling_columns_together() -> Result<()> {
+        // Arrange:
+        // Use one paired fragment spanning [20, 80) and provide two chromosome-wide scaling files:
+        // - coverage scaling       -> 2.0
+        // - count-based scaling -> 0.5
+        //
+        // `bam-to-frag` averages each scaling file over the same full fragment span, so the output
+        // row should carry both constants side by side. The header must keep a stable column order:
+        //   coverage_scaling_weight, count_scaling_weight
+        let bam = simple_inward_bam()?;
+        let work = tempdir().context("tempdir")?;
+        let coverage_scaling_path = work.path().join("coverage_scaling.tsv");
+        let fragment_count_scaling_path = work.path().join("fragment_count_scaling.tsv");
+        std::fs::write(
+            &coverage_scaling_path,
+            "chromosome\tstart\tend\tscaling_factor\nchr1\t0\t200\t2\n",
+        )?;
+        std::fs::write(
+            &fragment_count_scaling_path,
+            "chromosome\tstart\tend\tscaling_factor\nchr1\t0\t200\t0.5\n",
+        )?;
+
+        let frag_out_dir = work.path().join("frag_out");
+        std::fs::create_dir_all(&frag_out_dir)?;
+        let frag_ioc = IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: frag_out_dir.clone(),
+            n_threads: 1,
+        };
+        let chroms = ChromosomeArgs {
+            chromosomes: Some(vec!["chr1".to_string()]),
+            chromosomes_file: None,
+        };
+        let mut frag_cfg = BamToFragConfig::new(frag_ioc, chroms);
+        frag_cfg.set_output_prefix("scaled");
+        frag_cfg.set_min_mapq(0);
+        frag_cfg.set_require_proper_pair(false);
+        frag_cfg.set_coverage_scaling_factors(Some(coverage_scaling_path));
+        frag_cfg.set_count_scaling_factors(Some(fragment_count_scaling_path));
+
+        // Act
+        run_inner(&frag_cfg)?;
+
+        // Assert
+        let frag_rows = read_frag_gz(&frag_out_dir.join("scaled.frag.tsv.gz"))?;
+        let frag_header = std::fs::read_to_string(frag_out_dir.join("scaled.frag.header.tsv"))?;
+        assert_eq!(
+            frag_header,
+            "chromosome\tstart\tend\tmin_mapq\tread1_strand\tcoverage_scaling_weight\tcount_scaling_weight\n"
+        );
+        assert_eq!(frag_rows, vec!["chr1\t20\t80\t60\t+\t2\t0.5"]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn bam_to_frag_writes_count_scaling_column_when_only_count_scaling_is_configured() -> Result<()>
+    {
+        // Arrange:
+        // One paired fragment spanning [20, 80) and one chromosome-wide count-scaling factor 0.5.
+        //
+        // Expected:
+        // - header contains only `count_scaling_weight`
+        // - the one fragment row carries that value
+        let bam = simple_inward_bam()?;
+        let work = tempdir().context("tempdir")?;
+        let scaling_path = work.path().join("count_scaling.tsv");
+        std::fs::write(
+            &scaling_path,
+            "chromosome\tstart\tend\tscaling_factor\nchr1\t0\t200\t0.5\n",
+        )?;
+
+        let frag_out_dir = work.path().join("frag_out");
+        std::fs::create_dir_all(&frag_out_dir)?;
+        let frag_ioc = IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: frag_out_dir.clone(),
+            n_threads: 1,
+        };
+        let chroms = ChromosomeArgs {
+            chromosomes: Some(vec!["chr1".to_string()]),
+            chromosomes_file: None,
+        };
+        let mut frag_cfg = BamToFragConfig::new(frag_ioc, chroms);
+        frag_cfg.set_output_prefix("scaled");
+        frag_cfg.set_min_mapq(0);
+        frag_cfg.set_require_proper_pair(false);
+        frag_cfg.set_count_scaling_factors(Some(scaling_path));
+
+        // Act
+        run_inner(&frag_cfg)?;
+
+        // Assert
+        let frag_rows = read_frag_gz(&frag_out_dir.join("scaled.frag.tsv.gz"))?;
+        let frag_header = std::fs::read_to_string(frag_out_dir.join("scaled.frag.header.tsv"))?;
+        assert_eq!(
+            frag_header,
+            "chromosome\tstart\tend\tmin_mapq\tread1_strand\tcount_scaling_weight\n"
+        );
+        assert_eq!(frag_rows, vec!["chr1\t20\t80\t60\t+\t0.5"]);
+
+        Ok(())
+    }
+
+    #[cfg(feature = "cmd_bam_to_bam")]
     #[test]
     fn bam_to_frag_and_bam_to_bam_emit_combined_gc_scaling_and_length_metadata() -> Result<()> {
-        // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let ref_twobit = simple_reference_twobit()?;
         let work = tempdir().context("tempdir")?;
@@ -1068,6 +1353,7 @@ mod tests_bam_to_frag {
             length_edges: vec![10, 61, 100],
             gc_edges: vec![0, 51, 100],
             length_bin_frequencies: array![1.0_f64, 1.0_f64],
+            reference_contig_footprint: twobit_contig_footprint(&ref_twobit.path)?,
             correction_matrix: array![[3.0_f64, 1.0_f64], [1.0_f64, 1.0_f64]],
         };
         package.write_npz(&gc_path)?;
@@ -1084,7 +1370,7 @@ mod tests_bam_to_frag {
         //   scaling is also 2.0.
         // - Therefore:
         //   - `bam-to-frag` should emit `chr1 20 80 60 + 3 2`
-        //   - `bam-to-bam` should emit `GC=3.0`, `COV=2.0`, and `FLEN=60` on both mates.
+        //   - `bam-to-bam` should emit `GC=3.0`, `cw=2.0`, and `fl=60` on both mates.
 
         let frag_out_dir = work.path().join("frag_combined_out");
         std::fs::create_dir_all(&frag_out_dir)?;
@@ -1103,12 +1389,12 @@ mod tests_bam_to_frag {
         frag_cfg.set_require_proper_pair(false);
         frag_cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path.clone()),
-            drop_invalid_gc: false,
+            neutralize_invalid_gc: false,
         });
         frag_cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
         let mut frag_scale = cfdnalab::commands::cli_common::ScaleGenomeArgs::default();
         frag_scale.scaling_factors = Some(scaling_path.clone());
-        frag_cfg.set_scale_genome(frag_scale);
+        frag_cfg.set_coverage_scaling_factors(frag_scale.scaling_factors);
         {
             let fragment_lengths = frag_cfg.fragment_lengths_mut();
             fragment_lengths.min_fragment_length = 10;
@@ -1117,17 +1403,16 @@ mod tests_bam_to_frag {
 
         let bam_out = work.path().join("combined_tags.bam");
         let mut bam_cfg = BamToBamConfig::new(bam.bam.clone(), bam_out.clone(), chroms);
-        bam_cfg.skip_chromosome_sort = true;
         bam_cfg.set_min_mapq(0);
         bam_cfg.set_require_proper_pair(false);
         bam_cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path),
-            drop_invalid_gc: false,
+            neutralize_invalid_gc: false,
         });
         bam_cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
         let mut bam_scale = cfdnalab::commands::cli_common::ScaleGenomeArgs::default();
         bam_scale.scaling_factors = Some(scaling_path);
-        bam_cfg.set_scale_genome(bam_scale);
+        bam_cfg.set_coverage_scaling_factors(bam_scale.scaling_factors);
         {
             let fragment_lengths = bam_cfg.fragment_lengths_mut();
             fragment_lengths.min_fragment_length = 10;
@@ -1148,13 +1433,13 @@ mod tests_bam_to_frag {
                 Ok(Aux::Float(value)) => value,
                 other => panic!("expected GC float tag on every mate, got {other:?}"),
             };
-            let scaling = match record.aux(b"COV") {
+            let scaling = match record.aux(b"cw") {
                 Ok(Aux::Float(value)) => value,
-                other => panic!("expected COV float tag on every mate, got {other:?}"),
+                other => panic!("expected cw float tag on every mate, got {other:?}"),
             };
-            let flen = match record.aux(b"FLEN") {
+            let flen = match record.aux(b"fl") {
                 Ok(Aux::U32(value)) => value,
-                other => panic!("expected FLEN u32 tag on every mate, got {other:?}"),
+                other => panic!("expected fl u32 tag on every mate, got {other:?}"),
             };
             observed_tags.push((gc, scaling, flen));
         }
@@ -1163,7 +1448,7 @@ mod tests_bam_to_frag {
         assert_eq!(bam_counters.base.counted_fragments, 1);
         assert_eq!(
             frag_header,
-            "chromosome\tstart\tend\tmin_mapq\tread1_strand\tgc_weight\tscaling_weight\n"
+            "chromosome\tstart\tend\tmin_mapq\tread1_strand\tgc_weight\tcoverage_scaling_weight\n"
         );
         assert_eq!(frag_rows, vec!["chr1\t20\t80\t60\t+\t3\t2"]);
 
@@ -1175,17 +1460,17 @@ mod tests_bam_to_frag {
             );
             assert!(
                 (scaling - 2.0).abs() < 1e-6,
-                "mate {mate_idx} COV tag: expected 2.0, got {scaling}"
+                "mate {mate_idx} cw tag: expected 2.0, got {scaling}"
             );
-            assert_eq!(flen, 60, "mate {mate_idx} FLEN tag: expected 60");
+            assert_eq!(flen, 60, "mate {mate_idx} fl tag: expected 60");
         }
 
         Ok(())
     }
 
+    #[cfg(all(feature = "cmd_bam_to_bam", feature = "cmd_coverage_weights"))]
     #[test]
     fn real_coverage_weights_tsv_has_same_effect_in_bam_to_frag_and_bam_to_bam() -> Result<()> {
-        // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let work = tempdir().context("tempdir")?;
 
@@ -1214,7 +1499,7 @@ mod tests_bam_to_frag {
         }
         run_coverage_weights(&weights_cfg)?;
 
-        let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
+        let scaling_path = weights_out_dir.join("coverage.coverage.scaling_factors.tsv");
 
         // Manual expectations:
         // - `coverage-weights` on the simple fixture yields stride-bin scaling factors:
@@ -1250,7 +1535,7 @@ mod tests_bam_to_frag {
         frag_cfg.set_require_proper_pair(false);
         let mut frag_scale = cfdnalab::commands::cli_common::ScaleGenomeArgs::default();
         frag_scale.scaling_factors = Some(scaling_path.clone());
-        frag_cfg.set_scale_genome(frag_scale);
+        frag_cfg.set_coverage_scaling_factors(frag_scale.scaling_factors);
 
         run_inner(&frag_cfg)?;
         let frag_rows = read_frag_gz(&frag_out_dir.join("scaled_real.frag.tsv.gz"))?;
@@ -1265,38 +1550,175 @@ mod tests_bam_to_frag {
 
         let bam_out = work.path().join("scaled_real.bam");
         let mut bam_cfg = BamToBamConfig::new(bam.bam.clone(), bam_out.clone(), chroms);
-        bam_cfg.skip_chromosome_sort = true;
         bam_cfg.set_min_mapq(0);
         bam_cfg.set_require_proper_pair(false);
         let mut bam_scale = cfdnalab::commands::cli_common::ScaleGenomeArgs::default();
         bam_scale.scaling_factors = Some(scaling_path);
-        bam_cfg.set_scale_genome(bam_scale);
+        bam_cfg.set_coverage_scaling_factors(bam_scale.scaling_factors);
 
         run_bam_to_bam(&bam_cfg)?;
         let mut reader = rust_htslib::bam::Reader::from_path(&bam_out)?;
         let mut cov_tags = Vec::new();
         for record in reader.records() {
             let record = record?;
-            match record.aux(b"COV") {
+            match record.aux(b"cw") {
                 Ok(Aux::Float(value)) => cov_tags.push(value as f64),
-                other => panic!("expected COV float tag on every mate, got {other:?}"),
+                other => panic!("expected cw float tag on every mate, got {other:?}"),
             }
         }
         assert_eq!(cov_tags.len(), 2);
         for (mate_idx, value) in cov_tags.iter().enumerate() {
             assert!(
                 (*value - expected_weight).abs() < 1e-6,
-                "bam-to-bam COV tag for mate {mate_idx}: expected {expected_weight}, got {value}"
+                "bam-to-bam cw tag for mate {mate_idx}: expected {expected_weight}, got {value}"
             );
         }
 
         Ok(())
     }
 
+    #[cfg(all(feature = "cmd_bam_to_bam", feature = "cmd_fragment_count_weights"))]
+    #[test]
+    fn real_fragment_count_weights_tsv_has_same_effect_in_bam_to_frag_and_bam_to_bam() -> Result<()>
+    {
+        // Arrange:
+        // Reuse the mixed-length fixture:
+        // - short fragment [0,20)
+        // - long  fragment [20,80)
+        //
+        // With bin_size == stride == 20, fragment-count-weights yields:
+        // - short fragment count scaling = 0.5
+        // - long  fragment count scaling = 1.5
+        //
+        // Both transformers average over the full fragment span, so they should encode the same
+        // fragment-level count scaling for each fragment.
+        //
+        // We compare them at the fragment level:
+        // - `bam-to-frag` writes one row per fragment
+        // - `bam-to-bam` writes one tagged record per mate, so we must regroup mates by qname
+        //
+        // The hand-derived target values are:
+        // - short -> 0.5
+        // - long  -> 1.5
+        let bam = mixed_length_fragment_bam("bam_to_frag_real_count_weights")?;
+        let work = tempdir().context("tempdir")?;
+
+        let weights_out_dir = work.path().join("weights_out");
+        std::fs::create_dir_all(&weights_out_dir)?;
+        let mut weights_cfg = FragmentCountWeightsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: weights_out_dir.clone(),
+                n_threads: 1,
+            },
+            ChromosomeArgs {
+                chromosomes: Some(vec!["chr1".to_string()]),
+                chromosomes_file: None,
+            },
+        );
+        weights_cfg.set_output_prefix("counts".to_string());
+        weights_cfg.set_bin_size(20);
+        weights_cfg.set_stride(20);
+        weights_cfg.set_min_mapq(0);
+        weights_cfg.set_require_proper_pair(false);
+        {
+            let frag = weights_cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 100;
+        }
+        run_fragment_count_weights(&weights_cfg)?;
+
+        let scaling_path = weights_out_dir.join("counts.fragment_counts.scaling_factors.tsv");
+
+        let frag_out_dir = work.path().join("frag_real_count_weights");
+        std::fs::create_dir_all(&frag_out_dir)?;
+        let frag_ioc = IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: frag_out_dir.clone(),
+            n_threads: 1,
+        };
+        let chroms = ChromosomeArgs {
+            chromosomes: Some(vec!["chr1".to_string()]),
+            chromosomes_file: None,
+        };
+        let mut frag_cfg = BamToFragConfig::new(frag_ioc, chroms.clone());
+        frag_cfg.set_output_prefix("scaled_real");
+        frag_cfg.set_min_mapq(0);
+        frag_cfg.set_require_proper_pair(false);
+        frag_cfg.set_count_scaling_factors(Some(scaling_path.clone()));
+        {
+            let fragment_lengths = frag_cfg.fragment_lengths_mut();
+            fragment_lengths.min_fragment_length = 10;
+            fragment_lengths.max_fragment_length = 100;
+        }
+
+        run_inner(&frag_cfg)?;
+        let frag_rows = read_frag_gz(&frag_out_dir.join("scaled_real.frag.tsv.gz"))?;
+        let mut parsed_rows: Vec<(u64, f64)> = frag_rows
+            .iter()
+            .map(|line| {
+                let columns: Vec<&str> = line.split('\t').collect();
+                assert_eq!(columns.len(), 6, "Bad line: {line}");
+                Ok::<_, anyhow::Error>((columns[1].parse()?, columns[5].parse()?))
+            })
+            .collect::<Result<_>>()?;
+        parsed_rows.sort_by(|left, right| left.0.cmp(&right.0));
+
+        let bam_out = work.path().join("scaled_real.bam");
+        let mut bam_cfg = BamToBamConfig::new(bam.bam.clone(), bam_out.clone(), chroms);
+        bam_cfg.set_min_mapq(0);
+        bam_cfg.set_require_proper_pair(false);
+        bam_cfg.set_count_scaling_factors(Some(scaling_path));
+        {
+            let fragment_lengths = bam_cfg.fragment_lengths_mut();
+            fragment_lengths.min_fragment_length = 10;
+            fragment_lengths.max_fragment_length = 100;
+        }
+
+        run_bam_to_bam(&bam_cfg)?;
+        let bam_fragment_cnts = read_fragment_level_cnts_from_bam(&bam_out)?;
+
+        assert_eq!(parsed_rows.len(), 2, "expected exactly two frag rows");
+        assert_eq!(
+            bam_fragment_cnts.len(),
+            2,
+            "expected exactly two grouped BAM fragments"
+        );
+
+        // The two converters should agree on the same fragment-level value, but we still allow
+        // a small tolerance because the shared scaling TSV is generated through `f32`-backed
+        // smoothing/normalization before either converter consumes it.
+        for ((frag_start, frag_cnt), (bam_start, bam_cnt)) in
+            parsed_rows.iter().zip(bam_fragment_cnts.iter())
+        {
+            assert_eq!(
+                frag_start, bam_start,
+                "fragment starts should match between frag and BAM outputs"
+            );
+            assert!(
+                (*frag_cnt - *bam_cnt).abs() <= 1e-6,
+                "fragment start {frag_start}: bam-to-frag and bam-to-bam should encode the same fragment-level nw weight, got {frag_cnt} vs {bam_cnt}"
+            );
+        }
+
+        let expected = [(0_u64, 0.5_f64), (20_u64, 1.5_f64)];
+        // These are the hand-derived ideal values. The real scaling factors are produced through
+        // the shared `fragment-count-weights` pipeline, whose stride-bin state and normalization
+        // are currently stored as `f32`, so allow a small tolerance around the exact ideals.
+        for ((start, value), (_, expected_value)) in parsed_rows.iter().zip(expected.iter()) {
+            assert!(
+                (*value - *expected_value).abs() <= 1e-6,
+                "fragment start {start}: expected count scaling near {expected_value}, got {value}"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[cfg(feature = "cmd_coverage_weights")]
     #[test]
     fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_bam_to_frag()
     -> Result<()> {
-        // Human verification status: unverified
         // Arrange:
         // Reuse the same two-chromosome fixture and hand derivation as the command-level
         // `coverage-weights` shared-global-mean test:
@@ -1365,7 +1787,7 @@ mod tests_bam_to_frag {
         }
         run_coverage_weights(&weights_cfg)?;
 
-        let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
+        let scaling_path = weights_out_dir.join("coverage.coverage.scaling_factors.tsv");
         let frag_out_dir = work.path().join("frag_real_multi_chr_scaling");
         std::fs::create_dir_all(&frag_out_dir)?;
         let mut frag_cfg = BamToFragConfig::new(
@@ -1382,9 +1804,7 @@ mod tests_bam_to_frag {
         frag_cfg.set_output_prefix("scaled_multi_chr");
         frag_cfg.set_min_mapq(0);
         frag_cfg.set_require_proper_pair(false);
-        frag_cfg.set_scale_genome(cfdnalab::commands::cli_common::ScaleGenomeArgs {
-            scaling_factors: Some(scaling_path),
-        });
+        frag_cfg.set_coverage_scaling_factors(Some(scaling_path));
         {
             let frag = frag_cfg.fragment_lengths_mut();
             frag.min_fragment_length = 10;
@@ -1401,7 +1821,7 @@ mod tests_bam_to_frag {
         assert_eq!(counters.base.counted_fragments, 2);
         assert_eq!(
             frag_header,
-            "chromosome\tstart\tend\tmin_mapq\tread1_strand\tscaling_weight\n"
+            "chromosome\tstart\tend\tmin_mapq\tread1_strand\tcoverage_scaling_weight\n"
         );
         assert_eq!(frag_rows.len(), 2);
 
@@ -1450,10 +1870,10 @@ mod tests_bam_to_frag {
         Ok(())
     }
 
+    #[cfg(feature = "cmd_bam_to_bam")]
     #[test]
     fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_bam_to_frag_and_bam_to_bam() -> Result<()>
     {
-        // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let reference = simple_reference_twobit()?;
         let work = tempdir().context("tempdir")?;
@@ -1471,7 +1891,7 @@ mod tests_bam_to_frag {
         // - So both released converters must preserve the fragment unchanged apart from encoding
         //   the explicit neutral GC weight:
         //     `bam-to-frag`: row `chr1 20 80 60 + 1`
-        //     `bam-to-bam`: both mates tagged with `GC=1.0` and `FLEN=60`
+        //     `bam-to-bam`: both mates tagged with `GC=1.0` and `fl=60`
 
         let frag_out_dir = work.path().join("frag_real_gc");
         std::fs::create_dir_all(&frag_out_dir)?;
@@ -1490,7 +1910,7 @@ mod tests_bam_to_frag {
         frag_cfg.set_require_proper_pair(false);
         frag_cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path.clone()),
-            drop_invalid_gc: false,
+            neutralize_invalid_gc: false,
         });
         frag_cfg.set_ref_2bit(Some(reference.path.clone()));
         {
@@ -1501,12 +1921,11 @@ mod tests_bam_to_frag {
 
         let bam_out = work.path().join("real_gc_tags.bam");
         let mut bam_cfg = BamToBamConfig::new(bam.bam.clone(), bam_out.clone(), chroms);
-        bam_cfg.skip_chromosome_sort = true;
         bam_cfg.set_min_mapq(0);
         bam_cfg.set_require_proper_pair(false);
         bam_cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path),
-            drop_invalid_gc: false,
+            neutralize_invalid_gc: false,
         });
         bam_cfg.set_ref_2bit(Some(reference.path.clone()));
         {
@@ -1530,9 +1949,9 @@ mod tests_bam_to_frag {
                 Ok(Aux::Float(value)) => value,
                 other => panic!("expected GC float tag on every mate, got {other:?}"),
             };
-            let flen = match record.aux(b"FLEN") {
+            let flen = match record.aux(b"fl") {
                 Ok(Aux::U32(value)) => value,
-                other => panic!("expected FLEN u32 tag on every mate, got {other:?}"),
+                other => panic!("expected fl u32 tag on every mate, got {other:?}"),
             };
             observed_gc_tags.push(gc);
             observed_flen_tags.push(flen);
@@ -1551,10 +1970,10 @@ mod tests_bam_to_frag {
         Ok(())
     }
 
+    #[cfg(feature = "cmd_bam_to_bam")]
     #[test]
     fn real_ref_gc_bias_then_gc_bias_package_changes_bam_to_frag_and_bam_to_bam_in_expected_direction()
     -> Result<()> {
-        // Human verification status: unverified
         // Arrange:
         // Use the same real non-neutral producer workflow as the corresponding `gc-bias` test:
         // - Reference: chr1[0,100) all A, chr1[100,200) all C
@@ -1617,7 +2036,7 @@ mod tests_bam_to_frag {
         frag_cfg.set_require_proper_pair(false);
         frag_cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path.clone()),
-            drop_invalid_gc: false,
+            neutralize_invalid_gc: false,
         });
         frag_cfg.set_ref_2bit(Some(reference.path.clone()));
         {
@@ -1628,12 +2047,11 @@ mod tests_bam_to_frag {
 
         let bam_out = work.path().join("real_gc_tags.bam");
         let mut bam_cfg = BamToBamConfig::new(bam.bam.clone(), bam_out.clone(), chroms);
-        bam_cfg.skip_chromosome_sort = true;
         bam_cfg.set_min_mapq(0);
         bam_cfg.set_require_proper_pair(false);
         bam_cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path),
-            drop_invalid_gc: false,
+            neutralize_invalid_gc: false,
         });
         bam_cfg.set_ref_2bit(Some(reference.path.clone()));
         {
@@ -1671,9 +2089,9 @@ mod tests_bam_to_frag {
                 Ok(Aux::Float(value)) => value,
                 other => panic!("expected GC float tag on every mate, got {other:?}"),
             };
-            let flen = match record.aux(b"FLEN") {
+            let flen = match record.aux(b"fl") {
                 Ok(Aux::U32(value)) => value,
-                other => panic!("expected FLEN u32 tag on every mate, got {other:?}"),
+                other => panic!("expected fl u32 tag on every mate, got {other:?}"),
             };
             observed_gc_tags.push(gc);
             observed_flen_tags.push(flen);
@@ -1702,7 +2120,6 @@ mod tests_bam_to_frag {
 
     #[test]
     fn scaling_tsv_must_cover_requested_chromosome_end_in_bam_to_frag() -> Result<()> {
-        // Human verification status: unverified
         // Arrange:
         // `simple_inward_bam()` uses chr1 length 200.
         // A scaling TSV that stops at 100 is malformed for this requested chromosome even though
@@ -1730,9 +2147,7 @@ mod tests_bam_to_frag {
                 chromosomes_file: None,
             },
         );
-        cfg.set_scale_genome(cfdnalab::commands::cli_common::ScaleGenomeArgs {
-            scaling_factors: Some(scaling_path),
-        });
+        cfg.set_coverage_scaling_factors(Some(scaling_path));
         cfg.set_min_mapq(0);
 
         // Act
@@ -1750,13 +2165,120 @@ mod tests_bam_to_frag {
         Ok(())
     }
 
-    fn build_gc_package(path: &Path, end_offset: u64) -> Result<()> {
+    #[test]
+    fn count_scaling_tsv_must_cover_requested_chromosome_end_in_bam_to_frag() -> Result<()> {
+        // Arrange:
+        // Mirror the coverage-side malformed scaling regression through the separate
+        // `--count-scaling-factors` path. The loader contract is identical: requested
+        // chromosomes must be fully covered by contiguous bins.
+        let bam = simple_inward_bam()?;
+        let work = tempdir().context("tempdir")?;
+        let out_dir = work.path().join("out");
+        fs::create_dir_all(&out_dir)?;
+        let scaling_path = work.path().join("truncated_count_scaling.tsv");
+        fs::write(
+            &scaling_path,
+            "chromosome\tstart\tend\tscaling_factor\nchr1\t0\t100\t2.0\n",
+        )?;
+
+        let mut cfg = BamToFragConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir,
+                n_threads: 1,
+            },
+            ChromosomeArgs {
+                chromosomes: Some(vec!["chr1".to_string()]),
+                chromosomes_file: None,
+            },
+        );
+        cfg.set_count_scaling_factors(Some(scaling_path));
+        cfg.set_min_mapq(0);
+
+        // Act
+        let err = run_inner(&cfg).expect_err("truncated count scaling TSV should fail");
+
+        // Assert
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("scaling TSV: bins on 'chr1' must end at chrom_len=200 (got end=100)"),
+            "unexpected error message: {msg}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn count_scaling_tsv_with_uncorrected_metadata_rejects_gc_corrected_bam_to_frag_run()
+    -> Result<()> {
+        // Arrange:
+        // `bam-to-frag` also loads count scaling through the shared scaling-map path. When the
+        // run applies `--gc-file`, an explicitly uncorrected count-scaling TSV is a known
+        // incompatibility that should fail before any FRAG rows are written.
+        let bam = simple_inward_bam()?;
+        let ref_twobit = simple_reference_twobit()?;
+        let work = tempdir().context("tempdir")?;
+        let out_dir = work.path().join("out_count_gc_mismatch");
+        fs::create_dir_all(&out_dir)?;
+        let scaling_path = out_dir.join("uncorrected_count_scaling.tsv");
+        let gc_path = out_dir.join("gc_pkg.npz");
+        build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
+        fs::write(
+            &scaling_path,
+            "# gc_mode=uncorrected\nchromosome\tstart\tend\tscaling_factor\nchr1\t0\t200\t1.0\n",
+        )?;
+
+        let mut cfg = BamToFragConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir,
+                n_threads: 1,
+            },
+            ChromosomeArgs {
+                chromosomes: Some(vec!["chr1".to_string()]),
+                chromosomes_file: None,
+            },
+        );
+        cfg.set_output_prefix("count_gc_mismatch");
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_count_scaling_factors(Some(scaling_path));
+        cfg.set_gc(ApplyGCArgFileOnly {
+            gc_file: Some(gc_path),
+            neutralize_invalid_gc: false,
+        });
+        cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
+
+        // Act
+        let err = run_inner(&cfg)
+            .expect_err("uncorrected count scaling must fail in a GC-corrected bam-to-frag run");
+
+        // Assert
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("no GC correction"),
+            "unexpected error message: {msg}"
+        );
+        assert!(
+            msg.contains("via --gc-file"),
+            "unexpected error message: {msg}"
+        );
+
+        Ok(())
+    }
+
+    fn build_gc_package(
+        path: &Path,
+        end_offset: u64,
+        reference_contig_footprint: Vec<ContigFootprintEntry>,
+    ) -> Result<()> {
         let package = GCCorrectionPackage {
             version: GC_CORRECTION_SCHEMA_VERSION,
             end_offset,
             length_edges: vec![10, 60, 200],
             gc_edges: vec![0, 50, 101],
             length_bin_frequencies: array![1.0_f64, 3.0_f64],
+            reference_contig_footprint,
             correction_matrix: array![[1.0_f64, 1.0_f64], [2.0_f64, 10.0_f64]],
         };
         package.write_npz(path)?;
@@ -1770,6 +2292,58 @@ mod tests_bam_to_frag {
         gz.read_to_string(&mut s)?;
         let lines = s.lines().map(|l| l.to_string()).collect();
         Ok(lines)
+    }
+
+    #[cfg(feature = "cmd_bam_to_bam")]
+    fn read_fragment_level_cnts_from_bam(path: &Path) -> Result<Vec<(u64, f64)>> {
+        let mut reader = rust_htslib::bam::Reader::from_path(path)?;
+        let mut per_qname: HashMap<String, Vec<(u64, u32, f64)>> = HashMap::new();
+
+        for record in reader.records() {
+            let record = record?;
+            let qname = std::str::from_utf8(record.qname())
+                .expect("synthetic BAM qnames should be valid UTF-8")
+                .to_string();
+            let start = record.pos() as u64;
+            let flen = match record.aux(b"fl") {
+                Ok(Aux::U32(value)) => value,
+                other => panic!("expected fl u32 tag on every mate, got {other:?}"),
+            };
+            let cnt = match record.aux(b"nw") {
+                Ok(Aux::Float(value)) => value as f64,
+                other => panic!("expected nw float tag on every mate, got {other:?}"),
+            };
+            per_qname.entry(qname).or_default().push((start, flen, cnt));
+        }
+
+        let mut grouped = Vec::with_capacity(per_qname.len());
+        for (qname, entries) in per_qname {
+            assert_eq!(
+                entries.len(),
+                2,
+                "expected exactly two mate records per fragment for qname {qname}"
+            );
+
+            let fragment_start = entries.iter().map(|(start, _, _)| *start).min().unwrap();
+            let expected_flen = entries[0].1;
+            let expected_cnt = entries[0].2;
+
+            for (_, flen, cnt) in &entries[1..] {
+                assert_eq!(
+                    *flen, expected_flen,
+                    "mates should agree on fl for qname {qname}"
+                );
+                assert!(
+                    (*cnt - expected_cnt).abs() <= 1e-12,
+                    "mates should carry identical nw tags for qname {qname}, got {expected_cnt} vs {cnt}"
+                );
+            }
+
+            grouped.push((fragment_start, expected_cnt));
+        }
+
+        grouped.sort_by(|left, right| left.0.cmp(&right.0));
+        Ok(grouped)
     }
 
     fn fixed_chromosome_args() -> ChromosomeArgs {
@@ -1788,6 +2362,16 @@ mod tests_bam_to_frag {
             ]),
             chromosomes_file: None,
         }
+    }
+
+    #[cfg(feature = "cmd_fragment_count_weights")]
+    fn mixed_length_fragment_bam(name: &str) -> Result<super::fixtures::BamFixture> {
+        bam_from_specs(
+            vec![("chr1".to_string(), 100)],
+            vec![paired_fragment(0, 20, 10), paired_fragment(20, 60, 10)],
+            Vec::new(),
+            name,
+        )
     }
 
     /// Build a tiny BAM with two contigs and three inward-directed pairs, coordinate-sorted.

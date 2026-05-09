@@ -57,7 +57,6 @@ mod tests_flattening {
 
     #[test]
     fn flatten_empty() {
-        // Human verification status: unverified
         let w = Windows::from_sorted(Vec::new());
         let (flat, next) = w.into_flattened_reindexed(0);
         assert!(flat.as_slice().is_empty());
@@ -68,7 +67,6 @@ mod tests_flattening {
 
     #[test]
     fn flatten_singleton() {
-        // Human verification status: unverified
         let w = mk_sorted(&[(10, 20)]);
         let (flat, next) = w.into_flattened_reindexed(7);
         let a = flat.as_slice();
@@ -82,7 +80,6 @@ mod tests_flattening {
 
     #[test]
     fn flatten_no_merges() {
-        // Human verification status: unverified
         // Non-overlapping and non-touching
         let w = mk_sorted(&[(10, 15), (20, 25), (30, 35)]);
         let (flat, next) = w.into_flattened_reindexed(0);
@@ -104,7 +101,6 @@ mod tests_flattening {
 
     #[test]
     fn flatten_touching_merges() {
-        // Human verification status: unverified
         // Touching intervals must merge (half-open semantics)
         let w = mk_sorted(&[(10, 15), (15, 20), (20, 30)]);
         let (flat, next) = w.into_flattened_reindexed(100);
@@ -119,7 +115,6 @@ mod tests_flattening {
 
     #[test]
     fn flatten_overlapping_chain() {
-        // Human verification status: unverified
         // Mixed: one disjoint small block and a chain that overlaps/touches
         let w = mk_sorted(&[(5, 7), (10, 14), (12, 16), (16, 19)]);
         let (flat, next) = w.into_flattened_reindexed(50);
@@ -137,7 +132,6 @@ mod tests_flattening {
 
     #[test]
     fn flatten_large_start_idx() {
-        // Human verification status: unverified
         // Sanity: indices carry forward correctly from large start
         let w = mk_sorted(&[(0, 1), (2, 3), (4, 5)]);
         let (flat, next) = w.into_flattened_reindexed(1_000_000);
@@ -153,7 +147,6 @@ mod tests_flattening {
 
     #[test]
     fn grouped_windows_sort_and_preserve_group_indices() {
-        // Human verification status: unverified
         // Arrange:
         // - Inputs are unsorted by start, but group indices are payload and must survive sorting.
         // - After sorting by start we expect [10,15) idx 3, [15,18) idx 5, [20,30) idx 7.
@@ -173,7 +166,6 @@ mod tests_flattening {
 
     #[test]
     fn grouped_windows_span_uses_max_end_not_last_sorted_end() {
-        // Human verification status: unverified
         // Sorting by start yields [10,40), [20,25), [30,32). The last sorted window ends at 32,
         // but the collection span must use the true maximum end 40.
         let grouped = GroupedWindows::new(vec![
@@ -187,7 +179,6 @@ mod tests_flattening {
 
     #[test]
     fn grouped_windows_empty_has_zero_span() {
-        // Human verification status: unverified
         let grouped = GroupedWindows::from_sorted(Vec::new());
 
         assert!(grouped.as_slice().is_empty());
@@ -197,7 +188,6 @@ mod tests_flattening {
 
     #[test]
     fn grouped_windows_from_tuples_rejects_invalid_interval() {
-        // Human verification status: unverified
         let error = GroupedWindows::from_tuples(&[(10, 10, 3)])
             .expect_err("invalid grouped interval should fail");
 
@@ -209,7 +199,6 @@ mod tests_flattening {
 
     #[test]
     fn scored_windows_sort_and_preserve_scores() {
-        // Human verification status: unverified
         // Arrange:
         // - Sorting by start should reorder [20,30) and [10,15) into [10,15), [20,30).
         // - Score and original index are payload, so they must stay attached to their intervals.
@@ -228,7 +217,6 @@ mod tests_flattening {
 
     #[test]
     fn scored_windows_span_uses_max_end_not_last_sorted_end() {
-        // Human verification status: unverified
         // Sorting by start yields [10,45), [20,25), [30,33). As with grouped windows, span_end
         // must be the global maximum end 45 rather than the last sorted end 33.
         let scored = ScoredWindows::new(vec![
@@ -242,7 +230,6 @@ mod tests_flattening {
 
     #[test]
     fn scored_windows_to_windows_drops_score_but_keeps_interval_and_index() {
-        // Human verification status: unverified
         // Converting scored windows to plain windows should discard only the score field.
         // Interval bounds, original indices, and the collection span must remain unchanged.
         let scored = ScoredWindows::new(vec![
@@ -261,7 +248,6 @@ mod tests_flattening {
 
     #[test]
     fn windows_from_tuples_rejects_invalid_interval() {
-        // Human verification status: unverified
         let error =
             Windows::from_tuples(&[(12, 12, 0)]).expect_err("invalid plain interval should fail");
 
@@ -273,7 +259,6 @@ mod tests_flattening {
 
     #[test]
     fn scored_windows_from_tuples_rejects_invalid_interval() {
-        // Human verification status: unverified
         let error = ScoredWindows::from_tuples(&[(20, 19, 7, 1.5)])
             .expect_err("invalid scored interval should fail");
 

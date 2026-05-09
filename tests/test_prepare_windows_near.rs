@@ -65,7 +65,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn nearest_edge_distance_reports_negative_upstream_on_plus_strand() {
-        // Human verification status: unverified
         // Arrange
         // Interval on + strand: upstream edge is left coordinate 100
         // Window lies to the left (50-60), closest point to edge 100 is end=60 -> distance -40
@@ -102,7 +101,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn nearest_edge_distance_reports_negative_upstream_on_minus_strand() {
-        // Human verification status: unverified
         // Arrange
         // Interval on - strand: upstream edge is right coordinate 110
         // Window lies to the right (130-140); genomic distance is +20, but strand flips sign
@@ -139,7 +137,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn nearest_edge_distance_returns_tie_when_equidistant() {
-        // Human verification status: unverified
         // Arrange
         // Window 15-25 is 5 bp away from right edge of left interval (10) and left edge of right interval (30)
         let intervals = vec![
@@ -178,7 +175,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn apply_near_annotations_sets_no_near_labels_when_bins_and_no_distance_max() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         // No near intervals on any chromosome, but bins are requested
         // Should retain window and label with [NONE]/[NO-NEAR]
@@ -208,7 +204,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn apply_near_annotations_drops_when_direction_mismatch_and_distance_max() {
-        // Human verification status: unverified
         // Arrange
         // Near interval exists downstream, but we only accept upstream; distance_max forces drop
         let interval = near_interval(100, 110, None, Strand::Plus);
@@ -241,7 +236,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn apply_near_annotations_builds_composed_label_for_tie_annotations() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         // Window equidistant to upstream and downstream sites with group names; tie annotate
         // produces two tuples that render to comma-joined composition
@@ -299,7 +293,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn nearest_edge_distance_reports_overlap_as_zero() {
-        // Human verification status: unverified
         // Arrange
         // Window overlaps interval (5-15 vs 10-20) so distance must be 0 regardless of edge/direction
         let interval = near_interval(10, 20, None, Strand::Plus);
@@ -335,7 +328,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn nearest_edge_distance_falls_back_for_unknown_strand_on_directional_edge() {
-        // Human verification status: unverified
         // Arrange
         // Unknown strand causes upstream edge mode to behave like nearest; window right of interval so side downstream
         let interval = near_interval(100, 110, None, Strand::Unknown);
@@ -372,7 +364,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn apply_near_annotations_uses_resized_coordinates_for_distance_binning() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         // Resized window 15-35 is 5 bp from interval edge (10), original 20-30 would be 10 bp
         // distance_from=resized should pick bin based on 5 bp
@@ -417,7 +408,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn apply_near_annotations_uses_original_coordinates_for_distance_binning() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         // Original window 20-30 is 10 bp from interval edge (10), resized 15-35 would be 5 bp
         // distance_from=original should pick bin based on 10 bp
@@ -458,7 +448,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn apply_near_annotations_fills_missing_near_group_with_na() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         // Near interval with empty group column should emit near-name [NA]
         let mut file = NamedTempFile::new()?;
@@ -496,7 +485,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn load_near_index_merges_duplicates_with_strand_considered() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         // Two identical intervals with same strand should merge groups when policy merge and strand considered
         let mut file = NamedTempFile::new()?;
@@ -525,7 +513,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn load_near_index_keep_first_drops_subsequent_duplicates() -> Result<()> {
-        // Human verification status: unverified
         // Arrange: two identical intervals; keep-first retains the first only
         let mut file = NamedTempFile::new()?;
         writeln!(file, "chr1\t10\t20\t+\tX")?;
@@ -553,7 +540,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn load_near_index_drop_all_removes_duplicate_run() -> Result<()> {
-        // Human verification status: unverified
         // Arrange: two identical intervals; drop-all removes the entire run
         let mut file = NamedTempFile::new()?;
         writeln!(file, "chr1\t10\t20\t+\tX")?;
@@ -578,7 +564,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn near_direction_upstream_filters_out_downstream_hit() {
-        // Human verification status: unverified
         // Arrange: window downstream of near interval, direction=upstream should block it
         let intervals = vec![near_interval(0, 10, None, Strand::Plus)];
         let mut chrom = NearChrom {
@@ -602,7 +587,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn near_direction_downstream_filters_out_upstream_hit() {
-        // Human verification status: unverified
         // Arrange: window upstream of near interval, direction=downstream should block it
         let intervals = vec![near_interval(100, 110, None, Strand::Plus)];
         let mut chrom = NearChrom {
@@ -626,7 +610,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn bins_applied_when_no_hit_sets_no_near_labels() -> Result<()> {
-        // Human verification status: unverified
         // Arrange: chromosome present in near index but window falls outside direction/edge filter.
         // Current behavior keeps the window unchanged when `distance_max` is unset.
         let intervals = vec![near_interval(0, 10, None, Strand::Plus)];
@@ -660,7 +643,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn touch_is_treated_as_overlap_with_zero_distance() {
-        // Human verification status: unverified
         // Arrange: window ends exactly where interval starts; treated as overlap with distance 0
         let intervals = vec![near_interval(20, 30, None, Strand::Plus)];
         let mut chrom = NearChrom {
@@ -695,7 +677,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn upstream_edge_respects_strand_when_strand_column_present() {
-        // Human verification status: unverified
         // Arrange: same genomic interval annotated on + and -; upstream edge differs by strand
         let intervals = vec![
             near_interval(100, 110, None, Strand::Plus),
@@ -755,7 +736,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn downstream_edge_respects_strand_when_strand_column_present() {
-        // Human verification status: unverified
         // Arrange: same as prior but downstream edge selection
         let intervals = vec![
             near_interval(100, 110, None, Strand::Plus),
@@ -814,7 +794,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn distance_max_with_overlap_keeps_overlap() {
-        // Human verification status: unverified
         // Arrange: overlap distance is 0, so distance_max should keep it even when set small
         let intervals = vec![near_interval(10, 20, None, Strand::Plus)];
         let near_index = make_near_index(intervals);
@@ -838,7 +817,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn unknown_strand_upstream_falls_back_to_nearest_for_distance() {
-        // Human verification status: unverified
         // Arrange: unknown strand and upstream edge should behave like nearest
         let intervals = vec![near_interval(100, 110, None, Strand::Unknown)];
         let mut chrom = NearChrom {
@@ -873,7 +851,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn large_interval_list_cursor_stays_linear() {
-        // Human verification status: unverified
         // Arrange: many intervals; ensure cursor advances without quadratic behavior by checking it reaches near end
         let mut intervals: Vec<NearInterval> = Vec::new();
         for i in 0..1000 {
@@ -900,7 +877,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn label_rendering_composes_single_value_when_only_input_differs() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         // Two tuples differ only in input; composition depends on win-direction so it should collapse to one value
         let tuples = vec![
@@ -934,7 +910,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn label_rendering_keeps_order_when_parts_differ() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         // Tuples differ in win-direction; composition uses win-direction+near-name so it should comma-join in tuple order
         let tuples = vec![
@@ -967,7 +942,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn cursor_rewinds_when_window_moves_backward() {
-        // Human verification status: unverified
         // Arrange
         // First call moves cursor forward; second call with earlier window should still find upstream interval
         let interval = near_interval(10, 20, None, Strand::Plus);
@@ -1013,7 +987,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn overlapping_window_kept_when_direction_is_upstream_only() {
-        // Human verification status: unverified
         // Arrange
         // Overlap should always count as a hit even if direction filter would otherwise block
         let interval = near_interval(10, 20, None, Strand::Plus);
@@ -1049,7 +1022,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn distance_max_drops_when_direction_and_edge_block_hits() {
-        // Human verification status: unverified
         // Arrange: interval exists but edge/direction filter makes it invisible; distance_max should drop window
         let intervals = vec![near_interval(100, 110, None, Strand::Plus)];
         let near_index = make_near_index(intervals);
@@ -1075,7 +1047,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn cross_chromosome_no_near_sets_none_labels() -> Result<()> {
-        // Human verification status: unverified
         // Arrange: chr1 has intervals; chr2 lacks them. Chr2 windows should be labeled [NONE]/[NO-NEAR] with bins
         let mut idx = cfdnalab::commands::prepare_windows::near_file::NearIndex::default();
         idx.per_chrom.insert(
@@ -1113,7 +1084,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn chromosome_with_no_near_and_distance_max_drops_window() {
-        // Human verification status: unverified
         // Arrange: chromosome missing from near index; distance_max should drop window
         let idx = cfdnalab::commands::prepare_windows::near_file::NearIndex::default();
         let mut cfg = PrepareConfig::default();
@@ -1130,7 +1100,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn signed_bins_split_around_zero() -> Result<()> {
-        // Human verification status: unverified
         // Arrange: signed mode, bins straddle zero to classify upstream/overlap/downstream
         let near_index = make_near_index(vec![near_interval(100, 110, None, Strand::Plus)]);
         let mut cfg = PrepareConfig::default();
@@ -1183,7 +1152,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn absolute_mode_still_emits_direction_prefix() -> Result<()> {
-        // Human verification status: unverified
         // Arrange: distance_sign absolute but win-direction should include +/- based on position
         let near_index = make_near_index(vec![near_interval(100, 110, None, Strand::Plus)]);
         let mut cfg = PrepareConfig::default();
@@ -1208,7 +1176,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn far_hit_dropped_by_distance_max_absolute() {
-        // Human verification status: unverified
         // Arrange: absolute distance beyond max drops window
         let near_index = make_near_index(vec![near_interval(0, 10, None, Strand::Plus)]);
         let mut cfg = PrepareConfig::default();
@@ -1231,7 +1198,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn left_edge_vs_right_edge_asymmetry() {
-        // Human verification status: unverified
         // Arrange: non-overlapping downstream window. Left/right modes should differ.
         // Overlaps are defined to return distance 0 regardless of edge choice, so the
         // window must sit fully outside the interval to exercise edge asymmetry.
@@ -1282,7 +1248,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn parse_distance_bins_rejects_reversed_range() {
-        // Human verification status: unverified
         // Arrange / Act
         let result = parse_distance_bins(&vec!["bad:10-5".to_string()]);
 
@@ -1292,7 +1257,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn parse_distance_bins_accepts_zero_length_range() -> Result<()> {
-        // Human verification status: unverified
         // Arrange / Act
         let bins = parse_distance_bins(&vec!["zero:0-0".to_string()])?;
 
@@ -1304,7 +1268,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn signed_bins_classify_upstream_overlap_and_downstream() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         // Signed distances with bins that straddle zero; upstream negative, downstream positive, overlap zero
         let near_index = make_near_index(vec![near_interval(1000, 1010, None, Strand::Plus)]);
@@ -1373,7 +1336,6 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn signed_bins_with_negative_range_and_asymmetric_cutoffs() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         // Bins cross zero with wider upstream span; expects:
         // dist1: upstream beyond -2500

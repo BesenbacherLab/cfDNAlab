@@ -755,7 +755,7 @@ fn composition_membership_signature(
 /// Returns
 /// -------
 /// - `name`:
-///     Human-readable key name.
+///     User-readable key name.
 fn label_key_name(key: &LabelKey, label_schema: &LabelSchema) -> String {
     match key {
         LabelKey::Atomic(part) => part.as_str().to_string(),

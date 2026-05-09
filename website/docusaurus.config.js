@@ -4,7 +4,7 @@
 const config = {
   title: 'cfDNAlab',
   tagline: 'Fast and transparent cfDNA command-line analysis',
-  favicon: 'img/cfdnalab_logo_little_guy_200x181_144dpi.png',
+  favicon: 'img/cfdnalab_logo_little_guy_172x200_144dpi.png',
 
   url: 'https://BesenbacherLab.github.io',
   baseUrl: '/cfdnalab/',
@@ -54,12 +54,11 @@ const config = {
   themeConfig:
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
     ({
-      image: 'img/cfdnalab_logo_257x285_250dpi.png',
       navbar: {
         title: 'cfDNAlab',
         logo: {
           alt: 'cfDNAlab logo',
-          src: 'img/cfdnalab_logo_little_guy_200x181_144dpi.png'
+          src: 'img/cfdnalab_logo_little_guy_172x200_144dpi.png'
         },
         items: [
           {

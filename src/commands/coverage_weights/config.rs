@@ -1,21 +1,31 @@
-use crate::{commands::cli_common::*, shared::blacklist::BlacklistStrategy};
-use anyhow::bail;
-use std::path::PathBuf;
+use std::ops::{Deref, DerefMut};
 
-// TODO: Improve docstring - hard to understand
+use crate::commands::coverage_weights::scaling_weights_config::ScalingWeightsArgs;
 
-/// Extract fragment coverage in large genomic bins ("megabins") with a rolling
-/// window and calculate normalizing scaling factors for smoothing the genome.
+/// Extract fragment coverage-based smoothing weights in large genomic bins ("megabins")
+/// with a rolling window and calculate normalizing scaling factors for smoothing
+/// the genome.
 ///
-/// Outputs scaling factors per stride to allow other methods to apply the normalization (by weighting fragment counts).
+/// Use this when you want the smoothing profile to reflect total fragment coverage
+/// across the genome. This is the natural choice for coverage-like analyses.
+/// In contrast, fragment count-based weights (see `cfdna fragment-count-weights`)
+/// make long and short fragments contribute more equally.
 ///
-/// The scaling factors are *inverted*, so normalization becomes multiplication.
-/// Zero-valued coverages lead to zero-valued scaling factors. Non-zero factors have `mean == 1.0`.
+/// Outputs scaling factors per stride to allow other methods to apply the normalization.
+/// Files are written as:
+///
+/// `<prefix>.coverage.scaling_factors.tsv`
+///
+/// **Multipliers**: After normalization of the non-zero smoothed coverage values to
+/// a global mean of `1.0`, the values are **inverted** to **multiplicative** scaling factors.
 ///
 /// ## Coverage
 ///
-/// The full fragment span is counted without consideration of deletions and gaps.
-/// This is fine for genome-scale normalization that reduces relative changes in coverage across the genome.
+/// Internally, this command runs `fcoverage --by-size <stride> --per-window average`
+/// and then smooths those stride-bin averages.
+///
+/// By default, the full fragment span is counted, except for deletions and skipped
+/// regions that are not covered by the other read.
 ///
 /// ## Fragment span definition
 ///
@@ -23,10 +33,20 @@ use std::path::PathBuf;
 ///
 /// **Unpaired** where each read is a fragment: `[read.pos, read.end)`.
 ///
+/// ## GC correction
+///
+/// When downstream tools should use both genomic smoothing and GC-bias correction,
+/// supply `--gc-file` or `--gc-tag` here too. The command then uses corrected fragment
+/// coverage, which avoids over-correction downstream when the genomic smoothing factors
+/// partly reflect large-scale GC bias.
+///
+/// The written TSV records whether GC correction was used so downstream commands can check
+/// whether the two transformations are used together consistently or not.
+///
 /// ## Smoothing
 ///
 /// Smoothing is performed as a triangular moving average, calculating
-/// a weighted average of coverages from all bins overlapping a stride.  
+/// a weighted average of coverages from all bins overlapping a stride.
 ///
 /// ### Example
 ///
@@ -57,7 +77,14 @@ use std::path::PathBuf;
 ///
 /// At chromosome edges, the weights are truncated (e.g., `W_D: [2][3][2][1][0]`).
 ///
+/// The stride bins are further weighted by their number of eligible bases (non-blacklisted
+/// positions). This also handles the often shorter final stride bin per chromosome.
+///
 /// The weights are normalized by their sum (after potential truncation at edges).
+///
+/// Stride bins with undefined average coverage, for example fully blacklisted bins from
+/// `fcoverage`, are skipped while smoothing neighboring bins. They may still get a finite
+/// smoothed value from neighboring support, but their scaling factor is written as `0`.
 ///
 /// ## Always-on exclusion criteria
 ///
@@ -74,176 +101,43 @@ use std::path::PathBuf;
 #[derive(Clone)]
 pub struct CoverageWeightsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
-    pub ioc: IOCArgs,
+    pub shared: ScalingWeightsArgs,
 
-    #[cfg_attr(feature = "cli", clap(flatten))]
-    pub unpaired: UnpairedArgs,
-
-    /// Optional prefix for output files (e.g., a sample name) `[string]`
+    /// Ignore inter-mate gap when building coverage-based smoothing weights `[flag]`
     ///
-    /// Leave empty to write filenames without a leading prefix.
+    /// Use this when downstream coverage analyses will also use `fcoverage --ignore-gap`.
     ///
-    /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
-    ///
-    /// Examples produce files like:
-    ///   `<prefix>.scaling_factors.tsv`
-    #[cfg_attr(
-        feature = "cli",
-        clap(
-            long,
-            short = 'x',
-            default_value_t = String::new(),
-            hide_default_value = true,
-            help_heading = "Core"
-        )
-    )]
-    pub output_prefix: String,
-
-    /// Size (bp) of large genomic bins to calculate coverage in [integer]
-    ///
-    /// Larger values lead to a more smooth coverage across the genome.
-    ///
-    /// **NOTE**: The normalizing scaling factors are calculated per stride-sized overlap
-    /// of these bins. Technically, we only count the coverage per stride-sized bin
-    /// and then calculate the overlap with a triangular weighting scheme.
-    #[cfg_attr(
-        feature = "cli",
-        clap(long, default_value = "5000000", value_parser = clap::value_parser!(u32).range(1..), help_heading="Filtering"))]
-    pub bin_size: u32,
-
-    /// Size (bp) of stride [integer]
-    ///
-    /// **NOTE**: `--bin-size` must be divisible by `stride`. I.e., `--bin-size % stride` == 0`.
-    ///
-    /// A normalizing scaling factor is calculated per stride as the (inverse) weighted average coverage of the overlapping large-scale bins.
-    ///
-    /// Smaller values lead to a higher precision in the downstream normalization
-    /// but also require saving a larger BED file in the end (one line per stride-bin)
-    /// and take longer to compute.
-    #[cfg_attr(
-        feature = "cli",
-        clap(long, default_value = "500000", value_parser = clap::value_parser!(u32).range(1..), help_heading="Filtering"))]
-    pub stride: u32,
-
-    #[cfg_attr(feature = "cli", clap(flatten))]
-    pub chromosomes: ChromosomeArgs,
-
-    #[cfg_attr(feature = "cli", clap(flatten))]
-    pub fragment_lengths: FragmentLengthArgs,
-
-    /// Minimum mapping quality to include [integer]
-    #[cfg_attr(
-        feature = "cli",
-        clap(long, alias = "mq", default_value = "30", value_parser = clap::value_parser!(u8).range(0..), help_heading="Filtering"))]
-    pub min_mapq: u8,
-
-    /// Only count properly paired reads [flag]
-    #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
-    pub require_proper_pair: bool,
-
-    /// Optional BED file(s) with blacklisted regions [path]
-    #[cfg_attr(
-        feature = "cli", clap(short = 'b', long, value_parser, num_args = 1.., action = clap::ArgAction::Append, help_heading = "Filtering"))]
-    pub blacklist: Option<Vec<PathBuf>>,
-
-    /// Minimum size of blacklist intervals to load (bp) [integer]
-    #[cfg_attr(
-        feature = "cli",
-        clap(
-            long,
-            alias = "bl-min-size",
-            default_value = "1",
-            help_heading = "Filtering"
-        )
-    )]
-    pub blacklist_min_size: u64,
-
-    /// The fragment positions that should overlap blacklisted regions for it to be excluded [string]
-    ///
-    /// Possible values:
-    ///     `"any"`, `"all"`, `"midpoint"`, or `"proportion=<threshold>"` [string]
-    ///
-    /// Example of proportion: `--blacklist-strategy proportion=0.2` (no space around `=`)
-    #[cfg_attr(
-        feature = "cli",
-        clap(
-            long,
-            alias = "bl-strategy",
-            default_value = "any",
-            ignore_case = true,
-            help_heading = "Filtering"
-        )
-    )]
-    pub blacklist_strategy: BlacklistStrategy,
+    /// Cannot be used with `--reads-are-fragments`.
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
+    pub ignore_gap: bool,
 }
 
 impl CoverageWeightsConfig {
-    pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs) -> Self {
+    pub fn new(
+        ioc: crate::commands::cli_common::IOCArgs,
+        chromosomes: crate::commands::cli_common::ChromosomeArgs,
+    ) -> Self {
         Self {
-            ioc,
-            unpaired: UnpairedArgs {
-                reads_are_fragments: false,
-            },
-            output_prefix: String::new(),
-            bin_size: 5_000_000,
-            stride: 500_000,
-            chromosomes,
-            fragment_lengths: FragmentLengthArgs::default(),
-            min_mapq: 30,
-            require_proper_pair: false,
-            blacklist: None,
-            blacklist_min_size: 1,
-            blacklist_strategy: BlacklistStrategy::default(),
+            shared: ScalingWeightsArgs::new(ioc, chromosomes),
+            ignore_gap: false,
         }
     }
 
-    pub fn set_output_prefix(&mut self, output_prefix: String) {
-        self.output_prefix = output_prefix;
+    pub fn set_ignore_gap(&mut self, ignore_gap: bool) {
+        self.ignore_gap = ignore_gap;
     }
+}
 
-    pub fn set_bin_size(&mut self, bin_size: u32) {
-        self.bin_size = bin_size;
+impl Deref for CoverageWeightsConfig {
+    type Target = ScalingWeightsArgs;
+
+    fn deref(&self) -> &Self::Target {
+        &self.shared
     }
+}
 
-    pub fn set_stride(&mut self, stride: u32) {
-        self.stride = stride;
-    }
-
-    pub fn fragment_lengths_mut(&mut self) -> &mut FragmentLengthArgs {
-        &mut self.fragment_lengths
-    }
-
-    pub fn set_min_mapq(&mut self, min_mapq: u8) {
-        self.min_mapq = min_mapq;
-    }
-
-    pub fn set_require_proper_pair(&mut self, require: bool) {
-        self.require_proper_pair = require;
-    }
-
-    pub fn set_blacklist(&mut self, blacklist: Option<Vec<PathBuf>>) {
-        self.blacklist = blacklist;
-    }
-
-    pub fn check_bin_sizes(&self) -> anyhow::Result<()> {
-        let stride = self.stride;
-        let bin_size = self.bin_size;
-
-        if stride > bin_size {
-            bail!(
-                "stride ({}) cannot be higher than bin_size ({})",
-                stride,
-                bin_size,
-            );
-        }
-        if !bin_size.is_multiple_of(stride) {
-            bail!(
-                "bin_size ({}) must be divisible by stride ({})",
-                bin_size,
-                stride
-            );
-        }
-
-        Ok(())
+impl DerefMut for CoverageWeightsConfig {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.shared
     }
 }

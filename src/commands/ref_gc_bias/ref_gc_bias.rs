@@ -1,8 +1,33 @@
+//! Runner for calculating reference GC-bias.
+//!
+//! [Agents: Doc comments are humanly controlled, don't edit unless asked directly]
+//!
+//! It samples fitting fragments for all valid fragment lengths at N starting positions and
+//! calculates their GC contents. It then calculates the bias per fragment length.
+//!
+//! ## Implementation requirements
+//!
+//! Parallelization: Tiles.
+//!
+//! Windowing: Inclusion. Overlapping and touching BED intervals are merged.
+//! No by-size option is available as it would collapse to global mode after merging.
+//! BED windows can potentially extend across many or all tiles on a chromosome.
+//!
+//! "Fragment" ownership: For a given tile, we sample from all the possible starting positions.
+//! A "fragment" can cross into the following tile but never across genomic windows.
+//! If a fragment cannot fit inside a window, it is not counted. This means the final
+//! possible starting position is different per fragment length.
+//! For a given tile, only BED windows overlapping the core can get counts.
+//!
+//! To know exactly how many valid ACGT bases are in each tile for normalization,
+//! we calculate these for the bases included in the tile (non-blacklisted bases and
+//! within the windows / global). Overlapping windows reaching outside the tile are
+//! thus clipped to the core (for this ACGT base count only).
+
 use crate::{
     commands::{
         cli_common::*,
         gc_bias::{
-            GC_CORRECTION_SCHEMA_VERSION,
             counting::{
                 GCCounts, apply_gc_percent_width_correction, build_gc_prefixes,
                 count_reference_gc_and_length_by_window, gc_percent_widths,
@@ -18,16 +43,20 @@ use crate::{
         bam::Contigs,
         bed::{Windows, load_windows_from_bed},
         blacklist::apply_blacklist_mask_to_seq,
-        io::dot_join,
+        constants::GC_CORRECTION_SCHEMA_VERSION,
         interval::{IndexedInterval, Interval},
+        io::dot_join,
         progress::ProgressFactory,
-        reference::{read_seq_in_range, twobit_contig_lengths},
+        reference::{
+            ContigFootprintEntry, read_seq_in_range, twobit_contig_footprint, twobit_contig_lengths,
+        },
         sampling::{sample_starts_in_core, sampling_density},
         thread_pool::init_global_pool,
         tiled_run::{
             Tile, TileWindowSpan, build_tiles, overlapping_windows_for_tile,
             precompute_tile_window_spans,
         },
+        windowing::ensure_plain_bed_windows_not_empty,
     },
 };
 use anyhow::{Context, Result, ensure};
@@ -37,11 +66,22 @@ use ndarray_npy::NpzWriter;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use rayon::prelude::*;
 use std::{sync::Arc, time::Instant};
+use tracing::info;
+
+const COMMAND_TARGET: &str = "ref-gc-bias";
 
 pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
     let start_time = Instant::now();
+    opt.fragment_lengths.validate()?;
+    ensure!(
+        opt.n_positions > 0,
+        "--n-positions must be greater than zero"
+    );
     let prefix = opt.output_prefix.trim();
-    let chromosomes = opt.chromosomes.resolve_chromosomes(None)?;
+    validate_output_prefix(prefix)?;
+    let chromosomes = opt
+        .chromosomes
+        .resolve_chromosomes(Some(ContigSource::ref_2bit(&opt.ref_genome.ref_2bit)))?;
     let window_opt = opt.windows.resolve_windows();
     opt.check_smoothing_settings()?;
 
@@ -61,16 +101,20 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
 
     // Load blacklist intervals if provided
     if opt.blacklist.is_some() {
-        println!("Start: Loading blacklists");
+        info!(target: COMMAND_TARGET, "Loading blacklists");
     }
     let blacklist_map = load_blacklist_map(opt.blacklist.as_ref(), 1, 0, &chromosomes)?;
 
     // Load windows from BED file and merge overlapping/touching intervals (unique positions)
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
-            println!("Start: Loading window coordinates");
+            info!(target: COMMAND_TARGET, "Loading window coordinates");
             let mut wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
-            println!("Start: Merging overlapping/touching windows");
+            ensure_plain_bed_windows_not_empty(&wds)?;
+            info!(
+                target: COMMAND_TARGET,
+                "Merging overlapping/touching windows"
+            );
             let mut merged: FxHashMap<String, Windows> =
                 FxHashMap::with_capacity_and_hasher(wds.len(), Default::default());
             let mut next_idx = 0u64;
@@ -108,6 +152,21 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
         opt.fragment_lengths.max_fragment_length as usize,
         opt.end_offset as usize,
     ));
+    let total_valid_start_positions: u64 = chrom_lengths
+        .values()
+        .map(|&chrom_len| {
+            if chrom_len as u64 >= opt.fragment_lengths.max_fragment_length as u64 {
+                chrom_len as u64 - opt.fragment_lengths.max_fragment_length as u64 + 1
+            } else {
+                0
+            }
+        })
+        .sum();
+    ensure!(
+        total_valid_start_positions > 0,
+        "No selected chromosome is long enough for --max-fragment-length ({})",
+        opt.fragment_lengths.max_fragment_length
+    );
     let start_position_sampling_density = sampling_density(
         &chrom_lengths,
         opt.fragment_lengths.max_fragment_length as u64,
@@ -145,7 +204,7 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
                 .unwrap_or(&[])
         },
         0,
-        0,
+        0, // Windows can extend outside tiles but must overlap
     ));
 
     // Configure global thread‐pool size
@@ -153,7 +212,7 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
 
     let tile_window_spans_for_threads = tile_window_spans.clone();
 
-    println!("Start: Counting in tiles");
+    info!(target: COMMAND_TARGET, "Counting in tiles");
 
     // Identity accumulator used by the reducer when no tiles have produced output yet
     let zero_counts = GCCounts::new(
@@ -221,10 +280,18 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
     drop(windows_map);
     drop(blacklist_map);
 
-    println!("Start: Processing counts");
+    info!(target: COMMAND_TARGET, "Processing counts");
 
     let used_start_positions =
         total_counts.sum_for_length(opt.fragment_lengths.min_fragment_length as usize)?;
+    ensure!(
+        used_start_positions > 0.0,
+        "No sampled start positions contributed usable reference GC counts"
+    );
+    ensure!(
+        total_covered_acgt_positions > 0,
+        "Selected reference windows contained no usable ACGT bases"
+    );
 
     // Convert counts to Array2 and interpolate zero-counts (single global grid)
     let mut global_counts = total_counts;
@@ -246,7 +313,7 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
     .expect("support mask should be created");
 
     if !opt.skip_interpolation {
-        println!("Start: Interpolating missing counts");
+        info!(target: COMMAND_TARGET, "Interpolating missing counts");
         debug_assert_eq!(
             global_grid.dim(),
             outlier_support_mask.dim(),
@@ -289,7 +356,8 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
     );
 
     write_reference_gc_package(
-        &opt.output_dir.join(dot_join(&[prefix, "ref_gc_package.npz"])),
+        &opt.output_dir
+            .join(dot_join(&[prefix, "ref_gc_package.npz"])),
         &global_grid,
         &unobservable_support_mask,
         &outlier_support_mask,
@@ -301,19 +369,23 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
         opt.smoothing_radius,
         opt.smoothing_sigma,
         opt.skip_smoothing,
+        &chromosomes,
+        &twobit_contig_footprint(&opt.ref_genome.ref_2bit)?,
     )
     .context("Writing reference GC package failed")?;
 
     let elapsed = start_time.elapsed();
-    println!(
+    info!(
+        target: COMMAND_TARGET,
         "Windows covered {} total ACGT bases",
         total_covered_acgt_positions
     );
-    println!(
+    info!(
+        target: COMMAND_TARGET,
         "Used {:.0} start positions at length {}",
         used_start_positions, opt.fragment_lengths.min_fragment_length
     );
-    println!("Elapsed time: {:.2?}", elapsed);
+    info!(target: COMMAND_TARGET, "Elapsed time: {:.2?}", elapsed);
     Ok(())
 }
 
@@ -330,6 +402,8 @@ fn write_reference_gc_package(
     smoothing_radius: u8,
     smoothing_sigma: f64,
     skip_smoothing: bool,
+    chromosomes: &[String],
+    reference_contig_footprint: &[ContigFootprintEntry],
 ) -> Result<()> {
     let file = std::fs::File::create(path)?;
     let mut npz = NpzWriter::new(file);
@@ -353,6 +427,12 @@ fn write_reference_gc_package(
     )?;
     npz.add_array("smoothing_sigma", &Array1::from(vec![smoothing_sigma]))?;
     npz.add_array("skip_smoothing", &Array1::from(vec![skip_smoothing]))?;
+    let chromosomes_json = serde_json::to_vec(chromosomes)?;
+    npz.add_array("chromosomes_json", &Array1::from(chromosomes_json))?;
+    npz.add_array(
+        "reference_contig_footprint_json",
+        &Array1::from(serde_json::to_vec(reference_contig_footprint)?),
+    )?;
     npz.finish()?;
     Ok(())
 }
@@ -378,6 +458,7 @@ fn process_tile(
         return Ok((empty, 0));
     }
 
+    // Absolute genomic sequence loaded for this tile via 2bit
     let seq_start = tile.fetch_start().min(tile.core_start()) as u64;
     let seq_end = tile.fetch_end().min(chrom_len as u32) as u64;
 
@@ -395,11 +476,13 @@ fn process_tile(
 
     let core_start_usize = core_start as usize;
     let core_end_usize = core_end as usize;
-    let seq_offset = seq_start as usize;
 
-    // Build windows that start in the core but may extend into the right halo
+    // Build/redefine windows to have tile-local coordinates.
+    // These windows are clipped to start in the core but may extend into the right halo.
     // We keep starts inside the core (so starts are unique per tile) while letting fragment ends
     // reach into the fetched halo, which carries the needed sequence context
+    // Absolute -> tile-local coordinates: We offset coordinates by sequence start
+    // so they are relative to the loaded reference sequence
     let mut tile_windows: Vec<IndexedInterval<u64>> = Vec::new();
     if let Some(win_chr) = windows {
         let iter = overlapping_windows_for_tile(win_chr, tile, tile_window_span);
@@ -418,8 +501,10 @@ fn process_tile(
             )?);
         }
     } else {
-        // Global mode: one window spanning the tile core
+        // Global mode: one tile-local window starting from the tile core start
+        // and ending at the end of the loaded reference sequence
         tile_windows.push(IndexedInterval::new(
+            // Starts at the core start in the loaded sequence (offset by the left halo)
             core_start.saturating_sub(seq_start),
             seq_end.saturating_sub(seq_start),
             0,
@@ -440,7 +525,7 @@ fn process_tile(
     let core_end_idx = start_positions.partition_point(|&s| s < core_end_usize);
     let tile_starts: Vec<usize> = start_positions[core_start_idx..core_end_idx]
         .iter()
-        .map(|s| s.saturating_sub(seq_offset))
+        .map(|s| s.saturating_sub(seq_start as usize))
         .collect();
 
     // Allocate per-tile window accumulators (global sum comes from merging them)
@@ -454,6 +539,9 @@ fn process_tile(
         tile_windows.len()
     ];
 
+    // Count the reference GC by length and windows
+    // The tile_windows, tile_starts, and passed chrom_len (seq_end - seq_start)
+    // all use tile-local coordinates / size
     count_reference_gc_and_length_by_window(
         &mut counts_by_bin,
         &gc_prefixes,
@@ -506,4 +594,9 @@ fn process_tile(
     )?;
 
     Ok((merged, total_acgt_in_core))
+}
+
+#[cfg(test)]
+mod tests {
+    include!("ref_gc_bias_tests.rs");
 }

@@ -62,6 +62,9 @@ pub enum OutlierScopeArg {
 ///
 /// **Unpaired** where each read is a fragment: `end(read) - start(read)`.
 ///
+/// The utilized fragment length range is inherited from the
+/// `--ref-gc-file` to ensure consistency.
+///
 /// ## Windowing
 ///
 /// Technical GC bias is assumed to be a "global" bias. To control how each region of the genome
@@ -79,8 +82,6 @@ pub enum OutlierScopeArg {
 ///   --ref-2bit {PATH}/hg38.2bit \ # Or some other assembly
 ///
 ///   --ref-gc-file {REFERENCE_GC_FILE} \
-///
-///   --min-fragment-length 30 --max-fragment-length 1000 \
 ///
 ///   --blacklist {PATH}/encode_blacklist.bed # Or some other blacklist(s)
 ///
@@ -108,12 +109,26 @@ pub struct GCConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub unpaired: UnpairedArgs,
 
+    /// Optional prefix for output files (e.g., a sample name) `[string]`
+    ///
+    /// Leave empty to write filenames without a leading prefix.
+    ///
+    /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
+    ///
+    /// Examples produce files like:
+    ///   `<prefix>.gc_bias_correction.npz`
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, value_parser = crate::commands::cli_common::parse_output_prefix, help_heading = "Core")
+    )]
+    pub output_prefix: String,
+
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ref_genome: Ref2BitRequiredArgs,
 
     /// Path to file with reference GC bias to correct against `[path]`
-    /// 
-    /// Precompute with `cfdna ref-gc-bias`. The file is either named 
+    ///
+    /// Precompute with `cfdna ref-gc-bias`. The file is either named
     /// `ref_gc_package.npz` or `<prefix>.ref_gc_package.npz`.
     #[cfg_attr(
         feature = "cli",
@@ -186,7 +201,7 @@ pub struct GCConfig {
     )]
     pub min_gc_bin_mass: f32,
 
-    /// Number of extreme GC bins (`--min_gc_bin_mass`) from each side to interpolate from neighbouring corrections `[float]`
+    /// Number of extreme GC bins (`--min_gc_bin_mass`) from each side to interpolate from neighbouring corrections `[integer]`
     ///
     /// The most extreme GC fractions are very sparsely observed. This can lead to extreme corrections.
     /// Set the number of bins from each side where we interpolate a correction based on the neighbouring corrections.
@@ -203,7 +218,7 @@ pub struct GCConfig {
     )]
     pub num_extreme_gc_bins: u8,
 
-    /// Number of the **shortest** fragment length bins (`--min_length_bin_mass`) to interpolate from neighbouring corrections `[float]`
+    /// Number of the **shortest** fragment length bins (`--min_length_bin_mass`) to interpolate from neighbouring corrections `[integer]`
     ///
     /// The shortest fragment lengths can be very sparsely observed. This can lead to extreme corrections.
     /// Set the number of short-length bins where we interpolate a correction based on the neighbouring corrections.
@@ -249,6 +264,9 @@ pub struct GCConfig {
     /// Only count properly paired reads `[flag]`
     ///
     /// This is **NOT** recommended by default as it trims the tails of the length distribution.
+    ///
+    /// Note, that we only keep inward-directed fragments within the specified length range, so
+    /// there's no real need for proper-pair filtering.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
     pub require_proper_pair: bool,
 
@@ -267,7 +285,7 @@ pub struct GCConfig {
     )]
     pub min_window_acgt_pct: u8,
 
-    /// Handle extreme correction factors to avoid unstable weights `[string]`
+    /// Handle extreme GC-bias values to avoid unstable weights `[string]`
     ///
     /// Options:
     ///
@@ -277,7 +295,8 @@ pub struct GCConfig {
     ///
     /// - `iqr`, `stddev`, `mad`: Use the corresponding rule with multiplier `--outlier-k`.
     ///
-    /// **NOTE**: After outlier detection, correction values are further clipped at `[0.1, 10.0]`.
+    /// **NOTE**: After outlier detection, extreme GC-bias values are clipped at `[0.1, 10.0]`
+    /// before the final scaling steps.
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value_t = DEFAULT_OUTLIER_METHOD, value_enum, help_heading = "Outliers")
@@ -328,6 +347,9 @@ pub struct GCConfig {
     /// Whether to save key intermediate files for inspecting the correction process `[flag]`
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
     pub save_intermediates: bool,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub logging: LoggingArgs,
 }
 
 impl GCConfig {
@@ -342,6 +364,7 @@ impl GCConfig {
             unpaired: UnpairedArgs {
                 reads_are_fragments: false,
             },
+            output_prefix: String::new(),
             ref_genome: Ref2BitRequiredArgs { ref_2bit },
             ref_gc_file,
             windows: GCWindowsArgs::default(),
@@ -362,11 +385,16 @@ impl GCConfig {
             outlier_quantiles: DEFAULT_OUTLIER_QUANTILES.to_vec(),
             outlier_k: DEFAULT_OUTLIER_K,
             save_intermediates: false,
+            logging: LoggingArgs::default(),
         }
     }
 
     pub fn set_ioc(&mut self, ioc: IOCArgs) {
         self.ioc = ioc;
+    }
+
+    pub fn set_output_prefix(&mut self, output_prefix: String) {
+        self.output_prefix = output_prefix;
     }
 
     pub fn set_ref_gc_file(&mut self, ref_gc_file: PathBuf) {

@@ -1,4 +1,4 @@
-use crate::commands::cli_common::{ChromosomeArgs, FragmentLengthArgs};
+use crate::commands::cli_common::{ChromosomeArgs, FragmentLengthArgs, LoggingArgs};
 use crate::shared::blacklist::BlacklistStrategy;
 use std::path::PathBuf;
 
@@ -18,9 +18,11 @@ use std::path::PathBuf;
 ///
 /// - `gc_weight` -> `GC`
 ///
-/// - `scaling_weight` -> `COV`
+/// - `coverage_scaling_weight` -> `cw`
 ///
-/// - `flen` -> `FLEN`
+/// - `count_scaling_weight` -> `nw`
+///
+/// - `flen` -> `fl`
 ///
 /// ## BAM file
 ///
@@ -68,14 +70,14 @@ pub struct FragToBamConfig {
     /// With an empty prefix, the output filename is `fragments.bam`.
     #[cfg_attr(
         feature = "cli",
-        clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, help_heading = "Core")
+        clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, value_parser = crate::commands::cli_common::parse_output_prefix, help_heading = "Core")
     )]
     pub output_prefix: String,
 
     /// Optional header file with tab-separated column names for the frag file [path]
     ///
     /// Supply this when you want to transfer extra columns
-    /// (`gc_weight`, `scaling_weight`, and/or `flen`) to AUX tags
+    /// (`gc_weight`, `coverage_scaling_weight`, `count_scaling_weight`, and/or `flen`) to AUX tags
     /// in the BAM file and the frag file has no inline header row.
     ///
     /// **Auto-detection**: The command also tries to auto-detect a companion header file
@@ -121,7 +123,7 @@ pub struct FragToBamConfig {
     /// By default, unknown extra columns cause an error to prevent silent mistakes.
     ///
     /// With this flag, unknown extra columns are ignored with a warning, while known
-    /// extra columns (`gc_weight`, `scaling_weight`, `flen`) are still transferred.
+    /// extra columns (`gc_weight`, `coverage_scaling_weight`, `count_scaling_weight`, `flen`) are still transferred.
     ///
     /// If you want to ignore all extras, use `--ignore-extras` instead.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
@@ -161,6 +163,9 @@ pub struct FragToBamConfig {
         )
     )]
     pub blacklist_strategy: BlacklistStrategy,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub logging: LoggingArgs,
 }
 
 impl FragToBamConfig {
@@ -184,6 +189,7 @@ impl FragToBamConfig {
             blacklist: None,
             blacklist_min_size: 1,
             blacklist_strategy: BlacklistStrategy::Any,
+            logging: LoggingArgs::default(),
         }
     }
 

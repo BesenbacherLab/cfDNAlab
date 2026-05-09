@@ -1,6 +1,10 @@
 #[cfg(test)]
 mod tests_apply_scaling {
-    use cfdnalab::shared::scale_genome::apply_scaling_to_coverage_in_place;
+    use cfdnalab::shared::scale_genome::{ScalingBin, apply_scaling_to_coverage_in_place};
+
+    fn sb(s: u64, e: u64, w: f32) -> ScalingBin {
+        ScalingBin::new(s, e, w).unwrap()
+    }
 
     // Assert two slices are approximately equal within eps
     fn assert_slice_eq_eps(a: &[f32], b: &[f32], eps: f32) {
@@ -26,7 +30,6 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_mixed_bins_partial_overlap() {
-        // Human verification status: unverified
         // Tile core [105, 125), len 20
         // Bins: [90,110) sf=2.0, [110,120) sf=0.0, [120,140) sf=0.5
         // Expected (multiply-by-sf):
@@ -34,7 +37,7 @@ mod tests_apply_scaling {
         //   indices 5..15  *= 0.0  -> 0
         //   indices 15..20 *= 0.5  -> 5
         let core_start = 105u32;
-        let bins = vec![(90u64, 110u64, 2.0f32), (110, 120, 0.0), (120, 140, 0.5)];
+        let bins = vec![sb(90, 110, 2.0), sb(110, 120, 0.0), sb(120, 140, 0.5)];
         let mut cov = vec![10.0f32; 20];
         apply_scaling_to_coverage_in_place(&mut cov, core_start, &bins);
 
@@ -51,12 +54,11 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_starts_exactly_at_bin_boundary() {
-        // Human verification status: unverified
         // Tile core starts exactly at previous bin end
         // Bins: [0,100) sf=2.0, [100,200) sf=4.0
         // Tile: core_start=100, len=10 so all in second bin
         let core_start = 100u32;
-        let bins = vec![(0u64, 100u64, 2.0f32), (100, 200, 4.0)];
+        let bins = vec![sb(0, 100, 2.0), sb(100, 200, 4.0)];
         let mut cov = vec![8.0f32; 10];
         apply_scaling_to_coverage_in_place(&mut cov, core_start, &bins);
 
@@ -66,10 +68,9 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_zero_bin_covers_entire_tile() {
-        // Human verification status: unverified
         // Entire tile lies in a zero-scaled bin
         let core_start = 60u32;
-        let bins = vec![(50u64, 150u64, 0.0f32)];
+        let bins = vec![sb(50, 150, 0.0)];
         let mut cov = (0..20).map(|i| i as f32 + 1.0).collect::<Vec<_>>();
         apply_scaling_to_coverage_in_place(&mut cov, core_start, &bins);
 
@@ -79,7 +80,6 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_noop_on_empty_inputs() {
-        // Human verification status: unverified
         // No bins or empty coverage should be a no-op
         let core_start = 100u32;
 
@@ -88,11 +88,7 @@ mod tests_apply_scaling {
         assert!(cov1.is_empty());
 
         let mut cov_with_bins = vec![] as Vec<f32>;
-        apply_scaling_to_coverage_in_place(
-            &mut cov_with_bins,
-            core_start,
-            &[(90u64, 110u64, 2.0f32)],
-        );
+        apply_scaling_to_coverage_in_place(&mut cov_with_bins, core_start, &[sb(90, 110, 2.0)]);
         assert!(cov_with_bins.is_empty());
 
         let mut cov2 = vec![1.0f32, 2.0, 3.0];
@@ -102,12 +98,11 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_non_overlapping_bins_on_both_sides_leave_varied_tile_unchanged() {
-        // Human verification status: unverified
         // Tile [500, 510), with one scaling bin entirely left and one entirely right.
         // This is the real no-op case with non-empty scaling input: the function must not touch
         // any element just because unrelated bins exist elsewhere on the chromosome.
         let core_start = 500u32;
-        let bins = vec![(100u64, 200u64, 2.0f32), (520u64, 600u64, 0.25f32)];
+        let bins = vec![sb(100, 200, 2.0), sb(520, 600, 0.25)];
         let mut cov = vec![1.0f32, 3.5, 2.0, 7.0, 0.5, 9.0, 4.0, 8.0, 6.0, 5.5];
         let expected = cov.clone();
 
@@ -118,14 +113,13 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_multiple_bins_exact_edges() {
-        // Human verification status: unverified
         // Tile aligns exactly to bin edges
         // Bins: [1000,1010) sf=2, [1010,1020) sf=0, [1020,1030) sf=0.5
         let core_start = 1000u32;
         let bins = vec![
-            (1000u64, 1010u64, 2.0f32),
-            (1010, 1020, 0.0),
-            (1020, 1030, 0.5),
+            sb(1000, 1010, 2.0),
+            sb(1010, 1020, 0.0),
+            sb(1020, 1030, 0.5),
         ];
         let mut cov = vec![6.0f32; 30]; // First 30 cover those bins
         apply_scaling_to_coverage_in_place(&mut cov, core_start, &bins);
@@ -145,12 +139,11 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_bins_entirely_left_of_tile_noop() {
-        // Human verification status: unverified
         // All bins end before the tile starts -> no effect.
         // Include one bin that touches the tile boundary exactly at `core_start` to prove the
         // implementation treats the bins as half-open and does not scale index 0 by mistake.
         let core_start = 500u32;
-        let bins = vec![(100u64, 200u64, 2.0f32), (490, 500, 0.5)];
+        let bins = vec![sb(100, 200, 2.0), sb(490, 500, 0.5)];
         let mut cov = vec![7.0f32, 1.0, 9.0, 3.5, 2.25, 4.0, 8.0, 6.5, 5.0, 10.0];
         let expected = cov.clone();
         apply_scaling_to_coverage_in_place(&mut cov, core_start, &bins);
@@ -160,12 +153,11 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_bins_entirely_right_of_tile_noop() {
-        // Human verification status: unverified
         // All bins start after the tile ends -> no effect.
         // Include one bin that starts exactly at the tile end to prove the half-open convention at
         // the right boundary.
         let core_start = 100u32;
-        let bins = vec![(108u64, 200u64, 2.0f32), (1000, 2000, 0.5)];
+        let bins = vec![sb(108, 200, 2.0), sb(1000, 2000, 0.5)];
         let mut cov = vec![4.0f32, 1.5, 7.0, 2.0, 9.0, 3.0, 8.5, 6.0];
         let expected = cov.clone();
         apply_scaling_to_coverage_in_place(&mut cov, core_start, &bins);
@@ -175,11 +167,10 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_partial_left_overlap_only() {
-        // Human verification status: unverified
         // Bin overlaps only the left edge of the tile
         // Tile: [200, 210), Bin: [195, 205) sf=3.0 -> indices 0..5 scaled by 3
         let core_start = 200u32;
-        let bins = vec![(195u64, 205u64, 3.0f32)];
+        let bins = vec![sb(195, 205, 3.0)];
         let mut cov = vec![2.0f32; 10];
         apply_scaling_to_coverage_in_place(&mut cov, core_start, &bins);
 
@@ -192,11 +183,10 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_partial_right_overlap_only() {
-        // Human verification status: unverified
         // Bin overlaps only the right edge of the tile
         // Tile: [300, 312), Bin: [308, 400) sf=0.25 -> indices 8..12 scaled by 0.25
         let core_start = 300u32;
-        let bins = vec![(308u64, 400u64, 0.25f32)];
+        let bins = vec![sb(308, 400, 0.25)];
         let mut cov = vec![20.0f32; 12];
         apply_scaling_to_coverage_in_place(&mut cov, core_start, &bins);
 
@@ -209,15 +199,11 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_many_small_bins_inside_tile() {
-        // Human verification status: unverified
         // Tile: [1000, 1010). Bins: per-base alternating 2.0 and 0.5.
         let core_start = 1000u32;
         let bins = (1000u64..1010u64)
             .enumerate()
-            .map(|(i, s)| {
-                let sf = if i % 2 == 0 { 2.0f32 } else { 0.5f32 };
-                (s, s + 1, sf)
-            })
+            .map(|(i, s)| sb(s, s + 1, if i % 2 == 0 { 2.0 } else { 0.5 }))
             .collect::<Vec<_>>();
         let mut cov = vec![10.0f32; 10];
         apply_scaling_to_coverage_in_place(&mut cov, core_start, &bins);
@@ -234,7 +220,10 @@ mod tests_compute_window_scaling {
     use cfdnalab::shared::{
         interval::{IndexedInterval, Interval},
         overlaps::{OverlappingWindow, OverlappingWindows, find_overlapping_windows},
-        scale_genome::{compute_window_scaling_over_fragment, compute_window_scaling_over_overlap},
+        scale_genome::{
+            ScalingBin, build_reference_based_scaling_overlaps_for_assignment_overlaps,
+            compute_per_window_scaling_over_fragment, compute_per_window_scaling_over_overlap,
+        },
     };
 
     fn assert_f64_close(actual: f64, expected: f64, eps: f64, context: &str) {
@@ -243,6 +232,10 @@ mod tests_compute_window_scaling {
             diff <= eps,
             "{context}: got {actual}, expected {expected}, |diff|={diff}"
         );
+    }
+
+    fn sb(s: u64, e: u64, w: f32) -> ScalingBin {
+        ScalingBin::new(s, e, w).unwrap()
     }
 
     fn make_two_window_fragment_overlaps() -> anyhow::Result<OverlappingWindows> {
@@ -260,20 +253,283 @@ mod tests_compute_window_scaling {
         overlaps.windows.push(OverlappingWindow::new(
             0,
             Interval::new(0, 50)?,
-            30.0_f32 / 61.0_f32,
+            30.0 / 61.0,
         )?);
         overlaps.windows.push(OverlappingWindow::new(
             1,
             Interval::new(50, 100)?,
-            31.0_f32 / 61.0_f32,
+            31.0 / 61.0,
+        )?);
+        Ok(overlaps)
+    }
+
+    fn make_nontrivial_window_fragment_overlaps() -> anyhow::Result<OverlappingWindows> {
+        // Query/fragment interval is [20,90), length 70.
+        //
+        // Count windows:
+        // - idx 5, interval [0,50)    -> overlap [20,50) = 30 bp
+        // - idx 8, interval [50,100)  -> overlap [50,90) = 40 bp
+        //
+        // The deliberately non-sequential indices make this sensitive to row identity. A caller
+        // must not infer that output position and window index are interchangeable.
+        let fragment = Interval::new(20, 90)?;
+        let mut overlaps = OverlappingWindows::new(fragment);
+        overlaps.windows.push(OverlappingWindow::new(
+            5,
+            Interval::new(0, 50)?,
+            30.0 / 70.0,
+        )?);
+        overlaps.windows.push(OverlappingWindow::new(
+            8,
+            Interval::new(50, 100)?,
+            40.0 / 70.0,
         )?);
         Ok(overlaps)
     }
 
     #[test]
-    fn compute_window_scaling_over_fragment_uses_explicit_full_fragment_span_for_every_overlapping_window()
+    fn reference_based_scaling_overlaps_use_aligned_overlap_or_nearest_aligned_base()
     -> anyhow::Result<()> {
-        // Human verification status: unverified
+        // Human verification status: verified by hand
+        // Arrange:
+        // Assignment interval [8,22) extends beyond aligned interval [10,20).
+        // Three selected assignment windows cover:
+        // - [8,9):   clipped-only left  -> average nearest aligned base [10,11)
+        // - [14,16): aligned overlap    -> average [14,16)
+        // - [21,22): clipped-only right -> average nearest aligned base [19,20)
+        //
+        // Scaling bins make those three scaling intervals distinguishable:
+        // - [10,11): 2
+        // - [14,16): 5
+        // - [19,20): 7
+        let mut assignment_overlaps = OverlappingWindows::new(Interval::new(8, 22)?);
+        assignment_overlaps.windows.push(OverlappingWindow::new(
+            5,
+            Interval::new(8, 9)?,
+            1.0 / 14.0,
+        )?);
+        assignment_overlaps.windows.push(OverlappingWindow::new(
+            6,
+            Interval::new(14, 16)?,
+            2.0 / 14.0,
+        )?);
+        assignment_overlaps.windows.push(OverlappingWindow::new(
+            7,
+            Interval::new(21, 22)?,
+            1.0 / 14.0,
+        )?);
+        let aligned_interval = Interval::new(10, 20)?;
+        let scaling_chr = vec![
+            sb(0, 10, 100.0),
+            sb(10, 11, 2.0),
+            sb(11, 14, 1.0),
+            sb(14, 16, 5.0),
+            sb(16, 19, 1.0),
+            sb(19, 20, 7.0),
+            sb(20, 30, 100.0),
+        ];
+        let scaling_bin_indices = vec![1_usize, 2, 3, 4, 5];
+
+        // Act
+        let scaling_overlaps = build_reference_based_scaling_overlaps_for_assignment_overlaps(
+            &assignment_overlaps,
+            aligned_interval,
+        )?;
+        let scaled_rows = compute_per_window_scaling_over_overlap(
+            &assignment_overlaps,
+            Some(&scaling_overlaps),
+            &scaling_bin_indices,
+            &scaling_chr,
+        )?;
+
+        // Assert
+        assert_eq!(scaling_overlaps.interval, aligned_interval);
+        assert_eq!(scaling_overlaps.windows.len(), 3);
+        assert_eq!(scaling_overlaps.windows[0].idx, 5);
+        assert_eq!(scaling_overlaps.windows[0].interval, Interval::new(10, 11)?);
+        assert_f64_close(
+            scaling_overlaps.windows[0].overlap_fraction,
+            1.0 / 14.0,
+            1e-12,
+            "left clipped-only assignment fraction",
+        );
+        assert_eq!(scaling_overlaps.windows[1].idx, 6);
+        assert_eq!(scaling_overlaps.windows[1].interval, Interval::new(14, 16)?);
+        assert_f64_close(
+            scaling_overlaps.windows[1].overlap_fraction,
+            2.0 / 14.0,
+            1e-12,
+            "aligned assignment fraction",
+        );
+        assert_eq!(scaling_overlaps.windows[2].idx, 7);
+        assert_eq!(scaling_overlaps.windows[2].interval, Interval::new(19, 20)?);
+        assert_f64_close(
+            scaling_overlaps.windows[2].overlap_fraction,
+            1.0 / 14.0,
+            1e-12,
+            "right clipped-only assignment fraction",
+        );
+
+        assert_eq!(scaled_rows.len(), 3);
+        assert_eq!(scaled_rows[0].window_idx, 5);
+        assert_eq!(scaled_rows[0].window_interval, Interval::new(8, 9)?);
+        assert_eq!(scaled_rows[0].scaling_interval, Interval::new(10, 11)?);
+        assert_f64_close(
+            scaled_rows[0].scaling_weight,
+            2.0,
+            1e-12,
+            "left nearest weight",
+        );
+        assert_f64_close(
+            scaled_rows[0].overlap_fraction_to_count,
+            1.0 / 14.0,
+            1e-12,
+            "left overlap fraction to count",
+        );
+        assert_eq!(scaled_rows[1].window_idx, 6);
+        assert_eq!(scaled_rows[1].window_interval, Interval::new(14, 16)?);
+        assert_eq!(scaled_rows[1].scaling_interval, Interval::new(14, 16)?);
+        assert_f64_close(
+            scaled_rows[1].scaling_weight,
+            5.0,
+            1e-12,
+            "aligned overlap weight",
+        );
+        assert_f64_close(
+            scaled_rows[1].overlap_fraction_to_count,
+            2.0 / 14.0,
+            1e-12,
+            "aligned overlap fraction to count",
+        );
+        assert_eq!(scaled_rows[2].window_idx, 7);
+        assert_eq!(scaled_rows[2].window_interval, Interval::new(21, 22)?);
+        assert_eq!(scaled_rows[2].scaling_interval, Interval::new(19, 20)?);
+        assert_f64_close(
+            scaled_rows[2].scaling_weight,
+            7.0,
+            1e-12,
+            "right nearest weight",
+        );
+        assert_f64_close(
+            scaled_rows[2].overlap_fraction_to_count,
+            1.0 / 14.0,
+            1e-12,
+            "right overlap fraction to count",
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn compute_window_scaling_helpers_preserve_selected_window_row_identity() -> anyhow::Result<()>
+    {
+        // Human verification status: verified by hand
+        // Arrange:
+        // Use one fragment/query interval [20,90) and two count windows with non-sequential
+        // indices. The expected rows must stay in count-window order and carry the selected
+        // window interval directly:
+        // - row 0 carries window idx 5, interval [0,50), and overlap fraction 30/70
+        // - row 1 carries window idx 8, interval [50,100), and overlap fraction 40/70
+        //
+        // Scaling bins:
+        // - [0,30):   1
+        // - [30,70):  3
+        // - [70,120): 5
+        //
+        // Full-fragment average over [20,90):
+        //   ([20,30) 10 bp * 1 + [30,70) 40 bp * 3 + [70,90) 20 bp * 5) / 70
+        //   = (10 + 120 + 100) / 70 = 23/7.
+        //
+        // Overlap-only averages:
+        // - left overlap [20,50): 10 bp at 1 and 20 bp at 3
+        //   -> (10 + 60) / 30 = 7/3
+        // - right overlap [50,90): 20 bp at 3 and 20 bp at 5
+        //   -> (60 + 100) / 40 = 4
+        let count_overlaps = make_nontrivial_window_fragment_overlaps()?;
+        let scaling_chr = vec![sb(0, 30, 1.0), sb(30, 70, 3.0), sb(70, 120, 5.0)];
+        let scaling_bin_indices = vec![0_usize, 1, 2];
+
+        // Act
+        let fragment_rows = compute_per_window_scaling_over_fragment(
+            Interval::new(20, 90)?,
+            &count_overlaps,
+            &scaling_bin_indices,
+            &scaling_chr,
+        )?;
+        let overlap_rows = compute_per_window_scaling_over_overlap(
+            &count_overlaps,
+            None,
+            &scaling_bin_indices,
+            &scaling_chr,
+        )?;
+
+        // Assert
+        assert_eq!(fragment_rows.len(), 2);
+        assert_eq!(fragment_rows[0].window_idx, 5);
+        assert_eq!(fragment_rows[0].window_interval, Interval::new(0, 50)?);
+        assert_f64_close(
+            fragment_rows[0].scaling_weight,
+            23.0 / 7.0,
+            1e-12,
+            "left full-fragment weight",
+        );
+        assert_f64_close(
+            fragment_rows[0].overlap_fraction_to_count,
+            1.0,
+            1e-12,
+            "left full-fragment overlap fraction",
+        );
+        assert_eq!(fragment_rows[1].window_idx, 8);
+        assert_eq!(fragment_rows[1].window_interval, Interval::new(50, 100)?);
+        assert_f64_close(
+            fragment_rows[1].scaling_weight,
+            23.0 / 7.0,
+            1e-12,
+            "right full-fragment weight",
+        );
+        assert_f64_close(
+            fragment_rows[1].overlap_fraction_to_count,
+            1.0,
+            1e-12,
+            "right full-fragment overlap fraction",
+        );
+
+        assert_eq!(overlap_rows.len(), 2);
+        assert_eq!(overlap_rows[0].window_idx, 5);
+        assert_eq!(overlap_rows[0].window_interval, Interval::new(0, 50)?);
+        assert_f64_close(
+            overlap_rows[0].scaling_weight,
+            7.0 / 3.0,
+            1e-12,
+            "left overlap-only weight",
+        );
+        assert_f64_close(
+            overlap_rows[0].overlap_fraction_to_count,
+            30.0 / 70.0,
+            1e-12,
+            "left overlap fraction",
+        );
+        assert_eq!(overlap_rows[1].window_idx, 8);
+        assert_eq!(overlap_rows[1].window_interval, Interval::new(50, 100)?);
+        assert_f64_close(
+            overlap_rows[1].scaling_weight,
+            4.0,
+            1e-12,
+            "right overlap-only weight",
+        );
+        assert_f64_close(
+            overlap_rows[1].overlap_fraction_to_count,
+            40.0 / 70.0,
+            1e-12,
+            "right overlap fraction",
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn compute_per_window_scaling_over_fragment_uses_explicit_full_fragment_span_for_every_overlapping_window()
+    -> anyhow::Result<()> {
         // Arrange:
         // Use one fragment/query interval [20,81) and two overlapping count windows:
         // - [0,50)
@@ -293,16 +549,16 @@ mod tests_compute_window_scaling {
         // window that overlaps the fragment, and the reported overlap fraction is always 1.0.
         let count_overlaps = make_two_window_fragment_overlaps()?;
         let scaling_chr = vec![
-            (0_u64, 20_u64, 0.0_f32),
-            (20, 40, 1.0),
-            (40, 60, 1.0),
-            (60, 80, 1.0),
-            (80, 200, 0.0),
+            sb(0, 20, 0.0),
+            sb(20, 40, 1.0),
+            sb(40, 60, 1.0),
+            sb(60, 80, 1.0),
+            sb(80, 200, 0.0),
         ];
         let scaling_bin_indices = vec![0_usize, 1, 2, 3, 4];
 
         // Act
-        let out = compute_window_scaling_over_fragment(
+        let out = compute_per_window_scaling_over_fragment(
             Interval::new(20, 81)?,
             &count_overlaps,
             &scaling_bin_indices,
@@ -312,29 +568,41 @@ mod tests_compute_window_scaling {
         // Assert
         assert_eq!(out.len(), 2);
         let expected_weight = 60.0_f64 / 61.0_f64;
-        assert_eq!(out[0].0, 0);
+        assert_eq!(out[0].window_idx, 0);
+        assert_eq!(out[0].window_interval, Interval::new(0, 50)?);
         assert_f64_close(
-            out[0].1,
+            out[0].scaling_weight,
             expected_weight,
             1e-12,
             "left full-fragment weight",
         );
-        assert_f64_close(out[0].2, 1.0, 1e-12, "left full-fragment overlap fraction");
-        assert_eq!(out[1].0, 1);
         assert_f64_close(
-            out[1].1,
+            out[0].overlap_fraction_to_count,
+            1.0,
+            1e-12,
+            "left full-fragment overlap fraction",
+        );
+        assert_eq!(out[1].window_idx, 1);
+        assert_eq!(out[1].window_interval, Interval::new(50, 100)?);
+        assert_f64_close(
+            out[1].scaling_weight,
             expected_weight,
             1e-12,
             "right full-fragment weight",
         );
-        assert_f64_close(out[1].2, 1.0, 1e-12, "right full-fragment overlap fraction");
+        assert_f64_close(
+            out[1].overlap_fraction_to_count,
+            1.0,
+            1e-12,
+            "right full-fragment overlap fraction",
+        );
 
         Ok(())
     }
 
     #[test]
-    fn compute_window_scaling_over_overlap_uses_each_window_overlap_span() -> anyhow::Result<()> {
-        // Human verification status: unverified
+    fn compute_per_window_scaling_over_overlap_uses_each_window_overlap_span() -> anyhow::Result<()>
+    {
         // Arrange:
         // Reuse the same fragment/query interval [20,81), count windows, and scaling bins as the
         // previous test.
@@ -354,40 +622,48 @@ mod tests_compute_window_scaling {
         // - right = 31/61
         let count_overlaps = make_two_window_fragment_overlaps()?;
         let scaling_chr = vec![
-            (0_u64, 20_u64, 0.0_f32),
-            (20, 40, 1.0),
-            (40, 60, 1.0),
-            (60, 80, 1.0),
-            (80, 200, 0.0),
+            sb(0, 20, 0.0),
+            sb(20, 40, 1.0),
+            sb(40, 60, 1.0),
+            sb(60, 80, 1.0),
+            sb(80, 200, 0.0),
         ];
         let scaling_bin_indices = vec![0_usize, 1, 2, 3, 4];
 
         // Act
-        let out = compute_window_scaling_over_overlap(
+        let out = compute_per_window_scaling_over_overlap(
             &count_overlaps,
+            None,
             &scaling_bin_indices,
             &scaling_chr,
         )?;
 
         // Assert
         assert_eq!(out.len(), 2);
-        assert_eq!(out[0].0, 0);
-        assert_f64_close(out[0].1, 1.0, 1e-12, "left overlap-only weight");
+        assert_eq!(out[0].window_idx, 0);
+        assert_eq!(out[0].window_interval, Interval::new(0, 50)?);
         assert_f64_close(
-            out[0].2,
+            out[0].scaling_weight,
+            1.0,
+            1e-12,
+            "left overlap-only weight",
+        );
+        assert_f64_close(
+            out[0].overlap_fraction_to_count,
             (30.0_f32 / 61.0_f32) as f64,
             1e-7,
             "left overlap fraction",
         );
-        assert_eq!(out[1].0, 1);
+        assert_eq!(out[1].window_idx, 1);
+        assert_eq!(out[1].window_interval, Interval::new(50, 100)?);
         assert_f64_close(
-            out[1].1,
+            out[1].scaling_weight,
             30.0_f64 / 31.0_f64,
             1e-12,
             "right overlap-only weight",
         );
         assert_f64_close(
-            out[1].2,
+            out[1].overlap_fraction_to_count,
             (31.0_f32 / 61.0_f32) as f64,
             1e-7,
             "right overlap fraction",
@@ -399,7 +675,6 @@ mod tests_compute_window_scaling {
     #[test]
     fn scaling_bin_overlap_pipeline_recovers_chrom_local_indices_and_correct_fragment_weight()
     -> anyhow::Result<()> {
-        // Human verification status: unverified
         // Arrange:
         // Exercise the intended scaling pipeline directly, independent of any command:
         //
@@ -412,7 +687,7 @@ mod tests_compute_window_scaling {
         // 2. Build an ordered BED-mode window list from that table.
         // 3. Ask the overlap finder which scaling bins touch fragment [20,81).
         // 4. Recover the overlap finder scan indices from the result.
-        // 5. Feed those indices into `compute_window_scaling_over_fragment(...)`.
+        // 5. Feed those indices into `compute_per_window_scaling_over_fragment(...)`.
         //
         // In BED mode, `find_overlapping_windows(...)` returns the scan position inside the
         // supplied ordered window list, not `IndexedInterval.idx`. This still gives the correct
@@ -433,17 +708,17 @@ mod tests_compute_window_scaling {
         let fragment = Interval::new(20_u64, 81_u64)?;
         let count_overlaps = make_two_window_fragment_overlaps()?;
         let scaling_chr = vec![
-            (0_u64, 20_u64, 0.0_f32),
-            (20, 40, 1.0),
-            (40, 60, 2.0),
-            (60, 80, 4.0),
-            (80, 200, 8.0),
+            sb(0, 20, 0.0),
+            sb(20, 40, 1.0),
+            sb(40, 60, 2.0),
+            sb(60, 80, 4.0),
+            sb(80, 200, 8.0),
         ];
         let scaling_with_bin_idx: Vec<IndexedInterval<u64>> = scaling_chr
             .iter()
             .enumerate()
-            .map(|(idx, (start, end, _))| IndexedInterval::new(*start, *end, idx as u64))
-            .collect::<cfdnalab::Result<_>>()?;
+            .map(|(idx, b)| IndexedInterval::from_interval(b.interval, idx as u64))
+            .collect();
 
         // Act:
         // Recover the overlapping scaling-bin indices through the same BED-mode overlap-finder
@@ -465,7 +740,7 @@ mod tests_compute_window_scaling {
             .map(|window| window.idx)
             .collect();
 
-        let per_window_scaling = compute_window_scaling_over_fragment(
+        let per_window_scaling = compute_per_window_scaling_over_fragment(
             fragment,
             &count_overlaps,
             &overlapping_scaling_bin_indices,
@@ -488,37 +763,588 @@ mod tests_compute_window_scaling {
             "both count windows should receive the fragment-level scaling weight"
         );
         assert_eq!(
-            per_window_scaling[0].0, 0,
+            per_window_scaling[0].window_idx, 0,
             "left count window should retain its original window index"
         );
         assert_eq!(
-            per_window_scaling[1].0, 1,
+            per_window_scaling[1].window_idx, 1,
             "right count window should retain its original window index"
         );
         assert_f64_close(
-            per_window_scaling[0].1,
+            per_window_scaling[0].scaling_weight,
             148.0 / 61.0,
             1e-12,
             "left window fragment-average scaling",
         );
         assert_f64_close(
-            per_window_scaling[1].1,
+            per_window_scaling[1].scaling_weight,
             148.0 / 61.0,
             1e-12,
             "right window fragment-average scaling",
         );
         assert_f64_close(
-            per_window_scaling[0].2,
+            per_window_scaling[0].overlap_fraction_to_count,
             1.0,
             1e-12,
             "left window full-fragment overlap fraction",
         );
         assert_f64_close(
-            per_window_scaling[1].2,
+            per_window_scaling[1].overlap_fraction_to_count,
             1.0,
             1e-12,
             "right window full-fragment overlap fraction",
         );
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests_load_scaling_factors_tsv {
+    use cfdnalab::shared::{
+        bam::Contigs,
+        scale_genome::{ScalingBin, ScalingGCMode, load_scaling_factors_tsv},
+    };
+
+    fn sb(s: u64, e: u64, w: f32) -> ScalingBin {
+        ScalingBin::new(s, e, w).unwrap()
+    }
+    use fxhash::FxHashMap;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    fn contigs_for_chr1(len: u32) -> Contigs {
+        let mut contigs = FxHashMap::default();
+        contigs.insert("chr1".to_string(), (0, len));
+        Contigs { contigs }
+    }
+
+    fn contigs_for_lengths(entries: &[(&str, u32)]) -> Contigs {
+        let mut contigs = FxHashMap::default();
+        for (idx, (chromosome, len)) in entries.iter().enumerate() {
+            contigs.insert((*chromosome).to_string(), (idx as i32, *len));
+        }
+        Contigs { contigs }
+    }
+
+    fn write_scaling_file(contents: &str) -> anyhow::Result<NamedTempFile> {
+        let mut file = NamedTempFile::new()?;
+        file.write_all(contents.as_bytes())?;
+        Ok(file)
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_defaults_to_unknown_when_metadata_is_absent() -> anyhow::Result<()>
+    {
+        // The file has no metadata comments, so parsing should keep the GC mode as Unknown instead
+        // of guessing "uncorrected". The two bins still fully cover chr1: [0,5) and [5,10).
+        let file = write_scaling_file(
+            "chromosome\tstart\tend\tscaling_factor\nchr1\t0\t5\t1.25\nchr1\t5\t10\t0.75\n",
+        )?;
+
+        let loaded =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))?;
+
+        assert_eq!(loaded.metadata.gc_mode, ScalingGCMode::Unknown);
+        assert_eq!(
+            loaded.bins_by_chromosome.get("chr1"),
+            Some(&vec![sb(0, 5, 1.25), sb(5, 10, 0.75)])
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_reads_explicit_gc_mode_before_header() -> anyhow::Result<()> {
+        // The file starts with one GC-mode line and one unrelated comment line, then a normal
+        // header and two bins that fully cover chr1: [0,5) and [5,10). The parser should keep the
+        // richer `corrected_tag` source information.
+        let file = write_scaling_file(
+            "# gc_mode=corrected_tag\n# generated_by=test\nchromosome\tstart\tend\tscaling_factor\nchr1\t0\t5\t1.25\nchr1\t5\t10\t0.75\n",
+        )?;
+
+        let loaded =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))?;
+
+        assert!(
+            matches!(loaded.metadata.gc_mode, ScalingGCMode::CorrectedFromTag),
+            "expected corrected_tag GC mode to be preserved"
+        );
+        assert_eq!(
+            loaded.bins_by_chromosome.get("chr1"),
+            Some(&vec![sb(0, 5, 1.25), sb(5, 10, 0.75)])
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_reads_ignore_gap_metadata_before_header() -> anyhow::Result<()> {
+        // Coverage-based scaling files can record whether the source coverage omitted inter-mate
+        // gaps. The parser should keep that as optional metadata without affecting row parsing.
+        let file = write_scaling_file(
+            "# gc_mode=uncorrected\n# ignore_gap=true\nchromosome\tstart\tend\tscaling_factor\nchr1\t0\t10\t1.0\n",
+        )?;
+
+        let loaded =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))?;
+
+        assert_eq!(loaded.metadata.ignore_gap, Some(true));
+        assert_eq!(
+            loaded.bins_by_chromosome.get("chr1"),
+            Some(&vec![sb(0, 10, 1.0)])
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_rejects_invalid_ignore_gap_value() -> anyhow::Result<()> {
+        // `ignore_gap` is boolean metadata. Values other than true/false should fail before row
+        // parsing so typoed metadata does not silently disable the downstream warning.
+        let file = write_scaling_file(
+            "# ignore_gap=maybe\nchromosome\tstart\tend\tscaling_factor\nchr1\t0\t10\t1.0\n",
+        )?;
+
+        let err =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
+                .expect_err("invalid ignore_gap metadata should fail");
+
+        assert!(
+            err.to_string()
+                .contains("invalid value 'maybe' for scaling metadata key 'ignore_gap'"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_rejects_invalid_gc_mode_value() -> anyhow::Result<()> {
+        // `gc_mode` is enumerated metadata, so any other value should fail before row parsing.
+        let file = write_scaling_file(
+            "# gc_mode=maybe\nchromosome\tstart\tend\tscaling_factor\nchr1\t0\t10\t1.0\n",
+        )?;
+
+        let err =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
+                .expect_err("invalid metadata value should fail");
+
+        assert!(
+            err.to_string().contains("invalid value 'maybe'"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_rejects_duplicate_gc_mode_metadata() -> anyhow::Result<()> {
+        // Metadata keys should be unambiguous. Two `gc_mode` lines before the header would let the
+        // second one silently overwrite the first, so that input must fail during header parsing.
+        let file = write_scaling_file(
+            "# gc_mode=uncorrected\n# gc_mode=corrected_tag\nchromosome\tstart\tend\tscaling_factor\nchr1\t0\t10\t1.0\n",
+        )?;
+
+        let err =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
+                .expect_err("duplicate gc_mode metadata should fail");
+
+        assert!(
+            err.to_string()
+                .contains("duplicate scaling metadata key 'gc_mode'"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_rejects_blank_line_before_header() -> anyhow::Result<()> {
+        // The format allows metadata comments before the header, but a blank line there is
+        // ambiguous and should not be silently skipped when the header is required.
+        let file =
+            write_scaling_file("\nchromosome\tstart\tend\tscaling_factor\nchr1\t0\t10\t1.0\n")?;
+
+        let err =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
+                .expect_err("blank line before header should fail");
+
+        assert!(
+            err.to_string()
+                .contains("blank lines are not allowed before the scaling TSV header"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_matches_header_case_insensitively() -> anyhow::Result<()> {
+        // Column lookup should ignore case, so an uppercase header must still parse as the same
+        // required four fields.
+        let file =
+            write_scaling_file("CHROMOSOME\tSTART\tEND\tSCALING_FACTOR\nchr1\t0\t10\t1.5\n")?;
+
+        let loaded =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))?;
+
+        assert_eq!(
+            loaded.bins_by_chromosome.get("chr1"),
+            Some(&vec![sb(0, 10, 1.5)])
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_rejects_missing_required_header_column() -> anyhow::Result<()> {
+        // Omitting `scaling_factor` from the header must fail before any row parsing starts.
+        let file = write_scaling_file("chromosome\tstart\tend\nchr1\t0\t10\n")?;
+
+        let err =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
+                .expect_err("missing required header column should fail");
+
+        assert!(
+            err.to_string()
+                .contains("required column 'scaling_factor' not found in header"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_rejects_short_data_row() -> anyhow::Result<()> {
+        // A row missing the rightmost required field must fail with the line number and the
+        // expected number of columns.
+        let file = write_scaling_file("chromosome\tstart\tend\tscaling_factor\nchr1\t0\t10\n")?;
+
+        let err =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
+                .expect_err("short row should fail");
+
+        assert!(
+            err.to_string().contains("not enough columns"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_rejects_invalid_interval() -> anyhow::Result<()> {
+        // Row-level coordinate validation happens before chromosome-level contiguity checks, so a
+        // zero-width interval [5,5) must fail immediately.
+        let file = write_scaling_file("chromosome\tstart\tend\tscaling_factor\nchr1\t5\t5\t1.0\n")?;
+
+        let err =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
+                .expect_err("empty interval should fail");
+
+        assert!(
+            err.to_string().contains("invalid interval [5..5)"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_rejects_negative_scaling_factor() -> anyhow::Result<()> {
+        // Scaling factors are multiplicative weights and must be finite and non-negative.
+        let file =
+            write_scaling_file("chromosome\tstart\tend\tscaling_factor\nchr1\t0\t10\t-1.0\n")?;
+
+        let err =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
+                .expect_err("negative scaling factor should fail");
+
+        assert!(
+            err.to_string()
+                .contains("scaling_factor must be finite and >= 0"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_sorts_requested_chromosome_bins_by_start() -> anyhow::Result<()> {
+        // The loader promises sorted bins per chromosome, so an out-of-order but otherwise valid
+        // file should still load as contiguous [0,5) then [5,10).
+        let file = write_scaling_file(
+            "chromosome\tstart\tend\tscaling_factor\nchr1\t5\t10\t0.75\nchr1\t0\t5\t1.25\n",
+        )?;
+
+        let loaded =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))?;
+
+        assert_eq!(
+            loaded.bins_by_chromosome.get("chr1"),
+            Some(&vec![sb(0, 5, 1.25), sb(5, 10, 0.75)])
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_ignores_unrequested_chromosomes() -> anyhow::Result<()> {
+        // Rows for other chromosomes should be filtered out before storage. Only the requested
+        // chromosome must remain in the returned map.
+        let file = write_scaling_file(
+            "chromosome\tstart\tend\tscaling_factor\nchr1\t0\t10\t1.0\nchr2\t0\t5\t2.0\nchr2\t5\t10\t3.0\n",
+        )?;
+
+        let loaded =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))?;
+
+        assert_eq!(loaded.bins_by_chromosome.len(), 1);
+        assert_eq!(
+            loaded.bins_by_chromosome.get("chr1"),
+            Some(&vec![sb(0, 10, 1.0)])
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_errors_when_requested_chromosome_has_no_bins() -> anyhow::Result<()>
+    {
+        // Filtering out other chromosomes must not silently succeed when the requested chromosome
+        // ends up with no bins at all.
+        let file =
+            write_scaling_file("chromosome\tstart\tend\tscaling_factor\nchr2\t0\t10\t1.0\n")?;
+
+        let err =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
+                .expect_err("requested chromosome without bins should fail");
+
+        assert!(
+            err.to_string()
+                .contains("scaling TSV: no bins provided for chromosome 'chr1'"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_errors_when_bins_do_not_start_at_zero() -> anyhow::Result<()> {
+        // Full chromosome coverage must begin at 0, so a first bin [5,10) is invalid even if it
+        // would otherwise reach the contig end.
+        let file =
+            write_scaling_file("chromosome\tstart\tend\tscaling_factor\nchr1\t5\t10\t1.0\n")?;
+
+        let err =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
+                .expect_err("bins that start after 0 should fail");
+
+        assert!(
+            err.to_string()
+                .contains("scaling TSV: bins on 'chr1' must start at 0"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_errors_when_bins_have_a_gap() -> anyhow::Result<()> {
+        // Contiguous half-open bins [0,5) and [6,10) leave one uncovered base at position 5, so
+        // the chromosome-level sweep must reject them as non-contiguous.
+        let file = write_scaling_file(
+            "chromosome\tstart\tend\tscaling_factor\nchr1\t0\t5\t1.0\nchr1\t6\t10\t1.0\n",
+        )?;
+
+        let err =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
+                .expect_err("gapped bins should fail");
+
+        assert!(
+            err.to_string().contains("not contiguous"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_errors_when_bins_overlap() -> anyhow::Result<()> {
+        // Overlapping bins [0,6) and [5,10) break the same contiguity invariant from the other
+        // direction because the second bin starts before the previous one ended.
+        let file = write_scaling_file(
+            "chromosome\tstart\tend\tscaling_factor\nchr1\t0\t6\t1.0\nchr1\t5\t10\t1.0\n",
+        )?;
+
+        let err =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
+                .expect_err("overlapping bins should fail");
+
+        assert!(
+            err.to_string().contains("not contiguous"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_errors_when_bins_do_not_reach_contig_end() -> anyhow::Result<()> {
+        // A single bin [0,8) on a 10 bp chromosome leaves the tail uncovered, so full-coverage
+        // validation must reject it.
+        let file = write_scaling_file("chromosome\tstart\tend\tscaling_factor\nchr1\t0\t8\t1.0\n")?;
+
+        let err =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
+                .expect_err("truncated chromosome coverage should fail");
+
+        assert!(
+            err.to_string()
+                .contains("must end at chrom_len=10 (got end=8)"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_errors_when_requested_contig_metadata_is_missing()
+    -> anyhow::Result<()> {
+        // The loader validates full chromosome coverage against BAM contig lengths, so requesting a
+        // chromosome missing from `contigs` must fail even if the TSV rows themselves look valid.
+        let file =
+            write_scaling_file("chromosome\tstart\tend\tscaling_factor\nchr1\t0\t10\t1.0\n")?;
+        let contigs = contigs_for_lengths(&[("chr2", 10)]);
+
+        let err = load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs)
+            .expect_err("missing contig metadata should fail");
+
+        assert!(
+            err.to_string().contains("missing contig info for 'chr1'"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests_scaling_gc_compatibility {
+    use cfdnalab::shared::scale_genome::{
+        ScalingFactorsMetadata, ScalingGCMode, ensure_scaling_gc_compatibility,
+        scaling_gc_mode_for_run,
+    };
+    use std::path::Path;
+
+    #[test]
+    fn scaling_gc_compatibility_allows_unknown_scaling_gc_mode() -> anyhow::Result<()> {
+        let path = Path::new("/tmp/example.scaling_factors.tsv");
+        let metadata = ScalingFactorsMetadata {
+            gc_mode: ScalingGCMode::Unknown,
+            ignore_gap: None,
+        };
+
+        // Missing metadata should never block use, even when the current run uses GC correction.
+        ensure_scaling_gc_compatibility(path, metadata, scaling_gc_mode_for_run(true, false))?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn scaling_gc_compatibility_errors_when_uncorrected_scaling_meets_corrected_run() {
+        // This mismatch is now a hard error:
+        // - scaling file says uncorrected coverage
+        // - current run uses tag-based GC correction
+        let path = Path::new("/tmp/example.scaling_factors.tsv");
+        let metadata = ScalingFactorsMetadata {
+            gc_mode: ScalingGCMode::Uncorrected,
+            ignore_gap: None,
+        };
+
+        let err =
+            ensure_scaling_gc_compatibility(path, metadata, scaling_gc_mode_for_run(false, true))
+                .expect_err("known raw-vs-corrected mismatch should error");
+
+        assert!(
+            err.to_string().contains("no GC correction"),
+            "unexpected error text: {err}"
+        );
+        assert!(
+            err.to_string().contains("via --gc-tag"),
+            "unexpected error text: {err}"
+        );
+    }
+
+    #[test]
+    fn scaling_gc_compatibility_errors_when_corrected_scaling_meets_uncorrected_run() {
+        // This is the opposite known mismatch:
+        // - scaling file says corrected coverage from a tag
+        // - current run applies no GC correction
+        let path = Path::new("/tmp/example.scaling_factors.tsv");
+        let metadata = ScalingFactorsMetadata {
+            gc_mode: ScalingGCMode::CorrectedFromTag,
+            ignore_gap: None,
+        };
+
+        let err =
+            ensure_scaling_gc_compatibility(path, metadata, scaling_gc_mode_for_run(false, false))
+                .expect_err("known corrected-vs-raw mismatch should error");
+
+        assert!(
+            err.to_string().contains("via --gc-tag"),
+            "unexpected error text: {err}"
+        );
+        assert!(
+            err.to_string().contains("no GC correction"),
+            "unexpected error text: {err}"
+        );
+    }
+
+    #[test]
+    fn scaling_gc_compatibility_allows_corrected_file_scaling_with_corrected_tag_run()
+    -> anyhow::Result<()> {
+        // File-vs-tag is allowed because both sides are still GC-corrected:
+        // coverage-weights may have used `--gc-file`, while the later command uses tagged reads.
+        let path = Path::new("/tmp/example.scaling_factors.tsv");
+        let metadata = ScalingFactorsMetadata {
+            gc_mode: ScalingGCMode::CorrectedFromFile,
+            ignore_gap: None,
+        };
+
+        ensure_scaling_gc_compatibility(path, metadata, scaling_gc_mode_for_run(false, true))?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn scaling_gc_compatibility_allows_corrected_tag_scaling_with_corrected_file_run()
+    -> anyhow::Result<()> {
+        // The allowed file-vs-tag case must be symmetric. A scaling file built from tagged reads
+        // is still compatible with a later run that uses `--gc-file`.
+        let path = Path::new("/tmp/example.scaling_factors.tsv");
+        let metadata = ScalingFactorsMetadata {
+            gc_mode: ScalingGCMode::CorrectedFromTag,
+            ignore_gap: None,
+        };
+
+        ensure_scaling_gc_compatibility(path, metadata, scaling_gc_mode_for_run(true, false))?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn scaling_gc_compatibility_allows_uncorrected_scaling_with_uncorrected_run()
+    -> anyhow::Result<()> {
+        // The explicit `uncorrected` mode should only reject corrected runs, not another raw run.
+        let path = Path::new("/tmp/example.scaling_factors.tsv");
+        let metadata = ScalingFactorsMetadata {
+            gc_mode: ScalingGCMode::Uncorrected,
+            ignore_gap: None,
+        };
+
+        ensure_scaling_gc_compatibility(path, metadata, scaling_gc_mode_for_run(false, false))?;
 
         Ok(())
     }

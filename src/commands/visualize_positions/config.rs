@@ -1,11 +1,9 @@
 use crate::commands::{
     cli_common::{BaseSelectionArgs, FragmentPositionSelectionArgs},
-    fragment_kmers::{
-        parse::parse_positions,
-        positions::{BasesFrom, ReferenceFrame},
-    },
+    fragment_kmers::parse::parse_positions,
     visualize_positions::{Style, VizConfig, parse::parse_lengths},
 };
+use crate::shared::positioning::{BasesFrom, ReferenceFrame};
 use anyhow::{Context, Result, anyhow};
 #[cfg(feature = "cli")]
 use clap::Parser;
@@ -21,7 +19,7 @@ const MIN_FRAGMENT_LENGTH: u32 = 10;
 /// Use this helper to prototype the “where to count” arguments (`--frame`, `--positions`, `--step`, `--bases-from`, `--mismatch-bases-from`),
 /// before you run `cfdna fragment-kmers` on a BAM file. For every fragment length you request, the selected
 /// bases are rendered as ASCII or SVG, so you can check the correct positions are counted at. The
-/// command is geometry-only: no BAM or reference reads are touched while you iterate.
+/// command only works with coordinates: no BAM or reference reads are touched while you iterate.
 ///
 /// Describe your selections with the **1-based inclusive** grammar (`A..B`, `A..-B`, `..half`, `5..half-3`,
 /// `-60..60` (`mid`-frame-only), and friends) and the diagram will show the regions counted by

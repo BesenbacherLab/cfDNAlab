@@ -126,7 +126,7 @@ fn collect_motifs(
     v
 }
 
-/// Use the first window’s keys, sort them, and return the order.
+/// Use the first window's keys, sort them, and return the order.
 /// Panics only if `bins` is empty.
 pub fn motif_order(bins: &[FxHashMap<String, impl Copy>]) -> Vec<String> {
     assert!(
@@ -144,7 +144,7 @@ pub fn collapse_map(map: FxHashMap<String, f64>) -> FxHashMap<String, f64> {
     out.reserve(map.len());
 
     for (kmer, count) in map {
-        let canon = make_canonical(kmer);
+        let canon = make_canonical(kmer, true, false);
         *out.entry(canon).or_insert(0.0) += count;
     }
 
@@ -153,7 +153,9 @@ pub fn collapse_map(map: FxHashMap<String, f64>) -> FxHashMap<String, f64> {
 
 /// Collapse a set of reference kmers into a set of canonical keys
 pub fn collapse_set(set: &FxHashSet<String>) -> FxHashSet<String> {
-    set.iter().map(|m| make_canonical(m.to_string())).collect()
+    set.iter()
+        .map(|m| make_canonical(m.to_string(), true, false))
+        .collect()
 }
 
 /// Return all possible reference motifs (4ᵏ) for a given k.
@@ -181,7 +183,7 @@ pub fn split_and_decode_counts(
     let mut count_bins: FxHashMap<u8, FxHashMap<String, f64>> = FxHashMap::default();
 
     for (&kmer, &cnt) in counts {
-        // Human-readable motif, e.g. "ACG"
+        // User-readable motif, e.g. "ACG"
         let motif = kmer.to_string(kmer_specs);
 
         // Drop N's

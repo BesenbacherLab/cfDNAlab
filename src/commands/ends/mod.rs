@@ -1,2 +1,8 @@
 pub mod config;
+pub mod config_structs;
+pub mod counting;
 pub mod ends;
+pub mod motifs;
+pub mod output;
+pub mod tiling;
+pub mod write;

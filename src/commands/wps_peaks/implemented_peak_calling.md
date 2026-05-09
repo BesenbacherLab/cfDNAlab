@@ -17,7 +17,7 @@ This generated report captures the behavior that currently ships in `cfdna wps-p
    - Optional scaling factors are loaded and later used to rescale per-position WPS after the core calculation (identical to `cfdna wps`).
 
 2. **Tile construction**
-   - `build_tiles` splits chromosomes into overlapping tiles. Each tile’s core is surrounded by a symmetric halo large enough to cover the WPS window. When `wps_for_tile` runs it extends both sides by `window_left + EXTRA_PEAK_HALO_BP` on the start and `window_right + EXTRA_PEAK_HALO_BP` on the end. The left extension also drives `initial_segment_marker`, ensuring the first peak in the tile is aware of the last masked region upstream.
+   - `build_tiles` splits chromosomes into overlapping tiles. Each tile's core is surrounded by a symmetric halo large enough to cover the WPS window. When `wps_for_tile` runs it extends both sides by `window_left + EXTRA_PEAK_HALO_BP` on the start and `window_right + EXTRA_PEAK_HALO_BP` on the end. The left extension also drives `initial_segment_marker`, ensuring the first peak in the tile is aware of the last masked region upstream.
    - For fixed-size windows, `build_tiles` also reports whether tile boundaries align with window boundaries. When aligned, downstream code can treat stats as pure bin aggregates without streaming per-peak data.
 
 3. **Per-tile WPS computation**
@@ -32,7 +32,7 @@ This generated report captures the behavior that currently ships in `cfdna wps-p
 
 5. **Peak detection** (`call_peaks.rs`)
    - Residuals (i.e. median-subtracted smoothed WPS) are scanned left to right. Masked bases and `NaN`s finalize the current run.
-   - Short gaps (`MAX_GAP = 5 bp`) are bridged by inserting zeros, so minor dips do not break a run. Snyder’s script does the same by pushing `0` values while `ipos <= cend + 5` (see `snyder_code.md`).
+   - Short gaps (`MAX_GAP = 5 bp`) are bridged by inserting zeros, so minor dips do not break a run. Snyder's script does the same by pushing `0` values while `ipos <= cend + 5` (see `snyder_code.md`).
    - Runs shorter than 50 bp or longer than 450 bp are discarded (`MIN_LENGTH = 50`, `MAX_LENGTH = 150`, `MAX_RUN_LENGTH = 3 * MAX_LENGTH`).
    - A run is filtered through its own median: only positions with residuals >= run median survive.
    - Surviving positions are collapsed into sub windows. For runs up to 150 bp the densest sub window (by summed residual) is reported once. For longer runs (<= 450 bp) every contiguous sub window whose length sits within 50-150 bp and whose max residual exceeds `--min-peak-height` becomes a peak.
@@ -83,7 +83,7 @@ This generated report captures the behavior that currently ships in `cfdna wps-p
 
 - `normalize_halo` adjustments were removed earlier; code comments still ask for better documentation (`wps_peaks.rs` around `peaks_for_tile`). The current implementation assumes that the halo provided by `wps_for_tile` plus `EXTRA_PEAK_HALO_BP` is sufficient. Edge masking near tile boundaries can still zero out potential peaks; this is noted in TODO comments.
 - `WindowAccumulator::push_peak` relies on `scan_start` linear scans. With many overlapping windows this can become O(n^2). There is a TODO about making the function more readable and possibly more efficient.
-- Stats currently ignore distances between peaks that fall in adjacent windows, even if the windows overlap. Each window’s histogram only sees peaks fully contained in that window, so the gap between the last peak of window A and the first peak of window B is never counted. `WindowAccumulator` has TODO comments about threading “first/last peaks” across windows to remedy this, but nothing is implemented yet.
+- Stats currently ignore distances between peaks that fall in adjacent windows, even if the windows overlap. Each window's histogram only sees peaks fully contained in that window, so the gap between the last peak of window A and the first peak of window B is never counted. `WindowAccumulator` has TODO comments about threading “first/last peaks” across windows to remedy this, but nothing is implemented yet.
 - `FixedSizeWindows` uses in-memory `Vec`s per chromosome. If a chromosome has millions of small bins, the vector persists until the chromosome finishes. There is no streaming eviction beyond flushing once the chromosome changes.
 - There is no guard against windows that are smaller than the minimum allowed run length (50 bp). Such windows will simply never accumulate peaks.
 - BED windows supplied with `--per-window unique-positions` are merged prior to processing (see `into_flattened_reindexed`). That is expected because “unique” implies deduplicating overlaps, but it bears repeating: once merged, overlapping windows cannot be recovered in that mode.

@@ -2,9 +2,26 @@ use std::path::PathBuf;
 
 use crate::commands::cli_common::{ApplyGCArgs, ScaleGenomeArgs};
 use crate::commands::cli_common::{
-    ChromosomeArgs, FragmentLengthArgs, IOCArgs, UnpairedArgs, WindowsArgs,
+    ChromosomeArgs, DistributionWindowsArgs, FragmentLengthArgs, IOCArgs, LoggingArgs, UnpairedArgs,
 };
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
+
+/// How fragment length normalization should be applied in `fcoverage`.
+///
+/// `unit-mass` is the ordinary length-normalized mode where each counted fragment contributes
+/// total mass `1.0` before any GC correction or genomic scaling.
+///
+/// `restore-mean` counts in that same unit-mass space, then multiplies the final output by the
+/// observed mean normalization length. This restores the plain global mean level in the ordinary
+/// length-normalized case, but keeps the local fragment length equalization itself.
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LengthNormalizationMode {
+    #[default]
+    Off,
+    UnitMass,
+    RestoreMean,
+}
 
 /// Count positional **fragment** coverage across the genome.
 ///
@@ -20,18 +37,23 @@ use crate::commands::fcoverage::window_results::CoverageWindowAction;
 ///
 /// ## Windowing
 ///
-/// When specifying windows (`--by-bed` or `--by-size`), one of the following outputs
+/// When specifying windows (`--by-bed`, `--by-grouped-bed`, or `--by-size`), one of the following outputs
 /// is possible:
 ///
-///  - Get the average (default) or total coverage per window.
+/// - Get the average (default) or total coverage per window.
+///   Average is `NaN` when no positions are eligible, for example when the
+///   whole window is blacklisted.
 ///
-///  - Get the positional coverage for the included windows only (`--by-bed` *only*).
-///    Excludes all positions that do not overlap a window from the output.
-///    Choose between:
-///     1) Indexed: Adds the original window index as an output column and keeps duplicate positions.
-///     2) Unique: Overlapping windows are merged to avoid duplicate positions.
+/// - Get summary statistics per window or grouped row.
+///   Derived statistics with no eligible positions are `NaN`.
 ///
-/// Without windowing, positional coverage are outputted for the selected chromosomes.
+/// - Get the positional coverage for the included windows only (`--by-bed` *only*).
+///   Excludes all positions that do not overlap a window from the output.
+///   Choose between:
+///     1. Indexed: Adds the original window index as an output column and keeps duplicate positions.
+///     2. Unique: Overlapping windows are merged to avoid duplicate positions.
+///
+/// Without windowing, positional coverage are output for the selected chromosomes.
 ///
 /// ## Positional output and tiles
 ///
@@ -46,7 +68,7 @@ use crate::commands::fcoverage::window_results::CoverageWindowAction;
 ///
 /// ## Blacklisting
 ///
-/// Positions in blacklisted regions are set to `f32::NaN` (and thus not included in sums or averages).
+/// Blacklisted positions are excluded from positional and aggregate coverage outputs.
 ///
 /// ## GC correction
 ///
@@ -87,6 +109,51 @@ pub struct FCoverageConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub unpaired: UnpairedArgs,
 
+    /// Divide the contribution of each fragment by the number of countable bases `[string/flag]`
+    ///
+    /// By default, we count each fragment as `1.0` in each covered position (before correction/scaling).
+    /// That weights longer fragments higher than shorter fragments in the overall mass
+    /// as they are counted in more positions. If we want each fragment
+    /// to contribute the **same mass**, we can divide the per-position
+    /// `1.0` weight by the number of countable positions.
+    ///
+    /// **Interpretation**: Per-base fragment support after normalizing each fragment
+    /// to a total weight of `1.0` before correction/scaling.
+    /// For `--per-window total` this approximates fragment counts
+    /// (in sufficiently large windows).
+    /// For `--per-window average` this approximates fragment-count density,
+    /// i.e. fragment counts divided by window length.
+    ///
+    /// **Modes**:
+    ///
+    /// - `unit-mass`: Specifying `--normalize-by-length` or `--normalize-by-length=unit-mass`
+    /// uses the described "all fragments contribute a mass of 1" mode. **TIP**: In this mode,
+    /// we suggest setting `--decimals 3`.
+    ///
+    /// - `restore-mean`: Specifying `--normalize-by-length=restore-mean` restores the global mean
+    /// by multiplying the final output by the observed mean normalization length (the countable bases)
+    /// after counting in unit-mass space.
+    ///
+    /// This setting is reflected in the output filenames:
+    /// `length_normalized` for `unit-mass`,
+    /// `length_normalized.restored_mean` for `restore-mean`.
+    ///
+    /// Blacklisted positions still count toward the normalization denominator
+    /// to avoid large values around blacklisted regions (edge effects).
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            value_enum,
+            hide_possible_values = true,
+            default_value_t = LengthNormalizationMode::Off,
+            default_missing_value = "unit-mass",
+            num_args = 0..=1,
+            help_heading = "Core"
+        )
+    )]
+    pub normalize_by_length_mode: LengthNormalizationMode,
+
     /// Optional prefix for output files (e.g., a sample name) `[string]`
     ///
     /// Leave empty to write filenames without a leading prefix.
@@ -96,11 +163,12 @@ pub struct FCoverageConfig {
     /// Examples produce files like:
     ///   `<prefix>.fcoverage.per_position.bedgraph.zst`,
     ///   `<prefix>.fcoverage.per_position_per_window.tsv.zst`,
-    ///   `<prefix>.fcoverage.avg.tsv.zst`, or
-    ///   `<prefix>.fcoverage.total.tsv.zst`.
+    ///   `<prefix>.fcoverage.average.tsv.zst`,
+    ///   `<prefix>.fcoverage.total.tsv.zst`, or
+    ///   `<prefix>.fcoverage.summary_stats.tsv.zst`.
     #[cfg_attr(
         feature = "cli",
-        clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, help_heading = "Core")
+        clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, value_parser = crate::commands::cli_common::parse_output_prefix, help_heading = "Core")
     )]
     pub output_prefix: String,
 
@@ -124,7 +192,7 @@ pub struct FCoverageConfig {
     /// Chromosomes are processed in tiles of this size to reduce memory usage.
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "20000000", value_parser = clap::value_parser!(u32).range(1000000..), help_heading="Core"))]
+        clap(long, default_value = "10000000", value_parser = clap::value_parser!(u32).range(1000000..), help_heading="Core"))]
     pub tile_size: u32,
 
     /// What to return per window `[string]`
@@ -132,24 +200,39 @@ pub struct FCoverageConfig {
     /// Possible values:
     ///
     /// - `"average"`: Get the average coverage per window (default).
+    ///   Returns `NaN` when the window has no eligible positions after masking.
     ///
     /// - `"total"`: Get the total coverage per window.
     ///
-    /// - `"unique-positions"`: Get the positional coverage for the included windows only (`--by-bed` *only*).
+    /// - `"summary-stats"`: Get raw and derived coverage summary statistics per window.
+    ///   Average, variance, standard deviation, CV, and covered fraction are `NaN`
+    ///   when the window has no eligible positions after masking.
+    ///
+    /// For `--by-bed` only:
+    ///
+    /// - `"unique-positions"`: Get the positional coverage for the included windows only.
     ///   Overlapping windows are merged to avoid duplicate positions.
     ///   Excludes all positions that do not overlap a window from the output.
     ///
-    /// - `"indexed-positions"`: Get the positional coverage for the included windows only (`--by-bed` *only*).
+    /// - `"indexed-positions"`: Get the positional coverage for the included windows only.
     ///   Adds the original window index as an output column and keeps duplicate positions.
     ///   Excludes all positions that do not overlap a window from the output.
     ///   **NOTE**: The output is first sorted by chromosome, tile index, and window start.
     ///   Then the coverage segments are sorted by start- and end coordinates.
     ///   Window indices may thus not be contiguous.
     ///   Depending on your needs, sort downstream.
-    ///   
-    ///   
     ///
-    /// **NOTE**: Ignored when no windows are specified.
+    /// For `--by-grouped-bed` only, three further `"-on-unique-bases"` options, where we
+    /// merge overlapping or touching windows within each group windows before calculating
+    /// the statistics:
+    ///
+    /// - `"average-on-unique-bases"`: Get the average coverage across merged within-group windows.
+    ///
+    /// - `"total-on-unique-bases"`: Get the total coverage across merged within-group windows.
+    ///
+    /// - `"summary-stats-on-unique-bases"`: Get grouped summary statistics across merged within-group windows.
+    ///
+    /// Without windowing, only positional coverage output is supported.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -172,7 +255,7 @@ pub struct FCoverageConfig {
     pub ignore_gap: bool,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
-    pub windows: WindowsArgs,
+    pub windows: DistributionWindowsArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub chromosomes: ChromosomeArgs,
@@ -220,6 +303,9 @@ pub struct FCoverageConfig {
         )
     )]
     pub ref_2bit: Option<PathBuf>,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub logging: LoggingArgs,
 }
 
 impl FCoverageConfig {
@@ -229,13 +315,15 @@ impl FCoverageConfig {
             unpaired: UnpairedArgs {
                 reads_are_fragments: false,
             },
+            logging: LoggingArgs::default(),
+            normalize_by_length_mode: LengthNormalizationMode::Off,
             output_prefix: String::new(),
             decimals: 2,
             keep_zero_runs: false,
-            tile_size: 20_000_000,
+            tile_size: 10_000_000,
             per_window: CoverageWindowAction::Average,
             ignore_gap: false,
-            windows: WindowsArgs::default(),
+            windows: DistributionWindowsArgs::default(),
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),
             fragment_lengths: FragmentLengthArgs::default(),
@@ -245,7 +333,7 @@ impl FCoverageConfig {
             gc: ApplyGCArgs {
                 gc_file: None,
                 gc_tag: None,
-                drop_invalid_gc: false,
+                neutralize_invalid_gc: false,
             },
             ref_2bit: None,
         }
@@ -253,6 +341,25 @@ impl FCoverageConfig {
 
     pub fn set_output_prefix<S: Into<String>>(&mut self, prefix: S) {
         self.output_prefix = prefix.into();
+    }
+
+    pub fn set_unpaired(&mut self, unpaired: UnpairedArgs) {
+        self.unpaired = unpaired;
+    }
+
+    pub fn set_normalize_by_length_mode(
+        &mut self,
+        normalize_by_length_mode: LengthNormalizationMode,
+    ) {
+        self.normalize_by_length_mode = normalize_by_length_mode;
+    }
+
+    pub fn uses_length_normalization(&self) -> bool {
+        self.normalize_by_length_mode != LengthNormalizationMode::Off
+    }
+
+    pub fn restores_mean_after_length_normalization(&self) -> bool {
+        self.normalize_by_length_mode == LengthNormalizationMode::RestoreMean
     }
 
     pub fn set_decimals(&mut self, decimals: u8) {
@@ -279,12 +386,16 @@ impl FCoverageConfig {
         self.ignore_gap = ignore;
     }
 
-    pub fn set_windows(&mut self, windows: WindowsArgs) {
+    pub fn set_windows(&mut self, windows: DistributionWindowsArgs) {
         self.windows = windows;
     }
 
     pub fn fragment_lengths_mut(&mut self) -> &mut FragmentLengthArgs {
         &mut self.fragment_lengths
+    }
+
+    pub fn set_fragment_lengths(&mut self, fragment_lengths: FragmentLengthArgs) {
+        self.fragment_lengths = fragment_lengths;
     }
 
     pub fn set_min_mapq(&mut self, min_mapq: u8) {
@@ -293,6 +404,10 @@ impl FCoverageConfig {
 
     pub fn set_require_proper_pair(&mut self, require: bool) {
         self.require_proper_pair = require;
+    }
+
+    pub fn set_blacklist(&mut self, blacklist: Option<Vec<PathBuf>>) {
+        self.blacklist = blacklist;
     }
 
     pub fn set_gc(&mut self, gc: ApplyGCArgs) {

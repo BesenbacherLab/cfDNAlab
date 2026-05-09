@@ -1,3 +1,5 @@
+#![cfg(all(feature = "cmd_fcoverage", feature = "cmd_midpoints"))]
+
 mod tests {
     use cfdnalab::Error;
     use cfdnalab::commands::fcoverage::tiling::adapt_fetch_to_extreme_windows;
@@ -6,8 +8,9 @@ mod tests {
     use cfdnalab::shared::interval::{IndexedInterval, Interval};
     use cfdnalab::shared::tiled_run::{
         Tile, TileMode, TileWindowSpan, build_tiles, clamp_fetch_to_window_span,
-        precompute_tile_window_spans, tile_window_min_max,
+        overlapping_windows_for_tile, precompute_tile_window_spans,
     };
+    use cfdnalab::shared::window_fetch::window_derived_fetch_extent_for_core_overlap;
     use fxhash::FxHashMap;
     use std::path::PathBuf;
 
@@ -42,7 +45,6 @@ mod tests {
 
     #[test]
     fn parse_tile_index_basic() {
-        // Human verification status: unverified
         use cfdnalab::shared::tiled_run::parse_tile_index;
         assert_eq!(parse_tile_index("coverage.pos.chr1.12.tsv"), Some(12));
         assert_eq!(
@@ -58,7 +60,6 @@ mod tests {
 
     #[test]
     fn tile_new_accepts_checked_intervals_and_preserves_bounds() {
-        // Human verification status: unverified
         let core = Interval::new(100_u32, 150_u32).expect("test core interval should be valid");
         let fetch = Interval::new(80_u32, 170_u32).expect("test fetch interval should be valid");
 
@@ -78,7 +79,6 @@ mod tests {
 
     #[test]
     fn tile_from_coords_matches_typed_constructor() {
-        // Human verification status: unverified
         let from_coords = Tile::from_coords("chr1".to_string(), 0, 3, 100, 150, 80, 170)
             .expect("coordinate constructor should build a valid tile");
         let from_intervals = Tile::new(
@@ -99,7 +99,6 @@ mod tests {
 
     #[test]
     fn tile_new_rejects_fetch_interval_that_does_not_cover_core() {
-        // Human verification status: unverified
         let core = Interval::new(100_u32, 150_u32).expect("test core interval should be valid");
         let fetch = Interval::new(110_u32, 170_u32).expect("test fetch interval should be valid");
 
@@ -111,7 +110,6 @@ mod tests {
 
     #[test]
     fn tile_from_coords_rejects_invalid_core_bounds_before_tile_validation() {
-        // Human verification status: unverified
         let err = Tile::from_coords("chr1".to_string(), 0, 0, 100, 100, 80, 120)
             .expect_err("coordinate constructor should reject empty core intervals");
 
@@ -126,7 +124,6 @@ mod tests {
 
     #[test]
     fn clamp_fetch_respects_halo_and_chrom() {
-        // Human verification status: unverified
         let tile = make_tile(100, 150, 80, 170, 0);
         // Windows span 90..160; halos are 20 left, 20 right; chrom len 155
         let window_span = Interval::new(90, 160).expect("test span should be valid");
@@ -140,7 +137,6 @@ mod tests {
 
     #[test]
     fn clamp_fetch_returns_none_on_empty_span() {
-        // Human verification status: unverified
         let tile = make_tile(100, 150, 80, 170, 0);
         // Empty spans are rejected at interval construction, so the helper no longer
         // needs a separate runtime path for this case
@@ -150,7 +146,6 @@ mod tests {
 
     #[test]
     fn clamp_fetch_clamps_to_fetch_start_when_windows_left_of_tile() {
-        // Human verification status: unverified
         let tile = make_tile(100, 150, 90, 200, 0);
         // Windows far left. Even after adding halos the span ends before fetch_start,
         // so there is nothing to fetch and the range is discarded
@@ -162,7 +157,6 @@ mod tests {
 
     #[test]
     fn clamp_fetch_clamps_to_chrom_when_windows_right_of_chrom() {
-        // Human verification status: unverified
         let tile = make_tile(50, 70, 40, 120, 0);
         // Windows extend beyond chrom_len=100
         let window_span = Interval::new(80, 150).expect("test span should be valid");
@@ -175,8 +169,40 @@ mod tests {
     }
 
     #[test]
+    fn clamp_fetch_does_not_narrow_when_window_span_expands() {
+        let tile = make_tile(100, 150, 80, 170, 0);
+
+        // Manual derivation:
+        // - Tile halo already carried by `tile.fetch` is 20 bp on both sides.
+        // - Narrow window span [110,140) widens to [90,160) after keeping that halo.
+        // - Wider window span [90,160) widens to [70,180) and then clamps to the tile fetch
+        //   interval [80,170).
+        // - Adding support farther left and right must therefore move the final fetch outward,
+        //   never inward.
+        let narrower_window_span = Interval::new(110, 140).expect("test span should be valid");
+        let wider_window_span = Interval::new(90, 160).expect("test span should be valid");
+
+        let narrower_fetch = clamp_fetch_to_window_span(&tile, 500, narrower_window_span, 0)
+            .unwrap()
+            .expect("narrower window span should produce a fetch interval");
+        let wider_fetch = clamp_fetch_to_window_span(&tile, 500, wider_window_span, 0)
+            .unwrap()
+            .expect("wider window span should produce a fetch interval");
+
+        assert_eq!(narrower_fetch, Interval::new(90, 160).unwrap());
+        assert_eq!(wider_fetch, Interval::new(80, 170).unwrap());
+        assert!(
+            wider_fetch.start() <= narrower_fetch.start(),
+            "wider window support must not move the fetch start to the right"
+        );
+        assert!(
+            wider_fetch.end() >= narrower_fetch.end(),
+            "wider window support must not move the fetch end to the left"
+        );
+    }
+
+    #[test]
     fn clamp_fetch_returns_none_when_windows_right_of_tile() {
-        // Human verification status: unverified
         let tile = make_tile(100, 150, 90, 200, 0);
         // Windows sit to the right of the tile; even after halo expansion the span begins at 210-10=200,
         // matching fetch_end, so start >= end and the fetch range is discarded
@@ -187,23 +213,63 @@ mod tests {
     }
 
     #[test]
-    fn tile_window_min_max_returns_extremes() {
-        // Human verification status: unverified
+    fn window_derived_fetch_extent_for_core_overlap_returns_extremes() {
         let tile = make_tile(50, 150, 40, 160, 0);
         let windows = indexed_windows(&[(0, 40, 0), (40, 60, 1), (120, 200, 2), (300, 400, 3)]);
         let span = TileWindowSpan {
             first_idx: 1,
             last_idx_exclusive: 3,
         };
-        let interval = tile_window_min_max(&windows, &tile, Some(&span))
+        let interval = window_derived_fetch_extent_for_core_overlap(&windows, &tile, Some(&span))
             .unwrap()
             .expect("window span expected");
         assert_eq!(interval, Interval::new(40, 200).unwrap());
     }
 
     #[test]
+    fn overlapping_windows_for_tile_filters_halo_only_candidates_from_cached_span() {
+        // Manual derivation:
+        // - The cached candidate span may come from a fragment-reach model and include halo-only
+        //   windows [8,9) and [22,23) around core [10,20).
+        // - Core-overlap helpers must still yield only windows that truly intersect the core.
+        let tile = make_tile(10, 20, 6, 24, 0);
+        let windows = indexed_windows(&[(8, 9, 0), (10, 11, 1), (22, 23, 2)]);
+        let span = TileWindowSpan {
+            first_idx: 0,
+            last_idx_exclusive: 3,
+        };
+
+        let overlapping: Vec<_> = overlapping_windows_for_tile(&windows, &tile, Some(&span))
+            .map(|window| window.as_tuple())
+            .collect();
+
+        assert_eq!(overlapping, vec![(10, 11, 1)]);
+    }
+
+    #[test]
+    fn window_derived_fetch_extent_for_core_overlap_ignores_halo_only_candidates_from_cached_span()
+    {
+        // Manual derivation:
+        // - The cached candidate span below includes one left halo-only window [8,9), one
+        //   core-overlap window [10,11), and one right halo-only window [22,23).
+        // - `window_derived_fetch_extent_for_core_overlap(...)` is the core-overlap helper, so the
+        //   halo-only windows must not affect the returned extremes.
+        let tile = make_tile(10, 20, 6, 24, 0);
+        let windows = indexed_windows(&[(8, 9, 0), (10, 11, 1), (22, 23, 2)]);
+        let span = TileWindowSpan {
+            first_idx: 0,
+            last_idx_exclusive: 3,
+        };
+
+        let interval = window_derived_fetch_extent_for_core_overlap(&windows, &tile, Some(&span))
+            .unwrap()
+            .expect("core-overlap window span expected");
+
+        assert_eq!(interval, Interval::new(10, 11).unwrap());
+    }
+
+    #[test]
     fn precompute_tile_window_spans_filters_left_windows() {
-        // Human verification status: unverified
         let tiles = vec![
             make_tile(100, 150, 90, 170, 0),
             make_tile(150, 200, 140, 220, 1),
@@ -224,7 +290,6 @@ mod tests {
 
     #[test]
     fn build_tiles_respects_chrom_end_and_halo() {
-        // Human verification status: unverified
         let mut contigs = FxHashMap::default();
         contigs.insert("chr1".to_string(), (0, 95u32));
         let contigs = Contigs { contigs };
@@ -242,7 +307,6 @@ mod tests {
 
     #[test]
     fn midpoint_fetch_span_preserves_tile_carried_halo_near_chromosome_end() {
-        // Human verification status: unverified
         let tile = make_tile(80, 95, 70, 95, 0);
         let windows = indexed_windows(&[(90, 95, 0)]);
         let span = TileWindowSpan {
@@ -264,7 +328,6 @@ mod tests {
 
     #[test]
     fn midpoint_fetch_span_keeps_fragment_start_that_old_symmetric_halo_would_drop() {
-        // Human verification status: unverified
         let tile = make_tile(80, 95, 70, 95, 0);
         let windows = indexed_windows(&[(90, 95, 0)]);
         let span = TileWindowSpan {
@@ -302,7 +365,6 @@ mod tests {
 
     #[test]
     fn build_tiles_clamps_left_halo_and_zero_halo_matches_core() {
-        // Human verification status: unverified
         let mut contigs = FxHashMap::default();
         contigs.insert("chr1".to_string(), (0, 50u32));
         contigs.insert("chr2".to_string(), (1, 30u32));
@@ -334,7 +396,6 @@ mod tests {
 
     #[test]
     fn precompute_tile_window_spans_expands_with_halos() {
-        // Human verification status: unverified
         let tiles = vec![
             make_tile(100, 150, 80, 190, 0),
             make_tile(150, 200, 130, 230, 1),
@@ -361,8 +422,7 @@ mod tests {
     }
 
     #[test]
-    fn tile_window_min_max_returns_none_for_empty_span() {
-        // Human verification status: unverified
+    fn window_derived_fetch_extent_for_core_overlap_returns_none_for_empty_span() {
         let tile = make_tile(10, 20, 0, 30, 0);
         let windows: Vec<IndexedInterval<u64>> = Vec::new();
         let span = TileWindowSpan {
@@ -370,7 +430,7 @@ mod tests {
             last_idx_exclusive: 0,
         };
         assert!(
-            tile_window_min_max(&windows, &tile, Some(&span))
+            window_derived_fetch_extent_for_core_overlap(&windows, &tile, Some(&span))
                 .expect("window span computation should succeed")
                 .is_none()
         );
@@ -378,7 +438,6 @@ mod tests {
 
     #[test]
     fn clamp_fetch_returns_none_when_clamping_collapses_span() {
-        // Human verification status: unverified
         let tile = make_tile(10, 20, 0, 100, 0);
         // Window span sits right of the chromosome, clamping pulls end left of start
         let window_span = Interval::new(150, 160).expect("test span should be valid");
@@ -389,7 +448,6 @@ mod tests {
 
     #[test]
     fn clamp_fetch_uses_explicit_halo_when_tile_has_no_inferred_halo() {
-        // Human verification status: unverified
         let tile = make_tile(0, 200, 0, 200, 0);
 
         // This tile has no inferred right halo because the core already reaches the chromosome end.
@@ -406,7 +464,6 @@ mod tests {
 
     #[test]
     fn clamp_fetch_uses_full_explicit_halo_on_both_sides() {
-        // Human verification status: unverified
         let tile = make_tile(0, 200, 0, 200, 0);
         let window_span = Interval::new(80, 120).expect("test span should be valid");
 
@@ -421,7 +478,6 @@ mod tests {
 
     #[test]
     fn adapt_fetch_keeps_fragment_context_for_bed_aggregate_tiles() {
-        // Human verification status: unverified
         let tile = make_tile(0, 200, 0, 200, 0);
         let windows = indexed_windows(&[(0, 40, 0)]);
         let mode = TileMode::AggregatesByBed {
@@ -443,7 +499,6 @@ mod tests {
 
     #[test]
     fn adapt_fetch_keeps_left_halo_when_chrom_end_clips_last_tile_in_fcoverage() {
-        // Human verification status: unverified
         let tile = make_tile(80, 95, 70, 95, 0);
         let windows = indexed_windows(&[(90, 95, 0)]);
         let span = TileWindowSpan {

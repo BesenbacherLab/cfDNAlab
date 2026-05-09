@@ -1,6 +1,6 @@
 use crate::commands::cli_common::{
-    ApplyGCArgFileOnly, ChromosomeArgs, FragmentLengthArgs, ScaleGenomeArgs, UnpairedArgs,
-    WindowSpec,
+    ApplyGCArgFileOnly, ChromosomeArgs, FragmentLengthArgs, LoggingArgs, ScaleGenomeArgs,
+    UnpairedArgs, WindowSpec,
 };
 use crate::shared::blacklist::BlacklistStrategy;
 use std::path::PathBuf;
@@ -12,22 +12,29 @@ use std::path::PathBuf;
 /// them directly to a given BAM file. Filter which reads/fragments to write and add correction
 /// weights as AUX tags on the reads. The new BAM file is coordinate-sorted.
 ///
+/// The output BAM keeps the input BAM header and chromosome order.
+///
 /// **NOTE**: This is **not** needed for running other `cfDNAlab` tools.
 /// Those tools will **not** automatically use the correction tags.
-///
-/// ## Genomic smoothing (--scaling-factors)
-///
-/// The coverage weight that would normally be **multiplied** with the fragment's count value (`1.0`)
-/// is written as the AUX tag "`COV`" in the read(s).
 ///
 /// ## GC bias correction
 ///
 /// The GC bias correction weight that would normally be **multiplied** with the fragment's count
-/// value (`1.0` or the smoothed value) is written as the AUX tag "`GC`" in the read(s).
+/// value (`1.0`) is written as the AUX tag "`GC`" in the read(s).
+///
+/// ## Coverage-based genomic smoothing (--coverage-scaling-factors)
+///
+/// The coverage-based weight that would normally be **multiplied** with the fragment's count value
+/// (`1.0` or the corrected value) is written as the AUX tag "`cw`" in the read(s).
+///
+/// ## Fragment count-based genomic smoothing (--count-scaling-factors)
+///
+/// The fragment-count-based weight that would normally be **multiplied** with the fragment's count
+/// value (`1.0` or the corrected value) is written as the AUX tag "`nw`" in the read(s).
 ///
 /// ## Fragment length
 ///
-/// The fragment length is written to the AUX tag "`FLEN`".
+/// The fragment length is written to the AUX tag "`fl`".
 ///
 /// Definition:
 ///
@@ -82,28 +89,29 @@ pub struct BamToBamConfig {
     ///
     /// Reads that are part of a fragment that overlaps a window
     /// are considered for the new BAM file.
-    #[cfg_attr(
-        feature = "cli",
-        clap(long = "by-bed", value_parser, help_heading = "Windows")
-    )]
+    #[cfg_attr(feature = "cli", clap(long, value_parser, help_heading = "Windows"))]
     pub by_bed: Option<PathBuf>,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub chromosomes: ChromosomeArgs,
 
-    /// Keep the specified chromosome order instead of sorting lexicographically `[flag]`
+    /// Optional path to coverage-based scaling factors `[path]`
     ///
-    /// Many tools expect BAM files to be sorted as `chr1, chr10, chr11, ...`. By default,
-    /// we thus sort the specified chromosomes lexicographically. This is different to other
-    /// commands in `cfDNAlab`, which use the passed order of chromosomes.
+    /// `.tsv` file as produced by `cfdna coverage-weights`.
     #[cfg_attr(
         feature = "cli",
-        clap(long = "skip-chromosome-sort", help_heading = "Core")
+        clap(long, value_parser, help_heading = "Normalization")
     )]
-    pub skip_chromosome_sort: bool,
+    pub coverage_scaling_factors: Option<PathBuf>,
 
-    #[cfg_attr(feature = "cli", clap(flatten))]
-    pub scale_genome: ScaleGenomeArgs,
+    /// Optional path to count-based scaling factors `[path]`
+    ///
+    /// `.tsv` file as produced by `cfdna fragment-count-weights`.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, value_parser, help_heading = "Normalization")
+    )]
+    pub count_scaling_factors: Option<PathBuf>,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub fragment_lengths: FragmentLengthArgs,
@@ -120,7 +128,7 @@ pub struct BamToBamConfig {
     ///
     /// This is **NOT** recommended by default, as it trims the tails of the length distribution.
     ///
-    /// Note, that we only keep inward-directed fragments within a specified length range, so
+    /// Note, that we only keep inward-directed fragments within the specified length range, so
     /// there's no real need for proper-pair filtering.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
     pub require_proper_pair: bool,
@@ -179,6 +187,9 @@ pub struct BamToBamConfig {
         )
     )]
     pub ref_2bit: Option<PathBuf>,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub logging: LoggingArgs,
 }
 
 impl BamToBamConfig {
@@ -188,8 +199,8 @@ impl BamToBamConfig {
             out_bam,
             by_bed: None,
             chromosomes,
-            skip_chromosome_sort: false,
-            scale_genome: ScaleGenomeArgs::default(),
+            coverage_scaling_factors: None,
+            count_scaling_factors: None,
             fragment_lengths: FragmentLengthArgs::default(),
             min_mapq: 0,
             require_proper_pair: false,
@@ -201,9 +212,10 @@ impl BamToBamConfig {
             blacklist_strategy: BlacklistStrategy::Any,
             gc: ApplyGCArgFileOnly {
                 gc_file: None,
-                drop_invalid_gc: false,
+                neutralize_invalid_gc: false,
             },
             ref_2bit: None,
+            logging: LoggingArgs::default(),
         }
     }
 
@@ -224,8 +236,24 @@ impl BamToBamConfig {
         &mut self.fragment_lengths
     }
 
-    pub fn set_scale_genome(&mut self, scale: ScaleGenomeArgs) {
-        self.scale_genome = scale;
+    pub fn set_coverage_scaling_factors(&mut self, coverage_scaling_factors: Option<PathBuf>) {
+        self.coverage_scaling_factors = coverage_scaling_factors;
+    }
+
+    pub fn set_count_scaling_factors(&mut self, count_scaling_factors: Option<PathBuf>) {
+        self.count_scaling_factors = count_scaling_factors;
+    }
+
+    pub fn coverage_scale_genome_args(&self) -> ScaleGenomeArgs {
+        ScaleGenomeArgs {
+            scaling_factors: self.coverage_scaling_factors.clone(),
+        }
+    }
+
+    pub fn count_scale_genome_args(&self) -> ScaleGenomeArgs {
+        ScaleGenomeArgs {
+            scaling_factors: self.count_scaling_factors.clone(),
+        }
     }
 
     pub fn set_min_mapq(&mut self, min_mapq: u8) {
@@ -247,10 +275,6 @@ impl BamToBamConfig {
     pub fn set_blacklist_strategy(&mut self, blacklist_strategy: BlacklistStrategy) {
         self.blacklist_strategy = blacklist_strategy;
     }
-    pub fn set_skip_chromosome_sort(&mut self, skip_chromosome_sort: bool) {
-        self.skip_chromosome_sort = skip_chromosome_sort;
-    }
-
     pub fn set_gc(&mut self, gc: ApplyGCArgFileOnly) {
         self.gc = gc;
     }

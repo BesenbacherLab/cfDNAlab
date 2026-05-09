@@ -1,8 +1,9 @@
 use std::fmt::Write;
 
-use crate::commands::fragment_kmers::positions::ReferenceFrame;
+use crate::shared::positioning::ReferenceFrame;
+use crate::shared::visualization::Track;
 
-use super::model::{LengthVisualization, Track, VizConfig};
+use super::model::{LengthVisualization, VizConfig};
 
 /// Render the visualization as ASCII art.
 pub fn render_ascii(results: &[LengthVisualization], config: &VizConfig) -> String {

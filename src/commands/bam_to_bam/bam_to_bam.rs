@@ -2,6 +2,7 @@ use anyhow::{Context, Result, bail};
 use fxhash::FxHashMap;
 use rust_htslib::bam::{self, Format, Header, Read, Record, ext::BamRecordExtensions};
 use std::{sync::Arc, time::Instant};
+use tracing::info;
 
 use crate::{
     commands::{
@@ -13,10 +14,14 @@ use crate::{
             WindowSpec, ensure_output_dir, load_blacklist_map, load_scaling_map,
             resolve_chromosomes_and_contigs,
         },
-        counters::BamToFragCounters,
+        counters::BamToBamCounters,
         gc_bias::{
             correct::{GCCorrector, load_gc_corrector},
             counting::build_gc_prefixes,
+        },
+        run_statistics::{
+            DEFAULT_FRAGMENT_STATISTICS_LABELS, FragmentRunStatisticsOptions,
+            FragmentStatisticsLabels, GCStatisticsSummary, print_fragment_run_statistics,
         },
     },
     shared::{
@@ -24,15 +29,18 @@ use crate::{
         bed::load_windows_from_bed,
         blacklist::is_blacklisted,
         fragment::with_records_fragment::WithRecordsFragment,
-        fragment_iterator::fragments_with_records_from_bam,
+        fragment_iterators::fragments_with_records_from_bam,
         interval::{IndexedInterval, Interval},
         overlaps::find_overlapping_windows,
         progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq,
-        scale_genome::compute_window_scaling_over_fragment,
+        scale_genome::{ScalingBin, compute_per_window_scaling_over_fragment},
+        windowing::ensure_plain_bed_windows_not_empty,
     },
 };
+
+const COMMAND_TARGET: &str = "bam-to-bam";
 
 /// Execute the bam-to-bam filtering.
 ///
@@ -48,63 +56,42 @@ use crate::{
 pub fn run(opt: &BamToBamConfig) -> Result<()> {
     let start_time = Instant::now();
     let global_counter = run_inner(opt)?;
-
-    let quiet = false;
-
-    if !quiet {
-        println!();
-        println!("Statistics");
-        println!("----------");
-
-        // Print summary statistics and execution time
-        let elapsed = start_time.elapsed();
-        println!("  Total reads: {}", global_counter.base.total_reads);
-        println!(
-            "  Initially accepted reads: {} ({:.2}%, forward: {}, reverse: {})",
-            global_counter.base.accepted_forward + global_counter.base.accepted_reverse,
-            (global_counter.base.accepted_forward + global_counter.base.accepted_reverse) as f64
-                / global_counter.base.total_reads as f64
-                * 100.0,
-            global_counter.base.accepted_forward,
-            global_counter.base.accepted_reverse
-        );
-        println!(
-            "  Blacklist-excluded fragments: {}",
-            global_counter.blacklisted_fragments
-        );
-        if opt.gc.gc_file.is_some() {
-            let gc_fail_action = if opt.gc.drop_invalid_gc {
-                "fragment skipped"
-            } else {
-                "fragment counted with weight 1.0"
-            };
-            println!(
-                "  GC correction failures ({}): {}",
-                gc_fail_action, global_counter.gc_failed_fragments
-            );
-        }
-        println!(
-            "  Fragments included: {}",
-            global_counter.base.counted_fragments
-        );
-        println!("----------");
-        println!("Elapsed time: {:.2?}", elapsed);
-    }
+    let elapsed = start_time.elapsed();
+    print_fragment_run_statistics(
+        &global_counter.base,
+        elapsed,
+        FragmentRunStatisticsOptions {
+            include_section_header: true,
+            notes: &[],
+            labels: FragmentStatisticsLabels {
+                counted_fragments: "Fragments included",
+                ..DEFAULT_FRAGMENT_STATISTICS_LABELS
+            },
+            blacklist_excluded_fragments: Some(global_counter.blacklisted_fragments),
+            gc: opt.gc.gc_file.is_some().then_some(GCStatisticsSummary {
+                neutralize_invalid_gc: opt.gc.neutralize_invalid_gc,
+                failed_fragments: global_counter.gc_failed_fragments,
+                missing_tags: None,
+                out_of_range_tags: None,
+            }),
+        },
+        std::iter::empty::<&str>(),
+    );
     Ok(())
 }
 
-pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToFragCounters> {
+pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToBamCounters> {
+    opt.fragment_lengths.validate()?;
+    opt.gc.validate(opt.ref_2bit.as_deref())?;
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
     let (mut chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.in_bam.as_path())?;
-    if !opt.skip_chromosome_sort {
-        chromosomes.sort();
-    }
+    // Preserve the selected subset, but write it in the input BAM header order.
+    // BAM coordinate sorting follows header order, not chromosome-name string order.
+    sort_chromosomes_by_bam_header_order(&mut chromosomes, &contigs)?;
     let window_opt = opt.resolve_windows();
-
-    let quiet = false;
 
     // Create output directory
     let output_dir = opt
@@ -114,8 +101,8 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToFragCounters> {
     ensure_output_dir(output_dir)?;
 
     // Load blacklist intervals if provided
-    if opt.blacklist.is_some() && !quiet {
-        println!("Start: Loading blacklists");
+    if opt.blacklist.is_some() {
+        info!(target: COMMAND_TARGET, "Loading blacklists");
     }
     let blacklist_map = load_blacklist_map(
         opt.blacklist.as_ref(),
@@ -127,41 +114,54 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToFragCounters> {
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
-            println!("Start: Loading window coordinates");
-            Some(load_windows_from_bed(
-                bed,
-                Some(chromosomes.as_slice()),
-                None,
-                None,
-            )?)
+            info!(target: COMMAND_TARGET, "Loading window coordinates");
+            let windows = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            ensure_plain_bed_windows_not_empty(&windows)?;
+            Some(windows)
         }
         _ => None,
     };
 
     // Load genomic scaling factors
-    if opt.scale_genome.scaling_factors.is_some() {
-        println!("Start: Loading scaling factors");
+    let coverage_scale_genome = opt.coverage_scale_genome_args();
+    if coverage_scale_genome.scaling_factors.is_some() {
+        info!(target: COMMAND_TARGET, "Loading coverage scaling factors");
     }
-    let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> =
-        load_scaling_map(&opt.scale_genome, &chromosomes, &contigs)?;
+    let coverage_scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
+        &coverage_scale_genome,
+        &chromosomes,
+        &contigs,
+        crate::shared::scale_genome::scaling_gc_mode_for_run(opt.gc.gc_file.is_some(), false),
+        None,
+    )?;
+    let count_scale_genome = opt.count_scale_genome_args();
+    if count_scale_genome.scaling_factors.is_some() {
+        info!(target: COMMAND_TARGET, "Loading count-based scaling factors");
+    }
+    let count_scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
+        &count_scale_genome,
+        &chromosomes,
+        &contigs,
+        crate::shared::scale_genome::scaling_gc_mode_for_run(opt.gc.gc_file.is_some(), false),
+        None,
+    )?;
 
     // Load GC correction package if specified
     if opt.gc.gc_file.is_some() {
-        println!("Start: Loading GC correction matrix");
+        info!(target: COMMAND_TARGET, "Loading GC correction matrix");
     }
     let gc_corrector = load_gc_corrector(
         opt.gc.gc_file.as_ref(),
+        opt.ref_2bit.as_ref(),
         opt.fragment_lengths.min_fragment_length,
         opt.fragment_lengths.max_fragment_length,
     )?;
 
     // Create progress bar
-    let progress = ProgressFactory::with_enabled(!quiet);
+    let progress = ProgressFactory::new();
     let pb = Arc::new(progress.default_bar(chromosomes.len() as u64));
 
-    if !quiet {
-        println!("Start: Converting per chromosome");
-    }
+    info!(target: COMMAND_TARGET, "Converting per chromosome");
 
     pb.set_position(0);
 
@@ -172,7 +172,7 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToFragCounters> {
     let mut writer = bam::Writer::from_path(&opt.out_bam, &header, Format::Bam)
         .context("creating BAM writer")?;
 
-    let results: Vec<BamToFragCounters> = chromosomes
+    let results: Vec<BamToBamCounters> = chromosomes
         .iter()
         .map(|chr| -> Result<_> {
             let out = process_chrom(
@@ -182,7 +182,14 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToFragCounters> {
                     .as_ref()
                     .and_then(|m| m.get(chr).map(|v| v.as_slice())),
                 blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
-                scaling_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
+                coverage_scaling_map
+                    .get(chr)
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]),
+                count_scaling_map
+                    .get(chr)
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]),
                 gc_corrector.clone(),
                 &mut writer,
             )?;
@@ -193,7 +200,7 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToFragCounters> {
 
     pb.finish_with_message("| Finished conversion");
 
-    let mut global_counter = BamToFragCounters::default();
+    let mut global_counter = BamToBamCounters::default();
 
     // Collect counters
     for counter in results {
@@ -203,26 +210,49 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToFragCounters> {
     Ok(global_counter)
 }
 
+fn sort_chromosomes_by_bam_header_order(
+    chromosomes: &mut Vec<String>,
+    contigs: &crate::shared::bam::Contigs,
+) -> Result<()> {
+    // Chromosome selection can come from defaults, explicit CLI values, or a file. Those sources do
+    // not necessarily match the BAM header order, so sort the already-selected subset by header tid.
+    for chromosome in chromosomes.iter() {
+        contigs.contigs.get(chromosome).with_context(|| {
+            format!("missing BAM contig metadata for selected chromosome '{chromosome}'")
+        })?;
+    }
+
+    chromosomes.sort_by_key(|chromosome| {
+        contigs
+            .contigs
+            .get(chromosome)
+            .map(|(target_id, _chromosome_length)| *target_id)
+            .expect("target IDs were loaded for every selected chromosome")
+    });
+    Ok(())
+}
+
 fn process_chrom(
     chr: &str,
     opt: &BamToBamConfig,
     windows: Option<&[IndexedInterval<u64>]>,
     blacklist_intervals: &[Interval<u64>],
-    scaling_chr: &[(u64, u64, f32)],
+    coverage_scaling_chr: &[ScalingBin],
+    count_scaling_chr: &[ScalingBin],
     gc_corrector_opt: Option<GCCorrector>,
     writer: &mut bam::Writer,
-) -> anyhow::Result<BamToFragCounters> {
+) -> anyhow::Result<BamToBamCounters> {
     if matches!(opt.resolve_windows(), WindowSpec::Bed(_))
         && windows.is_none_or(|window_slice| window_slice.is_empty())
     {
-        return Ok(BamToFragCounters::default());
+        return Ok(BamToBamCounters::default());
     }
 
     // Open a fresh BAM reader for this thread
     let (mut reader, tid, chrom_len) = create_chromosome_reader(&opt.in_bam, chr)?;
 
     // Initialize counters (default -> 0s)
-    let mut counter = BamToFragCounters::default();
+    let mut counter = BamToBamCounters::default();
 
     let gc_prefixes_opt = if gc_corrector_opt.is_some() {
         let ref_2bit = match opt.ref_2bit.as_ref() {
@@ -239,14 +269,18 @@ fn process_chrom(
     //
     // In BED mode, `find_overlapping_windows(...)` uses the scan position in this ordered slice as
     // `OverlappingWindow.idx`; it does not use `IndexedInterval.idx`. Because this temporary list
-    // is built in the same order as `scaling_chr`, those scan positions already match the
-    // chromosome-local indices needed for indexing back into `scaling_chr`.
+    // is built in the same order as the scaling bins, those scan positions already match the
+    // chromosome-local indices needed for indexing back into those bins.
     //
     // So the carried `IndexedInterval.idx` value is intentionally a placeholder.
-    let scaling_with_bin_idx: Vec<IndexedInterval<u64>> = scaling_chr
+    let coverage_scaling_with_bin_idx: Vec<IndexedInterval<u64>> = coverage_scaling_chr
         .iter()
-        .map(|(start, end, _)| IndexedInterval::new(*start, *end, 0_u64))
-        .collect::<crate::Result<_>>()?;
+        .map(|b| IndexedInterval::from_interval(b.interval, 0_u64))
+        .collect();
+    let count_scaling_with_bin_idx: Vec<IndexedInterval<u64>> = count_scaling_chr
+        .iter()
+        .map(|b| IndexedInterval::from_interval(b.interval, 0_u64))
+        .collect();
 
     // Get coordinates to fetch reads from and to
     let (fetch_from, fetch_to) = if windows.is_some() {
@@ -311,7 +345,8 @@ fn process_chrom(
     // Streaming pointers
     let mut bl_ptr = 0; // Blacklist interval
     let mut wd_ptr = 0; // Genomic window
-    let mut sf_ptr = 0; // Scaling factor bin
+    let mut coverage_sf_ptr = 0; // Coverage scaling factor bin
+    let mut count_sf_ptr = 0; // Count-based scaling factor bin
 
     // Write using a bounded window sorter to ensure (start,end)-sorted output
     let mut sorter = WindowSorter::new(opt.fragment_lengths.max_fragment_length);
@@ -353,10 +388,10 @@ fn process_chrom(
             (Some(w), true) => Some(w),
             (None, true) => {
                 counter.gc_failed_fragments += 1;
-                if opt.gc.drop_invalid_gc {
-                    continue;
-                } else {
+                if opt.gc.neutralize_invalid_gc {
                     Some(1.0)
+                } else {
+                    continue;
                 }
             }
             (None, false) => None,
@@ -365,12 +400,12 @@ fn process_chrom(
 
         // Find all overlapping scaling-factor bins
         // And count up the weight
-        let scaling_weight = if !scaling_chr.is_empty() {
+        let coverage_weight = if !coverage_scaling_chr.is_empty() {
             // Find overlapping scaling-bins
             let overlapping_scaling_bins = find_overlapping_windows(
                 chrom_len,
-                &mut sf_ptr,
-                Some(&scaling_with_bin_idx),
+                &mut coverage_sf_ptr,
+                Some(&coverage_scaling_with_bin_idx),
                 None,
                 fragment.interval.try_to_u64()?, // Full fragment
                 1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0), // Any overlap
@@ -387,17 +422,50 @@ fn process_chrom(
                 .collect();
 
             // Calculate the weight per overlapping count-window
-            // NOTE: `compute_window_scaling_over_fragment` always returns
+            // NOTE: `compute_per_window_scaling_over_fragment` always returns
             // an overlap fraction of 1.0 (count full fragment)!
-            let scaling_weight = compute_window_scaling_over_fragment(
+            let scaling_weight = compute_per_window_scaling_over_fragment(
                 fragment.interval.try_to_u64()?,
                 &overlapping_windows,
                 &overlapping_scaling_bin_indices,
-                scaling_chr,
+                coverage_scaling_chr,
             )?
             .pop()
-            .map(|(_, w, _)| w)
+            .map(|window_scaling| window_scaling.scaling_weight)
             .expect("no overlapping scaling bins found");
+
+            Some(scaling_weight)
+        } else {
+            None
+        };
+        let count_weight = if !count_scaling_chr.is_empty() {
+            let overlapping_scaling_bins = find_overlapping_windows(
+                chrom_len,
+                &mut count_sf_ptr,
+                Some(&count_scaling_with_bin_idx),
+                None,
+                fragment.interval.try_to_u64()?,
+                1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0),
+                opt.fragment_lengths.max_fragment_length.into(),
+            )
+            .with_context(|| format!("finding overlapping count-based scaling bins on chr {chr}"))?
+            .context("no overlapping count-based scaling bins found")?;
+
+            let overlapping_scaling_bin_indices: Vec<usize> = overlapping_scaling_bins
+                .windows
+                .iter()
+                .map(|w| w.idx)
+                .collect();
+
+            let scaling_weight = compute_per_window_scaling_over_fragment(
+                fragment.interval.try_to_u64()?,
+                &overlapping_windows,
+                &overlapping_scaling_bin_indices,
+                count_scaling_chr,
+            )?
+            .pop()
+            .map(|window_scaling| window_scaling.scaling_weight)
+            .expect("no overlapping count-based scaling bins found");
 
             Some(scaling_weight)
         } else {
@@ -407,7 +475,8 @@ fn process_chrom(
         let fragment_length = fragment.len();
         let tags = Arc::new(RecordTags {
             fragment_length,
-            coverage_weight: scaling_weight.map(|w| w as f32),
+            coverage_weight: coverage_weight.map(|w| w as f32),
+            fragment_count_weight: count_weight.map(|w| w as f32),
             gc_weight: gc_weight.map(|w| w as f32),
         });
 

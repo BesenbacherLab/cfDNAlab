@@ -1,12 +1,14 @@
-use crate::commands::gc_bias::{
-    GC_CORRECTION_SCHEMA_VERSION,
-    binning::{BinnedAxis, compute_bin_edges},
-    load_reference_bias::ReferenceGCMetadata,
+use crate::{
+    commands::gc_bias::{
+        binning::{BinnedAxis, compute_bin_edges},
+        load_reference_bias::ReferenceGCMetadata,
+    },
+    shared::{constants::GC_CORRECTION_SCHEMA_VERSION, reference::ContigFootprintEntry},
 };
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use ndarray::{Array1, Array2};
 use ndarray_npy::{NpzReader, NpzWriter};
-use std::fs::File;
+use std::{fs::File, path::Path};
 
 #[derive(Clone, Debug)]
 pub struct GCCorrectionPackage {
@@ -16,6 +18,7 @@ pub struct GCCorrectionPackage {
     pub gc_edges: Vec<u32>,
     pub correction_matrix: Array2<f64>,
     pub length_bin_frequencies: Array1<f64>,
+    pub reference_contig_footprint: Vec<ContigFootprintEntry>,
 }
 
 impl GCCorrectionPackage {
@@ -33,6 +36,7 @@ impl GCCorrectionPackage {
             reference_metadata.max_fragment_length as u32,
         )?;
         let gc_edges = compute_bin_edges(gc_bins, 0, 100)?;
+        validate_correction_matrix_for_writing(&correction_matrix, &length_edges, &gc_edges)?;
         Ok(Self {
             version,
             end_offset: reference_metadata.end_offset as u64,
@@ -40,6 +44,7 @@ impl GCCorrectionPackage {
             gc_edges,
             correction_matrix,
             length_bin_frequencies,
+            reference_contig_footprint: reference_metadata.reference_contig_footprint.clone(),
         })
     }
 
@@ -55,14 +60,27 @@ impl GCCorrectionPackage {
             "length_bin_frequencies",
             &Array1::from(self.length_bin_frequencies.clone()),
         )?;
+        npz.add_array(
+            "reference_contig_footprint_json",
+            &Array1::from(serde_json::to_vec(&self.reference_contig_footprint)?),
+        )?;
         npz.finish()?;
         Ok(())
     }
 
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
-        let file = File::open(path.as_ref())
-            .with_context(|| format!("opening correction package {}", path.as_ref().display()))?;
-        let mut reader = NpzReader::new(file)?;
+        let path = path.as_ref();
+        validate_correction_package_path(path)?;
+
+        let file = File::open(path)
+            .with_context(|| format!("opening correction package {}", path.display()))?;
+        let mut reader = NpzReader::new(file).with_context(|| {
+            format!(
+                "reading GC correction package {} as a .npz archive",
+                path.display()
+            )
+        })?;
+        let array_names = reader.names()?;
 
         let correction_matrix: Array2<f64> = reader.by_name("correction_matrix")?;
         let length_edges_arr: Array1<u32> = reader.by_name("length_edges")?;
@@ -86,6 +104,20 @@ impl GCCorrectionPackage {
             .iter()
             .next()
             .context("end_offset array in GC correction package is empty")?;
+        ensure!(
+            array_names
+                .iter()
+                .any(|name| name == "reference_contig_footprint_json"),
+            "Missing reference_contig_footprint_json in GC correction package. Rebuild the package with the current schema."
+        );
+        let reference_contig_footprint_json: Array1<u8> =
+            reader.by_name("reference_contig_footprint_json")?;
+        let reference_contig_footprint: Vec<ContigFootprintEntry> = serde_json::from_slice(
+            reference_contig_footprint_json
+                .as_slice()
+                .context("reference_contig_footprint_json should be contiguous")?,
+        )
+        .context("invalid reference_contig_footprint_json in GC correction package")?;
 
         let length_edges = length_edges_arr.to_vec();
         let gc_edges = gc_edges_arr.to_vec();
@@ -116,6 +148,64 @@ impl GCCorrectionPackage {
             gc_edges,
             correction_matrix,
             length_bin_frequencies: length_bin_frequencies_arr,
+            reference_contig_footprint,
         })
     }
+}
+
+fn validate_correction_matrix_for_writing(
+    correction_matrix: &Array2<f64>,
+    length_edges: &[u32],
+    gc_edges: &[u32],
+) -> Result<()> {
+    ensure!(
+        length_edges.len() == correction_matrix.nrows() + 1,
+        "Number of Length edges ({}) must match number of correction rows + 1 ({})",
+        length_edges.len(),
+        correction_matrix.nrows() + 1
+    );
+    ensure!(
+        gc_edges.len() == correction_matrix.ncols() + 1,
+        "Number of GC edges ({}) must match number of correction columns + 1 ({})",
+        gc_edges.len(),
+        correction_matrix.ncols() + 1
+    );
+
+    for ((length_bin_idx, gc_bin_idx), &weight) in correction_matrix.indexed_iter() {
+        ensure!(
+            weight.is_finite() && weight >= 0.0,
+            "GC correction matrix contains invalid weight {} at length bin {} [{}-{}], GC bin {} [{}-{}]. Correction weights must be finite and non-negative",
+            weight,
+            length_bin_idx,
+            length_edges[length_bin_idx],
+            length_edges[length_bin_idx + 1],
+            gc_bin_idx,
+            gc_edges[gc_bin_idx],
+            gc_edges[gc_bin_idx + 1]
+        );
+    }
+
+    Ok(())
+}
+
+fn validate_correction_package_path(path: &Path) -> Result<()> {
+    if !path.is_file() {
+        bail!(
+            "GC correction package path must point to an existing .npz file: {}",
+            path.display()
+        );
+    }
+
+    let has_npz_extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("npz"));
+
+    ensure!(
+        has_npz_extension,
+        "GC correction package path must point to a .npz file: {}",
+        path.display()
+    );
+
+    Ok(())
 }

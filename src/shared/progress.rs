@@ -4,6 +4,8 @@ use std::{
     time::Duration,
 };
 
+use crate::shared::logging;
+
 const DEFAULT_BAR_TEMPLATE: &str = "       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}";
 const DEFAULT_SPINNER_TEMPLATE: &str = "{spinner} {msg} [{elapsed_precise}]";
 const DEFAULT_SPINNER_TICK_INTERVAL: Duration = Duration::from_millis(100);
@@ -57,7 +59,7 @@ impl ProgressFactory {
     /// Create a progress factory that honors both an explicit flag and TTY state.
     pub fn with_enabled(enabled: bool) -> Self {
         Self {
-            enabled: enabled && io::stderr().is_terminal(),
+            enabled: enabled && logging::progress_enabled() && io::stderr().is_terminal(),
         }
     }
 

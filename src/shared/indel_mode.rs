@@ -31,3 +31,37 @@ impl FromStr for IndelMode {
         }
     }
 }
+
+/// Policy for when to filter motifs due to indels.
+///
+/// Possible values:
+///     "auto", "skip-affected-end", or "skip-affected-fragment" [string]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum IndelMotifFilterPolicy {
+    /// Select the option based on the source.
+    ///
+    /// - For read-sequence bases, allow indels in the alignment.
+    ///
+    /// - For reference bases, skip motifs with indels in the alignment.
+    #[default]
+    Auto,
+    /// Always skip motifs overlapping indels.
+    SkipAffectedEnd,
+    /// Skip **fragments** when either end overlap indels.
+    SkipAffectedFragment,
+}
+
+impl FromStr for IndelMotifFilterPolicy {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        if s == "auto" {
+            Ok(IndelMotifFilterPolicy::Auto)
+        } else if s == "skip-affected-end" {
+            Ok(IndelMotifFilterPolicy::SkipAffectedEnd)
+        } else if s == "skip-affected-fragment" {
+            Ok(IndelMotifFilterPolicy::SkipAffectedFragment)
+        } else {
+            Err("Use 'auto', 'skip-affected-end', or 'skip-affected-fragment'".into())
+        }
+    }
+}

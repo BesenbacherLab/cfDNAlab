@@ -1,4 +1,7 @@
-use crate::commands::gc_bias::GC_CORRECTION_SCHEMA_VERSION;
+use crate::shared::{
+    constants::{GC_CORRECTION_SCHEMA_VERSION, MIN_ACGT_BASES_FOR_GC_FRACTION},
+    reference::ContigFootprintEntry,
+};
 use anyhow::{Context, Result, ensure};
 use ndarray::{Array1, Array2};
 use ndarray_npy::NpzReader;
@@ -18,6 +21,8 @@ pub struct ReferenceGCMetadata {
     pub min_fragment_length: usize,
     pub max_fragment_length: usize,
     pub end_offset: u8,
+    pub chromosomes: Vec<String>,
+    pub reference_contig_footprint: Vec<ContigFootprintEntry>,
     pub skip_interpolation: bool,
     pub smoothing_sigma: f64,
     pub smoothing_radius: u8,
@@ -92,6 +97,12 @@ fn read_reference_gc_package(
     let skip_smoothing_arr: Array1<bool> = reader
         .by_name("skip_smoothing")
         .context("missing skip_smoothing in reference GC package")?;
+    let chromosomes_json: Array1<u8> = reader
+        .by_name("chromosomes_json")
+        .context("missing chromosomes_json in reference GC package")?;
+    let reference_contig_footprint_json: Array1<u8> = reader
+        .by_name("reference_contig_footprint_json")
+        .context("missing reference_contig_footprint_json in reference GC package")?;
     ensure!(
         version_arr.len() == 1,
         "version should be length 1. Found len={}",
@@ -129,10 +140,55 @@ fn read_reference_gc_package(
         version_arr[0],
         GC_CORRECTION_SCHEMA_VERSION
     );
+    let min_fragment_length = lengths[0] as usize;
+    let max_fragment_length = lengths[1] as usize;
+    ensure!(
+        min_fragment_length <= max_fragment_length,
+        "length_range must be ordered as [min, max]. Found [{}, {}]",
+        min_fragment_length,
+        max_fragment_length
+    );
+    let expected_length_rows = max_fragment_length - min_fragment_length + 1;
+    ensure!(
+        counts.nrows() == expected_length_rows,
+        "Reference GC package row count {} does not match length_range [{}, {}] (expected {})",
+        counts.nrows(),
+        min_fragment_length,
+        max_fragment_length,
+        expected_length_rows
+    );
+    let end_offset = u8::try_from(end_offset_arr[0])
+        .context("end_offset in reference GC package must fit in u8")?;
+    let minimum_effective_length = MIN_ACGT_BASES_FOR_GC_FRACTION as usize;
+    ensure!(
+        min_fragment_length >= 2 * end_offset as usize + minimum_effective_length,
+        "Reference GC package has invalid effective minimum length: min_fragment_length ({}) - 2 * end_offset ({}) must be >= {}",
+        min_fragment_length,
+        end_offset,
+        minimum_effective_length
+    );
+    let chromosomes: Vec<String> = serde_json::from_slice(
+        chromosomes_json
+            .as_slice()
+            .context("chromosomes_json should be contiguous")?,
+    )
+    .context("invalid chromosomes_json in reference GC package")?;
+    ensure!(
+        !chromosomes.is_empty(),
+        "chromosomes_json must contain at least one chromosome"
+    );
+    let reference_contig_footprint: Vec<ContigFootprintEntry> = serde_json::from_slice(
+        reference_contig_footprint_json
+            .as_slice()
+            .context("reference_contig_footprint_json should be contiguous")?,
+    )
+    .context("invalid reference_contig_footprint_json in reference GC package")?;
     let metadata = ReferenceGCMetadata {
-        min_fragment_length: lengths[0] as usize,
-        max_fragment_length: lengths[1] as usize,
-        end_offset: end_offset_arr[0] as u8,
+        min_fragment_length,
+        max_fragment_length,
+        end_offset,
+        chromosomes,
+        reference_contig_footprint,
         skip_interpolation: skip_interpolation_arr[0] as bool,
         smoothing_radius: smoothing_radius_arr[0] as u8,
         smoothing_sigma: smoothing_sigma_arr[0] as f64,

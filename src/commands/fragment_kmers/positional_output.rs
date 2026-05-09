@@ -1,6 +1,7 @@
-use crate::commands::fragment_kmers::{positions::PositionGroup, tiling::PositionDescriptor};
+use crate::commands::fragment_kmers::tiling::PositionDescriptor;
 use crate::shared::io::dot_join;
 use crate::shared::kmers::{kmer_codec::KmerSpec, process_counts::DecodedCounts};
+use crate::shared::positioning::PositionGroup;
 use anyhow::{Context, Result};
 use fxhash::FxHashMap;
 use ndarray::Array3;

@@ -6,7 +6,7 @@ use crate::Result;
 use crate::shared::fragment::minimal_fragment::{
     Fragment, PairOrientable, is_inwards_oriented, oriented_pair_from_read_info,
 };
-use crate::shared::gc_tag::{GcTagValue, combine_gc_tag_values, read_gc_tag_from_record};
+use crate::shared::gc_tag::{GCTagValue, combine_gc_tag_values, read_gc_tag_from_record};
 use crate::shared::interval::{Interval, TouchingMergePolicy, merge_sorted_intervals};
 
 /// Fragment that may carry explicit reference-coverage segments
@@ -18,7 +18,7 @@ pub struct FragmentWithSegments {
     pub tid: i32,
     pub interval: Interval<u32>, // forward.start .. reverse.end
     pub segments: Option<SmallVec<[Interval<u32>; 12]>>,
-    pub gc_tag: GcTagValue,
+    pub gc_tag: GCTagValue,
 }
 
 impl FragmentWithSegments {
@@ -45,7 +45,7 @@ impl From<Fragment> for FragmentWithSegments {
             tid: f.tid,
             interval: f.interval,
             segments: None,
-            gc_tag: GcTagValue::default(),
+            gc_tag: GCTagValue::default(),
         }
     }
 }
@@ -53,13 +53,13 @@ impl From<Fragment> for FragmentWithSegments {
 /// Compact per-read metadata plus optional mapped-reference segments
 ///
 /// Stores only what we need to assemble a fragment without keeping whole BAM records.
-/// If the read’s CIGAR contains reference gaps (`D` or `N`), we also store the
-/// read’s **mapped reference segments** as relative pairs `[offset_from_pos, len]`
+/// If the read's CIGAR contains reference gaps (`D` or `N`), we also store the
+/// read's **mapped reference segments** as relative pairs `[offset_from_pos, len]`
 /// for ref+query consuming ops (`M`, `=`, `X`). Otherwise `ref_mapped_segments` is empty.
 ///
 /// Notes
 /// -----
-/// - `interval` is the read’s aligned reference span
+/// - `interval` is the read's aligned reference span
 /// - `ref_mapped_segments` elements are relative to `interval.start()`
 /// - Adjacent segments separated only by non-reference ops are merged
 #[derive(Debug, Clone)]
@@ -70,7 +70,7 @@ pub struct SegmentedReadInfo {
     pub has_ref_gap: bool,                    // True if any D/N present
     pub max_ref_gap: u32,                     // Longest single D/N length (0 if none)
     pub ref_mapped_segments: Vec<(u32, u32)>, // Relative segments: (offset_from_pos, len)
-    pub gc_tag: GcTagValue,
+    pub gc_tag: GCTagValue,
 }
 
 impl SegmentedReadInfo {
@@ -177,15 +177,6 @@ impl SegmentedReadInfo {
             ref_mapped_segments,
             gc_tag: gc_tag_value,
         })
-    }
-}
-
-impl TryFrom<&Record> for SegmentedReadInfo {
-    type Error = crate::Error;
-
-    #[inline]
-    fn try_from(r: &Record) -> Result<Self> {
-        SegmentedReadInfo::from_record_with_gc_tag(r, None)
     }
 }
 

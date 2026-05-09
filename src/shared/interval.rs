@@ -563,7 +563,7 @@ impl Interval<i64> {
 ///
 /// Use this when code needs ordered genomic bounds but the empty case is valid,
 /// for example collection envelopes or optional extents. For guaranteed
-/// non-empty geometry, use `Interval<T>` instead.
+/// non-empty intervals, use `Interval<T>` instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span<T> {
     start: T,
