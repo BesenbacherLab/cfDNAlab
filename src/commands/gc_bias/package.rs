@@ -140,6 +140,7 @@ impl GCCorrectionPackage {
             length_bin_frequencies_arr.len(),
             correction_matrix.dim().0
         );
+        validate_correction_matrix_values(&correction_matrix, &length_edges, &gc_edges)?;
 
         Ok(Self {
             version,
@@ -171,6 +172,16 @@ fn validate_correction_matrix_for_writing(
         correction_matrix.ncols() + 1
     );
 
+    validate_correction_matrix_values(correction_matrix, length_edges, gc_edges)?;
+
+    Ok(())
+}
+
+fn validate_correction_matrix_values(
+    correction_matrix: &Array2<f64>,
+    length_edges: &[u32],
+    gc_edges: &[u32],
+) -> Result<()> {
     for ((length_bin_idx, gc_bin_idx), &weight) in correction_matrix.indexed_iter() {
         ensure!(
             weight.is_finite() && weight >= 0.0,

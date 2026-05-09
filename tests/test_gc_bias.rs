@@ -4989,7 +4989,9 @@ mod tests_counts_end_offset {
         counts.set(6, 2, 10.0);
 
         // Act: smooth only the reachable portion of the row.
-        counts.smooth_length_rows_in_place(1.0, 1);
+        counts
+            .smooth_length_rows_in_place(1.0, 1)
+            .expect("smoothing should succeed for valid sigma and radius");
 
         // Assert: unreachable GC counts are absent and storage matches the effective length.
         assert!(counts.get(6, 3).is_none());

@@ -502,8 +502,7 @@ impl GCCounts {
     }
 
     /// Slice the row for `length` from a flat counts buffer and smooth it in place.
-    /// Returns `true` if the slice was valid and smoothed.
-    pub fn smooth_length_rows_in_place(&mut self, sigma: f64, radius: u8) {
+    pub fn smooth_length_rows_in_place(&mut self, sigma: f64, radius: u8) -> Result<()> {
         for length in self.length_range() {
             let Some(effective_length) = self.effective_length(length) else {
                 continue;
@@ -520,9 +519,9 @@ impl GCCounts {
                 length,
                 sigma,
                 radius as usize,
-            )
-            .expect("length/offsets out of range");
+            )?;
         }
+        Ok(())
     }
 
     pub fn length_range(&self) -> std::ops::RangeInclusive<usize> {

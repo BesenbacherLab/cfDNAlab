@@ -183,6 +183,21 @@ fn read_reference_gc_package(
             .context("reference_contig_footprint_json should be contiguous")?,
     )
     .context("invalid reference_contig_footprint_json in reference GC package")?;
+    let smoothing_radius = u8::try_from(smoothing_radius_arr[0])
+        .context("smoothing_radius in reference GC package must fit in u8")?;
+    let smoothing_sigma = smoothing_sigma_arr[0];
+    let skip_smoothing = skip_smoothing_arr[0];
+    if !skip_smoothing {
+        ensure!(
+            smoothing_sigma.is_finite() && smoothing_sigma > 0.0,
+            "smoothing_sigma in reference GC package must be finite and > 0 when smoothing is enabled"
+        );
+        ensure!(
+            smoothing_radius > 0,
+            "smoothing_radius in reference GC package must be > 0 when smoothing is enabled"
+        );
+    }
+
     let metadata = ReferenceGCMetadata {
         min_fragment_length,
         max_fragment_length,
@@ -190,9 +205,9 @@ fn read_reference_gc_package(
         chromosomes,
         reference_contig_footprint,
         skip_interpolation: skip_interpolation_arr[0] as bool,
-        smoothing_radius: smoothing_radius_arr[0] as u8,
-        smoothing_sigma: smoothing_sigma_arr[0] as f64,
-        skip_smoothing: skip_smoothing_arr[0] as bool,
+        smoothing_radius,
+        smoothing_sigma,
+        skip_smoothing,
     };
 
     ensure!(
