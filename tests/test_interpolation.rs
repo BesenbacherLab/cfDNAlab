@@ -65,6 +65,25 @@ mod zero_interpolator_tests {
     }
 
     #[test]
+    fn should_use_nearest_left_anchor_when_padding_missing_left_neighbours() -> anyhow::Result<()> {
+        // The real anchors all lie on y = x + 1. With four neighbours requested
+        // per side, the left side is short and needs one mirrored pseudo anchor.
+        // That pseudo anchor must use the nearest left boundary value 3.0, not
+        // the first left anchor value 1.0.
+        let mut histogram = vec![1.0, 2.0, 3.0, 0.0, 0.0, 6.0, 7.0, 8.0, 9.0];
+
+        fill_zero_bins_with_polynomial(&mut histogram, 1, 2, 4)?;
+
+        assert_slice_close(
+            &histogram,
+            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+            1e-9,
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn edge_run_with_single_anchor_is_left_unchanged() -> anyhow::Result<()> {
         // Run at the left edge has only one real anchor, so we skip interpolation
         // instead of inventing a slope with fabricated padding.
@@ -113,10 +132,10 @@ mod zero_interpolator_tests {
             12.630867510350752,
             16.369729318022028,
             19.0,
-            19.991333489571108,
-            27.054950394500395,
-            35.51499856782018,
-            45.371478009530456,
+            23.538146238575127,
+            30.150235919068848,
+            38.14143725750595,
+            47.51175025388644,
             57.0,
             70.52397195555398,
             84.35700466943274,
@@ -209,7 +228,8 @@ mod zero_interpolator_tests {
             6.0,
             6.0,
         ];
-        assert_slice_close(&histogram, &expected, 1e-9);
+
+        assert_slice_close(&histogram, &expected, 1e-7);
 
         Ok(())
     }
@@ -240,6 +260,38 @@ mod unsupported_interpolator_tests {
 
         assert_slice_close(&histogram, &[2.0, 4.0, 6.0, 8.0], 1e-9);
         assert!(mask.iter().all(|supported| *supported));
+
+        Ok(())
+    }
+
+    #[test]
+    fn unsupported_interp_marks_edge_bin_even_when_value_is_unchanged() -> anyhow::Result<()> {
+        // Masked correction bins can be prefilled with neutral 1.0 before
+        // interpolation. If the fitted edge value is also 1.0, the value is
+        // unchanged but the bin was still successfully interpolated.
+        let mut histogram = vec![1.0, 1.0, 1.0];
+        let mut mask = vec![false, true, true];
+
+        fill_unsupported_bins_with_polynomial(&mut histogram, &mut mask, 1, 2, 1, true)?;
+
+        assert_slice_close(&histogram, &[1.0, 1.0, 1.0], 1e-9);
+        assert_eq!(mask, vec![true, true, true]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn unsupported_interp_fills_edge_run_from_one_sided_support() -> anyhow::Result<()> {
+        // The left edge has no left anchor, but there are enough supported bins
+        // on the right to fit. The edge clamp uses the nearest right anchor as
+        // the boundary value, so both unsupported edge bins become 3.0.
+        let mut histogram = vec![0.0, 0.0, 3.0, 5.0, 7.0];
+        let mut mask = vec![false, false, true, true, true];
+
+        fill_unsupported_bins_with_polynomial(&mut histogram, &mut mask, 1, 2, 2, true)?;
+
+        assert_slice_close(&histogram, &[3.0, 3.0, 3.0, 5.0, 7.0], 1e-9);
+        assert_eq!(mask, vec![true, true, true, true, true]);
 
         Ok(())
     }

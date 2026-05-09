@@ -1,12 +1,14 @@
 use anyhow::{Result, ensure};
 
-/// Fill zero-valued histogram bins by fitting local weighted polynomials when enough real anchors exist.
+/// Fill zero-valued histogram bins by fitting local weighted polynomials from bins
+/// that were non-zero before interpolation.
 ///
-/// Operates in-place when there are at least `polynomial_degree + 1`
-/// genuine non-zero anchor bins in the original data. Contiguous zero runs are
+/// Operates in-place when the original histogram contains at least
+/// `polynomial_degree + 1` genuine non-zero anchor bins. Contiguous zero runs are
 /// interpolated with a single weighted polynomial and clamped to the neighbouring
-/// anchor range. When anchors are insufficient, the run is left unchanged to avoid
-/// fabricating edge behaviour.
+/// anchor range. Edge runs can be interpolated from one-sided real support by
+/// adding mirrored or boundary-valued pseudo anchors. Runs are left unchanged
+/// only when the real anchor set is too small or the local fit fails.
 ///
 /// Parameters
 /// ----------
@@ -15,7 +17,12 @@ use anyhow::{Result, ensure};
 /// - `polynomial_degree`:
 ///     Degree of the fitting polynomial (1 = linear, 2 = quadratic, etc.).
 /// - `min_neighbours`:
-///     Minimum total anchors required before fitting.
+///     Minimum number of non-zero neighbouring bins required to fit a zero run.
+///     The closest neighbouring bins on the left and right are used first.
+///     If one side has too few real neighbours, the fit first adds artificial bins
+///     at distances mirrored from real neighbours on the opposite side. If more bins
+///     are still needed, it adds artificial bins farther outward using the nearest
+///     available boundary value.
 /// - `max_neighbours_per_side`:
 ///     Cap on how many anchors to take from each side of the zero run.
 ///
@@ -92,7 +99,7 @@ pub fn fill_zero_bins_with_polynomial(
         };
         let right_anchor = histogram.get(run_end_idx).copied().unwrap_or(left_anchor);
 
-        if let Some(coefficients) = fit_run_polynomial(
+        if let Some(polynomial_fit) = fit_run_polynomial(
             run_start_idx,
             run_end_idx,
             polynomial_degree,
@@ -101,7 +108,8 @@ pub fn fill_zero_bins_with_polynomial(
             &anchors,
         ) {
             for target_idx in run_start_idx..run_end_idx {
-                let mut interpolated_value = evaluate_polynomial(&coefficients, target_idx as f64);
+                let mut interpolated_value =
+                    evaluate_polynomial_fit(&polynomial_fit, target_idx as f64);
                 if lower_bound != upper_bound {
                     interpolated_value = interpolated_value.max(lower_bound).min(upper_bound);
                 } else {
@@ -125,10 +133,12 @@ pub fn fill_zero_bins_with_polynomial(
 /// Interpolate unsupported bins using nearby supported anchors.
 ///
 /// Treats every `false` entry in `support_mask` as a gap and fits a weighted
-/// polynomial between supported neighbours when at least `polynomial_degree + 1`
-/// genuine anchors exist. Interpolated values are clamped to the anchor range and
-/// optionally mark the mask as supported. If there are too few real anchors, the
-/// run is skipped rather than inventing edge behaviour.
+/// polynomial when at least `polynomial_degree + 1` genuine supported anchors
+/// exist in the original row or column. Interpolated values are clamped to the
+/// anchor range and can optionally mark the mask as supported. Edge runs can be
+/// interpolated from one-sided real support by adding mirrored or boundary-valued
+/// pseudo anchors. Runs are skipped only when the real anchor set is too small or
+/// the local fit fails.
 ///
 /// Parameters
 /// ----------
@@ -139,7 +149,13 @@ pub fn fill_zero_bins_with_polynomial(
 /// - `polynomial_degree`:
 ///     Degree of the fitting polynomial (1 = linear, 2 = quadratic, etc.).
 /// - `min_neighbours`:
-///     Minimum total anchors (real or padded) required before fitting.
+///     Minimum number of supported neighbouring bins required to fit an unsupported run.
+///     A neighbouring bin is a bin outside the unsupported run with
+///     `support_mask == true`. The closest neighbouring bins on the left and
+///     right are used first. If one side has too few real neighbours, the fit
+///     first adds artificial bins at distances mirrored from real neighbours on
+///     the opposite side. If more bins are still needed, it adds artificial bins
+///     farther outward using the nearest available boundary value.
 /// - `max_neighbours_per_side`:
 ///     Cap on how many anchors to take from each side of the unsupported run.
 ///
@@ -202,7 +218,7 @@ pub fn fill_unsupported_bins_with_polynomial(
         let lower_bound = left_anchor.min(right_anchor);
         let upper_bound = left_anchor.max(right_anchor);
 
-        if let Some(coefficients) = fit_run_polynomial(
+        if let Some(polynomial_fit) = fit_run_polynomial(
             run_start_idx,
             run_end_idx,
             polynomial_degree,
@@ -210,9 +226,10 @@ pub fn fill_unsupported_bins_with_polynomial(
             max_neighbours_per_side,
             &anchors,
         ) {
-            let mut any_updates = false;
+            let mut any_value_updates = false;
             for target_idx in run_start_idx..run_end_idx {
-                let mut interpolated_value = evaluate_polynomial(&coefficients, target_idx as f64);
+                let mut interpolated_value =
+                    evaluate_polynomial_fit(&polynomial_fit, target_idx as f64);
                 if lower_bound != upper_bound {
                     interpolated_value = interpolated_value.max(lower_bound).min(upper_bound);
                 } else {
@@ -221,14 +238,14 @@ pub fn fill_unsupported_bins_with_polynomial(
                 let new_value = interpolated_value.max(0.0);
                 if (histogram[target_idx] - new_value).abs() > f64::EPSILON {
                     histogram[target_idx] = new_value;
-                    if update_mask {
-                        support_mask[target_idx] = true;
-                    }
-                    any_updates = true;
+                    any_value_updates = true;
+                }
+                if update_mask {
+                    support_mask[target_idx] = true;
                 }
             }
 
-            if any_updates {
+            if any_value_updates {
                 enforce_monotonic_segment(
                     &mut histogram[run_start_idx..run_end_idx],
                     left_anchor,
@@ -240,6 +257,12 @@ pub fn fill_unsupported_bins_with_polynomial(
     Ok(())
 }
 
+struct PolynomialFit {
+    coefficients: Vec<f64>,
+    center: f64,
+    scale: f64,
+}
+
 /// Build a polynomial for a zero run using nearby anchors (and optional zero padding).
 fn fit_run_polynomial(
     run_start_idx: usize,
@@ -248,7 +271,7 @@ fn fit_run_polynomial(
     min_neighbours: usize,
     max_neighbours_per_side: usize,
     anchors: &[(usize, f64)],
-) -> Option<Vec<f64>> {
+) -> Option<PolynomialFit> {
     let required_points = polynomial_degree + 1;
     // Measure anchor distances from the midpoint of the zero run so both sides are comparable
     let run_center = if run_end_idx == run_start_idx {
@@ -297,6 +320,7 @@ fn fit_run_polynomial(
     // When one side is missing, use the left/right boundary values to mirror
     let left_boundary = anchors
         .iter()
+        .rev()
         .find(|(idx, _)| *idx < run_start_idx)
         .map(|(_, v)| *v)
         .unwrap_or(0.0);
@@ -385,7 +409,32 @@ fn fit_run_polynomial(
             }
         }
     }
-    fit_weighted_polynomial(weighted_samples.as_slice(), polynomial_degree)
+
+    // Center and scale x before building monomial normal equations. This keeps
+    // powers like x^4 small without changing the fitted curve being evaluated.
+    let coordinate_scale = weighted_samples
+        .iter()
+        .map(|(gc_idx, _, _)| (gc_idx - run_center).abs())
+        .fold(0.0, f64::max)
+        .max(1.0);
+    let centered_samples: Vec<(f64, f64, f64)> = weighted_samples
+        .iter()
+        .map(|(gc_idx, count_value, weight)| {
+            (
+                (gc_idx - run_center) / coordinate_scale,
+                *count_value,
+                *weight,
+            )
+        })
+        .collect();
+
+    fit_weighted_polynomial(centered_samples.as_slice(), polynomial_degree).map(|coefficients| {
+        PolynomialFit {
+            coefficients,
+            center: run_center,
+            scale: coordinate_scale,
+        }
+    })
 }
 
 #[inline]
@@ -396,6 +445,12 @@ fn evaluate_polynomial(coefficients: &[f64], x: f64) -> f64 {
         .fold(0.0, |acc, (idx, coefficient)| {
             acc + coefficient * x.powi(idx as i32)
         })
+}
+
+#[inline]
+fn evaluate_polynomial_fit(polynomial_fit: &PolynomialFit, bin_idx: f64) -> f64 {
+    let local_x = (bin_idx - polynomial_fit.center) / polynomial_fit.scale;
+    evaluate_polynomial(&polynomial_fit.coefficients, local_x)
 }
 
 fn fit_weighted_polynomial(
