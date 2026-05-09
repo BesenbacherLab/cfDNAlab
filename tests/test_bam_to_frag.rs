@@ -1144,7 +1144,6 @@ mod tests_bam_to_frag {
 
         let bam_out = work.path().join("scaled.bam");
         let mut bam_cfg = BamToBamConfig::new(bam.bam.clone(), bam_out.clone(), chroms);
-        bam_cfg.skip_chromosome_sort = true;
         bam_cfg.set_min_mapq(0);
         bam_cfg.set_require_proper_pair(false);
         let mut bam_scale = cfdnalab::commands::cli_common::ScaleGenomeArgs::default();
@@ -1210,7 +1209,6 @@ mod tests_bam_to_frag {
 
         let bam_out = work.path().join("scaled.bam");
         let mut bam_cfg = BamToBamConfig::new(bam.bam.clone(), bam_out.clone(), chroms);
-        bam_cfg.skip_chromosome_sort = true;
         bam_cfg.set_min_mapq(0);
         bam_cfg.set_require_proper_pair(false);
         bam_cfg.set_count_scaling_factors(Some(scaling_path));
@@ -1405,7 +1403,6 @@ mod tests_bam_to_frag {
 
         let bam_out = work.path().join("combined_tags.bam");
         let mut bam_cfg = BamToBamConfig::new(bam.bam.clone(), bam_out.clone(), chroms);
-        bam_cfg.skip_chromosome_sort = true;
         bam_cfg.set_min_mapq(0);
         bam_cfg.set_require_proper_pair(false);
         bam_cfg.set_gc(ApplyGCArgFileOnly {
@@ -1553,7 +1550,6 @@ mod tests_bam_to_frag {
 
         let bam_out = work.path().join("scaled_real.bam");
         let mut bam_cfg = BamToBamConfig::new(bam.bam.clone(), bam_out.clone(), chroms);
-        bam_cfg.skip_chromosome_sort = true;
         bam_cfg.set_min_mapq(0);
         bam_cfg.set_require_proper_pair(false);
         let mut bam_scale = cfdnalab::commands::cli_common::ScaleGenomeArgs::default();
@@ -1670,7 +1666,6 @@ mod tests_bam_to_frag {
 
         let bam_out = work.path().join("scaled_real.bam");
         let mut bam_cfg = BamToBamConfig::new(bam.bam.clone(), bam_out.clone(), chroms);
-        bam_cfg.skip_chromosome_sort = true;
         bam_cfg.set_min_mapq(0);
         bam_cfg.set_require_proper_pair(false);
         bam_cfg.set_count_scaling_factors(Some(scaling_path));
@@ -1926,7 +1921,6 @@ mod tests_bam_to_frag {
 
         let bam_out = work.path().join("real_gc_tags.bam");
         let mut bam_cfg = BamToBamConfig::new(bam.bam.clone(), bam_out.clone(), chroms);
-        bam_cfg.skip_chromosome_sort = true;
         bam_cfg.set_min_mapq(0);
         bam_cfg.set_require_proper_pair(false);
         bam_cfg.set_gc(ApplyGCArgFileOnly {
@@ -2053,7 +2047,6 @@ mod tests_bam_to_frag {
 
         let bam_out = work.path().join("real_gc_tags.bam");
         let mut bam_cfg = BamToBamConfig::new(bam.bam.clone(), bam_out.clone(), chroms);
-        bam_cfg.skip_chromosome_sort = true;
         bam_cfg.set_min_mapq(0);
         bam_cfg.set_require_proper_pair(false);
         bam_cfg.set_gc(ApplyGCArgFileOnly {

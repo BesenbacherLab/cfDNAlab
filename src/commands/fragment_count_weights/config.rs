@@ -16,8 +16,8 @@ use crate::commands::coverage_weights::scaling_weights_config::ScalingWeightsArg
 ///
 /// `<prefix>.fragment_counts.scaling_factors.tsv`
 ///
-/// **Multipliers**: After normalization of the non-zero smoothed fragment-mass values to
-/// a global mean of `1.0`, the values are **inverted** to **multiplicative** scaling factors.
+/// **Multipliers**: After normalization of the non-zero smoothed fragment counts to
+/// a global mean of `1.0`, the values are inverted to multiplicative scaling factors.
 ///
 /// ## Fragment counts
 ///
@@ -25,17 +25,11 @@ use crate::commands::coverage_weights::scaling_weights_config::ScalingWeightsArg
 ///
 /// `fcoverage --normalize-by-length=unit-mass --by-size <stride> --per-window total`
 ///
-/// (The `unit-mass` mode is used as it's cheaper than rescaling and normalizes to the same weights.)
-///
 /// and then smooths those stride-bin totals.
 ///
-/// The resulting stride-bin values approximate fragment counts in each stride bin.
-/// A full fragment contributes total mass 1.0, split across the stride bins it overlaps
-/// according to covered span.
-///
-/// Strictly speaking this is still an approximation since fragments overlapping
-/// multiple stride bins are counted partly in each, but in sufficiently large
-/// bins the approximation error is tiny.
+/// The resulting stride-bin values are **fractional** fragment counts in each stride bin.
+/// Each fragment contributes `1.0` in total. If it crosses a stride-bin boundary,
+/// that contribution is split between the bins as the fractional overlap of each bin.
 ///
 /// ## Fragment span definition
 ///
@@ -46,8 +40,8 @@ use crate::commands::coverage_weights::scaling_weights_config::ScalingWeightsArg
 /// ## GC correction
 ///
 /// When downstream tools should use both genomic smoothing and GC-bias correction,
-/// you can build the smoothing weight off GC-corrected fragment mass by supplying either
-/// `--gc-file` or `--gc-tag`. This avoids over-correction where the genomic smoothing scalars
+/// supply `--gc-file` or `--gc-tag` here too. The command then uses corrected fragment
+/// counts, which avoids over-correction downstream when the genomic smoothing factors
 /// partly reflect large-scale GC bias.
 ///
 /// The written TSV records whether GC correction was used so downstream commands can check
@@ -56,7 +50,44 @@ use crate::commands::coverage_weights::scaling_weights_config::ScalingWeightsArg
 /// ## Smoothing
 ///
 /// Smoothing is performed as a triangular moving average, calculating
-/// a weighted average of fragment-mass values from all bins overlapping a stride.
+/// a weighted average of fragment counts from all bins overlapping a stride.
+///
+/// ### Example
+///
+/// Assuming a bin-size of 6 and stride size of 2 (normally defaults to 5Mb and 0.5Mb respectively).
+///
+/// **Stride bins** (fixed along genome, each with a fragment count):
+///
+/// `[A] [B] [C] [D] [E] [F] [G] ...`
+///
+/// **Overlapping megabins** (`MB*`) (each covers 3 stride-bins). **`W_D`**, the number of overlapping megabins,
+/// is the (unnormalized) weight of each stride-bin in the weighted-average fragment count for stride-bin `D`:
+///
+/// ```text
+///
+/// MB1: [A][B][C]
+///
+/// MB2:    [B][C][D]
+///
+/// MB3:       [C][D][E]
+///
+/// MB4:          [D][E][F]
+///
+/// MB5:             [E][F][G]
+///
+/// W_D: [0][1][2][3][2][1][0]
+///
+/// ```
+///
+/// At chromosome edges, the weights are truncated (e.g., `W_D: [2][3][2][1][0]`).
+///
+/// The stride bins are further weighted by their number of eligible bases (non-blacklisted
+/// positions). This also handles the often shorter final stride bin per chromosome.
+///
+/// The weights are normalized by their sum (after potential truncation at edges).
+///
+/// Fully blacklisted stride bins are skipped while smoothing neighboring bins. They may still get
+/// a finite smoothed value from neighboring support, but their scaling factor is written as `0`.
 ///
 /// ## Always-on exclusion criteria
 ///

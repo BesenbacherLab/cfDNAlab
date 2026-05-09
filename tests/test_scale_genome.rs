@@ -88,11 +88,7 @@ mod tests_apply_scaling {
         assert!(cov1.is_empty());
 
         let mut cov_with_bins = vec![] as Vec<f32>;
-        apply_scaling_to_coverage_in_place(
-            &mut cov_with_bins,
-            core_start,
-            &[sb(90, 110, 2.0)],
-        );
+        apply_scaling_to_coverage_in_place(&mut cov_with_bins, core_start, &[sb(90, 110, 2.0)]);
         assert!(cov_with_bins.is_empty());
 
         let mut cov2 = vec![1.0f32, 2.0, 3.0];
@@ -120,7 +116,11 @@ mod tests_apply_scaling {
         // Tile aligns exactly to bin edges
         // Bins: [1000,1010) sf=2, [1010,1020) sf=0, [1020,1030) sf=0.5
         let core_start = 1000u32;
-        let bins = vec![sb(1000, 1010, 2.0), sb(1010, 1020, 0.0), sb(1020, 1030, 0.5)];
+        let bins = vec![
+            sb(1000, 1010, 2.0),
+            sb(1010, 1020, 0.0),
+            sb(1020, 1030, 0.5),
+        ];
         let mut cov = vec![6.0f32; 30]; // First 30 cover those bins
         apply_scaling_to_coverage_in_place(&mut cov, core_start, &bins);
 
@@ -221,8 +221,7 @@ mod tests_compute_window_scaling {
         interval::{IndexedInterval, Interval},
         overlaps::{OverlappingWindow, OverlappingWindows, find_overlapping_windows},
         scale_genome::{
-            ScalingBin,
-            build_reference_based_scaling_overlaps_for_assignment_overlaps,
+            ScalingBin, build_reference_based_scaling_overlaps_for_assignment_overlaps,
             compute_per_window_scaling_over_fragment, compute_per_window_scaling_over_overlap,
         },
     };

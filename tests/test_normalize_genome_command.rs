@@ -7,7 +7,7 @@ use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs};
 use cfdnalab::commands::coverage_weights::config::CoverageWeightsConfig;
 use cfdnalab::commands::coverage_weights::coverage_weights::run;
 use cfdnalab::commands::coverage_weights::striding::{
-    StrideBin, normalize_average_overlap_by_global_mean,
+    StrideBin, normalize_weighted_average_overlap_by_global_mean,
 };
 #[cfg(feature = "cmd_fragment_count_weights")]
 use cfdnalab::commands::fragment_count_weights::{
@@ -16,7 +16,7 @@ use cfdnalab::commands::fragment_count_weights::{
 use cfdnalab::shared::interval::Interval;
 use fixtures::{
     FragmentSpec, ReadSpec, bam_from_specs, bam_from_specs_strict_identity, paired_fragment,
-    simple_inward_bam,
+    simple_inward_bam, write_bed,
 };
 use fxhash::FxHashMap;
 use tempfile::TempDir;
@@ -225,6 +225,23 @@ fn mixed_length_fragment_bam(name: &str) -> Result<fixtures::BamFixture> {
     bam_from_specs(
         vec![("chr1".to_string(), 100)],
         vec![paired_fragment(0, 20, 10), paired_fragment(20, 60, 10)],
+        Vec::new(),
+        name,
+    )
+}
+
+#[cfg(feature = "cmd_fragment_count_weights")]
+fn advanced_scaling_weights_bam(name: &str) -> Result<fixtures::BamFixture> {
+    bam_from_specs(
+        vec![("chr1".to_string(), 35), ("chr2".to_string(), 38)],
+        vec![
+            fragment_on_tid(paired_fragment(0, 10, 5), 0),
+            fragment_on_tid(paired_fragment(5, 20, 5), 0),
+            fragment_on_tid(paired_fragment(25, 10, 5), 0),
+            fragment_on_tid(paired_fragment(0, 30, 5), 1),
+            fragment_on_tid(paired_fragment(10, 10, 5), 1),
+            fragment_on_tid(paired_fragment(28, 10, 5), 1),
+        ],
         Vec::new(),
         name,
     )
@@ -561,6 +578,334 @@ fn fragment_count_weights_differs_from_coverage_weights_for_mixed_fragment_lengt
     Ok(())
 }
 
+#[cfg(feature = "cmd_fragment_count_weights")]
+#[test]
+fn scaling_weights_handle_multichrom_multitile_blacklist_and_short_final_bins() -> Result<()> {
+    // Arrange
+    //
+    // This fixture deliberately combines several scaling-weight concerns in one
+    // public-behavior test:
+    // - chromosomes have different lengths, so their final stride bins are different sizes
+    // - tile_size=25 is not aligned to stride=10, forcing cross-tile by-size reduction
+    // - blacklists include partial, full, and absent cases
+    // - fragments cross stride-bin and blacklist boundaries with lengths 10, 20, and 30
+    //
+    // Chromosome stride bins:
+    // - chr1 length 35: [0,10), [10,20), [20,30), [30,35)
+    // - chr2 length 38: [0,10), [10,20), [20,30), [30,38)
+    //
+    // Eligible bases:
+    // - chr1: 10, 5, 0, 5
+    // - chr2: 5, 10, 0, 8
+    //
+    // Coverage raw stride values:
+    // - chr1: 3/2, 1, NaN, 1
+    // - chr2: 1, 2, NaN, 1
+    //
+    // Fragment-count raw stride values:
+    // - chr1: 5/4, 1/4, NaN, 1/2
+    // - chr2: 1/6, 4/3, NaN, 4/5
+    //
+    // Coverage raw-value derivation:
+    // - chr1 [0,10): [0,10) covers 10 bases and [5,25) covers 5 bases -> 15/10 = 3/2
+    // - chr1 [10,20): [5,25) covers 10 eligible bases before masking -> 5/5 = 1
+    // - chr1 [20,30): fully blacklisted -> NaN
+    // - chr1 [30,35): [25,35) covers 5 bases -> 5/5 = 1
+    // - chr2 [0,10): [0,30) covers 5 eligible bases after masking -> 5/5 = 1
+    // - chr2 [10,20): [0,30) and [10,20) cover 10 bases each -> 20/10 = 2
+    // - chr2 [20,30): fully blacklisted -> NaN
+    // - chr2 [30,38): [28,38) covers 8 bases -> 8/8 = 1
+    //
+    // Fragment-count raw-value derivation:
+    // - chr1 [0,10): [0,10) contributes 1 and [5,25) contributes 10/20 over this bin -> 5/4
+    // - chr1 [10,20): only [5,25) contributes 5 eligible bp out of length 20 -> 1/4
+    // - chr1 [20,30): fully blacklisted -> NaN
+    // - chr1 [30,35): [25,35) contributes 5/10 -> 1/2
+    // - chr2 [0,10): [0,30) contributes 5 eligible bp out of length 30 -> 1/6
+    // - chr2 [10,20): [0,30) contributes 10/30 and [10,20) contributes 1 -> 4/3
+    // - chr2 [20,30): fully blacklisted -> NaN
+    // - chr2 [30,38): [28,38) contributes 8/10 -> 4/5
+    let bam = advanced_scaling_weights_bam("advanced_scaling_weights")?;
+    let work = TempDir::new()?;
+    let blacklist_path = work.path().join("advanced_scaling_blacklist.bed");
+    write_bed(
+        &blacklist_path,
+        &[
+            ("chr1", 15, 20, "chr1_partial"),
+            ("chr1", 20, 30, "chr1_full"),
+            ("chr2", 0, 5, "chr2_partial"),
+            ("chr2", 20, 30, "chr2_full"),
+        ],
+    )?;
+
+    let coverage_out = work.path().join("coverage_weights");
+    let counts_out = work.path().join("fragment_count_weights");
+
+    let mut coverage_cfg = CoverageWeightsConfig::new(
+        IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: coverage_out.clone(),
+            n_threads: 2,
+        },
+        base_chromosomes(&["chr1", "chr2"]),
+    );
+    coverage_cfg.set_output_prefix("coverage".to_string());
+    coverage_cfg.set_stride(10);
+    coverage_cfg.set_bin_size(20);
+    coverage_cfg.set_tile_size(25);
+    coverage_cfg.set_min_mapq(0);
+    coverage_cfg.set_require_proper_pair(false);
+    coverage_cfg.set_blacklist(Some(vec![blacklist_path.clone()]));
+    {
+        let frag = coverage_cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 10;
+        frag.max_fragment_length = 30;
+    }
+
+    let mut counts_cfg = FragmentCountWeightsConfig::new(
+        IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: counts_out.clone(),
+            n_threads: 2,
+        },
+        base_chromosomes(&["chr1", "chr2"]),
+    );
+    counts_cfg.set_output_prefix("counts".to_string());
+    counts_cfg.set_stride(10);
+    counts_cfg.set_bin_size(20);
+    counts_cfg.set_tile_size(25);
+    counts_cfg.set_min_mapq(0);
+    counts_cfg.set_require_proper_pair(false);
+    counts_cfg.set_blacklist(Some(vec![blacklist_path]));
+    {
+        let frag = counts_cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 10;
+        frag.max_fragment_length = 30;
+    }
+
+    // Expected smoothed coverage values use triangular weights [1,2,1] and eligible-base support.
+    // Fully blacklisted neighbors do not contribute to either numerator or denominator.
+    //
+    // chr1 [0,10):  (2*10*(3/2) + 1*5*1) / (2*10 + 1*5) = 35/25 = 7/5
+    // chr1 [10,20): (1*10*(3/2) + 2*5*1) / (1*10 + 2*5) = 25/20 = 5/4
+    // chr1 [20,30): (1*5*1 + 1*5*1) / (1*5 + 1*5) = 10/10 = 1
+    // chr1 [30,35): (2*5*1) / (2*5) = 1
+    //
+    // chr2 [0,10):  (2*5*1 + 1*10*2) / (2*5 + 1*10) = 30/20 = 3/2
+    // chr2 [10,20): (1*5*1 + 2*10*2) / (1*5 + 2*10) = 45/25 = 9/5
+    // chr2 [20,30): (1*10*2 + 1*8*1) / (1*10 + 1*8) = 28/18 = 14/9
+    // chr2 [30,38): (2*8*1) / (2*8) = 1
+    //
+    // The global mean excludes rows whose raw stride value is NaN, and weights by eligible bases.
+    let coverage_global_mean = (10.0 * (7.0 / 5.0)
+        + 5.0 * (5.0 / 4.0)
+        + 5.0 * 1.0
+        + 5.0 * (3.0 / 2.0)
+        + 10.0 * (9.0 / 5.0)
+        + 8.0 * 1.0)
+        / (10.0 + 5.0 + 5.0 + 5.0 + 10.0 + 8.0);
+    let expected_coverage = [
+        (
+            "chr1",
+            0,
+            10,
+            3.0 / 2.0,
+            7.0 / 5.0,
+            1.0 / ((7.0 / 5.0) / coverage_global_mean),
+        ),
+        (
+            "chr1",
+            10,
+            20,
+            1.0,
+            5.0 / 4.0,
+            1.0 / ((5.0 / 4.0) / coverage_global_mean),
+        ),
+        ("chr1", 20, 30, f64::NAN, 1.0, 0.0),
+        ("chr1", 30, 35, 1.0, 1.0, 1.0 / (1.0 / coverage_global_mean)),
+        (
+            "chr2",
+            0,
+            10,
+            1.0,
+            3.0 / 2.0,
+            1.0 / ((3.0 / 2.0) / coverage_global_mean),
+        ),
+        (
+            "chr2",
+            10,
+            20,
+            2.0,
+            9.0 / 5.0,
+            1.0 / ((9.0 / 5.0) / coverage_global_mean),
+        ),
+        ("chr2", 20, 30, f64::NAN, 14.0 / 9.0, 0.0),
+        ("chr2", 30, 38, 1.0, 1.0, 1.0 / (1.0 / coverage_global_mean)),
+    ];
+
+    // Expected smoothed fragment-count values:
+    //
+    // chr1 [0,10):  (2*10*(5/4) + 1*5*(1/4)) / (2*10 + 1*5) = 105/100 = 21/20
+    // chr1 [10,20): (1*10*(5/4) + 2*5*(1/4)) / (1*10 + 2*5) = 15/20 = 3/4
+    // chr1 [20,30): (1*5*(1/4) + 1*5*(1/2)) / (1*5 + 1*5) = 15/40 = 3/8
+    // chr1 [30,35): (2*5*(1/2)) / (2*5) = 1/2
+    //
+    // chr2 [0,10):  (2*5*(1/6) + 1*10*(4/3)) / (2*5 + 1*10) = 15/20 = 3/4
+    // chr2 [10,20): (1*5*(1/6) + 2*10*(4/3)) / (1*5 + 2*10) = 55/50 = 11/10
+    // chr2 [20,30): (1*10*(4/3) + 1*8*(4/5)) / (1*10 + 1*8) = 296/270 = 148/135
+    // chr2 [30,38): (2*8*(4/5)) / (2*8) = 4/5
+    let count_global_mean = (10.0 * (21.0 / 20.0)
+        + 5.0 * (3.0 / 4.0)
+        + 5.0 * (1.0 / 2.0)
+        + 5.0 * (3.0 / 4.0)
+        + 10.0 * (11.0 / 10.0)
+        + 8.0 * (4.0 / 5.0))
+        / (10.0 + 5.0 + 5.0 + 5.0 + 10.0 + 8.0);
+    let expected_counts = [
+        (
+            "chr1",
+            0,
+            10,
+            5.0 / 4.0,
+            21.0 / 20.0,
+            1.0 / ((21.0 / 20.0) / count_global_mean),
+        ),
+        (
+            "chr1",
+            10,
+            20,
+            1.0 / 4.0,
+            3.0 / 4.0,
+            1.0 / ((3.0 / 4.0) / count_global_mean),
+        ),
+        ("chr1", 20, 30, f64::NAN, 3.0 / 8.0, 0.0),
+        (
+            "chr1",
+            30,
+            35,
+            1.0 / 2.0,
+            1.0 / 2.0,
+            1.0 / ((1.0 / 2.0) / count_global_mean),
+        ),
+        (
+            "chr2",
+            0,
+            10,
+            1.0 / 6.0,
+            3.0 / 4.0,
+            1.0 / ((3.0 / 4.0) / count_global_mean),
+        ),
+        (
+            "chr2",
+            10,
+            20,
+            4.0 / 3.0,
+            11.0 / 10.0,
+            1.0 / ((11.0 / 10.0) / count_global_mean),
+        ),
+        ("chr2", 20, 30, f64::NAN, 148.0 / 135.0, 0.0),
+        (
+            "chr2",
+            30,
+            38,
+            4.0 / 5.0,
+            4.0 / 5.0,
+            1.0 / ((4.0 / 5.0) / count_global_mean),
+        ),
+    ];
+
+    // Act
+    run(&coverage_cfg)?;
+    run_fragment_count_weights(&counts_cfg)?;
+
+    let coverage_rows =
+        parse_scaling_rows(&coverage_out.join("coverage.coverage.scaling_factors.tsv"))?;
+    let count_rows =
+        parse_scaling_rows(&counts_out.join("counts.fragment_counts.scaling_factors.tsv"))?;
+
+    // Assert
+    assert_eq!(coverage_rows.len(), expected_coverage.len());
+    assert_eq!(count_rows.len(), expected_counts.len());
+
+    for (row_index, (row, expected)) in coverage_rows
+        .iter()
+        .zip(expected_coverage.iter())
+        .enumerate()
+    {
+        assert_scaling_row(row, expected, "coverage", row_index);
+    }
+    for (row_index, (row, expected)) in count_rows.iter().zip(expected_counts.iter()).enumerate() {
+        assert_scaling_row(row, expected, "fragment-count", row_index);
+    }
+
+    // The fully blacklisted middle rows still receive finite smoothed support from neighbors, but
+    // their scaling factor is zero because their own raw stride value is unavailable.
+    assert!(coverage_rows[2].smoothed_value.is_finite());
+    assert_eq!(coverage_rows[2].scaling_factor, 0.0);
+    assert!(coverage_rows[6].smoothed_value.is_finite());
+    assert_eq!(coverage_rows[6].scaling_factor, 0.0);
+    assert!(count_rows[2].smoothed_value.is_finite());
+    assert_eq!(count_rows[2].scaling_factor, 0.0);
+    assert!(count_rows[6].smoothed_value.is_finite());
+    assert_eq!(count_rows[6].scaling_factor, 0.0);
+
+    // The final short bins are deliberately unblacklisted, so they must retain finite raw values
+    // and non-zero scaling factors.
+    assert!(coverage_rows[3].stride_value.is_finite());
+    assert!(coverage_rows[3].scaling_factor > 0.0);
+    assert!(coverage_rows[7].stride_value.is_finite());
+    assert!(coverage_rows[7].scaling_factor > 0.0);
+    assert!(count_rows[3].stride_value.is_finite());
+    assert!(count_rows[3].scaling_factor > 0.0);
+    assert!(count_rows[7].stride_value.is_finite());
+    assert!(count_rows[7].scaling_factor > 0.0);
+
+    Ok(())
+}
+
+fn assert_scaling_row(
+    row: &ScalingRow,
+    expected: &(&str, u64, u64, f64, f64, f64),
+    command_label: &str,
+    row_index: usize,
+) {
+    let (
+        expected_chromosome,
+        expected_start,
+        expected_end,
+        expected_stride,
+        expected_smoothed,
+        expected_scaling,
+    ) = *expected;
+    assert_eq!(
+        row.chromosome, expected_chromosome,
+        "{command_label} row {row_index} chromosome"
+    );
+    assert_eq!(
+        row.start, expected_start,
+        "{command_label} row {row_index} start"
+    );
+    assert_eq!(row.end, expected_end, "{command_label} row {row_index} end");
+    assert_approx_or_both_nan(
+        row.stride_value,
+        expected_stride,
+        1e-6,
+        &format!("{command_label} row {row_index} stride_value"),
+    );
+    assert_approx_or_both_nan(
+        row.smoothed_value,
+        expected_smoothed,
+        1e-6,
+        &format!("{command_label} row {row_index} smoothed_value"),
+    );
+    assert_approx(
+        row.scaling_factor,
+        expected_scaling,
+        1e-6,
+        &format!("{command_label} row {row_index} scaling_factor"),
+    );
+}
+
 #[test]
 fn given_simple_fragment_when_coverage_weights_run_then_scaling_values_match_hand_derivation()
 -> Result<()> {
@@ -768,9 +1113,9 @@ fn check_bin_sizes_accepts_valid_stride_values() {
 fn normalize_average_overlap_keeps_sparse_non_zero_scaling_finite() -> Result<()> {
     // Arrange:
     // Use three stride bins with unequal lengths on one chromosome:
-    // - a very sparse but non-zero bin with avg-overlap coverage 0.0001
-    // - a typical covered bin with avg-overlap coverage 1.0 and 4x more genomic span
-    // - an uncovered bin with avg-overlap coverage 0.0
+    // - a very sparse but non-zero bin with smoothed value 0.0001
+    // - a typical covered bin with smoothed value 1.0 and 4x more genomic span
+    // - an uncovered bin with smoothed value 0.0
     //
     // With length-weighted normalization, the zero bin is ignored and the mean is:
     //   mean = (10 * 0.0001 + 40 * 1.0) / (10 + 40)
@@ -791,27 +1136,33 @@ fn normalize_average_overlap_keeps_sparse_non_zero_scaling_finite() -> Result<()
         vec![
             StrideBin {
                 interval: Interval::new(0, 10)?,
-                average_coverage: 0.0001,
-                average_overlap_coverage: 0.0001,
+                eligible_positions: 10,
+                support_ratio: 1.0,
+                stride_value: 0.0001,
+                smoothed_value: 0.0001,
                 scaling_factor: 0.0,
             },
             StrideBin {
                 interval: Interval::new(10, 50)?,
-                average_coverage: 1.0,
-                average_overlap_coverage: 1.0,
+                eligible_positions: 40,
+                support_ratio: 1.0,
+                stride_value: 1.0,
+                smoothed_value: 1.0,
                 scaling_factor: 0.0,
             },
             StrideBin {
                 interval: Interval::new(50, 60)?,
-                average_coverage: 0.0,
-                average_overlap_coverage: 0.0,
+                eligible_positions: 10,
+                support_ratio: 1.0,
+                stride_value: 0.0,
+                smoothed_value: 0.0,
                 scaling_factor: 0.0,
             },
         ],
     );
 
     // Act
-    let mean = normalize_average_overlap_by_global_mean(&mut bins_by_chr, true, true)?;
+    let mean = normalize_weighted_average_overlap_by_global_mean(&mut bins_by_chr, true, true)?;
 
     // Assert
     assert_approx(mean as f64, 0.80002, 1e-7, "global mean before inversion");
@@ -843,12 +1194,12 @@ fn normalize_average_overlap_keeps_sparse_non_zero_scaling_finite() -> Result<()
 }
 
 #[test]
-fn normalize_average_overlap_support_floor_excludes_tiny_bin_from_mean_and_inversion() -> Result<()>
+fn normalize_smoothed_values_support_floor_excludes_tiny_bin_from_mean_and_inversion() -> Result<()>
 {
     // Arrange:
     // Use three bins with unequal lengths on one chromosome:
-    // - one extremely tiny bin with avg-overlap coverage 1e-40
-    // - one ordinary covered bin with avg-overlap coverage 1.0 and 4x more genomic span
+    // - one extremely tiny bin with smoothed value 1e-40
+    // - one ordinary covered bin with smoothed value 1.0 and 4x more genomic span
     // - one uncovered zero bin
     //
     // The support floor now treats the tiny bin as zero-support before both global-mean
@@ -866,27 +1217,33 @@ fn normalize_average_overlap_support_floor_excludes_tiny_bin_from_mean_and_inver
         vec![
             StrideBin {
                 interval: Interval::new(0, 10)?,
-                average_coverage: 1.0e-40_f32,
-                average_overlap_coverage: 1.0e-40_f32,
+                eligible_positions: 10,
+                support_ratio: 1.0,
+                stride_value: 1.0e-40_f32,
+                smoothed_value: 1.0e-40_f32,
                 scaling_factor: 0.0,
             },
             StrideBin {
                 interval: Interval::new(10, 50)?,
-                average_coverage: 1.0,
-                average_overlap_coverage: 1.0,
+                eligible_positions: 40,
+                support_ratio: 1.0,
+                stride_value: 1.0,
+                smoothed_value: 1.0,
                 scaling_factor: 0.0,
             },
             StrideBin {
                 interval: Interval::new(50, 60)?,
-                average_coverage: 0.0,
-                average_overlap_coverage: 0.0,
+                eligible_positions: 10,
+                support_ratio: 1.0,
+                stride_value: 0.0,
+                smoothed_value: 0.0,
                 scaling_factor: 0.0,
             },
         ],
     );
 
     // Act
-    let mean = normalize_average_overlap_by_global_mean(&mut bins_by_chr, true, true)?;
+    let mean = normalize_weighted_average_overlap_by_global_mean(&mut bins_by_chr, true, true)?;
 
     // Assert
     assert!(
@@ -921,11 +1278,11 @@ fn normalize_average_overlap_support_floor_excludes_tiny_bin_from_mean_and_inver
 }
 
 #[test]
-fn normalize_average_overlap_weights_short_final_bin_in_global_mean() -> Result<()> {
+fn normalize_smoothed_values_weights_short_final_bin_in_global_mean() -> Result<()> {
     // Arrange:
     // Use two bins on one chromosome, where the final bin is half as long:
-    // - [0, 20): avg-overlap coverage 1.0
-    // - [20, 30): avg-overlap coverage 3.0
+    // - [0, 20): smoothed value 1.0
+    // - [20, 30): smoothed value 3.0
     //
     // With length weighting enabled, the global mean is base-weighted:
     //   mean = (1.0 * 20 + 3.0 * 10) / (20 + 10) = 50 / 30 = 5/3
@@ -942,21 +1299,25 @@ fn normalize_average_overlap_weights_short_final_bin_in_global_mean() -> Result<
         vec![
             StrideBin {
                 interval: Interval::new(0, 20)?,
-                average_coverage: 1.0,
-                average_overlap_coverage: 1.0,
+                eligible_positions: 20,
+                support_ratio: 1.0,
+                stride_value: 1.0,
+                smoothed_value: 1.0,
                 scaling_factor: 0.0,
             },
             StrideBin {
                 interval: Interval::new(20, 30)?,
-                average_coverage: 3.0,
-                average_overlap_coverage: 3.0,
+                eligible_positions: 10,
+                support_ratio: 1.0,
+                stride_value: 3.0,
+                smoothed_value: 3.0,
                 scaling_factor: 0.0,
             },
         ],
     );
 
     // Act
-    let mean = normalize_average_overlap_by_global_mean(&mut bins_by_chr, true, true)?;
+    let mean = normalize_weighted_average_overlap_by_global_mean(&mut bins_by_chr, true, true)?;
 
     // Assert
     assert_approx(mean as f64, 5.0 / 3.0, 1e-6, "length-weighted global mean");

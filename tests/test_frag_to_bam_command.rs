@@ -2618,7 +2618,6 @@ fn bam_frag_bam_roundtrip_preserves_coverage_tags_for_same_span() -> Result<()> 
         original_out.clone(),
         base_chromosomes(&["chr1"]),
     );
-    original_cfg.skip_chromosome_sort = true;
     original_cfg.set_coverage_scaling_factors(Some(scaling_path.clone()));
     original_cfg.min_mapq = 0;
     {
@@ -2632,7 +2631,6 @@ fn bam_frag_bam_roundtrip_preserves_coverage_tags_for_same_span() -> Result<()> 
         restored_out.clone(),
         base_chromosomes(&["chr1"]),
     );
-    restored_cfg.skip_chromosome_sort = true;
     restored_cfg.set_coverage_scaling_factors(Some(scaling_path));
     restored_cfg.min_mapq = 0;
     restored_cfg.unpaired.reads_are_fragments = true;
@@ -2713,7 +2711,6 @@ fn bam_frag_bam_roundtrip_preserves_count_tags_for_same_span() -> Result<()> {
         original_out.clone(),
         base_chromosomes(&["chr1"]),
     );
-    original_cfg.skip_chromosome_sort = true;
     original_cfg.set_count_scaling_factors(Some(scaling_path.clone()));
     original_cfg.min_mapq = 0;
     {
@@ -2727,7 +2724,6 @@ fn bam_frag_bam_roundtrip_preserves_count_tags_for_same_span() -> Result<()> {
         restored_out.clone(),
         base_chromosomes(&["chr1"]),
     );
-    restored_cfg.skip_chromosome_sort = true;
     restored_cfg.set_count_scaling_factors(Some(scaling_path));
     restored_cfg.min_mapq = 0;
     restored_cfg.unpaired.reads_are_fragments = true;

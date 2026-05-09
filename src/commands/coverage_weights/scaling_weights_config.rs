@@ -34,32 +34,38 @@ pub struct ScalingWeightsArgs {
     )]
     pub output_prefix: String,
 
-    /// Size (bp) of large genomic bins to calculate coverage in [integer]
+    /// Size (bp) of tiles to parallelize over `[integer]`
     ///
-    /// Larger values lead to a more smooth coverage across the genome.
-    ///
-    /// **NOTE**: The normalizing scaling factors are calculated per stride-sized overlap
-    /// of these bins. Technically, we only count fragment mass per stride-sized bin
-    /// and then calculate the overlap with a triangular weighting scheme.
+    /// Chromosomes are processed in tiles of this size to reduce memory usage.
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "5000000", value_parser = clap::value_parser!(u32).range(1..), help_heading="Core"))]
-    pub bin_size: u32,
+        clap(long, default_value = "10000000", value_parser = clap::value_parser!(u32).range(1000000..), help_heading="Core"))]
+    pub tile_size: u32,
 
-    /// Size (bp) of stride [integer]
+    /// Size (bp) of the stride bins [integer]
     ///
     /// **NOTE**: `--bin-size` must be divisible by `stride`. I.e., `--bin-size % stride` == 0`.
     ///
-    /// A normalizing scaling factor is calculated per stride as the inverse weighted average
-    /// fragment mass of the overlapping large-scale bins.
+    /// A multiplicative scaling factor is calculated per stride bin based on all its
+    /// overlapping large-scale bins (`--bin-size`).
     ///
-    /// Smaller values lead to a higher precision in the downstream normalization
-    /// but also require saving a larger TSV in the end (one line per stride-bin)
-    /// and take longer to compute.
+    /// Setting smaller values leads to a higher precision in the downstream normalization
+    /// but also requires saving a larger TSV (one line per stride-bin)
+    /// and takes longer to compute.
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value = "500000", value_parser = clap::value_parser!(u32).range(1..), help_heading="Core"))]
     pub stride: u32,
+
+    /// Size (bp) of the large genomic bins used to build the triangularly weighted average [integer]
+    ///
+    /// Each stride bin is smoothed based on all large genomic bins that overlap it.
+    /// Larger values lead to more smoothing across the genome as each
+    /// stride bin is overlapped by more large bins from a broader region.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, default_value = "5000000", value_parser = clap::value_parser!(u32).range(1..), help_heading="Core"))]
+    pub bin_size: u32,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub chromosomes: ChromosomeArgs,
@@ -122,6 +128,7 @@ impl ScalingWeightsArgs {
             output_prefix: String::new(),
             bin_size: 5_000_000,
             stride: 500_000,
+            tile_size: 10_000_000,
             chromosomes,
             fragment_lengths: FragmentLengthArgs::default(),
             min_mapq: 30,
@@ -146,6 +153,10 @@ impl ScalingWeightsArgs {
 
     pub fn set_stride(&mut self, stride: u32) {
         self.stride = stride;
+    }
+
+    pub fn set_tile_size(&mut self, tile_size: u32) {
+        self.tile_size = tile_size;
     }
 
     pub fn fragment_lengths_mut(&mut self) -> &mut FragmentLengthArgs {

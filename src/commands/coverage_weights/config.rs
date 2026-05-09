@@ -24,7 +24,6 @@ use crate::commands::coverage_weights::scaling_weights_config::ScalingWeightsArg
 /// Internally, this command runs `fcoverage --by-size <stride> --per-window average`
 /// and then smooths those stride-bin averages.
 ///
-/// Fragment counting therefore follows `fcoverage`.
 /// By default, the full fragment span is counted, except for deletions and skipped
 /// regions that are not covered by the other read.
 ///
@@ -37,8 +36,8 @@ use crate::commands::coverage_weights::scaling_weights_config::ScalingWeightsArg
 /// ## GC correction
 ///
 /// When downstream tools should use both genomic smoothing and GC-bias correction,
-/// you can build the smoothing weight off GC-corrected fragment coverage by supplying either
-/// `--gc-file` or `--gc-tag`. This avoids over-correction where the genomic smoothing scalars
+/// supply `--gc-file` or `--gc-tag` here too. The command then uses corrected fragment
+/// coverage, which avoids over-correction downstream when the genomic smoothing factors
 /// partly reflect large-scale GC bias.
 ///
 /// The written TSV records whether GC correction was used so downstream commands can check
@@ -77,6 +76,9 @@ use crate::commands::coverage_weights::scaling_weights_config::ScalingWeightsArg
 /// ```
 ///
 /// At chromosome edges, the weights are truncated (e.g., `W_D: [2][3][2][1][0]`).
+///
+/// The stride bins are further weighted by their number of eligible bases (non-blacklisted
+/// positions). This also handles the often shorter final stride bin per chromosome.
 ///
 /// The weights are normalized by their sum (after potential truncation at edges).
 ///

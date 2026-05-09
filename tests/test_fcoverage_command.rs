@@ -4796,7 +4796,6 @@ fn bam_to_bam_gc_file_output_drives_fcoverage_gc_tag_same_as_original_gc_file() 
         tagged_bam_path.clone(),
         base_chromosomes(&["chr1"]),
     );
-    bam_to_bam_cfg.skip_chromosome_sort = true;
     bam_to_bam_cfg.min_mapq = 0;
     bam_to_bam_cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
         gc_file: Some(gc_path.clone()),

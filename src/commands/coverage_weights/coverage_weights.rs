@@ -3,7 +3,7 @@ use crate::{
         cli_common::{ensure_output_dir, resolve_chromosomes_and_contigs, validate_output_prefix},
         coverage_weights::scaling_weights_config::ScalingWeightsArgs,
         coverage_weights::striding::{
-            StrideBin, fill_triangular_overlap, normalize_average_overlap_by_global_mean,
+            StrideBin, fill_triangular_overlap, normalize_weighted_average_overlap_by_global_mean,
         },
         fcoverage::{
             config::{FCoverageConfig, LengthNormalizationMode},
@@ -157,6 +157,7 @@ pub(crate) fn run_with_fcoverage(
         &fcoverage_result,
         chromosomes.as_slice(),
         command.fcoverage_value_header(),
+        opt.stride,
     )?;
 
     for chromosome in &chromosomes {
@@ -166,12 +167,12 @@ pub(crate) fn run_with_fcoverage(
         fill_triangular_overlap(bins, opt.bin_size, opt.stride);
     }
 
-    let global_average_smoothed_value =
-        normalize_average_overlap_by_global_mean(&mut bins_by_chr, true, true)?;
+    let mean_weighted_average_overlap =
+        normalize_weighted_average_overlap_by_global_mean(&mut bins_by_chr, true, true)?;
 
     command.info(&format!(
-        "Calculated the global average smoothed value: {}",
-        global_average_smoothed_value
+        "Normalized the weighted average overlap values using global mean: {}",
+        mean_weighted_average_overlap
     ));
 
     command.info("Writing stride-bin coordinates and scaling factors to disk");
@@ -211,8 +212,8 @@ pub(crate) fn run_with_fcoverage(
                 chromosome,
                 bin.start(),
                 bin.end(),
-                bin.average_coverage,
-                bin.average_overlap_coverage,
+                bin.stride_value,
+                bin.smoothed_value,
                 bin.scaling_factor
             )
             .context("writing TSV row")?;
@@ -280,6 +281,7 @@ fn build_fcoverage_stride_config(
     cfg.set_decimals(FCOVERAGE_INTERMEDIATE_DECIMALS);
     cfg.set_per_window(command.fcoverage_window_action());
     cfg.set_ignore_gap(ignore_gap);
+    cfg.set_tile_size(opt.tile_size);
     cfg.set_windows(crate::commands::cli_common::DistributionWindowsArgs {
         by_size: Some(opt.stride as u64),
         by_bed: None,
@@ -298,7 +300,12 @@ fn load_stride_bins_from_fcoverage_tsv(
     fcoverage_result: &FCoverageRunResult,
     chromosomes: &[String],
     value_header: &str,
+    stride: u32,
 ) -> Result<FxHashMap<String, Vec<StrideBin>>> {
+    ensure!(
+        stride > 0,
+        "stride must be greater than zero when loading fcoverage stride bins"
+    );
     let path = &fcoverage_result.final_out_path;
     let mut reader = open_text_reader(path)?;
     let mut line = String::new();
@@ -345,24 +352,49 @@ fn load_stride_bins_from_fcoverage_tsv(
         let end: u32 = cols[2]
             .parse()
             .with_context(|| format!("{}: invalid end '{}'", path.display(), cols[2]))?;
-        let average_coverage: f32 = cols[3].parse().with_context(|| {
+        let mut stride_value: f32 = cols[3].parse().with_context(|| {
             format!("{}: invalid {} '{}'", path.display(), value_header, cols[3])
         })?;
-        let _: u64 = cols[4].parse().with_context(|| {
+        let blacklisted_positions: u64 = cols[4].parse().with_context(|| {
             format!(
                 "{}: invalid blacklisted_positions '{}'",
                 path.display(),
                 cols[4]
             )
         })?;
+        let interval = Interval::new(start, end).with_context(|| {
+            format!(
+                "{}: invalid stride-bin interval {}..{} for chromosome '{}'",
+                path.display(),
+                start,
+                end,
+                chromosome
+            )
+        })?;
+        let span_positions = u64::from(interval.len());
+        ensure!(
+            blacklisted_positions <= span_positions,
+            "{}: blacklisted_positions {} exceeds row span {}..{}",
+            path.display(),
+            blacklisted_positions,
+            start,
+            end
+        );
+        let eligible_positions = (span_positions - blacklisted_positions) as u32;
+        if eligible_positions == 0 {
+            stride_value = f32::NAN;
+        }
+        let support_ratio = (eligible_positions as f64) / (stride as f64);
 
         bins_by_chr
             .entry(chromosome)
             .or_insert_with(Vec::new)
             .push(StrideBin {
-                interval: Interval::new(start, end)?,
-                average_coverage,
-                average_overlap_coverage: 0.0,
+                interval,
+                eligible_positions,
+                support_ratio,
+                stride_value,
+                smoothed_value: 0.0,
                 scaling_factor: 0.0,
             });
     }

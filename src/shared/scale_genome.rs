@@ -138,11 +138,7 @@ pub fn scaling_gc_mode_for_run(gc_file_enabled: bool, gc_tag_enabled: bool) -> S
 /// - _:
 ///     Scales `cov[a..b]` by `1*sf` for each overlapping bin.
 #[inline]
-pub fn apply_scaling_to_coverage_in_place(
-    cov: &mut [f32],
-    core_start: u32,
-    bins: &[ScalingBin],
-) {
+pub fn apply_scaling_to_coverage_in_place(cov: &mut [f32], core_start: u32, bins: &[ScalingBin]) {
     if cov.is_empty() || bins.is_empty() {
         return;
     }
@@ -513,8 +509,7 @@ pub fn load_scaling_factors_tsv(
     let want: FxHashSet<&str> = chromosomes.iter().map(|s| s.as_str()).collect();
 
     // Accumulator: per-chromosome bins (unsorted initially; sorted below)
-    let mut map: FxHashMap<String, Vec<ScalingBin>> =
-        FxHashMap::with_hasher(Default::default());
+    let mut map: FxHashMap<String, Vec<ScalingBin>> = FxHashMap::with_hasher(Default::default());
 
     // Stream rows; reuse `line` to avoid allocations per row
     let mut line = String::new();

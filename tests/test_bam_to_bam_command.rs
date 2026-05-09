@@ -179,11 +179,9 @@ fn by_bed_excludes_chromosomes_without_any_windows() -> Result<()> {
     };
     let mut global_cfg =
         BamToBamConfig::new(bam.bam.clone(), global_out_bam.clone(), chrom_args.clone());
-    global_cfg.skip_chromosome_sort = true;
     global_cfg.min_mapq = 0;
 
     let mut cfg = BamToBamConfig::new(bam.bam.clone(), out_bam.clone(), chrom_args);
-    cfg.skip_chromosome_sort = true;
     cfg.min_mapq = 0;
     cfg.by_bed = Some(bed);
 
@@ -269,7 +267,7 @@ fn default_min_mapq_matches_explicit_zero_and_differs_from_explicit_thirty() -> 
 }
 
 #[test]
-fn respects_chromosome_sort_toggle() -> Result<()> {
+fn writes_explicit_chromosomes_in_bam_header_order() -> Result<()> {
     let frag_chr2 = paired_fragment(10, 160, 40);
     let frag_chr10 = fragment_on_tid(paired_fragment(20, 160, 40), 1);
     let chroms = vec![("chr2".to_string(), 500), ("chr10".to_string(), 500)];
@@ -282,47 +280,40 @@ fn respects_chromosome_sort_toggle() -> Result<()> {
 
     let work = tempdir()?;
     let chrom_args = ChromosomeArgs {
-        chromosomes: Some(vec!["chr2".to_string(), "chr10".to_string()]),
+        chromosomes: Some(vec!["chr10".to_string(), "chr2".to_string()]),
         chromosomes_file: None,
     };
 
-    let sorted_out = work.path().join("sorted.bam");
-    let cfg_sorted = BamToBamConfig::new(bam.bam.clone(), sorted_out.clone(), chrom_args.clone());
-    run_inner(&cfg_sorted)?;
-    assert_eq!(
-        first_record_chrom(&sorted_out)?,
-        "chr10",
-        "Default sorting should reorder chromosomes lexicographically"
-    );
+    let out_bam = work.path().join("header_order.bam");
+    let cfg = BamToBamConfig::new(bam.bam.clone(), out_bam.clone(), chrom_args);
+    run_inner(&cfg)?;
 
-    let unsorted_out = work.path().join("unsorted.bam");
-    let mut cfg_unsorted = BamToBamConfig::new(bam.bam.clone(), unsorted_out.clone(), chrom_args);
-    cfg_unsorted.skip_chromosome_sort = true;
-    run_inner(&cfg_unsorted)?;
     assert_eq!(
-        first_record_chrom(&unsorted_out)?,
-        "chr2",
-        "Skipping chromosome sort should keep the provided order"
+        read_record_chromosomes(&out_bam)?,
+        vec![
+            "chr2".to_string(),
+            "chr2".to_string(),
+            "chr10".to_string(),
+            "chr10".to_string(),
+        ],
+        "output must follow BAM header target order, not the user-provided chromosome order",
     );
+    assert_bam_records_are_coordinate_sorted(&out_bam)?;
 
     Ok(())
 }
 
 #[test]
-fn chromosomes_all_default_sorts_lexicographically_instead_of_bam_header_order() -> Result<()> {
+fn chromosomes_all_follows_bam_header_order() -> Result<()> {
     // Arrange:
     // Build a BAM whose header/contig order is intentionally non-lexicographic:
     //   [chr2, chr10, chr1]
     //
-    // With `--chromosomes all`, `bam-to-bam` first resolves chromosomes from the BAM header and
-    // then, by default, sorts them lexicographically unless `--skip-chromosome-sort` is set.
-    //
-    // Therefore the output processing order must be:
-    //   chr1, chr10, chr2
-    //
-    // We place one fragment on each chromosome so the emitted record order reveals that behavior
+    // With `--chromosomes all`, `bam-to-bam` resolves chromosomes from the BAM header and writes
+    // them in that same target-id order so the output remains coordinate-sorted.
+    // We place one fragment on each chromosome so the record order reveals that behavior
     // directly. Each kept fragment writes two BAM records, so the expected chromosome sequence is:
-    //   [chr1, chr1, chr10, chr10, chr2, chr2]
+    //   [chr2, chr2, chr10, chr10, chr1, chr1]
     let bam = bam_from_specs(
         vec![
             ("chr2".to_string(), 500),
@@ -350,46 +341,29 @@ fn chromosomes_all_default_sorts_lexicographically_instead_of_bam_header_order()
     run_inner(&cfg)?;
 
     // Assert
-    let mut reader = bam::Reader::from_path(&out_bam)?;
-    let header = reader.header().to_owned();
-    let mut record_chromosomes = Vec::new();
-    for record_result in reader.records() {
-        let record = record_result?;
-        let tid = record.tid() as u32;
-        record_chromosomes.push(
-            std::str::from_utf8(header.tid2name(tid))
-                .unwrap()
-                .to_string(),
-        );
-    }
     assert_eq!(
-        record_chromosomes,
+        read_record_chromosomes(&out_bam)?,
         vec![
-            "chr1".to_string(),
-            "chr1".to_string(),
-            "chr10".to_string(),
-            "chr10".to_string(),
             "chr2".to_string(),
             "chr2".to_string(),
+            "chr10".to_string(),
+            "chr10".to_string(),
+            "chr1".to_string(),
+            "chr1".to_string(),
         ],
-        "`--chromosomes all` should still follow the command's default lexicographic sorting"
+        "`--chromosomes all` should follow BAM header target order"
     );
+    assert_bam_records_are_coordinate_sorted(&out_bam)?;
 
     Ok(())
 }
 
 #[test]
-fn chromosomes_all_with_skip_sort_follows_bam_header_order() -> Result<()> {
+fn writes_chromosomes_file_selection_in_bam_header_order() -> Result<()> {
     // Arrange:
-    // Reuse the same intentionally non-lexicographic BAM header/contig order:
-    //   [chr2, chr10, chr1]
-    //
-    // With `--chromosomes all`, chromosome resolution starts from that BAM header order.
-    // When `--skip-chromosome-sort` is enabled, the command should keep that resolved order
-    // instead of applying its default lexicographic reordering.
-    //
-    // With one fragment on each chromosome, the emitted chromosome sequence must therefore be:
-    //   [chr2, chr2, chr10, chr10, chr1, chr1]
+    // The chromosome file deliberately lists chr1 before chr2, but the BAM header order is chr2,
+    // chr10, chr1. The command should keep only the selected subset and write that subset in BAM
+    // header order: chr2 first, then chr1. chr10 must not appear because it was not selected.
     let bam = bam_from_specs(
         vec![
             ("chr2".to_string(), 500),
@@ -402,46 +376,34 @@ fn chromosomes_all_with_skip_sort_follows_bam_header_order() -> Result<()> {
             fragment_on_tid(paired_fragment(30, 120, 40), 2),
         ],
         Vec::new(),
-        "bam_to_bam_all_skip_sort",
+        "bam_to_bam_chromosome_file_header_order",
     )?;
 
     let work = tempdir()?;
-    let out_bam = work.path().join("all_unsorted.bam");
+    let out_bam = work.path().join("chromosome_file_header_order.bam");
+    let chromosomes_file = work.path().join("chromosomes.txt");
+    fs::write(&chromosomes_file, "chr1\nchr2\n")?;
     let chrom_args = ChromosomeArgs {
-        chromosomes: Some(vec!["all".to_string()]),
-        chromosomes_file: None,
+        chromosomes: None,
+        chromosomes_file: Some(chromosomes_file),
     };
-    let mut cfg = BamToBamConfig::new(bam.bam.clone(), out_bam.clone(), chrom_args);
-    cfg.skip_chromosome_sort = true;
+    let cfg = BamToBamConfig::new(bam.bam.clone(), out_bam.clone(), chrom_args);
 
     // Act
     run_inner(&cfg)?;
 
     // Assert
-    let mut reader = bam::Reader::from_path(&out_bam)?;
-    let header = reader.header().to_owned();
-    let mut record_chromosomes = Vec::new();
-    for record_result in reader.records() {
-        let record = record_result?;
-        let tid = record.tid() as u32;
-        record_chromosomes.push(
-            std::str::from_utf8(header.tid2name(tid))
-                .unwrap()
-                .to_string(),
-        );
-    }
     assert_eq!(
-        record_chromosomes,
+        read_record_chromosomes(&out_bam)?,
         vec![
             "chr2".to_string(),
             "chr2".to_string(),
-            "chr10".to_string(),
-            "chr10".to_string(),
             "chr1".to_string(),
             "chr1".to_string(),
         ],
-        "`--skip-chromosome-sort` should preserve BAM-header-derived order for `--chromosomes all`"
+        "chromosome-file selection should keep the selected subset but write it in BAM header order"
     );
+    assert_bam_records_are_coordinate_sorted(&out_bam)?;
 
     Ok(())
 }
@@ -539,8 +501,7 @@ fn global_mode_keeps_expected_fragments_across_three_chromosomes() -> Result<()>
         ]),
         chromosomes_file: None,
     };
-    let mut cfg = BamToBamConfig::new(bam.bam.clone(), out_bam.clone(), chrom_args);
-    cfg.skip_chromosome_sort = true;
+    let cfg = BamToBamConfig::new(bam.bam.clone(), out_bam.clone(), chrom_args);
 
     run_inner(&cfg)?;
 
@@ -592,7 +553,6 @@ fn bed_mode_filters_expected_fragments_across_three_chromosomes() -> Result<()> 
         chromosomes_file: None,
     };
     let mut cfg = BamToBamConfig::new(bam.bam.clone(), out_bam.clone(), chrom_args);
-    cfg.skip_chromosome_sort = true;
     cfg.by_bed = Some(bed);
 
     run_inner(&cfg)?;
@@ -1504,7 +1464,6 @@ fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_bam_t
             chromosomes_file: None,
         },
     );
-    cfg.skip_chromosome_sort = true;
     cfg.set_coverage_scaling_factors(Some(scaling_path));
     cfg.min_mapq = 0;
     {
@@ -1713,9 +1672,7 @@ fn base_config(in_bam: &Path, out_bam: &Path) -> BamToBamConfig {
         chromosomes: Some(vec!["chr1".to_string()]),
         chromosomes_file: None,
     };
-    let mut cfg = BamToBamConfig::new(in_bam.to_path_buf(), out_bam.to_path_buf(), chrom_args);
-    cfg.skip_chromosome_sort = true;
-    cfg
+    BamToBamConfig::new(in_bam.to_path_buf(), out_bam.to_path_buf(), chrom_args)
 }
 
 fn orphan_read(pos: i64) -> ReadSpec {
@@ -1767,6 +1724,38 @@ fn read_tag_values(path: &Path, tag: &[u8]) -> Result<Vec<f32>> {
         }
     }
     Ok(values)
+}
+
+fn read_record_chromosomes(path: &Path) -> Result<Vec<String>> {
+    let mut reader = bam::Reader::from_path(path)?;
+    let header = reader.header().to_owned();
+    let mut chromosomes = Vec::new();
+    for record_result in reader.records() {
+        let record = record_result?;
+        let tid = record.tid() as u32;
+        chromosomes.push(std::str::from_utf8(header.tid2name(tid))?.to_string());
+    }
+    Ok(chromosomes)
+}
+
+fn assert_bam_records_are_coordinate_sorted(path: &Path) -> Result<()> {
+    let mut reader = bam::Reader::from_path(path)?;
+    let mut previous_coordinate: Option<(i32, i64)> = None;
+    for record_result in reader.records() {
+        let record = record_result?;
+        let current_coordinate = (record.tid(), record.pos());
+        if let Some(previous_coordinate) = previous_coordinate {
+            assert!(
+                previous_coordinate <= current_coordinate,
+                "BAM records in {} are not coordinate-sorted: observed {:?} after {:?}",
+                path.display(),
+                current_coordinate,
+                previous_coordinate
+            );
+        }
+        previous_coordinate = Some(current_coordinate);
+    }
+    Ok(())
 }
 
 fn assert_first_record_has_exact_aux_tags(path: &Path, expected_tags: &[&[u8; 2]]) -> Result<()> {
@@ -1833,20 +1822,6 @@ fn mixed_length_fragment_bam(name: &str) -> Result<fixtures::BamFixture> {
         Vec::new(),
         name,
     )
-}
-
-fn first_record_chrom(path: &Path) -> Result<String> {
-    let mut reader = bam::Reader::from_path(path)?;
-    let header = reader.header().to_owned();
-    let rec = reader
-        .records()
-        .next()
-        .expect("BAM should contain records")?;
-    let tid = rec.tid() as u32;
-    let name = std::str::from_utf8(header.tid2name(tid))
-        .unwrap()
-        .to_string();
-    Ok(name)
 }
 
 fn write_bed(path: &Path, windows: &[(u64, u64)]) -> Result<()> {

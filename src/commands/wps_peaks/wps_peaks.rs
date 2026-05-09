@@ -18,11 +18,11 @@ use crate::commands::wps_peaks::config::WPSPeaksConfig;
 use crate::commands::wps_peaks::normalize_wps::{normalize_wps, smoothe_wps};
 use crate::commands::wps_peaks::window_peak_results::PeaksWindowAction;
 use crate::shared::bam::Contigs;
-use crate::shared::scale_genome::ScalingBin;
 use crate::shared::bed::load_windows_from_bed;
 use crate::shared::interval::{IndexedInterval, Interval};
 use crate::shared::io::dot_join;
 use crate::shared::progress::ProgressFactory;
+use crate::shared::scale_genome::ScalingBin;
 use crate::shared::temp_chrom_names::TempChromNameMap;
 use crate::shared::thread_pool::init_global_pool;
 use crate::shared::tiled_run::{

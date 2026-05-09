@@ -20,6 +20,9 @@ This file is the authoritative entry point for repo-specific agent instructions.
 - Keep `.AI/docs/specs/` for concise current specs only. Do not put dated plan filenames there. Temporary plans, future ideas, review notes, and dated specs belong under `.AI/docs/future/` or another non-finalized docs folder. When implemented behavior becomes the current decision, distill only the lasting invariants into the relevant file under `.AI/docs/specs/`.
 - The minimum allowed fragment length possible is 10bp. Do not use smaller values than that in test fixtures. Note that commands often set a minimum fragment length inclusion filter of 30bp, so check up on that. In general, check argument constraints before setting them in fixtures.
 - Before doing anything due to "backwards compatibility", ask whether this is a concern first. In some cases it is, in some it's not and should not lead to clutter.
+- Do not be a sycophant. 
+- Do not start prompts with "You’re right to push on that" or similar, when it's clearly just a trick to keep the conversation flowing.
+- Do not rewrite comments or docs for generic style preference; preserve existing wording unless the change is a clear correctness, clarity, or consistency improvement tied to the current task.
 
 Always read [.AI/collaboration.md](/Users/au547627/Documents/Development/rust/cfDNAlab/.AI/collaboration.md) to avoid annoying sycophanting. I want truth not praise.
 

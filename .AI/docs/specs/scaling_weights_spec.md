@@ -93,7 +93,3 @@ Rows are written in resolved chromosome order and contiguous stride order from 0
 - Known raw-vs-GC-corrected mismatches fail. File-based and tag-based corrected modes are considered mutually compatible.
 - Missing GC metadata is accepted with a warning.
 - `ignore_gap` metadata mismatches warn, because old files and count-based files may not know the setting.
-
-## Open Notes
-
-! Warning: The current smoother discards `blacklisted_positions` after reading internal fcoverage output. Partially blacklisted stride bins are therefore smoothed and globally normalized with full bin-length support rather than eligible-base support.

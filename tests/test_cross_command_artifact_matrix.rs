@@ -249,7 +249,6 @@ fn bam_to_bam_consumes_shared_real_artifacts_with_expected_fragment_tags() -> Re
         out_bam.clone(),
         base_chromosomes(&["chr1"]),
     );
-    cfg.skip_chromosome_sort = true;
     cfg.set_min_mapq(0);
     cfg.set_require_proper_pair(false);
     cfg.set_coverage_scaling_factors(Some(artifacts.scaling_path.clone()));

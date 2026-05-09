@@ -12,6 +12,8 @@ use std::path::PathBuf;
 /// them directly to a given BAM file. Filter which reads/fragments to write and add correction
 /// weights as AUX tags on the reads. The new BAM file is coordinate-sorted.
 ///
+/// The output BAM keeps the input BAM header and chromosome order.
+///
 /// **NOTE**: This is **not** needed for running other `cfDNAlab` tools.
 /// Those tools will **not** automatically use the correction tags.
 ///
@@ -92,14 +94,6 @@ pub struct BamToBamConfig {
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub chromosomes: ChromosomeArgs,
-
-    /// Keep the specified chromosome order instead of sorting lexicographically `[flag]`
-    ///
-    /// Many tools expect BAM files to be sorted as `chr1, chr10, chr11, ...`. By default,
-    /// we thus sort the specified chromosomes lexicographically. This is different to other
-    /// commands in `cfDNAlab`, which use the passed order of chromosomes.
-    #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
-    pub skip_chromosome_sort: bool,
 
     /// Optional path to coverage-based scaling factors `[path]`
     ///
@@ -205,7 +199,6 @@ impl BamToBamConfig {
             out_bam,
             by_bed: None,
             chromosomes,
-            skip_chromosome_sort: false,
             coverage_scaling_factors: None,
             count_scaling_factors: None,
             fragment_lengths: FragmentLengthArgs::default(),
@@ -282,10 +275,6 @@ impl BamToBamConfig {
     pub fn set_blacklist_strategy(&mut self, blacklist_strategy: BlacklistStrategy) {
         self.blacklist_strategy = blacklist_strategy;
     }
-    pub fn set_skip_chromosome_sort(&mut self, skip_chromosome_sort: bool) {
-        self.skip_chromosome_sort = skip_chromosome_sort;
-    }
-
     pub fn set_gc(&mut self, gc: ApplyGCArgFileOnly) {
         self.gc = gc;
     }

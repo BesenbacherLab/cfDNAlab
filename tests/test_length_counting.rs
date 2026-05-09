@@ -15,8 +15,8 @@ mod tests {
         midpoint::{midpoint_random_even, midpoint_random_even_for_fragment},
         overlaps::find_overlapping_windows,
         scale_genome::{
-            ScalingBin,
-            compute_per_window_scaling_over_fragment, compute_per_window_scaling_over_overlap,
+            ScalingBin, compute_per_window_scaling_over_fragment,
+            compute_per_window_scaling_over_overlap,
         },
     };
     use rand::RngCore;

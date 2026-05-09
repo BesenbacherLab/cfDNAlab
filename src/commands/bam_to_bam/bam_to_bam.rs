@@ -88,9 +88,9 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToBamCounters> {
     }
     let (mut chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.in_bam.as_path())?;
-    if !opt.skip_chromosome_sort {
-        chromosomes.sort();
-    }
+    // Preserve the selected subset, but write it in the input BAM header order.
+    // BAM coordinate sorting follows header order, not chromosome-name string order.
+    sort_chromosomes_by_bam_header_order(&mut chromosomes, &contigs)?;
     let window_opt = opt.resolve_windows();
 
     // Create output directory
@@ -208,6 +208,28 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToBamCounters> {
     }
 
     Ok(global_counter)
+}
+
+fn sort_chromosomes_by_bam_header_order(
+    chromosomes: &mut Vec<String>,
+    contigs: &crate::shared::bam::Contigs,
+) -> Result<()> {
+    // Chromosome selection can come from defaults, explicit CLI values, or a file. Those sources do
+    // not necessarily match the BAM header order, so sort the already-selected subset by header tid.
+    for chromosome in chromosomes.iter() {
+        contigs.contigs.get(chromosome).with_context(|| {
+            format!("missing BAM contig metadata for selected chromosome '{chromosome}'")
+        })?;
+    }
+
+    chromosomes.sort_by_key(|chromosome| {
+        contigs
+            .contigs
+            .get(chromosome)
+            .map(|(target_id, _chromosome_length)| *target_id)
+            .expect("target IDs were loaded for every selected chromosome")
+    });
+    Ok(())
 }
 
 fn process_chrom(
