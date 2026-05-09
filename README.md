@@ -581,11 +581,6 @@ The **intervals** must have the same fixed size. A common binding site window si
 
 ### Everything combined
 
-
-
-[TODO: Add output-prefix for remaining commands]
-[TODO: Add end motifs example]
-
 ```bash
 
 BAM="..."                  # The cfDNA sample

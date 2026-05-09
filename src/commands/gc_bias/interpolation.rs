@@ -1,4 +1,3 @@
-///! NOTE: This code was generated. TODO: Validate that it's correct.
 use anyhow::{Result, ensure};
 
 /// Fill zero-valued histogram bins by fitting local weighted polynomials when enough real anchors exist.

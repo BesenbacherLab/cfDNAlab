@@ -531,7 +531,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             fill_unsupported_bins_with_polynomial(
                 row_slice, mask_slice, 2, 3, 3,
                 // Update mask when cells become supported
-                // (TODO: not currently used downstream but worth having for future checks)
+                // (NOTE: not currently used downstream but worth having for future checks)
                 true,
             )?;
         }
