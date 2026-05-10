@@ -2625,7 +2625,7 @@ fn unpaired_single_read_matches_paired_fragment_output_for_same_span() -> Result
     // - paired-end fixture `simple_inward_bam()`
     // - one unpaired read with aligned span [20, 80)
     //
-    // In paired mode the fragment span is [forward.pos, reverse.end).
+    // In paired mode the fragment span is [forward.pos, reverse.reference_end).
     // In unpaired `reads_are_fragments` mode the fragment span is [read.pos, read.end).
     // So both inputs should yield the same positional coverage bedGraph:
     //   chr1  20  80  1

@@ -31,9 +31,12 @@ pub enum LengthNormalizationMode {
 ///
 /// ## Fragment span definition
 ///
-/// **Paired-end**: `[forward.pos, reverse.end)`.
+/// **Paired-end**: `[forward.pos, reverse.reference_end)`, the reference span
+/// from the first aligned position on the forward read to the last aligned
+/// position on the reverse read.
 ///
-/// **Unpaired** where each read is a fragment: `[read.pos, read.end)`.
+/// **Unpaired** where each read is a fragment: `[read.pos, read.reference_end)`,
+/// the reference span from the first to the last aligned position on the read.
 ///
 /// ## Windowing
 ///

@@ -199,7 +199,7 @@ impl PairOrientable for SegmentedReadInfo {
 ///
 /// Summary
 /// -------
-/// Returns a fragment spanning `[forward.pos, reverse.end)` and, when either read
+/// Returns a fragment spanning `[forward.pos, reverse.reference_end)` and, when either read
 /// has a sufficiently large reference gap, attaches explicit mapped-reference
 /// segments so downstream coverage respects true deletions.
 ///
@@ -213,7 +213,7 @@ impl PairOrientable for SegmentedReadInfo {
 ///
 /// Returns
 /// -------
-/// - frag: FragmentWithSegments covering `[forward.pos, reverse.end)`
+/// - frag: FragmentWithSegments covering `[forward.pos, reverse.reference_end)`
 ///   With `segments = None` when no triggering gap is present
 pub fn collect_fragment_with_segments(
     a: &SegmentedReadInfo,

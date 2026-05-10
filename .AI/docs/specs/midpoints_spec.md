@@ -18,7 +18,7 @@
 - Length bins are half-open and also define the accepted fragment length range.
 - Even-length fragment midpoints use deterministic coordinate-derived random rounding. Duplicate fragments with the same coordinates choose the same midpoint base.
 - Tile ownership is by midpoint position in the tile core, not by fragment start.
-- Blacklist filtering is fragment-level and happens before midpoint ownership is checked in the current implementation.
+- Blacklist filtering is fragment-level and happens after midpoint tile ownership is checked so boundary fragments do not inflate blacklist statistics in neighboring tiles.
 
 ## Counting
 

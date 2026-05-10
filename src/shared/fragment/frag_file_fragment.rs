@@ -67,7 +67,7 @@ impl PairOrientable for FragReadInfo {
 #[derive(Debug, Clone)]
 pub struct FragFileFragment {
     pub tid: i32,
-    pub interval: Interval<u32>, // fragment span [forward.pos, reverse.end)
+    pub interval: Interval<u32>, // fragment span [forward.pos, reverse.reference_end)
     pub min_mapq: u8,
     pub read1_strand: char,
 }

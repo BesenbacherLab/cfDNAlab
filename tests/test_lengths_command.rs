@@ -1124,7 +1124,7 @@ mod tests_lengths_command {
         // - one unpaired read with aligned span [20, 80)
         //
         // In both commands:
-        // - paired mode defines fragment span as [forward.pos, reverse.end)
+        // - paired mode defines fragment span as [forward.pos, reverse.reference_end)
         // - unpaired `reads_are_fragments` mode defines fragment span as [read.pos, read.end)
         //
         // So both inputs represent one fragment of length 60 and must produce the same global

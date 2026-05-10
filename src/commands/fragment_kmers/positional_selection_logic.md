@@ -29,7 +29,7 @@ This "filter -> make runs -> final step -> check k-mer fit" model keeps behavior
 
 ## Fragment definition
 
-A fragment contains two inward-directed reads (one forward, one reverse) and starts at the left 5' start (forward.pos) and ends at the right 5' start (reverse.end).
+A fragment contains two inward-directed reads (one forward, one reverse) and starts at the left 5' start (forward.pos) and ends at the right 5' start (reverse.reference_end).
 
 ```text
 Reference 5' >>>>>>>>>>>>>>> 3'

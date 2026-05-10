@@ -556,7 +556,7 @@ impl SparseProfileGroupsCounts {
 /// Validation happens before the partial file is returned so merge code can assume:
 ///
 /// - `idx` and `data` have the same length
-/// - `idx` is sorted ascending
+/// - `idx` is sorted strictly ascending, with no duplicate indices
 /// - all indices fit the current platform `usize`
 /// - all indices are inside the destination dense vector
 /// - the stored shape matches the current run
@@ -601,13 +601,13 @@ fn read_sparse_profile_partial_file(
         data.len()
     );
 
-    // Validate sorted order and bounds once, before the parallel merge starts mutating output
+    // Validate canonical order and bounds once, before the parallel merge starts mutating output
     let mut previous_idx: Option<u64> = None;
     for &flat_idx_u64 in &idx {
         if let Some(previous) = previous_idx {
             ensure!(
-                previous <= flat_idx_u64,
-                "Sparse midpoint partial file {} indices must be sorted ascending",
+                previous < flat_idx_u64,
+                "Sparse midpoint partial file {} indices must be sorted strictly ascending without duplicates",
                 path.display()
             );
         }

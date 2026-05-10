@@ -50,11 +50,10 @@ use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::{path::PathBuf, sync::Arc, time::Instant};
-use tracing::info;
+use tracing::{info, warn};
 
 const COMMAND_TARGET: &str = "midpoints";
-
-// Handle deletions?
+const DENSE_PROFILE_SIZE_WARNING_BYTES: usize = 50 * 1_000_000_000;
 
 /// Execute the grouped midpoint profiling pipeline end-to-end.
 ///
@@ -75,7 +74,7 @@ const COMMAND_TARGET: &str = "midpoints";
 /// Parameters
 /// ----------
 /// - `opt`:
-///     Fully resolved configuration for the `profile-groups` command.
+///     Fully resolved configuration for the `midpoints` command.
 ///
 /// Returns
 /// -------
@@ -120,6 +119,12 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         None,
     )?;
     let num_groups = group_idx_to_name.len();
+    #[cfg(feature = "plotters")]
+    ensure!(
+        opt.plot_groups.iter().all(|&idx| idx < num_groups),
+        "--plot-groups: group index is out of bounds. There are {} groups (0-based).",
+        num_groups
+    );
     let total_windows: usize = windows_map.values().map(|gw| gw.len()).sum();
     info!(
         target: COMMAND_TARGET,
@@ -142,6 +147,30 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     let length_axis = Arc::new(LengthAxis::new(opt.resolve_length_bins()?)?);
     let min_fragment_length = length_axis.min_fragment_length();
     let max_fragment_length = length_axis.max_fragment_length();
+    let dense_profile_entries = num_groups
+        .checked_mul(length_axis.num_bins())
+        .and_then(|size| size.checked_mul(window_size))
+        .context("dense midpoint profile shape overflow")?;
+    let dense_profile_bytes = dense_profile_entries
+        .checked_mul(std::mem::size_of::<f32>())
+        .context("dense midpoint profile byte size overflow")?;
+    let dense_profile_gb = dense_profile_bytes as f64 / 1_000_000_000.0;
+    info!(
+        target: COMMAND_TARGET,
+        "Dense midpoint output shape: groups={} length_bins={} positions={} | approx {:.2} GB",
+        num_groups,
+        length_axis.num_bins(),
+        window_size,
+        dense_profile_gb,
+    );
+    if dense_profile_bytes >= DENSE_PROFILE_SIZE_WARNING_BYTES {
+        warn!(
+            target: COMMAND_TARGET,
+            "Dense midpoint output is large: approx {:.2} GB for {} entries",
+            dense_profile_gb,
+            dense_profile_entries,
+        );
+    }
 
     // Load genomic scaling factors
     if opt.scale_genome.scaling_factors.is_some() {
@@ -549,6 +578,16 @@ fn process_tile(
         let fragment = fragment_res.context("reading fragment")?;
         let fragment_length = fragment.len();
 
+        // Determine fragment midpoint. Even-sized fragments use deterministic coordinate-derived
+        // random rounding so tie positions are not always rounded in the same direction
+        let midpoint =
+            midpoint_random_even_for_fragment(&tile.chr, fragment.start(), fragment_length);
+
+        // Keep only the fragments with midpoints within the tile
+        if midpoint < tile.core_start() || midpoint >= tile.core_end() {
+            continue;
+        }
+
         // Determine blacklist status
         let in_blacklist = is_blacklisted(
             blacklist_intervals,
@@ -559,16 +598,6 @@ fn process_tile(
         );
         if in_blacklist {
             counter.blacklisted_fragments += 1;
-            continue;
-        }
-
-        // Determine fragment midpoint. Even-sized fragments use deterministic coordinate-derived
-        // random rounding so tie positions are not always rounded in the same direction
-        let midpoint =
-            midpoint_random_even_for_fragment(&tile.chr, fragment.start(), fragment_length);
-
-        // Keep only the fragments with midpoints within the tile
-        if midpoint < tile.core_start() || midpoint >= tile.core_end() {
             continue;
         }
 
@@ -623,7 +652,7 @@ fn process_tile(
             Some(&core_overlapping_windows),
             None,
             Interval::new(midpoint.into(), (midpoint + 1).into())?,
-            0.99, // "Full" 1bp overlap but avoid rounding error
+            0.99, // "Full" 1bp overlap but avoid roundoff error
             max_fragment_length.into(),
         )?;
         let overlapping_windows = if let Some(overlaps) = overlapping_windows {
@@ -646,8 +675,16 @@ fn process_tile(
                 fragment.interval.try_to_u64()?, // Full fragment
                 1. / (max_fragment_length as f64 + 1.0), // Any overlap
                 max_fragment_length.into(),
-            )?
-            .context("unwrapping overlapping scaling bins")?; // Should always find >= 1 bin
+            )
+            .with_context(|| format!("finding overlapping scaling bins on chr {}", tile.chr))?
+            .with_context(|| {
+                format!(
+                    "no overlapping scaling bins found for fragment {}:{}-{}. Scaling factors must cover every counted base on every counted chromosome",
+                    tile.chr,
+                    fragment.start(),
+                    fragment.end()
+                )
+            })?;
 
             // Extract the indices of the overlapping bins
             let overlapping_scaling_bin_indices: Vec<usize> = overlapping_scaling_bins
