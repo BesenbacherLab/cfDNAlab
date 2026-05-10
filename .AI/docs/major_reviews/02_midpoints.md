@@ -14,14 +14,19 @@ Post-release performance optimizations that affect this command:
 
 ## Release triage
 
-Pre-release semantic/docs:
+Pre-release semantic decision:
 
-- M-005: midpoint blacklist semantics should be either aligned with counted midpoint placement or documented explicitly.
+- None active. M-005 was resolved by defining shared midpoint blacklisting as central-base support: odd fragments check the unique central base, and even fragments check either central base.
+
+Operational guardrail, only if oversized dense outputs are in the three-day target:
+
+- M-D-001: dense final shape needs fail-fast checked allocation instead of late panic/OOM behavior.
 
 Post-release performance/scalability:
 
 - G-006: sparse-window GC reference pruning.
 - M-001B: optional sparse final output would help very large group, width, and length-bin shapes.
+- M-D-002: sparse tile accumulation should skip exactly zero weights.
 
 ## Findings
 
@@ -41,18 +46,15 @@ Recommended tasks:
 - Add roundtrip tests that load the sparse final output, densify it in test code, and compare it against the dense `.npy` output for the same small fixture.
 - Document downstream loading in Python, including how to reconstruct `(group, length_bin, position)` from the sparse two-dimensional representation.
 
-### M-005 - Medium - `--blacklist-strategy midpoint` uses a different even-fragment midpoint than counting
+### M-005 - Implemented - `--blacklist-strategy midpoint` now checks both central bases for even fragments
 
-Blacklist filtering happens before the command samples the counted midpoint ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L495-L510)). The shared blacklist midpoint strategy uses `start + (end - start) / 2`, which is the right-center base for even-length half-open fragments ([overlaps.rs](../../src/shared/blacklist/overlaps.rs#L74-L96)). The count placement then randomly selects left or right center for the same even-length fragment ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L508-L510)).
+Blacklist filtering happens before the command samples the counted midpoint ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L495-L510)). The old shared blacklist midpoint strategy used `start + (end - start) / 2`, which is the right-center base for even-length half-open fragments, while count placement randomly selected left or right center for the same even-length fragment.
 
-The existing test suite pins this current behavior: an even fragment can be deterministically blacklisted by the right-center base even though the profile placement would otherwise be randomized between two central bases ([test_profile_groups_command.rs](../../tests/test_profile_groups_command.rs#L586-L662)).
+Status: implemented by making the shared `midpoint` blacklist strategy check central-base support. Odd-length fragments check the unique central base. Even-length fragments check both central bases, so either central base overlapping a blacklist interval excludes the fragment. The command-level regression now proves both left-center and right-center blacklist hits remove the even-length fragment.
 
-Impact: users may read `midpoint` blacklist strategy as "filter by the midpoint that would be counted", but that is not true for even-length fragments at blacklist edges.
+Impact: this keeps `midpoint` as a conservative coordinate-mask strategy without coupling shared blacklist filtering to the command-specific randomized midpoint tie break.
 
-Recommended fix:
-
-- Decide whether `midpoints` should reuse the sampled counted midpoint for midpoint-blacklist filtering.
-- If the deterministic blacklist midpoint is preferred, state that explicitly in the `--blacklist-strategy midpoint` help for commands that also randomize midpoint placement.
+No remaining action for this finding.
 
 ## Sparse final output design note
 
@@ -168,7 +170,7 @@ These were investigated but I did not find evidence of an actual problem:
 - **Sparse merge correctness**: `read_sparse_profile_partial_file` validates length agreement, ascending sort, `usize` fit, in-bounds indices, and shape match before any merge work begins ([counting_by_group.rs:553-620](../../src/commands/midpoints/counting_by_group.rs#L553-L620)). The chunked-Mutex merge in `merge_sparse_profile_partial_file` correctly partitions by `flat_idx / chunk_size` and only holds one chunk lock at a time, with the wrap-around split via `partition_point` preserving full coverage of every entry.
 - **`gc_corrector.clone()` per tile**: clones an `Array2<f64>`, which is non-trivial, but the same pattern is used in `ends`, `lengths`, and `fcoverage` (see explicit comment "Quite small memory footprint" at [fcoverage.rs:562](../../src/commands/fcoverage/fcoverage.rs#L562)). Not a midpoints-specific concern.
 - **`incr_weighted` casting `f64 -> f32`**: realistic GC × scaling products stay far below `f32::MAX`; no overflow in practice and consistent with the dense `.npy` output type.
-- **Even-fragment blacklist midpoint vs counted midpoint divergence**: already tracked as M-005 above; not duplicated here.
+- **Even-fragment blacklist midpoint vs counted midpoint divergence**: tracked as M-005 above and now resolved with central-base support semantics.
 
 ## Codex comments on Claude findings
 
@@ -188,7 +190,7 @@ Overall: the Claude findings are mostly low-severity cleanup and statistics-cons
 
 The command already has broad integration coverage: length-bin parsing, default MAPQ, paired/unpaired parity, group index ordering, even-length midpoint edge placement, blacklist midpoint behavior, real GC packages, GC tags, GC/scaling multiplication, scaling TSV validation, tile-boundary behavior, chromosome-end fetch narrowing, CLI smoke output, and cross-command BAM/fragment roundtrips are all represented.
 
-The most important midpoint-specific missing tests from this review are sparse final-output roundtrips if M-001B is implemented and the chosen even-midpoint blacklist semantics if that contract changes. The deferred skipped-tile GC reference pruning optimization is tracked in G-006 in `00_shared_package_notes.md`.
+The most important midpoint-specific missing test from this review is sparse final-output roundtrips if M-001B is implemented. The chosen even-midpoint blacklist semantics now have command-level regression coverage. The deferred skipped-tile GC reference pruning optimization is tracked in G-006 in `00_shared_package_notes.md`.
 
 ## Re-review additions (2026-05-04)
 
@@ -207,3 +209,99 @@ Post-release performance:
 ### Command-specific findings
 
 No new midpoints-only counting correctness finding was added in this pass. The shared input/output contract issues found during the re-review have since been implemented.
+
+## Fundamental-only re-review (2026-05-10)
+
+Scope: re-read `src/commands/midpoints/{midpoints,counting_by_group,config,windows,plotting}.rs`, the directly used interval, tiling, BED, blacklist, GC, scaling, fragment, BAM, and artifact helpers, the midpoint spec, and the existing midpoint integration/unit tests. I did not run tests.
+
+Result: I did not find a new midpoint-local fundamental count-correctness bug in this pass. The earlier ten-item addition was too broad for this review target: G-025 was retired after `MAX_SUPPORTED_FRAGMENT_LENGTH` was lowered to 50,000 bp, and M-D-002 through M-D-009 are hardening, performance, diagnostics, or documentation notes rather than release-blocking midpoint-count defects.
+
+Core invariants rechecked:
+
+- Tile ownership is by the sampled midpoint falling in the tile core, so the same fragment can be fetched by neighboring halo tiles without double-counting the midpoint.
+- Fetch narrowing from core-overlapping windows remains safe because a fragment of length at most `max_fragment_length` whose midpoint can hit one of those windows must lie inside the narrowed fetch band.
+- The streaming overlap pointers remain safe despite paired-fragment yield order because fragment starts and midpoints cannot move backward by more than `max_fragment_length` between records yielded from coordinate-sorted pairs.
+- Fragment length indexing goes through the shared `LengthAxis`, and out-of-range lengths are dropped before counting.
+- GC and scaling weights are applied once per selected midpoint-window count; full-fragment coverage scaling is intentionally averaged over the entire fragment span, not just the 1 bp midpoint.
+
+Remaining fundamental decisions:
+
+- M-D-001 is an operational guardrail, not a counting bug. It matters before release only if the expected target runs include dense final tensors large enough to risk allocator aborts or late panics.
+
+The remaining M-D entries below are retained only as non-fundamental backlog notes from the same read-through. They should not be treated as the answer to "what can make midpoint counts wrong?"
+
+### M-D-001 - Medium - Dense final shape is not preflighted as a user-facing error
+
+`midpoints` processes all tiles into sparse partials before constructing the dense final `ProfileGroupsCounts` ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L284-L287)). The dense constructor then calls `flattened_profile_size`, which panics on shape overflow via `expect("ProfileGroupsCounts shape overflow")` ([counting_by_group.rs](../../src/commands/midpoints/counting_by_group.rs#L51-L60)), and allocates `vec![0f32; flattened_size]` without a memory-budget check ([counting_by_group.rs](../../src/commands/midpoints/counting_by_group.rs#L227-L230)).
+
+Impact: an oversized `(group, length_bin, position)` shape can waste a full counting run and then end in a panic or allocator abort instead of a clear CLI error. M-001B tracks an optional sparse final format; this finding is the immediate dense-path hardening needed even if dense remains the default.
+
+Recommended fix:
+
+- Compute the final shape and estimated bytes in `run` immediately after loading grouped windows and the length axis.
+- Use checked arithmetic that returns `anyhow::Result`, and bail with the requested dimensions and estimated dense bytes before tile processing starts.
+- Keep this check even after sparse final output exists; dense output still needs explicit bounds.
+
+### M-D-002 - Low - Sparse tile accumulation stores exactly zero weights
+
+`SparseProfileGroupsCounts::incr_weighted` inserts an entry before adding `weight as f32` ([counting_by_group.rs](../../src/commands/midpoints/counting_by_group.rs#L486-L495)). The midpoint loop calls it for GC/scaling-weighted counts without skipping zero products ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L685-L690), [midpoints.rs](../../src/commands/midpoints/midpoints.rs#L710-L715)).
+
+Impact: zero-valued GC or scaling weights can create sparse entries, write temp partials, and later merge zeros into the dense output. Counts stay numerically correct, but sparse temp files can become large in the exact use case where weights are intended to mask or downweight regions.
+
+Recommended fix: after deciding the final count weight, skip `incr_weighted` when it is exactly `0.0`. Keep the counted-fragment statistic behavior explicit so a zero-weight hit either remains counted by design or is documented as filtered.
+
+### M-D-003 - Low - `MidpointsConfig::new` uses a different default tile size than the CLI
+
+The CLI default is 20,000,000 bp ([config.rs](../../src/commands/midpoints/config.rs#L119)), while `MidpointsConfig::new` sets 63,000,000 bp ([config.rs](../../src/commands/midpoints/config.rs#L232)). Tests and programmatic callers that use the constructor get different tiling, temporary-file, and boundary-stat behavior than the command-line default unless they override it.
+
+Impact: this makes constructor-based coverage less representative of real CLI runs and can hide tile-boundary regressions or produce surprising memory/performance differences for API callers.
+
+Recommended fix: put the default in one constant and use it from both the Clap default and the constructor, or remove the constructor default if all callers should set tile size deliberately.
+
+### M-D-004 - Low - Even-sized windows use an uncentered QC plot x-axis
+
+`plot_midpoint_profiles` centers x-values only when `window_size` is odd. For even windows it plots positions as raw `0..window_size` values and heatmap edges as `-0.5..window_size-0.5` ([plotting.rs](../../src/commands/midpoints/plotting.rs#L63-L78)).
+
+Impact: the dense `.npy` artifact is still correct and zero-based relative to the BED window start, but the QC plots silently switch conventions based on window parity. For even fixed-size windows, a user looking for midpoint enrichment around the site center can read the peak position incorrectly.
+
+Recommended fix: choose one plot contract. Either always plot zero-based position to match the array artifact, or always plot center-relative coordinates with an explicit even-window convention. Add a plotting helper test for even and odd window sizes.
+
+### M-D-005 - Low - Command-level GC-tag failure behavior is not covered
+
+The midpoint loop has command-specific branches for missing, invalid, and out-of-range GC tags, plus `--neutralize-invalid-gc` behavior ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L577-L600)). The existing midpoint integration coverage includes valid GC-tag pair averaging, but not the failure and neutralization branches for this command path.
+
+Impact: shared GC-tag parsing can be correct while `midpoints` still reports counters or writes weighted counts differently from sibling commands. This is especially easy to regress because M-C-002 already notes that GC work currently happens before the no-window filter.
+
+Recommended fix: add midpoint command fixtures for missing tag, invalid tag, out-of-range tag, and neutralized invalid tag. Assert both the output count and the relevant `gc_*` counters.
+
+### M-D-006 - Low - No-scaling-bin errors omit fragment coordinates
+
+When coverage scaling is enabled, the midpoint loop bails from `find_overlapping_windows` with only `context("unwrapping overlapping scaling bins")` if no scaling bin overlaps the fragment ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L641-L650)). The analogous `ends` path reports chromosome and fragment coordinates in the error message ([ends.rs](../../src/commands/ends/ends.rs#L918-L926)).
+
+Impact: this should be rare if scaling TSV validation is correct, but when it happens the user cannot identify the offending region from the midpoint error alone.
+
+Recommended fix: match the `ends` diagnostic and include chromosome, fragment start, and fragment end in the midpoint scaling-bin error.
+
+### M-D-007 - Low - Dense output is written before the group-index sidecar
+
+`run` writes `<prefix>.midpoint_profiles.npy` before it writes `<prefix>.group_index.tsv` ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L295-L303)). If the sidecar write fails, the user can be left with a fresh primary count artifact that has no matching group-name map.
+
+Impact: the count tensor is not self-describing. A missing or stale sidecar can make downstream group interpretation ambiguous, especially when group order depends on the first occurrence order in the BED.
+
+Recommended fix: write both public artifacts to temporary paths and rename them into place only after both succeed. At minimum, write the sidecar first so a sidecar failure does not leave a new unlabeled count tensor.
+
+### M-D-008 - Low - Sparse partial reader accepts duplicate flat indices
+
+`read_sparse_profile_partial_file` checks sorted order with `previous <= flat_idx` ([counting_by_group.rs](../../src/commands/midpoints/counting_by_group.rs#L591-L601)). The current writer should not emit duplicates because it drains a map, but a duplicate index in a corrupted or hand-written partial file passes validation and is merged twice.
+
+Impact: this is defensive hardening for an internal temp format, not normal command behavior. Still, the reader advertises validation for the sparse partial contract, and duplicate entries make the merge result depend on malformed input rather than failing closed.
+
+Recommended fix: reject duplicates by requiring `previous < flat_idx`, or deliberately coalesce duplicates in the reader and document that duplicate COO-style entries are allowed.
+
+### M-D-009 - Low - CLI span docs use `end` instead of `reference_end`
+
+The `midpoints` help text describes paired spans as `[forward.pos, reverse.end)` and unpaired spans as `[read.pos, read.end)` ([config.rs](../../src/commands/midpoints/config.rs#L24-L29)). The project vocabulary for fragment spans is `forward.pos` to `reverse.reference_end`, and the implementation stores the reverse/read reference end via `record.reference_end()` ([minimal_fragment.rs](../../src/shared/fragment/minimal_fragment.rs#L25-L28), [minimal_fragment.rs](../../src/shared/fragment/minimal_fragment.rs#L96-L104)).
+
+Impact: documentation only, but this command is explicitly about midpoint placement, so span terminology needs to be exact. Using `end` invites confusion with other coordinate endings or read-sequence length concepts.
+
+Recommended fix: update the help text to use `reverse.reference_end` and `read.reference_end`, preserving the current `pos` / `reference_end` domain wording.

@@ -22,6 +22,7 @@ use crate::{
     },
     shared::{
         bam::create_chromosome_reader,
+        base::ZEROISH_F64_TOLERANCE,
         bed::{load_grouped_windows_from_bed, load_windows_from_bed},
         blacklist::is_blacklisted,
         clip_mode::ClipMode,
@@ -82,6 +83,19 @@ struct TileOutputs {
     grouped_counts: Option<FxHashMap<u64, LengthCounts>>,
     partial_path: Option<PathBuf>,
     cross_path: Option<PathBuf>,
+}
+
+#[inline]
+fn should_store_length_weight(weight: f64) -> Result<bool> {
+    ensure!(
+        weight.is_finite(),
+        "length count weight {weight} is not finite"
+    );
+    ensure!(
+        weight >= -ZEROISH_F64_TOLERANCE,
+        "length count weight {weight} is negative, this is not currently supported"
+    );
+    Ok(weight > ZEROISH_F64_TOLERANCE)
 }
 
 fn reduce_tile_partials_for_chr(
@@ -1046,6 +1060,9 @@ fn process_tile(
                 let count_weight = window_scaling.overlap_fraction_to_count
                     * window_scaling.scaling_weight
                     * gc_weight;
+                if !should_store_length_weight(count_weight)? {
+                    continue;
+                }
                 match window_opt {
                     DistributionWindowSpec::GroupedBed(_) => {
                         let windows_chr = windows_chr
@@ -1090,6 +1107,9 @@ fn process_tile(
                     WindowAssigner::CountOverlap => overlapped_window.overlap_fraction,
                     _ => 1.0f64,
                 } * gc_weight;
+                if !should_store_length_weight(count_weight)? {
+                    continue;
+                }
                 match window_opt {
                     DistributionWindowSpec::GroupedBed(_) => {
                         let windows_chr = windows_chr

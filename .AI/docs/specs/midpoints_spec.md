@@ -37,6 +37,7 @@
 - File-based GC correction reads reference sequence for the full tile fetch span.
 - Scaling TSVs must fully cover every selected chromosome and pass GC-mode compatibility checks.
 - Blacklist strategy uses the aligned fragment span and the shared blacklist strategies: `any`, `all`, `midpoint`, or `proportion=<threshold>`.
+- `midpoint` blacklist strategy checks the single central base for odd fragments and either central base for even fragments. It does not use the randomized counted-midpoint tie break.
 
 ## Tiling And Merge
 

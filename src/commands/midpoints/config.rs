@@ -165,6 +165,9 @@ pub struct MidpointsConfig {
     /// Possible values:
     ///     `"any"`, `"all"`, `"midpoint"`, or `"proportion=<threshold>"`
     ///
+    /// `midpoint` checks the single central base for odd fragments and either
+    /// central base for even fragments.
+    ///
     /// Example of proportion: `--blacklist-strategy proportion=0.2` (no space around `=`)
     #[cfg_attr(
         feature = "cli",
@@ -229,7 +232,7 @@ impl MidpointsConfig {
             output_prefix: String::new(),
             intervals,
             length_bins: vec!["30".to_string(), "1001".to_string()],
-            tile_size: 63_000_000,
+            tile_size: 20000000,
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),
             min_mapq: 30,

@@ -71,7 +71,11 @@ pub fn is_all(
     }
 }
 
-/// Check if fragment midpoint lies within an interval
+/// Check if the fragment midpoint support overlaps a blacklist interval.
+///
+/// Odd-length fragments have one central base. Even-length fragments have two
+/// central bases in discrete base coordinates, so either central base is enough
+/// to blacklist the fragment.
 pub fn is_midpoint(
     intervals: &[Interval<u64>],
     interval: Interval<u64>,
@@ -79,16 +83,22 @@ pub fn is_midpoint(
     ptr: &mut usize,
 ) -> bool {
     let (start, end) = interval.as_tuple();
-    // Compute fragment midpoint
-    let mid = start + (end - start) / 2;
+    let length = end - start;
+    let right_center = start + length / 2;
+    let left_center = if length % 2 == 0 {
+        right_center - 1
+    } else {
+        right_center
+    };
+
     // Skip any intervals that end entirely before the fragment start minus `look_back`
     while *ptr < intervals.len() && intervals[*ptr].end() <= start.saturating_sub(look_back) {
         *ptr += 1;
     }
-    // Iterate over every interval that could cover the midpoint
+    // Iterate over every interval that could cover one of the central bases
     let mut i = *ptr;
-    while i < intervals.len() && intervals[i].start() <= mid {
-        if intervals[i].contains_point(mid) {
+    while i < intervals.len() && intervals[i].start() <= right_center {
+        if intervals[i].contains_point(left_center) || intervals[i].contains_point(right_center) {
             return true;
         }
         i += 1;
@@ -163,4 +173,9 @@ pub fn is_any(
     }
     // ptr remains at the first possible overlapping interval
     covered_bases > 0
+}
+
+#[cfg(test)]
+mod tests {
+    include!("overlaps_tests.rs");
 }

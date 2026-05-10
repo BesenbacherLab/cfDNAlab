@@ -7,6 +7,39 @@ fn spec_for_k(k: u8) -> KmerSpec {
 }
 
 #[test]
+fn end_motif_counts_skips_zeroish_weights_and_rejects_negative_weights() -> anyhow::Result<()> {
+    // Arrange: this key is valid, so only the weight controls whether sparse storage is updated.
+    let key = EncodedEndMotifKey {
+        inside_code: 1,
+        outside_code: 2,
+        reverse_on_decode: false,
+    };
+    let mut counts = EndMotifCounts::new();
+
+    // Act and assert: exact zero and tiny negative roundoff should be skipped by callers before
+    // they touch sparse storage.
+    assert!(!EndMotifCounts::should_store_weight(0.0)?);
+    assert!(!EndMotifCounts::should_store_weight(
+        -ZEROISH_F64_TOLERANCE / 2.0
+    )?);
+
+    // Act and assert: a real negative weight is an upstream weighting error.
+    let error = EndMotifCounts::should_store_weight(-10.0 * ZEROISH_F64_TOLERANCE)
+        .expect_err("material negative weights should fail");
+    assert!(
+        error.to_string().contains("is negative"),
+        "unexpected error: {error}"
+    );
+
+    // Act and assert: positive weights update the sparse map.
+    assert!(EndMotifCounts::should_store_weight(1.25)?);
+    counts.incr_weighted(key, 1.25);
+    assert_eq!(counts.counts.get(&key), Some(&1.25));
+
+    Ok(())
+}
+
+#[test]
 fn decode_full_motif_keeps_left_end_in_storage_order() {
     // Arrange: left-end storage order is outside || inside.
     let inside_spec = spec_for_k(2);

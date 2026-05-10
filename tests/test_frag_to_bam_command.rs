@@ -379,11 +379,12 @@ fn run_blacklist_strategy_case(strategy: BlacklistStrategy) -> Result<Vec<u64>> 
     let chrom_sizes_path = input_dir.path().join("chrom.sizes");
     let blacklist_path = input_dir.path().join("blacklist.bed");
 
-    // Four 10bp fragments and one blacklist interval [10,20):
+    // Five 10bp fragments and one blacklist interval [10,20):
     // - [0,10)   overlap=0
-    // - [5,15)   overlap=5/10, midpoint=10
-    // - [10,20)  overlap=10/10, midpoint=15
-    // - [15,25)  overlap=5/10, midpoint=20 (outside half-open [10,20))
+    // - [5,15)   overlap=5/10, central bases 9 and 10
+    // - [10,20)  overlap=10/10, central bases 14 and 15
+    // - [15,25)  overlap=5/10, central bases 19 and 20
+    // - [16,26)  overlap=4/10, central bases 20 and 21
     write_frag_file(
         &frag_path,
         &[
@@ -391,6 +392,7 @@ fn run_blacklist_strategy_case(strategy: BlacklistStrategy) -> Result<Vec<u64>> 
             "chr1\t5\t15\t60\t+",
             "chr1\t10\t20\t60\t+",
             "chr1\t15\t25\t60\t+",
+            "chr1\t16\t26\t60\t+",
         ],
     )?;
     write_chrom_sizes(&chrom_sizes_path, &[("chr1", 100)])?;
@@ -1525,7 +1527,7 @@ fn given_explicit_and_inline_headers_when_run_then_returns_header_conflict_error
 
 #[test]
 fn given_blacklist_any_when_run_then_any_overlap_is_excluded() -> Result<()> {
-    // Any overlap excludes [5,15), [10,20), and [15,25), so only [0,10) remains.
+    // Any overlap excludes all fragments except [0,10).
     let kept_starts = run_blacklist_strategy_case(BlacklistStrategy::Any)?;
     assert_eq!(kept_starts, vec![0]);
     Ok(())
@@ -1535,27 +1537,28 @@ fn given_blacklist_any_when_run_then_any_overlap_is_excluded() -> Result<()> {
 fn given_blacklist_all_when_run_then_only_fully_overlapped_fragments_are_excluded() -> Result<()> {
     // Full overlap excludes only [10,20).
     let kept_starts = run_blacklist_strategy_case(BlacklistStrategy::All)?;
-    assert_eq!(kept_starts, vec![0, 5, 15]);
+    assert_eq!(kept_starts, vec![0, 5, 15, 16]);
     Ok(())
 }
 
 #[test]
 fn given_blacklist_midpoint_when_run_then_midpoint_overlap_controls_exclusion() -> Result<()> {
-    // Midpoints:
-    // - [5,15) midpoint=10 -> excluded
-    // - [10,20) midpoint=15 -> excluded
-    // - [15,25) midpoint=20 -> kept (end-exclusive blacklist interval)
+    // Midpoint strategy checks central-base support:
+    // - [5,15) central bases 9 and 10 -> excluded
+    // - [10,20) central bases 14 and 15 -> excluded
+    // - [15,25) central bases 19 and 20 -> excluded because 19 lies in [10,20)
+    // - [16,26) central bases 20 and 21 -> kept because [10,20) is end-exclusive
     let kept_starts = run_blacklist_strategy_case(BlacklistStrategy::Midpoint)?;
-    assert_eq!(kept_starts, vec![0, 15]);
+    assert_eq!(kept_starts, vec![0, 16]);
     Ok(())
 }
 
 #[test]
 fn given_blacklist_proportion_when_run_then_threshold_controls_exclusion() -> Result<()> {
-    // Overlap fractions are [0.0, 0.5, 1.0, 0.5] for the four fragments.
+    // Overlap fractions are [0.0, 0.5, 1.0, 0.5, 0.4] for the five fragments.
     // With threshold 0.6, only [10,20) is excluded.
     let kept_starts = run_blacklist_strategy_case(BlacklistStrategy::Proportion(0.6))?;
-    assert_eq!(kept_starts, vec![0, 5, 15]);
+    assert_eq!(kept_starts, vec![0, 5, 15, 16]);
     Ok(())
 }
 

@@ -88,6 +88,32 @@ fn fragment_with_two_ends(
 }
 
 #[test]
+fn count_fragment_in_window_zero_weight_does_not_create_sparse_window_or_flags() {
+    // Arrange: the fragment has two valid read-backed motifs and the window assignment would
+    // otherwise count both ends.
+    let fragment = fragment_with_two_ends(10, b"AC", 20, b"GT");
+    let motif_context = read_only_motif_context(2);
+    let mut counts_by_window = EndCountsByWindow::default();
+
+    // Act
+    let counted = count_fragment_in_window(
+        &mut counts_by_window,
+        3,
+        Interval::new(10_u64, 20_u64).expect("valid window"),
+        &fragment,
+        0.0,
+        &motif_context,
+        KmerSource::Read,
+        WindowMotifAssigner::Any,
+    )
+    .expect("counting should work");
+
+    // Assert: zero-weight motifs should not produce sparse payload entries or counted-end stats.
+    assert_eq!(counted, CountedEndFlags::default());
+    assert!(counts_by_window.is_empty());
+}
+
+#[test]
 fn count_fragment_in_window_endpoint_counts_only_left_end_when_window_hits_left_terminal_base() {
     // Arrange: left boundary is at genomic position 10 and right boundary is at 20 for the
     // half-open fragment interval [10, 20).

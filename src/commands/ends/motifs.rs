@@ -8,7 +8,7 @@ use crate::{
     commands::ends::{
         config::EndsConfig,
         config_structs::{ClipStrategy, KmerSource, WindowMotifAssigner},
-        counting::{EncodedEndMotifKey, EndCountsByWindow},
+        counting::{EncodedEndMotifKey, EndCountsByWindow, EndMotifCounts},
     },
     shared::{
         blacklist::{apply_blacklist_mask_to_seq, apply_mask::BLACKLIST_BYTE},
@@ -345,6 +345,9 @@ pub(crate) fn count_fragment_in_window(
     assign_by: WindowMotifAssigner,
 ) -> Result<CountedEndFlags> {
     let mut counted_end_flags = CountedEndFlags::default();
+    if !EndMotifCounts::should_store_weight(weight)? {
+        return Ok(counted_end_flags);
+    }
 
     if let Some(left_end) = fragment.left_end.as_ref() {
         let count_left_end = match assign_by {

@@ -28,6 +28,7 @@ Implemented findings removed from active tracking:
 - G-022: output prefixes can escape the output directory.
 - G-023: reference GC packages do not record or check the reference identity later used by `gc-bias`.
 - G-024: GC correction package reference mismatches are warning-only.
+- G-025: blacklist `any` strategy could miss exact 65,536 bp overlaps while the supported fragment cap was 100,000 bp; lowering `MAX_SUPPORTED_FRAGMENT_LENGTH` to 50,000 bp removes that reachable fragment-overlap case.
 
 Reviewed and deliberately not tracked:
 
