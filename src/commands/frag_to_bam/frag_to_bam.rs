@@ -11,7 +11,7 @@ use crate::{
             GC_WEIGHT_AUX_TAG,
         },
         interval::Interval,
-        io::{dot_join, open_text_reader},
+        io::{FinalOutputFiles, dot_join, open_text_reader},
         reference::load_chrom_sizes_with_order,
         temp_chrom_names::TempChromNameMap,
         tiled_run::TempDirGuard,
@@ -161,6 +161,7 @@ fn run_inner(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
     let mut temp_dir_guard = TempDirGuard::new(&opt.output_dir, opt.output_prefix.trim())
         .context("Creating temp directory for frag-to-bam")?;
     let temp_dir = temp_dir_guard.path().to_path_buf();
+    let mut final_outputs = FinalOutputFiles::new(temp_dir_guard.path())?;
 
     let reader = open_text_reader(&opt.frag)
         .with_context(|| format!("Opening fragment file {}", opt.frag.display()))?;
@@ -345,7 +346,11 @@ fn run_inner(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
     let output_path = opt
         .output_dir
         .join(dot_join(&[opt.output_prefix.trim(), "fragments.bam"]));
-    let mut writer = bam::Writer::from_path(&output_path, &header, Format::Bam)
+    let temp_output_path = final_outputs.temp_path_for(&output_path)?;
+
+    // Write the BAM under the run temp directory while records are still streaming
+    // Move it to the final path only after the BAM writer has closed successfully
+    let mut writer = bam::Writer::from_path(&temp_output_path, &header, Format::Bam)
         .context("Creating BAM writer")?;
 
     // Second pass: write BAM in chrom_sizes order for predictable tid ordering
@@ -375,6 +380,10 @@ fn run_inner(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
                 .with_context(|| format!("Writing BAM record for {}", chr))?;
         }
     }
+    drop(writer);
+
+    final_outputs.record(temp_output_path, output_path.clone())?;
+    final_outputs.move_into_place()?;
 
     temp_dir_guard
         .remove()

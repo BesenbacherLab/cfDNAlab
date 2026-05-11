@@ -20,7 +20,7 @@ use crate::commands::wps_peaks::window_peak_results::PeaksWindowAction;
 use crate::shared::bam::Contigs;
 use crate::shared::bed::load_windows_from_bed;
 use crate::shared::interval::{IndexedInterval, Interval};
-use crate::shared::io::dot_join;
+use crate::shared::io::{FinalOutputFiles, dot_join};
 use crate::shared::progress::ProgressFactory;
 use crate::shared::scale_genome::ScalingBin;
 use crate::shared::temp_chrom_names::TempChromNameMap;
@@ -231,6 +231,7 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
     let temp_dir_guard = TempDirGuard::new(&opt.shared_args.ioc.output_dir, prefix)
         .context("create per-run temp dir for peaks")?;
     let temp_dir = temp_dir_guard.path();
+    let mut final_outputs = FinalOutputFiles::new(temp_dir)?;
     let tile_window_spans_for_threads = tile_window_spans.clone();
     let stats_mode = matches!(opt.per_window, Some(PeaksWindowAction::Stats));
     let chr_offsets_for_threads = Arc::clone(&chr_offsets);
@@ -334,13 +335,16 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
     pb.finish_with_message("| Finished peak calling");
 
     let mut total_counter = WPSPeaksCounters::default();
-    match opt.per_window {
+    let (final_output_path, wrote_stats) = match opt.per_window {
         None => {
+            let final_output_path = opt
+                .shared_args
+                .ioc
+                .output_dir
+                .join(dot_join(&[prefix, "wps.peaks.tsv.zst"]));
+            let temp_output_path = final_outputs.temp_path_for(&final_output_path)?;
             let mut writer = GlobalWriter::new(
-                opt.shared_args
-                    .ioc
-                    .output_dir
-                    .join(dot_join(&[prefix, "wps.peaks.tsv.zst"])),
+                temp_output_path.clone(),
                 opt.shared_args.ioc.n_threads as u32,
             )?;
             for result in &tile_results {
@@ -348,6 +352,8 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
                 writer.write_tile_file(result.peak_file_path.as_path())?;
             }
             writer.finish()?;
+            final_outputs.record(temp_output_path, final_output_path.clone())?;
+            (final_output_path, false)
         }
         Some(action) => {
             let window_source = match &window_opt {
@@ -382,9 +388,15 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
                     anyhow::bail!("per-window outputs require --by-bed or --by-size");
                 }
             };
+            let output_mode = WindowOutputMode::from(action);
+            let final_output_path = opt
+                .shared_args
+                .ioc
+                .output_dir
+                .join(output_mode.file_name(prefix));
+            let temp_output_path = final_outputs.temp_path_for(&final_output_path)?;
             let mut writer = WindowOutputWriter::new(
-                &opt.shared_args.ioc.output_dir,
-                prefix,
+                temp_output_path.clone(),
                 opt.shared_args.decimals as usize,
                 opt.shared_args.ioc.n_threads as u32,
                 action,
@@ -399,7 +411,23 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
                 )?;
             }
             writer.finish()?;
+            final_outputs.record(temp_output_path, final_output_path.clone())?;
+            (
+                final_output_path,
+                matches!(action, PeaksWindowAction::Stats),
+            )
         }
+    };
+
+    final_outputs.move_into_place()?;
+    if wrote_stats {
+        info!(
+            target: COMMAND_TARGET,
+            "Saved window stats to: {}",
+            final_output_path.display()
+        );
+    } else {
+        info!(target: COMMAND_TARGET, "Saved peaks to: {}", final_output_path.display());
     }
 
     let elapsed = start_time.elapsed();
@@ -435,7 +463,6 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
 }
 
 pub struct GlobalWriter {
-    path: PathBuf,
     writer: BufWriter<Box<dyn Write>>,
 }
 
@@ -443,7 +470,7 @@ impl GlobalWriter {
     fn new(path: PathBuf, threads: u32) -> Result<Self> {
         let mut writer = open_zstd_auto_writer(&path, 3, Some(threads))?;
         writeln!(writer, "chromosome\tstart\tend\tpeak_position\theight")?;
-        Ok(Self { path, writer })
+        Ok(Self { writer })
     }
 
     fn write_tile_file(&mut self, path: &Path) -> Result<()> {
@@ -454,7 +481,6 @@ impl GlobalWriter {
 
     fn finish(&mut self) -> Result<()> {
         self.writer.flush()?;
-        info!(target: COMMAND_TARGET, "Saved peaks to: {}", self.path.display());
         Ok(())
     }
 }
@@ -680,9 +706,18 @@ impl From<PeaksWindowAction> for WindowOutputMode {
     }
 }
 
+impl WindowOutputMode {
+    fn file_name(self, prefix: &str) -> String {
+        match self {
+            WindowOutputMode::Unique => dot_join(&[prefix, "wps.peaks.unique.tsv.zst"]),
+            WindowOutputMode::Indexed => dot_join(&[prefix, "wps.peaks.indexed.tsv.zst"]),
+            WindowOutputMode::Stats => dot_join(&[prefix, "wps.peaks.stats.tsv.zst"]),
+        }
+    }
+}
+
 // TODO: document this with pedagogical explanations
 pub struct WindowOutputWriter {
-    path: PathBuf,
     writer: BufWriter<Box<dyn Write>>,
     accumulator: WindowAccumulator,
     window_source: WindowSource,
@@ -694,19 +729,13 @@ pub struct WindowOutputWriter {
 
 impl WindowOutputWriter {
     fn new(
-        output_dir: &Path,
-        prefix: &str,
+        path: PathBuf,
         decimals: usize,
         threads: u32,
         action: PeaksWindowAction,
         window_source: WindowSource,
     ) -> Result<Self> {
         let mode = WindowOutputMode::from(action);
-        let path = output_dir.join(match mode {
-            WindowOutputMode::Unique => dot_join(&[prefix, "wps.peaks.unique.tsv.zst"]),
-            WindowOutputMode::Indexed => dot_join(&[prefix, "wps.peaks.indexed.tsv.zst"]),
-            WindowOutputMode::Stats => dot_join(&[prefix, "wps.peaks.stats.tsv.zst"]),
-        });
         let mut writer = open_zstd_auto_writer(&path, 3, Some(threads))?;
         match mode {
             WindowOutputMode::Unique => {
@@ -728,7 +757,6 @@ impl WindowOutputWriter {
         }
 
         Ok(Self {
-            path,
             writer,
             accumulator: WindowAccumulator::new(action, decimals),
             window_source,
@@ -943,16 +971,6 @@ impl WindowOutputWriter {
     fn finish(&mut self) -> Result<()> {
         self.accumulator.flush_all(&mut self.writer)?;
         self.writer.flush()?;
-        match self.mode {
-            WindowOutputMode::Stats => {
-                info!(
-                    target: COMMAND_TARGET,
-                    "Saved window stats to: {}",
-                    self.path.display()
-                );
-            }
-            _ => info!(target: COMMAND_TARGET, "Saved peaks to: {}", self.path.display()),
-        }
         Ok(())
     }
 

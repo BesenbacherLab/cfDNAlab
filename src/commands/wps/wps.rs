@@ -16,7 +16,7 @@ use crate::shared::fragment::minimal_fragment::Fragment;
 use crate::shared::fragment_iterators::fragments_from_bam;
 use crate::shared::gc_tag::ClassifiedGCTagWeight;
 use crate::shared::interval::{IndexedInterval, Interval};
-use crate::shared::io::dot_join;
+use crate::shared::io::{FinalOutputFiles, dot_join};
 use crate::shared::progress::ProgressFactory;
 use crate::shared::read::{default_include_read_paired_end, default_include_read_unpaired};
 use crate::shared::reference::read_seq_in_range;
@@ -264,6 +264,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
     let temp_dir_guard = TempDirGuard::new(&opt.shared_args.ioc.output_dir, prefix)
         .context("create per-run temp dir")?;
     let temp_dir = temp_dir_guard.path();
+    let mut final_outputs = FinalOutputFiles::new(temp_dir)?;
 
     // Window size when --by-size (otherwise None)
     let by_size_bp: Option<u64> = match &window_opt {
@@ -538,15 +539,20 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
         "Merging temporary tile files to final output"
     );
 
-    // Merge temporary output files and
-    // reduce windows present in multiple tiles
+    // Merge tile temp files into a completed output under the final-output temp directory
+    // The merged file moves into output_dir only after the full writer succeeds
 
     let final_out_path = if let Some(action) = per_window_action {
         match action {
             CoverageWindowAction::OnlyIncludeThesePositionsUnique => {
                 // Windowed positional (unique and non-indexed)
-                merge_positional_tile_outputs_with_optional_scaling(
-                    &opt.shared_args.ioc.output_dir,
+                let final_path = opt
+                    .shared_args
+                    .ioc
+                    .output_dir
+                    .join(&final_bedgraph_pos_name);
+                let temp_path = merge_positional_tile_outputs_with_optional_scaling(
+                    final_outputs.temp_dir(),
                     &chromosomes,
                     &wps_positional_tile_outputs(&tile_temp_outputs),
                     final_bedgraph_pos_name.as_str(),
@@ -554,12 +560,15 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                     false,
                     decimals_to_use,
                     opt.shared_args.ioc.n_threads as usize,
-                )?
+                )?;
+                final_outputs.record(temp_path, final_path.clone())?;
+                final_path
             }
             CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
                 // Windowed positional with orig_idx column
-                merge_positional_tile_outputs_with_optional_scaling(
-                    &opt.shared_args.ioc.output_dir,
+                let final_path = opt.shared_args.ioc.output_dir.join(&final_tsv_pos_name);
+                let temp_path = merge_positional_tile_outputs_with_optional_scaling(
+                    final_outputs.temp_dir(),
                     &chromosomes,
                     &wps_positional_tile_outputs(&tile_temp_outputs),
                     final_tsv_pos_name.as_str(),
@@ -567,7 +576,9 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                     true,
                     decimals_to_use,
                     opt.shared_args.ioc.n_threads as usize,
-                )?
+                )?;
+                final_outputs.record(temp_path, final_path.clone())?;
+                final_path
             }
             CoverageWindowAction::Average | CoverageWindowAction::Total => {
                 // Per-chrom reduce of partials into final aggregates
@@ -576,6 +587,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                     CoverageWindowAction::Total => final_total_name.as_str(),
                     _ => unreachable!(),
                 });
+                let temp_final_path = final_outputs.temp_path_for(&final_path)?;
 
                 // Reduce by window source
                 match &window_opt {
@@ -584,7 +596,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                             .as_ref()
                             .context("BED WPS reduction requires loaded windows")?;
                         write_bed_aggregate_output(
-                            &final_path,
+                            &temp_final_path,
                             &collect_wps_aggregate_tile_outputs_by_chromosome(
                                 &tile_temp_outputs,
                                 WpsTileTempOutput::is_bed_aggregate,
@@ -600,7 +612,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                     }
                     WindowSpec::Size(_) => {
                         write_size_aggregate_output(
-                            &final_path,
+                            &temp_final_path,
                             &collect_wps_aggregate_tile_outputs_by_chromosome(
                                 &tile_temp_outputs,
                                 WpsTileTempOutput::is_size_aggregate,
@@ -619,6 +631,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                     _ => unreachable!(),
                 }
 
+                final_outputs.record(temp_final_path, final_path.clone())?;
                 final_path
             }
             _ => {
@@ -627,8 +640,13 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
         }
     } else {
         // Whole-genome positional coverage
-        merge_positional_tile_outputs_with_optional_scaling(
-            &opt.shared_args.ioc.output_dir,
+        let final_path = opt
+            .shared_args
+            .ioc
+            .output_dir
+            .join(&final_bedgraph_pos_name);
+        let temp_path = merge_positional_tile_outputs_with_optional_scaling(
+            final_outputs.temp_dir(),
             &chromosomes,
             &wps_positional_tile_outputs(&tile_temp_outputs),
             final_bedgraph_pos_name.as_str(),
@@ -636,8 +654,13 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
             false,
             decimals_to_use,
             opt.shared_args.ioc.n_threads as usize,
-        )?
+        )?;
+        final_outputs.record(temp_path, final_path.clone())?;
+        final_path
     };
+
+    final_outputs.move_into_place()?;
+
     info!(
         target: COMMAND_TARGET,
         "Saved output to: {}",

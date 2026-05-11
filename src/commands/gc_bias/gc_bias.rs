@@ -36,7 +36,7 @@ use crate::{
         fragment::minimal_fragment::Fragment,
         fragment_iterators::fragments_from_bam,
         interval::{IndexedInterval, Interval},
-        io::dot_join,
+        io::{FinalOutputFiles, dot_join},
         midpoint::midpoint_random_even_for_fragment,
         overlaps::find_overlapping_windows,
         progress::ProgressFactory,
@@ -256,11 +256,6 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     let prefix = opt.output_prefix.trim();
     validate_output_prefix(prefix)?;
     let window_opt = opt.windows.resolve_windows();
-    let mut intermediate_saver = IntermediateFileSaver::new(
-        opt.save_intermediates,
-        opt.ioc.output_dir.clone(),
-        prefix.to_string(),
-    );
 
     info!(target: COMMAND_TARGET, "Loading reference GC bias");
     let ReferenceGCData {
@@ -285,6 +280,15 @@ pub fn run(opt: &GCConfig) -> Result<()> {
 
     // Create output directory
     create_dir_all(&opt.ioc.output_dir).context("Cannot create output_dir")?;
+    let final_temp_dir_guard = TempDirGuard::new(&opt.ioc.output_dir, "gc_bias_final")
+        .context("create final output temp dir")?;
+    let mut final_outputs = FinalOutputFiles::new(final_temp_dir_guard.path())?;
+    let mut intermediate_saver = IntermediateFileSaver::new(
+        opt.save_intermediates,
+        final_outputs.temp_dir().to_path_buf(),
+        opt.ioc.output_dir.clone(),
+        prefix.to_string(),
+    );
 
     // Load blacklist intervals if provided
     let blacklist_map = load_blacklist_map(opt.blacklist.as_ref(), 1, 0, &chromosomes)?;
@@ -495,6 +499,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     );
 
     intermediate_saver.save_file(
+        &mut final_outputs,
         &avg_gc_pct_counts,
         "avg_cfdna_counts",
         "average cfDNA counts",
@@ -508,6 +513,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             .ok_or_else(|| anyhow!("masked mean scaling had no supported elements"))?;
 
     intermediate_saver.save_file(
+        &mut final_outputs,
         &norm_gc_counts,
         "normalized_avg_cfdna_counts",
         "normalized average cfDNA counts",
@@ -537,6 +543,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         }
 
         intermediate_saver.save_file(
+            &mut final_outputs,
             &norm_gc_counts,
             "interpolated_cfdna_counts",
             "interpolated cfDNA counts",
@@ -561,6 +568,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
 
     if do_smoothing {
         intermediate_saver.save_file(
+            &mut final_outputs,
             &smoothed_gc_counts,
             "smoothed_cfdna_counts",
             "smoothed cfDNA counts",
@@ -615,12 +623,14 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     };
 
     intermediate_saver.save_file(
+        &mut final_outputs,
         &binned_ref_counts,
         "binned_ref_counts",
         "binned reference counts",
     )?;
 
     intermediate_saver.save_file(
+        &mut final_outputs,
         &binned_gc_counts,
         "binned_cfdna_counts",
         "binned cfDNA counts",
@@ -649,11 +659,13 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     }
 
     intermediate_saver.save_file(
+        &mut final_outputs,
         &norm_gc_counts,
         "normalized_binned_cfdna_counts",
         "normalized binned cfDNA counts",
     )?;
     intermediate_saver.save_file(
+        &mut final_outputs,
         &norm_ref_counts,
         "normalized_binned_ref_counts",
         "normalized binned reference counts",
@@ -735,6 +747,9 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         per_length_totals.iter().map(|v| *v / total).collect()
     };
 
+    // Write every final output to the temp directory before moving any of them into place
+    // This keeps failed writes from leaving a mix of old and new final files
+
     // Save reusable correction package with metadata for downstream commands
     let correction_pkg = GCCorrectionPackage::from_components(
         GC_CORRECTION_SCHEMA_VERSION,
@@ -744,11 +759,13 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         length_bin_frequencies.clone(),
         &reference_metadata,
     )?;
-    correction_pkg.write_npz(
-        opt.ioc
-            .output_dir
-            .join(dot_join(&[prefix, "gc_bias_correction.npz"])),
-    )?;
+    let correction_package_path = opt
+        .ioc
+        .output_dir
+        .join(dot_join(&[prefix, "gc_bias_correction.npz"]));
+    let temp_correction_package_path = final_outputs.temp_path_for(&correction_package_path)?;
+    correction_pkg.write_npz(&temp_correction_package_path)?;
+    final_outputs.record(temp_correction_package_path, correction_package_path)?;
 
     // Plot the avg. gc-bias across lengths for quick QC
     #[cfg(feature = "plotters")]
@@ -757,8 +774,8 @@ pub fn run(opt: &GCConfig) -> Result<()> {
 
         info!(target: COMMAND_TARGET, "Plotting GC bias");
 
-        plot_gc_bias(
-            &opt.ioc.output_dir,
+        let temp_plot_paths = plot_gc_bias(
+            final_outputs.temp_dir(),
             prefix,
             &gc_bins,
             &length_bins,
@@ -768,7 +785,12 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             &avg_gc_pct_counts,
             &binned_gc_counts,
         )?;
+        // These plots were written to final_outputs.temp_dir() with their final filenames
+        // Record each one as output_dir/<file name>, then move all outputs at the end
+        final_outputs.record_temp_files_with_same_names_in(temp_plot_paths, &opt.ioc.output_dir)?;
     }
+
+    final_outputs.move_into_place()?;
 
     let elapsed = start_time.elapsed();
     let mut extra_lines = vec![format!(
@@ -1462,25 +1484,46 @@ where
     x.mapv_inplace(|v| if v == 0.0 { 0.0 } else { 1.0 / v });
 }
 
-pub struct IntermediateFileSaver {
-    pub save_intermediates: bool,
-    pub out_dir: PathBuf,
-    pub prefix: String,
+/// Writes optional GC-bias intermediate arrays through the staged final-output writer.
+///
+/// The saver owns the intermediate naming state and the temp/final directory roots. Each
+/// `save_file` call writes to `temp_dir` and records the matching final path in `FinalOutputFiles`.
+/// The caller moves all recorded outputs into place once the command has finished writing.
+struct IntermediateFileSaver {
+    save_intermediates: bool,
+    temp_dir: PathBuf,
+    final_dir: PathBuf,
+    prefix: String,
     previously_saved: usize,
 }
 
 impl IntermediateFileSaver {
-    pub fn new(save_intermediates: bool, out_dir: PathBuf, prefix: String) -> Self {
+    /// Create a saver for intermediate arrays.
+    ///
+    /// `temp_dir` is where files are written immediately. `final_dir` is where they will be moved
+    /// by `FinalOutputFiles::move_into_place`.
+    fn new(
+        save_intermediates: bool,
+        temp_dir: PathBuf,
+        final_dir: PathBuf,
+        prefix: String,
+    ) -> Self {
         IntermediateFileSaver {
             save_intermediates,
-            out_dir,
+            temp_dir,
+            final_dir,
             prefix,
             previously_saved: 0,
         }
     }
 
-    pub fn save_file<S>(
+    /// Write one intermediate array to the temp directory and record where it should end up.
+    ///
+    /// `final_outputs` is only used to record the completed temp-to-final path pair. Path naming
+    /// stays inside this saver so call sites do not need to know intermediate filenames.
+    fn save_file<S>(
         &mut self,
+        final_outputs: &mut FinalOutputFiles,
         x: &ArrayBase<S, Ix2>,
         file_tag: &str,
         msg_tag: &str,
@@ -1491,15 +1534,14 @@ impl IntermediateFileSaver {
         if self.save_intermediates {
             info!(target: COMMAND_TARGET, "Intermediate file: Saving {}", msg_tag);
             let file_name = format!("gc_bias.{}.{}.npy", file_tag, self.previously_saved);
-            write_npy(
-                self.out_dir
-                    .join(dot_join(&[self.prefix.as_str(), file_name.as_str()])),
-                x,
-            )
-            .context(format!(
+            let output_name = dot_join(&[self.prefix.as_str(), file_name.as_str()]);
+            let temp_path = self.temp_dir.join(output_name.as_str());
+            let final_path = self.final_dir.join(output_name);
+            write_npy(&temp_path, x).context(format!(
                 "Failed to write intermediate file {}",
                 self.previously_saved
             ))?;
+            final_outputs.record(temp_path, final_path)?;
             self.previously_saved += 1;
         }
         Ok(())

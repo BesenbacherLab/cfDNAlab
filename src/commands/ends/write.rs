@@ -13,7 +13,10 @@ use anyhow::{Context, Result};
 use fxhash::FxHashMap;
 use ndarray::Array2;
 use ndarray_npy::write_npy;
-use std::{io::Write, path::Path};
+use std::{
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 /// Write the final end-motif count outputs.
 ///
@@ -35,15 +38,15 @@ use std::{io::Write, path::Path};
 ///
 /// Returns
 /// -------
-/// - `Result<()>`:
-///   `Ok(())` after the requested output files have been written
+/// - `Result<Vec<PathBuf>>`:
+///   Paths written by this helper
 pub fn write_end_motif_outputs(
     output_dir: &Path,
     prefix: &str,
     bins: &[FxHashMap<String, f64>],
     motifs: &[String],
     write_dense_output: bool,
-) -> Result<()> {
+) -> Result<Vec<PathBuf>> {
     let motifs_path = output_dir.join(dot_join(&[prefix, "end_motifs.txt"]));
     if write_dense_output {
         let counts_path = output_dir.join(dot_join(&[prefix, "end_motifs.npy"]));
@@ -59,12 +62,12 @@ pub fn write_end_motif_outputs(
         motifs_writer
             .finish()
             .with_context(|| format!("finalize {}", motifs_path.display()))?;
+        Ok(vec![counts_path, motifs_path])
     } else {
         let counts_path = output_dir.join(dot_join(&[prefix, "end_motifs.sparse.npz"]));
         write_category_sparse_with_paths(bins, motifs, &counts_path, &motifs_path)?;
+        Ok(vec![counts_path, motifs_path])
     }
-
-    Ok(())
 }
 
 /// Write the small settings sidecar needed to interpret end-motif outputs.
@@ -84,9 +87,13 @@ pub fn write_end_motif_outputs(
 ///
 /// Returns
 /// -------
-/// - `Result<()>`:
-///   `Ok(())` after the settings sidecar has been written
-pub fn write_end_settings_json(output_dir: &Path, prefix: &str, opt: &EndsConfig) -> Result<()> {
+/// - `Result<PathBuf>`:
+///   Path to the written settings sidecar
+pub fn write_end_settings_json(
+    output_dir: &Path,
+    prefix: &str,
+    opt: &EndsConfig,
+) -> Result<PathBuf> {
     let settings_path = output_dir.join(dot_join(&[prefix, "end_motif_settings.json"]));
     let mut settings_writer = create_text_writer(&settings_path)
         .with_context(|| format!("create {}", settings_path.display()))?;
@@ -135,7 +142,7 @@ pub fn write_end_settings_json(output_dir: &Path, prefix: &str, opt: &EndsConfig
     settings_writer
         .finish()
         .with_context(|| format!("finalize {}", settings_path.display()))?;
-    Ok(())
+    Ok(settings_path)
 }
 
 #[cfg_attr(not(feature = "ends_experimental"), allow(unused_variables))]

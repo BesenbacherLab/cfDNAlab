@@ -8,7 +8,10 @@ use crate::{
         },
         transitions::config::TransitionsConfig,
     },
-    shared::{io::dot_join, tiled_run::TempDirGuard},
+    shared::{
+        io::{FinalOutputFiles, dot_join},
+        tiled_run::TempDirGuard,
+    },
 };
 use anyhow::{Context, Result, ensure};
 use fxhash::FxHashMap;
@@ -143,6 +146,7 @@ pub fn run(opt: &TransitionsConfig) -> Result<()> {
     let mut temp_root_guard = TempDirGuard::new(&opt.shared_args.ioc.output_dir, prefix)
         .context("create per-run temp dir")?;
     let temp_root = temp_root_guard.path().to_path_buf();
+    let mut final_outputs = FinalOutputFiles::new(&temp_root)?;
 
     let mut tmp_ioc = opt.shared_args.ioc.clone();
     tmp_ioc.output_dir = temp_root.join("kmer_counts");
@@ -192,31 +196,22 @@ pub fn run(opt: &TransitionsConfig) -> Result<()> {
             // Normalise counts into conditional frequencies
             let freqs = compute_transition_frequencies(&counts, order, &motifs)?;
 
-            // Persist frequency cube to final output directory
+            // Write final outputs to the temp folder first
+            // They move into output_dir after all requested transition files have been written
             let output_path =
                 final_dir.join(dot_join(&[prefix, &format!("k{k}_{group}_freqs.npy")]));
-            write_npy(&output_path, &freqs)
-                .with_context(|| format!("writing {}", output_path.display()))?;
+            let temp_output_path = final_outputs.temp_path_for(&output_path)?;
+            write_npy(&temp_output_path, &freqs)
+                .with_context(|| format!("writing {}", temp_output_path.display()))?;
+            final_outputs.record(temp_output_path, output_path)?;
 
             // Copy motif metadata so downstream tools share identical ordering
             let motif_dest =
                 final_dir.join(dot_join(&[prefix, &format!("k{k}_{group}_motifs.txt")]));
-            if motif_dest != motifs_path {
-                fs::copy(&motifs_path, &motif_dest)
-                    .with_context(|| format!("copying to {}", motif_dest.display()))?;
-            }
-
-            // Copy positional offsets for this orientation when available
-            let positions_src =
-                counts_dir.join(dot_join(&[prefix, &format!("{group}_positions.txt")]));
-            if positions_src.exists() {
-                let positions_dest =
-                    final_dir.join(dot_join(&[prefix, &format!("{group}_positions.txt")]));
-                if positions_dest != positions_src {
-                    fs::copy(&positions_src, &positions_dest)
-                        .with_context(|| format!("copying to {}", positions_dest.display()))?;
-                }
-            }
+            let temp_motif_dest = final_outputs.temp_path_for(&motif_dest)?;
+            fs::copy(&motifs_path, &temp_motif_dest)
+                .with_context(|| format!("copying to {}", temp_motif_dest.display()))?;
+            final_outputs.record(temp_motif_dest, motif_dest)?;
 
             wrote_group = true;
         }
@@ -227,6 +222,22 @@ pub fn run(opt: &TransitionsConfig) -> Result<()> {
             order
         );
     }
+
+    // Position files describe the left/right/mid coordinate grids and are not order-specific
+    // Copy each existing group file once after all transition arrays have been recorded
+    for group in groups {
+        let positions_file_name = dot_join(&[prefix, &format!("{group}_positions.txt")]);
+        let positions_src = counts_dir.join(&positions_file_name);
+        if positions_src.exists() {
+            let positions_dest = final_dir.join(&positions_file_name);
+            let temp_positions_dest = final_outputs.temp_path_for(&positions_dest)?;
+            fs::copy(&positions_src, &temp_positions_dest)
+                .with_context(|| format!("copying to {}", temp_positions_dest.display()))?;
+            final_outputs.record(temp_positions_dest, positions_dest)?;
+        }
+    }
+
+    final_outputs.move_into_place()?;
 
     // Remove temporary staging directory once final outputs are written
     temp_root_guard

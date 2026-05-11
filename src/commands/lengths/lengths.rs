@@ -30,7 +30,7 @@ use crate::{
         fragment_iterators::fragments_with_indel_counts_from_bam,
         indel_mode::IndelMode,
         interval::{IndexedInterval, Interval},
-        io::dot_join,
+        io::{FinalOutputFiles, dot_join},
         midpoint::midpoint_random_even_for_fragment,
         overlaps::find_overlapping_windows,
         progress::ProgressFactory,
@@ -330,6 +330,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     let temp_dir_guard =
         TempDirGuard::new(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
     let temp_dir = temp_dir_guard.path();
+    let mut final_outputs = FinalOutputFiles::new(temp_dir)?;
     let partials_prefix = &dot_join(&[prefix, "part"]);
     let cross_prefix = &dot_join(&[prefix, "cross"]);
 
@@ -527,16 +528,30 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         reorder_bed_outputs_by_original_index(&mut bin_info, &mut all_bins)?;
     }
 
-    // Write final counts to output_dir
-    write_npy(
-        opt.ioc
-            .output_dir
-            .join(dot_join(&[prefix, "length_counts.npy"])),
-        &stack_length_counts(&all_bins)?,
-    )
-    .context("Write final fail")?;
+    info!(target: COMMAND_TARGET, "Writing final files");
 
-    write_fragment_length_settings_json(opt, &window_opt, &length_axis, prefix)?;
+    // Write every final output to the temp directory before moving any of them into place
+    // This keeps failed writes from leaving a mix of old and new final files
+    let final_counts_path = opt
+        .ioc
+        .output_dir
+        .join(dot_join(&[prefix, "length_counts.npy"]));
+    let temp_counts_path = final_outputs.temp_path_for(&final_counts_path)?;
+    write_npy(&temp_counts_path, &stack_length_counts(&all_bins)?).with_context(|| {
+        format!(
+            "writing final length counts to temp file {}",
+            temp_counts_path.display()
+        )
+    })?;
+    final_outputs.record(temp_counts_path, final_counts_path)?;
+
+    let settings_path = opt
+        .ioc
+        .output_dir
+        .join(dot_join(&[prefix, "fragment_length_settings.json"]));
+    let temp_settings_path = final_outputs.temp_path_for(&settings_path)?;
+    write_fragment_length_settings_json(&temp_settings_path, opt, &window_opt, &length_axis)?;
+    final_outputs.record(temp_settings_path, settings_path)?;
 
     // Write window coordinates plus overlap metadata as TSV to output_dir
     match &window_opt {
@@ -552,22 +567,28 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                 .ioc
                 .output_dir
                 .join(dot_join(&[prefix, "group_index.tsv"]));
+            let temp_group_index_path = final_outputs.temp_path_for(&group_index_path)?;
             write_group_index_with_blacklist_tsv(
-                group_index_path,
+                &temp_group_index_path,
                 group_idx_to_name,
                 &chromosomes,
                 grouped_windows_map,
                 &blacklist_map,
                 opt.blacklist.is_some(),
             )?;
+            final_outputs.record(temp_group_index_path, group_index_path)?;
         }
         DistributionWindowSpec::Global => {}
         _ => {
             info!(target: COMMAND_TARGET, "Writing window coordinates to disk");
             let bins_path = opt.ioc.output_dir.join(dot_join(&[prefix, "bins.tsv"]));
-            write_bin_info_tsv(bins_path, &bin_info)?;
+            let temp_bins_path = final_outputs.temp_path_for(&bins_path)?;
+            write_bin_info_tsv(&temp_bins_path, &bin_info)?;
+            final_outputs.record(temp_bins_path, bins_path)?;
         }
     }
+
+    final_outputs.move_into_place()?;
 
     // Plot the global fragment length distribution after the machine-readable outputs are complete
     #[cfg(feature = "plotters")]

@@ -26,7 +26,6 @@ Post-release performance/scalability:
 
 - G-006: sparse-window GC reference pruning.
 - M-001B: optional sparse final output would help very large group, width, and length-bin shapes.
-- M-D-002: sparse tile accumulation should skip exactly zero weights.
 
 ## Findings
 
@@ -80,14 +79,6 @@ Scope: deep dive into `src/commands/midpoints/{midpoints,counting_by_group,confi
 
 ## Findings
 
-### M-C-003 - Low - `get_overlapping_sites_and_adapt_fetch_to_extremes` walks tile windows twice
-
-The helper calls `overlapping_windows_for_tile` once to materialize `overlapping_sites` and then again, indirectly, inside `window_derived_fetch_extent_for_core_overlap` which itself calls `overlapping_windows_for_tile` to find the min/max window edges ([midpoints.rs:773-789](../../src/commands/midpoints/midpoints.rs#L773-L789), [window_fetch.rs:171-189](../../src/shared/window_fetch.rs#L171-L189)).
-
-Impact: per-tile overhead for re-iterating the candidate window slice. Small per-tile, but multiplied by the tile count it is pure waste because the second pass produces information that the first pass could have computed inline.
-
-Recommended fix: fold the min-start / max-end accumulation into the single pass that builds `overlapping_sites`, and drop the second `window_derived_fetch_extent_for_core_overlap` call (or specialize a variant that accepts a pre-collected slice).
-
 
 ## Items I checked and ruled out
 
@@ -96,23 +87,16 @@ These were investigated but I did not find evidence of an actual problem:
 - **`scaling_with_bin_idx` placeholder index of 0 plus `OverlappingWindow.idx` reuse**: works correctly because `find_overlapping_windows` returns the scan position (not the carried `idx`) in BED mode ([overlaps.rs:269-300](../../src/shared/overlaps.rs#L269-L300)), and the scaling vector is built in the same order as `scaling_chr`. The contract is documented in the inline comment at [midpoints.rs:438-444](../../src/commands/midpoints/midpoints.rs#L438-L444) and matches the same pattern used in `ends.rs` and `lengths.rs`.
 - **`wd_ptr` and midpoints going backward across consecutive fragments**: `find_overlapping_windows` uses `query.start.saturating_sub(look_back)` with `look_back = max_fragment_length`, which strictly upper-bounds the maximum decrease in midpoint between two start-sorted fragments (`(max_len - min_len)/2 ≤ max_len`). No off-by-one in the streaming pointer.
 - **`compute_per_window_scaling_over_fragment` filter pruning midpoint-overlap windows**: cannot occur. Any window returned by the midpoint query satisfies `window.end > fragment_start` and `window.start < fragment_end` because the midpoint lies inside both intervals.
-- **Sparse merge correctness**: `read_sparse_profile_partial_file` validates length agreement, ascending sort, `usize` fit, in-bounds indices, and shape match before any merge work begins ([counting_by_group.rs:553-620](../../src/commands/midpoints/counting_by_group.rs#L553-L620)). The chunked-Mutex merge in `merge_sparse_profile_partial_file` correctly partitions by `flat_idx / chunk_size` and only holds one chunk lock at a time, with the wrap-around split via `partition_point` preserving full coverage of every entry.
+- **Sparse merge correctness**: `read_sparse_profile_partial_file` validates length agreement, strictly ascending unique indices, `usize` fit, in-bounds indices, and shape match before any merge work begins ([counting_by_group.rs:554-632](../../src/commands/midpoints/counting_by_group.rs#L554-L632)). The chunked-Mutex merge in `merge_sparse_profile_partial_file` correctly partitions by `flat_idx / chunk_size` and only holds one chunk lock at a time, with the wrap-around split via `partition_point` preserving full coverage of every entry.
 - **`gc_corrector.clone()` per tile**: clones an `Array2<f64>`, which is non-trivial, but the same pattern is used in `ends`, `lengths`, and `fcoverage` (see explicit comment "Quite small memory footprint" at [fcoverage.rs:562](../../src/commands/fcoverage/fcoverage.rs#L562)). Not a midpoints-specific concern.
 - **`incr_weighted` casting `f64 -> f32`**: realistic GC × scaling products stay far below `f32::MAX`; no overflow in practice and consistent with the dense `.npy` output type.
 - **Even-fragment blacklist midpoint vs counted midpoint divergence**: tracked as M-005 above and now resolved with central-base support semantics.
 
 ## Codex comments on Claude findings
 
-Overall: the Claude findings are mostly low-severity cleanup and statistics-consistency issues rather than output-count correctness issues. The most useful near-term items are M-C-001, M-C-002, M-C-004, and M-C-006 because they make stats and failure behavior easier to reason about.
+Overall: the retained Claude finding is a low-severity performance cleanup rather than an output-count correctness issue.
 
-- **M-C-001**: Agree. Moving midpoint-core ownership before blacklist would make `blacklisted_fragments` less tile-size-sensitive and more consistent with `lengths` and `ends`. This should not change final midpoint counts, only reported statistics and possibly a little wasted blacklist work. It needs a focused stats test near a tile boundary.
-- **M-C-002**: Agree in principle. GC failure counters should probably reflect fragments that could have contributed to a count. Moving midpoint-window overlap before GC also avoids unnecessary GC work for sparse BED inputs. The main implementation detail is to keep the existing ordering invariant that file-based GC correction only happens after tile-core ownership is known.
 - **M-C-003**: Agree, but this is a small optimization. If changed, keep the helper readable because the fetch-narrowing semantics are more important than saving one short per-tile pass.
-- **M-C-004**: Agree. This is a straightforward fail-fast improvement. Plot group validation should happen immediately after grouped BED loading, while `num_groups` and `group_idx_to_name` are already available.
-- **M-C-005**: Mostly agree. For a 1 bp midpoint query, `1.0` is clearer than `0.99`, but this should not be framed as a general "no roundoff" argument. Float-heavy counting code always has numerical noise. The practical point is narrower: a 1 bp query produces only complete-overlap or no-overlap cases, so `1.0` expresses the intended predicate better than `0.99`. If we keep a non-1.0 threshold for consistency with other commands, the comment should describe command consistency rather than floating-point safety.
-- **M-C-006**: Agree. This is just stale wording and should be fixed when touching `midpoints.rs`.
-- **M-C-007**: Agree that the comment is too vague. If deletion/CIGAR semantics matter, they need a real review item. Otherwise the comment should go away in a cleanup pass.
-- **M-C-008**: Agree as defensive cleanup, but it is not operationally important if all real `Tile` values come from contig tids. A `try_from` assert would make the invariant explicit.
 - **Items ruled out**: Mostly agree. The note about `wd_ptr` only rules out backward movement across fragment order inside one window slice. It does not cover the separate tile-local versus chromosome-wide pointer bug found during the tile-size comparison, where `core_overlapping_windows` is a compact vector and must use a tile-local pointer starting at zero.
 
 ## Existing coverage notes
@@ -143,7 +127,7 @@ No new midpoints-only counting correctness finding was added in this pass. The s
 
 Scope: re-read `src/commands/midpoints/{midpoints,counting_by_group,config,windows,plotting}.rs`, the directly used interval, tiling, BED, blacklist, GC, scaling, fragment, BAM, and artifact helpers, the midpoint spec, and the existing midpoint integration/unit tests. I did not run tests.
 
-Result: I did not find a new midpoint-local fundamental count-correctness bug in this pass. The earlier ten-item addition was too broad for this review target: G-025 was retired after `MAX_SUPPORTED_FRAGMENT_LENGTH` was lowered to 50,000 bp, and M-D-002 through M-D-009 are hardening, performance, diagnostics, or documentation notes rather than release-blocking midpoint-count defects.
+Result: I did not find a new midpoint-local fundamental count-correctness bug in this pass. The earlier M-D backlog was too broad for this review target: G-025 was retired after `MAX_SUPPORTED_FRAGMENT_LENGTH` was lowered to 50,000 bp, and the retained M-D entries are hardening, performance, or artifact-consistency notes rather than release-blocking midpoint-count defects.
 
 Core invariants rechecked:
 

@@ -1,4 +1,5 @@
 use crate::shared::gc_tag::ClassifiedGCTagWeight;
+use crate::shared::io::FinalOutputFiles;
 use crate::{
     commands::{
         cli_common::{
@@ -316,20 +317,30 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     all_counts.add_from_sparse_npz_files_parallel(all_tmp_count_paths)?;
     let all_counts_3d_arr = all_counts.view_ndarray3_group_len_pos();
 
-    info!(
-        target: COMMAND_TARGET,
-        "Writing final counts to {}",
-        final_counts_path.display()
-    );
-    // Write final counts to output_dir
-    write_npy(&final_counts_path, &all_counts_3d_arr).context("Write final fail")?;
+    // Write every final output to the temp directory before moving any of them into place
+    // This keeps failed writes from leaving a mix of old and new final files
+    let mut final_outputs = FinalOutputFiles::new(temp_dir)?;
 
+    let temp_counts_path = final_outputs.temp_path_for(&final_counts_path)?;
     info!(
         target: COMMAND_TARGET,
-        "Writing group index to {}",
-        map_path.display()
+        "Writing final counts to temp file {}",
+        temp_counts_path.display()
     );
-    write_group_idx_to_name_tsv(map_path, &group_idx_to_name)?;
+    write_npy(&temp_counts_path, &all_counts_3d_arr)
+        .with_context(|| format!("writing final counts to {}", temp_counts_path.display()))?;
+    final_outputs.record(temp_counts_path, final_counts_path)?;
+
+    let temp_map_path = final_outputs.temp_path_for(&map_path)?;
+    info!(
+        target: COMMAND_TARGET,
+        "Writing group index to temp file {}",
+        temp_map_path.display()
+    );
+    write_group_idx_to_name_tsv(&temp_map_path, &group_idx_to_name)?;
+    final_outputs.record(temp_map_path, map_path)?;
+
+    final_outputs.move_into_place()?;
 
     #[cfg(feature = "plotters")]
     {

@@ -26,7 +26,7 @@ use crate::{
         fragment::frag_file_fragment::FragFileFragment,
         fragment_iterators::fragments_with_frag_file_info_from_bam,
         interval::{IndexedInterval, Interval},
-        io::dot_join,
+        io::{FinalOutputFiles, dot_join},
         overlaps::find_overlapping_windows,
         progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
@@ -159,9 +159,10 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
     )?;
 
     // Build temporary directory
-    let mut temp_dir_guard =
+    let temp_dir_guard =
         TempDirGuard::new(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
     let temp_dir = temp_dir_guard.path().to_path_buf();
+    let mut final_outputs = FinalOutputFiles::new(temp_dir_guard.path())?;
     let output_file: PathBuf = opt.ioc.output_dir.join(dot_join(&[prefix, "frag.tsv.gz"]));
     let output_header_file: PathBuf = opt
         .ioc
@@ -222,10 +223,9 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
         target: COMMAND_TARGET,
         "Concatenating chromosome-wise frag files"
     );
-    concat_frag_zst_to_gzip(&chromosome_paths, &output_file, false)?;
-
-    // Remove temporary directory once final outputs are written
-    temp_dir_guard.remove().context("remove temp directory")?;
+    let temp_output_file = final_outputs.temp_path_for(&output_file)?;
+    concat_frag_zst_to_gzip(&chromosome_paths, &temp_output_file, false)?;
+    final_outputs.record(temp_output_file, output_file)?;
 
     // Create text line
     info!(target: COMMAND_TARGET, "Writing a header file");
@@ -247,12 +247,19 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
     }
     header.push('\n');
 
-    fs::write(&output_header_file, header).with_context(|| {
+    let temp_output_header_file = final_outputs.temp_path_for(&output_header_file)?;
+    fs::write(&temp_output_header_file, header).with_context(|| {
         format!(
             "Failed writing fragment header to {}",
-            output_header_file.display()
+            temp_output_header_file.display()
         )
     })?;
+
+    final_outputs.record(temp_output_header_file, output_header_file)?;
+
+    // Keep the final fragment file and header hidden while either write can still fail
+    // Move both completed files into output_dir together after the data and header are ready
+    final_outputs.move_into_place()?;
 
     Ok(global_counter)
 }
