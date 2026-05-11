@@ -1,8 +1,14 @@
-use super::{configured_max_fragment_reach_bp, reorder_bed_outputs_by_original_index};
+use super::{
+    configured_max_fragment_reach_bp, reorder_bed_outputs_by_original_index,
+    should_store_length_weight,
+};
 use crate::commands::cli_common::{ChromosomeArgs, IOCArgs};
-use crate::commands::lengths::counting::{LengthAxis, LengthCounts};
 use crate::commands::lengths::config::LengthsConfig;
-use crate::shared::{clip_mode::ClipMode, indel_mode::IndelMode, windowing::WindowBinInfo};
+use crate::commands::lengths::counting::{LengthAxis, LengthCounts};
+use crate::shared::{
+    base::ZEROISH_F64_TOLERANCE, clip_mode::ClipMode, indel_mode::IndelMode,
+    windowing::WindowBinInfo,
+};
 use std::sync::Arc;
 
 fn counts_with_value(value: f64) -> LengthCounts {
@@ -34,6 +40,27 @@ fn test_config() -> LengthsConfig {
             chromosomes_file: None,
         },
     )
+}
+
+#[test]
+fn length_weight_storage_predicate_skips_zeroish_weights() -> anyhow::Result<()> {
+    // Act and assert: exact zero and tiny negative roundoff should be skipped before sparse
+    // grouped length entries are created.
+    assert!(!should_store_length_weight(0.0)?);
+    assert!(!should_store_length_weight(-ZEROISH_F64_TOLERANCE / 2.0)?);
+
+    // Act and assert: a material negative weight is an upstream weighting error.
+    let error = should_store_length_weight(-10.0 * ZEROISH_F64_TOLERANCE)
+        .expect_err("material negative weights should fail");
+    assert!(
+        error.to_string().contains("is negative"),
+        "unexpected error: {error}"
+    );
+
+    // Act and assert: positive weights should pass through to existing count logic.
+    assert!(should_store_length_weight(1.25)?);
+
+    Ok(())
 }
 
 #[test]

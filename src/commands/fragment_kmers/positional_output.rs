@@ -10,7 +10,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs::File,
     io::{Cursor, Write},
-    path::Path,
+    path::{Path, PathBuf},
 };
 use zip::{ZipWriter, write::SimpleFileOptions};
 
@@ -40,11 +40,13 @@ pub fn write_positional_output(
     output_dir: &Path,
     prefix: &str,
     save_sparse: bool,
-) -> Result<()> {
+) -> Result<Vec<PathBuf>> {
+    let mut written_paths = Vec::new();
     let n_windows = positional_counts.len();
 
     let positions_by_group = collect_positions_by_group(positional_counts);
-    write_positions_metadata(prefix, output_dir, &positions_by_group)?;
+    let position_paths = write_positions_metadata(prefix, output_dir, &positions_by_group)?;
+    written_paths.extend(position_paths);
 
     // Iterate k's in a deterministic order
     let mut ks: Vec<u8> = kmer_specs.keys().copied().collect();
@@ -67,7 +69,7 @@ pub fn write_positional_output(
             }
 
             if save_sparse {
-                write_positional_sparse_matrix(
+                let paths = write_positional_sparse_matrix(
                     k,
                     label,
                     offsets,
@@ -78,8 +80,9 @@ pub fn write_positional_output(
                     output_dir,
                     prefix,
                 )?;
+                written_paths.extend(paths);
             } else {
-                write_positional_dense_matrix(
+                let paths = write_positional_dense_matrix(
                     k,
                     label,
                     offsets,
@@ -91,11 +94,12 @@ pub fn write_positional_output(
                     prefix,
                     n_windows,
                 )?;
+                written_paths.extend(paths);
             }
         }
     }
 
-    Ok(())
+    Ok(written_paths)
 }
 
 fn collect_positions_by_group(
@@ -122,7 +126,8 @@ fn write_positions_metadata(
     prefix: &str,
     output_dir: &Path,
     positions_by_group: &BTreeMap<PositionGroup, Vec<i32>>,
-) -> Result<()> {
+) -> Result<Vec<PathBuf>> {
+    let mut written_paths = Vec::new();
     for (group, offsets) in positions_by_group {
         if offsets.is_empty() {
             continue;
@@ -133,8 +138,9 @@ fn write_positions_metadata(
         for offset in offsets {
             writeln!(file, "{offset}")?;
         }
+        written_paths.push(path);
     }
-    Ok(())
+    Ok(written_paths)
 }
 
 fn write_positional_dense_matrix(
@@ -148,7 +154,7 @@ fn write_positional_dense_matrix(
     output_dir: &Path,
     prefix: &str,
     n_windows: usize,
-) -> Result<()> {
+) -> Result<Vec<PathBuf>> {
     let n_positions = offsets.len();
     let n_motifs = motifs.len();
     let mut array = Array3::<f64>::zeros((n_windows, n_positions, n_motifs));
@@ -174,9 +180,9 @@ fn write_positional_dense_matrix(
     let counts_path = output_dir.join(dot_join(&[prefix, &format!("k{k}_{label}_counts.npy")]));
     write_npy(&counts_path, &array)?;
 
-    write_motif_list(prefix, k, label, motifs, output_dir)?;
+    let motifs_path = write_motif_list(prefix, k, label, motifs, output_dir)?;
 
-    Ok(())
+    Ok(vec![counts_path, motifs_path])
 }
 
 fn write_positional_sparse_matrix(
@@ -189,7 +195,7 @@ fn write_positional_sparse_matrix(
     motifs: &[String],
     output_dir: &Path,
     prefix: &str,
-) -> Result<()> {
+) -> Result<Vec<PathBuf>> {
     let n_windows = positional_counts.len();
     let n_positions = offsets.len();
     let n_motifs = motifs.len();
@@ -250,10 +256,10 @@ fn write_positional_sparse_matrix(
     npz.write_all(&format_buf)?;
     npz.finish()?;
 
-    write_motif_list(prefix, k, label, motifs, output_dir)?;
-    write_grid_metadata(prefix, k, label, n_windows, n_positions, output_dir)?;
+    let motifs_path = write_motif_list(prefix, k, label, motifs, output_dir)?;
+    let grid_path = write_grid_metadata(prefix, k, label, n_windows, n_positions, output_dir)?;
 
-    Ok(())
+    Ok(vec![npz_path, motifs_path, grid_path])
 }
 
 fn write_motif_list(
@@ -262,13 +268,13 @@ fn write_motif_list(
     label: &str,
     motifs: &[String],
     output_dir: &Path,
-) -> Result<()> {
+) -> Result<PathBuf> {
     let path = output_dir.join(dot_join(&[prefix, &format!("k{k}_{label}_motifs.txt")]));
     let mut file = File::create(&path).with_context(|| format!("creating {}", path.display()))?;
     for motif in motifs {
         writeln!(file, "{motif}")?;
     }
-    Ok(())
+    Ok(path)
 }
 
 fn write_grid_metadata(
@@ -278,12 +284,12 @@ fn write_grid_metadata(
     windows: usize,
     positions: usize,
     output_dir: &Path,
-) -> Result<()> {
+) -> Result<PathBuf> {
     let path = output_dir.join(dot_join(&[prefix, &format!("k{k}_{label}_grid.txt")]));
     let mut file = File::create(&path).with_context(|| format!("creating {}", path.display()))?;
     writeln!(file, "windows\t{}", windows)?;
     writeln!(file, "positions\t{}", positions)?;
-    Ok(())
+    Ok(path)
 }
 
 fn group_label(group: PositionGroup) -> &'static str {

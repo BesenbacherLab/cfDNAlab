@@ -9,7 +9,7 @@
 ## Non-goals and relationship to existing commands
 
 - Do not recreate outputs from `cfdna lengths`, `cfdna fcoverage`, `cfdna fragment-kmers`,
-  `cfdna transitions`, `cfdna wps`, `cfdna wps-peaks`, or `cfdna profile-groups`
+  `cfdna transitions`, `cfdna wps`, `cfdna wps-peaks`, or `cfdna midpoints`
 - Avoid windowed or per-base outputs by default
 - Avoid reference or annotation requirements unless explicitly enabled
 - Keep metrics small, interpretable, and easy to validate

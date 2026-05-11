@@ -232,8 +232,8 @@ are added together with the API they exercise.
 Per repo rules, implementation should run:
 
 ```bash
-cargo check --features cli,plotters
-cargo check --tests --features cli,plotters
+cargo check
+cargo check --tests
 ```
 
 Do not run tests unless explicitly requested.

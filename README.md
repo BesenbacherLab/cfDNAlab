@@ -23,6 +23,8 @@ Works on cfDNA **fragments** from either *paired-end* sequencing data or unpaire
 
 The commands are **highly flexible** with many options and good default settings. Start with the simple [examples](#examples) in this README and then check the full guides in the [docs](https://cfdnalab.tools/).
 
+**Workflow-safe outputs**: The output files are only moved to their final location once all files have been fully written, so workflow managers don't see partially written files as complete.
+
 The package is under active development and may [change](https://github.com/BesenbacherLab/cfDNAlab/blob/main/CHANGELOG). Multiple additional commands are currently being built.
 Suggest a tool or feature [here](https://github.com/BesenbacherLab/cfDNAlab/issues/new/choose)!
 
@@ -42,11 +44,11 @@ conda activate cfdnalab
 Compile and install:
 
 ```bash
-cargo install --git https://github.com/BesenbacherLab/cfDNAlab --features cli,plotters
+cargo install --git https://github.com/BesenbacherLab/cfDNAlab
 cfdna --help
 # or clone + build
 git clone https://github.com/BesenbacherLab/cfDNAlab
-cd cfdnalab && cargo build --release --features cli,plotters
+cd cfdnalab && cargo build --release
 target/release/cfdna --help
 ```
 

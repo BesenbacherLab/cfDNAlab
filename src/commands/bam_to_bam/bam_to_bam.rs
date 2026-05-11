@@ -31,11 +31,13 @@ use crate::{
         fragment::with_records_fragment::WithRecordsFragment,
         fragment_iterators::fragments_with_records_from_bam,
         interval::{IndexedInterval, Interval},
+        io::FinalOutputFiles,
         overlaps::find_overlapping_windows,
         progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq,
         scale_genome::{ScalingBin, compute_per_window_scaling_over_fragment},
+        tiled_run::TempDirGuard,
         windowing::ensure_plain_bed_windows_not_empty,
     },
 };
@@ -99,6 +101,9 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToBamCounters> {
         .parent()
         .expect("`--out-bam` did not contain a parent directory.");
     ensure_output_dir(output_dir)?;
+    let temp_dir_guard =
+        TempDirGuard::new(output_dir, COMMAND_TARGET).context("create per-run temp dir")?;
+    let mut final_outputs = FinalOutputFiles::new(temp_dir_guard.path())?;
 
     // Load blacklist intervals if provided
     if opt.blacklist.is_some() {
@@ -169,7 +174,11 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToBamCounters> {
         let reader = bam::Reader::from_path(&opt.in_bam).context("opening BAM to read header")?;
         Header::from_template(reader.header())
     };
-    let mut writer = bam::Writer::from_path(&opt.out_bam, &header, Format::Bam)
+    let temp_out_bam = final_outputs.temp_path_for(&opt.out_bam)?;
+
+    // Write the output BAM under the run temp directory while chromosome writes are ongoing
+    // Move it to the requested BAM path only after the writer has closed successfully
+    let mut writer = bam::Writer::from_path(&temp_out_bam, &header, Format::Bam)
         .context("creating BAM writer")?;
 
     let results: Vec<BamToBamCounters> = chromosomes
@@ -206,6 +215,10 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToBamCounters> {
     for counter in results {
         global_counter += counter;
     }
+    drop(writer);
+
+    final_outputs.record(temp_out_bam, opt.out_bam.clone())?;
+    final_outputs.move_into_place()?;
 
     Ok(global_counter)
 }

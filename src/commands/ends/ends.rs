@@ -42,7 +42,7 @@ use crate::{
         fragment::ends_fragment::FragmentWithEnds,
         fragment_iterators::fragments_with_ends_from_bam,
         interval::{IndexedInterval, Interval},
-        io::dot_join,
+        io::{FinalOutputFiles, dot_join},
         midpoint::midpoint_random_even_for_fragment,
         overlaps::find_overlapping_windows,
         progress::ProgressFactory,
@@ -296,6 +296,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     let temp_dir_guard =
         TempDirGuard::new(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
     let temp_dir = temp_dir_guard.path();
+    let mut final_outputs = FinalOutputFiles::new(temp_dir)?;
 
     let counts_prefix = &dot_join(&[prefix, "counts"]);
     let inside_spec = build_optional_kmer_spec(opt.k_inside, "inside")?;
@@ -444,15 +445,30 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     if write_dense_output {
         ensure_dense_end_motif_output_size(all_bins.len(), motif_order.len())?;
     }
-    write_end_motif_outputs(
-        &opt.ioc.output_dir,
+
+    // Write every final output to the temp directory before moving any of them into place
+    // This keeps failed writes from leaving a mix of old and new final files
+    let temp_motif_output_paths = write_end_motif_outputs(
+        final_outputs.temp_dir(),
         prefix,
         &all_bins,
         &motif_order,
         write_dense_output,
     )?;
+    // These files were written to final_outputs.temp_dir() with their final filenames
+    // Record each one as output_dir/<file name>, then move all outputs at the end
+    final_outputs
+        .record_temp_files_with_same_names_in(temp_motif_output_paths, &opt.ioc.output_dir)?;
 
-    write_end_settings_json(&opt.ioc.output_dir, prefix, opt)?;
+    let temp_settings_path = write_end_settings_json(final_outputs.temp_dir(), prefix, opt)?;
+    let settings_file_name = temp_settings_path.file_name().with_context(|| {
+        format!(
+            "temporary output path has no filename: {}",
+            temp_settings_path.display()
+        )
+    })?;
+    let settings_path = opt.ioc.output_dir.join(settings_file_name);
+    final_outputs.record(temp_settings_path, settings_path)?;
 
     // Write window coordinates plus overlap metadata as TSV to output_dir
     match &window_opt {
@@ -468,22 +484,28 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
                 .ioc
                 .output_dir
                 .join(dot_join(&[prefix, "group_index.tsv"]));
+            let temp_group_index_path = final_outputs.temp_path_for(&group_index_path)?;
             write_group_index_with_blacklist_tsv(
-                group_index_path,
+                &temp_group_index_path,
                 group_idx_to_name,
                 &chromosomes,
                 grouped_windows_map,
                 &blacklist_map,
                 opt.blacklist.is_some(),
             )?;
+            final_outputs.record(temp_group_index_path, group_index_path)?;
         }
         DistributionWindowSpec::Global => {}
         _ => {
             info!(target: COMMAND_TARGET, "Writing window coordinates to disk");
             let bins_path = opt.ioc.output_dir.join(dot_join(&[prefix, "bins.tsv"]));
-            write_bin_info_tsv(bins_path, &bin_info)?;
+            let temp_bins_path = final_outputs.temp_path_for(&bins_path)?;
+            write_bin_info_tsv(&temp_bins_path, &bin_info)?;
+            final_outputs.record(temp_bins_path, bins_path)?;
         }
     }
+
+    final_outputs.move_into_place()?;
 
     drop(blacklist_map);
 

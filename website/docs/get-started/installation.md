@@ -12,7 +12,7 @@ conda activate cfdnalab
 ## Build from GitHub
 
 ```bash
-cargo install --git https://github.com/BesenbacherLab/cfDNAlab --features cli,plotters
+cargo install --git https://github.com/BesenbacherLab/cfDNAlab
 ```
 
 Verify installation:
@@ -27,7 +27,7 @@ cfdna --help
 # Once downloaded, enter the directory
 cd cfDNAlab
 # Then build it as so:
-cargo build --release --features cli,plotters
+cargo build --release
 ```
 
 The binary is available at `target/release/cfdna`.

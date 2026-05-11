@@ -17,7 +17,7 @@ use crate::{
     },
     shared::{
         interval::Interval,
-        io::{dot_join, open_text_reader},
+        io::{FinalOutputFiles, dot_join, open_text_reader},
         tiled_run::TempDirGuard,
     },
 };
@@ -133,6 +133,13 @@ pub(crate) fn run_with_fcoverage(
     // Keep all intermediate files under the user-chosen output directory so disk usage stays
     // within the filesystem location the user already selected for results.
     ensure_output_dir(&opt.ioc.output_dir)?;
+    let final_temp_dir_guard = TempDirGuard::new(
+        &opt.ioc.output_dir,
+        &dot_join(&[opt.output_prefix.as_str(), "scaling_weights_final"]),
+    )
+    .context("creating final output temp directory")?;
+    let mut final_outputs = FinalOutputFiles::new(final_temp_dir_guard.path())?;
+
     let fcoverage_output_dir_guard = TempDirGuard::new(
         &opt.ioc.output_dir,
         &dot_join(&[opt.output_prefix.as_str(), "coverage_weights_source"]),
@@ -178,8 +185,9 @@ pub(crate) fn run_with_fcoverage(
     command.info("Writing stride-bin coordinates and scaling factors to disk");
     let file_name = dot_join(&[opt.output_prefix.as_str(), command.output_file_name()]);
     let final_output_path = opt.ioc.output_dir.join(&file_name);
+    let temp_output_path = final_outputs.temp_path_for(&final_output_path)?;
     let mut tsv_writer =
-        BufWriter::new(File::create(&final_output_path).context("creating scaling-factors TSV")?);
+        BufWriter::new(File::create(&temp_output_path).context("creating scaling-factors TSV")?);
     writeln!(
         tsv_writer,
         "# gc_mode={}",
@@ -221,6 +229,9 @@ pub(crate) fn run_with_fcoverage(
     }
 
     tsv_writer.flush().context("flushing scaling-factors TSV")?;
+    drop(tsv_writer);
+    final_outputs.record(temp_output_path, final_output_path.clone())?;
+    final_outputs.move_into_place()?;
     command.info(&format!("Saved output to: {}", final_output_path.display()));
 
     let global_counter = fcoverage_result.counters;

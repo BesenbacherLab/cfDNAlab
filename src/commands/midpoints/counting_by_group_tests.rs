@@ -139,6 +139,16 @@ fn sparse_partial_file_reader_rejects_malformed_partial_files() -> Result<()> {
         read_sparse_profile_partial_file(&descending, expected_shape, destination_len).is_err()
     );
 
+    let duplicate = temp_dir.path().join("duplicate.npz");
+    write_sparse_partial_file(&duplicate, &[1, 1], &[1.0, 1.0], &expected_shape)?;
+    let duplicate_error =
+        read_sparse_profile_partial_file(&duplicate, expected_shape, destination_len)
+            .expect_err("duplicate sparse indices should fail validation");
+    assert!(
+        duplicate_error.to_string().contains("without duplicates"),
+        "unexpected duplicate-index error: {duplicate_error}"
+    );
+
     let out_of_bounds = temp_dir.path().join("out_of_bounds.npz");
     write_sparse_partial_file(
         &out_of_bounds,

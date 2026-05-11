@@ -18,7 +18,7 @@
 - Length bins are half-open and also define the accepted fragment length range.
 - Even-length fragment midpoints use deterministic coordinate-derived random rounding. Duplicate fragments with the same coordinates choose the same midpoint base.
 - Tile ownership is by midpoint position in the tile core, not by fragment start.
-- Blacklist filtering is fragment-level and happens before midpoint ownership is checked in the current implementation.
+- Blacklist filtering is fragment-level and happens after midpoint tile ownership is checked so boundary fragments do not inflate blacklist statistics in neighboring tiles.
 
 ## Counting
 
@@ -37,6 +37,7 @@
 - File-based GC correction reads reference sequence for the full tile fetch span.
 - Scaling TSVs must fully cover every selected chromosome and pass GC-mode compatibility checks.
 - Blacklist strategy uses the aligned fragment span and the shared blacklist strategies: `any`, `all`, `midpoint`, or `proportion=<threshold>`.
+- `midpoint` blacklist strategy checks the single central base for odd fragments and either central base for even fragments. It does not use the randomized counted-midpoint tie break.
 
 ## Tiling And Merge
 

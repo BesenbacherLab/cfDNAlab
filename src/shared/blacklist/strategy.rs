@@ -13,7 +13,10 @@ pub enum BlacklistStrategy {
     Any,
     /// All positions overlap with blacklisted regions.
     All,
-    /// Midpoint position overlaps with blacklisted regions.
+    /// The central base overlaps with blacklisted regions.
+    ///
+    /// Even-length fragments have two central bases in discrete base coordinates.
+    /// The fragment is blacklisted if either central base overlaps a blacklist interval.
     Midpoint,
     /// A given proportion of positions overlap with blacklisted regions (e.g. `proportion=0.2`).
     Proportion(f64),

@@ -10,7 +10,7 @@ use num_traits::NumCast;
 use std::fs::File;
 use std::io::Cursor;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use zip::{ZipWriter, write::SimpleFileOptions};
 
 /// Write one `.npy` matrix and a companion `*_motifs.txt` file for every
@@ -33,8 +33,9 @@ pub fn write_decoded_counts_matrix(
     output_dir: &Path,
     prefix: &str,
     save_sparse: bool,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<PathBuf>> {
     let n_win = prepared_windows.len();
+    let mut written_paths = Vec::new();
 
     for &k in kmer_specs.keys() {
         // Collect reference bins for this k
@@ -45,14 +46,15 @@ pub fn write_decoded_counts_matrix(
             }
         }
         let tag = dot_join(&[prefix, &format!("k{k}")]);
-        if save_sparse {
-            write_category_sparse(&ref_bins, &motifs_by_k[&k], &tag, output_dir)?;
+        let mut paths = if save_sparse {
+            write_category_sparse(&ref_bins, &motifs_by_k[&k], &tag, output_dir)?
         } else {
-            write_category(&ref_bins, &motifs_by_k[&k], &tag, output_dir)?;
-        }
+            write_category(&ref_bins, &motifs_by_k[&k], &tag, output_dir)?
+        };
+        written_paths.append(&mut paths);
     }
 
-    Ok(())
+    Ok(written_paths)
 }
 
 /// Write <prefix>_counts.npy and <prefix>_motifs.txt
@@ -63,9 +65,9 @@ fn write_category(
     motifs: &[String],
     prefix: &str,
     out_dir: &Path,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<PathBuf>> {
     if bins.is_empty() {
-        return Ok(()); // nothing to write
+        return Ok(Vec::new()); // nothing to write
     }
 
     // Output matrix
@@ -85,14 +87,16 @@ fn write_category(
     }
 
     // Persist outputs
-    write_npy(out_dir.join(format!("{prefix}_counts.npy")), &mat)?;
+    let counts_path = out_dir.join(format!("{prefix}_counts.npy"));
+    write_npy(&counts_path, &mat)?;
 
-    let mut txt = File::create(out_dir.join(format!("{prefix}_motifs.txt")))?;
+    let motifs_path = out_dir.join(format!("{prefix}_motifs.txt"));
+    let mut txt = File::create(&motifs_path)?;
     for m in motifs {
         writeln!(txt, "{m}")?;
     }
 
-    Ok(())
+    Ok(vec![counts_path, motifs_path])
 }
 
 // Sparse version
@@ -125,10 +129,15 @@ pub fn write_category_sparse(
     motifs: &[String],
     prefix: &str,
     out_dir: &Path,
-) -> Result<()> {
+) -> Result<Vec<PathBuf>> {
+    if bins.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let counts_path = out_dir.join(format!("{prefix}_counts_sparse.npz"));
     let motifs_path = out_dir.join(format!("{prefix}_motifs.txt"));
-    write_category_sparse_with_paths(bins, motifs, &counts_path, &motifs_path)
+    write_category_sparse_with_paths(bins, motifs, &counts_path, &motifs_path)?;
+    Ok(vec![counts_path, motifs_path])
 }
 
 /// Write SciPy-compatible COO matrix to explicit output paths.

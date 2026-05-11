@@ -23,9 +23,12 @@ use std::path::PathBuf;
 ///
 /// ## Fragment span definition
 ///
-/// **Paired-end**: `[forward.pos, reverse.end)`.
+/// **Paired-end**: `[forward.pos, reverse.reference_end)`, the reference span
+/// from the first aligned position on the forward read to the last aligned
+/// position on the reverse read.
 ///
-/// **Unpaired** where each read is a fragment: `[read.pos, read.end)`.
+/// **Unpaired** where each read is a fragment: `[read.pos, read.reference_end)`,
+/// the reference span from the first to the last aligned position on the read.
 ///
 /// The utilized fragment length range is specified via `--length-bins`.
 ///
@@ -165,6 +168,9 @@ pub struct MidpointsConfig {
     /// Possible values:
     ///     `"any"`, `"all"`, `"midpoint"`, or `"proportion=<threshold>"`
     ///
+    /// `midpoint` checks the single central base for odd fragments and either
+    /// central base for even fragments.
+    ///
     /// Example of proportion: `--blacklist-strategy proportion=0.2` (no space around `=`)
     #[cfg_attr(
         feature = "cli",
@@ -229,7 +235,7 @@ impl MidpointsConfig {
             output_prefix: String::new(),
             intervals,
             length_bins: vec!["30".to_string(), "1001".to_string()],
-            tile_size: 63_000_000,
+            tile_size: 20000000,
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),
             min_mapq: 30,

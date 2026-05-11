@@ -95,6 +95,29 @@ fn stack_end_motif_counts_errors_when_a_bin_contains_an_unknown_motif() {
 }
 
 #[test]
+fn write_end_motif_outputs_returns_the_paths_it_writes() {
+    // Arrange: dense output writes the matrix path and the motif-label path.
+    let out_dir = TempDir::new().expect("tempdir");
+    let bins = vec![FxHashMap::from_iter([("_A".to_string(), 1.0)])];
+    let motifs = vec!["_A".to_string()];
+
+    // Act
+    let written_paths =
+        write_end_motif_outputs(out_dir.path(), "ends", &bins, &motifs, true)
+            .expect("dense end motif outputs should write");
+
+    // Assert
+    let counts_path = out_dir.path().join("ends.end_motifs.npy");
+    let motifs_path = out_dir.path().join("ends.end_motifs.txt");
+    assert_eq!(written_paths, vec![counts_path.clone(), motifs_path.clone()]);
+    assert!(counts_path.exists());
+    assert_eq!(
+        std::fs::read_to_string(motifs_path).expect("motif labels should be readable"),
+        "_A\n"
+    );
+}
+
+#[test]
 fn write_end_settings_json_writes_the_minimal_interpretation_sidecar() {
     // Arrange: the minimal default config has
     // - k_inside: 1
@@ -110,9 +133,11 @@ fn write_end_settings_json_writes_the_minimal_interpretation_sidecar() {
     let cfg = minimal_config(out_dir.path());
 
     // Act
-    write_end_settings_json(out_dir.path(), "ends", &cfg).expect("settings json should write");
-    let settings = std::fs::read_to_string(out_dir.path().join("ends.end_motif_settings.json"))
-        .expect("settings json should be readable");
+    let settings_path =
+        write_end_settings_json(out_dir.path(), "ends", &cfg).expect("settings json should write");
+    assert_eq!(settings_path, out_dir.path().join("ends.end_motif_settings.json"));
+    let settings =
+        std::fs::read_to_string(settings_path).expect("settings json should be readable");
 
     // Assert
     assert_eq!(

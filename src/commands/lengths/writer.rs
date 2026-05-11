@@ -4,11 +4,7 @@ use crate::{
         gc_bias::correct::{GCLengthRange, MarginalizeLengthsWeightingScheme},
         lengths::{config::LengthsConfig, counting::LengthAxis},
     },
-    shared::{
-        clip_mode::ClipMode,
-        indel_mode::IndelMode,
-        io::{create_text_writer, dot_join},
-    },
+    shared::{clip_mode::ClipMode, indel_mode::IndelMode, io::create_text_writer},
 };
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -49,10 +45,10 @@ struct FragmentLengthSettings<'a> {
 }
 
 pub(super) fn write_fragment_length_settings_json(
+    settings_path: &std::path::Path,
     opt: &LengthsConfig,
     window_opt: &DistributionWindowSpec,
     length_axis: &LengthAxis,
-    prefix: &str,
 ) -> Result<()> {
     let settings = FragmentLengthSettings {
         length_axis: LengthAxisSettings {
@@ -77,11 +73,7 @@ pub(super) fn write_fragment_length_settings_json(
         scaling_factors_used: opt.scale_genome.scaling_factors.is_some(),
     };
 
-    let settings_path = opt
-        .ioc
-        .output_dir
-        .join(dot_join(&[prefix, "fragment_length_settings.json"]));
-    let mut settings_writer = create_text_writer(&settings_path)
+    let mut settings_writer = create_text_writer(settings_path)
         .with_context(|| format!("create {}", settings_path.display()))?;
     serde_json::to_writer_pretty(&mut settings_writer, &settings)
         .with_context(|| format!("write {}", settings_path.display()))?;

@@ -20,7 +20,7 @@ use crate::shared::fragment::segment_fragment::FragmentWithSegments;
 use crate::shared::fragment_iterators::fragments_with_segments_from_bam;
 use crate::shared::gc_tag::{ClassifiedGCTagWeight, MIN_REASONABLE_GC_WEIGHT};
 use crate::shared::interval::{IndexedInterval, Interval};
-use crate::shared::io::dot_join;
+use crate::shared::io::{FinalOutputFiles, dot_join};
 use crate::shared::progress::ProgressFactory;
 use crate::shared::read::{default_include_read_paired_end, default_include_read_unpaired};
 use crate::shared::reference::read_seq_in_range;
@@ -325,6 +325,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
     let temp_dir_guard =
         TempDirGuard::new(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
     let temp_dir = temp_dir_guard.path();
+    let mut final_outputs = FinalOutputFiles::new(temp_dir)?;
 
     // Window size when --by-size (otherwise None)
     let by_size_bp: Option<u64> = match &window_opt {
@@ -659,11 +660,14 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
     // Merge temporary output files and
     // reduce windows present in multiple tiles
 
+    // Write every final output to the temp directory before moving any of them into place
+    // This keeps failed writes from leaving a mix of old and new final files
     let final_out_path = if !windowed {
         // Whole-genome positional coverage
         let positional_outputs = positional_tile_outputs(&tile_temp_outputs);
-        merge_positional_tile_outputs_with_optional_scaling(
-            &opt.ioc.output_dir,
+        let final_path = opt.ioc.output_dir.join(final_bedgraph_pos_name.as_str());
+        let temp_final_path = merge_positional_tile_outputs_with_optional_scaling(
+            final_outputs.temp_dir(),
             &chromosomes,
             &positional_outputs,
             final_bedgraph_pos_name.as_str(),
@@ -671,14 +675,17 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
             false,
             decimals_to_use,
             opt.ioc.n_threads,
-        )?
+        )?;
+        final_outputs.record(temp_final_path, final_path.clone())?;
+        final_path
     } else {
         match opt.per_window {
             CoverageWindowAction::OnlyIncludeThesePositionsUnique => {
                 // Windowed positional (unique and non-indexed)
                 let positional_outputs = positional_tile_outputs(&tile_temp_outputs);
-                merge_positional_tile_outputs_with_optional_scaling(
-                    &opt.ioc.output_dir,
+                let final_path = opt.ioc.output_dir.join(final_bedgraph_pos_name.as_str());
+                let temp_final_path = merge_positional_tile_outputs_with_optional_scaling(
+                    final_outputs.temp_dir(),
                     &chromosomes,
                     &positional_outputs,
                     final_bedgraph_pos_name.as_str(),
@@ -686,13 +693,16 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                     false,
                     decimals_to_use,
                     opt.ioc.n_threads,
-                )?
+                )?;
+                final_outputs.record(temp_final_path, final_path.clone())?;
+                final_path
             }
             CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
                 // Windowed positional with orig_idx column
                 let positional_outputs = positional_tile_outputs(&tile_temp_outputs);
-                merge_positional_tile_outputs_with_optional_scaling(
-                    &opt.ioc.output_dir,
+                let final_path = opt.ioc.output_dir.join(final_tsv_pos_name.as_str());
+                let temp_final_path = merge_positional_tile_outputs_with_optional_scaling(
+                    final_outputs.temp_dir(),
                     &chromosomes,
                     &positional_outputs,
                     final_tsv_pos_name.as_str(),
@@ -700,7 +710,9 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                     true,
                     decimals_to_use,
                     opt.ioc.n_threads,
-                )?
+                )?;
+                final_outputs.record(temp_final_path, final_path.clone())?;
+                final_path
             }
             CoverageWindowAction::Average
             | CoverageWindowAction::Total
@@ -709,10 +721,11 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
             | CoverageWindowAction::TotalOnUniqueBases
             | CoverageWindowAction::SummaryStatsOnUniqueBases => {
                 let final_path = opt.ioc.output_dir.join(final_aggregate_name.as_str());
+                let temp_final_path = final_outputs.temp_path_for(&final_path)?;
 
                 match &window_opt {
                     DistributionWindowSpec::Bed(_) => write_bed_aggregate_output(
-                        &final_path,
+                        &temp_final_path,
                         &bed_aggregate_tile_outputs_by_chr(&tile_temp_outputs),
                         windows_map
                             .as_ref()
@@ -725,7 +738,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                         restore_mean_multiplier,
                     )?,
                     DistributionWindowSpec::GroupedBed(_) => write_grouped_bed_aggregate_output(
-                        &final_path,
+                        &temp_final_path,
                         &bed_aggregate_tile_outputs_by_chr(&tile_temp_outputs),
                         grouped_layout
                             .as_ref()
@@ -737,7 +750,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                         restore_mean_multiplier,
                     )?,
                     DistributionWindowSpec::Size(_) => write_size_aggregate_output(
-                        &final_path,
+                        &temp_final_path,
                         &size_aggregate_tile_outputs_by_chr(&tile_temp_outputs),
                         &size_final_tile_outputs(&tile_temp_outputs),
                         &chromosomes,
@@ -759,19 +772,24 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                         .ioc
                         .output_dir
                         .join(dot_join(&[prefix, "group_index.tsv"]));
+                    let temp_group_index_path = final_outputs.temp_path_for(&group_index_path)?;
                     write_group_idx_to_name_tsv(
-                        group_index_path,
+                        &temp_group_index_path,
                         &grouped_layout
                             .as_ref()
                             .context("grouped outputs require group index metadata")?
                             .group_idx_to_name,
                     )?;
+                    final_outputs.record(temp_group_index_path, group_index_path)?;
                 }
 
+                final_outputs.record(temp_final_path, final_path.clone())?;
                 final_path
             }
         }
     };
+
+    final_outputs.move_into_place()?;
 
     info!(
         target: COMMAND_TARGET,

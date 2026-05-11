@@ -30,7 +30,7 @@ use crate::commands::prepare_windows::writers::{ChromTempWriter, finalize_temp_w
 use crate::shared::bed::{detect_header, line_looks_like_header};
 use crate::shared::blacklist::{is_blacklisted, load_blacklists};
 use crate::shared::interval::Interval;
-use crate::shared::io::open_text_reader;
+use crate::shared::io::{FinalOutputFiles, open_text_reader};
 use crate::shared::progress::ProgressFactory;
 use crate::shared::reference::load_chrom_sizes;
 use crate::shared::thread_pool::init_global_pool;
@@ -651,9 +651,26 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
     } else {
         chromosomes
     };
+    // Avoid exposing a partial output file while the final filtering pass is still writing
+    // For file outputs, write the completed result under the run temp directory first, then move it
+    // to the user-requested path after the full write succeeds
+    //
+    // The filtering helpers take their output path from PrepareConfig. Clone the config and replace
+    // only that path so the filtering code can stay focused on writing one configured destination
+    //
+    // Stdout stays on the original config because there is no filesystem path to move into place
+    let mut output_cfg = cfg.clone();
+    let final_output = if cfg.output.as_os_str() != "-" {
+        let outputs = FinalOutputFiles::new(temp_dir_guard.path())?;
+        let temp_path = outputs.temp_path_for(&cfg.output)?;
+        output_cfg.output = temp_path.clone();
+        Some((outputs, temp_path))
+    } else {
+        None
+    };
 
     filter_and_write_output(
-        cfg,
+        &output_cfg,
         &temp_entries,
         &label_schema,
         &out_labels,
@@ -662,6 +679,12 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
         temp_dir_guard.path(),
         &output_chromosomes,
     )?;
+
+    if let Some((mut outputs, temp_path)) = final_output {
+        outputs.record(temp_path, cfg.output.clone())?;
+        outputs.move_into_place()?;
+    }
+
     println!("Start: Removing temporary directory");
     temp_dir_guard.remove()?;
 

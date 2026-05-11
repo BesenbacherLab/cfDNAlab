@@ -58,6 +58,7 @@
 ## Weighting
 
 - Each counted end receives: assignment overlap mass, times GC weight, times scaling weight.
+- Zero-ish final weights do not create sparse motif entries or counted-end statistics. Material negative weights are an error.
 - GC weight is fragment-level and reused for all counted ends and windows from that fragment.
 - Scaling for non-`count-overlap` modes is averaged over the full aligned fragment and reused for selected windows.
 - Scaling for `count-overlap` is averaged over the aligned overlap span for each output row.

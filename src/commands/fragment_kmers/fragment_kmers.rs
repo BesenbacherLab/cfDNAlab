@@ -36,7 +36,7 @@ use crate::{
         fragment::segment_kmer_fragment::FragmentWithKmerSegments,
         fragment_iterators::fragments_with_kmer_segments_from_bam,
         interval::Interval,
-        io::dot_join,
+        io::{FinalOutputFiles, dot_join},
         kmers::{
             kmer_codec::{KmerCodes, KmerSpec, build_kmer_specs, build_left_aligned_codes_per_k},
             process_counts::{DecodedCounts, prepare_decoded_counts, split_and_decode_counts},
@@ -238,6 +238,7 @@ fn run_inner_with_reporting(
     // Build temporary directory
     let temp_dir_guard = TempDirGuard::new(&opt.shared_args.ioc.output_dir, prefix)
         .context("create per-run temp dir")?;
+    let mut final_outputs = FinalOutputFiles::new(temp_dir_guard.path())?;
 
     // Window size when --by-size (otherwise None)
     let by_size_bp: Option<u64> = match &window_opt {
@@ -411,13 +412,19 @@ fn run_inner_with_reporting(
         if show_progress_and_status {
             info!(target: COMMAND_TARGET, "Writing positional counts to disk");
         }
-        write_positional_output(
+        let temp_output_paths = write_positional_output(
             &positional_decoded,
             &motifs_by_k,
             &kmer_specs,
-            &opt.shared_args.ioc.output_dir,
+            final_outputs.temp_dir(),
             &opt.shared_args.output_prefix,
             opt.save_sparse,
+        )?;
+        // These files were written to final_outputs.temp_dir() with their final filenames
+        // Record each one as output_dir/<file name>, then move all outputs at the end
+        final_outputs.record_temp_files_with_same_names_in(
+            temp_output_paths,
+            &opt.shared_args.ioc.output_dir,
         )?;
     } else {
         let all_bins = merge_tile_counts(payloads, total_windows_usize, &kmer_specs)?;
@@ -426,17 +433,24 @@ fn run_inner_with_reporting(
         let (prepared_counts, motifs_by_k) =
             prepare_decoded_counts(&all_bins, opt.canonical, &kmer_specs);
 
-        // Write final counts to output_dir
+        // Write counts to the temp folder first
+        // They move into output_dir after all requested output files have been written
         if show_progress_and_status {
             info!(target: COMMAND_TARGET, "Writing counts to disk");
         }
-        write_decoded_counts_matrix(
+        let temp_output_paths = write_decoded_counts_matrix(
             &prepared_counts,
             &kmer_specs,
             &motifs_by_k,
-            &opt.shared_args.ioc.output_dir,
+            final_outputs.temp_dir(),
             &opt.shared_args.output_prefix,
             opt.save_sparse,
+        )?;
+        // These files were written to final_outputs.temp_dir() with their final filenames
+        // Record each one as output_dir/<file name>, then move all outputs at the end
+        final_outputs.record_temp_files_with_same_names_in(
+            temp_output_paths,
+            &opt.shared_args.ioc.output_dir,
         )?;
     }
 
@@ -450,7 +464,7 @@ fn run_inner_with_reporting(
         chr_offsets.as_ref(),
     )?;
 
-    // Write window coordinates plus overlap metadata as TSV to output_dir
+    // Write window coordinates plus overlap metadata to the same temp folder as the count outputs
     if !matches!(window_opt, WindowSpec::Global) {
         if show_progress_and_status {
             info!(target: COMMAND_TARGET, "Writing window coordinates to disk");
@@ -460,8 +474,12 @@ fn run_inner_with_reporting(
             .ioc
             .output_dir
             .join(dot_join(&[prefix, "bins.tsv"]));
-        write_bin_info_tsv(bins_path, &bin_info)?;
+        let temp_bins_path = final_outputs.temp_path_for(&bins_path)?;
+        write_bin_info_tsv(&temp_bins_path, &bin_info)?;
+        final_outputs.record(temp_bins_path, bins_path)?;
     }
+
+    final_outputs.move_into_place()?;
 
     Ok(global_counter)
 }

@@ -45,7 +45,7 @@ use crate::{
         blacklist::apply_blacklist_mask_to_seq,
         constants::GC_CORRECTION_SCHEMA_VERSION,
         interval::{IndexedInterval, Interval},
-        io::dot_join,
+        io::{FinalOutputFiles, dot_join},
         progress::ProgressFactory,
         reference::{
             ContigFootprintEntry, read_seq_in_range, twobit_contig_footprint, twobit_contig_lengths,
@@ -53,7 +53,7 @@ use crate::{
         sampling::{sample_starts_in_core, sampling_density},
         thread_pool::init_global_pool,
         tiled_run::{
-            Tile, TileWindowSpan, build_tiles, overlapping_windows_for_tile,
+            TempDirGuard, Tile, TileWindowSpan, build_tiles, overlapping_windows_for_tile,
             precompute_tile_window_spans,
         },
         windowing::ensure_plain_bed_windows_not_empty,
@@ -355,9 +355,18 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
         global_grid.dim()
     );
 
+    let final_temp_dir_guard = TempDirGuard::new(&opt.output_dir, "ref_gc_bias_final")
+        .context("create final output temp dir")?;
+    let mut final_outputs = FinalOutputFiles::new(final_temp_dir_guard.path())?;
+
+    // Write every final output to the temp directory before moving any of them into place
+    // This keeps failed writes from appearing completed
+    let ref_gc_package_path = opt
+        .output_dir
+        .join(dot_join(&[prefix, "ref_gc_package.npz"]));
+    let temp_ref_gc_package_path = final_outputs.temp_path_for(&ref_gc_package_path)?;
     write_reference_gc_package(
-        &opt.output_dir
-            .join(dot_join(&[prefix, "ref_gc_package.npz"])),
+        &temp_ref_gc_package_path,
         &global_grid,
         &unobservable_support_mask,
         &outlier_support_mask,
@@ -373,6 +382,8 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
         &twobit_contig_footprint(&opt.ref_genome.ref_2bit)?,
     )
     .context("Writing reference GC package failed")?;
+    final_outputs.record(temp_ref_gc_package_path, ref_gc_package_path)?;
+    final_outputs.move_into_place()?;
 
     let elapsed = start_time.elapsed();
     info!(

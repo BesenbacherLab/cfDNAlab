@@ -1,3 +1,4 @@
+use crate::shared::base::ZEROISH_F32_TOLERANCE;
 use crate::shared::length_axis::LengthAxis;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use fxhash::FxHashMap;
@@ -491,7 +492,19 @@ impl SparseProfileGroupsCounts {
         weight: f64,
     ) -> Result<()> {
         let flat_idx = self.index_of(position, group_idx, length)?;
-        *self.counts.entry(flat_idx).or_insert(0.0) += weight as f32;
+        ensure!(
+            weight.is_finite() && weight >= f32::MIN as f64 && weight <= f32::MAX as f64,
+            "sparse midpoint weight {weight} cannot be represented as f32"
+        );
+        let weight_f32 = weight as f32;
+        ensure!(
+            weight_f32 >= -ZEROISH_F32_TOLERANCE,
+            "sparse midpoint weight {weight_f32} is negative, this is not currently supported"
+        );
+        // Avoid adding zero-weight entries to the sparse array
+        if weight_f32 > ZEROISH_F32_TOLERANCE {
+            *self.counts.entry(flat_idx).or_insert(0.0) += weight_f32;
+        }
         Ok(())
     }
 
@@ -543,7 +556,7 @@ impl SparseProfileGroupsCounts {
 /// Validation happens before the partial file is returned so merge code can assume:
 ///
 /// - `idx` and `data` have the same length
-/// - `idx` is sorted ascending
+/// - `idx` is sorted strictly ascending, with no duplicate indices
 /// - all indices fit the current platform `usize`
 /// - all indices are inside the destination dense vector
 /// - the stored shape matches the current run
@@ -588,13 +601,13 @@ fn read_sparse_profile_partial_file(
         data.len()
     );
 
-    // Validate sorted order and bounds once, before the parallel merge starts mutating output
+    // Validate canonical order and bounds once, before the parallel merge starts mutating output
     let mut previous_idx: Option<u64> = None;
     for &flat_idx_u64 in &idx {
         if let Some(previous) = previous_idx {
             ensure!(
-                previous <= flat_idx_u64,
-                "Sparse midpoint partial file {} indices must be sorted ascending",
+                previous < flat_idx_u64,
+                "Sparse midpoint partial file {} indices must be sorted strictly ascending without duplicates",
                 path.display()
             );
         }

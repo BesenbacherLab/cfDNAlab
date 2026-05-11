@@ -9,7 +9,7 @@ This file is the authoritative entry point for repo-specific agent instructions.
 - Keep functions small and single-purpose when reasonable.
 - Prefer explicit names over abbreviations. Do not use single-letter variable names.
 - Do not fail silently. If something is wrong, the program should tell the user.
-- Run `cargo check --features cli,plotters` after code changes and `cargo check --tests --features cli,plotters` after test code changes. After major refactors, run `cargo check --all-features`. When working on non-default commands (see cargo.toml), include their command features in these calls as well.
+- Run `cargo check` after code changes and `cargo check --tests` after test code changes. After major refactors, run `cargo check --all-features`. When working on non-default commands (see cargo.toml), include their command features in these calls as well.
 - Do NOT run tests. I run tests in this project. You use mental derivation only.
 - If a file is changed, always read it before answering.
 - If I ask for a new code review, never rely on memory to answer.
@@ -23,6 +23,7 @@ This file is the authoritative entry point for repo-specific agent instructions.
 - Do not be a sycophant. 
 - Do not start prompts with "You’re right to push on that" or similar, when it's clearly just a trick to keep the conversation flowing.
 - Do not rewrite comments or docs for generic style preference; preserve existing wording unless the change is a clear correctness, clarity, or consistency improvement tied to the current task.
+- Do not write unnecessary wrapper functions.
 
 Always read [.AI/collaboration.md](/Users/au547627/Documents/Development/rust/cfDNAlab/.AI/collaboration.md) to avoid annoying sycophanting. I want truth not praise.
 

@@ -25,10 +25,17 @@ fn minimal_config(output_dir: PathBuf) -> LengthsConfig {
 }
 
 fn read_settings(output_dir: &std::path::Path, prefix: &str) -> Value {
-    let settings_path = output_dir.join(dot_join(&[prefix, "fragment_length_settings.json"]));
+    let settings_path = settings_path(output_dir, prefix);
     let settings_text =
         std::fs::read_to_string(settings_path).expect("settings sidecar should be readable");
     serde_json::from_str(&settings_text).expect("settings sidecar should be valid JSON")
+}
+
+fn settings_path(output_dir: &std::path::Path, prefix: &str) -> PathBuf {
+    output_dir.join(crate::shared::io::dot_join(&[
+        prefix,
+        "fragment_length_settings.json",
+    ]))
 }
 
 #[test]
@@ -57,7 +64,12 @@ fn settings_writer_records_non_default_interpretation_fields() {
     let window_spec = DistributionWindowSpec::Size(100);
 
     // Act
-    write_fragment_length_settings_json(&config, &window_spec, &length_axis, "sample")
+    write_fragment_length_settings_json(
+        &settings_path(out_dir.path(), "sample"),
+        &config,
+        &window_spec,
+        &length_axis,
+    )
         .expect("settings sidecar should write");
     let settings = read_settings(out_dir.path(), "sample");
 
@@ -100,10 +112,10 @@ fn settings_writer_uses_compact_stepped_range_definition_for_dense_default() {
 
     // Act
     write_fragment_length_settings_json(
+        &settings_path(out_dir.path(), "dense"),
         &config,
         &DistributionWindowSpec::Global,
         &length_axis,
-        "dense",
     )
     .expect("dense settings sidecar should write");
     let settings = read_settings(out_dir.path(), "dense");
@@ -129,17 +141,17 @@ fn settings_writer_records_bed_and_grouped_window_semantics() {
 
     // Act
     write_fragment_length_settings_json(
+        &settings_path(out_dir.path(), "bed"),
         &config,
         &DistributionWindowSpec::Bed(PathBuf::from("windows.bed")),
         &length_axis,
-        "bed",
     )
     .expect("BED settings sidecar should write");
     write_fragment_length_settings_json(
+        &settings_path(out_dir.path(), "groups"),
         &config,
         &DistributionWindowSpec::GroupedBed(PathBuf::from("groups.bed")),
         &length_axis,
-        "groups",
     )
     .expect("grouped settings sidecar should write");
 

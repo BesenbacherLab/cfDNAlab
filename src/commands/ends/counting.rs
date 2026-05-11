@@ -1,8 +1,8 @@
 use crate::shared::{
-    base::{make_canonical, rev_complement},
+    base::{ZEROISH_F64_TOLERANCE, make_canonical, rev_complement},
     kmers::kmer_codec::KmerSpec,
 };
-use anyhow::Result;
+use anyhow::{Result, ensure};
 use fxhash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
@@ -63,7 +63,10 @@ impl EndMotifCounts {
         Self::new()
     }
 
-    /// Add one weighted motif observation to this window.
+    /// Add a single already-validated weighted motif observation to this window.
+    ///
+    /// Callers are responsible for checking `EndMotifCounts::should_store_weight` before calling
+    /// this helper.
     ///
     /// Parameters
     /// ----------
@@ -79,6 +82,20 @@ impl EndMotifCounts {
     #[inline]
     pub fn incr_weighted(&mut self, key: EncodedEndMotifKey, weight: f64) {
         *self.counts.entry(key).or_insert(0.0) += weight;
+    }
+
+    /// Return whether a weight should create a sparse count entry.
+    #[inline]
+    pub(crate) fn should_store_weight(weight: f64) -> Result<bool> {
+        ensure!(
+            weight.is_finite(),
+            "sparse end motif weight {weight} is not finite"
+        );
+        ensure!(
+            weight >= -ZEROISH_F64_TOLERANCE,
+            "sparse end motif weight {weight} is negative, this is not currently supported"
+        );
+        Ok(weight > ZEROISH_F64_TOLERANCE)
     }
 
     /// Merge another sparse window counter into this one.

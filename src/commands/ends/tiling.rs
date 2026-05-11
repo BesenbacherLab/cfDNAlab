@@ -90,12 +90,15 @@ pub fn build_tile_payload(
 ) -> Vec<TileWindowEndCounts> {
     let mut payload: Vec<TileWindowEndCounts> = counts_by_window
         .into_iter()
-        .map(|(original_idx, counts)| {
+        .filter_map(|(original_idx, counts)| {
             let mut entries: Vec<TileEndMotifCountEntry> = counts
                 .counts
                 .into_iter()
                 .map(TileEndMotifCountEntry::from)
                 .collect();
+            if entries.is_empty() {
+                return None;
+            }
 
             entries.sort_unstable_by_key(|entry| {
                 (
@@ -105,10 +108,10 @@ pub fn build_tile_payload(
                 )
             });
 
-            TileWindowEndCounts {
+            Some(TileWindowEndCounts {
                 original_idx,
                 entries,
-            }
+            })
         })
         .collect();
 
@@ -137,9 +140,13 @@ pub fn merge_tile_payload(
     tile_payload: Vec<TileWindowEndCounts>,
 ) -> Result<()> {
     for window_counts in tile_payload {
-        let dst = merged.entry(window_counts.original_idx).or_default();
         for entry in window_counts.entries {
-            dst.incr_weighted(EncodedEndMotifKey::from(&entry), entry.value);
+            if EndMotifCounts::should_store_weight(entry.value)? {
+                merged
+                    .entry(window_counts.original_idx)
+                    .or_default()
+                    .incr_weighted(EncodedEndMotifKey::from(&entry), entry.value);
+            }
         }
     }
 

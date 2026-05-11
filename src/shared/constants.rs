@@ -2,7 +2,7 @@
 pub const MIN_ACGT_BASES_FOR_GC_FRACTION: u32 = 10;
 
 /// Maximum supported fragment length.
-pub const MAX_SUPPORTED_FRAGMENT_LENGTH: u32 = 100_000;
+pub const MAX_SUPPORTED_FRAGMENT_LENGTH: u32 = 50_000;
 
 /// Default maximum soft-clipped bases allowed at each fragment end.
 pub const DEFAULT_MAX_SOFT_CLIPS: u16 = 256;

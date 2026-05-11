@@ -9,17 +9,16 @@
 
 ## Executive Summary
 
-| Area                 | Status  | Notes                                                          |
-| -------------------- | ------- | -------------------------------------------------------------- |
-| **Build**            | PASS    | Clean compile (debug + release), 0 errors                      |
-| **Tests**            | PASS    | 1 080+ tests, all passing                                      |
-| **Clippy**           | PASS    | 0 clippy warnings                                              |
-| **License**          | PASS    | MIT license file present, `license = "MIT"` in Cargo.toml      |
-| **Cargo metadata**   | PARTIAL | Keywords exceed crates.io limit (8/5)                          |
-| **CI**               | PARTIAL | Three workflows exist but `rust.yml` doesn't use `--features cli,plotters` |
-| **README**           | BLOCKED | 6 visible TODO placeholders remain                             |
-| **Generated code**   | BLOCKED | 2 modules carry "unvalidated AI-generated" warnings            |
-| **Website docs**     | PARTIAL | Missing guides for `ends`, `fragment-count-weights`, conversion commands |
+| Area               | Status  | Notes                                                                    |
+| ------------------ | ------- | ------------------------------------------------------------------------ |
+| **Build**          | PASS    | Clean compile (debug + release), 0 errors                                |
+| **Tests**          | PASS    | 1 080+ tests, all passing                                                |
+| **Clippy**         | PASS    | 0 clippy warnings                                                        |
+| **License**        | PASS    | MIT license file present, `license = "MIT"` in Cargo.toml                |
+| **Cargo metadata** | PARTIAL | Keywords exceed crates.io limit (8/5)                                    |
+| **README**         | BLOCKED | 6 visible TODO placeholders remain                                       |
+| **Generated code** | BLOCKED | 2 modules carry "unvalidated AI-generated" warnings                      |
+| **Website docs**   | PARTIAL | Missing guides for `ends`, `fragment-count-weights`, conversion commands |
 
 **Overall verdict:** Close to release but with a handful of blockers and several should-fix items.
 
@@ -33,23 +32,23 @@ These must be resolved before public release. Each one is visible to users, revi
 
 Users landing on the GitHub page will see unfinished sentences:
 
-| Line | Content |
-| ---- | ------- |
-| 9    | "The package is in alpha-stage (being developed)" |
+| Line | Content                                             |
+| ---- | --------------------------------------------------- |
+| 9    | "The package is in alpha-stage (being developed)"   |
 | 75   | `[TODO: Not that simple]` and `(TODO on samtools!)` |
-| 343  | `[TODO: Note on how to get griffin-like profiles]` |
-| 351  | `[TODO: Add example]` (end motifs recipe) |
-| 355  | `[TODO: Add output-prefix for remaining commands]` |
-| 445  | `[TODO: Check correctness]` for file column docs |
+| 343  | `[TODO: Note on how to get griffin-like profiles]`  |
+| 351  | `[TODO: Add example]` (end motifs recipe)           |
+| 355  | `[TODO: Add output-prefix for remaining commands]`  |
+| 445  | `[TODO: Check correctness]` for file column docs    |
 
 **Action:** Fill in or remove every TODO. Change line 9 to release-ready language. Add the missing end-motifs recipe or remove the placeholder section.
 
 ### B2. Source module carries "unvalidated AI-generated code" warning
 
-| File | Warning |
-| ---- | ------- |
+| File                                      | Warning                              |
+| ----------------------------------------- | ------------------------------------ |
 | `src/commands/gc_bias/interpolation.rs:1` | `"TODO: Validate that it's correct"` |
-| ~~`src/shared/frag_file.rs:1`~~ | ~~Removed~~ |
+| ~~`src/shared/frag_file.rs:1`~~           | ~~Removed~~                          |
 
 The `interpolation.rs` comment will be visible to anyone inspecting the source and is damaging for a tool targeting scientific credibility. Even if the code is now correct, the warning must be removed or replaced with a validation note before release.
 
@@ -69,15 +68,6 @@ crates.io allows a maximum of **5 keywords**. The current list has **8**:
 ## SHOULD FIX
 
 Not strict blockers, but each one poses a risk to credibility, usability, or CI reliability for a public release.
-
-### S1. CI workflow (`rust.yml`) doesn't test with `--features cli,plotters`
-
-The `rust.yml` workflow runs `cargo build` and `cargo test` with default features only. This means:
-- The CLI binary (`cfdna`) is **not built** in CI (it requires the `cli` feature).
-- Plotters integration is **not tested** in CI.
-- The coverage workflow (`code_cov.yml`) uses `--all-features`, which does cover everything, but the primary build/test CI does not.
-
-**Action:** Update `rust.yml` to use `--features cli,plotters` (or `--all-features`) for both build and test steps. Also install system dependencies (`libfontconfig1-dev`) as the coverage workflow does.
 
 ### S2. CHANGELOG needs updating
 
@@ -173,7 +163,6 @@ These areas have been resolved since the earlier reviews and are now release-rea
 - [ ] Remove all README TODOs (B1)
 - [ ] Remove/rewrite AI-generated-code warnings in `interpolation.rs` (B2)
 - [X] Reduce Cargo.toml keywords to 5 (B3)
-- [X] Update `rust.yml` CI to build+test with `--features cli,plotters` (S1)
 - [X] Rewrite CHANGELOG to be release-quality (S2)
 - [X] Update website intro (S3)
 - [ ] Fix or remove DELFI guide TODOs (S4)
@@ -201,10 +190,10 @@ Reviewed `--help` output for all 12 commands listed in the README plus the top-l
 
 ### Inconsistencies across commands
 
-| # | Finding | Commands | Severity |
-|---|---------|----------|----------|
-| C8 | **`--output-prefix` examples inconsistent.** `coverage-weights` and `fragment-count-weights` show no example output filenames. Other commands do. | `coverage-weights`, `fragment-count-weights` | LOW |
-| C9 | **`--require-proper-pair` wording differs.** `fcoverage` uses a shorter version without the "trims the tails" explanation. Others include it. Minor, but noticeable when comparing help text. | `fcoverage` vs others | LOW |
+| #   | Finding                                                                                                                                                                                       | Commands                                     | Severity |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- | -------- |
+| C8  | **`--output-prefix` examples inconsistent.** `coverage-weights` and `fragment-count-weights` show no example output filenames. Other commands do.                                             | `coverage-weights`, `fragment-count-weights` | LOW      |
+| C9  | **`--require-proper-pair` wording differs.** `fcoverage` uses a shorter version without the "trims the tails" explanation. Others include it. Minor, but noticeable when comparing help text. | `fcoverage` vs others                        | LOW      |
 
 ---
 
@@ -212,11 +201,11 @@ Reviewed `--help` output for all 12 commands listed in the README plus the top-l
 
 The following documents are consolidated into this report and should be removed:
 
-| File | Original date | Reason for removal |
-| ---- | ------------- | ------------------ |
-| `CURRENT_STATE_REVIEW.md` | 2026-04-02 | Tile/fetch refactor review — findings incorporated, code has evolved |
-| `RELEASE_READINESS_REPORT.md` | 2026-03-12 | Original readiness report — most items resolved or superseded |
-| `RELEASED_COMMANDS_TEST_PLAN.md` | 2026-03-25 | Test plan — coverage gaps closed, plan self-reports "no concrete high-priority gaps" |
-| `plans_and_specs/RELEASE_TODO.md` | Various | Release TODO — blockers tracked here instead |
-| `plans_and_specs/COMMAND_RELEASE_AUDIT_SPEC_2026-03-03.md` | 2026-03-03 | Audit spec — findings resolved or tracked here |
-| `plans_and_specs/ends_code_review.md` | Various | Ends code review — `ends` is now substantially tested; remaining items are low-severity |
+| File                                                       | Original date | Reason for removal                                                                      |
+| ---------------------------------------------------------- | ------------- | --------------------------------------------------------------------------------------- |
+| `CURRENT_STATE_REVIEW.md`                                  | 2026-04-02    | Tile/fetch refactor review — findings incorporated, code has evolved                    |
+| `RELEASE_READINESS_REPORT.md`                              | 2026-03-12    | Original readiness report — most items resolved or superseded                           |
+| `RELEASED_COMMANDS_TEST_PLAN.md`                           | 2026-03-25    | Test plan — coverage gaps closed, plan self-reports "no concrete high-priority gaps"    |
+| `plans_and_specs/RELEASE_TODO.md`                          | Various       | Release TODO — blockers tracked here instead                                            |
+| `plans_and_specs/COMMAND_RELEASE_AUDIT_SPEC_2026-03-03.md` | 2026-03-03    | Audit spec — findings resolved or tracked here                                          |
+| `plans_and_specs/ends_code_review.md`                      | Various       | Ends code review — `ends` is now substantially tested; remaining items are low-severity |

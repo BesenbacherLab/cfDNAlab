@@ -655,8 +655,7 @@ fn even_length_midpoint_tie_counts_exactly_one_of_two_adjacent_edge_windows() ->
 }
 
 #[test]
-fn blacklist_midpoint_filtering_uses_floor_midpoint_even_when_profile_placement_randomizes()
--> Result<()> {
+fn blacklist_midpoint_filtering_checks_both_centers_for_even_fragments() -> Result<()> {
     // Arrange:
     // Use the same even-length fragment [40,50), whose placement midpoint is randomized between
     // 44 and 45. Count it against one 2 bp window [44,46), so without blacklist the profile row
@@ -664,22 +663,22 @@ fn blacklist_midpoint_filtering_uses_floor_midpoint_even_when_profile_placement_
     //   [1,0] if midpoint=44
     //   [0,1] if midpoint=45
     //
-    // Now add blacklist interval [45,46) and choose blacklist strategy `Midpoint`.
-    // The shared blacklist helper does not use the random tie rule. It uses:
-    //   start + (end - start) / 2 = 45
-    // for [40,50). So the fragment must always be blacklisted, even though profile placement
-    // would otherwise be allowed to land at either 44 or 45.
+    // Now choose blacklist strategy `Midpoint`.
+    // The shared blacklist helper is intentionally conservative for even-length fragments:
+    // either central base can blacklist the fragment.
     let bam = bam_from_specs(
         vec![("chr1".to_string(), 100)],
         vec![paired_fragment_on_tid(0, 40, 10, 5)],
         Vec::new(),
-        "midpoints_blacklist_midpoint_floor_contract",
+        "midpoints_blacklist_midpoint_central_base_contract",
     )?;
     let temp = TempDir::new()?;
     let bed_path = temp.path().join("windows.bed");
-    let blacklist_path = temp.path().join("blacklist.bed");
+    let left_center_blacklist_path = temp.path().join("blacklist_left_center.bed");
+    let right_center_blacklist_path = temp.path().join("blacklist_right_center.bed");
     write_bed(&bed_path, &[("chr1", 44, 46, "groupA")])?;
-    std::fs::write(&blacklist_path, "chr1\t45\t46\n")?;
+    std::fs::write(&left_center_blacklist_path, "chr1\t44\t45\n")?;
+    std::fs::write(&right_center_blacklist_path, "chr1\t45\t46\n")?;
 
     let make_cfg = |output_dir: &std::path::Path, blacklist: Option<Vec<PathBuf>>| {
         let mut cfg = MidpointsConfig::new(
@@ -703,13 +702,22 @@ fn blacklist_midpoint_filtering_uses_floor_midpoint_even_when_profile_placement_
     };
 
     let baseline_out = temp.path().join("baseline");
-    let blacklisted_out = temp.path().join("blacklisted");
+    let left_blacklisted_out = temp.path().join("blacklisted_left_center");
+    let right_blacklisted_out = temp.path().join("blacklisted_right_center");
     std::fs::create_dir_all(&baseline_out)?;
-    std::fs::create_dir_all(&blacklisted_out)?;
+    std::fs::create_dir_all(&left_blacklisted_out)?;
+    std::fs::create_dir_all(&right_blacklisted_out)?;
 
     // Act
     run(&make_cfg(&baseline_out, None))?;
-    run(&make_cfg(&blacklisted_out, Some(vec![blacklist_path])))?;
+    run(&make_cfg(
+        &left_blacklisted_out,
+        Some(vec![left_center_blacklist_path]),
+    ))?;
+    run(&make_cfg(
+        &right_blacklisted_out,
+        Some(vec![right_center_blacklist_path]),
+    ))?;
 
     // Assert
     let baseline_arr: Array3<f32> = read_npy(baseline_out.join("sites.midpoint_profiles.npy"))?;
@@ -723,14 +731,19 @@ fn blacklist_midpoint_filtering_uses_floor_midpoint_even_when_profile_placement_
         baseline_row
     );
 
-    let blacklisted_arr: Array3<f32> =
-        read_npy(blacklisted_out.join("sites.midpoint_profiles.npy"))?;
-    assert_eq!(blacklisted_arr.shape(), &[1, 1, 2]);
-    assert_eq!(
-        blacklisted_arr.sum(),
-        0.0,
-        "midpoint blacklist filtering should deterministically remove the fragment via floor midpoint 45"
-    );
+    for (case_name, output_dir) in [
+        ("left central base", left_blacklisted_out),
+        ("right central base", right_blacklisted_out),
+    ] {
+        let blacklisted_arr: Array3<f32> =
+            read_npy(output_dir.join("sites.midpoint_profiles.npy"))?;
+        assert_eq!(blacklisted_arr.shape(), &[1, 1, 2]);
+        assert_eq!(
+            blacklisted_arr.sum(),
+            0.0,
+            "midpoint blacklist filtering should remove an even fragment when the {case_name} is blacklisted"
+        );
+    }
 
     Ok(())
 }

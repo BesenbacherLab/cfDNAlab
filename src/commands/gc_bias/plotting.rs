@@ -9,7 +9,7 @@ use crate::shared::plotters::{
 };
 use anyhow::{Context, Result};
 use ndarray::{Array1, Array2, Axis};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Plot GC bias diagnostics: average bias curves and heatmaps.
 ///
@@ -46,7 +46,9 @@ pub fn plot_gc_bias(
     reference_metadata: &ReferenceGCMetadata,
     full_res_counts: &Array2<f64>,
     binned_counts: &Array2<f64>,
-) -> Result<()> {
+) -> Result<Vec<PathBuf>> {
+    let mut written_paths = Vec::new();
+
     let gc_edges = compute_bin_edges(gc_bins, 0, 100)?;
     let x_values: Vec<f64> = gc_edges
         .windows(2)
@@ -153,6 +155,7 @@ pub fn plot_gc_bias(
         1000,
     )
     .with_context(|| format!("writing GC bias plot to {}", plot_path_unweighted.display()))?;
+    written_paths.push(plot_path_unweighted);
 
     let plot_path_weighted = output_dir.join(dot_join(&[
         prefix,
@@ -169,6 +172,7 @@ pub fn plot_gc_bias(
         1000,
     )
     .with_context(|| format!("writing GC bias plot to {}", plot_path_weighted.display()))?;
+    written_paths.push(plot_path_weighted);
 
     let hm_width: u32 = 1000;
     let hm_height: u32 = 700;
@@ -201,6 +205,7 @@ pub fn plot_gc_bias(
         HeatmapFormat::Png,
     )
     .with_context(|| format!("writing GC bias heatmap to {}", heatmap_path.display()))?;
+    written_paths.push(heatmap_path);
 
     // Binned heatmap with bin-index histograms
     let heatmap_path = output_dir.join(dot_join(&[prefix, "gc_bias_heatmap.bins.png"]));
@@ -232,6 +237,7 @@ pub fn plot_gc_bias(
             heatmap_path.display()
         )
     })?;
+    written_paths.push(heatmap_path);
 
-    Ok(())
+    Ok(written_paths)
 }
