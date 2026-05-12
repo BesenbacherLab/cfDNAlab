@@ -19,7 +19,7 @@
 
 Ultra-fast command-line tools for analysis of cell-free DNA. Extract **fragment coverage**, **midpoint coverage**, **fragment end-motifs**, and **fragment lengths** across the whole genome or in windows in mere seconds or minutes. All commands integrate options for sample-specific GC correction and large-scale genomic smoothing.
 
-Works on cfDNA **fragments** from either *paired-end* sequencing data or unpaired data where each read represents a full fragment. Written in rust for *speed*.
+Works on cfDNA **fragments** from either *paired-end* sequencing data or unpaired data where each read represents a full fragment. Written in Rust for *speed*.
 
 The commands are **highly flexible** with many options and good default settings. Start with the simple [examples](#examples) in this README and then check the full guides in the [docs](https://cfdnalab.tools/).
 
@@ -54,6 +54,21 @@ target/release/cfdna --help
 
 <br>
 
+## Quick start
+
+Calculating positional fragment coverage across the genome is as easy as:
+
+```bash
+cfdna fcoverage \
+  --bam <sample>.bam \ 
+  --output-dir <sample_directory>/coverage \
+  --output-prefix <sample_id>
+```
+
+Then, you can add blacklist filtering, GC correction and more. See the [examples](#examples) below or the website [guides](https://cfdnalab.tools/).
+
+<br>
+
 ## Commands
 
 The following commands are currently available:
@@ -69,7 +84,7 @@ Extract fragmentomics features:
   alt="cfdna fcoverage"
   width="185"
 /></dt>
-  <dd>Count <i>fragment</i> coverage per position or aggregated in windows.</dd>
+  <dd>Count <i>fragment</i> coverage per position or aggregated in windows with `cfdna fcoverage`.</dd>
   
   <hr>
 
@@ -78,7 +93,7 @@ Extract fragmentomics features:
   alt="cfdna midpoints"
   width="185"
 /></dt>
-  <dd>Count fragment <i>midpoint</i> coverage in fixed-size intervals, collapsed by groups across the genome.<br>E.g., transcription factor binding sites, aggregated per transcription factor.<br>Fast alternative to <a href=https://github.com/adoebley/Griffin>Griffin</a> when combined with <code>cfdna gc-bias</code>.</dd>
+  <dd>Count fragment <i>midpoint</i> coverage in fixed-size intervals, collapsed by groups across the genome with `cfdna midpoints`.<br>E.g., transcription factor binding sites, aggregated per transcription factor.<br>Fast alternative to <a href=https://github.com/adoebley/Griffin>Griffin</a> when combined with <code>cfdna gc-bias</code>.</dd>
   
   <hr>
 
@@ -87,7 +102,7 @@ Extract fragmentomics features:
   alt="cfdna ends"
   width="140"
 /></dt>
-  <dd>Count fragment end- and breakpoint-motifs.</dd>
+  <dd>Count fragment end- and breakpoint-motifs with `cfdna ends`.</dd>
   
   <hr>
   
@@ -96,7 +111,7 @@ Extract fragmentomics features:
   alt="cfdna lengths"
   width="160"
 /></dt>
-  <dd>Count fragment lengths.<br>In paired-end, the length is defined as <code>end(reverse) - start(forward)</code> for inwardly directed pairs only.</dd>
+  <dd>Count fragment lengths with `cfdna lengths`.<br>In paired-end, the length is defined as <code>end(reverse) - start(forward)</code> for inwardly directed pairs only.</dd>
   <hr>
 </dl>
 
@@ -115,7 +130,7 @@ Precompute GC-bias correction and genomic smoothing scaling factors:
   alt="cfdna ref-gc-bias"
   width="185"
 /></dt>
-  <dd>Calculate GC-bias for correcting a sample in the feature extraction commands.</dd>
+  <dd>Calculate GC-bias with `cfdna gc-bias` for correcting a sample in the feature extraction commands.</dd>
 
   <hr>
   <dt><img
@@ -123,7 +138,7 @@ Precompute GC-bias correction and genomic smoothing scaling factors:
   alt="cfdna fragment-count-weights"
   width="295"
 /></dt>
-  <dd>Calculate fragment count-based scaling factors for normalizing/smoothing fragment counts across the genome.</dd>
+  <dd>Calculate fragment count-based scaling factors with `cfdna fragment-count-weights` for normalizing/smoothing fragment counts across the genome.</dd>
 
   <hr>
 
@@ -132,7 +147,7 @@ Precompute GC-bias correction and genomic smoothing scaling factors:
   alt="cfdna coverage-weights"
   width="245"
 /></dt>
-  <dd>Calculate fragment coverage-based scaling factors for normalizing/smoothing coverage across the genome.</dd>
+  <dd>Calculate fragment coverage-based scaling factors with `cfdna coverage-weights` for normalizing/smoothing coverage across the genome.</dd>
   <hr>
 </dl>
 
@@ -147,7 +162,7 @@ Convert BAM files to frag files, frag files to BAM files, and BAM files to tagge
   alt="cfdna bam-to-bam"
   width="200"
 /></dt>
-  <dd>Apply our filters and/or write GC correction and coverage weight tags to a BAM file.</dd>
+  <dd>Apply our filters and/or write GC correction and coverage weight tags to a BAM file with `cfdna bam-to-bam`.</dd>
 
   <hr>
 
@@ -156,16 +171,16 @@ Convert BAM files to frag files, frag files to BAM files, and BAM files to tagge
   alt="cfdna bam-to-frag"
   width="203"
 /></dt>
-  <dd>Write fragment coordinates to a "frag" file (bed-like tsv file).</dd>
+  <dd>Write fragment coordinates to a "frag" file (bed-like tsv file) with `cfdna bam-to-frag`.</dd>
 
   <hr>
 
   <dt><img
-  src="https://img.shields.io/badge/%24-cfdna%20frag--to--frag-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
-  alt="cfdna frag-to-frag"
+  src="https://img.shields.io/badge/%24-cfdna%20frag--to--bam-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
+  alt="cfdna frag-to-bam"
   width="203"
 /></dt>
-  <dd>Convert fragment coordinates to a single-read unpaired BAM file.</dd>
+  <dd>Convert fragment coordinates to a single-read unpaired BAM file with `cfdna frag-to-bam`.</dd>
   <hr>
 </dl>
 
@@ -269,7 +284,7 @@ cfdna ref-gc-bias --help
 cfdna ref-gc-bias \
   --ref-2bit <path>/hg38.2bit \
   --output-dir <ref_gc_directory> \
-  --output-prefix hg38 \ # Output becomes "<ref_gc_directory>/hg38.ref_gc_package.npz"
+  --output-prefix hg38 \
   --n-threads 12 \
   --blacklist <path>/hg38-blacklist.v2.bed
 
@@ -492,7 +507,7 @@ Choose any relevant options below. See `--help` for more options.
 
 ### Fragment lengths
 
-Multiple studies have used fragment lengths (count distributions) to detect cancer [REFS].
+Multiple studies have used fragment lengths (count distributions) to detect cancer (Renaud et al. 2022, Cristiano et al. 2019).
 
 ```bash
 
@@ -541,7 +556,7 @@ Choose any relevant options below. See `--help` for more options.
 
 ### Fragment midpoint profiles
 
-Multiple studies have profiled the midpoint coverage around e.g. transcription factor binding sites (summed per transcription factor, per position) [REFS]. This can inform about the binding activity of different transcription factors related to cancer.
+Multiple studies have profiled the midpoint coverage around e.g. transcription factor binding sites (summed per transcription factor, per position) (Doebley et al., 2022). This can inform about the binding activity of different transcription factors related to cancer.
 
 ```bash
 
@@ -555,6 +570,7 @@ cfdna midpoints \
   --intervals <fixed_size_intervals>.tsv \
   --blacklist <path>/hg38-blacklist.v2.bed \
   --blacklist <path>/<another_blacklist>.bed
+
 ```
 
 Choose any relevant options below. See `--help` for more options.
@@ -574,8 +590,6 @@ Choose any relevant options below. See `--help` for more options.
   --scaling-factors ...
 
 ```
-
-[TODO: Note on how to get griffin-like profiles]
 
 The **intervals** must have the same fixed size. A common binding site window size is `2001bp`, centered around the binding site center. The expected columns are: `chromosome, start, end, group_name` (where `group_name` is the group to collapse profiles by, e.g., the transcription factor ID). The intervals should be sorted by chromosome and start-coordinates.
 
@@ -770,4 +784,10 @@ zstdcat path_to/file.tsv.zst
 
 ## References
 
-- Wang, H., Mennea, P.D., Chan, Y.K.E. et al. A standardized framework for robust fragmentomic feature extraction from cell-free DNA sequencing data. Genome Biol 26, 141 (2025). <https://doi.org/10.1186/s13059-025-03607-5>
+- Cristiano et al. Genome-wide cell-free DNA fragmentation in patients with cancer. Nature. 2019 Jun;570(7761):385-389. <https://doi.org/10.1038/s41586-019-1272-6>
+
+- Doebley et al. A framework for clinical cancer subtyping from nucleosome profiling of cell-free DNA. Nat Commun 13, 7475 (2022). <https://doi.org/10.1038/s41467-022-35076-w>
+
+- Renaud et al. Elife. 2022 Jul 27;11:e71569. <https://doi.org/10.7554/eLife.71569>
+
+- Wang et al. A standardized framework for robust fragmentomic feature extraction from cell-free DNA sequencing data. Genome Biol 26, 141 (2025). <https://doi.org/10.1186/s13059-025-03607-5>
