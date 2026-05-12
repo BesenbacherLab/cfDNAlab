@@ -22,6 +22,11 @@ pub struct ScalingBin {
 
 impl ScalingBin {
     pub fn new(start: u64, end: u64, weight_per_base: f32) -> anyhow::Result<Self> {
+        ensure!(
+            weight_per_base.is_finite() && weight_per_base >= 0.0,
+            "scaling_factor must be finite and >= 0 (got {})",
+            weight_per_base
+        );
         Ok(Self {
             interval: Interval::new(start, end)?,
             weight_per_base,

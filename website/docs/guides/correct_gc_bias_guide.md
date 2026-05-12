@@ -1,6 +1,6 @@
 # Correct GC-Bias
 
-Fragmentomics features are vulnerable to biases from various sample-handling and sequencing processes, such as PCR amplification. `cfDNAlab` commands thus allow the correction of the commonly observed GC-bias.
+Fragmentomics features are vulnerable to biases from various sample-handling and sequencing processes, such as PCR amplification. `cfDNAlab` commands allow correcting the commonly observed GC-bias.
 
 This requires only a few steps.
 

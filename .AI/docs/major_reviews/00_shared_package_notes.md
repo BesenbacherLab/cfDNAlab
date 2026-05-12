@@ -29,6 +29,9 @@ Implemented findings removed from active tracking:
 - G-023: reference GC packages do not record or check the reference identity later used by `gc-bias`.
 - G-024: GC correction package reference mismatches are warning-only.
 - G-025: blacklist `any` strategy could miss exact 65,536 bp overlaps while the supported fragment cap was 100,000 bp; lowering `MAX_SUPPORTED_FRAGMENT_LENGTH` to 50,000 bp removes that reachable fragment-overlap case.
+- G-026: `build_tiles()` accepted `tile_bp = 0` and could loop forever. It now rejects zero tile sizes before tiling.
+- G-028: shared scaling-over-fragment helpers lacked explicit boundary arithmetic coverage. Helper tests now cover explicit zero-factor bins, single-bin fragments, and multi-bin fragments; `ScalingBin::new()` now rejects non-finite and negative weights.
+- G-029: `FinalOutputFiles::move_into_place()` did not state its multi-file failure contract. It now documents best-effort sequential publication.
 
 Reviewed and deliberately not tracked:
 

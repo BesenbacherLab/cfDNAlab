@@ -306,6 +306,25 @@ mod tests {
     }
 
     #[test]
+    fn build_tiles_rejects_zero_tile_size() {
+        // A zero core width would leave `start` unchanged in the tile loop, so reject it before
+        // any chromosome work begins.
+        let mut contigs = FxHashMap::default();
+        contigs.insert("chr1".to_string(), (0, 95u32));
+        let contigs = Contigs { contigs };
+
+        let error = build_tiles(&["chr1".to_string()], &contigs, 0, 10, None)
+            .expect_err("zero tile size should fail before tiling");
+
+        assert!(
+            error
+                .to_string()
+                .contains("tile size must be greater than zero"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
     fn midpoint_fetch_span_preserves_tile_carried_halo_near_chromosome_end() {
         let tile = make_tile(80, 95, 70, 95, 0);
         let windows = indexed_windows(&[(90, 95, 0)]);
