@@ -145,7 +145,7 @@ Convert BAM files to frag files, frag files to BAM files, and BAM files to tagge
   <dt><img
   src="https://img.shields.io/badge/%24-cfdna%20bam--to--bam-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna bam-to-bam"
-  width="205"
+  width="200"
 /></dt>
   <dd>Apply our filters and/or write GC correction and coverage weight tags to a BAM file.</dd>
 
@@ -154,7 +154,7 @@ Convert BAM files to frag files, frag files to BAM files, and BAM files to tagge
   <dt><img
   src="https://img.shields.io/badge/%24-cfdna%20bam--to--frag-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna bam-to-frag"
-  width="205"
+  width="203"
 /></dt>
   <dd>Write fragment coordinates to a "frag" file (bed-like tsv file).</dd>
 
@@ -163,7 +163,7 @@ Convert BAM files to frag files, frag files to BAM files, and BAM files to tagge
   <dt><img
   src="https://img.shields.io/badge/%24-cfdna%20frag--to--frag-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna frag-to-frag"
-  width="205"
+  width="203"
 /></dt>
   <dd>Convert fragment coordinates to a single-read unpaired BAM file.</dd>
   <hr>
