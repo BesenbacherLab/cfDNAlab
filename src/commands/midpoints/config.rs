@@ -14,12 +14,12 @@ use std::path::PathBuf;
 /// Count positional fragment **midpoint** coverage in groups of genomic windows.
 ///
 /// **Midpoints**: The center of the fragment span, with ties (in even-sized fragments)
-/// randomly (but reproducibly) assigned to the left or right mid-position to avoid bias
+/// randomly and reproducibly assigned to the left or right mid-position to avoid bias
 /// from always rounding in the same direction.
 ///
-/// **Groups**: The coverage profiles are "collapsed" (summed per position) for all windows in a group.
-/// E.g., groups can be transcription factors with windows being binding sites. We then
-/// get the overall midpoint profile per transcription factor.
+/// **Groups**: The coverage profiles are collapsed (summed per position) across windows in a group.
+/// E.g., transcription factors as groups with binding sites as windows, yielding the
+/// overall midpoint profile per transcription factor.
 ///
 /// ## Fragment span definition
 ///
