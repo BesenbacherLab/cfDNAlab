@@ -3,6 +3,8 @@
 mod fixtures;
 
 use anyhow::Result;
+#[cfg(feature = "cli")]
+use anyhow::{Context, bail};
 #[cfg(feature = "cmd_bam_to_bam")]
 use cfdnalab::commands::bam_to_bam::{
     bam_to_bam::run_inner as run_bam_to_bam, config::BamToBamConfig,
@@ -22,8 +24,8 @@ use cfdnalab::shared::{
 use fixtures::{
     FragmentSpec, ReadSpec, bam_from_specs, bam_from_specs_strict_identity,
     build_real_neutral_gc_package, build_real_neutral_gc_package_for_range,
-    build_real_non_neutral_gc_package, complex_bam_fixture, late_origin_gc_reference_sequence,
-    simple_reference_twobit, twobit_from_sequences, write_bed, write_two_bin_gc_package,
+    build_real_non_neutral_gc_package, late_origin_gc_reference_sequence, simple_reference_twobit,
+    twobit_from_sequences, write_bed, write_two_bin_gc_package,
 };
 use ndarray::Array3;
 use ndarray::array;
@@ -31,7 +33,13 @@ use ndarray_npy::read_npy;
 use rust_htslib::bam::record::Aux;
 use rust_htslib::bam::{self, Read, Reader};
 use std::collections::HashMap;
+#[cfg(feature = "cli")]
+use std::ffi::OsStr;
+#[cfg(feature = "cli")]
+use std::path::Path;
 use std::path::PathBuf;
+#[cfg(feature = "cli")]
+use std::process::Command;
 use tempfile::TempDir;
 
 const MIDPOINT_F32_TOL: f32 = 1e-5;
@@ -61,6 +69,16 @@ fn paired_fragment_on_tid(
     fragment_len: i64,
     read_len: i64,
 ) -> FragmentSpec {
+    paired_fragment_on_tid_with_mapq(tid, start, fragment_len, read_len, 60)
+}
+
+fn paired_fragment_on_tid_with_mapq(
+    tid: usize,
+    start: i64,
+    fragment_len: i64,
+    read_len: i64,
+    mapq: u8,
+) -> FragmentSpec {
     const FLAG_FIRST_MATE: u16 = 0x40;
     const FLAG_SECOND_MATE: u16 = 0x80;
     const FLAG_PROPER_PAIR: u16 = 0x2;
@@ -76,7 +94,7 @@ fn paired_fragment_on_tid(
             seq: vec![b'A'; read_len as usize],
             qual: 40,
             is_reverse: false,
-            mapq: 60,
+            mapq,
             flags: FLAG_FIRST_MATE | FLAG_MATE_REVERSE | FLAG_PROPER_PAIR,
             mate_tid: Some(tid),
             mate_pos: Some(reverse_start),
@@ -89,7 +107,7 @@ fn paired_fragment_on_tid(
             seq: vec![b'T'; read_len as usize],
             qual: 40,
             is_reverse: true,
-            mapq: 60,
+            mapq,
             flags: FLAG_SECOND_MATE | FLAG_PROPER_PAIR,
             mate_tid: Some(tid),
             mate_pos: Some(start),
@@ -198,6 +216,195 @@ fn read_group_index_map(path: &std::path::Path) -> Result<HashMap<String, usize>
         out.insert(name, idx);
     }
     Ok(out)
+}
+
+#[derive(Debug)]
+struct MidpointsAxisContractFixture {
+    _interval_dir: TempDir,
+    bam: fixtures::BamFixture,
+    intervals_path: PathBuf,
+}
+
+fn midpoint_axis_contract_fixture() -> Result<MidpointsAxisContractFixture> {
+    let high_tile_offset = 1_000_000_i64;
+    let bam = bam_from_specs(
+        vec![
+            ("chr1".to_string(), 1_100_000),
+            ("chr2".to_string(), 1_100_000),
+        ],
+        vec![
+            // Positive: chr1 groupA, length bin [20,60), midpoint 50, position 10.
+            paired_fragment_on_tid(0, 40, 21, 10),
+            // Positive: chr1 groupA, length bin [60,120), midpoint 1,000,205, position 25.
+            paired_fragment_on_tid(0, high_tile_offset + 168, 75, 20),
+            // Positive: chr2 groupB, length bin [20,60), midpoint 45, position 25.
+            paired_fragment_on_tid(1, 35, 21, 10),
+            // Positive: chr2 groupB, length bin [60,120), midpoint 1,000,080, position 20.
+            paired_fragment_on_tid(1, high_tile_offset + 43, 75, 20),
+            // Positive: chr1 groupC, length bin [20,60), midpoint 310, position 10.
+            paired_fragment_on_tid(0, 300, 21, 10),
+            // Positive: chr2 groupC, length bin [20,60), midpoint 310, position 10.
+            paired_fragment_on_tid(1, 300, 21, 10),
+            // Negative: midpoint sits inside a groupA window, but length 19 is below [20,60).
+            paired_fragment_on_tid(0, 56, 19, 10),
+            // Negative: midpoint sits inside a groupB window, but length 120 is the final
+            // exclusive edge of [60,120).
+            paired_fragment_on_tid(1, high_tile_offset + 20, 120, 20),
+            // Negative: midpoint sits inside a groupA window, but MAPQ is below the configured
+            // threshold.
+            paired_fragment_on_tid_with_mapq(0, high_tile_offset + 180, 21, 10, 20),
+            // Negative: accepted length and MAPQ, but the midpoint does not overlap any BED row.
+            paired_fragment_on_tid(1, 500_000, 21, 10),
+        ],
+        Vec::new(),
+        "midpoints_axis_contract",
+    )?;
+
+    let interval_dir = TempDir::new()?;
+    let intervals_path = interval_dir.path().join("windows.bed");
+    write_bed(
+        &intervals_path,
+        &[
+            ("chr1", 40, 80, "groupA"),
+            ("chr1", 300, 340, "groupC"),
+            ("chr1", 1_000_180, 1_000_220, "groupA"),
+            ("chr2", 20, 60, "groupB"),
+            ("chr2", 300, 340, "groupC"),
+            ("chr2", 1_000_060, 1_000_100, "groupB"),
+        ],
+    )?;
+
+    Ok(MidpointsAxisContractFixture {
+        _interval_dir: interval_dir,
+        bam,
+        intervals_path,
+    })
+}
+
+fn expected_midpoint_axis_contract_counts() -> Array3<f32> {
+    let mut expected = Array3::<f32>::zeros((3, 2, 40));
+    expected[[0, 0, 10]] = 1.0;
+    expected[[0, 1, 25]] = 1.0;
+    expected[[1, 0, 10]] = 2.0;
+    expected[[2, 0, 25]] = 1.0;
+    expected[[2, 1, 20]] = 1.0;
+    expected
+}
+
+fn midpoint_axis_contract_config(
+    fixture: &MidpointsAxisContractFixture,
+    output_dir: &std::path::Path,
+    n_threads: usize,
+    output_prefix: &str,
+) -> MidpointsConfig {
+    let mut config = MidpointsConfig::new(
+        IOCArgs {
+            bam: fixture.bam.bam.clone(),
+            output_dir: output_dir.to_path_buf(),
+            n_threads,
+        },
+        base_chromosomes(&["chr1", "chr2"]),
+        fixture.intervals_path.clone(),
+    );
+    config.set_output_prefix(output_prefix);
+    config.set_length_bins(vec![20, 60, 120]);
+    config.set_tile_size(1_000_000);
+    config.set_min_mapq(30);
+    config.set_require_proper_pair(false);
+    config.set_scale_genome(ScaleGenomeArgs::default());
+    config
+}
+
+#[cfg(feature = "cli")]
+fn binary_name(base_name: &str) -> String {
+    if cfg!(windows) {
+        format!("{base_name}.exe")
+    } else {
+        base_name.to_string()
+    }
+}
+
+#[cfg(feature = "cli")]
+fn cfdna_bin_path() -> Result<PathBuf> {
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_cfdna") {
+        return Ok(PathBuf::from(path));
+    }
+
+    let current_exe = std::env::current_exe().context("failed to read current test binary path")?;
+    let deps_dir = current_exe
+        .parent()
+        .context("failed to derive deps directory from current test binary path")?;
+    let target_dir = deps_dir
+        .parent()
+        .context("failed to derive target directory from deps path")?;
+
+    let direct_path = target_dir.join(binary_name("cfdna"));
+    if direct_path.is_file() {
+        return Ok(direct_path);
+    }
+
+    let mut hashed_candidates = Vec::new();
+    for entry in std::fs::read_dir(deps_dir).with_context(|| {
+        format!(
+            "failed to list candidate binaries in {}",
+            deps_dir.display()
+        )
+    })? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let file_name = match path.file_name().and_then(OsStr::to_str) {
+            Some(name) => name,
+            None => continue,
+        };
+        let extension = path.extension().and_then(OsStr::to_str);
+        let looks_like_hashed_binary = file_name.starts_with("cfdna-");
+        let is_makefile_dep = extension == Some("d");
+        if looks_like_hashed_binary && !is_makefile_dep {
+            hashed_candidates.push(path);
+        }
+    }
+    hashed_candidates.sort_by_key(|path| {
+        std::fs::metadata(path)
+            .and_then(|meta| meta.modified())
+            .ok()
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+    });
+    if let Some(path) = hashed_candidates.into_iter().last() {
+        return Ok(path);
+    }
+
+    bail!(
+        "Could not locate cfdna binary. Tried CARGO_BIN_EXE_cfdna, {}, and hashed binaries under {}",
+        direct_path.display(),
+        deps_dir.display()
+    );
+}
+
+#[cfg(feature = "cli")]
+fn command_output(command_name: &str, args: &[&str]) -> Result<std::process::Output> {
+    Command::new(cfdna_bin_path()?)
+        .arg(command_name)
+        .args(args)
+        .output()
+        .with_context(|| format!("failed running cfdna {command_name} {}", args.join(" ")))
+}
+
+#[cfg(feature = "cli")]
+fn assert_success_with_logs(output: &std::process::Output, command_desc: &str) {
+    let stdout_text = String::from_utf8_lossy(&output.stdout);
+    let stderr_text = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "Expected {command_desc} to succeed.\nstdout:\n{stdout_text}\nstderr:\n{stderr_text}"
+    );
+}
+
+#[cfg(feature = "cli")]
+fn path_text(path: &Path) -> String {
+    path.to_string_lossy().to_string()
 }
 
 fn write_minimal_gc_package_excluding_length_61(
@@ -768,47 +975,130 @@ fn length_bin_start_end_list_format_is_rejected() {
 
 #[test]
 fn midpoint_profiles_written_with_group_index() -> Result<()> {
-    let bam = complex_bam_fixture()?;
+    // Arrange:
+    // This fixture pins the public midpoint profile contract, not the current implementation
+    // details. Positive fragments cover both length bins, both chromosomes, and one group whose
+    // windows are split across chromosomes. The negative fragments prove that plausible
+    // off-contract records do not leak into the output.
+    let fixture = midpoint_axis_contract_fixture()?;
     let temp = TempDir::new()?;
-    let bed_path = temp.path().join("windows.bed");
-    write_bed(
-        &bed_path,
-        &[
-            ("chr1", 40, 80, "groupA"),
-            ("chr1", 180, 220, "groupA"),
-            ("chr2", 20, 60, "groupB"),
-            ("chr2", 60, 100, "groupB"),
-        ],
-    )?;
+    let cfg = midpoint_axis_contract_config(&fixture, temp.path(), 2, "sites");
 
-    let mut cfg = MidpointsConfig::new(
-        IOCArgs {
-            bam: bam.bam.clone(),
-            output_dir: temp.path().to_path_buf(),
-            n_threads: 2,
-        },
-        base_chromosomes(&["chr1", "chr2"]),
-        bed_path.clone(),
-    );
-    cfg.set_output_prefix("sites");
-    cfg.set_length_bins(vec![20, 60, 120]);
-    cfg.set_tile_size(1_000);
-    cfg.set_min_mapq(0);
-    cfg.set_require_proper_pair(false);
-    cfg.set_scale_genome(ScaleGenomeArgs::default());
-
+    // Act
     run(&cfg)?;
 
+    // Assert
     let counts_path = temp.path().join("sites.midpoint_profiles.npy");
     assert!(counts_path.exists());
     let arr: Array3<f32> = read_npy(&counts_path)?;
-    assert_eq!(arr.shape(), &[2, 2, 40]); // groups, length bins, window size
-    assert!(arr.sum() > 0.0);
+    let expected = expected_midpoint_axis_contract_counts();
+    assert_eq!(arr.shape(), &[3, 2, 40]);
+    assert_eq!(
+        arr, expected,
+        "midpoint profile axes must be (group, length_bin, position), with excluded fragments contributing no mass"
+    );
+    assert_eq!(arr.sum(), 6.0);
 
     let map_path = temp.path().join("sites.group_index.tsv");
-    let map_text = std::fs::read_to_string(&map_path)?;
-    assert!(map_text.contains("groupA"));
-    assert!(map_text.contains("groupB"));
+    let group_to_idx = read_group_index_map(&map_path)?;
+    assert_eq!(
+        group_to_idx,
+        HashMap::from([
+            ("groupA".to_string(), 0usize),
+            ("groupC".to_string(), 1usize),
+            ("groupB".to_string(), 2usize)
+        ])
+    );
+
+    Ok(())
+}
+
+#[cfg(feature = "cli")]
+#[test]
+fn midpoint_profiles_are_identical_across_thread_counts() -> Result<()> {
+    // Arrange:
+    // Run the command in separate processes so each invocation owns a fresh Rayon global pool.
+    // The intended user contract is deterministic output, independent of how tile work is
+    // scheduled across workers. CI runners can expose only one core, so only request thread counts
+    // that the current machine can actually run.
+    let fixture = midpoint_axis_contract_fixture()?;
+    let mut observed_outputs = Vec::new();
+    let bam_path = path_text(&fixture.bam.bam);
+    let intervals_path = path_text(&fixture.intervals_path);
+    let available_parallelism = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1);
+    let thread_counts: Vec<usize> = [1_usize, 2, 4, 8]
+        .into_iter()
+        .filter(|n_threads| *n_threads <= available_parallelism)
+        .collect();
+    if thread_counts.len() < 2 {
+        return Ok(());
+    }
+
+    // Act
+    for n_threads in thread_counts {
+        let output_dir = TempDir::new()?;
+        let output_dir_text = path_text(output_dir.path());
+        let output_prefix = format!("sites_threads_{n_threads}");
+        let n_threads_text = n_threads.to_string();
+        let output = command_output(
+            "midpoints",
+            &[
+                "--bam",
+                bam_path.as_str(),
+                "--output-dir",
+                output_dir_text.as_str(),
+                "--chromosomes",
+                "chr1",
+                "chr2",
+                "--n-threads",
+                n_threads_text.as_str(),
+                "--intervals",
+                intervals_path.as_str(),
+                "--min-mapq",
+                "30",
+                "--length-bins",
+                "20",
+                "60",
+                "120",
+                "--tile-size",
+                "1000000",
+                "--output-prefix",
+                output_prefix.as_str(),
+            ],
+        )?;
+        assert_success_with_logs(
+            &output,
+            &format!("cfdna midpoints with {n_threads} thread(s)"),
+        );
+
+        let arr: Array3<f32> = read_npy(
+            output_dir
+                .path()
+                .join(format!("{output_prefix}.midpoint_profiles.npy")),
+        )?;
+        let group_index_text = std::fs::read_to_string(
+            output_dir
+                .path()
+                .join(format!("{output_prefix}.group_index.tsv")),
+        )?;
+        observed_outputs.push((n_threads, output_dir, arr, group_index_text));
+    }
+
+    // Assert
+    let expected = expected_midpoint_axis_contract_counts();
+    let reference_group_index_text = observed_outputs[0].3.clone();
+    for (n_threads, _output_dir, arr, group_index_text) in observed_outputs {
+        assert_eq!(
+            arr, expected,
+            "{n_threads} thread(s) should produce the hand-derived midpoint profile"
+        );
+        assert_eq!(
+            group_index_text, reference_group_index_text,
+            "{n_threads} thread(s) should produce the same group index artifact"
+        );
+    }
 
     Ok(())
 }

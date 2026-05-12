@@ -238,6 +238,18 @@ mod tests_compute_window_scaling {
         ScalingBin::new(s, e, w).unwrap()
     }
 
+    #[test]
+    fn scaling_bin_constructor_rejects_non_finite_weight() {
+        let err =
+            ScalingBin::new(0, 10, f32::NAN).expect_err("non-finite scaling weights should fail");
+
+        assert!(
+            err.to_string()
+                .contains("scaling_factor must be finite and >= 0"),
+            "unexpected error: {err}"
+        );
+    }
+
     fn make_two_window_fragment_overlaps() -> anyhow::Result<OverlappingWindows> {
         // Query/fragment interval is [20,81), length 61.
         //
@@ -596,6 +608,105 @@ mod tests_compute_window_scaling {
             1e-12,
             "right full-fragment overlap fraction",
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn compute_per_window_scaling_over_fragment_handles_boundary_and_multibin_edge_cases()
+    -> anyhow::Result<()> {
+        struct Case {
+            name: &'static str,
+            fragment: Interval<u64>,
+            scaling_chr: Vec<ScalingBin>,
+            expected_weight: f64,
+        }
+
+        let cases = vec![
+            Case {
+                name: "fragment starts in a leading zero-factor bin",
+                fragment: Interval::new(10, 60)?,
+                scaling_chr: vec![sb(0, 20, 0.0), sb(20, 40, 2.0), sb(40, 100, 2.0)],
+                expected_weight: (10.0 * 0.0 + 20.0 * 2.0 + 20.0 * 2.0) / 50.0,
+            },
+            Case {
+                name: "fragment ends in a trailing zero-factor bin",
+                fragment: Interval::new(40, 90)?,
+                scaling_chr: vec![sb(0, 60, 2.0), sb(60, 80, 2.0), sb(80, 100, 0.0)],
+                expected_weight: (20.0 * 2.0 + 20.0 * 2.0 + 10.0 * 0.0) / 50.0,
+            },
+            Case {
+                name: "fragment lies fully inside one scaling bin",
+                fragment: Interval::new(25, 75)?,
+                scaling_chr: vec![sb(0, 100, 3.0)],
+                expected_weight: 3.0,
+            },
+            Case {
+                name: "fragment spans three or more distinct scaling bins",
+                fragment: Interval::new(10, 90)?,
+                scaling_chr: vec![
+                    sb(0, 20, 1.0),
+                    sb(20, 35, 2.0),
+                    sb(35, 60, 4.0),
+                    sb(60, 100, 8.0),
+                ],
+                expected_weight: (10.0 * 1.0 + 15.0 * 2.0 + 25.0 * 4.0 + 30.0 * 8.0) / 80.0,
+            },
+            Case {
+                name: "fragment crosses a zero-factor bin between non-zero bins",
+                fragment: Interval::new(10, 90)?,
+                scaling_chr: vec![
+                    sb(0, 20, 2.0),
+                    sb(20, 30, 0.0),
+                    sb(30, 60, 4.0),
+                    sb(60, 100, 4.0),
+                ],
+                expected_weight: (10.0 * 2.0 + 10.0 * 0.0 + 30.0 * 4.0 + 30.0 * 4.0) / 80.0,
+            },
+        ];
+
+        for case in cases {
+            let mut count_overlaps = OverlappingWindows::new(case.fragment);
+            for (window_idx, window_interval) in
+                [(0, Interval::new(0, 50)?), (1, Interval::new(50, 100)?)]
+            {
+                let overlap_start = case.fragment.start().max(window_interval.start());
+                let overlap_end = case.fragment.end().min(window_interval.end());
+                if overlap_start < overlap_end {
+                    let overlap_len = (overlap_end - overlap_start) as f64;
+                    let fragment_len = (case.fragment.end() - case.fragment.start()) as f64;
+                    count_overlaps.windows.push(OverlappingWindow::new(
+                        window_idx,
+                        window_interval,
+                        overlap_len / fragment_len,
+                    )?);
+                }
+            }
+
+            let scaling_bin_indices: Vec<usize> = (0..case.scaling_chr.len()).collect();
+            let out = compute_per_window_scaling_over_fragment(
+                case.fragment,
+                &count_overlaps,
+                &scaling_bin_indices,
+                &case.scaling_chr,
+            )?;
+
+            assert_eq!(
+                out.len(),
+                2,
+                "{}: both count windows should overlap the fragment",
+                case.name
+            );
+            for row in out {
+                assert_f64_close(row.scaling_weight, case.expected_weight, 1e-12, case.name);
+                assert_f64_close(row.overlap_fraction_to_count, 1.0, 1e-12, case.name);
+                assert_eq!(
+                    row.scaling_interval, case.fragment,
+                    "{}: scaling interval should remain the full fragment",
+                    case.name
+                );
+            }
+        }
 
         Ok(())
     }

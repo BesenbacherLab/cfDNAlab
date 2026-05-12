@@ -498,6 +498,11 @@ pub fn build_tiles(
     halo_bp: u32,
     align_bp: Option<u64>,
 ) -> anyhow::Result<(Vec<Tile>, bool)> {
+    ensure!(
+        tile_bp > 0,
+        "tile size must be greater than zero when building tiles"
+    );
+
     let mut tiles = Vec::new();
 
     // Decide the effective core size in bases (possibly aligned)

@@ -219,6 +219,12 @@ impl FinalOutputFiles {
         Ok(())
     }
 
+    /// Move recorded temp files to their final paths one by one.
+    ///
+    /// Each recorded artifact has already been fully written in the temp directory, so callers do
+    /// not expose half-written individual files. This helper is still best-effort across multiple
+    /// artifacts: if a later rename fails, earlier files may already be visible at their final
+    /// paths and the error is returned to the caller.
     pub(crate) fn move_into_place(self) -> Result<()> {
         for (temp_path, final_path) in self.paths {
             move_output_file_into_place(&temp_path, &final_path)?;
