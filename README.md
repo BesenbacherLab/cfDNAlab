@@ -84,7 +84,7 @@ Extract fragmentomics features:
   alt="cfdna fcoverage"
   width="185"
 /></dt>
-  <dd>Count <i>fragment</i> coverage per position or aggregated in windows with `cfdna fcoverage`.</dd>
+  <dd>Count <i>fragment</i> coverage per position or aggregated in windows with <code>cfdna fcoverage</code>.</dd>
   
   <hr>
 
@@ -93,7 +93,7 @@ Extract fragmentomics features:
   alt="cfdna midpoints"
   width="185"
 /></dt>
-  <dd>Count fragment <i>midpoint</i> coverage in fixed-size intervals, collapsed by groups across the genome with `cfdna midpoints`.<br>E.g., transcription factor binding sites, aggregated per transcription factor.<br>Fast alternative to <a href=https://github.com/adoebley/Griffin>Griffin</a> when combined with <code>cfdna gc-bias</code>.</dd>
+  <dd>Count fragment <i>midpoint</i> coverage in fixed-size intervals, collapsed by groups across the genome with <code>cfdna midpoints</code>.<br>E.g., transcription factor binding sites, aggregated per transcription factor.<br>Fast alternative to <a href=https://github.com/adoebley/Griffin>Griffin</a> when combined with <code>cfdna gc-bias</code>.</dd>
   
   <hr>
 
@@ -102,7 +102,7 @@ Extract fragmentomics features:
   alt="cfdna ends"
   width="140"
 /></dt>
-  <dd>Count fragment end- and breakpoint-motifs with `cfdna ends`.</dd>
+  <dd>Count fragment end- and breakpoint-motifs with <code>cfdna ends</code>.</dd>
   
   <hr>
   
@@ -111,7 +111,7 @@ Extract fragmentomics features:
   alt="cfdna lengths"
   width="160"
 /></dt>
-  <dd>Count fragment lengths with `cfdna lengths`.<br>In paired-end, the length is defined as <code>end(reverse) - start(forward)</code> for inwardly directed pairs only.</dd>
+  <dd>Count fragment lengths with <code>cfdna lengths</code>.<br>In paired-end, the length is defined as <code>end(reverse) - start(forward)</code> for inwardly directed pairs only.</dd>
   <hr>
 </dl>
 
@@ -130,7 +130,7 @@ Precompute GC-bias correction and genomic smoothing scaling factors:
   alt="cfdna ref-gc-bias"
   width="185"
 /></dt>
-  <dd>Calculate GC-bias with `cfdna gc-bias` for correcting a sample in the feature extraction commands.</dd>
+  <dd>Calculate GC-bias with <code>cfdna gc-bias</code> for correcting a sample in the feature extraction commands.</dd>
 
   <hr>
   <dt><img
@@ -138,7 +138,7 @@ Precompute GC-bias correction and genomic smoothing scaling factors:
   alt="cfdna fragment-count-weights"
   width="295"
 /></dt>
-  <dd>Calculate fragment count-based scaling factors with `cfdna fragment-count-weights` for normalizing/smoothing fragment counts across the genome.</dd>
+  <dd>Calculate fragment count-based scaling factors with <code>cfdna fragment-count-weights</code> for normalizing/smoothing fragment counts across the genome.</dd>
 
   <hr>
 
@@ -147,7 +147,7 @@ Precompute GC-bias correction and genomic smoothing scaling factors:
   alt="cfdna coverage-weights"
   width="245"
 /></dt>
-  <dd>Calculate fragment coverage-based scaling factors with `cfdna coverage-weights` for normalizing/smoothing coverage across the genome.</dd>
+  <dd>Calculate fragment coverage-based scaling factors with <code>cfdna coverage-weights</code> for normalizing/smoothing coverage across the genome.</dd>
   <hr>
 </dl>
 
@@ -162,7 +162,7 @@ Convert BAM files to frag files, frag files to BAM files, and BAM files to tagge
   alt="cfdna bam-to-bam"
   width="200"
 /></dt>
-  <dd>Apply our filters and/or write GC correction and coverage weight tags to a BAM file with `cfdna bam-to-bam`.</dd>
+  <dd>Apply our filters and/or write GC correction and coverage weight tags to a BAM file with <code>cfdna bam-to-bam</code>.</dd>
 
   <hr>
 
@@ -171,7 +171,7 @@ Convert BAM files to frag files, frag files to BAM files, and BAM files to tagge
   alt="cfdna bam-to-frag"
   width="203"
 /></dt>
-  <dd>Write fragment coordinates to a "frag" file (bed-like tsv file) with `cfdna bam-to-frag`.</dd>
+  <dd>Write fragment coordinates to a "frag" file (bed-like tsv file) with <code>cfdna bam-to-frag</code>.</dd>
 
   <hr>
 
@@ -180,7 +180,7 @@ Convert BAM files to frag files, frag files to BAM files, and BAM files to tagge
   alt="cfdna frag-to-bam"
   width="203"
 /></dt>
-  <dd>Convert fragment coordinates to a single-read unpaired BAM file with `cfdna frag-to-bam`.</dd>
+  <dd>Convert fragment coordinates to a single-read unpaired BAM file with <code>cfdna frag-to-bam</code>.</dd>
   <hr>
 </dl>
 
@@ -541,9 +541,9 @@ Choose any relevant options below. See `--help` for more options.
   --by-grouped-bed <path>/<some_grouped_intervals>.bed \
 
   # Count in fragment length bins (last edge is exclusive)
-  # Default is one column per length from 30 through 1000
+  # Default is one column per length from 30 through 999
   # 1) Bin lengths every 10bp
-  --length-bins 30:1001:10 \
+  --length-bins 30:1000:10 \
   # 2) Specific bin edges, here short/long bins
   --length-bins 100 151 221 \
 
