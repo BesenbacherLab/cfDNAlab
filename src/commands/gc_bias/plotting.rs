@@ -5,11 +5,15 @@ use crate::shared::io::dot_join;
 use crate::shared::plotters::{
     heatmap::{HeatmapFormat, HeatmapUpsample, write_heatmap_with_histograms},
     histogram::HistogramSpec,
-    lineplot::write_line_plot_png,
+    lineplot::{LinePlotSeries, write_line_plot_png, write_multi_line_plot_png},
 };
 use anyhow::{Context, Result};
 use ndarray::{Array1, Array2, Axis};
 use std::path::{Path, PathBuf};
+
+const SELECTED_LENGTH_BIAS_MIN_BP: usize = 80;
+const SELECTED_LENGTH_BIAS_MAX_BP: usize = 220;
+const SELECTED_LENGTH_BIAS_STEP_BP: usize = 20;
 
 /// Plot GC bias diagnostics: average bias curves and heatmaps.
 ///
@@ -174,6 +178,26 @@ pub fn plot_gc_bias(
     .with_context(|| format!("writing GC bias plot to {}", plot_path_weighted.display()))?;
     written_paths.push(plot_path_weighted);
 
+    let selected_lengths_plot_path = output_dir.join(dot_join(&[
+        prefix,
+        "gc_bias_by_selected_lengths_80_220bp.png",
+    ]));
+    if write_selected_length_bias_plot(
+        &selected_lengths_plot_path,
+        &x_values,
+        &bias_matrix,
+        length_bins,
+        reference_metadata,
+    )
+    .with_context(|| {
+        format!(
+            "writing selected-length GC bias plot to {}",
+            selected_lengths_plot_path.display()
+        )
+    })? {
+        written_paths.push(selected_lengths_plot_path);
+    }
+
     let hm_width: u32 = 1000;
     let hm_height: u32 = 700;
     let scaling_factor = (hm_height as f32 / bias_matrix.nrows() as f32)
@@ -240,4 +264,75 @@ pub fn plot_gc_bias(
     written_paths.push(heatmap_path);
 
     Ok(written_paths)
+}
+
+fn write_selected_length_bias_plot(
+    output_path: &Path,
+    gc_bin_midpoints_pct: &[f64],
+    bias_matrix: &Array2<f64>,
+    length_bins: &BinnedAxis,
+    reference_metadata: &ReferenceGCMetadata,
+) -> Result<bool> {
+    let selected_lengths = selected_length_biases(bias_matrix, length_bins, reference_metadata);
+    if selected_lengths.is_empty() {
+        return Ok(false);
+    }
+
+    let gc_content: Vec<f64> = gc_bin_midpoints_pct
+        .iter()
+        .map(|gc_percent| gc_percent / 100.0)
+        .collect();
+    let labels: Vec<String> = selected_lengths
+        .iter()
+        .map(|(fragment_length, _)| format!("{fragment_length} bp"))
+        .collect();
+    let series: Vec<LinePlotSeries<'_>> = selected_lengths
+        .iter()
+        .zip(labels.iter())
+        .map(|((_, bias_values), label)| LinePlotSeries {
+            label,
+            x_values: &gc_content,
+            y_values: bias_values,
+        })
+        .collect();
+
+    write_multi_line_plot_png(
+        output_path,
+        "GC bias by selected fragment length",
+        "GC content",
+        "GC bias",
+        &series,
+        1600,
+        1000,
+    )?;
+    Ok(true)
+}
+
+fn selected_length_biases(
+    bias_matrix: &Array2<f64>,
+    length_bins: &BinnedAxis,
+    reference_metadata: &ReferenceGCMetadata,
+) -> Vec<(usize, Vec<f64>)> {
+    let mut selected_lengths = Vec::new();
+    for fragment_length in (SELECTED_LENGTH_BIAS_MIN_BP..=SELECTED_LENGTH_BIAS_MAX_BP)
+        .step_by(SELECTED_LENGTH_BIAS_STEP_BP)
+    {
+        if fragment_length < reference_metadata.min_fragment_length
+            || fragment_length > reference_metadata.max_fragment_length
+        {
+            continue;
+        }
+
+        let length_index = fragment_length - reference_metadata.min_fragment_length;
+        let Some(&length_bin_index) = length_bins.index_to_bin.get(&length_index) else {
+            continue;
+        };
+        if length_bin_index >= bias_matrix.nrows() {
+            continue;
+        }
+
+        selected_lengths.push((fragment_length, bias_matrix.row(length_bin_index).to_vec()));
+    }
+
+    selected_lengths
 }
