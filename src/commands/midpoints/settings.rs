@@ -117,7 +117,7 @@ pub(super) fn write_midpoint_profile_settings_json(
 fn smoothing_settings(profile_layout: ProfileLayout) -> SmoothingSettings {
     match profile_layout.smoothing_window {
         None => SmoothingSettings {
-            method: "raw",
+            method: "none",
             polynomial_order: None,
             window_bp: None,
             computation_flank_bp: profile_layout.smoothing_flank,

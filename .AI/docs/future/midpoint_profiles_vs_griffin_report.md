@@ -7,8 +7,9 @@ Status: future analysis, not a finalized user-facing specification.
 This report compares the planned midpoint-profile command with Griffin's nucleosome
 profiling workflow. It assumes the next midpoint-profile work adds strand-aware
 orientation for site-centered inputs, including TSS sites. It also assumes the
-smoothing documentation clearly states that `savgol=165` is a nucleosome-scale
-preset, not a universal profile-smoothing default.
+smoothing documentation clearly states that default `savgol=165` is a
+nucleosome-scale smoother, not a guarantee that the same scale is optimal for
+every interval class.
 
 The goal is not to make a Griffin clone. The goal is to keep the midpoint command a
 general profile generator while making it possible to explain which settings are
@@ -56,18 +57,20 @@ For our command, a 165 bp order-3 Savitzky-Golay preset remains the natural
 Griffin-like nucleosome-scale setting. There is no reason to change that number
 just because we smooth at base resolution. It should still not be treated as
 universally optimal for TFBS, TSS, very short windows, or non-nucleosomal fragment
-classes. The clean policy is:
+classes. The current policy is:
 
-- raw profiles remain the default output
+- `savgol=165` is the default smoother for midpoint profiles
 
-- `--smooth savgol` is a documented nucleosome-scale preset
+- `--smoothing none` writes unsmoothed profiles when users need raw signal
 
-- `--smooth savgol=<odd_bp>` lets users tune the biological scale
+- `--smoothing savgol=<odd_bp>` lets users tune the biological scale
 
 - smoothing happens at full resolution before any final binning
 
-This makes the default conservative. It avoids irreversible smoothing unless the
-user asks for it, while keeping a Griffin-familiar smoothing scale available.
+This makes the common visual output cleaner while keeping raw signal explicit
+and available. The important difference from Griffin is not the nominal physical
+support. It is that our command smooths at base resolution and only bins at the
+end.
 
 ## Where Our Approach Is Better For A General Tool
 
@@ -91,15 +94,15 @@ For a general tool, base resolution until the end is the better default. It avoi
 making the smoothing result depend on an early binning choice, and it lets users
 choose final binning as an output-size or downstream-analysis decision.
 
-### Raw By Default
+### Smoothed By Default, Raw When Requested
 
-Griffin's final profiles are smoothed by default. Our command writes raw profiles
-unless smoothing is requested.
+Griffin's final profiles are smoothed by default. Our command also smooths by
+default, using the same nominal 165 bp physical scale, but `--smoothing none`
+keeps unsmoothed output available as an explicit command choice.
 
-Raw by default is better for a reusable profile generator. Smoothing is a modeling
-choice, not a counting requirement. Users can reproduce smoothed outputs from raw
-profiles, but they cannot reconstruct raw high-frequency signal from a smoothed
-profile.
+This is a different tradeoff than the earlier raw-default plan. It favors the
+profile most users want to inspect, while preserving a clear escape hatch for
+downstream methods that should own their own smoothing.
 
 ### Smoothing Flanks Instead Of Edge Modes
 
@@ -269,9 +272,10 @@ edge-padding can preprocess intervals or use a future explicit mode.
 - Add strand-aware interval orientation that works naturally for TSS and other
   directional sites.
 
-- Document that `savgol=165` is the Griffin-like nucleosome-scale preset. Any
-  future tuning should be driven by biology and interval class, not by a mistaken
-  idea that Griffin's 165 bp setting used a different physical support.
+- Document that default `savgol=165` is the Griffin-like nucleosome-scale
+  smoother. Any future tuning should be driven by biology and interval class, not
+  by a mistaken idea that Griffin's 165 bp setting used a different physical
+  support.
 
 - Document a Griffin-like recipe:
 
@@ -279,7 +283,8 @@ edge-padding can preprocess intervals or use a future explicit mode.
 
   - use MAPQ 20 if reproducing Griffin defaults
 
-  - use `--smooth savgol` for a Griffin-familiar smoothing scale
+  - use the default smoothing, or spell it out as `--smoothing savgol=165`, for a
+    Griffin-familiar smoothing scale
 
   - use `--bin-size 15` when comparing to Griffin-style output tables
 

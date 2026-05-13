@@ -338,6 +338,7 @@ fn midpoint_axis_contract_config(
     );
     config.set_output_prefix(output_prefix);
     config.set_length_bins(vec![20, 60, 120]);
+    config.set_smoothing(MidpointSmoothing::None);
     config.set_tile_size(1_000_000);
     config.set_min_mapq(30);
     config.set_require_proper_pair(false);
@@ -563,6 +564,7 @@ fn midpoints_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_
         );
         cfg.set_output_prefix(prefix);
         cfg.set_length_bins(vec![61, 62]);
+        cfg.set_smoothing(MidpointSmoothing::None);
         cfg.set_require_proper_pair(false);
         cfg
     };
@@ -638,6 +640,7 @@ fn unpaired_single_read_matches_paired_midpoint_profile_for_same_span() -> Resul
         );
         cfg.set_output_prefix("sites");
         cfg.set_length_bins(vec![61, 62]);
+        cfg.set_smoothing(MidpointSmoothing::None);
         cfg.set_tile_size(1_000);
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
@@ -700,6 +703,7 @@ fn bed_sites_mixed_core_and_halo_rows_keep_only_the_core_midpoint_count_across_t
         );
         cfg.set_output_prefix("sites");
         cfg.set_length_bins(vec![11, 12]);
+        cfg.set_smoothing(MidpointSmoothing::None);
         cfg.set_tile_size(tile_size);
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
@@ -764,6 +768,7 @@ fn later_tile_site_keeps_midpoint_count_when_window_span_starts_after_zero() -> 
         );
         cfg.set_output_prefix("sites");
         cfg.set_length_bins(vec![11, 12]);
+        cfg.set_smoothing(MidpointSmoothing::None);
         cfg.set_tile_size(tile_size);
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
@@ -816,6 +821,7 @@ fn core_overlap_bed_site_is_kept_for_midpoints() -> Result<()> {
     );
     cfg.set_output_prefix("sites");
     cfg.set_length_bins(vec![11, 12]);
+    cfg.set_smoothing(MidpointSmoothing::None);
     cfg.set_tile_size(10);
     cfg.set_min_mapq(0);
     cfg.set_require_proper_pair(false);
@@ -866,6 +872,7 @@ fn even_length_midpoint_tie_counts_exactly_one_of_two_adjacent_edge_windows() ->
     );
     cfg.set_output_prefix("sites");
     cfg.set_length_bins(vec![10, 11]);
+    cfg.set_smoothing(MidpointSmoothing::None);
     cfg.set_tile_size(1_000);
     cfg.set_min_mapq(0);
     cfg.set_require_proper_pair(false);
@@ -929,6 +936,7 @@ fn blacklist_midpoint_filtering_checks_both_centers_for_even_fragments() -> Resu
         );
         cfg.set_output_prefix("sites");
         cfg.set_length_bins(vec![10, 11]);
+        cfg.set_smoothing(MidpointSmoothing::None);
         cfg.set_tile_size(1_000);
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
@@ -1019,6 +1027,7 @@ fn keep_blacklisted_intervals_keeps_sites_but_still_filters_fragments() -> Resul
     );
     cfg.set_output_prefix("sites");
     cfg.set_length_bins(vec![11, 12]);
+    cfg.set_smoothing(MidpointSmoothing::None);
     cfg.set_tile_size(1_000);
     cfg.set_min_mapq(0);
     cfg.set_require_proper_pair(false);
@@ -1071,6 +1080,7 @@ fn midpoint_prefilter_fails_clearly_when_blacklist_drops_all_intervals() -> Resu
     );
     cfg.set_output_prefix("sites");
     cfg.set_length_bins(vec![11, 12]);
+    cfg.set_smoothing(MidpointSmoothing::None);
     cfg.set_tile_size(1_000);
     cfg.set_min_mapq(0);
     cfg.set_require_proper_pair(false);
@@ -1286,6 +1296,7 @@ fn group_index_counts_eligible_intervals_after_prefilter() -> Result<()> {
     );
     cfg.set_output_prefix("sites");
     cfg.set_length_bins(vec![11, 12]);
+    cfg.set_smoothing(MidpointSmoothing::None);
     cfg.set_tile_size(1_000);
     cfg.set_min_mapq(0);
     cfg.set_require_proper_pair(false);
@@ -1368,6 +1379,8 @@ fn midpoint_profiles_are_identical_across_thread_counts() -> Result<()> {
                 "20",
                 "60",
                 "120",
+                "--smoothing",
+                "none",
                 "--tile-size",
                 "1000000",
                 "--output-prefix",
@@ -1463,6 +1476,7 @@ fn group_index_axis_matches_first_group_encounter_order_and_collapsed_counts() -
     );
     cfg.set_output_prefix("sites");
     cfg.set_length_bins(vec![61, 62]);
+    cfg.set_smoothing(MidpointSmoothing::None);
     cfg.set_tile_size(40);
     cfg.set_min_mapq(0);
     cfg.set_require_proper_pair(false);
@@ -1559,6 +1573,7 @@ fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_midpo
     );
     cfg.set_output_prefix("sites");
     cfg.set_length_bins(vec![61, 62]);
+    cfg.set_smoothing(MidpointSmoothing::None);
     cfg.set_tile_size(1_000);
     cfg.set_min_mapq(0);
     cfg.set_require_proper_pair(false);
@@ -1635,6 +1650,7 @@ fn gc_file_late_tile_site_uses_reference_coordinates_after_fetch_narrowing() -> 
     );
     cfg.set_output_prefix("sites");
     cfg.set_length_bins(vec![61, 62]);
+    cfg.set_smoothing(MidpointSmoothing::None);
     cfg.set_tile_size(1_000);
     cfg.set_min_mapq(0);
     cfg.set_require_proper_pair(false);
@@ -1763,6 +1779,7 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_midpoints_in_expected_direction
     );
     cfg.set_output_prefix("sites");
     cfg.set_length_bins(vec![61, 62]);
+    cfg.set_smoothing(MidpointSmoothing::None);
     cfg.set_tile_size(1_000);
     cfg.set_min_mapq(0);
     cfg.set_require_proper_pair(false);
@@ -1835,6 +1852,7 @@ fn midpoints_rejects_gc_package_when_length_bins_are_outside_supported_range() -
     );
     cfg.set_output_prefix("sites");
     cfg.set_length_bins(vec![61, 62]);
+    cfg.set_smoothing(MidpointSmoothing::None);
     cfg.set_tile_size(1_000);
     cfg.set_min_mapq(0);
     cfg.set_require_proper_pair(false);
@@ -1893,6 +1911,7 @@ fn midpoints_rejects_gc_package_with_schema_version_mismatch() -> Result<()> {
     );
     cfg.set_output_prefix("sites");
     cfg.set_length_bins(vec![60, 61]);
+    cfg.set_smoothing(MidpointSmoothing::None);
     cfg.set_tile_size(1_000);
     cfg.set_min_mapq(0);
     cfg.set_require_proper_pair(false);
@@ -1981,6 +2000,7 @@ fn coverage_weights_tsv_changes_midpoints_by_full_fragment_average_not_window_ov
     );
     midpoints_cfg.set_output_prefix("sites");
     midpoints_cfg.set_length_bins(vec![61, 62]);
+    midpoints_cfg.set_smoothing(MidpointSmoothing::None);
     midpoints_cfg.set_tile_size(1_000);
     midpoints_cfg.set_min_mapq(0);
     midpoints_cfg.set_require_proper_pair(false);
@@ -2136,6 +2156,7 @@ fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_midpo
     );
     midpoints_cfg.set_output_prefix("sites");
     midpoints_cfg.set_length_bins(vec![61, 62]);
+    midpoints_cfg.set_smoothing(MidpointSmoothing::None);
     midpoints_cfg.set_tile_size(1_000);
     midpoints_cfg.set_min_mapq(0);
     midpoints_cfg.set_require_proper_pair(false);
@@ -2204,6 +2225,7 @@ fn gc_tag_pair_average_sets_midpoint_profile_weight() -> Result<()> {
     );
     cfg.set_output_prefix("sites");
     cfg.set_length_bins(vec![61, 62]);
+    cfg.set_smoothing(MidpointSmoothing::None);
     cfg.set_tile_size(1_000);
     cfg.set_min_mapq(0);
     cfg.set_require_proper_pair(false);
@@ -2332,6 +2354,7 @@ fn gc_file_and_scaling_tsv_weights_multiply_in_midpoints() -> Result<()> {
     );
     cfg.set_output_prefix("sites");
     cfg.set_length_bins(vec![61, 62]);
+    cfg.set_smoothing(MidpointSmoothing::None);
     cfg.set_tile_size(1_000);
     cfg.set_min_mapq(0);
     cfg.set_require_proper_pair(false);
@@ -2440,6 +2463,7 @@ fn bam_to_bam_gc_file_output_drives_midpoints_gc_tag_same_as_original_gc_file() 
     );
     original_cfg.set_output_prefix("origsites");
     original_cfg.set_length_bins(vec![61, 62]);
+    original_cfg.set_smoothing(MidpointSmoothing::None);
     original_cfg.set_tile_size(1_000);
     original_cfg.set_min_mapq(0);
     original_cfg.set_require_proper_pair(false);
@@ -2468,6 +2492,7 @@ fn bam_to_bam_gc_file_output_drives_midpoints_gc_tag_same_as_original_gc_file() 
     );
     tagged_cfg.set_output_prefix("taggedsites");
     tagged_cfg.set_length_bins(vec![61, 62]);
+    tagged_cfg.set_smoothing(MidpointSmoothing::None);
     tagged_cfg.set_tile_size(1_000);
     tagged_cfg.set_min_mapq(0);
     tagged_cfg.set_require_proper_pair(false);
@@ -2527,6 +2552,7 @@ fn scaling_tsv_must_cover_requested_chromosome_end_in_midpoints() -> Result<()> 
     );
     cfg.set_output_prefix("sites");
     cfg.set_length_bins(vec![60, 61]);
+    cfg.set_smoothing(MidpointSmoothing::None);
     cfg.set_tile_size(1_000);
     cfg.set_min_mapq(0);
     cfg.set_require_proper_pair(false);
@@ -2588,6 +2614,7 @@ fn midpoint_fetch_narrowing_preserves_tile_halo_near_chromosome_end_on_three_chr
     );
     cfg.set_output_prefix("sites");
     cfg.set_length_bins(vec![10, 15]);
+    cfg.set_smoothing(MidpointSmoothing::None);
     cfg.set_tile_size(40);
     cfg.set_min_mapq(0);
     cfg.set_require_proper_pair(false);
@@ -2676,6 +2703,7 @@ fn midpoint_fetch_narrowing_reads_all_eligible_fragments_near_chromosome_end_on_
     );
     cfg.set_output_prefix("sites_fetch_reads_all");
     cfg.set_length_bins(vec![10, 15]);
+    cfg.set_smoothing(MidpointSmoothing::None);
     cfg.set_tile_size(40);
     cfg.set_min_mapq(0);
     cfg.set_require_proper_pair(false);

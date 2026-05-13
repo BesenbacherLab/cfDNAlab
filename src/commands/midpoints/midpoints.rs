@@ -147,7 +147,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     let max_fragment_length = length_axis.max_fragment_length();
 
     // Resolve counted and final profile dimensions
-    let profile_layout = ProfileLayout::resolve(output_window_size, opt.bin_size, opt.smooth)?;
+    let profile_layout = ProfileLayout::resolve(output_window_size, opt.bin_size, opt.smoothing)?;
 
     // The grouped BED loader preserves group ids in IndexedInterval.idx. Moving the inner vectors
     // avoids cloning millions of intervals before tiling

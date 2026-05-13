@@ -16,7 +16,7 @@ flowchart TD
     weights["Apply requested weights<br/>GC tags or GC package, plus scaling TSVs"]
     count["Count into sparse tile profiles<br/>group x length bin x position"]
     merge["Merge sparse tile profiles"]
-    postprocess["Post-process final profiles<br/>optional SavGol smoothing, trim flanks, final binning"]
+    postprocess["Post-process final profiles<br/>configured smoothing, trim flanks, final binning"]
     profile["Dense midpoint profile<br/>midpoint_profiles.npy"]
     group_index["Group index<br/>group_idx to group name"]
     settings["Settings<br/>axis, smoothing, and binning metadata"]
@@ -50,7 +50,7 @@ flowchart TD
 
 Each grouped BED row contributes a fixed-width window. Windows with the same group name are collapsed into one profile, so the final array is shaped `(group, length_bin, position)`. Fragment length bins come from `--length-bins`, and each accepted fragment contributes to the bin containing its fragment length.
 
-Raw full-resolution profiles are the default. Optional Savitzky-Golay smoothing runs on final grouped profiles, not on each input interval. Optional binning averages adjacent positions after smoothing and after computation flanks are trimmed.
+Savitzky-Golay smoothing is applied to final grouped profiles by default, not to each input interval. Use `--smoothing none` when you need unsmoothed profiles. Optional binning averages adjacent positions after smoothing and after computation flanks are trimmed.
 
 ## Midpoint Placement
 

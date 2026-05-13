@@ -1,18 +1,28 @@
-use super::{MidpointSmoothing, order3_coefficients, parse_midpoint_smoothing};
+use super::{
+    DEFAULT_SAVGOL_WINDOW_BP, MidpointSmoothing, order3_coefficients, parse_midpoint_smoothing,
+};
 
 const TOLERANCE: f64 = 1e-8;
 const SCIPY_REGRESSION_TOLERANCE: f64 = 1e-12;
 
 #[test]
-fn parse_smoothing_accepts_raw_default_and_explicit_savgol_window() {
+fn default_smoothing_is_explicit_165bp_savgol() {
     assert_eq!(
-        parse_midpoint_smoothing("raw").expect("raw smoothing mode should parse"),
-        MidpointSmoothing::Raw
+        MidpointSmoothing::default(),
+        MidpointSmoothing::SavGol {
+            window_bp: DEFAULT_SAVGOL_WINDOW_BP
+        }
     );
+    assert_eq!(MidpointSmoothing::default().to_string(), "savgol=165");
+}
+
+#[test]
+fn parse_smoothing_accepts_none_and_explicit_savgol_window() {
     assert_eq!(
-        parse_midpoint_smoothing("savgol").expect("default SavGol smoothing should parse"),
-        MidpointSmoothing::SavGolDefault
+        parse_midpoint_smoothing("none").expect("none smoothing mode should parse"),
+        MidpointSmoothing::None
     );
+    assert_eq!(MidpointSmoothing::None.to_string(), "none");
     assert_eq!(
         parse_midpoint_smoothing("savgol=101").expect("explicit odd SavGol window should parse"),
         MidpointSmoothing::SavGol { window_bp: 101 }
@@ -38,6 +48,19 @@ fn parse_smoothing_rejects_even_and_too_short_savgol_windows() {
 
 #[test]
 fn parse_smoothing_rejects_unknown_methods_and_malformed_windows() {
+    let bare_savgol_error =
+        parse_midpoint_smoothing("savgol").expect_err("bare SavGol should not parse");
+    assert!(
+        bare_savgol_error.contains("Use 'none' or 'savgol=<odd_bp>'"),
+        "unexpected bare-savgol error: {bare_savgol_error}"
+    );
+
+    let raw_error = parse_midpoint_smoothing("raw").expect_err("raw was renamed to none");
+    assert!(
+        raw_error.contains("Use 'none' or 'savgol=<odd_bp>'"),
+        "unexpected raw-mode error: {raw_error}"
+    );
+
     let unknown_error =
         parse_midpoint_smoothing("gaussian=21").expect_err("unsupported methods should fail");
     assert!(

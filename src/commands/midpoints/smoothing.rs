@@ -6,28 +6,27 @@ pub const SAVGOL_POLYNOMIAL_ORDER: u32 = 3;
 
 /// Smoothing mode for final midpoint profiles.
 ///
-/// `Raw` is the default and leaves grouped midpoint profiles unsmoothed. `SavGolDefault` selects
-/// the documented Savitzky-Golay window, while `SavGol` stores an explicit odd window size in base
-/// pairs. Polynomial order is fixed at 3 so the command exposes one signal-scale choice instead of
-/// several coupled filter parameters.
+/// `SavGol` is the default and stores the odd smoothing window size in base pairs. `None` leaves
+/// grouped midpoint profiles unsmoothed. Polynomial order is fixed at 3 so the command exposes one
+/// signal-scale choice instead of several coupled filter parameters.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MidpointSmoothing {
-    Raw,
-    SavGolDefault,
+    None,
     SavGol { window_bp: u32 },
 }
 
 impl Default for MidpointSmoothing {
     fn default() -> Self {
-        Self::Raw
+        Self::SavGol {
+            window_bp: DEFAULT_SAVGOL_WINDOW_BP,
+        }
     }
 }
 
 impl fmt::Display for MidpointSmoothing {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Raw => formatter.write_str("raw"),
-            Self::SavGolDefault => formatter.write_str("savgol"),
+            Self::None => formatter.write_str("none"),
             Self::SavGol { window_bp } => write!(formatter, "savgol={window_bp}"),
         }
     }
@@ -41,27 +40,25 @@ impl FromStr for MidpointSmoothing {
     }
 }
 
-/// Parse the `--smooth` value accepted by the midpoint CLI.
+/// Parse the `--smoothing` value accepted by the midpoint CLI.
 ///
-/// The parser intentionally accepts `raw` so configuration round-trips and tests can name the raw
-/// mode, even though users normally omit `--smooth` for raw output.
+/// Users can disable profile smoothing with `none` or request an explicit order-3 Savitzky-Golay
+/// window with `savgol=<odd_bp>`. The default is supplied by `MidpointSmoothing::default()`, so the
+/// parser does not accept a bare `savgol` shorthand.
 pub fn parse_midpoint_smoothing(value: &str) -> std::result::Result<MidpointSmoothing, String> {
     let trimmed = value.trim();
-    if trimmed.eq_ignore_ascii_case("raw") {
-        return Ok(MidpointSmoothing::Raw);
-    }
-    if trimmed.eq_ignore_ascii_case("savgol") {
-        return Ok(MidpointSmoothing::SavGolDefault);
+    if trimmed.eq_ignore_ascii_case("none") {
+        return Ok(MidpointSmoothing::None);
     }
 
     let Some((method, window_text)) = trimmed.split_once('=') else {
         return Err(format!(
-            "unsupported smoothing mode '{value}'. Use 'savgol' or 'savgol=<odd_bp>'"
+            "unsupported smoothing mode '{value}'. Use 'none' or 'savgol=<odd_bp>'"
         ));
     };
     if !method.eq_ignore_ascii_case("savgol") {
         return Err(format!(
-            "unsupported smoothing method '{method}'. Use 'savgol'"
+            "unsupported smoothing method '{method}'. Use 'none' or 'savgol=<odd_bp>'"
         ));
     }
 

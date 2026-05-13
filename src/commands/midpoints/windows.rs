@@ -122,7 +122,7 @@ pub(crate) fn prepare_count_windows(
 
             let expanded_start = window.start().checked_sub(flank).ok_or_else(|| {
                 anyhow::anyhow!(
-                    "Cannot smooth interval {chromosome}:{}-{} because it is within {} bp of the chromosome start. Use a smaller --smooth window or remove this interval.",
+                    "Cannot smooth interval {chromosome}:{}-{} because it is within {} bp of the chromosome start. Use a smaller --smoothing window, set --smoothing none, or remove this interval.",
                     window.start(),
                     window.end(),
                     flank
@@ -138,7 +138,7 @@ pub(crate) fn prepare_count_windows(
             })?;
             if expanded_end > chrom_len {
                 bail!(
-                    "Cannot smooth interval {chromosome}:{}-{} because it is within {} bp of the chromosome end. Use a smaller --smooth window or remove this interval.",
+                    "Cannot smooth interval {chromosome}:{}-{} because it is within {} bp of the chromosome end. Use a smaller --smoothing window, set --smoothing none, or remove this interval.",
                     window.start(),
                     window.end(),
                     flank

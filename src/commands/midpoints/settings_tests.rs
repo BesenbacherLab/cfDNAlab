@@ -29,20 +29,20 @@ fn settings_test_config() -> MidpointsConfig {
 }
 
 #[test]
-fn smoothing_settings_describes_raw_and_savgol_layouts() {
-    let raw_layout =
-        ProfileLayout::resolve(11, 1, MidpointSmoothing::Raw).expect("raw layout should resolve");
+fn smoothing_settings_describes_none_and_savgol_layouts() {
+    let none_layout = ProfileLayout::resolve(11, 1, MidpointSmoothing::None)
+        .expect("unsmoothed layout should resolve");
     let savgol_layout = ProfileLayout::resolve(7, 3, MidpointSmoothing::SavGol { window_bp: 7 })
         .expect("savgol layout should resolve");
 
-    let raw = smoothing_settings(raw_layout);
+    let none = smoothing_settings(none_layout);
     let savgol = smoothing_settings(savgol_layout);
 
-    assert_eq!(raw.method, "raw");
-    assert_eq!(raw.polynomial_order, None);
-    assert_eq!(raw.window_bp, None);
-    assert_eq!(raw.computation_flank_bp, 0);
-    assert!(!raw.applied_before_binning);
+    assert_eq!(none.method, "none");
+    assert_eq!(none.polynomial_order, None);
+    assert_eq!(none.window_bp, None);
+    assert_eq!(none.computation_flank_bp, 0);
+    assert!(!none.applied_before_binning);
 
     assert_eq!(savgol.method, "savitzky_golay");
     assert_eq!(savgol.polynomial_order, Some(3));
@@ -55,12 +55,12 @@ fn smoothing_settings_describes_raw_and_savgol_layouts() {
 fn last_position_bin_width_uses_real_width_of_final_bin() {
     // Output length 7 with bin size 3 produces [0,3), [3,6), and [6,7), so the last bin is 1 bp.
     let partial_final_bin =
-        ProfileLayout::resolve(7, 3, MidpointSmoothing::Raw).expect("layout should resolve");
+        ProfileLayout::resolve(7, 3, MidpointSmoothing::None).expect("layout should resolve");
     assert_eq!(last_position_bin_width(partial_final_bin), 1);
 
     // Output length 9 with bin size 3 has no partial final bin, so the last bin keeps the full width.
     let full_final_bin =
-        ProfileLayout::resolve(9, 3, MidpointSmoothing::Raw).expect("layout should resolve");
+        ProfileLayout::resolve(9, 3, MidpointSmoothing::None).expect("layout should resolve");
     assert_eq!(last_position_bin_width(full_final_bin), 3);
 }
 
@@ -78,7 +78,7 @@ fn midpoint_settings_json_records_savgol_and_final_position_binning() {
     config.blacklist = Some(vec![PathBuf::from("blacklist.bed")]);
     let length_axis =
         LengthAxis::new(vec![30, 40, 50]).expect("valid stepped length axis should resolve");
-    let profile_layout = ProfileLayout::resolve(7, 3, config.smooth)
+    let profile_layout = ProfileLayout::resolve(7, 3, config.smoothing)
         .expect("profile layout should resolve for 7 bp SavGol over a 7 bp interval");
 
     // Act
@@ -129,18 +129,19 @@ fn midpoint_settings_json_records_savgol_and_final_position_binning() {
 }
 
 #[test]
-fn midpoint_settings_json_records_raw_explicit_length_edges_without_savgol_fields() {
+fn midpoint_settings_json_records_unsmoothed_explicit_length_edges_without_savgol_fields() {
     // Arrange:
-    // Raw full-resolution output has no smoothing window and the counted interval is identical to
-    // the public interval. Explicit non-uniform length edges must be written back as explicit
-    // edges so downstream readers do not infer a fake step size.
+    // Unsmoothed full-resolution output has no smoothing window, so the counted interval is
+    // identical to the public interval. Explicit non-uniform length edges must be written back as
+    // explicit edges so downstream readers do not infer a fake step size.
     let temp = TempDir::new().expect("temp dir should be created");
     let settings_path = temp.path().join("raw.midpoint_profile_settings.json");
-    let config = settings_test_config();
+    let mut config = settings_test_config();
+    config.set_smoothing(MidpointSmoothing::None);
     let length_axis =
         LengthAxis::new(vec![30, 80, 150]).expect("valid explicit length axis should resolve");
-    let profile_layout = ProfileLayout::resolve(11, 1, config.smooth)
-        .expect("raw profile layout should resolve");
+    let profile_layout = ProfileLayout::resolve(11, 1, config.smoothing)
+        .expect("unsmoothed profile layout should resolve");
 
     // Act
     super::write_midpoint_profile_settings_json(
@@ -168,7 +169,7 @@ fn midpoint_settings_json_records_raw_explicit_length_edges_without_savgol_field
     assert_eq!(settings["position_axis"]["n_bins"], 11);
     assert_eq!(settings["position_axis"]["bin_size_bp"], 1);
     assert_eq!(settings["position_axis"]["last_bin_width_bp"], 1);
-    assert_eq!(settings["smoothing"]["method"], "raw");
+    assert_eq!(settings["smoothing"]["method"], "none");
     assert!(settings["smoothing"].get("polynomial_order").is_none());
     assert!(settings["smoothing"].get("window_bp").is_none());
     assert_eq!(settings["smoothing"]["computation_flank_bp"], 0);

@@ -7,12 +7,12 @@ use ndarray::{Array3, array};
 
 #[test]
 fn resolve_savgol_fails_with_suggested_window_when_default_does_not_fit() {
-    let error = ProfileLayout::resolve(100, 1, MidpointSmoothing::SavGolDefault)
+    let error = ProfileLayout::resolve(100, 1, MidpointSmoothing::default())
         .expect_err("default 165 bp smoothing should not fit a 100 bp interval");
     let message = error.to_string();
 
     assert!(
-        message.contains("--smooth savgol=99"),
+        message.contains("--smoothing savgol=99"),
         "error should suggest the largest odd fitting window, got: {message}"
     );
 }
@@ -24,7 +24,7 @@ fn resolve_explicit_savgol_fails_with_suggested_window_when_it_does_not_fit() {
     let message = error.to_string();
 
     assert!(
-        message.contains("--smooth savgol=99"),
+        message.contains("--smoothing savgol=99"),
         "error should suggest the largest odd fitting window, got: {message}"
     );
 }
@@ -64,7 +64,8 @@ fn largest_odd_window_that_fits_returns_none_below_minimum_interval_size() {
 fn postprocess_identity_returns_no_owned_copy() {
     let profile = array![[[1.0_f32, 2.0, 3.0]]];
     let layout =
-        ProfileLayout::resolve(3, 1, MidpointSmoothing::Raw).expect("raw layout should resolve");
+        ProfileLayout::resolve(3, 1, MidpointSmoothing::None)
+            .expect("unsmoothed layout should resolve");
 
     let transformed =
         postprocess_profile(profile.view(), layout).expect("identity postprocess should succeed");
@@ -76,7 +77,8 @@ fn postprocess_identity_returns_no_owned_copy() {
 fn postprocess_bins_final_partial_bin_by_actual_width() {
     let profile = array![[[1.0_f32, 2.0, 3.0, 4.0, 5.0]]];
     let layout =
-        ProfileLayout::resolve(5, 3, MidpointSmoothing::Raw).expect("binned layout should resolve");
+        ProfileLayout::resolve(5, 3, MidpointSmoothing::None)
+            .expect("binned layout should resolve");
 
     let transformed = postprocess_profile(profile.view(), layout)
         .expect("binning should succeed")
@@ -120,8 +122,8 @@ fn bin_profile_with_bin_size_one_keeps_position_values() {
 }
 
 #[test]
-fn postprocess_rejects_raw_layout_with_extra_counted_positions() {
-    // Raw profiles do not have smoothing flanks. If a raw layout claims extra counted positions,
+fn postprocess_rejects_unsmoothed_layout_with_extra_counted_positions() {
+    // Unsmoothed profiles do not have smoothing flanks. If such a layout claims extra counted positions,
     // silently slicing them away would hide a broken caller-side profile layout.
     let profile = array![[[1.0_f32, 2.0, 3.0, 4.0, 5.0, 6.0]]];
     let layout = ProfileLayout {
@@ -134,12 +136,12 @@ fn postprocess_rejects_raw_layout_with_extra_counted_positions() {
     };
 
     let error = postprocess_profile(profile.view(), layout)
-        .expect_err("raw profiles with extra counted positions should fail");
+        .expect_err("unsmoothed profiles with extra counted positions should fail");
     let message = error.to_string();
 
     assert!(
-        message.contains("raw midpoint profile expected 5 positions, got 6"),
-        "unexpected raw profile shape error: {message}"
+        message.contains("unsmoothed midpoint profile expected 5 positions, got 6"),
+        "unexpected unsmoothed profile shape error: {message}"
     );
 }
 

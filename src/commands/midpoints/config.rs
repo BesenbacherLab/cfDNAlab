@@ -22,8 +22,8 @@ use std::path::PathBuf;
 /// E.g., transcription factors as groups with binding sites as windows, yielding the
 /// overall midpoint profile per transcription factor.
 ///
-/// **Smoothing**: Apply Savitzky-Golay filtering to counts for smoother profiles.
-/// This is disabled by default.
+/// **Smoothing**: Final profiles are smoothed with an order-3 Savitzky-Golay
+/// filter unless `--smoothing none` is used.
 ///
 /// ## Fragment span definition
 ///
@@ -130,26 +130,23 @@ pub struct MidpointsConfig {
 
     /// Smooth final midpoint profiles with an order-3 Savitzky-Golay filter `[string]`
     ///
-    /// - Unspecified (default): Write the unsmoothed profiles.
+    /// By default smoothing is applied with a 165 bp window (nucleosome-scale).
+    /// This was selected based on the defaults in Griffin.
     ///
-    /// - `savgol`: Apply order-3 Savitzky-Golay smoothing with a 165 bp window.
+    /// Use `none` to write unsmoothed profiles.
     ///
-    /// - `savgol=<odd_bp>` to set a different odd window size in base pairs.
-    ///   E.g., `--smooth savgol=155` for a 155 bp smoothing window.
+    /// Use `savgol=<odd_bp>` to set a different odd window size in base pairs. For example,
+    /// `--smoothing savgol=155` uses a 155 bp smoothing window.
     ///
-    /// When smoothing is specified, the intervals are counted with additional flank positions
-    /// to avoid edge effects in the smoothed values. Flanked intervals cannot exceed the chromosome
-    /// context. Once smoothing is applied to final grouped profiles, the flanking is trimmed.
+    /// When smoothing is active, intervals are counted with additional flank positions to avoid
+    /// edge effects in the smoothed values. Flanked intervals cannot exceed chromosome boundaries.
+    /// After smoothing final grouped profiles, the command trims the flanks and writes exactly
+    /// the positions from `--intervals`.
     #[cfg_attr(
         feature = "cli",
-        clap(
-            long,
-            default_value = "raw",
-            hide_default_value = true,
-            help_heading = "Post-processing"
-        )
+        clap(long, default_value = "savgol=165", help_heading = "Post-processing")
     )]
-    pub smooth: MidpointSmoothing,
+    pub smoothing: MidpointSmoothing,
 
     /// Size of tiles to parallelize over `[integer]`
     ///
@@ -230,8 +227,8 @@ pub struct MidpointsConfig {
     ///
     /// To avoid that edge bias, intervals within `ceil(max_fragment_length / 2) + smoothing_flank`
     /// from blacklisted regions are removed prior to counting.
-    /// `smoothing_flank` is 0 for raw profiles and half the Savitzky-Golay window when
-    /// smoothing is used.
+    /// `smoothing_flank` is 0 when `--smoothing none` is used and half the Savitzky-Golay window
+    /// when smoothing is active.
     ///
     /// Set this flag to keep those intervals in the site set. Fragment-level blacklist filtering still
     /// applies.
@@ -290,7 +287,7 @@ impl MidpointsConfig {
             intervals,
             length_bins: vec!["30".to_string(), "1001".to_string()],
             bin_size: 1,
-            smooth: MidpointSmoothing::Raw,
+            smoothing: MidpointSmoothing::default(),
             tile_size: 20000000,
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),
@@ -333,7 +330,7 @@ impl MidpointsConfig {
     }
 
     pub fn set_smoothing(&mut self, smoothing: MidpointSmoothing) {
-        self.smooth = smoothing;
+        self.smoothing = smoothing;
     }
 
     pub fn resolve_length_bins(&self) -> Result<Vec<u32>> {

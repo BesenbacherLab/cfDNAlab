@@ -1,6 +1,4 @@
-use crate::commands::midpoints::smoothing::{
-    DEFAULT_SAVGOL_WINDOW_BP, MidpointSmoothing, order3_coefficients,
-};
+use crate::commands::midpoints::smoothing::{MidpointSmoothing, order3_coefficients};
 use anyhow::{Context, Result, bail, ensure};
 use ndarray::{Array3, ArrayView3, s};
 
@@ -37,15 +35,14 @@ impl ProfileLayout {
         ensure!(bin_size >= 1, "--bin-size must be at least 1");
 
         let smoothing_window = match smoothing {
-            MidpointSmoothing::Raw => None,
-            MidpointSmoothing::SavGolDefault => Some(DEFAULT_SAVGOL_WINDOW_BP),
+            MidpointSmoothing::None => None,
             MidpointSmoothing::SavGol { window_bp } => Some(window_bp),
         };
 
         if let Some(window) = smoothing_window {
             if output_len < 7 {
                 bail!(
-                    "Cannot apply Savitzky-Golay smoothing to {output_len} bp output intervals. Use intervals of at least 7 bp or omit --smooth."
+                    "Cannot apply Savitzky-Golay smoothing to {output_len} bp output intervals. Use intervals of at least 7 bp or set --smoothing none."
                 );
             }
             ensure!(
@@ -60,7 +57,7 @@ impl ProfileLayout {
                 let suggested_window = largest_odd_window_that_fits(output_len)
                     .context("could not suggest a Savitzky-Golay window")?;
                 bail!(
-                    "Savitzky-Golay window {window} bp is longer than the {output_len} bp output interval. Use --smooth savgol={suggested_window} or longer intervals."
+                    "Savitzky-Golay window {window} bp is longer than the {output_len} bp output interval. Use --smoothing savgol={suggested_window} or longer intervals."
                 );
             }
         }
@@ -108,7 +105,7 @@ fn largest_odd_window_that_fits(output_len: usize) -> Option<u32> {
 /// along the position axis, and averages final bins when requested.
 ///
 /// Returns `None` for the identity path so the caller can write the merged dense tensor without
-/// allocating a second array for raw, unbinned profiles.
+/// allocating a second array for unsmoothed, unbinned profiles.
 pub(crate) fn postprocess_profile(
     profile: ArrayView3<'_, f32>,
     layout: ProfileLayout,
@@ -130,7 +127,7 @@ pub(crate) fn postprocess_profile(
     } else {
         ensure!(
             positions == layout.output_len,
-            "raw midpoint profile expected {} positions, got {}",
+            "unsmoothed midpoint profile expected {} positions, got {}",
             layout.output_len,
             positions
         );
