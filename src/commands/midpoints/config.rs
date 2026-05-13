@@ -118,6 +118,14 @@ pub struct MidpointsConfig {
     )]
     pub length_bins: Vec<String>,
 
+    /// Size of tiles to parallelize over `[integer]`
+    ///
+    /// Chromosomes are processed in tiles of this size to reduce memory usage.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, default_value = "20000000", value_parser = clap::value_parser!(u32).range(1000000..), help_heading="Core"))]
+    pub tile_size: u32,
+
     /// Average adjacent positions in bins after counting and smoothing `[integer]`
     ///
     /// Defaults to 1 for full resolution. Larger values shrink the final
@@ -147,14 +155,6 @@ pub struct MidpointsConfig {
         clap(long, default_value = "savgol=165", help_heading = "Post-processing")
     )]
     pub smoothing: MidpointSmoothing,
-
-    /// Size of tiles to parallelize over `[integer]`
-    ///
-    /// Chromosomes are processed in tiles of this size to reduce memory usage.
-    #[cfg_attr(
-        feature = "cli",
-        clap(long, default_value = "20000000", value_parser = clap::value_parser!(u32).range(1000000..), help_heading="Core"))]
-    pub tile_size: u32,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub chromosomes: ChromosomeArgs,
