@@ -128,8 +128,7 @@ pub struct MidpointsConfig {
 
     /// Average adjacent positions in bins after counting and smoothing `[integer]`
     ///
-    /// Defaults to 1 for full resolution. Larger values shrink the final
-    /// position axis by averaging adjacent bases.
+    /// Defaults to 1 for full resolution.
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value = "1", value_parser = clap::value_parser!(u32).range(1..), help_heading = "Post-processing")
@@ -220,18 +219,18 @@ pub struct MidpointsConfig {
 
     /// Keep intervals that overlap nearby blacklisted regions `[flag]`
     ///
-    /// **Edge bias**: When a blacklist is supplied, fragments overlapping blacklisted bases are filtered before
-    /// they can contribute midpoint counts. That fragment-level filtering can create artificial
+    /// **Edge bias**: Fragments overlapping blacklisted bases are filtered before
+    /// they can contribute midpoint counts. This can create artificial
     /// dips near profile edges if an interval is close enough to a blacklist for relevant
     /// fragments to be removed on one side but not the other.
     ///
     /// To avoid that edge bias, intervals within `ceil(max_fragment_length / 2) + smoothing_flank`
     /// from blacklisted regions are removed prior to counting.
-    /// `smoothing_flank` is 0 when `--smoothing none` is used and half the Savitzky-Golay window
-    /// when smoothing is active.
+    /// `smoothing_flank` is half the Savitzky-Golay window when smoothing is active and
+    /// `0` when `--smoothing none`.
     ///
-    /// Set this flag to keep those intervals in the site set. Fragment-level blacklist filtering still
-    /// applies.
+    /// Set this flag to keep those intervals in the site set. 
+    /// Fragment-level blacklist filtering still applies.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
     pub keep_blacklisted_intervals: bool,
 

@@ -703,7 +703,7 @@ pub struct ScaleGenomeArgs {
     ///
     /// Files may start with comment metadata lines from `cfdna coverage-weights/fragment-count-weights`, such as `# gc_mode=corrected_tag`.
     ///
-    /// The scaling-bin-overlapping parts of the fragments are counted as the scaling factor of the bin (`w=sf`).
+    /// The scaling-bin-overlapping parts of the fragments are counted as the scaling factor of the bin.
     ///
     /// ## File Requirements
     ///
