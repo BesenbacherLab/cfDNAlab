@@ -135,7 +135,7 @@ pub struct RefGCBiasConfig {
     /// Note: The same smoothing parameters (sigma and radius) are used for downstream `cfdna gc-bias` calls.
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "0.55",
+        clap(long, default_value = "0.8",
              value_parser = clap::value_parser!(f64), help_heading="Smoothing"))]
     pub smoothing_sigma: f64,
 
