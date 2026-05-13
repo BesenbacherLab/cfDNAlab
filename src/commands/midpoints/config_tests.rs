@@ -1,6 +1,7 @@
 use super::MidpointsConfig;
 use crate::{
     commands::cli_common::{ChromosomeArgs, IOCArgs},
+    commands::midpoints::smoothing::MidpointSmoothing,
     shared::constants::MAX_SUPPORTED_FRAGMENT_LENGTH,
 };
 use std::path::PathBuf;
@@ -15,6 +16,16 @@ fn config_for_length_bin_resolution() -> MidpointsConfig {
         ChromosomeArgs::default(),
         PathBuf::from("intervals.tsv"),
     )
+}
+
+#[test]
+fn new_midpoints_config_uses_165bp_savgol_smoothing_by_default() {
+    let config = config_for_length_bin_resolution();
+
+    assert_eq!(
+        config.smoothing,
+        MidpointSmoothing::SavGol { window_bp: 165 }
+    );
 }
 
 #[test]

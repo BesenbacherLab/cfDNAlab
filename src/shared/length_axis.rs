@@ -1,5 +1,23 @@
 use crate::shared::constants::{MAX_SUPPORTED_FRAGMENT_LENGTH, MIN_ACGT_BASES_FOR_GC_FRACTION};
 use anyhow::{Result, ensure};
+use serde::Serialize;
+
+#[derive(Serialize)]
+pub(crate) struct LengthAxisSettings<'a> {
+    column_intervals: &'static str,
+    min_fragment_length: u32,
+    max_fragment_length: u32,
+    n_bins: usize,
+    single_bp_bins: bool,
+    bin_definition: LengthBinDefinition<'a>,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum LengthBinDefinition<'a> {
+    SteppedRange { start: u32, end: u32, step: u32 },
+    ExplicitEdges { edges: &'a [u32] },
+}
 
 /// Resolved fragment length output axis.
 ///
@@ -126,4 +144,57 @@ impl LengthAxis {
     pub fn is_single_bp_bins(&self) -> bool {
         self.single_bp_bins
     }
+
+    /// Return a JSON-serializable description of the length-bin output axis.
+    ///
+    /// Commands that write dense or table-like length-binned outputs use this shared sidecar
+    /// representation so downstream readers see the same half-open bin contract everywhere.
+    pub(crate) fn settings(&self) -> LengthAxisSettings<'_> {
+        LengthAxisSettings {
+            column_intervals: "half_open",
+            min_fragment_length: self.min_fragment_length(),
+            max_fragment_length: self.max_fragment_length(),
+            n_bins: self.num_bins(),
+            single_bp_bins: self.is_single_bp_bins(),
+            bin_definition: length_bin_definition(self.edges()),
+        }
+    }
+}
+
+fn length_bin_definition(edges: &[u32]) -> LengthBinDefinition<'_> {
+    if let Some(step) = stepped_range_step(edges) {
+        LengthBinDefinition::SteppedRange {
+            start: edges[0],
+            end: *edges.last().expect("validated length axis has edges"),
+            step,
+        }
+    } else {
+        LengthBinDefinition::ExplicitEdges { edges }
+    }
+}
+
+fn stepped_range_step(edges: &[u32]) -> Option<u32> {
+    let step = edges.get(1)?.checked_sub(*edges.first()?)?;
+    if step == 0 {
+        return None;
+    }
+
+    let last_bin_index = edges.len().checked_sub(2)?;
+    for (bin_index, edge_pair) in edges.windows(2).enumerate() {
+        let width = edge_pair[1].checked_sub(edge_pair[0])?;
+        if bin_index == last_bin_index {
+            if width == 0 || width > step {
+                return None;
+            }
+        } else if width != step {
+            return None;
+        }
+    }
+
+    Some(step)
+}
+
+#[cfg(test)]
+mod tests {
+    include!("length_axis_tests.rs");
 }

@@ -10,6 +10,7 @@
 - Sites with the same group name collapse into one group profile.
 - Group indices are assigned by first observed group name during grouped BED loading.
 - Chromosome filtering may remove rows, but the command must fail if no selected grouped windows remain.
+- With blacklists, intervals whose output span plus `ceil(max_fragment_length / 2) + smoothing_flank` overlaps a blacklisted region are removed before counting unless `--keep-blacklisted-intervals` is set.
 
 ## Fragment And Midpoint Geometry
 
@@ -29,6 +30,10 @@
 - Fragment length lookup must use the shared `LengthAxis`, not a manual bin search.
 - Weight per contribution is GC weight times optional scaling weight.
 - Scaling is averaged over the full aligned fragment and applied to every selected midpoint window.
+- Profiles are smoothed by default with order-3 Savitzky-Golay smoothing and a 165 bp window. `--smoothing none` disables smoothing. `--smoothing savgol=<odd_bp>` sets an explicit odd window size in base pairs.
+- Smoothing flanks are derived from the selected smoothing mode: `--smoothing none` uses flank 0, and Savitzky-Golay profiles use `floor(window_bp / 2)`.
+- Smoothing flanks are computation-only. When smoothing is enabled, counting uses flanked intervals, but output positions still refer to the original interval.
+- Smoothing flanks must fit chromosome bounds. The command fails instead of edge-padding or clipping smoothed intervals.
 
 ## GC, Scaling, And Blacklists
 
@@ -38,6 +43,7 @@
 - Scaling TSVs must fully cover every selected chromosome and pass GC-mode compatibility checks.
 - Blacklist strategy uses the aligned fragment span and the shared blacklist strategies: `any`, `all`, `midpoint`, or `proportion=<threshold>`.
 - `midpoint` blacklist strategy checks the single central base for odd fragments and either central base for even fragments. It does not use the randomized counted-midpoint tie break.
+- `--keep-blacklisted-intervals` disables only interval-level blacklist prefiltering. Fragment-level blacklist filtering still applies.
 
 ## Tiling And Merge
 
@@ -50,13 +56,19 @@
 - Empty sparse tiles do not write partial files.
 - Merge allocates one final dense output buffer and adds sparse partials in parallel into chunk locks.
 - Sparse partials must validate shape, sorted indices, equal `idx`/`data` lengths, platform index fit, and destination bounds before merging.
+- After merge, configured order-3 Savitzky-Golay smoothing runs on final grouped profiles along the position axis unless `--smoothing none` is used.
+- Final binning averages adjacent positions after smoothing and flank trimming. `--bin-size 1` preserves base resolution.
+- A shorter final position bin is divided by its actual width, not by `--bin-size`.
 
 ## Output Contract
 
 - Main output is `<prefix>.midpoint_profiles.npy` with shape `(group, length_bin, position)`.
-- Group index output is `<prefix>.group_index.tsv`.
+- The command writes one selected profile output. Users who want multiple transforms, such as unsmoothed and smoothed profiles, should run the command with separate output prefixes.
+- Group index output is `<prefix>.group_index.tsv` with columns `group_idx`, `group_name`, and `eligible_intervals`.
+- `eligible_intervals` is the number of intervals retained in each group after chromosome filtering and interval-level blacklist prefiltering. It is independent of fragment overlap, so an interval still counts when no fragment midpoint lands inside it.
+- Settings output is `<prefix>.midpoint_profile_settings.json`. It records array axes, length-bin edges, output interval length, counted interval length, final position bin size, bin aggregation, last bin width, smoothing method, smoothing window, smoothing order, computation flank, correction flags, and interval blacklist prefilter state and margin.
 - With the `plotters` feature, selected group indices can emit quick QC line plots and length-bin heatmaps.
-- Run statistics include counted fragments, blacklist exclusions, and GC failure summaries when relevant.
+- Run statistics include counted fragments, intervals after chromosome filtering, blacklist-prefiltered intervals, intervals retained for counting, blacklist exclusions, and GC failure summaries when relevant. When interval blacklist prefiltering is active, the reported run statistics also include the prefilter margin.
 
 ## Open Notes
 

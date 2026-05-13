@@ -22,7 +22,9 @@ use cfdnalab::commands::{
     },
     fcoverage::{config::FCoverageConfig, fcoverage::run as run_fcoverage},
     lengths::{config::LengthsConfig, lengths::run as run_lengths},
-    midpoints::{config::MidpointsConfig, midpoints::run as run_midpoints},
+    midpoints::{
+        config::MidpointsConfig, midpoints::run as run_midpoints, smoothing::MidpointSmoothing,
+    },
 };
 use cfdnalab::shared::{indel_mode::IndelMode, io::dot_join};
 use fixtures::{
@@ -352,6 +354,7 @@ fn midpoints_consumes_shared_real_artifacts_with_expected_profile_mass() -> Resu
     );
     cfg.set_output_prefix("sites");
     cfg.set_length_bins(vec![61, 62]);
+    cfg.set_smoothing(MidpointSmoothing::None);
     cfg.set_tile_size(1_000);
     cfg.set_min_mapq(0);
     cfg.set_require_proper_pair(false);

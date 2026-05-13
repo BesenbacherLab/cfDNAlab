@@ -28,7 +28,9 @@ use cfdnalab::commands::gc_bias::package::GCCorrectionPackage;
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_lengths"))]
 use cfdnalab::commands::lengths::{config::LengthsConfig, lengths::run as run_lengths};
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
-use cfdnalab::commands::midpoints::{config::MidpointsConfig, midpoints::run as run_midpoints};
+use cfdnalab::commands::midpoints::{
+    config::MidpointsConfig, midpoints::run as run_midpoints, smoothing::MidpointSmoothing,
+};
 use cfdnalab::shared::blacklist::BlacklistStrategy;
 use cfdnalab::shared::constants::GC_CORRECTION_SCHEMA_VERSION;
 use cfdnalab::shared::io::dot_join;
@@ -2812,6 +2814,7 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_midpoints_then_roundtrip_mat
         );
         cfg.set_output_prefix(prefix);
         cfg.set_length_bins(vec![61, 62]);
+        cfg.set_smoothing(MidpointSmoothing::None);
         cfg.set_tile_size(1_000);
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
@@ -2843,7 +2846,10 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_midpoints_then_roundtrip_mat
     assert_eq!(original_arr[[0, 0, 5]], 1.0);
     assert_eq!(original_arr.sum(), 1.0);
     assert_eq!(original_groups, restored_groups);
-    assert_eq!(original_groups.trim(), "group_idx\tgroup_name\n0\tgroupA");
+    assert_eq!(
+        original_groups.trim(),
+        "group_idx\tgroup_name\teligible_intervals\n0\tgroupA\t1"
+    );
 
     Ok(())
 }
@@ -2937,6 +2943,7 @@ fn given_bam_to_frag_gc_weights_then_frag_to_bam_then_midpoints_gc_tag_matches_o
     );
     original_midpoints_cfg.set_output_prefix("origsites");
     original_midpoints_cfg.set_length_bins(vec![61, 62]);
+    original_midpoints_cfg.set_smoothing(MidpointSmoothing::None);
     original_midpoints_cfg.set_tile_size(1_000);
     original_midpoints_cfg.set_min_mapq(0);
     original_midpoints_cfg.set_require_proper_pair(false);
@@ -2980,6 +2987,7 @@ fn given_bam_to_frag_gc_weights_then_frag_to_bam_then_midpoints_gc_tag_matches_o
     );
     restored_midpoints_cfg.set_output_prefix("restoredsites");
     restored_midpoints_cfg.set_length_bins(vec![61, 62]);
+    restored_midpoints_cfg.set_smoothing(MidpointSmoothing::None);
     restored_midpoints_cfg.set_tile_size(1_000);
     restored_midpoints_cfg.set_min_mapq(0);
     restored_midpoints_cfg.set_require_proper_pair(false);
@@ -3132,6 +3140,7 @@ fn given_bam_to_frag_real_non_neutral_gc_then_frag_to_bam_then_midpoints_gc_tag_
     );
     original_midpoints_cfg.set_output_prefix("origsites");
     original_midpoints_cfg.set_length_bins(vec![61, 62]);
+    original_midpoints_cfg.set_smoothing(MidpointSmoothing::None);
     original_midpoints_cfg.set_tile_size(1_000);
     original_midpoints_cfg.set_min_mapq(0);
     original_midpoints_cfg.set_require_proper_pair(false);
@@ -3175,6 +3184,7 @@ fn given_bam_to_frag_real_non_neutral_gc_then_frag_to_bam_then_midpoints_gc_tag_
     );
     restored_midpoints_cfg.set_output_prefix("restoredsites");
     restored_midpoints_cfg.set_length_bins(vec![61, 62]);
+    restored_midpoints_cfg.set_smoothing(MidpointSmoothing::None);
     restored_midpoints_cfg.set_tile_size(1_000);
     restored_midpoints_cfg.set_min_mapq(0);
     restored_midpoints_cfg.set_require_proper_pair(false);

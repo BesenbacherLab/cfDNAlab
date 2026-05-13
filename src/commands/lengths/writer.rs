@@ -4,28 +4,14 @@ use crate::{
         gc_bias::correct::{GCLengthRange, MarginalizeLengthsWeightingScheme},
         lengths::{config::LengthsConfig, counting::LengthAxis},
     },
-    shared::{clip_mode::ClipMode, indel_mode::IndelMode, io::create_text_writer},
+    shared::{
+        clip_mode::ClipMode, indel_mode::IndelMode, io::create_text_writer,
+        length_axis::LengthAxisSettings,
+    },
 };
 use anyhow::{Context, Result};
 use serde::Serialize;
 use std::io::Write;
-
-#[derive(Serialize)]
-struct LengthAxisSettings<'a> {
-    column_intervals: &'static str,
-    min_fragment_length: u32,
-    max_fragment_length: u32,
-    n_bins: usize,
-    single_bp_bins: bool,
-    bin_definition: LengthBinDefinition<'a>,
-}
-
-#[derive(Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum LengthBinDefinition<'a> {
-    SteppedRange { start: u32, end: u32, step: u32 },
-    ExplicitEdges { edges: &'a [u32] },
-}
 
 #[derive(Serialize)]
 struct FragmentLengthSettings<'a> {
@@ -51,14 +37,7 @@ pub(super) fn write_fragment_length_settings_json(
     length_axis: &LengthAxis,
 ) -> Result<()> {
     let settings = FragmentLengthSettings {
-        length_axis: LengthAxisSettings {
-            column_intervals: "half_open",
-            min_fragment_length: length_axis.min_fragment_length(),
-            max_fragment_length: length_axis.max_fragment_length(),
-            n_bins: length_axis.num_bins(),
-            single_bp_bins: length_axis.is_single_bp_bins(),
-            bin_definition: length_bin_definition(length_axis.edges()),
-        },
+        length_axis: length_axis.settings(),
         aggregation_level: aggregation_level_name(window_opt),
         window_mode: window_mode_name(window_opt),
         indel_mode: indel_mode_name(opt.indel_mode),
@@ -82,39 +61,6 @@ pub(super) fn write_fragment_length_settings_json(
         .finish()
         .with_context(|| format!("finalize {}", settings_path.display()))?;
     Ok(())
-}
-
-fn length_bin_definition(edges: &[u32]) -> LengthBinDefinition<'_> {
-    if let Some(step) = stepped_range_step(edges) {
-        LengthBinDefinition::SteppedRange {
-            start: edges[0],
-            end: *edges.last().expect("validated length axis has edges"),
-            step,
-        }
-    } else {
-        LengthBinDefinition::ExplicitEdges { edges }
-    }
-}
-
-fn stepped_range_step(edges: &[u32]) -> Option<u32> {
-    let step = edges.get(1)?.checked_sub(*edges.first()?)?;
-    if step == 0 {
-        return None;
-    }
-
-    let last_bin_index = edges.len().checked_sub(2)?;
-    for (bin_index, edge_pair) in edges.windows(2).enumerate() {
-        let width = edge_pair[1].checked_sub(edge_pair[0])?;
-        if bin_index == last_bin_index {
-            if width == 0 || width > step {
-                return None;
-            }
-        } else if width != step {
-            return None;
-        }
-    }
-
-    Some(step)
 }
 
 fn aggregation_level_name(window_opt: &DistributionWindowSpec) -> &'static str {

@@ -471,6 +471,8 @@ fn midpoints_cli_minimal_invocation_writes_profiles_and_group_index() -> Result<
             "--length-bins",
             "20",
             "120",
+            "--smoothing",
+            "none",
             "--output-prefix",
             output_prefix,
         ],
