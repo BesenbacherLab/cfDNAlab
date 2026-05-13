@@ -17,7 +17,9 @@ use cfdnalab::commands::coverage_weights::{
 use cfdnalab::commands::gc_bias::package::GCCorrectionPackage;
 use cfdnalab::commands::midpoints::config::MidpointsConfig;
 use cfdnalab::commands::midpoints::midpoints::run;
+use cfdnalab::commands::midpoints::smoothing::MidpointSmoothing;
 use cfdnalab::shared::{
+    blacklist::BlacklistStrategy,
     constants::GC_CORRECTION_SCHEMA_VERSION,
     reference::{ContigFootprintEntry, twobit_contig_footprint},
 };
@@ -32,6 +34,7 @@ use ndarray::array;
 use ndarray_npy::read_npy;
 use rust_htslib::bam::record::Aux;
 use rust_htslib::bam::{self, Read, Reader};
+use serde_json::Value;
 use std::collections::HashMap;
 #[cfg(feature = "cli")]
 use std::ffi::OsStr;
@@ -214,6 +217,33 @@ fn read_group_index_map(path: &std::path::Path) -> Result<HashMap<String, usize>
         let idx = fields.next().unwrap().parse::<usize>()?;
         let name = fields.next().unwrap().to_string();
         out.insert(name, idx);
+    }
+    Ok(out)
+}
+
+fn read_group_index_eligible_intervals(path: &std::path::Path) -> Result<HashMap<String, usize>> {
+    let text = std::fs::read_to_string(path)?;
+    let mut lines = text.lines();
+    let header = lines.next().unwrap_or("");
+    assert_eq!(
+        header, "group_idx\tgroup_name\teligible_intervals",
+        "midpoint group index must expose eligible profile intervals per group"
+    );
+
+    let mut out = HashMap::new();
+    for line in lines {
+        if line.is_empty() {
+            continue;
+        }
+        let fields: Vec<&str> = line.split('\t').collect();
+        assert_eq!(
+            fields.len(),
+            3,
+            "midpoint group index row should have group_idx, group_name, and eligible_intervals"
+        );
+        let group_name = fields[1].to_string();
+        let eligible_intervals = fields[2].parse::<usize>()?;
+        out.insert(group_name, eligible_intervals);
     }
     Ok(out)
 }
@@ -905,6 +935,9 @@ fn blacklist_midpoint_filtering_checks_both_centers_for_even_fragments() -> Resu
         cfg.set_scale_genome(ScaleGenomeArgs::default());
         cfg.blacklist = blacklist;
         cfg.blacklist_strategy = cfdnalab::shared::blacklist::BlacklistStrategy::Midpoint;
+        // This test targets fragment-level midpoint blacklist behavior. The interval prefilter
+        // would correctly remove this tiny test window before the fragment filter runs
+        cfg.set_keep_blacklisted_intervals(true);
         cfg
     };
 
@@ -956,6 +989,189 @@ fn blacklist_midpoint_filtering_checks_both_centers_for_even_fragments() -> Resu
 }
 
 #[test]
+fn keep_blacklisted_intervals_keeps_sites_but_still_filters_fragments() -> Result<()> {
+    // Arrange:
+    // The 11 bp fragment spans [45,56), so its midpoint is 50 and would count at position 0 in
+    // the output interval [50,57). The blacklist [45,46) overlaps the fragment span, and it also
+    // lies inside the interval-level safety margin. Setting `keep_blacklisted_intervals` proves
+    // that the site remains available while fragment-level blacklist filtering still removes the
+    // fragment contribution.
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 200)],
+        vec![paired_fragment_on_tid(0, 45, 11, 5)],
+        Vec::new(),
+        "midpoints_keep_blacklisted_intervals_fragment_filter",
+    )?;
+    let temp = TempDir::new()?;
+    let bed_path = temp.path().join("windows.bed");
+    let blacklist_path = temp.path().join("blacklist.bed");
+    write_bed(&bed_path, &[("chr1", 50, 57, "groupA")])?;
+    std::fs::write(&blacklist_path, "chr1\t45\t46\n")?;
+
+    let mut cfg = MidpointsConfig::new(
+        IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: temp.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1"]),
+        bed_path,
+    );
+    cfg.set_output_prefix("sites");
+    cfg.set_length_bins(vec![11, 12]);
+    cfg.set_tile_size(1_000);
+    cfg.set_min_mapq(0);
+    cfg.set_require_proper_pair(false);
+    cfg.set_scale_genome(ScaleGenomeArgs::default());
+    cfg.blacklist = Some(vec![blacklist_path]);
+    cfg.blacklist_strategy = BlacklistStrategy::Any;
+    cfg.set_keep_blacklisted_intervals(true);
+
+    // Act
+    run(&cfg)?;
+
+    // Assert
+    let arr: Array3<f32> = read_npy(temp.path().join("sites.midpoint_profiles.npy"))?;
+    assert_eq!(arr.shape(), &[1, 1, 7]);
+    assert_eq!(
+        arr.sum(),
+        0.0,
+        "fragment-level blacklist filtering should still remove the only fragment"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn midpoint_prefilter_fails_clearly_when_blacklist_drops_all_intervals() -> Result<()> {
+    // Arrange:
+    // With length bin [11,12), the interval blacklist margin is ceil(11 / 2) = 6 bp.
+    // The output interval [50,57) plus that margin is [44,63), which overlaps [45,46).
+    // Because `keep_blacklisted_intervals` is false, the only interval is prefiltered away.
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 200)],
+        vec![paired_fragment_on_tid(0, 45, 11, 5)],
+        Vec::new(),
+        "midpoints_all_intervals_dropped_by_blacklist",
+    )?;
+    let temp = TempDir::new()?;
+    let bed_path = temp.path().join("windows.bed");
+    let blacklist_path = temp.path().join("blacklist.bed");
+    write_bed(&bed_path, &[("chr1", 50, 57, "groupA")])?;
+    std::fs::write(&blacklist_path, "chr1\t45\t46\n")?;
+
+    let mut cfg = MidpointsConfig::new(
+        IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: temp.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1"]),
+        bed_path,
+    );
+    cfg.set_output_prefix("sites");
+    cfg.set_length_bins(vec![11, 12]);
+    cfg.set_tile_size(1_000);
+    cfg.set_min_mapq(0);
+    cfg.set_require_proper_pair(false);
+    cfg.set_scale_genome(ScaleGenomeArgs::default());
+    cfg.blacklist = Some(vec![blacklist_path]);
+    cfg.blacklist_strategy = BlacklistStrategy::Any;
+
+    // Act
+    let error = run(&cfg).expect_err("blacklist prefiltering should drop the only interval");
+    let message = error.to_string();
+
+    // Assert
+    assert!(
+        message.contains("No midpoint intervals remain after filtering"),
+        "unexpected all-dropped error: {message}"
+    );
+    assert!(
+        message.contains("Blacklist prefiltering dropped 1 interval(s)"),
+        "all-dropped error should name blacklist prefiltering: {message}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn midpoint_command_smooths_full_resolution_profile_before_final_binning() -> Result<()> {
+    // Arrange:
+    // Build an expanded 13-position profile with counts 1..13 around output interval [50,57).
+    // A 7 bp SavGol window has radius 3, so smoothing preserves the linear profile at retained
+    // centers 4..10. Final 3 bp binning then averages [4,5,6] -> 5, [7,8,9] -> 8, [10] -> 10.
+    let mut fragments = Vec::new();
+    for midpoint in 47_i64..=59 {
+        let count_at_position = (midpoint - 46) as usize;
+        for _ in 0..count_at_position {
+            fragments.push(paired_fragment_on_tid(0, midpoint - 5, 11, 5));
+        }
+    }
+    let bam = bam_from_specs_strict_identity(
+        vec![("chr1".to_string(), 200)],
+        fragments,
+        Vec::new(),
+        "midpoints_savgol_then_bin_command",
+    )?;
+    let temp = TempDir::new()?;
+    let bed_path = temp.path().join("windows.bed");
+    write_bed(&bed_path, &[("chr1", 50, 57, "groupA")])?;
+
+    let mut cfg = MidpointsConfig::new(
+        IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: temp.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1"]),
+        bed_path,
+    );
+    cfg.set_output_prefix("sites");
+    cfg.set_length_bins(vec![11, 12]);
+    cfg.set_tile_size(1_000);
+    cfg.set_min_mapq(0);
+    cfg.set_require_proper_pair(false);
+    cfg.set_scale_genome(ScaleGenomeArgs::default());
+    cfg.set_smoothing(MidpointSmoothing::SavGol { window_bp: 7 });
+    cfg.set_bin_size(3);
+
+    // Act
+    run(&cfg)?;
+
+    // Assert
+    let arr: Array3<f32> = read_npy(temp.path().join("sites.midpoint_profiles.npy"))?;
+    assert_eq!(arr.shape(), &[1, 1, 3]);
+    assert!((arr[[0, 0, 0]] - 5.0).abs() <= MIDPOINT_F32_TOL);
+    assert!((arr[[0, 0, 1]] - 8.0).abs() <= MIDPOINT_F32_TOL);
+    assert!((arr[[0, 0, 2]] - 10.0).abs() <= MIDPOINT_F32_TOL);
+
+    let settings_path = temp.path().join("sites.midpoint_profile_settings.json");
+    let settings_text = std::fs::read_to_string(&settings_path)?;
+    let settings: Value = serde_json::from_str(&settings_text)?;
+    assert_eq!(
+        settings["array_axes"],
+        serde_json::json!(["group", "length_bin", "position"])
+    );
+    assert_eq!(settings["length_axis"]["min_fragment_length"], 11);
+    assert_eq!(settings["length_axis"]["max_fragment_length"], 11);
+    assert_eq!(settings["length_axis"]["n_bins"], 1);
+    assert_eq!(settings["position_axis"]["output_interval_length_bp"], 7);
+    assert_eq!(settings["position_axis"]["counted_interval_length_bp"], 13);
+    assert_eq!(settings["position_axis"]["n_bins"], 3);
+    assert_eq!(settings["position_axis"]["bin_size_bp"], 3);
+    assert_eq!(settings["position_axis"]["bin_aggregation"], "mean");
+    assert_eq!(settings["position_axis"]["last_bin_width_bp"], 1);
+    assert_eq!(settings["smoothing"]["method"], "savitzky_golay");
+    assert_eq!(settings["smoothing"]["polynomial_order"], 3);
+    assert_eq!(settings["smoothing"]["window_bp"], 7);
+    assert_eq!(settings["smoothing"]["computation_flank_bp"], 3);
+    assert_eq!(settings["smoothing"]["applied_before_binning"], true);
+
+    Ok(())
+}
+
+#[test]
 fn length_bin_start_end_list_format_is_rejected() {
     // Arrange: This format was intentionally removed.
     let mut config = base_midpoints_config_for_length_bins();
@@ -1001,6 +1217,7 @@ fn midpoint_profiles_written_with_group_index() -> Result<()> {
 
     let map_path = temp.path().join("sites.group_index.tsv");
     let group_to_idx = read_group_index_map(&map_path)?;
+    let group_to_eligible_intervals = read_group_index_eligible_intervals(&map_path)?;
     assert_eq!(
         group_to_idx,
         HashMap::from([
@@ -1008,6 +1225,95 @@ fn midpoint_profiles_written_with_group_index() -> Result<()> {
             ("groupC".to_string(), 1usize),
             ("groupB".to_string(), 2usize)
         ])
+    );
+    assert_eq!(
+        group_to_eligible_intervals,
+        HashMap::from([
+            ("groupA".to_string(), 2usize),
+            ("groupC".to_string(), 2usize),
+            ("groupB".to_string(), 2usize)
+        ]),
+        "eligible_intervals should count profile intervals, independent of fragment count"
+    );
+
+    let settings_path = temp.path().join("sites.midpoint_profile_settings.json");
+    assert!(settings_path.exists());
+
+    Ok(())
+}
+
+#[test]
+fn group_index_counts_eligible_intervals_after_prefilter() -> Result<()> {
+    // Arrange:
+    // Length bin [11,12) gives an interval blacklist margin of ceil(11 / 2) = 6 bp.
+    //
+    // groupA has two input intervals:
+    // - [50,57) is dropped because [50,57) expanded by 6 bp -> [44,63), overlapping [44,46).
+    // - [120,127) is retained.
+    //
+    // groupB has one input interval:
+    // - [80,87) is dropped because [80,87) expanded by 6 bp -> [74,93), overlapping [74,75).
+    //
+    // The BAM contains no fragments. The expected counts therefore prove that `eligible_intervals`
+    // describes the retained profile interval set, not observed coverage.
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 200)],
+        Vec::new(),
+        Vec::new(),
+        "midpoints_group_index_eligible_intervals",
+    )?;
+    let temp = TempDir::new()?;
+    let bed_path = temp.path().join("windows.bed");
+    let blacklist_path = temp.path().join("blacklist.bed");
+    write_bed(
+        &bed_path,
+        &[
+            ("chr1", 50, 57, "groupA"),
+            ("chr1", 80, 87, "groupB"),
+            ("chr1", 120, 127, "groupA"),
+        ],
+    )?;
+    std::fs::write(&blacklist_path, "chr1\t44\t46\nchr1\t74\t75\n")?;
+
+    let mut cfg = MidpointsConfig::new(
+        IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: temp.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1"]),
+        bed_path,
+    );
+    cfg.set_output_prefix("sites");
+    cfg.set_length_bins(vec![11, 12]);
+    cfg.set_tile_size(1_000);
+    cfg.set_min_mapq(0);
+    cfg.set_require_proper_pair(false);
+    cfg.set_scale_genome(ScaleGenomeArgs::default());
+    cfg.blacklist = Some(vec![blacklist_path]);
+    cfg.blacklist_strategy = BlacklistStrategy::Any;
+
+    // Act
+    run(&cfg)?;
+
+    // Assert
+    let arr: Array3<f32> = read_npy(temp.path().join("sites.midpoint_profiles.npy"))?;
+    assert_eq!(arr.shape(), &[2, 1, 7]);
+    assert_eq!(
+        arr.sum(),
+        0.0,
+        "the fixture has no fragments, so eligible interval counts must not depend on observed coverage"
+    );
+
+    let group_to_eligible_intervals =
+        read_group_index_eligible_intervals(&temp.path().join("sites.group_index.tsv"))?;
+    assert_eq!(
+        group_to_eligible_intervals,
+        HashMap::from([
+            ("groupA".to_string(), 1usize),
+            ("groupB".to_string(), 0usize)
+        ]),
+        "eligible_intervals should reflect intervals left after interval-level blacklist prefiltering"
     );
 
     Ok(())

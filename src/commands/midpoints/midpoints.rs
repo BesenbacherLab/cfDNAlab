@@ -14,7 +14,10 @@ use crate::{
         midpoints::{
             config::MidpointsConfig,
             counting_by_group::{ProfileGroupsCounts, SparseProfileGroupsCounts},
-            windows::ensure_uniform_window_len,
+            group_index::{eligible_interval_counts_by_group, write_midpoint_group_index_tsv},
+            postprocess::{ProfileLayout, postprocess_profile},
+            settings::write_midpoint_profile_settings_json,
+            windows::{ensure_uniform_window_len, prepare_count_windows},
         },
         run_statistics::{
             DEFAULT_FRAGMENT_STATISTICS_LABELS, FragmentRunStatisticsOptions, GCStatisticsSummary,
@@ -23,7 +26,7 @@ use crate::{
     },
     shared::{
         bam::create_chromosome_reader,
-        bed::{load_grouped_windows_from_bed, write_group_idx_to_name_tsv},
+        bed::load_grouped_windows_from_bed,
         blacklist::is_blacklisted,
         fragment::minimal_fragment::Fragment,
         fragment_iterators::fragments_from_bam,
@@ -136,40 +139,90 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     );
 
     // Ensure all windows have the same length
-    let window_size = ensure_uniform_window_len(&windows_map)?;
+    let output_window_size = ensure_uniform_window_len(&windows_map)?;
+
+    // Parse and validate fragment length bins once so all tiles share one lookup table
+    let length_axis = Arc::new(LengthAxis::new(opt.resolve_length_bins()?)?);
+    let min_fragment_length = length_axis.min_fragment_length();
+    let max_fragment_length = length_axis.max_fragment_length();
+
+    // Resolve counted and final profile dimensions
+    let profile_layout = ProfileLayout::resolve(output_window_size, opt.bin_size, opt.smooth)?;
+
     // The grouped BED loader preserves group ids in IndexedInterval.idx. Moving the inner vectors
     // avoids cloning millions of intervals before tiling
     let indexed_windows_map: FxHashMap<String, Vec<IndexedInterval<u64>>> = windows_map
         .into_iter()
         .map(|(chromosome, grouped_windows)| (chromosome, grouped_windows.into_inner()))
         .collect();
+    let interval_blacklist_margin = ((u64::from(max_fragment_length) + 1) / 2)
+        .checked_add(u64::from(profile_layout.smoothing_flank))
+        .context("interval blacklist margin overflow")?;
+    let use_blacklist_prefilter = opt.blacklist.is_some() && !opt.keep_blacklisted_intervals;
+    let (indexed_windows_map, interval_stats) = prepare_count_windows(
+        indexed_windows_map,
+        &contigs,
+        &blacklist_map,
+        profile_layout.smoothing_flank,
+        interval_blacklist_margin,
+        use_blacklist_prefilter,
+    )?;
+    ensure!(
+        interval_stats.retained_for_counting > 0,
+        "No midpoint intervals remain after filtering. Blacklist prefiltering dropped {} interval(s).",
+        interval_stats.dropped_by_blacklist_prefilter
+    );
+    let group_eligible_interval_counts =
+        eligible_interval_counts_by_group(&indexed_windows_map, &group_idx_to_name);
 
-    // Parse and validate fragment length bins once so all tiles share one lookup table
-    let length_axis = Arc::new(LengthAxis::new(opt.resolve_length_bins()?)?);
-    let min_fragment_length = length_axis.min_fragment_length();
-    let max_fragment_length = length_axis.max_fragment_length();
+    info!(
+        target: COMMAND_TARGET,
+        "  Intervals after chromosome filtering: {} | blacklist-prefiltered: {} | retained: {}",
+        interval_stats.loaded_after_chromosome_filtering,
+        interval_stats.dropped_by_blacklist_prefilter,
+        interval_stats.retained_for_counting,
+    );
+
     let dense_profile_entries = num_groups
         .checked_mul(length_axis.num_bins())
-        .and_then(|size| size.checked_mul(window_size))
+        .and_then(|size| size.checked_mul(profile_layout.flanked_length))
         .context("dense midpoint profile shape overflow")?;
     let dense_profile_bytes = dense_profile_entries
         .checked_mul(std::mem::size_of::<f32>())
         .context("dense midpoint profile byte size overflow")?;
     let dense_profile_gb = dense_profile_bytes as f64 / 1_000_000_000.0;
+    let final_profile_entries = num_groups
+        .checked_mul(length_axis.num_bins())
+        .and_then(|size| size.checked_mul(profile_layout.output_positions))
+        .context("final midpoint profile shape overflow")?;
+    let final_profile_bytes = final_profile_entries
+        .checked_mul(std::mem::size_of::<f32>())
+        .context("final midpoint profile byte size overflow")?;
+    let final_profile_gb = final_profile_bytes as f64 / 1_000_000_000.0;
     info!(
         target: COMMAND_TARGET,
-        "Dense midpoint output shape: groups={} length_bins={} positions={} | approx {:.2} GB",
+        "Dense midpoint counting shape: groups={} length_bins={} positions={} | approx {:.2} GB",
         num_groups,
         length_axis.num_bins(),
-        window_size,
+        profile_layout.flanked_length,
         dense_profile_gb,
     );
-    if dense_profile_bytes >= DENSE_PROFILE_SIZE_WARNING_BYTES {
+    if profile_layout.output_positions != profile_layout.flanked_length {
+        info!(
+            target: COMMAND_TARGET,
+            "Final midpoint output shape: groups={} length_bins={} positions={} | approx {:.2} GB",
+            num_groups,
+            length_axis.num_bins(),
+            profile_layout.output_positions,
+            final_profile_gb,
+        );
+    }
+    if final_profile_bytes >= DENSE_PROFILE_SIZE_WARNING_BYTES {
         warn!(
             target: COMMAND_TARGET,
             "Dense midpoint output is large: approx {:.2} GB for {} entries",
-            dense_profile_gb,
-            dense_profile_entries,
+            final_profile_gb,
+            final_profile_entries,
         );
     }
 
@@ -231,6 +284,10 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         .ioc
         .output_dir
         .join(dot_join(&[prefix, "group_index.tsv"]));
+    let settings_path = opt
+        .ioc
+        .output_dir
+        .join(dot_join(&[prefix, "midpoint_profile_settings.json"]));
 
     let progress = ProgressFactory::new();
     let pb = Arc::new(progress.default_bar(total_tiles as u64));
@@ -277,7 +334,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
                 opt,
                 tile,
                 tile_counts_out,
-                window_size,
+                profile_layout.flanked_length,
                 num_groups,
                 Arc::clone(&length_axis),
                 windows_chr,
@@ -312,10 +369,17 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     );
 
     // Allocate the single final dense profile and merge sparse tile partial files into it
-    let mut all_counts =
-        ProfileGroupsCounts::new(window_size, num_groups, Arc::clone(&length_axis));
+    let mut all_counts = ProfileGroupsCounts::new(
+        profile_layout.flanked_length,
+        num_groups,
+        Arc::clone(&length_axis),
+    );
     all_counts.add_from_sparse_npz_files_parallel(all_tmp_count_paths)?;
-    let all_counts_3d_arr = all_counts.view_ndarray3_group_len_pos();
+    let merged_counts_view = all_counts.view_ndarray3_group_len_pos();
+    let transformed_counts = postprocess_profile(merged_counts_view, profile_layout)?;
+    let final_counts_view = transformed_counts
+        .as_ref()
+        .map_or(merged_counts_view, |counts| counts.view());
 
     // Write every final output to the temp directory before moving any of them into place
     // This keeps failed writes from leaving a mix of old and new final files
@@ -327,7 +391,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         "Writing final counts to temp file {}",
         temp_counts_path.display()
     );
-    write_npy(&temp_counts_path, &all_counts_3d_arr)
+    write_npy(&temp_counts_path, &final_counts_view)
         .with_context(|| format!("writing final counts to {}", temp_counts_path.display()))?;
     final_outputs.record(temp_counts_path, final_counts_path)?;
 
@@ -337,8 +401,28 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         "Writing group index to temp file {}",
         temp_map_path.display()
     );
-    write_group_idx_to_name_tsv(&temp_map_path, &group_idx_to_name)?;
+    write_midpoint_group_index_tsv(
+        &temp_map_path,
+        &group_idx_to_name,
+        &group_eligible_interval_counts,
+    )?;
     final_outputs.record(temp_map_path, map_path)?;
+
+    let temp_settings_path = final_outputs.temp_path_for(&settings_path)?;
+    info!(
+        target: COMMAND_TARGET,
+        "Writing midpoint profile settings to temp file {}",
+        temp_settings_path.display()
+    );
+    write_midpoint_profile_settings_json(
+        &temp_settings_path,
+        opt,
+        &length_axis,
+        profile_layout,
+        interval_blacklist_margin,
+        use_blacklist_prefilter,
+    )?;
+    final_outputs.record(temp_settings_path, settings_path)?;
 
     final_outputs.move_into_place()?;
 
@@ -357,11 +441,32 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
             &opt.plot_groups,
             length_axis.edges(),
             &group_idx_to_name,
-            all_counts_3d_arr,
+            final_counts_view,
         )?;
     }
 
     let elapsed = start_time.elapsed();
+    let mut extra_statistics = vec![
+        format!(
+            "Intervals after chromosome filtering: {}",
+            interval_stats.loaded_after_chromosome_filtering
+        ),
+        format!(
+            "Blacklist-prefiltered intervals: {}",
+            interval_stats.dropped_by_blacklist_prefilter
+        ),
+        format!(
+            "Intervals retained for counting: {}",
+            interval_stats.retained_for_counting
+        ),
+    ];
+    if use_blacklist_prefilter {
+        extra_statistics.push(format!(
+            "Interval blacklist prefilter margin: {} bp",
+            interval_blacklist_margin
+        ));
+    }
+
     print_fragment_run_statistics(
         &global_counter.base,
         elapsed,
@@ -387,7 +492,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
                 },
             ),
         },
-        std::iter::empty::<&str>(),
+        extra_statistics.iter().map(String::as_str),
     );
     Ok(())
 }

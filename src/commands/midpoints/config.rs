@@ -3,6 +3,7 @@ use crate::{
         ApplyGCArgs, ChromosomeArgs, IOCArgs, LoggingArgs, ScaleGenomeArgs, UnpairedArgs,
         resolve_length_bin_edges,
     },
+    commands::midpoints::smoothing::MidpointSmoothing,
     shared::{
         blacklist::BlacklistStrategy,
         constants::{MAX_SUPPORTED_FRAGMENT_LENGTH, MIN_ACGT_BASES_FOR_GC_FRACTION},
@@ -20,6 +21,9 @@ use std::path::PathBuf;
 /// **Groups**: The coverage profiles are collapsed (summed per position) across windows in a group.
 /// E.g., transcription factors as groups with binding sites as windows, yielding the
 /// overall midpoint profile per transcription factor.
+///
+/// **Smoothing**: Apply Savitzky-Golay filtering to counts for smoother profiles.
+/// This is disabled by default.
 ///
 /// ## Fragment span definition
 ///
@@ -114,6 +118,39 @@ pub struct MidpointsConfig {
     )]
     pub length_bins: Vec<String>,
 
+    /// Average adjacent positions in bins after counting and smoothing `[integer]`
+    ///
+    /// Defaults to 1 for full resolution. Larger values shrink the final
+    /// position axis by averaging adjacent bases.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, default_value = "1", value_parser = clap::value_parser!(u32).range(1..), help_heading = "Post-processing")
+    )]
+    pub bin_size: u32,
+
+    /// Smooth final midpoint profiles with an order-3 Savitzky-Golay filter `[string]`
+    ///
+    /// - Unspecified (default): Write the unsmoothed profiles.
+    ///
+    /// - `savgol`: Apply order-3 Savitzky-Golay smoothing with a 165 bp window.
+    ///
+    /// - `savgol=<odd_bp>` to set a different odd window size in base pairs.
+    ///   E.g., `--smooth savgol=155` for a 155 bp smoothing window.
+    ///
+    /// When smoothing is specified, the intervals are counted with additional flank positions
+    /// to avoid edge effects in the smoothed values. Flanked intervals cannot exceed the chromosome
+    /// context. Once smoothing is applied to final grouped profiles, the flanking is trimmed.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            default_value = "raw",
+            hide_default_value = true,
+            help_heading = "Post-processing"
+        )
+    )]
+    pub smooth: MidpointSmoothing,
+
     /// Size of tiles to parallelize over `[integer]`
     ///
     /// Chromosomes are processed in tiles of this size to reduce memory usage.
@@ -184,6 +221,23 @@ pub struct MidpointsConfig {
     )]
     pub blacklist_strategy: BlacklistStrategy,
 
+    /// Keep intervals that overlap nearby blacklisted regions `[flag]`
+    ///
+    /// **Edge bias**: When a blacklist is supplied, fragments overlapping blacklisted bases are filtered before
+    /// they can contribute midpoint counts. That fragment-level filtering can create artificial
+    /// dips near profile edges if an interval is close enough to a blacklist for relevant
+    /// fragments to be removed on one side but not the other.
+    ///
+    /// To avoid that edge bias, intervals within `ceil(max_fragment_length / 2) + smoothing_flank`
+    /// from blacklisted regions are removed prior to counting.
+    /// `smoothing_flank` is 0 for raw profiles and half the Savitzky-Golay window when
+    /// smoothing is used.
+    ///
+    /// Set this flag to keep those intervals in the site set. Fragment-level blacklist filtering still
+    /// applies.
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
+    pub keep_blacklisted_intervals: bool,
+
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub gc: ApplyGCArgs,
 
@@ -235,6 +289,8 @@ impl MidpointsConfig {
             output_prefix: String::new(),
             intervals,
             length_bins: vec!["30".to_string(), "1001".to_string()],
+            bin_size: 1,
+            smooth: MidpointSmoothing::Raw,
             tile_size: 20000000,
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),
@@ -243,6 +299,7 @@ impl MidpointsConfig {
             blacklist: None,
             blacklist_min_size: 1,
             blacklist_strategy: BlacklistStrategy::default(),
+            keep_blacklisted_intervals: false,
             gc: ApplyGCArgs {
                 gc_file: None,
                 gc_tag: None,
@@ -270,6 +327,15 @@ impl MidpointsConfig {
         self.length_bins = vec![spec.into()];
     }
 
+    pub fn set_bin_size(&mut self, bin_size: u32) {
+        assert!(bin_size >= 1, "bin_size must be at least 1");
+        self.bin_size = bin_size;
+    }
+
+    pub fn set_smoothing(&mut self, smoothing: MidpointSmoothing) {
+        self.smooth = smoothing;
+    }
+
     pub fn resolve_length_bins(&self) -> Result<Vec<u32>> {
         resolve_length_bin_edges(
             &self.length_bins,
@@ -288,6 +354,10 @@ impl MidpointsConfig {
 
     pub fn set_require_proper_pair(&mut self, require: bool) {
         self.require_proper_pair = require;
+    }
+
+    pub fn set_keep_blacklisted_intervals(&mut self, keep: bool) {
+        self.keep_blacklisted_intervals = keep;
     }
 
     pub fn set_scale_genome(&mut self, scale: ScaleGenomeArgs) {

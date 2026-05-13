@@ -2843,7 +2843,10 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_midpoints_then_roundtrip_mat
     assert_eq!(original_arr[[0, 0, 5]], 1.0);
     assert_eq!(original_arr.sum(), 1.0);
     assert_eq!(original_groups, restored_groups);
-    assert_eq!(original_groups.trim(), "group_idx\tgroup_name\n0\tgroupA");
+    assert_eq!(
+        original_groups.trim(),
+        "group_idx\tgroup_name\teligible_intervals\n0\tgroupA\t1"
+    );
 
     Ok(())
 }
