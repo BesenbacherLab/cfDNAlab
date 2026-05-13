@@ -68,6 +68,17 @@ impl ScalingWeightsCommand {
         }
     }
 
+    fn normalization_message(self, global_mean: f32, stride: u32) -> String {
+        match self {
+            Self::Coverage => format!(
+                "Normalized smoothed coverage to global mean: {global_mean} (average coverage per eligible base)"
+            ),
+            Self::FragmentCount => format!(
+                "Normalized smoothed fragment counts to global mean: {global_mean} (unit fragments per {stride} bp stride)"
+            ),
+        }
+    }
+
     fn info(self, message: &str) {
         match self {
             Self::Coverage => info!(target: "coverage-weights", "{message}"),
@@ -177,10 +188,7 @@ pub(crate) fn run_with_fcoverage(
     let mean_weighted_average_overlap =
         normalize_weighted_average_overlap_by_global_mean(&mut bins_by_chr, true, true)?;
 
-    command.info(&format!(
-        "Normalized the weighted average overlap values using global mean: {}",
-        mean_weighted_average_overlap
-    ));
+    command.info(&command.normalization_message(mean_weighted_average_overlap, opt.stride));
 
     command.info("Writing stride-bin coordinates and scaling factors to disk");
     let file_name = dot_join(&[opt.output_prefix.as_str(), command.output_file_name()]);
