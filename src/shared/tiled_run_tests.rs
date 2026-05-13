@@ -52,6 +52,44 @@ fn temp_dir_guard_remove_is_idempotent() -> anyhow::Result<()> {
 }
 
 #[test]
+fn temp_dir_retry_cleanup_removes_nested_directory() -> anyhow::Result<()> {
+    let base_dir = tempfile::TempDir::new()?;
+    let temp_path = base_dir.path().join("tmp.cleanup_retry");
+    std::fs::create_dir_all(temp_path.join("nested"))?;
+    std::fs::write(temp_path.join("nested").join("tile.tmp"), b"temporary tile payload")?;
+
+    let failures = cleanup_temp_dirs_with_retries(
+        std::slice::from_ref(&temp_path),
+        std::time::Duration::from_millis(0),
+        std::time::Duration::from_millis(0),
+        1,
+    );
+
+    assert!(
+        failures.is_empty(),
+        "cleanup should remove nested temp dir: {failures:?}"
+    );
+    assert!(!temp_path.exists());
+    Ok(())
+}
+
+#[test]
+fn temp_dir_retry_cleanup_treats_missing_directory_as_success() -> anyhow::Result<()> {
+    let base_dir = tempfile::TempDir::new()?;
+    let missing_path = base_dir.path().join("tmp.already_gone");
+
+    let failures = cleanup_temp_dirs_with_retries(
+        std::slice::from_ref(&missing_path),
+        std::time::Duration::from_millis(0),
+        std::time::Duration::from_millis(0),
+        1,
+    );
+
+    assert!(failures.is_empty());
+    Ok(())
+}
+
+#[test]
 fn precompute_tile_window_spans_keeps_left_halo_only_windows_for_raw_end_reach() {
     // Raw clipping can move the counted left endpoint left of the aligned fragment start.
     // For a tile core [10,20) and max-soft-clip reach of 2 bp, a BED window [8,9) must stay

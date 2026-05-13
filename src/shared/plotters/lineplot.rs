@@ -2,6 +2,13 @@ use anyhow::Result;
 use plotters::{coord::Shift, prelude::*};
 use std::path::Path;
 
+/// One labeled series for multi-line QC plots.
+pub struct LinePlotSeries<'a> {
+    pub label: &'a str,
+    pub x_values: &'a [f64],
+    pub y_values: &'a [f64],
+}
+
 /// Render a quick-look line plot to a PNG file for fast QC.
 ///
 /// Draws labeled axes with a small padding around both ranges so the
@@ -44,6 +51,46 @@ pub fn write_line_plot_png<P: AsRef<Path>>(
 ) -> Result<()> {
     let drawing_area = BitMapBackend::new(out_path.as_ref(), (width, height)).into_drawing_area();
     draw_line_plot(&drawing_area, title, x_label, y_label, x_values, y_values)
+}
+
+/// Render a labeled multi-series line plot to a PNG file for fast QC.
+///
+/// Draws one line per series and places a legend in the plot area. This keeps
+/// short diagnostic comparisons readable without forcing each caller to repeat
+/// Plotters setup code.
+///
+/// Parameters
+/// ----------
+/// - `out_path`:
+///     Destination path for the image file.
+/// - `title`:
+///     Plot title shown above the chart.
+/// - `x_label`:
+///     Label for the x axis.
+/// - `y_label`:
+///     Label for the y axis.
+/// - `series`:
+///     Labeled series to draw. Each series must have non-empty x and y arrays of equal length.
+/// - `width`:
+///     Canvas width in pixels.
+/// - `height`:
+///     Canvas height in pixels.
+///
+/// Returns
+/// -------
+/// - `Result<()>`:
+///     Ok when the plot is written.
+pub fn write_multi_line_plot_png<P: AsRef<Path>>(
+    out_path: P,
+    title: &str,
+    x_label: &str,
+    y_label: &str,
+    series: &[LinePlotSeries<'_>],
+    width: u32,
+    height: u32,
+) -> Result<()> {
+    let drawing_area = BitMapBackend::new(out_path.as_ref(), (width, height)).into_drawing_area();
+    draw_multi_line_plot(&drawing_area, title, x_label, y_label, series)
 }
 
 /// Render a quick-look line plot to an SVG file for fast QC.
@@ -166,6 +213,122 @@ where
         x_values.iter().copied().zip(y_values.iter().copied()),
         &BLUE,
     ))?;
+
+    drawing_area.present()?;
+    Ok(())
+}
+
+fn draw_multi_line_plot<DB: DrawingBackend>(
+    drawing_area: &DrawingArea<DB, Shift>,
+    title: &str,
+    x_label: &str,
+    y_label: &str,
+    series: &[LinePlotSeries<'_>],
+) -> Result<()>
+where
+    DB::ErrorType: 'static + std::error::Error + Send + Sync,
+{
+    anyhow::ensure!(!series.is_empty(), "line plot series are empty");
+    for line in series {
+        anyhow::ensure!(
+            !line.x_values.is_empty(),
+            "x axis values are empty for {}",
+            line.label
+        );
+        anyhow::ensure!(
+            line.x_values.len() == line.y_values.len(),
+            "x/y length mismatch for {}",
+            line.label
+        );
+    }
+
+    let x_min = series
+        .iter()
+        .flat_map(|line| line.x_values.iter().copied())
+        .fold(f64::INFINITY, f64::min);
+    let x_max = series
+        .iter()
+        .flat_map(|line| line.x_values.iter().copied())
+        .fold(f64::NEG_INFINITY, f64::max);
+
+    let x_span = (x_max - x_min).abs();
+    let x_pad = if x_span > 0.0 && x_span.is_finite() {
+        x_span * 0.05
+    } else {
+        1.0
+    };
+    let x_range = (x_min - x_pad)..(x_max + x_pad);
+
+    let y_min = series
+        .iter()
+        .flat_map(|line| line.y_values.iter().copied())
+        .fold(f64::INFINITY, f64::min);
+    let y_max = series
+        .iter()
+        .flat_map(|line| line.y_values.iter().copied())
+        .fold(f64::NEG_INFINITY, f64::max);
+
+    let mut y_low = if y_min.is_finite() { y_min } else { 0.0 };
+    let mut y_high = if y_max.is_finite() { y_max } else { 1.0 };
+
+    if (y_high - y_low).abs() < f64::EPSILON {
+        let pad = (y_low.abs() * 0.05).max(1.0);
+        y_low -= pad;
+        y_high += pad;
+    }
+
+    let y_span = (y_high - y_low).abs();
+    let y_pad = if y_span > 0.0 && y_span.is_finite() {
+        y_span * 0.05
+    } else {
+        1.0
+    };
+    let y_range = (y_low - y_pad)..(y_high + y_pad);
+
+    drawing_area.fill(&WHITE)?;
+
+    let x_label_area = 52;
+    let y_label_area = 62;
+
+    let mut chart = ChartBuilder::on(drawing_area)
+        .caption(title, ("sans-serif", 22))
+        .margin(20)
+        .x_label_area_size(x_label_area)
+        .y_label_area_size(y_label_area)
+        .build_cartesian_2d(x_range, y_range)?;
+
+    chart
+        .configure_mesh()
+        .axis_desc_style(("sans-serif", 22))
+        .x_desc(x_label)
+        .y_desc(y_label)
+        .draw()?;
+
+    for (series_index, line) in series.iter().enumerate() {
+        let line_style = ShapeStyle::from(&Palette99::pick(series_index)).stroke_width(3);
+        chart
+            .draw_series(LineSeries::new(
+                line.x_values
+                    .iter()
+                    .copied()
+                    .zip(line.y_values.iter().copied()),
+                line_style,
+            ))?
+            .label(line.label)
+            .legend(move |(legend_x, legend_y)| {
+                PathElement::new(
+                    vec![(legend_x, legend_y), (legend_x + 24, legend_y)],
+                    line_style,
+                )
+            });
+    }
+
+    chart
+        .configure_series_labels()
+        .background_style(WHITE.mix(0.85))
+        .border_style(BLACK)
+        .label_font(("sans-serif", 18))
+        .draw()?;
 
     drawing_area.present()?;
     Ok(())

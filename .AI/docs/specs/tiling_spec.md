@@ -52,7 +52,7 @@ For fixed-size windows, fetch narrowing derives the first and last fixed bins to
 
 - Temporary directories are created under the command output directory as `tmp.<prefix>.<random>` or equivalent dot-joined names.
 - `TempDirGuard` owns cleanup on success, early return, and drop.
-- Ctrl-C cleanup registration is shared across guarded temp dirs.
+- Ctrl-C cleanup registration is shared across guarded temp dirs. The signal handler starts the hidden cleanup helper and exits the main process, so cleanup happens after in-process worker threads have stopped writing.
 - Commands should keep temp dirs inside the selected output tree so large intermediates stay on the expected filesystem.
 
 ## Reducer Rules

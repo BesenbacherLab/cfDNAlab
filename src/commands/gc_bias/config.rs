@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 // Central defaults to keep CLI and programmatic creation in sync
 pub const DEFAULT_TILE_SIZE: u32 = 10_000_000;
-pub const DEFAULT_MIN_LENGTH_BIN_MASS: f32 = 0.5;
+pub const DEFAULT_MIN_LENGTH_BIN_MASS: f32 = 1.0;
 pub const DEFAULT_MIN_LENGTH_BIN_WIDTH: u8 = 3;
 pub const DEFAULT_MIN_GC_BIN_MASS: f32 = 1.0;
 pub const DEFAULT_NUM_EXTREME_GC_BINS: u8 = 1;
