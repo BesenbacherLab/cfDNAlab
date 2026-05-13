@@ -3,14 +3,22 @@ use crate::shared::interval::{IndexedInterval, Interval};
 use crate::shared::io::dot_join;
 use anyhow::{Context, ensure};
 use rand::{Rng, distr::Alphanumeric};
+use std::env;
+use std::ffi::OsString;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::process;
+use std::process::{self, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
+use std::thread;
+use std::time::Duration;
 use tracing::warn;
 
 const TEMP_DIR_CLEANUP_TARGET: &str = "temp-dir-cleanup";
+const TEMP_DIR_CLEANUP_HELPER_ARG: &str = "--__cfdnalab-clean-temp-dirs";
+const TEMP_DIR_CLEANUP_INITIAL_DELAY: Duration = Duration::from_millis(250);
+const TEMP_DIR_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(250);
+const TEMP_DIR_CLEANUP_MAX_ATTEMPTS: usize = 120;
 static TEMP_DIR_CTRL_C_CLEANUP_STARTED: AtomicBool = AtomicBool::new(false);
 static TEMP_DIR_CTRL_C_HANDLER_INSTALLED: OnceLock<()> = OnceLock::new();
 static TEMP_DIR_CTRL_C_REGISTRY: OnceLock<Mutex<Vec<PathBuf>>> = OnceLock::new();
@@ -777,19 +785,23 @@ fn install_temp_dir_ctrl_c_cleanup_handler() {
                 Ok(paths) => paths.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
-            for path in paths {
-                match std::fs::remove_dir_all(&path) {
-                    Ok(()) => {}
-                    Err(err) if err.kind() == ErrorKind::NotFound => {}
-                    Err(err) => {
-                        // Write directly to stderr because the handler exits immediately after cleanup
-                        eprintln!(
-                            "Warning: failed to remove temporary directory {}: {}",
-                            path.display(),
-                            err
-                        );
-                    }
-                }
+
+            if !paths.is_empty()
+                && let Err(err) = spawn_temp_dir_cleanup_helper(paths.as_slice())
+            {
+                // Write directly to stderr because the handler exits immediately after cleanup.
+                // If the helper cannot start, use a short best-effort fallback so Ctrl+C still
+                // has a chance to clean up trivial temp dirs.
+                eprintln!(
+                    "Warning: failed to start temporary-directory cleanup helper: {}",
+                    err
+                );
+                warn_cleanup_failures(cleanup_temp_dirs_with_retries(
+                    paths.as_slice(),
+                    Duration::from_millis(0),
+                    Duration::from_millis(50),
+                    3,
+                ));
             }
 
             process::exit(130);
@@ -801,6 +813,108 @@ fn install_temp_dir_ctrl_c_cleanup_handler() {
             );
         }
     });
+}
+
+fn spawn_temp_dir_cleanup_helper(paths: &[PathBuf]) -> std::io::Result<()> {
+    let current_exe = env::current_exe()?;
+    let mut command = Command::new(current_exe);
+    command
+        .arg(TEMP_DIR_CLEANUP_HELPER_ARG)
+        .args(paths)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit());
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+
+    command.spawn()?;
+    Ok(())
+}
+
+/// Run the hidden temp-dir cleanup helper mode if the current process was started for cleanup.
+///
+/// The normal CLI calls this before Clap parsing. The helper sleeps briefly so the interrupted
+/// parent process can exit and close tile-writer file handles, then removes the registered temp
+/// directories with bounded retries.
+pub fn run_temp_dir_cleanup_helper_if_requested() -> bool {
+    let mut args = env::args_os();
+    let _program = args.next();
+    let Some(mode) = args.next() else {
+        return false;
+    };
+    if mode != OsString::from(TEMP_DIR_CLEANUP_HELPER_ARG) {
+        return false;
+    }
+
+    let paths: Vec<PathBuf> = args.map(PathBuf::from).collect();
+    let failures = cleanup_temp_dirs_with_retries(
+        paths.as_slice(),
+        TEMP_DIR_CLEANUP_INITIAL_DELAY,
+        TEMP_DIR_CLEANUP_RETRY_DELAY,
+        TEMP_DIR_CLEANUP_MAX_ATTEMPTS,
+    );
+    let exit_code = if failures.is_empty() { 0 } else { 1 };
+    warn_cleanup_failures(failures);
+    process::exit(exit_code);
+}
+
+fn cleanup_temp_dirs_with_retries(
+    paths: &[PathBuf],
+    initial_delay: Duration,
+    retry_delay: Duration,
+    max_attempts: usize,
+) -> Vec<(PathBuf, String)> {
+    if !paths.is_empty() && !initial_delay.is_zero() {
+        thread::sleep(initial_delay);
+    }
+
+    let attempts = max_attempts.max(1);
+    let mut failures = Vec::new();
+    for path in paths {
+        let mut last_error = None;
+        for attempt_idx in 0..attempts {
+            match remove_temp_dir_once(path) {
+                Ok(()) => {
+                    last_error = None;
+                    break;
+                }
+                Err(err) => {
+                    last_error = Some(err.to_string());
+                    if attempt_idx + 1 < attempts && !retry_delay.is_zero() {
+                        thread::sleep(retry_delay);
+                    }
+                }
+            }
+        }
+
+        if let Some(err) = last_error {
+            failures.push((path.clone(), err));
+        }
+    }
+
+    failures
+}
+
+fn remove_temp_dir_once(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err),
+    }
+}
+
+fn warn_cleanup_failures(failures: Vec<(PathBuf, String)>) {
+    for (path, err) in failures {
+        eprintln!(
+            "Warning: failed to remove temporary directory {}: {}",
+            path.display(),
+            err
+        );
+    }
 }
 
 fn register_temp_dir_for_ctrl_c_cleanup(path: &Path) {

@@ -13,6 +13,10 @@ fn main() {
 fn main() {
     use clap::FromArgMatches;
 
+    if cfdnalab::shared::tiled_run::run_temp_dir_cleanup_helper_if_requested() {
+        return;
+    }
+
     let command = build_terminal_command();
     let matches = command.clone().get_matches();
     let command_name = matches.subcommand_name().unwrap_or("help").to_string();
