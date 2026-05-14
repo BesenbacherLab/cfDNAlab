@@ -436,7 +436,7 @@ fn is_sorted_by_start_with_scores(ws: &[ScoredInterval<u64>]) -> bool {
 
 /* GROUPED bed files */
 
-const GROUPED_BED_STRAND_SAMPLE_ROWS: usize = 20;
+const GROUPED_BED_STRAND_SAMPLE_ROWS: usize = 200;
 
 /// Load *grouped* windows from a BED file into a per-chromosome map.
 ///

@@ -92,6 +92,11 @@ pub struct MidpointsConfig {
     ///
     /// Required columns: `chromosome, start, end, group_name`. No header.
     /// Optional fifth and sixth columns follow the strand rules above.
+    ///
+    /// Note: Besides chromosome-filtering and blacklist-filtering (see explanation in
+    /// `--keep-blacklisted-intervals`), no additional interval filtering is performed.
+    /// It is up to the user to remove duplicate intervals, within-group overlapping intervals,
+    /// and other potential clean-ups beforehand.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -229,7 +234,7 @@ pub struct MidpointsConfig {
     )]
     pub blacklist_strategy: BlacklistStrategy,
 
-    /// Keep intervals that overlap nearby blacklisted regions `[flag]`
+    /// Don't filter out intervals that overlap nearby blacklisted regions `[flag]`
     ///
     /// **Edge bias**: Fragments overlapping blacklisted bases are filtered before
     /// they can contribute midpoint counts. This can create artificial

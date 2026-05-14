@@ -560,6 +560,8 @@ Choose any relevant options below. See `--help` for more options.
 
 Multiple studies have profiled the midpoint coverage around e.g. transcription factor binding sites (summed per transcription factor, per position) (Doebley et al., 2022). This can inform about the binding activity of different transcription factors related to cancer.
 
+By default, a 3rd order Savitzky-Golay filter smooths the final profiles.
+
 ```bash
 
 cfdna midpoints --help
@@ -591,9 +593,12 @@ Choose any relevant options below. See `--help` for more options.
   --ref-2bit <path>/hg38.2bit \
   --scaling-factors ...
 
+  # Disable profile smoothing
+  --smoothing none
+
 ```
 
-The **intervals** must have the same fixed size. A common binding site window size is `2001bp`, centered around the binding site center. The expected columns are: `chromosome, start, end, group_name` (where `group_name` is the group to collapse profiles by, e.g., the transcription factor ID). The intervals should be sorted by chromosome and start-coordinates.
+The **intervals** must have the same fixed size. A common binding site window size is `2001bp`, centered around the binding site center. The expected columns are: `chromosome, start, end, group_name` (where `group_name` is the group to collapse profiles by, e.g., the transcription factor ID). Additional `score` (ignored) and `strand` columns can be present, in which case intervals on the reverse strand (-) are counted in the reverse direction. The intervals should be sorted by chromosome and start-coordinates.
 
 **TIP** Remove intervals that lie closer than half the maximum fragment length from any blacklisted region, to reduce mappability biases in the profiles.
 
