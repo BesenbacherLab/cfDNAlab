@@ -96,8 +96,6 @@ Extract fragmentomics features:
   width="185"
 /></dt>
   <dd>Count fragment <i>midpoint</i> coverage in fixed-size intervals, collapsed by groups across the genome.<br>E.g., transcription factor binding sites, aggregated per transcription factor.<br>Fast alternative to <a href=https://github.com/adoebley/Griffin>Griffin</a> when combined with <code>cfdna gc-bias</code>.</dd>
-  
-  **NOTE**: We are currently improving this command so it will be changing in the coming weeks.
 
   <hr>
 
