@@ -11,9 +11,7 @@ fn contigs_with_lengths(entries: &[(&str, u32)]) -> Contigs {
         contigs: FxHashMap::default(),
     };
     for (name, len) in entries {
-        contigs
-            .contigs
-            .insert((*name).to_string(), (0_i32, *len));
+        contigs.contigs.insert((*name).to_string(), (0_i32, *len));
     }
     contigs
 }
@@ -55,7 +53,8 @@ fn compute_window_offsets_counts_size_windows_across_chromosomes() -> Result<()>
     let contigs = contigs_with_lengths(&[("chr1", 250), ("chr2", 90)]);
 
     // Act
-    let (total, offsets) = compute_window_offsets(&WindowSpec::Size(100), &chromosomes, &contigs, None)?;
+    let (total, offsets) =
+        compute_window_offsets(&WindowSpec::Size(100), &chromosomes, &contigs, None)?;
 
     // Assert
     assert_eq!(total, 4);
@@ -71,7 +70,10 @@ fn compute_window_offsets_preserves_bed_original_indices() -> Result<()> {
     let contigs = contigs_with_lengths(&[("chr1", 100), ("chr2", 100)]);
     let mut windows_map = FxHashMap::default();
     windows_map.insert("chr1".to_string(), Windows::from_tuples(&[(0, 10, 5_u64)])?);
-    windows_map.insert("chr2".to_string(), Windows::from_tuples(&[(10, 20, 9_u64)])?);
+    windows_map.insert(
+        "chr2".to_string(),
+        Windows::from_tuples(&[(10, 20, 9_u64)])?,
+    );
 
     // Act
     let (total, offsets) = compute_window_offsets(
@@ -123,8 +125,8 @@ fn ensure_plain_bed_windows_not_empty_accepts_one_surviving_window() -> Result<(
 fn ensure_grouped_bed_windows_not_empty_errors_when_no_grouped_windows_survive() -> Result<()> {
     // Arrange
     let mut windows_map = FxHashMap::default();
-    windows_map.insert("chr1".to_string(), GroupedWindows::from_tuples(&[])?);
-    windows_map.insert("chr2".to_string(), GroupedWindows::from_tuples(&[])?);
+    windows_map.insert("chr1".to_string(), GroupedWindows::from_tuples(&[], None)?);
+    windows_map.insert("chr2".to_string(), GroupedWindows::from_tuples(&[], None)?);
 
     // Act
     let result = ensure_grouped_bed_windows_not_empty(&windows_map);
@@ -141,10 +143,10 @@ fn ensure_grouped_bed_windows_not_empty_errors_when_no_grouped_windows_survive()
 fn ensure_grouped_bed_windows_not_empty_accepts_one_surviving_grouped_window() -> Result<()> {
     // Arrange
     let mut windows_map = FxHashMap::default();
-    windows_map.insert("chr1".to_string(), GroupedWindows::from_tuples(&[])?);
+    windows_map.insert("chr1".to_string(), GroupedWindows::from_tuples(&[], None)?);
     windows_map.insert(
         "chr2".to_string(),
-        GroupedWindows::from_tuples(&[(10, 20, 0)])?,
+        GroupedWindows::from_tuples(&[(10, 20, 0)], None)?,
     );
 
     // Act / Assert

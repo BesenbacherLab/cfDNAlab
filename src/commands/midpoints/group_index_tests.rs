@@ -1,5 +1,5 @@
 use super::{eligible_interval_counts_by_group, write_midpoint_group_index_tsv};
-use crate::shared::interval::IndexedInterval;
+use crate::shared::{bed::GroupedWindows, interval::IndexedInterval};
 use fxhash::FxHashMap;
 use tempfile::TempDir;
 
@@ -10,13 +10,22 @@ fn eligible_interval_counts_include_zero_count_groups() {
     let mut intervals_by_chromosome = FxHashMap::default();
     intervals_by_chromosome.insert(
         "chr1".to_string(),
-        vec![
-            IndexedInterval::new(10, 20, 0).expect("valid test interval"),
-            IndexedInterval::new(30, 40, 0).expect("valid test interval"),
-            IndexedInterval::new(50, 60, 2).expect("valid test interval"),
-        ],
+        GroupedWindows::new(
+            vec![
+                IndexedInterval::new(10, 20, 0).expect("valid test interval"),
+                IndexedInterval::new(30, 40, 0).expect("valid test interval"),
+                IndexedInterval::new(50, 60, 2).expect("valid test interval"),
+            ],
+            None,
+        ),
     );
-    intervals_by_chromosome.insert("chr2".to_string(), Vec::new());
+    intervals_by_chromosome.insert(
+        "chr2".to_string(),
+        GroupedWindows::new(
+            Vec::<IndexedInterval<u64>>::new(),
+            None,
+        ),
+    );
 
     let mut group_idx_to_name = FxHashMap::default();
     group_idx_to_name.insert(0, "groupA".to_string());

@@ -25,6 +25,9 @@ use std::path::PathBuf;
 /// **Smoothing**: Final profiles are smoothed with an order-3 Savitzky-Golay
 /// filter unless `--smoothing none` is used.
 ///
+/// **Strandedness**: When the `--intervals` carry strand information (`+`/`-`/`.`),
+/// reverse-stranded (`-`) intervals write into group profiles in reverse order.
+///
 /// ## Fragment span definition
 ///
 /// **Paired-end**: `[forward.pos, reverse.reference_end)`, the reference span
@@ -72,14 +75,23 @@ pub struct MidpointsConfig {
 
     /// The grouped fixed-size intervals to count within `[path]`
     ///
-    /// A BED-like file of genomic intervals and their respective group names.
+    /// A BED-like file of genomic intervals, their respective group names, and optionally
+    /// the interval strandedness.
     ///
     /// Must be sorted by the `chromosome` and `start` coordinates, and
     /// all intervals must have the same size.
     ///
     /// Sites with the same group name are collapsed to a single profile.
     ///
-    /// Columns: `chromosome, start, end, group_name`. No header.
+    /// Strand tokens are `+`, `-`, or `.`. With six or more columns, only column 6 is read as
+    /// strand. With exactly five columns, column 5 may be strand. If column 5 looks stranded but
+    /// column 6 exists and does not, the file is rejected as ambiguous.
+    ///
+    /// Forward and unknown strandedness use normal genomic order while reverse stranded intervals
+    /// write into the grouped profiles in reverse order.
+    ///
+    /// Required columns: `chromosome, start, end, group_name`. No header.
+    /// Optional fifth and sixth columns follow the strand rules above.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -229,7 +241,7 @@ pub struct MidpointsConfig {
     /// `smoothing_flank` is half the Savitzky-Golay window when smoothing is active and
     /// `0` when `--smoothing none`.
     ///
-    /// Set this flag to keep those intervals in the site set. 
+    /// Set this flag to keep those intervals in the site set.
     /// Fragment-level blacklist filtering still applies.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
     pub keep_blacklisted_intervals: bool,

@@ -229,7 +229,7 @@ where
     spans
 }
 
-/// Iterator over the windows that overlap a tile core.
+/// Iterator over windows that overlap a tile core.
 ///
 /// The underlying slice is filtered on-the-fly to skip windows whose span does not intersect the
 /// tile, so callers do not need to duplicate the overlap predicates.
@@ -241,28 +241,42 @@ pub struct TileWindowsIter<'a> {
     core_end: u64,
 }
 
+impl<'a> TileWindowsIter<'a> {
+    /// Produces the next source-slice index whose window intersects the tile core.
+    ///
+    /// Cached index bounds may include neighbouring candidates, so this method checks overlap on
+    /// the fly and discards false positives before yielding. Use this when a caller needs to keep
+    /// sidecar vectors aligned with the source window slice.
+    ///
+    /// # Returns
+    /// `Some(index)` when another overlapping window is available, otherwise `None` at the end of
+    /// the span.
+    pub(crate) fn next_window_index(&mut self) -> Option<usize> {
+        while self.next_idx < self.end_idx {
+            let window_idx = self.next_idx;
+            let window = &self.windows[window_idx];
+            self.next_idx += 1;
+            // Only return windows that truly intersect the tile core, even if the cached span
+            // contains neighbouring candidates with the same chromosome ordering
+            if window.end() > self.core_start && window.start() < self.core_end {
+                return Some(window_idx);
+            }
+        }
+        None
+    }
+}
+
 impl<'a> Iterator for TileWindowsIter<'a> {
     type Item = &'a IndexedInterval<u64>;
 
     /// Produces the next window that intersects the stored tile core.
     ///
-    /// Cached index bounds may include neighbouring candidates, so this method checks overlap on
-    /// the fly and discards false positives before yielding.
-    ///
     /// # Returns
     /// `Some(window)` when another overlapping window is available, otherwise `None` at the end of
     /// the span.
     fn next(&mut self) -> Option<Self::Item> {
-        while self.next_idx < self.end_idx {
-            let window = &self.windows[self.next_idx];
-            self.next_idx += 1;
-            // Only return windows that truly intersect the tile core, even if the cached span
-            // contains neighbouring candidates with the same chromosome ordering
-            if window.end() > self.core_start && window.start() < self.core_end {
-                return Some(window);
-            }
-        }
-        None
+        self.next_window_index()
+            .map(|window_idx| &self.windows[window_idx])
     }
 }
 
@@ -337,7 +351,7 @@ fn advance_window_span_bounds(
     (left, right)
 }
 
-/// Provides an iterator over the windows that overlap a given tile core.
+/// Provides an iterator over windows that overlap a given tile core.
 ///
 /// It reuses a cached span when available, falling back to a local scan otherwise, and clamps the
 /// resulting indices to the source slice before constructing the iterator.
@@ -348,7 +362,8 @@ fn advance_window_span_bounds(
 /// - `span`: Optional cached span previously produced by `precompute_tile_window_spans`.
 ///
 /// # Returns
-/// A `TileWindowsIter` positioned to stream the overlapping windows.
+/// A `TileWindowsIter` positioned to stream overlapping windows. Commands that need aligned
+/// sidecar data can use its crate-local source-index access on the returned iterator.
 pub fn overlapping_windows_for_tile<'a>(
     windows: &'a [IndexedInterval<u64>],
     tile: &Tile,

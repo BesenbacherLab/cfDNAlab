@@ -39,12 +39,12 @@ pub fn load_windows_from_bed(
     let mut reader = open_text_reader(bed.as_ref())?;
 
     // Optional whitelist of chromosomes
-    let mut vec_mapping: FxHashMap<String, Vec<(u64, u64, u64)>> = FxHashMap::default();
+    let mut windows_by_chromosome: FxHashMap<String, Vec<(u64, u64, u64)>> = FxHashMap::default();
     let allowed_chromosomes: Option<FxHashSet<&str>> = chromosomes.map(|chr_list| {
         let mut allowed = FxHashSet::with_capacity_and_hasher(chr_list.len(), Default::default());
         for chr in chr_list {
             allowed.insert(chr.as_str());
-            vec_mapping.entry(chr.clone()).or_default();
+            windows_by_chromosome.entry(chr.clone()).or_default();
         }
         allowed
     });
@@ -177,7 +177,7 @@ pub fn load_windows_from_bed(
             continue;
         }
 
-        vec_mapping
+        windows_by_chromosome
             .entry(chr.to_string())
             .or_default()
             .push((start, end, current_orig_win_idx));
@@ -192,7 +192,7 @@ pub fn load_windows_from_bed(
         );
     }
 
-    let windows_mapping: FxHashMap<String, Windows> = vec_mapping
+    let windows_mapping: FxHashMap<String, Windows> = windows_by_chromosome
         .into_iter()
         .map(|(chr, windows)| Ok((chr, Windows::from_tuples(&windows)?)))
         .collect::<crate::Result<_>>()?;
@@ -436,6 +436,8 @@ fn is_sorted_by_start_with_scores(ws: &[ScoredInterval<u64>]) -> bool {
 
 /* GROUPED bed files */
 
+const GROUPED_BED_STRAND_SAMPLE_ROWS: usize = 20;
+
 /// Load *grouped* windows from a BED file into a per-chromosome map.
 ///
 /// Parameters
@@ -443,6 +445,9 @@ fn is_sorted_by_start_with_scores(ws: &[ScoredInterval<u64>]) -> bool {
 ///  - bed: Path to BED file with group names in the fourth column.
 ///  - chromosomes: Names of chromosomes to include in output,
 ///    even when not present in the BED file.
+///  - read_strands: Detect and read interval strandedness from the BED fields. For files with six
+///    or more columns, only column 6 is read as strand. Column 5 is accepted only for five-column
+///    grouped files.
 ///  - filter_fn: Function for deciding whether to include
 ///    an interval. Should take in the `chr,start,end` values
 ///    and return `true` (keep) or `false` (discard).
@@ -455,21 +460,47 @@ fn is_sorted_by_start_with_scores(ws: &[ScoredInterval<u64>]) -> bool {
 ///  - Mapping of 'chromosome -> sorted window coordinates (start, end, group index)'.
 ///
 ///  - Mapping of 'group index -> group name'.
+///
+///  - Optional strand-detection metadata when `read_strands` is enabled.
 pub fn load_grouped_windows_from_bed(
     bed: impl AsRef<Path>,
     chromosomes: Option<&[String]>,
+    read_strands: bool,
     filter_fn: Option<&dyn Fn(&str, u64, u64) -> bool>,
     exp_num_windows: Option<u64>,
-) -> Result<(FxHashMap<String, GroupedWindows>, FxHashMap<u64, String>)> {
-    let mut reader = open_text_reader(bed.as_ref())?; // Works with &Path, PathBuf, &str
+) -> Result<(
+    FxHashMap<String, GroupedWindows>,
+    FxHashMap<u64, String>,
+    Option<GroupedBedStrandDetection>,
+)> {
+    let bed_path = bed.as_ref();
+    let strand_detection = if read_strands {
+        Some(detect_grouped_bed_strand_column(bed_path)?)
+    } else {
+        None
+    };
+    let detected_strand_column = strand_detection
+        .as_ref()
+        .and_then(|detection| detection.column);
+    let mut reader = open_text_reader(bed_path)?; // Works with &Path, PathBuf, &str
+
+    // Initialize maps
+    let mut grouped_windows_by_chromosome: FxHashMap<String, Vec<IndexedInterval<u64>>> =
+        FxHashMap::default();
+    let mut strand_mapping: Option<FxHashMap<String, Vec<Strand>>> =
+        detected_strand_column.is_some().then(FxHashMap::default);
 
     // Optional whitelist of chromosomes
-    let mut vec_mapping: FxHashMap<String, Vec<IndexedInterval<u64>>> = FxHashMap::default();
     let allowed_chromosomes: Option<FxHashSet<&str>> = chromosomes.map(|chr_list| {
         let mut allowed = FxHashSet::with_capacity_and_hasher(chr_list.len(), Default::default());
         for chr in chr_list {
             allowed.insert(chr.as_str());
-            vec_mapping.entry(chr.clone()).or_default();
+            grouped_windows_by_chromosome
+                .entry(chr.clone())
+                .or_default();
+            if let Some(strands_by_chr) = strand_mapping.as_mut() {
+                strands_by_chr.entry(chr.clone()).or_default();
+            }
         }
         allowed
     });
@@ -491,19 +522,10 @@ pub fn load_grouped_windows_from_bed(
         }
         lineno += 1;
 
-        // Fast skips
-        if buf.as_bytes().first().is_some_and(|b| *b == b'#') {
-            continue;
-        }
         let line = buf.trim_end_matches(['\n', '\r']);
 
-        if line.is_empty() {
-            continue;
-        }
-
-        // Skip UCSC header directives in BED files
-        let trimmed_line_start = line.trim_start();
-        if trimmed_line_start.starts_with("track") || trimmed_line_start.starts_with("browser") {
+        // Fast skips
+        if should_skip_bed_line(line) {
             continue;
         }
 
@@ -618,6 +640,25 @@ pub fn load_grouped_windows_from_bed(
             continue;
         }
 
+        let strand = match detected_strand_column {
+            None => Strand::Unstranded,
+            Some(GroupedBedStrandColumn::Column5) => {
+                let column5 = fields.next();
+                let column6 = fields.next();
+                ensure!(
+                    column6.is_none(),
+                    "BED parse error at line {}: inconsistent grouped BED column count. Strands were detected in column 5 from 5-column rows, but this row has 6 or more columns",
+                    lineno
+                );
+                parse_grouped_bed_strand_value(column5, lineno, 5)?
+            }
+            Some(GroupedBedStrandColumn::Column6) => {
+                let _column5 = fields.next();
+                let column6 = fields.next();
+                parse_grouped_bed_strand_value(column6, lineno, 6)?
+            }
+        };
+
         let checked_window = IndexedInterval::new(start, end, group_idx).with_context(|| {
             format!(
                 "BED parse error at line {}: invalid interval [{start},{end})",
@@ -625,10 +666,16 @@ pub fn load_grouped_windows_from_bed(
             )
         })?;
 
-        vec_mapping
+        grouped_windows_by_chromosome
             .entry(chr.to_string())
             .or_default()
             .push(checked_window);
+        if let Some(strands_by_chr) = strand_mapping.as_mut() {
+            strands_by_chr
+                .entry(chr.to_string())
+                .or_default()
+                .push(strand);
+        }
     }
 
     if let Some(expected_num_windows) = exp_num_windows {
@@ -639,12 +686,21 @@ pub fn load_grouped_windows_from_bed(
             expected_num_windows
         );
     }
+    ensure!(
+        orig_win_idx > 0,
+        "grouped BED file did not contain any interval rows. Empty BED files are not valid input"
+    );
 
     // Convert parsed checked intervals into grouped windows.
     // GroupedWindows::new sorts internally and caches the chromosome span.
-    let windows_mapping: FxHashMap<String, GroupedWindows> = vec_mapping
+    let windows_mapping: FxHashMap<String, GroupedWindows> = grouped_windows_by_chromosome
         .into_iter()
-        .map(|(chr, windows)| (chr, GroupedWindows::new(windows)))
+        .map(|(chr, windows)| {
+            let strands = strand_mapping
+                .as_mut()
+                .and_then(|strands_by_chr| strands_by_chr.remove(&chr));
+            (chr, GroupedWindows::new(windows, strands))
+        })
         .collect();
 
     // Invert the group mapping to allow getting the group name from the group index
@@ -653,7 +709,187 @@ pub fn load_grouped_windows_from_bed(
         .map(|(name, &idx)| (idx, name.clone()))
         .collect();
 
-    Ok((windows_mapping, group_idx_to_name))
+    Ok((windows_mapping, group_idx_to_name, strand_detection))
+}
+
+/// Site orientation read from a BED file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Strand {
+    /// Site has no directional interpretation.
+    Unstranded,
+    /// Site is forward-oriented.
+    Forward,
+    /// Site is reverse-oriented.
+    Reverse,
+}
+
+/// Check whether a sampled BED field is one of the supported UCSC strand tokens.
+///
+/// This is a classifier, not strict parsing. The detector uses `None` to mean "this sampled
+/// column is not strand-like". Once a column has been selected, `parse_bed_strand_token` turns
+/// invalid values into user-facing errors.
+fn classify_bed_strand_token(token: &str) -> Option<Strand> {
+    match token {
+        "." => Some(Strand::Unstranded),
+        "+" => Some(Strand::Forward),
+        "-" => Some(Strand::Reverse),
+        _ => None,
+    }
+}
+
+/// Parse a selected grouped BED strand field.
+///
+/// This function is strict. It is only used after the loader has decided which column is the
+/// strand column, so any value other than `+`, `-`, or `.` is a malformed BED row and returns an
+/// error with the line and column number.
+fn parse_bed_strand_token(value: &str, lineno: usize, column_number: usize) -> Result<Strand> {
+    classify_bed_strand_token(value).with_context(|| {
+        format!(
+            "BED parse error at line {}: invalid strand '{}' in column {}. Expected '+', '-', or '.'",
+            lineno, value, column_number
+        )
+    })
+}
+
+/// Strand column found during grouped BED sampling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupedBedStrandColumn {
+    Column5,
+    Column6,
+}
+
+/// What the grouped BED sampling pass found about interval strands.
+///
+/// `sampled_rows` is the number of non-header BED rows used for detection. `column` is `Some`
+/// only when the sampled rows identified a usable strand column. `saw_column6` lets commands warn
+/// when a wide BED-like file was treated as unstranded because column 6 did not contain `+`, `-`,
+/// or `.`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GroupedBedStrandDetection {
+    pub sampled_rows: usize,
+    pub column: Option<GroupedBedStrandColumn>,
+    pub saw_column6: bool,
+}
+
+/// Return whether a BED line should be ignored before field parsing.
+///
+/// Blank lines, comments, and UCSC `track` or `browser` directives do not represent intervals and
+/// should not count toward strand-column detection or parsed window totals.
+fn should_skip_bed_line(line: &str) -> bool {
+    if line.as_bytes().first().is_some_and(|value| *value == b'#') {
+        return true;
+    }
+    if line.is_empty() {
+        return true;
+    }
+
+    let trimmed_line_start = line.trim_start();
+    trimmed_line_start.starts_with("track") || trimmed_line_start.starts_with("browser")
+}
+
+/// Detect whether grouped BED rows contain a strand column.
+///
+/// The grouped BED loader samples the first 20 data rows instead of scanning the full file up
+/// front. Column 6 is preferred because it matches standard BED6 layout. Column 5 is accepted only
+/// when no sampled row has a column 6. If column 5 looks stranded but column 6 exists and is not a
+/// strand column, the file is treated as ambiguous and rejected.
+fn detect_grouped_bed_strand_column(bed: &Path) -> Result<GroupedBedStrandDetection> {
+    let mut reader = open_text_reader(bed)?;
+    let mut buffer = String::new();
+    let mut sampled_rows = 0usize;
+    let mut any_column5 = false;
+    let mut any_column6 = false;
+    let mut all_sampled_column5_are_strands = true;
+    let mut all_sampled_column6_are_strands = true;
+
+    while sampled_rows < GROUPED_BED_STRAND_SAMPLE_ROWS {
+        buffer.clear();
+        if reader.read_line(&mut buffer)? == 0 {
+            break;
+        }
+
+        let line = buffer.trim_end_matches(['\n', '\r']);
+        if should_skip_bed_line(line) {
+            continue;
+        }
+
+        let columns: Vec<&str> = line.split_ascii_whitespace().collect();
+        if columns.is_empty() {
+            continue;
+        }
+
+        sampled_rows += 1;
+        match columns.get(4) {
+            Some(value) => {
+                any_column5 = true;
+                if classify_bed_strand_token(value).is_none() {
+                    all_sampled_column5_are_strands = false;
+                }
+            }
+            None => all_sampled_column5_are_strands = false,
+        }
+
+        match columns.get(5) {
+            Some(value) => {
+                any_column6 = true;
+                if classify_bed_strand_token(value).is_none() {
+                    all_sampled_column6_are_strands = false;
+                }
+            }
+            None => all_sampled_column6_are_strands = false,
+        }
+    }
+
+    if sampled_rows == 0 {
+        bail!(
+            "grouped BED file did not contain any interval rows. Empty BED files are not valid input"
+        );
+    }
+
+    if any_column6 && all_sampled_column6_are_strands {
+        return Ok(GroupedBedStrandDetection {
+            sampled_rows,
+            column: Some(GroupedBedStrandColumn::Column6),
+            saw_column6: any_column6,
+        });
+    }
+
+    if any_column6 && any_column5 && all_sampled_column5_are_strands {
+        bail!(
+            "grouped BED strand column is ambiguous: column 5 contains only '+', '-', or '.', but column 6 exists and is not a strand column. When 6 or more BED columns are supplied, put strands in column 6"
+        );
+    }
+
+    if !any_column6 && any_column5 && all_sampled_column5_are_strands {
+        return Ok(GroupedBedStrandDetection {
+            sampled_rows,
+            column: Some(GroupedBedStrandColumn::Column5),
+            saw_column6: any_column6,
+        });
+    }
+    Ok(GroupedBedStrandDetection {
+        sampled_rows,
+        column: None,
+        saw_column6: any_column6,
+    })
+}
+
+/// Parse one already-selected grouped BED strand field.
+///
+/// The loader decides which field to pass based on the detected file layout. This helper only
+/// checks that the selected field exists and contains a supported strand token.
+fn parse_grouped_bed_strand_value(
+    value: Option<&str>,
+    lineno: usize,
+    column_number: usize,
+) -> Result<Strand> {
+    let value = value.with_context(|| {
+        format!(
+            "BED parse error at line {}: missing strand in column {}",
+            lineno, column_number
+        )
+    })?;
+    parse_bed_strand_token(value, lineno, column_number)
 }
 
 /// Owned collection of half-open windows with a cached genomic span.
@@ -662,9 +898,11 @@ pub fn load_grouped_windows_from_bed(
 /// ----------
 /// - `windows` should be sorted by start (ascending order).
 /// - Coordinates are half-open: `[start, end)`.
+/// - `strands`, when present, is one-to-one with `windows` and uses the same order.
 #[derive(Debug, Clone)]
 pub struct GroupedWindows {
     pub windows: Vec<IndexedInterval<u64>>, // (start, end, group idx)
+    pub strands: Option<Vec<Strand>>,       // strands in the same order
     /// Cached outer envelope across all windows.
     span: Span<i64>,
 }
@@ -673,22 +911,58 @@ impl GroupedWindows {
     /// Construct from any window list (may be unsorted/overlapping).
     /// Ensures start- and end-sorted order (does not retain initial order)
     /// and computes span as `min(start)` .. `max(end)`.
-    pub fn new(mut windows: Vec<IndexedInterval<u64>>) -> Self {
-        windows.sort_unstable_by_key(|window| (window.start(), window.end()));
-        GroupedWindows::from_sorted(windows)
+    pub fn new(mut windows: Vec<IndexedInterval<u64>>, strands: Option<Vec<Strand>>) -> Self {
+        match strands {
+            Some(strands) => {
+                assert_eq!(
+                    windows.len(),
+                    strands.len(),
+                    "grouped window strands must match grouped window count"
+                );
+                let mut windows_and_strands: Vec<(IndexedInterval<u64>, Strand)> =
+                    windows.drain(..).zip(strands).collect();
+                windows_and_strands
+                    .sort_unstable_by_key(|(window, _)| (window.start(), window.end()));
+                let (sorted_windows, sorted_strands) = windows_and_strands.into_iter().unzip();
+                GroupedWindows::from_sorted(sorted_windows, Some(sorted_strands))
+            }
+            None => {
+                windows.sort_unstable_by_key(|window| (window.start(), window.end()));
+                GroupedWindows::from_sorted(windows, None)
+            }
+        }
     }
 
     /// Construct from raw `(start, end, group_idx)` tuples.
     ///
     /// Use this when grouped BED parsing still works in tuple space.
     /// Prefer `new` and `from_sorted` when the windows are already checked.
-    pub fn from_tuples(windows: &[(u64, u64, u64)]) -> crate::Result<Self> {
-        Ok(Self::new(IndexedInterval::from_tuples(windows)?))
+    pub fn from_tuples(
+        windows: &[(u64, u64, u64)],
+        strands: Option<Vec<Strand>>,
+    ) -> crate::Result<Self> {
+        Ok(Self::new(IndexedInterval::from_tuples(windows)?, strands))
+    }
+
+    pub fn mut_windows_and_strands(
+        &mut self,
+    ) -> (&mut Vec<IndexedInterval<u64>>, &mut Option<Vec<Strand>>) {
+        (&mut self.windows, &mut self.strands)
     }
 
     /// Construct from a list you guarantee is already sorted by start (non-decreasing).
     /// Computes span as `min(start)` .. `max(end)` (robust to irregular ends).
-    pub fn from_sorted(grouped_windows: Vec<IndexedInterval<u64>>) -> Self {
+    pub fn from_sorted(
+        grouped_windows: Vec<IndexedInterval<u64>>,
+        strands: Option<Vec<Strand>>,
+    ) -> Self {
+        if let Some(strands) = strands.as_ref() {
+            assert_eq!(
+                grouped_windows.len(),
+                strands.len(),
+                "grouped window strands must match grouped window count"
+            );
+        }
         debug_assert!(
             is_sorted_by_start_indexed(&grouped_windows),
             "windows must be start-sorted"
@@ -706,6 +980,7 @@ impl GroupedWindows {
         };
         Self {
             windows: grouped_windows,
+            strands,
             span,
         }
     }
@@ -724,7 +999,7 @@ impl GroupedWindows {
 
     /// Borrow the underlying windows.
     #[inline]
-    pub fn as_slice(&self) -> &[IndexedInterval<u64>] {
+    pub fn windows_as_slice(&self) -> &[IndexedInterval<u64>] {
         &self.windows
     }
 
@@ -759,6 +1034,22 @@ impl GroupedWindows {
     #[inline]
     pub fn span(&self) -> Span<i64> {
         self.span
+    }
+
+    /// The intervals have strand information.
+    #[inline]
+    pub fn has_strands(&self) -> bool {
+        self.strands.is_some()
+    }
+}
+
+impl Default for GroupedWindows {
+    fn default() -> Self {
+        Self {
+            windows: Vec::new(),
+            strands: None,
+            span: Span::from_ordered(0, 0),
+        }
     }
 }
 
@@ -821,10 +1112,10 @@ pub fn build_grouped_coverage_layout(
         // - raw mode keeps every original grouped BED interval as its own segment
         // - unique-base mode first merges overlaps and touching intervals within each group
         let mut chromosome_segments: Vec<(Interval<u64>, u64)> = if unique_bases {
-            merged_group_segments(grouped_windows.as_slice())?
+            merged_group_segments(grouped_windows.windows_as_slice())?
         } else {
             grouped_windows
-                .as_slice()
+                .windows_as_slice()
                 .iter()
                 .map(|window| Ok((Interval::new(window.start(), window.end())?, window.idx())))
                 .collect::<Result<Vec<_>>>()?
@@ -993,12 +1284,13 @@ pub fn load_scored_windows_from_bed(
     let mut reader = open_text_reader(bed.as_ref())?; // Works with &Path, PathBuf, &str
 
     // Optional whitelist of chromosomes
-    let mut vec_mapping: FxHashMap<String, Vec<(u64, u64, u64, f64)>> = FxHashMap::default();
+    let mut scored_windows_by_chromosome: FxHashMap<String, Vec<(u64, u64, u64, f64)>> =
+        FxHashMap::default();
     let allowed_chromosomes: Option<FxHashSet<&str>> = chromosomes.map(|chr_list| {
         let mut allowed = FxHashSet::with_capacity_and_hasher(chr_list.len(), Default::default());
         for chr in chr_list {
             allowed.insert(chr.as_str());
-            vec_mapping.entry(chr.clone()).or_default();
+            scored_windows_by_chromosome.entry(chr.clone()).or_default();
         }
         allowed
     });
@@ -1144,12 +1436,10 @@ pub fn load_scored_windows_from_bed(
             continue;
         }
 
-        vec_mapping.entry(chr.to_string()).or_default().push((
-            start,
-            end,
-            current_orig_win_idx,
-            score,
-        ));
+        scored_windows_by_chromosome
+            .entry(chr.to_string())
+            .or_default()
+            .push((start, end, current_orig_win_idx, score));
     }
 
     if let Some(expected_num_windows) = exp_num_windows {
@@ -1163,7 +1453,7 @@ pub fn load_scored_windows_from_bed(
 
     // Convert parsed tuples into typed scored windows.
     // ScoredWindows::from_tuples delegates to ScoredWindows::new, which sorts internally.
-    let windows_mapping: FxHashMap<String, ScoredWindows> = vec_mapping
+    let windows_mapping: FxHashMap<String, ScoredWindows> = scored_windows_by_chromosome
         .into_iter()
         .map(|(chr, windows)| Ok((chr.to_string(), ScoredWindows::from_tuples(&windows)?)))
         .collect::<crate::Result<_>>()?;

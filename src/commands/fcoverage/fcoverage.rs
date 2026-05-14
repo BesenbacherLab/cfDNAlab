@@ -262,8 +262,14 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
         }
         DistributionWindowSpec::GroupedBed(bed) => {
             info!(target: COMMAND_TARGET, "Loading grouped window coordinates");
-            let (grouped_windows_by_chr, group_idx_to_name) =
-                load_grouped_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            let (grouped_windows_by_chr, group_idx_to_name, _strand_detection) =
+                load_grouped_windows_from_bed(
+                    bed,
+                    Some(chromosomes.as_slice()),
+                    false,
+                    None,
+                    None,
+                )?;
             ensure_grouped_bed_windows_not_empty(&grouped_windows_by_chr)?;
             grouped_layout = Some(build_grouped_coverage_layout(
                 &grouped_windows_by_chr,

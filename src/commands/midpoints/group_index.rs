@@ -1,4 +1,4 @@
-use crate::shared::{interval::IndexedInterval, io::create_text_writer};
+use crate::shared::{bed::GroupedWindows, io::create_text_writer};
 use anyhow::{Context, Result};
 use fxhash::FxHashMap;
 use std::{io::Write, path::Path};
@@ -9,15 +9,15 @@ use std::{io::Write, path::Path};
 /// remain in each group after chromosome filtering and interval-level blacklist prefiltering, even
 /// when no fragment midpoint later overlaps an interval.
 pub(crate) fn eligible_interval_counts_by_group(
-    indexed_intervals_by_chromosome: &FxHashMap<String, Vec<IndexedInterval<u64>>>,
+    grouped_windows_by_chromosome: &FxHashMap<String, GroupedWindows>,
     group_idx_to_name: &FxHashMap<u64, String>,
 ) -> FxHashMap<u64, usize> {
     let mut counts: FxHashMap<u64, usize> = group_idx_to_name
         .keys()
         .map(|&group_idx| (group_idx, 0usize))
         .collect();
-    for intervals in indexed_intervals_by_chromosome.values() {
-        for interval in intervals {
+    for grouped_windows in grouped_windows_by_chromosome.values() {
+        for interval in grouped_windows.windows.iter() {
             *counts.entry(interval.idx()).or_insert(0) += 1;
         }
     }
