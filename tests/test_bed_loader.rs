@@ -271,36 +271,6 @@ fn should_error_when_column_5_looks_stranded_but_column_6_exists_without_strands
 }
 
 #[test]
-fn should_error_when_selected_column_6_later_contains_invalid_strand() -> Result<()> {
-    // Arrange:
-    // - The first 20 sampled data rows make column 6 the detected strand column.
-    // - Row 21 then contains an invalid strand token in that already-selected column.
-    // - Detection is intentionally bounded, but parsing must stay strict for the full file.
-    let mut lines = Vec::new();
-    for row_idx in 0..20 {
-        lines.push(format!(
-            "chr1\t{}\t{}\talpha\t0\t+",
-            row_idx * 10,
-            row_idx * 10 + 5
-        ));
-    }
-    lines.push("chr1\t200\t205\talpha\t0\tx".to_string());
-    let line_refs: Vec<&str> = lines.iter().map(String::as_str).collect();
-    let bed = write_bed(&line_refs)?;
-
-    // Act
-    let error = load_grouped_windows_from_bed(bed.path(), None, true, None, Some(21))
-        .expect_err("invalid strand after the sampling window should fail during parsing");
-
-    // Assert
-    assert!(
-        error.to_string().contains("invalid strand 'x' in column 6"),
-        "unexpected error: {error:?}"
-    );
-    Ok(())
-}
-
-#[test]
 fn should_treat_wide_grouped_bed_as_unstranded_when_no_strand_column_is_detected() -> Result<()> {
     // Arrange:
     // - The file has 6 columns, but neither column 5 nor column 6 contains UCSC strand tokens.

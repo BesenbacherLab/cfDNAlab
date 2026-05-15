@@ -789,10 +789,10 @@ fn should_skip_bed_line(line: &str) -> bool {
 
 /// Detect whether grouped BED rows contain a strand column.
 ///
-/// The grouped BED loader samples the first 20 data rows instead of scanning the full file up
-/// front. Column 6 is preferred because it matches standard BED6 layout. Column 5 is accepted only
-/// when no sampled row has a column 6. If column 5 looks stranded but column 6 exists and is not a
-/// strand column, the file is treated as ambiguous and rejected.
+/// The grouped BED loader samples a bounded prefix of data rows instead of scanning the full file
+/// up front. Column 6 is preferred because it matches standard BED6 layout. Column 5 is accepted
+/// only when no sampled row has a column 6. If column 5 looks stranded but column 6 exists and is
+/// not a strand column, the file is treated as ambiguous and rejected.
 fn detect_grouped_bed_strand_column(bed: &Path) -> Result<GroupedBedStrandDetection> {
     let mut reader = open_text_reader(bed)?;
     let mut buffer = String::new();

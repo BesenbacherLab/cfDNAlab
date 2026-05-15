@@ -9,6 +9,7 @@ license = "MIT"
 readme = "README.md"
 include = [
     "/Cargo.toml",
+    "/Cargo.lock",
     "/LICENSE",
     "/README.md",
     "/cfdnalab_logo_750x500_150dpi.png",

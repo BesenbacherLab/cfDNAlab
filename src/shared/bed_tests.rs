@@ -30,6 +30,46 @@ fn layout_segments_for_chr(
 }
 
 #[test]
+fn should_error_when_selected_column_6_later_contains_invalid_strand() -> Result<()> {
+    // Arrange:
+    // - The sampled data rows make column 6 the detected strand column.
+    // - The next row then contains an invalid strand token in that already-selected column.
+    // - Detection is intentionally bounded, but parsing must stay strict for the full file.
+    let mut bed = tempfile::NamedTempFile::new()?;
+    for row_idx in 0..GROUPED_BED_STRAND_SAMPLE_ROWS {
+        writeln!(
+            bed,
+            "chr1\t{}\t{}\talpha\t0\t+",
+            row_idx * 10,
+            row_idx * 10 + 5
+        )?;
+    }
+    writeln!(
+        bed,
+        "chr1\t{}\t{}\talpha\t0\tx",
+        GROUPED_BED_STRAND_SAMPLE_ROWS * 10,
+        GROUPED_BED_STRAND_SAMPLE_ROWS * 10 + 5
+    )?;
+
+    // Act
+    let error = load_grouped_windows_from_bed(
+        bed.path(),
+        None,
+        true,
+        None,
+        Some((GROUPED_BED_STRAND_SAMPLE_ROWS + 1) as u64),
+    )
+    .expect_err("invalid strand after the sampling window should fail during parsing");
+
+    // Assert
+    assert!(
+        error.to_string().contains("invalid strand 'x' in column 6"),
+        "unexpected error: {error:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn build_grouped_coverage_layout_keeps_raw_segments_when_unique_bases_is_disabled() -> Result<()> {
     // Arrange
     // Group 0 has two overlapping windows:
