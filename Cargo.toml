@@ -15,8 +15,8 @@ include = [
     "/src/**/*.rs",
 ]
 repository = "https://github.com/BesenbacherLab/cfDNAlab"
-homepage = "https://BesenbacherLab.github.io/cfdnalab/"
-documentation = "https://BesenbacherLab.github.io/cfdnalab/docs"
+homepage = "https://cfDNAlab.tools/"
+documentation = "https://cfDNAlab.tools/"
 keywords = ["bioinformatics", "cfdna", "cell-free-dna", "fragmentomics", "genomics"]
 categories = ["command-line-utilities", "science"]
 

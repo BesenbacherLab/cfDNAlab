@@ -39,11 +39,11 @@ Action:
 
 This is the highest-impact release hygiene issue because it affects the artifact that gets permanently distributed.
 
-### 2. Remove or hide the unfinished DELFI guide
+### 2. Confirm the unfinished DELFI guide stays out of public docs
 
-`website/docs/guides/delfi_features_guide.md` is still under the Docusaurus docs tree and contains visible TODOs plus unfinished prose. It is not in `sidebars.js`, but it is still a docs file and the site config indexes docs content.
+The unfinished DELFI guide has been moved to `website/drafts/delfi_features_guide.md`, outside the Docusaurus `website/docs/` tree.
 
-Current visible problems include:
+It still contains visible TODOs plus unfinished prose, so it should stay out of public docs until it is intentionally completed:
 
 - `[TODO: Make it clear that we don't do exactly what they do ...]`
 - `[TODO: Figure out exactly what the DELFI settings are]`
@@ -52,23 +52,24 @@ Current visible problems include:
 
 Action:
 
-- Move this guide out of `website/docs/` until it is complete, or mark it as non-published if the current Docusaurus setup supports that cleanly.
+- Keep this guide out of `website/docs/` until it is complete.
 - Do not spend release-day time finishing the DELFI method unless it is central to the announcement.
 
-### 3. Decide the canonical docs URL
+### 3. Verify custom-domain docs deployment
 
-The repo currently points users to two different docs homes:
+The canonical public docs URL is `https://cfDNAlab.tools/`.
+
+Current repo settings now point there:
 
 - `README.md` badge and prose use `https://cfDNAlab.tools/`.
-- `Cargo.toml` uses `https://BesenbacherLab.github.io/cfdnalab/` and `/docs`.
-- `website/docusaurus.config.js` is configured for GitHub Pages with `url: 'https://BesenbacherLab.github.io'` and `baseUrl: '/cfdnalab/'`.
+- `Cargo.toml` uses `https://cfDNAlab.tools/` for homepage and documentation.
+- `website/docusaurus.config.js` uses `url: 'https://cfDNAlab.tools'` and `baseUrl: '/'`.
+- `website/static/CNAME` contains `cfDNAlab.tools` for the GitHub Pages artifact.
 
 Action:
 
-- If `cfDNAlab.tools` is the public URL, configure the site and Cargo metadata for that URL and make sure deployment writes the right domain setup.
-- If GitHub Pages is the public URL, update the README badge and docs links.
-
-Do this before crates.io publication and announcement, because crate metadata and public links are what new users will copy first.
+- After deployment, verify `https://cfDNAlab.tools/` loads the built site and docs links resolve from the site root.
+- Do this before crates.io publication and announcement, because crate metadata and public links are what new users will copy first.
 
 ### 4. Run the release checks locally
 
@@ -168,8 +169,8 @@ Action:
 ## Release-Day Order
 
 1. Verify the `include` whitelist with `cargo package --list`.
-2. Remove or hide the DELFI guide from public docs.
-3. Make `cfDNAlab.tools` vs GitHub Pages consistent across README, Cargo metadata, and Docusaurus.
+2. Keep the DELFI guide out of public docs.
+3. Verify `https://cfDNAlab.tools/` loads the deployed site and docs links.
 4. Run the release checks listed above.
 5. Run your full tests.
 6. Publish/tag.
