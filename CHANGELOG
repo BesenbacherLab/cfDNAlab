@@ -1,5 +1,15 @@
 # Changelog
 
+## cfDNAlab 0.2.0
+
+**BREAKING CHANGES**:
+
+The output formats are changed to simplify downstream work in R and python. While the previous NumPy `.npy` 
+format was easy to load in python, the user had to infer the column names, etc. We are moving towards
+more self-contained formats for a better and safer experience.
+
+ - `cfdna lengths` now outputs a wide-format TSV (`.tsv.gz`) file with one row per window/group.
+
 ## cfDNAlab 0.1.0
 
 Adds the following public commands:

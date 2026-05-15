@@ -32,13 +32,11 @@ use fixtures::{
     BamFixture, FragmentSpec, LONG_FRAGMENT_LENGTH, LONG_FRAGMENT_STARTS, ReadSpec, bam_from_specs,
     bam_from_specs_strict_identity, build_real_neutral_gc_package,
     build_real_neutral_gc_package_for_range, build_real_non_neutral_gc_package,
-    late_origin_gc_reference_sequence, long_fragment_bam, paired_fragment, read_zst_to_string,
-    simple_inward_bam, simple_reference_twobit, twobit_from_sequences, write_bed,
-    write_scaling_factors, write_two_bin_gc_package,
+    late_origin_gc_reference_sequence, long_fragment_bam, paired_fragment, read_length_counts_tsv,
+    read_zst_to_string, simple_inward_bam, simple_reference_twobit, twobit_from_sequences,
+    write_bed, write_scaling_factors, write_two_bin_gc_package,
 };
-use ndarray::Array2;
 use ndarray::array;
-use ndarray_npy::read_npy;
 use rust_htslib::bam::record::Aux;
 use rust_htslib::bam::{self, Read, Reader};
 use std::path::{Path, PathBuf};
@@ -2979,9 +2977,9 @@ fn fcoverage_and_lengths_agree_on_the_single_fragment_that_survives_mapq_filteri
     // Assert
     let lengths_path = lengths_out.path().join(dot_join(&[
         lengths_cfg.output_prefix.trim(),
-        "length_counts.npy",
+        "length_counts.tsv.gz",
     ]));
-    let lengths_arr: Array2<f64> = read_npy(&lengths_path)?;
+    let lengths_arr = read_length_counts_tsv(&lengths_path)?;
     assert_eq!(lengths_arr.shape(), &[1, 191]);
     let len60_idx = 60 - 10;
     assert!((lengths_arr[(0, len60_idx)] - 1.0).abs() < 1e-6);

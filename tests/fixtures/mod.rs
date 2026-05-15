@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, ensure};
 use cfdnalab::commands::cli_common::{BaseSelectionArgs, FragmentPositionSelectionArgs};
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
 use cfdnalab::commands::cli_common::{
@@ -15,6 +15,7 @@ use cfdnalab::commands::ref_gc_bias::{
 use cfdnalab::shared::positioning::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
 use cfdnalab::shared::reference::twobit_contig_lengths;
+use ndarray::Array2;
 use rust_htslib::bam::{self, header::HeaderRecord, record::Cigar, record::CigarString};
 use std::{
     fs::{File, OpenOptions},
@@ -1055,6 +1056,63 @@ pub fn read_zst_to_string(path: &Path) -> Result<String> {
     let mut buf = String::new();
     decoder.read_to_string(&mut buf)?;
     Ok(buf)
+}
+
+/// Read a gzip-compressed length-count TSV as text.
+///
+/// `cfdna lengths` writes gzip-compressed TSV output. Tests use this helper
+/// when they need to inspect metadata columns directly.
+pub fn read_length_counts_text<P: AsRef<Path>>(path: P) -> Result<String> {
+    let path = path.as_ref();
+    let file = File::open(path).with_context(|| format!("opening {}", path.display()))?;
+    let mut decoder = flate2::read::MultiGzDecoder::new(file);
+    let mut text = String::new();
+    decoder
+        .read_to_string(&mut text)
+        .with_context(|| format!("reading {}", path.display()))?;
+    Ok(text)
+}
+
+/// Read a length-count TSV and return only the numeric `count_*` columns.
+///
+/// This keeps integration tests that previously read the old dense NPY matrix
+/// focused on the same numeric contract while allowing metadata columns to
+/// vary by output mode.
+pub fn read_length_counts_tsv<P: AsRef<Path>>(path: P) -> Result<Array2<f64>> {
+    let text = read_length_counts_text(path)?;
+    let mut lines = text.lines();
+    let header = lines
+        .next()
+        .context("length counts TSV must have a header")?;
+    let headers: Vec<&str> = header.split('\t').collect();
+    let first_count_column = headers
+        .iter()
+        .position(|column| column.starts_with("count_"))
+        .context("length counts TSV must contain count columns")?;
+    let count_column_count = headers.len() - first_count_column;
+    ensure!(
+        count_column_count > 0,
+        "length counts TSV must contain at least one count column"
+    );
+
+    let mut values = Vec::new();
+    let mut row_count = 0;
+    for line in lines {
+        let fields: Vec<&str> = line.split('\t').collect();
+        ensure!(
+            fields.len() == headers.len(),
+            "length counts row must match the header column count"
+        );
+        for value in &fields[first_count_column..] {
+            values.push(value.parse::<f64>()?);
+        }
+        row_count += 1;
+    }
+
+    Ok(Array2::from_shape_vec(
+        (row_count, count_column_count),
+        values,
+    )?)
 }
 
 pub fn read_binary_zst(path: &Path) -> Result<Vec<u8>> {

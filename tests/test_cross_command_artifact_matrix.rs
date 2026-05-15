@@ -29,8 +29,8 @@ use cfdnalab::commands::{
 use cfdnalab::shared::{indel_mode::IndelMode, io::dot_join};
 use fixtures::{
     BamFixture, TwoBitFixture, bam_from_specs, build_real_neutral_gc_package,
-    build_real_neutral_gc_package_for_range, paired_fragment, read_zst_to_string,
-    simple_inward_bam, simple_reference_twobit, write_bed,
+    build_real_neutral_gc_package_for_range, paired_fragment, read_length_counts_tsv,
+    read_zst_to_string, simple_inward_bam, simple_reference_twobit, write_bed,
 };
 use ndarray::{Array2, Array3};
 use ndarray_npy::read_npy;
@@ -319,8 +319,11 @@ fn lengths_consumes_shared_real_artifacts_with_expected_weighted_count() -> Resu
     run_lengths(&cfg)?;
 
     // Assert
-    let counts_path = out_dir.join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
-    let arr: Array2<f64> = read_npy(&counts_path)?;
+    let counts_path = out_dir.join(dot_join(&[
+        cfg.output_prefix.trim(),
+        "length_counts.tsv.gz",
+    ]));
+    let arr: Array2<f64> = read_length_counts_tsv(&counts_path)?;
     assert_eq!(arr.dim(), (1, 1));
     assert_close_f64(
         arr[(0, 0)],

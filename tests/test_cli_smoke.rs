@@ -183,7 +183,7 @@ fn ends_help_only_shows_collapse_complements_when_experimental_feature_is_enable
 fn lengths_cli_minimal_invocation_writes_output_files_with_expected_prefix() -> Result<()> {
     // Arrange:
     // The command contract says lengths writes:
-    // - <prefix>.length_counts.npy
+    // - <prefix>.length_counts.tsv.gz
     // - <prefix>.fragment_length_settings.json
     // We run a minimal binary invocation with a tiny deterministic BAM fixture.
     let bam_fixture = fixtures::simple_inward_bam()?;
@@ -216,16 +216,16 @@ fn lengths_cli_minimal_invocation_writes_output_files_with_expected_prefix() -> 
     assert_success_with_logs(&output, "cfdna lengths minimal invocation");
 
     // Assert
-    let npy_path = out_dir
+    let counts_path = out_dir
         .path()
-        .join(format!("{output_prefix}.length_counts.npy"));
+        .join(format!("{output_prefix}.length_counts.tsv.gz"));
     let settings_path = out_dir
         .path()
         .join(format!("{output_prefix}.fragment_length_settings.json"));
     assert!(
-        npy_path.exists(),
+        counts_path.exists(),
         "Expected output file to exist: {}",
-        npy_path.display()
+        counts_path.display()
     );
     assert!(
         settings_path.exists(),

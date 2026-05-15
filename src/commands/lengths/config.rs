@@ -24,10 +24,11 @@ pub const MAX_DELETION_BASES: u16 = 256;
 
 /// Count fragment lengths in a BAM-file.
 ///
-/// Writes a two-dimensional `.npy` count matrix. The first dimension contains
-/// count vectors: one global vector, one vector per window, or one vector per
-/// grouped-BED group depending on the selected windowing mode. The second
-/// dimension contains fragment length bins.
+/// Writes a wide compressed TSV count table. Rows contain the global output,
+/// genomic windows, or grouped-BED groups depending on the selected windowing
+/// mode. Single-bp fragment length bins are stored as `count_<length>` columns.
+/// Wider bins are stored as `count_<start>_<end>` columns, where `<start>` and
+/// `<end>` are the half-open fragment length bin bounds.
 ///
 /// ## Fragment length definition
 ///
@@ -104,7 +105,7 @@ pub struct LengthsConfig {
     /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
     ///
     /// Examples produce files like:
-    ///   `<prefix>.length_counts.npy`
+    ///   `<prefix>.length_counts.tsv.gz`
     #[cfg_attr(
         feature = "cli",
         clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, value_parser = crate::commands::cli_common::parse_output_prefix, help_heading = "Core")

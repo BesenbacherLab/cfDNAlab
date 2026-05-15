@@ -42,8 +42,6 @@ use flate2::read::MultiGzDecoder;
 use ndarray::Array3;
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
 use ndarray::array;
-#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_lengths"))]
-use ndarray_npy::read_npy;
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
 use ndarray_npy::read_npy as read_npy_midpoints;
 use rust_htslib::bam::ext::BamRecordExtensions;
@@ -55,6 +53,8 @@ use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_lengths"))]
+use fixtures::read_length_counts_tsv;
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_fcoverage"))]
 use fixtures::read_zst_to_string;
 #[cfg(feature = "cmd_bam_to_frag")]
@@ -1987,7 +1987,6 @@ fn read_gzip_text(path: &Path) -> Result<String> {
     decoder.read_to_string(&mut text)?;
     Ok(text)
 }
-
 #[cfg(feature = "cmd_bam_to_frag")]
 fn roundtrip_simple_inward_to_unpaired_bam() -> Result<(fixtures::BamFixture, TempDir, PathBuf)> {
     let source_bam = fixtures::simple_inward_bam()?;
@@ -2305,13 +2304,13 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_then_roundtrip_match
     run_lengths(&original_cfg)?;
     run_lengths(&restored_cfg)?;
 
-    let original_counts: ndarray::Array2<f64> = read_npy(original_out.path().join(dot_join(&[
+    let original_counts = read_length_counts_tsv(&original_out.path().join(dot_join(&[
         original_cfg.output_prefix.trim(),
-        "length_counts.npy",
+        "length_counts.tsv.gz",
     ])))?;
-    let restored_counts: ndarray::Array2<f64> = read_npy(restored_out.path().join(dot_join(&[
+    let restored_counts = read_length_counts_tsv(&restored_out.path().join(dot_join(&[
         restored_cfg.output_prefix.trim(),
-        "length_counts.npy",
+        "length_counts.tsv.gz",
     ])))?;
 
     // Assert:
@@ -2394,13 +2393,13 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_with_blacklist_then_
     run_lengths(&restored_cfg)?;
 
     // Assert
-    let original_counts: ndarray::Array2<f64> = read_npy(original_out.path().join(dot_join(&[
+    let original_counts = read_length_counts_tsv(&original_out.path().join(dot_join(&[
         original_cfg.output_prefix.trim(),
-        "length_counts.npy",
+        "length_counts.tsv.gz",
     ])))?;
-    let restored_counts: ndarray::Array2<f64> = read_npy(restored_out.path().join(dot_join(&[
+    let restored_counts = read_length_counts_tsv(&restored_out.path().join(dot_join(&[
         restored_cfg.output_prefix.trim(),
-        "length_counts.npy",
+        "length_counts.tsv.gz",
     ])))?;
 
     assert_eq!(original_counts.dim(), (1, 91));

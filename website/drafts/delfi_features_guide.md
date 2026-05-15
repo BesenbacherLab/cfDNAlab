@@ -107,30 +107,31 @@ cfdna fcoverage \
 
 To calculate the short/long fragment length ratios, we take the following steps:
 
-1) Load the length counts from the saved NumPy array (shape: `(# windows, 2)`).
-2) Read short (100-150bp) and long (151-220bp) counts from the two length-bin columns.
+1) Load the length counts from the saved TSV table.
+2) Read short (100-150bp) and long (151-220bp) counts.
 3) Calculate the ratios of those counts per 5Mb window.
 
 
 ```bash
-LEN_COUNTS="$LEN_DIR/$SAMPLE_ID.length_counts.npy"
+LEN_COUNTS="$LEN_DIR/$SAMPLE_ID.length_counts.tsv.gz"
 DELFI_LENGTHS="$LEN_DIR/$SAMPLE_ID.delfi_short_long.npy"
 ```
 
 ```python
 from pathlib import Path
 import numpy as np
+import pandas as pd
 
 # Path to files 
 # Change these to fit with your paths or pass through the command line
 sample_id = "sample_01"
 len_dir = Path.home() / "delfi_features" / "output" / sample_id / "lengths"
 
-# Load lengths and extract short/long columns
-# Column 0 is [100,151), column 1 is [151,221)
-length_counts = np.load(len_dir / f"{sample_id}.length_counts.npy")
-short_counts = length_counts[:, 0]
-long_counts = length_counts[:, 1]
+# Load lengths and extract short/long columns.
+# count_100_151 is [100,151), count_151_221 is [151,221).
+length_counts = pd.read_csv(len_dir / f"{sample_id}.length_counts.tsv.gz", sep="\t")
+short_counts = length_counts["count_100_151"].to_numpy()
+long_counts = length_counts["count_151_221"].to_numpy()
 
 # Divide the two count vectors across all windows
 # Some windows might have little coverage due to the blacklisting

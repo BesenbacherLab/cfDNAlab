@@ -11,9 +11,12 @@ use crate::{
         },
         lengths::{
             config::{LengthsConfig, validate_gc_length_trim_rare},
-            counting::{LengthAxis, LengthCounts, stack_length_counts},
+            counting::{LengthAxis, LengthCounts},
             tiling::{reduce_partials_for_chr, write_cross_npy, write_partials_npz},
-            writer::write_fragment_length_settings_json,
+            writer::{
+                LengthCountRowMetadata, write_fragment_length_settings_json,
+                write_length_counts_tsv,
+            },
         },
         run_statistics::{
             DEFAULT_FRAGMENT_STATISTICS_LABELS, FragmentRunStatisticsOptions, GCStatisticsSummary,
@@ -49,14 +52,12 @@ use crate::{
         window_fetch::{BedFetchPolicy, fetch_span_for_tile},
         windowing::{
             WindowBinInfo, build_bin_info, compute_window_offsets,
-            ensure_plain_bed_windows_not_empty, write_bin_info_tsv,
-            write_group_index_with_blacklist_tsv,
+            ensure_plain_bed_windows_not_empty,
         },
     },
 };
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::FxHashMap;
-use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::{
@@ -541,9 +542,39 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     let final_counts_path = opt
         .ioc
         .output_dir
-        .join(dot_join(&[prefix, "length_counts.npy"]));
+        .join(dot_join(&[prefix, "length_counts.tsv.gz"]));
     let temp_counts_path = final_outputs.temp_path_for(&final_counts_path)?;
-    write_npy(&temp_counts_path, &stack_length_counts(&all_bins)?).with_context(|| {
+    let row_metadata = match &window_opt {
+        DistributionWindowSpec::Global => LengthCountRowMetadata::Global,
+        DistributionWindowSpec::Size(_) | DistributionWindowSpec::Bed(_) => {
+            LengthCountRowMetadata::Windows {
+                windows: &bin_info,
+                include_blacklisted_fraction: opt.blacklist.is_some(),
+            }
+        }
+        DistributionWindowSpec::GroupedBed(_) => {
+            let group_idx_to_name = group_idx_to_name
+                .as_ref()
+                .context("group_idx_to_name missing when writing grouped outputs")?;
+            let grouped_windows_map = grouped_windows_map
+                .as_ref()
+                .context("grouped windows missing when writing grouped outputs")?;
+            LengthCountRowMetadata::Groups {
+                group_idx_to_name,
+                chromosomes: &chromosomes,
+                grouped_windows_map,
+                blacklist_map: &blacklist_map,
+                include_blacklisted_fraction: opt.blacklist.is_some(),
+            }
+        }
+    };
+    write_length_counts_tsv(
+        &temp_counts_path,
+        &all_bins,
+        length_axis.as_ref(),
+        row_metadata,
+    )
+    .with_context(|| {
         format!(
             "writing final length counts to temp file {}",
             temp_counts_path.display()
@@ -558,41 +589,6 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     let temp_settings_path = final_outputs.temp_path_for(&settings_path)?;
     write_fragment_length_settings_json(&temp_settings_path, opt, &window_opt, &length_axis)?;
     final_outputs.record(temp_settings_path, settings_path)?;
-
-    // Write window coordinates plus overlap metadata as TSV to output_dir
-    match &window_opt {
-        DistributionWindowSpec::GroupedBed(_) => {
-            info!(target: COMMAND_TARGET, "Writing group metadata to disk");
-            let group_idx_to_name = group_idx_to_name
-                .as_ref()
-                .context("group_idx_to_name missing when writing grouped outputs")?;
-            let grouped_windows_map = grouped_windows_map
-                .as_ref()
-                .context("grouped windows missing when writing grouped outputs")?;
-            let group_index_path = opt
-                .ioc
-                .output_dir
-                .join(dot_join(&[prefix, "group_index.tsv"]));
-            let temp_group_index_path = final_outputs.temp_path_for(&group_index_path)?;
-            write_group_index_with_blacklist_tsv(
-                &temp_group_index_path,
-                group_idx_to_name,
-                &chromosomes,
-                grouped_windows_map,
-                &blacklist_map,
-                opt.blacklist.is_some(),
-            )?;
-            final_outputs.record(temp_group_index_path, group_index_path)?;
-        }
-        DistributionWindowSpec::Global => {}
-        _ => {
-            info!(target: COMMAND_TARGET, "Writing window coordinates to disk");
-            let bins_path = opt.ioc.output_dir.join(dot_join(&[prefix, "bins.tsv"]));
-            let temp_bins_path = final_outputs.temp_path_for(&bins_path)?;
-            write_bin_info_tsv(&temp_bins_path, &bin_info)?;
-            final_outputs.record(temp_bins_path, bins_path)?;
-        }
-    }
 
     final_outputs.move_into_place()?;
 
