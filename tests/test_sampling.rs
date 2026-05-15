@@ -1,5 +1,3 @@
-// TODO: Validate tests - generated but not yet checked!
-
 #[cfg(test)]
 mod tests_sample_starts_in_core {
     use anyhow::Result;

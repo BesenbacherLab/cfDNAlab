@@ -8,80 +8,48 @@ This replaces the older 2026-04-19 review. The old README TODO, Cargo keyword, g
 
 ## Verdict
 
-The source tree is close, but I would not publish the crate or announce the docs until the package contents, incomplete docs page, and public URL story are fixed or explicitly accepted.
-
-For a same-day release, do not spend time on broad cleanup. Fix the necessary items below, run the release checks locally, then tag.
+The release now looks like a final-verification problem, not a broad cleanup problem. The package boundary, public docs URL, and DELFI draft exposure have been addressed in the repo. Do not spend release-day time on wider refactors.
 
 ## Necessary Before Release
 
-### 1. Verify the crates.io package contents
+### 1. Verify the crates.io package artifact
 
-`Cargo.toml` now has an explicit `include` whitelist for the crate package:
+`Cargo.toml` has an explicit package whitelist:
 
 - `/Cargo.toml`
 - `/LICENSE`
 - `/README.md`
 - `/cfdnalab_logo_750x500_150dpi.png`
 - `/src/**/*.rs`
+- `/tests/**/*.rs`
 
-This should keep the package focused on the CLI code, library code, license, main README, and the image referenced by the README.
-
-The reason this matters is that the repo has tracked internal material that should not go to crates.io by accident:
-
-- `.AI/` contains 50 tracked files, including future plans, major reviews, and this readiness report.
-- `website/` contains authored docs and Docusaurus build inputs.
-- `.github/` contains CI files that are useful in the repo but not needed in the crate archive.
+This keeps the crate focused on code, the main README, the README image, and the test suite. It excludes `.AI/`, `website/`, `.github/`, `other_software/`, generated site output, and Node dependencies.
 
 Action:
 
-- Verify with `cargo package --list --allow-dirty` before committing, or `cargo package --list` after committing, that `.AI/`, old review notes, future plans, website docs, and `.github/` are not included.
-- Run `cargo package` after the package list looks right.
+- Run `cargo package --list` after committing, or `cargo package --list --allow-dirty` before committing, and check that no internal/docs/vendor paths appear.
+- Run `cargo package`.
+- Run `cargo publish --dry-run`.
 
-This is the highest-impact release hygiene issue because it affects the artifact that gets permanently distributed.
-
-### 2. Confirm the unfinished DELFI guide stays out of public docs
-
-The unfinished DELFI guide has been moved to `website/drafts/delfi_features_guide.md`, outside the Docusaurus `website/docs/` tree.
-
-It still contains visible TODOs plus unfinished prose, so it should stay out of public docs until it is intentionally completed:
-
-- `[TODO: Make it clear that we don't do exactly what they do ...]`
-- `[TODO: Figure out exactly what the DELFI settings are]`
-- `[TODO: The actual DELFI approach needs to be found in their code]`
-- The file ends mid-thought after "Since we already have the fragment-level GC correction, we will".
-
-Action:
-
-- Keep this guide out of `website/docs/` until it is complete.
-- Do not spend release-day time finishing the DELFI method unless it is central to the announcement.
-
-### 3. Verify custom-domain docs deployment
+### 2. Verify custom-domain docs deployment
 
 The canonical public docs URL is `https://cfDNAlab.tools/`.
 
-Current repo settings now point there:
+Current repo settings point there:
 
-- `README.md` badge and prose use `https://cfDNAlab.tools/`.
+- `README.md` uses `https://cfDNAlab.tools` / `https://cfDNAlab.tools/` for docs links.
 - `Cargo.toml` uses `https://cfDNAlab.tools/` for homepage and documentation.
 - `website/docusaurus.config.js` uses `url: 'https://cfDNAlab.tools'` and `baseUrl: '/'`.
-- `website/static/CNAME` contains `cfDNAlab.tools` for the GitHub Pages artifact.
 
 Action:
 
-- After deployment, verify `https://cfDNAlab.tools/` loads the built site and docs links resolve from the site root.
-- Do this before crates.io publication and announcement, because crate metadata and public links are what new users will copy first.
+- After deployment, verify `https://cfDNAlab.tools/` loads the built site.
+- Verify docs links resolve from the site root.
+- Verify the GitHub Pages custom domain and DNS settings are configured in GitHub/DNS. With the current GitHub Actions Pages workflow, a `CNAME` file is not required.
 
-### 4. Run the release checks locally
+### 3. Run the final checks
 
-I started compile/package checks during this review before you redirected the scope. The compile-only checks that completed were clean:
-
-- `cargo check`
-- `cargo check --all-features`
-- `cargo check --tests`
-
-I did not run tests. `cargo package` could not complete in the sandbox because it needed crates.io index access, and the later offline attempt was interrupted.
-
-Action for you before tagging/publishing:
+I did not run tests. Earlier compile-only checks completed cleanly during this review, but you should rerun final checks yourself from the release state:
 
 ```bash
 cargo check
@@ -94,13 +62,13 @@ npm --prefix website ci
 npm --prefix website run build
 ```
 
-Then run your normal test suite outside this agent session.
+Then run your normal full test suite.
 
 ## Maybe Necessary
 
 ### Cargo.lock is ignored and untracked
 
-`Cargo.lock` exists locally but is ignored by `.gitignore` and not tracked. For a CLI distributed via `cargo install --git` and crates.io, this is a reproducibility decision, not a style issue.
+`Cargo.lock` exists locally but is ignored by `.gitignore` and not tracked. For a CLI distributed via `cargo install --git` and crates.io, this is a reproducibility decision.
 
 Action:
 
@@ -110,12 +78,13 @@ Action:
 
 ### README badges need post-publish cleanup
 
-The README badges still say crates.io and BioConda are not published. That is fine before publication, but it will look stale immediately after the release if the announcement sends users to GitHub.
+The README badges still say crates.io and BioConda are not published. This is acceptable for the initial release, but keep it in the follow-up plan.
 
 Action:
 
-- Update package badges after each package is actually published.
+- After crates.io publication, update the crates.io badge.
 - Do not claim BioConda availability until it exists.
+- Revisit badges for the GitHub repo and v0.2 cleanup.
 
 ### CHANGELOG is minimal
 
@@ -126,37 +95,20 @@ Action:
 - Optional: add a short 0.1.0 summary with the command groups, supported input model, and bias/smoothing support.
 - Not necessary if the README or announcement text carries that context.
 
-### Source-visible unvalidated-test comments remain
+## Accepted Risks
 
-There are still source-visible comments in tests such as:
-
-- `tests/test_sampling.rs`: "TODO: Validate tests - generated but not yet checked!"
-- `tests/test_prepare_windows_near.rs`: "TODO: These tests are completely unvalidated."
-
-These are not runtime blockers and they are outside the main release docs, but they are visible in a public source review.
-
-Action:
-
-- Leave them if time is tight.
-- Clean them if the release goal includes source credibility for scientific reviewers.
-
-### Stale all-features CI comment
-
-`.github/workflows/rust_all_features.yml` says "This is allowed to fail, as not all commands are done yet", but the workflow does not actually allow failure. That comment reads stale for a release tree.
-
-Action:
-
-- Remove or update the comment when convenient.
-- This is not a release blocker if the workflow passes.
+- `.github/workflows/rust_all_features.yml` intentionally signals failure if the all-features build/test job fails. The comment about not interpreting every failure as a release blocker is not a release issue.
 
 ## No Longer Relevant From The Old Report
 
 - README TODO placeholders: not present in the current README.
 - Cargo keyword limit: fixed at five keywords.
-- `src/commands/gc_bias/interpolation.rs` AI-validation warning: removed. The file now has ordinary implementation docs and interpolation tests.
+- `src/commands/gc_bias/interpolation.rs` AI-validation warning: removed.
 - Missing generated CLI pages for `ends` and `fragment-count-weights`: current generated docs include both.
 - Dead `keep_temp = false` branches: no current matches in `src/commands` or `src/shared`.
 - Website intro missing `ends`: fixed.
+- DELFI guide exposure: moved out of `website/docs/` to `website/drafts/delfi_features_guide.md`.
+- Source-visible generated/unvalidated test TODOs: removed from `tests/test_sampling.rs` and `tests/test_prepare_windows_near.rs`.
 
 ## Current Good Signals
 
@@ -165,13 +117,14 @@ Action:
 - README command list matches the default release command set.
 - Generated CLI docs exist locally for the 11 release commands and the generation script uses `--scope release`.
 - CI has separate default, all-features, docs, and coverage workflows.
+- The Docusaurus config uses the custom domain and root base URL.
 
 ## Release-Day Order
 
-1. Verify the `include` whitelist with `cargo package --list`.
-2. Keep the DELFI guide out of public docs.
-3. Verify `https://cfDNAlab.tools/` loads the deployed site and docs links.
-4. Run the release checks listed above.
-5. Run your full tests.
+1. Verify the package whitelist with `cargo package --list`.
+2. Run `cargo package` and `cargo publish --dry-run`.
+3. Run the final compile/docs checks listed above.
+4. Run your full tests.
+5. Verify `https://cfDNAlab.tools/` after docs deployment.
 6. Publish/tag.
 7. Update badges and announcement links after packages/docs are live.
