@@ -18,11 +18,11 @@ For a same-day release, do not spend time on broad cleanup. Fix the necessary it
 
 `Cargo.toml` now has an explicit `include` whitelist for the crate package:
 
-- `Cargo.toml`
-- `LICENSE`
-- `README.md`
-- `cfdnalab_logo_750x500_150dpi.png`
-- `src/**/*.rs`
+- `/Cargo.toml`
+- `/LICENSE`
+- `/README.md`
+- `/cfdnalab_logo_750x500_150dpi.png`
+- `/src/**/*.rs`
 
 This should keep the package focused on the CLI code, library code, license, main README, and the image referenced by the README.
 
@@ -34,7 +34,7 @@ The reason this matters is that the repo has tracked internal material that shou
 
 Action:
 
-- Verify with `cargo package --list` that `.AI/`, old review notes, future plans, website docs, and `.github/` are not included.
+- Verify with `cargo package --list --allow-dirty` before committing, or `cargo package --list` after committing, that `.AI/`, old review notes, future plans, website docs, and `.github/` are not included.
 - Run `cargo package` after the package list looks right.
 
 This is the highest-impact release hygiene issue because it affects the artifact that gets permanently distributed.

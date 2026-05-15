@@ -8,11 +8,11 @@ description = "Ultra-fast command-line tools for cell-free DNA fragmentomics ana
 license = "MIT"
 readme = "README.md"
 include = [
-    "Cargo.toml",
-    "LICENSE",
-    "README.md",
-    "cfdnalab_logo_750x500_150dpi.png",
-    "src/**/*.rs",
+    "/Cargo.toml",
+    "/LICENSE",
+    "/README.md",
+    "/cfdnalab_logo_750x500_150dpi.png",
+    "/src/**/*.rs",
 ]
 repository = "https://github.com/BesenbacherLab/cfDNAlab"
 homepage = "https://BesenbacherLab.github.io/cfdnalab/"
