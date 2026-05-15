@@ -3,6 +3,7 @@ use crate::{
     commands::{
         cli_common::{AssignToWindowArgs, ChromosomeArgs, IOCArgs},
         gc_bias::correct::{GCLengthRange, MarginalizeLengthsWeightingScheme},
+        lengths::config::DEFAULT_OUTPUT_DECIMALS,
     },
     shared::{
         bed::GroupedWindows,
@@ -68,8 +69,14 @@ fn length_counts_tsv_writes_global_count_columns_without_row_key() {
     let counts = vec![length_counts(&axis, &[12.0, 3.5])];
 
     // Act
-    write_length_counts_tsv(&output_path, &counts, &axis, LengthCountRowMetadata::Global)
-        .expect("global TSV should write");
+    write_length_counts_tsv(
+        &output_path,
+        &counts,
+        &axis,
+        DEFAULT_OUTPUT_DECIMALS,
+        LengthCountRowMetadata::Global,
+    )
+    .expect("global TSV should write");
 
     // Assert
     assert_eq!(
@@ -112,6 +119,7 @@ fn length_counts_tsv_writes_window_coordinates_without_row_index() {
         &output_path,
         &counts,
         &axis,
+        DEFAULT_OUTPUT_DECIMALS,
         LengthCountRowMetadata::Windows {
             windows: &windows,
             include_blacklisted_fraction: true,
@@ -126,6 +134,47 @@ fn length_counts_tsv_writes_window_coordinates_without_row_index() {
             "chrom\tstart\tend\tblacklisted_fraction\tcount_30\tcount_31_40\n",
             "chr1\t0\t100\t0.25\t12\t3.5\n",
             "chr1\t100\t200\t0\t0.25\t7\n",
+        )
+    );
+}
+
+#[test]
+fn length_counts_tsv_rounds_counts_to_requested_decimals_and_blacklist_fraction_to_three() {
+    // Arrange:
+    // The writer rounds only the text representation. `--decimals` controls count columns, while
+    // blacklist fractions keep enough precision to remain useful when counts are written as
+    // integers.
+    let temp = TempDir::new().expect("tempdir");
+    let output_path = temp.path().join("sample.length_counts.tsv");
+    let axis = Arc::new(LengthAxis::new(vec![30, 31, 40]).expect("valid length axis"));
+    let counts = vec![length_counts(&axis, &[12.345_678, 0.004])];
+    let windows = vec![WindowBinInfo {
+        chromosome: "chr1".to_string(),
+        start: 0,
+        end: 100,
+        output_index: 10,
+        blacklisted_fraction: 1.0 / 3.0,
+    }];
+
+    // Act
+    write_length_counts_tsv(
+        &output_path,
+        &counts,
+        &axis,
+        0,
+        LengthCountRowMetadata::Windows {
+            windows: &windows,
+            include_blacklisted_fraction: true,
+        },
+    )
+    .expect("window TSV should write");
+
+    // Assert
+    assert_eq!(
+        read_text(&output_path),
+        concat!(
+            "chrom\tstart\tend\tblacklisted_fraction\tcount_30\tcount_31_40\n",
+            "chr1\t0\t100\t0.333\t12\t0\n",
         )
     );
 }
@@ -169,6 +218,7 @@ fn length_counts_tsv_writes_group_names_and_eligible_windows_without_group_index
         &output_path,
         &counts,
         &axis,
+        DEFAULT_OUTPUT_DECIMALS,
         LengthCountRowMetadata::Groups {
             group_idx_to_name: &group_idx_to_name,
             chromosomes: &chromosomes,
@@ -227,6 +277,7 @@ fn length_counts_tsv_errors_when_group_indices_are_not_count_row_indices() {
         &output_path,
         &counts,
         &axis,
+        DEFAULT_OUTPUT_DECIMALS,
         LengthCountRowMetadata::Groups {
             group_idx_to_name: &group_idx_to_name,
             chromosomes: &chromosomes,
@@ -272,6 +323,7 @@ fn length_counts_tsv_errors_when_grouped_window_references_unknown_group() {
         &output_path,
         &counts,
         &axis,
+        DEFAULT_OUTPUT_DECIMALS,
         LengthCountRowMetadata::Groups {
             group_idx_to_name: &group_idx_to_name,
             chromosomes: &chromosomes,
@@ -317,6 +369,7 @@ fn length_counts_tsv_errors_when_group_name_cannot_be_written_as_one_tsv_cell() 
         &output_path,
         &counts,
         &axis,
+        DEFAULT_OUTPUT_DECIMALS,
         LengthCountRowMetadata::Groups {
             group_idx_to_name: &group_idx_to_name,
             chromosomes: &chromosomes,
@@ -345,6 +398,7 @@ fn settings_writer_records_non_default_interpretation_fields() {
     config.clip_mode = ClipMode::Adjust;
     config.max_soft_clips = 7;
     config.max_deletion_bases = 11;
+    config.set_decimals(4);
     config.set_window_assignment(AssignToWindowArgs {
         assign_by: WindowAssigner::Proportion(0.5),
     });
@@ -389,6 +443,7 @@ fn settings_writer_records_non_default_interpretation_fields() {
     assert_eq!(settings["max_soft_clips"], json!(7));
     assert_eq!(settings["max_deletion_bases"], json!(11));
     assert_eq!(settings["assign_by"], json!("proportion=0.5"));
+    assert_eq!(settings["decimals"], json!(4));
     assert_eq!(settings["gc_length_weighting"], json!("frequency"));
     assert_eq!(settings["gc_length_range"], json!("package"));
     assert_eq!(settings["gc_length_trim_rare"], json!(0.05));
@@ -428,6 +483,7 @@ fn settings_writer_uses_compact_stepped_range_definition_for_dense_default() {
     assert!(settings["length_axis"].get("edges").is_none());
     assert_eq!(settings["gc_length_trim_rare"], json!(0.0));
     assert_eq!(settings["blacklist_used"], json!(false));
+    assert_eq!(settings["decimals"], json!(DEFAULT_OUTPUT_DECIMALS));
 }
 
 #[test]

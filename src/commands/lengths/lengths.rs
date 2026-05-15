@@ -572,6 +572,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         &temp_counts_path,
         &all_bins,
         length_axis.as_ref(),
+        opt.decimals,
         row_metadata,
     )
     .with_context(|| {

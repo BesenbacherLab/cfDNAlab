@@ -21,6 +21,7 @@ use std::path::PathBuf;
 
 pub const DEFAULT_MAX_DELETION_BASES: u16 = 100;
 pub const MAX_DELETION_BASES: u16 = 256;
+pub const DEFAULT_OUTPUT_DECIMALS: u8 = 6;
 
 /// Count fragment lengths in a BAM-file.
 ///
@@ -111,6 +112,14 @@ pub struct LengthsConfig {
         clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, value_parser = crate::commands::cli_common::parse_output_prefix, help_heading = "Core")
     )]
     pub output_prefix: String,
+
+    /// Decimals to round count values to when writing `[integer]`
+    ///
+    /// This only affects the text representation in the final output.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, default_value_t = DEFAULT_OUTPUT_DECIMALS, value_parser = clap::value_parser!(u8).range(0..), help_heading="Core"))]
+    pub decimals: u8,
 
     /// How to handle insertions and deletions in fragments `[string]`
     ///
@@ -447,6 +456,7 @@ impl LengthsConfig {
         Self {
             ioc,
             output_prefix: String::new(),
+            decimals: DEFAULT_OUTPUT_DECIMALS,
             indel_mode: IndelMode::Ignore,
             clip_mode: ClipMode::Aligned,
             max_soft_clips: DEFAULT_MAX_SOFT_CLIPS,
@@ -535,6 +545,10 @@ impl LengthsConfig {
 
     pub fn set_tile_size(&mut self, tile_size: u32) {
         self.tile_size = tile_size;
+    }
+
+    pub fn set_decimals(&mut self, decimals: u8) {
+        self.decimals = decimals;
     }
 
     pub fn set_require_proper_pair(&mut self, require: bool) {

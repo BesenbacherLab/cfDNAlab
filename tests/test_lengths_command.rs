@@ -3482,16 +3482,16 @@ mod tests_lengths_command {
         assert_eq!(arr[(2, 0)], 0.0);
         assert!((arr.sum() - 1.0).abs() < 1e-12);
 
-        assert_eq!(
-            parse_group_index_rows(&group_index),
-            vec![
-                (0, "beta".to_string(), 1.0 / 3.0),
-                (1, "alpha".to_string(), 0.0),
-                (2, "gamma".to_string(), 1.0),
-            ]
-        );
+        let group_rows = parse_group_index_rows(&group_index);
+        assert_eq!(group_rows.len(), 3);
+        assert_eq!(group_rows[0].0, 0);
+        assert_eq!(group_rows[0].1, "beta");
+        assert_eq!(group_rows[0].2, 0.333);
+        assert_eq!(group_rows[1], (1, "alpha".to_string(), 0.0));
+        assert_eq!(group_rows[2], (2, "gamma".to_string(), 1.0));
         assert_eq!(settings["aggregation_level"], "groups");
         assert_eq!(settings["window_mode"], "by-grouped-bed");
+        assert_eq!(settings["decimals"], 6);
         assert!(!out_dir.path().join("sampleA.bins.tsv").exists());
         assert!(!out_dir.path().join("sampleA.grouped_windows.tsv").exists());
         Ok(())

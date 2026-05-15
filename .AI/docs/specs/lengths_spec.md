@@ -13,7 +13,9 @@
 - Grouped BED mode writes one row per group, keyed by `group_name`.
 - Grouped BED rows include `eligible_windows`, the number of retained grouped BED windows assigned to that group.
 - When a blacklist is used, grouped BED rows also include interval-width weighted `blacklisted_fraction`.
-- Settings JSON records length-axis intervals, aggregation level, window mode, indel mode, clip mode, assignment mode, GC settings, and whether blacklist, GC correction, or scaling factors were used.
+- Count values are rounded only when written, using the configured `--decimals` value.
+- Blacklist fractions are rounded only when written, always to three decimals.
+- Settings JSON records length-axis intervals, aggregation level, window mode, indel mode, clip mode, assignment mode, count output decimals, GC settings, and whether blacklist, GC correction, or scaling factors were used.
 
 ## Length Axis
 

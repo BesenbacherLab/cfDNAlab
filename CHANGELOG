@@ -9,6 +9,7 @@ format was easy to load in python, the user had to infer the column names, etc. 
 more self-contained formats for a better and safer experience.
 
  - `cfdna lengths` now outputs a wide-format TSV (`.tsv.gz`) file with one row per window/group.
+ - `cfdna lengths` adds `--decimals` to control written count precision.
 
 ## cfDNAlab 0.1.0
 

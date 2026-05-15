@@ -8,6 +8,7 @@ use crate::{
         bed::GroupedWindows,
         blacklist::compute_blacklist_overlap,
         clip_mode::ClipMode,
+        formatters::CompactNumber,
         indel_mode::IndelMode,
         interval::Interval,
         io::create_text_writer,
@@ -19,6 +20,8 @@ use anyhow::{Context, Result, ensure};
 use fxhash::FxHashMap;
 use serde::Serialize;
 use std::{io::Write, path::Path};
+
+const BLACKLISTED_FRACTION_DECIMALS: i32 = 3;
 
 /// Interpretation metadata for a fragment-length count table.
 ///
@@ -36,6 +39,7 @@ struct FragmentLengthSettings<'a> {
     max_soft_clips: u16,
     max_deletion_bases: u16,
     assign_by: String,
+    decimals: u8,
     gc_length_weighting: &'static str,
     gc_length_range: &'static str,
     gc_length_trim_rare: f64,
@@ -64,6 +68,7 @@ pub(super) fn write_fragment_length_settings_json(
         max_soft_clips: opt.max_soft_clips,
         max_deletion_bases: opt.max_deletion_bases,
         assign_by: window_assigner_name(opt.window_assignment.assign_by),
+        decimals: opt.decimals,
         gc_length_weighting: gc_length_weighting_name(opt.gc_length_weighting),
         gc_length_range: gc_length_range_name(opt.gc_length_range),
         gc_length_trim_rare: opt.gc_length_trim_rare,
@@ -88,13 +93,17 @@ pub(super) fn write_fragment_length_settings_json(
 /// The table is intentionally wide: each output unit is one row, and each fragment-length bin is
 /// one count column. Single-bp bins use `count_<length>`, and wider bins use
 /// `count_<start>_<end>`. This keeps row metadata from being repeated for every length bin while
-/// remaining directly readable as a TSV in R and Python.
+/// remaining directly readable as a TSV in R and Python. `decimals` controls only the written count
+/// representation, not the internal aggregation precision. Blacklist fractions are always rounded
+/// to three decimals.
 pub(super) fn write_length_counts_tsv(
     output_path: &Path,
     counts: &[LengthCounts],
     length_axis: &LengthAxis,
+    decimals: u8,
     row_metadata: LengthCountRowMetadata<'_>,
 ) -> Result<()> {
+    let decimals = i32::from(decimals);
     let count_headers = length_count_column_headers(length_axis);
     ensure!(
         counts.iter().all(
@@ -115,7 +124,7 @@ pub(super) fn write_length_counts_tsv(
                 counts.len()
             );
             write_count_header(&mut writer, output_path, &[], &count_headers)?;
-            write_count_values(&mut writer, output_path, &counts[0].counts, false)?;
+            write_count_values(&mut writer, output_path, &counts[0].counts, decimals, false)?;
         }
         LengthCountRowMetadata::Windows {
             windows,
@@ -141,10 +150,23 @@ pub(super) fn write_length_counts_tsv(
                 )
                 .with_context(|| format!("write {}", output_path.display()))?;
                 if include_blacklisted_fraction {
-                    write!(writer, "\t{}", window.blacklisted_fraction)
-                        .with_context(|| format!("write {}", output_path.display()))?;
+                    write!(
+                        writer,
+                        "\t{}",
+                        CompactNumber {
+                            v: window.blacklisted_fraction,
+                            decimals: BLACKLISTED_FRACTION_DECIMALS,
+                        }
+                    )
+                    .with_context(|| format!("write {}", output_path.display()))?;
                 }
-                write_count_values(&mut writer, output_path, &length_counts.counts, true)?;
+                write_count_values(
+                    &mut writer,
+                    output_path,
+                    &length_counts.counts,
+                    decimals,
+                    true,
+                )?;
             }
         }
         LengthCountRowMetadata::Groups {
@@ -184,10 +206,23 @@ pub(super) fn write_length_counts_tsv(
                 write!(writer, "\t{}", summary.eligible_windows)
                     .with_context(|| format!("write {}", output_path.display()))?;
                 if include_blacklisted_fraction {
-                    write!(writer, "\t{}", summary.blacklisted_fraction)
-                        .with_context(|| format!("write {}", output_path.display()))?;
+                    write!(
+                        writer,
+                        "\t{}",
+                        CompactNumber {
+                            v: summary.blacklisted_fraction,
+                            decimals: BLACKLISTED_FRACTION_DECIMALS,
+                        }
+                    )
+                    .with_context(|| format!("write {}", output_path.display()))?;
                 }
-                write_count_values(&mut writer, output_path, &length_counts.counts, true)?;
+                write_count_values(
+                    &mut writer,
+                    output_path,
+                    &length_counts.counts,
+                    decimals,
+                    true,
+                )?;
             }
         }
     }
@@ -296,6 +331,7 @@ fn write_count_values(
     writer: &mut impl Write,
     output_path: &Path,
     counts: &[f64],
+    decimals: i32,
     has_leading_metadata: bool,
 ) -> Result<()> {
     let mut is_first_count = !has_leading_metadata;
@@ -303,7 +339,15 @@ fn write_count_values(
         if !is_first_count {
             write!(writer, "\t").with_context(|| format!("write {}", output_path.display()))?;
         }
-        write!(writer, "{count}").with_context(|| format!("write {}", output_path.display()))?;
+        write!(
+            writer,
+            "{}",
+            CompactNumber {
+                v: *count,
+                decimals
+            }
+        )
+        .with_context(|| format!("write {}", output_path.display()))?;
         is_first_count = false;
     }
     writeln!(writer).with_context(|| format!("write {}", output_path.display()))?;
