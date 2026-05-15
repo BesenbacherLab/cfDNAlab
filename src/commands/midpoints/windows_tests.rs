@@ -1,6 +1,7 @@
 use super::{interval_with_margin_overlaps_blacklist, prepare_count_windows};
 use crate::shared::{
     bam::Contigs,
+    bed::{GroupedWindows, Strand},
     interval::{IndexedInterval, Interval},
 };
 use fxhash::FxHashMap;
@@ -15,16 +16,29 @@ fn contigs(entries: &[(&str, u32)]) -> Contigs {
     contigs
 }
 
+fn grouped_windows(windows: Vec<IndexedInterval<u64>>) -> GroupedWindows {
+    GroupedWindows::new(windows, None)
+}
+
+fn grouped_windows_with_strands(
+    windows: Vec<IndexedInterval<u64>>,
+    strands: Vec<Strand>,
+) -> GroupedWindows {
+    GroupedWindows::new(windows, Some(strands))
+}
+
 #[test]
 fn prepare_count_windows_expands_by_smoothing_flank() {
     let mut windows = FxHashMap::default();
     windows.insert(
         "chr1".to_string(),
-        vec![IndexedInterval::new(100, 110, 3_u64).expect("valid window")],
+        grouped_windows(vec![
+            IndexedInterval::new(100, 110, 3_u64).expect("valid window")
+        ]),
     );
 
-    let (prepared, stats) = prepare_count_windows(
-        windows,
+    let stats = prepare_count_windows(
+        &mut windows,
         &contigs(&[("chr1", 500)]),
         &FxHashMap::default(),
         4,
@@ -33,7 +47,10 @@ fn prepare_count_windows_expands_by_smoothing_flank() {
     )
     .expect("expanded interval should fit chromosome bounds");
 
-    let chr_windows = prepared.get("chr1").expect("chr1 should be retained");
+    let chr_windows = windows
+        .get("chr1")
+        .expect("chr1 should be retained")
+        .windows_as_slice();
     assert_eq!(chr_windows[0].as_tuple(), (96, 114, 3));
     assert_eq!(stats.loaded_after_chromosome_filtering, 1);
     assert_eq!(stats.retained_for_counting, 1);
@@ -44,10 +61,10 @@ fn prepare_count_windows_drops_blacklist_margin_overlaps() {
     let mut windows = FxHashMap::default();
     windows.insert(
         "chr1".to_string(),
-        vec![
+        grouped_windows(vec![
             IndexedInterval::new(100, 110, 0_u64).expect("valid first window"),
             IndexedInterval::new(200, 210, 1_u64).expect("valid second window"),
-        ],
+        ]),
     );
     let mut blacklist = FxHashMap::default();
     blacklist.insert(
@@ -55,11 +72,14 @@ fn prepare_count_windows_drops_blacklist_margin_overlaps() {
         vec![Interval::new(85, 90).expect("valid blacklist")],
     );
 
-    let (prepared, stats) =
-        prepare_count_windows(windows, &contigs(&[("chr1", 500)]), &blacklist, 0, 15, true)
+    let stats =
+        prepare_count_windows(&mut windows, &contigs(&[("chr1", 500)]), &blacklist, 0, 15, true)
             .expect("blacklist prefiltering should succeed");
 
-    let chr_windows = prepared.get("chr1").expect("chr1 should be retained");
+    let chr_windows = windows
+        .get("chr1")
+        .expect("chr1 should be retained")
+        .windows_as_slice();
     assert_eq!(chr_windows.len(), 1);
     assert_eq!(chr_windows[0].idx(), 1);
     assert_eq!(stats.dropped_by_blacklist_prefilter, 1);
@@ -67,11 +87,58 @@ fn prepare_count_windows_drops_blacklist_margin_overlaps() {
 }
 
 #[test]
+fn prepare_count_windows_compacts_strands_with_retained_windows() {
+    let mut windows = FxHashMap::default();
+    windows.insert(
+        "chr1".to_string(),
+        grouped_windows_with_strands(
+            vec![
+                IndexedInterval::new(100, 110, 0_u64).expect("valid first window"),
+                IndexedInterval::new(200, 210, 1_u64).expect("valid second window"),
+                IndexedInterval::new(300, 310, 2_u64).expect("valid third window"),
+            ],
+            vec![Strand::Forward, Strand::Reverse, Strand::Unstranded],
+        ),
+    );
+    let mut blacklist = FxHashMap::default();
+    blacklist.insert(
+        "chr1".to_string(),
+        vec![Interval::new(85, 90).expect("valid blacklist")],
+    );
+
+    let stats =
+        prepare_count_windows(&mut windows, &contigs(&[("chr1", 500)]), &blacklist, 0, 15, true)
+            .expect("blacklist prefiltering should succeed");
+
+    let chr_windows = windows.get("chr1").expect("chr1 should be retained");
+    assert_eq!(
+        chr_windows
+            .windows_as_slice()
+            .iter()
+            .map(|window| window.as_tuple())
+            .collect::<Vec<_>>(),
+        vec![(200, 210, 1), (300, 310, 2)]
+    );
+    assert_eq!(
+        chr_windows
+            .strands
+            .as_ref()
+            .expect("retained windows should keep strand metadata")
+            .as_slice(),
+        &[Strand::Reverse, Strand::Unstranded]
+    );
+    assert_eq!(stats.dropped_by_blacklist_prefilter, 1);
+    assert_eq!(stats.retained_for_counting, 2);
+}
+
+#[test]
 fn prepare_count_windows_margin_can_include_fragment_radius_and_smoothing_flank() {
     let mut windows = FxHashMap::default();
     windows.insert(
         "chr1".to_string(),
-        vec![IndexedInterval::new(100, 110, 0_u64).expect("valid window")],
+        grouped_windows(vec![
+            IndexedInterval::new(100, 110, 0_u64).expect("valid window")
+        ]),
     );
     let mut blacklist = FxHashMap::default();
     blacklist.insert(
@@ -82,11 +149,11 @@ fn prepare_count_windows_margin_can_include_fragment_radius_and_smoothing_flank(
     // This mirrors `ceil(max_fragment_length / 2) + smoothing_flank` with values 6 + 3.
     // The blacklist touches the margin-expanded interval [91,119), but it would not touch the
     // fragment-radius-only interval [94,116). That makes the smoothing-flank contribution visible.
-    let (prepared, stats) =
-        prepare_count_windows(windows, &contigs(&[("chr1", 500)]), &blacklist, 3, 9, true)
+    let stats =
+        prepare_count_windows(&mut windows, &contigs(&[("chr1", 500)]), &blacklist, 3, 9, true)
             .expect("blacklist prefiltering should succeed");
 
-    assert!(prepared.get("chr1").expect("chr1 should exist").is_empty());
+    assert!(windows.get("chr1").expect("chr1 should exist").is_empty());
     assert_eq!(stats.dropped_by_blacklist_prefilter, 1);
     assert_eq!(stats.retained_for_counting, 0);
 }
@@ -96,7 +163,9 @@ fn keep_blacklisted_intervals_disables_interval_prefilter() {
     let mut windows = FxHashMap::default();
     windows.insert(
         "chr1".to_string(),
-        vec![IndexedInterval::new(100, 110, 0_u64).expect("valid window")],
+        grouped_windows(vec![
+            IndexedInterval::new(100, 110, 0_u64).expect("valid window")
+        ]),
     );
     let mut blacklist = FxHashMap::default();
     blacklist.insert(
@@ -104,8 +173,8 @@ fn keep_blacklisted_intervals_disables_interval_prefilter() {
         vec![Interval::new(85, 90).expect("valid blacklist")],
     );
 
-    let (prepared, stats) = prepare_count_windows(
-        windows,
+    let stats = prepare_count_windows(
+        &mut windows,
         &contigs(&[("chr1", 500)]),
         &blacklist,
         0,
@@ -114,7 +183,7 @@ fn keep_blacklisted_intervals_disables_interval_prefilter() {
     )
     .expect("disabled prefilter should keep the interval");
 
-    assert_eq!(prepared.get("chr1").expect("chr1 should exist").len(), 1);
+    assert_eq!(windows.get("chr1").expect("chr1 should exist").len(), 1);
     assert_eq!(stats.dropped_by_blacklist_prefilter, 0);
     assert_eq!(stats.retained_for_counting, 1);
 }
@@ -124,11 +193,13 @@ fn prepare_count_windows_reports_raw_interval_outside_chromosome_bounds_without_
     let mut windows = FxHashMap::default();
     windows.insert(
         "chr1".to_string(),
-        vec![IndexedInterval::new(490, 510, 0_u64).expect("valid unchecked window")],
+        grouped_windows(vec![
+            IndexedInterval::new(490, 510, 0_u64).expect("valid unchecked window")
+        ]),
     );
 
     let error = prepare_count_windows(
-        windows,
+        &mut windows,
         &contigs(&[("chr1", 500)]),
         &FxHashMap::default(),
         0,
@@ -153,7 +224,9 @@ fn prepare_count_windows_reports_outside_chromosome_before_blacklist_prefilterin
     let mut windows = FxHashMap::default();
     windows.insert(
         "chr1".to_string(),
-        vec![IndexedInterval::new(490, 510, 0_u64).expect("valid unchecked window")],
+        grouped_windows(vec![
+            IndexedInterval::new(490, 510, 0_u64).expect("valid unchecked window")
+        ]),
     );
     let mut blacklist = FxHashMap::default();
     blacklist.insert(
@@ -162,7 +235,7 @@ fn prepare_count_windows_reports_outside_chromosome_before_blacklist_prefilterin
     );
 
     let error = prepare_count_windows(
-        windows,
+        &mut windows,
         &contigs(&[("chr1", 500)]),
         &blacklist,
         0,
@@ -183,11 +256,11 @@ fn prepare_count_windows_requires_flank_to_fit_chromosome_bounds() {
     let mut windows = FxHashMap::default();
     windows.insert(
         "chr1".to_string(),
-        vec![IndexedInterval::new(2, 12, 0_u64).expect("valid window")],
+        grouped_windows(vec![IndexedInterval::new(2, 12, 0_u64).expect("valid window")]),
     );
 
     let error = prepare_count_windows(
-        windows,
+        &mut windows,
         &contigs(&[("chr1", 500)]),
         &FxHashMap::default(),
         4,

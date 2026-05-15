@@ -1,5 +1,3 @@
-//! TODO: These tests are completely unvalidated. Go through each and every one manually.
-
 #![cfg(feature = "cmd_prepare_windows")]
 
 mod tests_prepare_windows_near {

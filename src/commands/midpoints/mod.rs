@@ -7,4 +7,5 @@ pub mod plotting;
 pub mod postprocess;
 pub(crate) mod settings;
 pub mod smoothing;
+pub(crate) mod strand;
 pub mod windows;

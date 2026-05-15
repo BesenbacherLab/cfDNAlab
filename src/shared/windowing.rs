@@ -301,7 +301,7 @@ pub fn write_group_index_with_blacklist_tsv(
         for chr in chromosomes {
             let windows = grouped_windows_map
                 .get(chr)
-                .map(|windows| windows.as_slice())
+                .map(|windows| windows.windows_as_slice())
                 .unwrap_or(&[]);
             let blacklist_intervals = blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]);
             let mut blacklist_ptr = 0usize;

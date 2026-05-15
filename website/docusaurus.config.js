@@ -6,8 +6,8 @@ const config = {
   tagline: 'Fast and transparent cfDNA command-line analysis',
   favicon: 'img/cfdnalab_logo_little_guy_172x200_144dpi.png',
 
-  url: 'https://BesenbacherLab.github.io',
-  baseUrl: '/cfdnalab/',
+  url: 'https://cfDNAlab.tools',
+  baseUrl: '/',
 
   organizationName: 'BesenbacherLab',
   projectName: 'cfdnalab',

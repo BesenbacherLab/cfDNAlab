@@ -1,7 +1,8 @@
 use anyhow::Result;
 use cfdnalab::shared::bed::{
-    detect_header, line_looks_like_header, load_grouped_windows_from_bed,
-    load_scored_windows_from_bed, load_windows_from_bed, write_group_idx_to_name_tsv,
+    GroupedBedStrandColumn, Strand, detect_header, line_looks_like_header,
+    load_grouped_windows_from_bed, load_scored_windows_from_bed, load_windows_from_bed,
+    write_group_idx_to_name_tsv,
 };
 use cfdnalab::shared::interval::{IndexedInterval, ScoredInterval};
 use flate2::{Compression, write::GzEncoder};
@@ -155,21 +156,152 @@ fn should_sort_grouped_windows_and_reuse_group_indices_when_loading_bed() -> Res
         "chr2\t5\t8\talpha",
     ])?;
 
-    let (map, group_idx_to_name) = load_grouped_windows_from_bed(bed.path(), None, None, Some(4))?;
+    let (map, group_idx_to_name, strand_detection) =
+        load_grouped_windows_from_bed(bed.path(), None, false, None, Some(4))?;
+    assert!(
+        strand_detection.is_none(),
+        "strand detection should not run when read_strands is false"
+    );
 
     assert_eq!(map.len(), 2);
     let chr1 = map.get("chr1").expect("chr1 missing");
     assert_eq!(
-        chr1.as_slice(),
+        chr1.windows_as_slice(),
         indexed_windows(&[(10, 12, 1), (15, 18, 0)])
+    );
+    assert!(
+        chr1.strands.is_none(),
+        "strands should not be loaded when read_strands is false"
     );
 
     let chr2 = map.get("chr2").expect("chr2 missing");
-    assert_eq!(chr2.as_slice(), indexed_windows(&[(5, 8, 1), (20, 30, 0)]));
+    assert_eq!(
+        chr2.windows_as_slice(),
+        indexed_windows(&[(5, 8, 1), (20, 30, 0)])
+    );
 
     assert_eq!(group_idx_to_name.len(), 2);
     assert_eq!(group_idx_to_name.get(&0).map(String::as_str), Some("beta"));
     assert_eq!(group_idx_to_name.get(&1).map(String::as_str), Some("alpha"));
+    Ok(())
+}
+
+#[test]
+fn should_read_grouped_bed_strands_from_column_6() -> Result<()> {
+    // Arrange:
+    // - Column 4 is the group name, column 5 is a BED score-like value, and column 6 is strand.
+    // - The loader sorts by coordinate, so strand values must move with their source rows.
+    let bed = write_bed(&[
+        "chr1\t20\t30\tbeta\t0\t-",
+        "chr1\t10\t15\talpha\t0\t+",
+        "chr1\t15\t18\tbeta\t0\t.",
+    ])?;
+
+    let (map, _group_idx_to_name, strand_detection) =
+        load_grouped_windows_from_bed(bed.path(), None, true, None, Some(3))?;
+    let strand_detection = strand_detection.expect("strand detection should run");
+    assert_eq!(
+        strand_detection.column,
+        Some(GroupedBedStrandColumn::Column6)
+    );
+
+    let chr1 = map.get("chr1").expect("chr1 missing");
+    assert_eq!(
+        chr1.windows_as_slice(),
+        indexed_windows(&[(10, 15, 1), (15, 18, 0), (20, 30, 0)])
+    );
+    assert_eq!(
+        chr1.strands
+            .as_ref()
+            .expect("strands should be loaded")
+            .as_slice(),
+        &[Strand::Forward, Strand::Unstranded, Strand::Reverse]
+    );
+    Ok(())
+}
+
+#[test]
+fn should_read_grouped_bed_strands_from_column_5_when_no_column_6_exists() -> Result<()> {
+    // Arrange:
+    // - This is a non-standard grouped BED shape where column 4 is the group and column 5 is
+    //   strand. It is only accepted because there is no column 6.
+    let bed = write_bed(&["chr1\t10\t15\talpha\t+", "chr1\t20\t25\tbeta\t-"])?;
+
+    let (map, _group_idx_to_name, strand_detection) =
+        load_grouped_windows_from_bed(bed.path(), None, true, None, Some(2))?;
+    let strand_detection = strand_detection.expect("strand detection should run");
+    assert_eq!(
+        strand_detection.column,
+        Some(GroupedBedStrandColumn::Column5)
+    );
+
+    let chr1 = map.get("chr1").expect("chr1 missing");
+    assert_eq!(
+        chr1.windows_as_slice(),
+        indexed_windows(&[(10, 15, 0), (20, 25, 1)])
+    );
+    assert_eq!(
+        chr1.strands
+            .as_ref()
+            .expect("strands should be loaded")
+            .as_slice(),
+        &[Strand::Forward, Strand::Reverse]
+    );
+    Ok(())
+}
+
+#[test]
+fn should_error_when_column_5_looks_stranded_but_column_6_exists_without_strands() -> Result<()> {
+    // Arrange:
+    // - With 6 columns, strand belongs in column 6.
+    // - A strand-looking column 5 is ambiguous because it could be a non-standard file or a
+    //   misplaced strand column, so the loader must not silently treat the file as unstranded.
+    let bed = write_bed(&["chr1\t10\t15\talpha\t+\t0", "chr1\t20\t25\tbeta\t-\t0"])?;
+
+    let error = load_grouped_windows_from_bed(bed.path(), None, true, None, Some(2))
+        .expect_err("ambiguous strand columns should fail");
+
+    assert!(
+        error
+            .to_string()
+            .contains("When 6 or more BED columns are supplied, put strands in column 6"),
+        "unexpected error: {error:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn should_treat_wide_grouped_bed_as_unstranded_when_no_strand_column_is_detected() -> Result<()> {
+    // Arrange:
+    // - The file has 6 columns, but neither column 5 nor column 6 contains UCSC strand tokens.
+    // - This is a wide non-standard grouped BED-like file, so the loader should keep the intervals
+    //   and report that no strand column was selected.
+    let bed = write_bed(&[
+        "chr1\t20\t25\tbeta\t7.2\tannotation_b",
+        "chr1\t10\t15\talpha\t3.1\tannotation_a",
+    ])?;
+
+    // Act
+    let (map, _group_idx_to_name, strand_detection) =
+        load_grouped_windows_from_bed(bed.path(), None, true, None, Some(2))?;
+
+    // Assert
+    let strand_detection = strand_detection.expect("strand detection should run");
+    assert_eq!(strand_detection.column, None);
+    assert!(
+        strand_detection.saw_column6,
+        "detection metadata should record that a wide file was sampled"
+    );
+
+    let chr1 = map.get("chr1").expect("chr1 missing");
+    assert_eq!(
+        chr1.windows_as_slice(),
+        indexed_windows(&[(10, 15, 1), (20, 25, 0)])
+    );
+    assert!(
+        chr1.strands.is_none(),
+        "wide files without strand tokens in the sampled strand columns should be unstranded"
+    );
     Ok(())
 }
 
@@ -216,8 +348,13 @@ fn should_keep_only_whitelisted_chromosomes_when_loading_grouped_bed() -> Result
     ])?;
     let whitelist = vec!["chr2".to_string()];
 
-    let (map, group_idx_to_name) =
-        load_grouped_windows_from_bed(bed.path(), Some(whitelist.as_slice()), None, Some(3))?;
+    let (map, group_idx_to_name, _strand_detection) = load_grouped_windows_from_bed(
+        bed.path(),
+        Some(whitelist.as_slice()),
+        false,
+        None,
+        Some(3),
+    )?;
 
     assert_eq!(map.len(), 1);
     assert!(
@@ -225,7 +362,10 @@ fn should_keep_only_whitelisted_chromosomes_when_loading_grouped_bed() -> Result
         "chr1 should be excluded by the chromosome whitelist"
     );
     let chr2 = map.get("chr2").expect("chr2 missing");
-    assert_eq!(chr2.as_slice(), indexed_windows(&[(5, 9, 1), (10, 15, 0)]));
+    assert_eq!(
+        chr2.windows_as_slice(),
+        indexed_windows(&[(5, 9, 1), (10, 15, 0)])
+    );
     assert_eq!(group_idx_to_name.get(&0).map(String::as_str), Some("beta"));
     assert_eq!(group_idx_to_name.get(&1).map(String::as_str), Some("alpha"));
     Ok(())
@@ -235,7 +375,7 @@ fn should_keep_only_whitelisted_chromosomes_when_loading_grouped_bed() -> Result
 fn should_error_when_grouped_bed_is_missing_group_name() -> Result<()> {
     let bed = write_bed(&["chr1\t0\t10"])?;
 
-    let error = load_grouped_windows_from_bed(bed.path(), None, None, None)
+    let error = load_grouped_windows_from_bed(bed.path(), None, false, None, None)
         .expect_err("missing group name should fail");
 
     assert!(error.to_string().contains("missing group name"));

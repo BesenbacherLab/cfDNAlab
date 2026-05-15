@@ -1,15 +1,14 @@
 # Midpoint Profiles Compared With Griffin
 
-Analysis by Codex 5.5 on May 13th 2026. Last edit: May 13th 2026
+Analysis by Codex 5.5 on May 13th 2026. Last edit: May 14th 2026
 
 Status: future analysis, not a finalized user-facing specification.
 
-This report compares the planned midpoint-profile command with Griffin's nucleosome
-profiling workflow. It assumes the next midpoint-profile work adds strand-aware
-orientation for site-centered inputs, including TSS sites. It also assumes the
-smoothing documentation clearly states that default `savgol=165` is a
-nucleosome-scale smoother, not a guarantee that the same scale is optimal for
-every interval class.
+This report compares the midpoint-profile command with Griffin's nucleosome
+profiling workflow. The midpoint command now supports strand-aware orientation
+for directional site-centered inputs, including TSS sites. The default
+`savgol=165` smoother should be read as a nucleosome-scale smoother, not a
+guarantee that the same scale is optimal for every interval class.
 
 The goal is not to make a Griffin clone. The goal is to keep the midpoint command a
 general profile generator while making it possible to explain which settings are
@@ -84,11 +83,14 @@ For a general command, exact interval-defined output is better. Users can prepar
 TFBS, enhancer, TSS, promoter, or arbitrary windows and know that the array axis
 matches their input definition.
 
+Strand-aware output preserves that exact interval length. Forward and unstranded
+sites use left-to-right genomic offsets, while reverse-strand sites write into the
+same output axis in mirrored order.
+
 ### Base Resolution Until The End
 
-Our planned processing keeps profiles at base resolution through counting and
-smoothing, then optionally bins at the end. Griffin bins first and smooths the
-binned signal.
+Our processing keeps profiles at base resolution through counting and smoothing,
+then optionally bins at the end. Griffin bins first and smooths the binned signal.
 
 For a general tool, base resolution until the end is the better default. It avoids
 making the smoothing result depend on an early binning choice, and it lets users
@@ -147,7 +149,7 @@ Silently padding can hide that error.
 
 Griffin masks excluded bins during site merging. Our blacklist inputs can include
 low- or zero-mappability regions, ENCODE exclusions, gaps, centromeres, and other
-regions that should not contribute to profiles. The planned default removes
+regions that should not contribute to profiles. The current default removes
 intervals whose output span plus fragment and smoothing safety margin overlaps a
 blacklisted region, unless users explicitly keep them.
 
@@ -180,14 +182,6 @@ removed or cause nearby intervals to be removed, rather than receiving inflated
 coverage weights.
 
 ## Where Griffin Is Better Or More Complete
-
-### Mature Site Orientation
-
-Griffin already handles forward, reverse, and undirected sites and reverses
-reverse-strand profiles before merging.
-
-This is the main real feature gap for TSS-style analyses. Once our command has
-strand-aware orientation, this difference should mostly close.
 
 ### End-To-End Griffin Outputs
 
@@ -269,9 +263,6 @@ edge-padding can preprocess intervals or use a future explicit mode.
 
 ## Remaining Work For A Griffin-Like Guide
 
-- Add strand-aware interval orientation that works naturally for TSS and other
-  directional sites.
-
 - Document that default `savgol=165` is the Griffin-like nucleosome-scale
   smoother. Any future tuning should be driven by biology and interval class, not
   by a mistaken idea that Griffin's 165 bp setting used a different physical
@@ -298,8 +289,8 @@ edge-padding can preprocess intervals or use a future explicit mode.
 
 ## Bottom Line
 
-After adding strand-aware orientation and making the smoothing preset clear, the
-midpoint command is better suited than Griffin for general midpoint-profile
+With strand-aware orientation implemented and the smoothing preset made explicit,
+the midpoint command is better suited than Griffin for general midpoint-profile
 generation. It is less opinionated, keeps higher-resolution information longer,
 has clearer interval semantics, and avoids several hidden transformations.
 

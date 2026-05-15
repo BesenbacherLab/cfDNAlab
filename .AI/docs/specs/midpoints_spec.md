@@ -9,6 +9,8 @@
 - All selected intervals must have the same length.
 - Sites with the same group name collapse into one group profile.
 - Group indices are assigned by first observed group name during grouped BED loading.
+- Optional interval strand tokens are `+`, `-`, or `.`. Files with six or more columns read strand only from column 6. Five-column files may read strand from column 5. A strand-like column 5 with a non-strand column 6 is rejected as ambiguous.
+- Missing strand information is treated as unstranded.
 - Chromosome filtering may remove rows, but the command must fail if no selected grouped windows remain.
 - With blacklists, intervals whose output span plus `ceil(max_fragment_length / 2) + smoothing_flank` overlaps a blacklisted region are removed before counting unless `--keep-blacklisted-intervals` is set.
 
@@ -24,7 +26,8 @@
 ## Counting
 
 - Each accepted fragment contributes to every grouped site window containing its midpoint.
-- Position is zero-based relative to the site's interval start.
+- Forward and unstranded intervals use zero-based genomic offset from the site start.
+- Reverse intervals mirror the site position, so the rightmost base in the half-open interval maps to profile position 0.
 - The dense public array has shape `(group, length_bin, position)`.
 - The flat storage order is group-major, then length-bin, then position.
 - Fragment length lookup must use the shared `LengthAxis`, not a manual bin search.
@@ -72,6 +75,6 @@
 
 ## Open Notes
 
-! Warning: Projection from paired sites to midpoint-centered or strand-aware profiles remains future work. Keep projection plans outside finalized specs until implemented.
+! Warning: Projection from paired sites to midpoint-centered profiles remains future work. Keep projection plans outside finalized specs until implemented.
 
 ! Warning: File-based GC prefix construction still happens before no-window pruning for sparse targeted runs. This is a performance issue, not a correctness mismatch.

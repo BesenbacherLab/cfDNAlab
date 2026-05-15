@@ -838,6 +838,63 @@ fn core_overlap_bed_site_is_kept_for_midpoints() -> Result<()> {
 }
 
 #[test]
+fn stranded_bed_intervals_mirror_midpoint_positions_in_command_output() -> Result<()> {
+    // Arrange:
+    // - One unpaired read-as-fragment spans [6,17), so its midpoint is 11.
+    // - The same genomic interval [10,15) is supplied twice, once as + and once as -.
+    // - Forward position is 11 - 10 = 1.
+    // - Reverse position mirrors within the half-open interval: (15 - 1) - 11 = 3.
+    // - Because both intervals overlap the same midpoint, each group receives one count at its
+    //   strand-oriented position.
+    let bam = single_read_fragment_bam("midpoints_stranded_profile_mirror", 6, 11)?;
+    let temp = TempDir::new()?;
+    let bed_path = temp.path().join("stranded_sites.bed");
+    std::fs::write(
+        &bed_path,
+        "chr1\t10\t15\tgroup_plus\t0\t+\nchr1\t10\t15\tgroup_minus\t0\t-\n",
+    )?;
+
+    let mut cfg = MidpointsConfig::new(
+        IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: temp.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1"]),
+        bed_path,
+    );
+    cfg.set_output_prefix("sites");
+    cfg.set_length_bins(vec![11, 12]);
+    cfg.set_smoothing(MidpointSmoothing::None);
+    cfg.set_tile_size(1_000);
+    cfg.set_min_mapq(0);
+    cfg.set_require_proper_pair(false);
+    cfg.unpaired.reads_are_fragments = true;
+
+    // Act
+    run(&cfg)?;
+
+    // Assert
+    let arr: Array3<f32> = read_npy(temp.path().join("sites.midpoint_profiles.npy"))?;
+    let group_to_idx = read_group_index_map(&temp.path().join("sites.group_index.tsv"))?;
+    let group_plus = group_to_idx["group_plus"];
+    let group_minus = group_to_idx["group_minus"];
+
+    assert_eq!(arr.shape(), &[2, 1, 5]);
+    assert_eq!(
+        arr.slice(ndarray::s![group_plus, 0, ..]).to_vec(),
+        vec![0.0, 1.0, 0.0, 0.0, 0.0]
+    );
+    assert_eq!(
+        arr.slice(ndarray::s![group_minus, 0, ..]).to_vec(),
+        vec![0.0, 0.0, 0.0, 1.0, 0.0]
+    );
+    assert_eq!(arr.sum(), 2.0);
+
+    Ok(())
+}
+
+#[test]
 fn even_length_midpoint_tie_counts_exactly_one_of_two_adjacent_edge_windows() -> Result<()> {
     // Arrange:
     // One even-length fragment spans [40,50), so `midpoints` randomizes the tie and places the

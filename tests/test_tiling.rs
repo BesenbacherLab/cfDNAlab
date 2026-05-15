@@ -5,6 +5,7 @@ mod tests {
     use cfdnalab::commands::fcoverage::tiling::adapt_fetch_to_extreme_windows;
     use cfdnalab::commands::midpoints::midpoints::get_overlapping_sites_and_adapt_fetch_to_extremes;
     use cfdnalab::shared::bam::Contigs;
+    use cfdnalab::shared::bed::{GroupedWindows, Strand};
     use cfdnalab::shared::interval::{IndexedInterval, Interval};
     use cfdnalab::shared::tiled_run::{
         Tile, TileMode, TileWindowSpan, build_tiles, clamp_fetch_to_window_span,
@@ -247,6 +248,58 @@ mod tests {
     }
 
     #[test]
+    fn midpoint_site_selection_preserves_strands_after_filtering_cached_span() {
+        // Manual derivation:
+        // - The cached span includes four candidates around core [10,20).
+        // - [8,9) and [22,23) are halo-only candidates and must be removed.
+        // - The retained windows are source indices 1 and 2, so their retained strands must be
+        //   Reverse and Unstranded in that order.
+        let tile = make_tile(10, 20, 10, 20, 0);
+        let windows = indexed_windows(&[(8, 9, 0), (10, 12, 1), (18, 19, 2), (22, 23, 3)]);
+        let grouped_windows = GroupedWindows::new(
+            windows,
+            Some(vec![
+                Strand::Forward,
+                Strand::Reverse,
+                Strand::Unstranded,
+                Strand::Forward,
+            ]),
+        );
+        let span = TileWindowSpan {
+            first_idx: 0,
+            last_idx_exclusive: 4,
+        };
+
+        let (sites, fetch_span) = get_overlapping_sites_and_adapt_fetch_to_extremes(
+            &grouped_windows,
+            Some(&span),
+            &tile,
+            30,
+            0,
+        )
+        .unwrap()
+        .expect("core-overlap sites should produce a fetch span");
+
+        assert_eq!(
+            sites
+                .windows_as_slice()
+                .iter()
+                .map(|window| window.as_tuple())
+                .collect::<Vec<_>>(),
+            vec![(10, 12, 1), (18, 19, 2)]
+        );
+        assert_eq!(
+            sites
+                .strands
+                .as_ref()
+                .expect("strand metadata should be retained")
+                .as_slice(),
+            &[Strand::Reverse, Strand::Unstranded]
+        );
+        assert_eq!(fetch_span, Interval::new(10, 19).unwrap());
+    }
+
+    #[test]
     fn window_derived_fetch_extent_for_core_overlap_ignores_halo_only_candidates_from_cached_span()
     {
         // Manual derivation:
@@ -328,17 +381,23 @@ mod tests {
     fn midpoint_fetch_span_preserves_tile_carried_halo_near_chromosome_end() {
         let tile = make_tile(80, 95, 70, 95, 0);
         let windows = indexed_windows(&[(90, 95, 0)]);
+        let grouped_windows = GroupedWindows::new(windows.clone(), None);
         let span = TileWindowSpan {
             first_idx: 0,
             last_idx_exclusive: 1,
         };
 
-        let (sites, fetch_span) =
-            get_overlapping_sites_and_adapt_fetch_to_extremes(&windows, Some(&span), &tile, 95, 10)
-                .unwrap()
-                .expect("midpoint site should produce a fetch span");
+        let (sites, fetch_span) = get_overlapping_sites_and_adapt_fetch_to_extremes(
+            &grouped_windows,
+            Some(&span),
+            &tile,
+            95,
+            10,
+        )
+        .unwrap()
+        .expect("midpoint site should produce a fetch span");
 
-        assert_eq!(sites, windows);
+        assert_eq!(sites.windows_as_slice(), windows.as_slice());
         // The tile already carries the only usable left halo near chromosome end. Shrinking to the
         // extreme site must preserve that tile-carried halo instead of collapsing the fetch span
         // to [90,95).
@@ -349,15 +408,21 @@ mod tests {
     fn midpoint_fetch_span_keeps_fragment_start_that_old_symmetric_halo_would_drop() {
         let tile = make_tile(80, 95, 70, 95, 0);
         let windows = indexed_windows(&[(90, 95, 0)]);
+        let grouped_windows = GroupedWindows::new(windows, None);
         let span = TileWindowSpan {
             first_idx: 0,
             last_idx_exclusive: 1,
         };
 
-        let (_sites, fetch_span) =
-            get_overlapping_sites_and_adapt_fetch_to_extremes(&windows, Some(&span), &tile, 95, 10)
-                .unwrap()
-                .expect("midpoint site should produce a fetch span");
+        let (_sites, fetch_span) = get_overlapping_sites_and_adapt_fetch_to_extremes(
+            &grouped_windows,
+            Some(&span),
+            &tile,
+            95,
+            10,
+        )
+        .unwrap()
+        .expect("midpoint site should produce a fetch span");
 
         // Manual derivation of the old bad behavior:
         // - The last tile is core [80,95) with fetch [70,95), so chromosome-end clipping leaves an

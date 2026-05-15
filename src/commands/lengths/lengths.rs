@@ -224,8 +224,14 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     let (grouped_windows_map, group_idx_to_name) = match &window_opt {
         DistributionWindowSpec::GroupedBed(bed) => {
             info!(target: COMMAND_TARGET, "Loading grouped window coordinates");
-            let (windows_map, group_idx_to_name) =
-                load_grouped_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            let (windows_map, group_idx_to_name, _strand_detection) =
+                load_grouped_windows_from_bed(
+                    bed,
+                    Some(chromosomes.as_slice()),
+                    false,
+                    None,
+                    None,
+                )?;
             ensure!(
                 !group_idx_to_name.is_empty(),
                 "grouped BED file did not contain any valid windows on the selected chromosomes"
@@ -246,7 +252,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
             grouped_windows_map.as_ref().map(|windows_map| {
                 windows_map
                     .iter()
-                    .map(|(chr, windows)| (chr.clone(), windows.as_slice().to_vec()))
+                    .map(|(chr, windows)| (chr.clone(), windows.windows_as_slice().to_vec()))
                     .collect()
             })
         };

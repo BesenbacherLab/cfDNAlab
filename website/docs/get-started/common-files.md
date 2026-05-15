@@ -29,7 +29,7 @@ The **BAM** file (`--bam`) contains the actual sample-specific sequencing data, 
 
 **Windows** are genomic intervals that we are specifically interested in (`--by-bed`, `--by-grouped-bed`). Depending on the command and settings, we either get separate features per window/group _or_ include only the specified window positions.
 
-**Intervals** are fixed-size genomic intervals (`--intervals`) used by `cfdna midpoints` to create coverage profiles. 
+**Intervals** are fixed-size genomic intervals (`--intervals`) used by `cfdna midpoints` to create midpoint coverage profiles. 
 
 **GC-bias**: Fragmentation patterns in cfDNA are vulnerable to GC-bias (see the GC-bias guide). `cfdna gc-bias` calculates this bias for a given sample BAM file, which can then be passed to the feature extraction commands to correct the bias in the features. Before we can calculate the sample bias though, we need to know the GC-bias in _reference genome_. This should be done _once_ per assembly using `cfdna ref-gc-bias`.
 

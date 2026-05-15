@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://github.com/BesenbacherLab/cfDNAlab/actions/workflows/rust.yml"><img src="https://github.com/BesenbacherLab/cfDNAlab/actions/workflows/rust.yml/badge.svg" alt="CI" /></a>
   <a href="https://codecov.io/gh/BesenbacherLab/cfDNAlab"><img src="https://codecov.io/gh/BesenbacherLab/cfDNAlab/branch/main/graph/badge.svg" alt="codecov" /></a>
-  <a href="https://crates.io/crates/cfdnalab"><img src="https://img.shields.io/badge/crates.io-not_published-lightgrey" alt="crates.io" /></a>
+  <a href="https://crates.io/crates/cfdnalab"><img src="https://img.shields.io/crates/v/cfdnalab" alt="crates.io" /></a>
   <a href="https://anaconda.org/bioconda/cfdnalab"><img src="https://img.shields.io/badge/bioconda-not_published-lightgrey" alt="BioConda" /></a>
   <a href="https://cfDNAlab.tools"><img src="https://img.shields.io/badge/docs-cfDNAlab.tools-blue" alt="Docs" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT" /></a>
@@ -96,8 +96,6 @@ Extract fragmentomics features:
   width="185"
 /></dt>
   <dd>Count fragment <i>midpoint</i> coverage in fixed-size intervals, collapsed by groups across the genome.<br>E.g., transcription factor binding sites, aggregated per transcription factor.<br>Fast alternative to <a href=https://github.com/adoebley/Griffin>Griffin</a> when combined with <code>cfdna gc-bias</code>.</dd>
-  
-  **NOTE**: We are currently improving this command so it will be changing in the coming weeks.
 
   <hr>
 
@@ -562,6 +560,8 @@ Choose any relevant options below. See `--help` for more options.
 
 Multiple studies have profiled the midpoint coverage around e.g. transcription factor binding sites (summed per transcription factor, per position) (Doebley et al., 2022). This can inform about the binding activity of different transcription factors related to cancer.
 
+By default, a 3rd order Savitzky-Golay filter smooths the final profiles.
+
 ```bash
 
 cfdna midpoints --help
@@ -593,9 +593,12 @@ Choose any relevant options below. See `--help` for more options.
   --ref-2bit <path>/hg38.2bit \
   --scaling-factors ...
 
+  # Disable profile smoothing
+  --smoothing none
+
 ```
 
-The **intervals** must have the same fixed size. A common binding site window size is `2001bp`, centered around the binding site center. The expected columns are: `chromosome, start, end, group_name` (where `group_name` is the group to collapse profiles by, e.g., the transcription factor ID). The intervals should be sorted by chromosome and start-coordinates.
+The **intervals** must have the same fixed size. A common binding site window size is `2001bp`, centered around the binding site center. The expected columns are: `chromosome, start, end, group_name` (where `group_name` is the group to collapse profiles by, e.g., the transcription factor ID). Additional `score` (ignored) and `strand` columns can be present, in which case intervals on the reverse strand (-) are counted in the reverse direction. The intervals should be sorted by chromosome and start-coordinates.
 
 **TIP** Remove intervals that lie closer than half the maximum fragment length from any blacklisted region, to reduce mappability biases in the profiles.
 

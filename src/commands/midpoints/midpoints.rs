@@ -1,3 +1,4 @@
+use crate::shared::bed::{GroupedBedStrandColumn, GroupedWindows, Strand};
 use crate::shared::gc_tag::ClassifiedGCTagWeight;
 use crate::shared::io::FinalOutputFiles;
 use crate::{
@@ -17,6 +18,7 @@ use crate::{
             group_index::{eligible_interval_counts_by_group, write_midpoint_group_index_tsv},
             postprocess::{ProfileLayout, postprocess_profile},
             settings::write_midpoint_profile_settings_json,
+            strand::stranded_window_position,
             windows::{ensure_uniform_window_len, prepare_count_windows},
         },
         run_statistics::{
@@ -116,12 +118,39 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
 
     // Load grouped fixed-size windows from BED
     info!(target: COMMAND_TARGET, "Loading fixed-size intervals");
-    let (windows_map, group_idx_to_name) = load_grouped_windows_from_bed(
-        opt.intervals.clone(),
-        Some(chromosomes.as_slice()),
-        None,
-        None,
-    )?;
+    let (mut grouped_windows_map, group_idx_to_name, strand_detection) =
+        load_grouped_windows_from_bed(
+            opt.intervals.clone(),
+            Some(chromosomes.as_slice()),
+            true,
+            None,
+            None,
+        )?;
+    if let Some(strand_detection) = strand_detection {
+        match strand_detection.column {
+            Some(GroupedBedStrandColumn::Column6) => {
+                info!(target: COMMAND_TARGET, "  Interval strands: loaded from BED column 6");
+            }
+            Some(GroupedBedStrandColumn::Column5) => {
+                warn!(
+                    target: COMMAND_TARGET,
+                    "  Interval strands: loaded from BED column 5 because no column 6 was present"
+                );
+            }
+            None if strand_detection.saw_column6 => {
+                warn!(
+                    target: COMMAND_TARGET,
+                    "  Interval strands: column 6 is present but is not '+', '-', or '.', so intervals are treated as unstranded"
+                );
+            }
+            None => {
+                info!(
+                    target: COMMAND_TARGET,
+                    "  Interval strands: no BED strand column detected, treating intervals as unstranded"
+                );
+            }
+        }
+    }
     let num_groups = group_idx_to_name.len();
     #[cfg(feature = "plotters")]
     ensure!(
@@ -129,17 +158,17 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         "--plot-groups: group index is out of bounds. There are {} groups (0-based).",
         num_groups
     );
-    let total_windows: usize = windows_map.values().map(|gw| gw.len()).sum();
+    let total_windows: usize = grouped_windows_map.values().map(|gw| gw.len()).sum();
     info!(
         target: COMMAND_TARGET,
         "  Num. chromosomes: {:?} | Num. windows: {:?} | Num. groups: {:?}",
-        windows_map.keys().len(),
+        grouped_windows_map.keys().len(),
         total_windows,
         num_groups,
     );
 
     // Ensure all windows have the same length
-    let output_window_size = ensure_uniform_window_len(&windows_map)?;
+    let output_window_size = ensure_uniform_window_len(&grouped_windows_map)?;
 
     // Parse and validate fragment length bins once so all tiles share one lookup table
     let length_axis = Arc::new(LengthAxis::new(opt.resolve_length_bins()?)?);
@@ -149,18 +178,12 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     // Resolve counted and final profile dimensions
     let profile_layout = ProfileLayout::resolve(output_window_size, opt.bin_size, opt.smoothing)?;
 
-    // The grouped BED loader preserves group ids in IndexedInterval.idx. Moving the inner vectors
-    // avoids cloning millions of intervals before tiling
-    let indexed_windows_map: FxHashMap<String, Vec<IndexedInterval<u64>>> = windows_map
-        .into_iter()
-        .map(|(chromosome, grouped_windows)| (chromosome, grouped_windows.into_inner()))
-        .collect();
     let interval_blacklist_margin = ((u64::from(max_fragment_length) + 1) / 2)
         .checked_add(u64::from(profile_layout.smoothing_flank))
         .context("interval blacklist margin overflow")?;
     let use_blacklist_prefilter = opt.blacklist.is_some() && !opt.keep_blacklisted_intervals;
-    let (indexed_windows_map, interval_stats) = prepare_count_windows(
-        indexed_windows_map,
+    let interval_stats = prepare_count_windows(
+        &mut grouped_windows_map,
         &contigs,
         &blacklist_map,
         profile_layout.smoothing_flank,
@@ -173,7 +196,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         interval_stats.dropped_by_blacklist_prefilter
     );
     let group_eligible_interval_counts =
-        eligible_interval_counts_by_group(&indexed_windows_map, &group_idx_to_name);
+        eligible_interval_counts_by_group(&grouped_windows_map, &group_idx_to_name);
 
     info!(
         target: COMMAND_TARGET,
@@ -263,10 +286,15 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     let temp_chrom_name_map = TempChromNameMap::from_contigs(&chromosomes)?;
     let total_tiles = tiles.len();
 
-    let windows_lookup = &indexed_windows_map;
+    let windows_lookup = &grouped_windows_map;
     let tile_window_spans = Arc::new(precompute_tile_window_spans(
         &tiles,
-        |chr| windows_lookup.get(chr).map(|w| w.as_slice()).unwrap_or(&[]),
+        |chr| {
+            windows_lookup
+                .get(chr)
+                .map(|w| w.windows_as_slice())
+                .unwrap_or(&[])
+        },
         0,
         0,
     ));
@@ -301,6 +329,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
 
     let tile_window_spans_for_threads = tile_window_spans.clone();
     let gc_tag = opt.gc.gc_tag.as_deref();
+    let empty_grouped_windows = GroupedWindows::default();
 
     let tile_results: Vec<(ProfileGroupsCounters, Option<PathBuf>)> = tiles
         .par_iter()
@@ -308,10 +337,9 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         .map(|(tile_idx, tile)| -> Result<(_, _)> {
             let tile_span = tile_window_spans_for_threads[tile_idx];
             // Borrow chromosome-local data for this tile worker
-            let windows_chr: &[IndexedInterval<u64>] = indexed_windows_map
+            let windows_chr: &GroupedWindows = grouped_windows_map
                 .get(&tile.chr)
-                .map(|v| v.as_slice())
-                .unwrap_or(&[]);
+                .unwrap_or(&empty_grouped_windows);
             let blacklist_chr: &[Interval<u64>] = blacklist_map
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
@@ -553,7 +581,7 @@ fn process_tile(
     window_size: usize,
     num_groups: usize,
     length_axis: Arc<LengthAxis>,
-    windows: &[IndexedInterval<u64>],
+    grouped_windows: &GroupedWindows,
     tile_window_span: Option<&TileWindowSpan>,
     blacklist_intervals: &[Interval<u64>],
     scaling_chr: &[ScalingBin],
@@ -605,7 +633,7 @@ fn process_tile(
     // windows return immediately and do not produce a sparse temp file
     let Some((core_overlapping_windows, fetch_span)) =
         get_overlapping_sites_and_adapt_fetch_to_extremes(
-            windows,
+            grouped_windows,
             tile_window_span,
             tile,
             chrom_len as u32,
@@ -614,6 +642,8 @@ fn process_tile(
     else {
         return Ok((counter, None));
     };
+    let core_overlapping_window_slice = core_overlapping_windows.windows_as_slice();
+    let core_overlapping_strands = core_overlapping_windows.strands.as_deref();
     let (fetch_from, fetch_to) = fetch_span.try_to_i64()?.as_tuple();
 
     reader
@@ -765,7 +795,7 @@ fn process_tile(
         let overlapping_windows = find_overlapping_windows(
             chrom_len,
             &mut wd_ptr,
-            Some(&core_overlapping_windows),
+            Some(core_overlapping_window_slice),
             None,
             Interval::new(midpoint.into(), (midpoint + 1).into())?,
             0.99, // "Full" 1bp overlap but avoid roundoff error
@@ -821,10 +851,13 @@ fn process_tile(
             for window_scaling in overlap_weights {
                 let overlapped_window_idx = window_scaling.window_idx;
                 let scaling_weight = window_scaling.scaling_weight;
-                let window = core_overlapping_windows[overlapped_window_idx];
+                let window = core_overlapping_window_slice[overlapped_window_idx];
                 let window_start = window.start();
                 let window_end = window.end();
                 let group_idx = window.idx();
+                let strand = core_overlapping_strands
+                    .map(|strands| strands[overlapped_window_idx])
+                    .unwrap_or(Strand::Unstranded);
                 let midpoint_u64 = midpoint as u64;
                 ensure!(
                     window_start <= midpoint_u64 && midpoint_u64 < window_end,
@@ -833,8 +866,8 @@ fn process_tile(
                     window_start,
                     window_end
                 );
-                let window_position = usize::try_from(midpoint_u64 - window_start)
-                    .context("window position does not fit in usize")?;
+                let window_position =
+                    stranded_window_position(window.interval, midpoint_u64, strand)?;
                 counts.incr_weighted(
                     window_position,
                     group_idx as usize,
@@ -846,10 +879,13 @@ fn process_tile(
             // When no scaling, increment counter by the GC weight for each window / bin
             for overlapped_window in overlapping_windows.windows {
                 let overlapped_window_idx = overlapped_window.idx;
-                let window = core_overlapping_windows[overlapped_window_idx];
+                let window = core_overlapping_window_slice[overlapped_window_idx];
                 let window_start = window.start();
                 let window_end = window.end();
                 let group_idx = window.idx();
+                let strand = core_overlapping_strands
+                    .map(|strands| strands[overlapped_window_idx])
+                    .unwrap_or(Strand::Unstranded);
                 let midpoint_u64 = midpoint as u64;
                 ensure!(
                     window_start <= midpoint_u64 && midpoint_u64 < window_end,
@@ -858,8 +894,8 @@ fn process_tile(
                     window_start,
                     window_end
                 );
-                let window_position = usize::try_from(midpoint_u64 - window_start)
-                    .context("window position does not fit in usize")?;
+                let window_position =
+                    stranded_window_position(window.interval, midpoint_u64, strand)?;
                 counts.incr_weighted(
                     window_position,
                     group_idx as usize,
@@ -891,15 +927,16 @@ fn process_tile(
 ///
 /// Midpoints groups windows by `group_idx`, so the returned `IndexedInterval` values carry group
 /// identifiers rather than the original BED row order used in some other commands. The helper
-/// keeps only the sites overlapping the tile, computes the minimum start and maximum end across
-/// those sites, and clamps the resulting fetch interval back onto the tile fetch band. When no
-/// site overlaps the tile, the caller can skip the tile entirely.
+/// keeps only the sites overlapping the tile and preserves strand values beside them when the BED
+/// loader detected a strand column. It computes the minimum start and maximum end across those
+/// sites, then clamps the resulting fetch interval back onto the tile fetch band. When no site
+/// overlaps the tile, the caller can skip the tile entirely.
 ///
 /// Parameters
 /// ----------
-/// - `windows`:
+/// - `grouped_windows`:
 ///     Start-sorted midpoint windows for the current chromosome. Their `idx` field stores the
-///     midpoint group index.
+///     midpoint group index. Optional strand values must be aligned with these windows.
 /// - `tile_span`:
 ///     Optional cached index range for windows that can overlap the tile.
 /// - `tile`:
@@ -918,19 +955,32 @@ fn process_tile(
 ///     non-empty fetch interval remains after clamping. `None` when the tile has no overlapping
 ///     sites or the clamped fetch interval is empty.
 pub fn get_overlapping_sites_and_adapt_fetch_to_extremes(
-    windows: &[IndexedInterval<u64>],
+    grouped_windows: &GroupedWindows,
     tile_span: Option<&TileWindowSpan>,
     tile: &Tile,
     chrom_len: u32,
     halo_bp: u64,
-) -> Result<Option<(Vec<IndexedInterval<u64>>, Interval<u64>)>> {
+) -> Result<Option<(GroupedWindows, Interval<u64>)>> {
+    let windows = grouped_windows.windows_as_slice();
     let reserve_hint = tile_span
         .map(|span| span.last_idx_exclusive.saturating_sub(span.first_idx))
         .unwrap_or(0)
         .min(windows.len());
     let mut overlapping_sites = Vec::with_capacity(reserve_hint);
-    for site in overlapping_windows_for_tile(windows, tile, tile_span) {
-        overlapping_sites.push(*site);
+    let mut overlapping_strands = grouped_windows
+        .strands
+        .as_ref()
+        .map(|_| Vec::with_capacity(reserve_hint));
+
+    let mut overlapping_window_iter = overlapping_windows_for_tile(windows, tile, tile_span);
+    while let Some(window_idx) = overlapping_window_iter.next_window_index() {
+        overlapping_sites.push(windows[window_idx]);
+        if let (Some(source_strands), Some(target_strands)) = (
+            grouped_windows.strands.as_ref(),
+            overlapping_strands.as_mut(),
+        ) {
+            target_strands.push(source_strands[window_idx]);
+        }
     }
     if overlapping_sites.is_empty() {
         return Ok(None);
@@ -945,5 +995,8 @@ pub fn get_overlapping_sites_and_adapt_fetch_to_extremes(
         return Ok(None);
     };
 
-    Ok(Some((overlapping_sites, fetch_span)))
+    Ok(Some((
+        GroupedWindows::from_sorted(overlapping_sites, overlapping_strands),
+        fetch_span,
+    )))
 }

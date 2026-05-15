@@ -59,20 +59,18 @@ pub(crate) struct MidpointIntervalStats {
 ///
 /// The input window indices are transferred directly to the new intervals and remains intact.
 pub(crate) fn prepare_count_windows(
-    mut windows_by_chr: FxHashMap<String, Vec<IndexedInterval<u64>>>,
+    windows_by_chr: &mut FxHashMap<String, GroupedWindows>,
     contigs: &Contigs,
     blacklist_by_chr: &FxHashMap<String, Vec<Interval<u64>>>,
     smoothing_flank: u32,
     blacklist_margin: u64,
     use_blacklist_prefilter: bool,
-) -> Result<(
-    FxHashMap<String, Vec<IndexedInterval<u64>>>,
-    MidpointIntervalStats,
-)> {
+) -> Result<MidpointIntervalStats> {
     let mut stats = MidpointIntervalStats::default();
     let flank = u64::from(smoothing_flank);
 
-    for (chromosome, windows) in windows_by_chr.iter_mut() {
+    for (chromosome, grouped_windows) in windows_by_chr.iter_mut() {
+        let (windows, strands) = grouped_windows.mut_windows_and_strands();
         stats.loaded_after_chromosome_filtering += windows.len();
         let chrom_len = contigs
             .contigs
@@ -145,17 +143,25 @@ pub(crate) fn prepare_count_windows(
                 );
             }
 
+            // Compact both the windows and strands
             windows[write_idx] = IndexedInterval::new(expanded_start, expanded_end, window.idx())?;
+            if let Some(strands) = strands.as_mut() {
+                let strand = strands[window_idx];
+                strands[write_idx] = strand;
+            }
             write_idx += 1;
         }
 
         // Drop the stale tail. It contains blacklisted intervals and old copies left behind after
         // retained intervals were moved forward
         windows.truncate(write_idx);
+        if let Some(strands) = strands.as_mut() {
+            strands.truncate(write_idx);
+        }
         stats.retained_for_counting += write_idx;
     }
 
-    Ok((windows_by_chr, stats))
+    Ok(stats)
 }
 
 fn interval_with_margin_overlaps_blacklist(

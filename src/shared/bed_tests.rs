@@ -1,7 +1,7 @@
 use super::*;
 
 fn grouped_windows(entries: &[(u64, u64, u64)]) -> GroupedWindows {
-    GroupedWindows::from_tuples(entries).expect("test grouped windows should be valid")
+    GroupedWindows::from_tuples(entries, None).expect("test grouped windows should be valid")
 }
 
 fn group_names(entries: &[(u64, &str)]) -> FxHashMap<u64, String> {
@@ -27,6 +27,46 @@ fn layout_segments_for_chr(
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[test]
+fn should_error_when_selected_column_6_later_contains_invalid_strand() -> Result<()> {
+    // Arrange:
+    // - The sampled data rows make column 6 the detected strand column.
+    // - The next row then contains an invalid strand token in that already-selected column.
+    // - Detection is intentionally bounded, but parsing must stay strict for the full file.
+    let mut bed = tempfile::NamedTempFile::new()?;
+    for row_idx in 0..GROUPED_BED_STRAND_SAMPLE_ROWS {
+        writeln!(
+            bed,
+            "chr1\t{}\t{}\talpha\t0\t+",
+            row_idx * 10,
+            row_idx * 10 + 5
+        )?;
+    }
+    writeln!(
+        bed,
+        "chr1\t{}\t{}\talpha\t0\tx",
+        GROUPED_BED_STRAND_SAMPLE_ROWS * 10,
+        GROUPED_BED_STRAND_SAMPLE_ROWS * 10 + 5
+    )?;
+
+    // Act
+    let error = load_grouped_windows_from_bed(
+        bed.path(),
+        None,
+        true,
+        None,
+        Some((GROUPED_BED_STRAND_SAMPLE_ROWS + 1) as u64),
+    )
+    .expect_err("invalid strand after the sampling window should fail during parsing");
+
+    // Assert
+    assert!(
+        error.to_string().contains("invalid strand 'x' in column 6"),
+        "unexpected error: {error:?}"
+    );
+    Ok(())
 }
 
 #[test]
@@ -61,8 +101,14 @@ fn build_grouped_coverage_layout_keeps_raw_segments_when_unique_bases_is_disable
     assert_eq!(layout.segment_idx_to_group_idx.get(&2), Some(&1));
     assert_eq!(layout.group_span_positions.get(&0), Some(&20));
     assert_eq!(layout.group_span_positions.get(&1), Some(&5));
-    assert_eq!(layout.group_idx_to_name.get(&0).map(String::as_str), Some("alpha"));
-    assert_eq!(layout.group_idx_to_name.get(&1).map(String::as_str), Some("beta"));
+    assert_eq!(
+        layout.group_idx_to_name.get(&0).map(String::as_str),
+        Some("alpha")
+    );
+    assert_eq!(
+        layout.group_idx_to_name.get(&1).map(String::as_str),
+        Some("beta")
+    );
     Ok(())
 }
 
@@ -80,7 +126,13 @@ fn build_grouped_coverage_layout_merges_same_group_overlaps_touches_and_duplicat
     let mut grouped_windows_by_chr = FxHashMap::default();
     grouped_windows_by_chr.insert(
         "chr1".to_string(),
-        grouped_windows(&[(10, 20, 0), (15, 25, 0), (25, 30, 0), (40, 45, 1), (40, 45, 1)]),
+        grouped_windows(&[
+            (10, 20, 0),
+            (15, 25, 0),
+            (25, 30, 0),
+            (40, 45, 1),
+            (40, 45, 1),
+        ]),
     );
     let group_idx_to_name = group_names(&[(0, "alpha"), (1, "beta")]);
 
@@ -167,8 +219,8 @@ fn build_grouped_coverage_layout_keeps_disjoint_segments_for_the_same_group() ->
 }
 
 #[test]
-fn build_grouped_coverage_layout_assigns_segment_indices_by_requested_chromosome_order() -> Result<()>
-{
+fn build_grouped_coverage_layout_assigns_segment_indices_by_requested_chromosome_order()
+-> Result<()> {
     // Arrange
     // The requested chromosome order is chr3, chr1, chr2.
     // chr2 is missing and must be skipped without consuming an index.
@@ -195,8 +247,8 @@ fn build_grouped_coverage_layout_assigns_segment_indices_by_requested_chromosome
 }
 
 #[test]
-fn build_grouped_coverage_layout_sorts_segments_by_start_end_and_group_idx_within_chromosome() -> Result<()>
-{
+fn build_grouped_coverage_layout_sorts_segments_by_start_end_and_group_idx_within_chromosome()
+-> Result<()> {
     // Arrange
     // After merging in unique-base mode, the chromosome contains three segments with the same
     // start coordinate:
@@ -285,8 +337,8 @@ fn build_grouped_coverage_layout_preserves_unused_group_names_in_nonempty_layout
 }
 
 #[test]
-fn build_grouped_coverage_layout_keeps_chromosomes_independent_while_summing_group_spans() -> Result<()>
-{
+fn build_grouped_coverage_layout_keeps_chromosomes_independent_while_summing_group_spans()
+-> Result<()> {
     // Arrange
     // Group 0 appears on two chromosomes:
     // - chr1: [0, 5) and [5, 10) touch, so unique-base mode merges them to [0, 10)
@@ -294,7 +346,10 @@ fn build_grouped_coverage_layout_keeps_chromosomes_independent_while_summing_gro
     //
     // The per-group span should therefore be 10 + 5 = 15 across the two chromosomes
     let mut grouped_windows_by_chr = FxHashMap::default();
-    grouped_windows_by_chr.insert("chr1".to_string(), grouped_windows(&[(0, 5, 0), (5, 10, 0)]));
+    grouped_windows_by_chr.insert(
+        "chr1".to_string(),
+        grouped_windows(&[(0, 5, 0), (5, 10, 0)]),
+    );
     grouped_windows_by_chr.insert("chr2".to_string(), grouped_windows(&[(20, 25, 0)]));
 
     // Act
