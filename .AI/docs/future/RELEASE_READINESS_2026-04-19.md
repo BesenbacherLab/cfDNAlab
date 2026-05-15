@@ -1,211 +1,176 @@
-# cfDNAlab Release Readiness Report
+# cfDNAlab Release Readiness Review
 
-**Date:** 2026-04-19
+**Date:** 2026-05-15
 **Version:** 0.1.0
-**Branch:** `main`
-**Target:** Public GitHub release, crates.io publication, scientific conference + LinkedIn announcement
+**Target:** first public release, crates.io package, public docs, announcement
 
----
+This replaces the older 2026-04-19 review. The old README TODO, Cargo keyword, generated-doc, and AI-warning blockers are no longer the right release focus.
 
-## Executive Summary
+## Verdict
 
-| Area               | Status  | Notes                                                                    |
-| ------------------ | ------- | ------------------------------------------------------------------------ |
-| **Build**          | PASS    | Clean compile (debug + release), 0 errors                                |
-| **Tests**          | PASS    | 1 080+ tests, all passing                                                |
-| **Clippy**         | PASS    | 0 clippy warnings                                                        |
-| **License**        | PASS    | MIT license file present, `license = "MIT"` in Cargo.toml                |
-| **Cargo metadata** | PARTIAL | Keywords exceed crates.io limit (8/5)                                    |
-| **README**         | BLOCKED | 6 visible TODO placeholders remain                                       |
-| **Generated code** | BLOCKED | 2 modules carry "unvalidated AI-generated" warnings                      |
-| **Website docs**   | PARTIAL | Missing guides for `ends`, `fragment-count-weights`, conversion commands |
+The source tree is close, but I would not publish the crate or announce the docs until the package contents, incomplete docs page, and public URL story are fixed or explicitly accepted.
 
-**Overall verdict:** Close to release but with a handful of blockers and several should-fix items.
+For a same-day release, do not spend time on broad cleanup. Fix the necessary items below, run the release checks locally, then tag.
 
----
+## Necessary Before Release
 
-## BLOCKERS
+### 1. Verify the crates.io package contents
 
-These must be resolved before public release. Each one is visible to users, reviewers, or the crates.io registry and would undermine trust.
+`Cargo.toml` now has an explicit `include` whitelist for the crate package:
 
-### B1. README contains 6 visible TODO placeholders
+- `Cargo.toml`
+- `LICENSE`
+- `README.md`
+- `cfdnalab_logo_750x500_150dpi.png`
+- `src/**/*.rs`
 
-Users landing on the GitHub page will see unfinished sentences:
+This should keep the package focused on the CLI code, library code, license, main README, and the image referenced by the README.
 
-| Line | Content                                             |
-| ---- | --------------------------------------------------- |
-| 9    | "The package is in alpha-stage (being developed)"   |
-| 75   | `[TODO: Not that simple]` and `(TODO on samtools!)` |
-| 343  | `[TODO: Note on how to get griffin-like profiles]`  |
-| 351  | `[TODO: Add example]` (end motifs recipe)           |
-| 355  | `[TODO: Add output-prefix for remaining commands]`  |
-| 445  | `[TODO: Check correctness]` for file column docs    |
+The reason this matters is that the repo has tracked internal material that should not go to crates.io by accident:
 
-**Action:** Fill in or remove every TODO. Change line 9 to release-ready language. Add the missing end-motifs recipe or remove the placeholder section.
+- `.AI/` contains 50 tracked files, including future plans, major reviews, and this readiness report.
+- `website/` contains authored docs and Docusaurus build inputs.
+- `.github/` contains CI files that are useful in the repo but not needed in the crate archive.
 
-### B2. Source module carries "unvalidated AI-generated code" warning
+Action:
 
-| File                                      | Warning                              |
-| ----------------------------------------- | ------------------------------------ |
-| `src/commands/gc_bias/interpolation.rs:1` | `"TODO: Validate that it's correct"` |
-| ~~`src/shared/frag_file.rs:1`~~           | ~~Removed~~                          |
+- Verify with `cargo package --list` that `.AI/`, old review notes, future plans, website docs, and `.github/` are not included.
+- Run `cargo package` after the package list looks right.
 
-The `interpolation.rs` comment will be visible to anyone inspecting the source and is damaging for a tool targeting scientific credibility. Even if the code is now correct, the warning must be removed or replaced with a validation note before release.
+This is the highest-impact release hygiene issue because it affects the artifact that gets permanently distributed.
 
-**Action:** Validate `interpolation.rs` (or confirm it's already been validated) and remove or rewrite the warning comment.
+### 2. Remove or hide the unfinished DELFI guide
 
-### B3. `keywords` in Cargo.toml exceeds the crates.io limit
+`website/docs/guides/delfi_features_guide.md` is still under the Docusaurus docs tree and contains visible TODOs plus unfinished prose. It is not in `sidebars.js`, but it is still a docs file and the site config indexes docs content.
 
-crates.io allows a maximum of **5 keywords**. The current list has **8**:
-`["cfdna", "cell-free-dna", "fragmentomics", "fragmentation", "bioinformatics", "genomics", "sequencing", "cli"]`
+Current visible problems include:
 
-`cargo publish` will fail.
+- `[TODO: Make it clear that we don't do exactly what they do ...]`
+- `[TODO: Figure out exactly what the DELFI settings are]`
+- `[TODO: The actual DELFI approach needs to be found in their code]`
+- The file ends mid-thought after "Since we already have the fragment-level GC correction, we will".
 
-**Action:** Reduce to 5 keywords. Suggested: `["cfdna", "cell-free-dna", "fragmentomics", "bioinformatics", "genomics"]`.
+Action:
 
----
+- Move this guide out of `website/docs/` until it is complete, or mark it as non-published if the current Docusaurus setup supports that cleanly.
+- Do not spend release-day time finishing the DELFI method unless it is central to the announcement.
 
-## SHOULD FIX
+### 3. Decide the canonical docs URL
 
-Not strict blockers, but each one poses a risk to credibility, usability, or CI reliability for a public release.
+The repo currently points users to two different docs homes:
 
-### S2. CHANGELOG needs updating
+- `README.md` badge and prose use `https://cfDNAlab.tools/`.
+- `Cargo.toml` uses `https://BesenbacherLab.github.io/cfdnalab/` and `/docs`.
+- `website/docusaurus.config.js` is configured for GitHub Pages with `url: 'https://BesenbacherLab.github.io'` and `baseUrl: '/cfdnalab/'`.
 
-The CHANGELOG currently:
-- Sources a `release-notes.md` that says "Multiple other commands are being built. While they are technically present... they either not tested properly or outright won't work." This reads poorly for a release announcement.
-- Lists `cfdna ends` as a public command — confirm this is intentional for 0.1.0.
-- Lists `cfdna fragment-count-weights` — this is a new command not present in the older reviews. Confirm it's release-ready.
+Action:
 
-**Action:** Rewrite the CHANGELOG release notes for 0.1.0 to be professional and confident. Remove the "won't work" language.
+- If `cfDNAlab.tools` is the public URL, configure the site and Cargo metadata for that URL and make sure deployment writes the right domain setup.
+- If GitHub Pages is the public URL, update the README badge and docs links.
 
-### S3. Website intro doesn't mention `ends` or `fragment-count-weights`
+Do this before crates.io publication and announcement, because crate metadata and public links are what new users will copy first.
 
-The [intro.md](website/docs/intro.md) says cfDNAlab extracts "fragment coverage, midpoint coverage, and fragment lengths" — it omits **fragment end- and breakpoint motifs**.
+### 4. Run the release checks locally
 
-**Action:** Add end-motifs to the intro feature list, matching the README.
+I started compile/package checks during this review before you redirected the scope. The compile-only checks that completed were clean:
 
-### S5. `delfi_features_guide.md` has 5 unresolved TODOs
+- `cargo check`
+- `cargo check --all-features`
+- `cargo check --tests`
 
-This is the only website guide with TODOs. All five are research questions about how DELFI actually works. If this guide ships as-is, users will see incomplete documentation.
+I did not run tests. `cargo package` could not complete in the sandbox because it needed crates.io index access, and the later offline attempt was interrupted.
 
-**Action:** Either finish the guide or remove/hide it from the public docs until it's complete.
+Action for you before tagging/publishing:
 
-### S6. Dead `keep_temp = false` pattern in 5 commands
+```bash
+cargo check
+cargo check --all-features
+cargo check --tests
+cargo package --list
+cargo package
+cargo publish --dry-run
+npm --prefix website ci
+npm --prefix website run build
+```
 
-Five commands contain `let keep_temp = false;` with a dead `else` branch:
-- `lengths.rs:467`, `gc_bias.rs:397`, `midpoints.rs:302`, `ends.rs:431`, `wps.rs:607`
+Then run your normal test suite outside this agent session.
 
-This is not user-facing but looks sloppy in source review. 
+## Maybe Necessary
 
-**Action:** Remove the dead branches or implement `--keep-temp` behind a dev feature.
+### Cargo.lock is ignored and untracked
 
-### ~~S6. Commented-out code~~ — RESOLVED
+`Cargo.lock` exists locally but is ignored by `.gitignore` and not tracked. For a CLI distributed via `cargo install --git` and crates.io, this is a reproducibility decision, not a style issue.
 
-Commented-out functions in `bam.rs` and `striding.rs` removed by user. `frag_file.rs` warning removed. `lib.rs` re-exports are intentional (future API curation).
+Action:
 
----
+- Decide whether the release should commit `Cargo.lock`.
+- If yes, remove `Cargo.lock` from `.gitignore`, commit the lockfile, and use locked installs/checks where relevant.
+- If no, accept that installs and CI resolve current compatible dependency versions.
 
-## NICE TO HAVE
+### README badges need post-publish cleanup
 
-These improve polish but won't block a successful release.
+The README badges still say crates.io and BioConda are not published. That is fine before publication, but it will look stale immediately after the release if the announcement sends users to GitHub.
 
-### N1. Source-level TODOs in released command paths
+Action:
 
-48 `TODO`/`FIXME` comments remain across 28 source files. Most are minor (naming suggestions, possible optimizations, speculative features). None are user-facing. The count is down from ~65 in March, so progress is real.
+- Update package badges after each package is actually published.
+- Do not claim BioConda availability until it exists.
 
-Not a blocker — internal TODOs are normal in actively developed software. However, the two AI-generated-code TODOs (B2) stand out and must be addressed.
+### CHANGELOG is minimal
 
-### N2. Missing website guides
+`CHANGELOG` is release-safe now. It lists the public commands and no longer contains the old "won't work" language. It is still thin for an announcement.
 
-Guides exist for: fragment coverage, fragment lengths, fragment midpoints, genomic smoothing, GC bias correction, DELFI features.
+Action:
 
-Guides missing for: **end motifs**, **fragment-count-weights**, **bam-to-bam**, **bam-to-frag**, **frag-to-bam** (conversion commands).
+- Optional: add a short 0.1.0 summary with the command groups, supported input model, and bias/smoothing support.
+- Not necessary if the README or announcement text carries that context.
 
-The README recipes partially cover some of these. For a first release, the README recipes + CLI `--help` may be sufficient, but guides would strengthen the documentation story for a conference presentation.
+### Source-visible unvalidated-test comments remain
 
-### N3. Missing CLI reference docs for `ends` and `fragment-count-weights`
+There are still source-visible comments in tests such as:
 
-The generated CLI docs in `website/docs/generated/cli/` cover 10 commands but are missing `ends` and `fragment-count-weights`. The doc generation script likely needs updating.
+- `tests/test_sampling.rs`: "TODO: Validate tests - generated but not yet checked!"
+- `tests/test_prepare_windows_near.rs`: "TODO: These tests are completely unvalidated."
 
----
+These are not runtime blockers and they are outside the main release docs, but they are visible in a public source review.
 
-## WHAT'S IN GOOD SHAPE
+Action:
 
-These areas have been resolved since the earlier reviews and are now release-ready:
+- Leave them if time is tight.
+- Clean them if the release goal includes source credibility for scientific reviewers.
 
-1. **Clippy:** 0 warnings (was 425 in March). This is excellent for a public release.
+### Stale all-features CI comment
 
-2. **Cargo.toml metadata:** `authors`, `description`, `license`, `repository`, `homepage`, `documentation`, `categories` are all populated and correct.
+`.github/workflows/rust_all_features.yml` says "This is allowed to fail, as not all commands are done yet", but the workflow does not actually allow failure. That comment reads stale for a release tree.
 
-3. **LICENSE file:** MIT license present with correct copyright.
+Action:
 
-4. **CI infrastructure:** Three GitHub Actions workflows exist:
-   - `rust.yml` — build + test with `--all-features`
-   - `code_cov.yml` — Codecov coverage with `--all-features`
-   - `docs.yml` — generates CLI docs, builds and deploys Docusaurus site to GitHub Pages
+- Remove or update the comment when convenient.
+- This is not a release blocker if the workflow passes.
 
-5. **Test coverage:** 1 080+ test functions across integration and unit tests. All commands have substantial test coverage. The test plan identifies no high-priority gaps remaining.
+## No Longer Relevant From The Old Report
 
-6. **Test quality:** The test suite covers fragment semantics, window semantics, tiling invariance, weight composition, cross-command interoperability, and artifact contracts. A release-spine workflow test verifies the full `ref-gc-bias -> gc-bias -> coverage-weights -> fcoverage` pipeline.
+- README TODO placeholders: not present in the current README.
+- Cargo keyword limit: fixed at five keywords.
+- `src/commands/gc_bias/interpolation.rs` AI-validation warning: removed. The file now has ordinary implementation docs and interpolation tests.
+- Missing generated CLI pages for `ends` and `fragment-count-weights`: current generated docs include both.
+- Dead `keep_temp = false` branches: no current matches in `src/commands` or `src/shared`.
+- Website intro missing `ends`: fixed.
 
-7. **CONTRIBUTING.md:** Present at `.github/CONTRIBUTING.md`.
+## Current Good Signals
 
-8. **Website documentation:** Docusaurus site with auto-generated CLI reference, user guides, and installation instructions. Deployed via GitHub Pages.
+- `Cargo.toml` metadata has name, version, authors, description, license, README, repository, homepage, documentation, keywords, and category.
+- Default features expose the documented release commands and do not include experimental commands such as `fragment-kmers`, `prepare-windows`, `wps`, or `wps-peaks`.
+- README command list matches the default release command set.
+- Generated CLI docs exist locally for the 11 release commands and the generation script uses `--scope release`.
+- CI has separate default, all-features, docs, and coverage workflows.
 
-9. **Tile/window refactor:** The April 2 refactor (BedFetchPolicy, candidate window spans) is architecturally sound. Boundary logic has been manually verified. The main risk (fcoverage double-counting from wrong model) is now tested.
+## Release-Day Order
 
----
-
-## RELEASE CHECKLIST
-
-### Before tagging 0.1.0
-
-- [ ] Remove all README TODOs (B1)
-- [ ] Remove/rewrite AI-generated-code warnings in `interpolation.rs` (B2)
-- [X] Reduce Cargo.toml keywords to 5 (B3)
-- [X] Rewrite CHANGELOG to be release-quality (S2)
-- [X] Update website intro (S3)
-- [ ] Fix or remove DELFI guide TODOs (S4)
-- [ ] Remove dead `keep_temp` branches (S5)
-- [X] Remove commented-out code (S6)
-
-### Before `cargo publish`
-
-- [ ] Run `cargo package --features cli` and verify it succeeds
-- [ ] Verify `cargo publish --dry-run` passes
-- [ ] Confirm the binary name `cfdna` doesn't conflict on crates.io
-
-### Before conference/LinkedIn announcement
-
-- [ ] Verify website deploys correctly (https://BesenbacherLab.github.io/cfdnalab/)
-- [ ] Add end-motifs guide or at minimum a complete README recipe (N2)
-- [ ] Update generated CLI docs to include `ends` and `fragment-count-weights` (N3)
-- [ ] Prepare a brief feature summary suitable for LinkedIn (command list, speed claims, key differentiators)
-
----
-
-## CLI DOCS REVIEW
-
-Reviewed `--help` output for all 12 commands listed in the README plus the top-level `cfdna --help`. Findings are organized by severity.
-
-### Inconsistencies across commands
-
-| #   | Finding                                                                                                                                                                                       | Commands                                     | Severity |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- | -------- |
-| C8  | **`--output-prefix` examples inconsistent.** `coverage-weights` and `fragment-count-weights` show no example output filenames. Other commands do.                                             | `coverage-weights`, `fragment-count-weights` | LOW      |
-| C9  | **`--require-proper-pair` wording differs.** `fcoverage` uses a shorter version without the "trims the tails" explanation. Others include it. Minor, but noticeable when comparing help text. | `fcoverage` vs others                        | LOW      |
-
----
-
-## DOCUMENTS SUPERSEDED BY THIS REPORT
-
-The following documents are consolidated into this report and should be removed:
-
-| File                                                       | Original date | Reason for removal                                                                      |
-| ---------------------------------------------------------- | ------------- | --------------------------------------------------------------------------------------- |
-| `CURRENT_STATE_REVIEW.md`                                  | 2026-04-02    | Tile/fetch refactor review — findings incorporated, code has evolved                    |
-| `RELEASE_READINESS_REPORT.md`                              | 2026-03-12    | Original readiness report — most items resolved or superseded                           |
-| `RELEASED_COMMANDS_TEST_PLAN.md`                           | 2026-03-25    | Test plan — coverage gaps closed, plan self-reports "no concrete high-priority gaps"    |
-| `plans_and_specs/RELEASE_TODO.md`                          | Various       | Release TODO — blockers tracked here instead                                            |
-| `plans_and_specs/COMMAND_RELEASE_AUDIT_SPEC_2026-03-03.md` | 2026-03-03    | Audit spec — findings resolved or tracked here                                          |
-| `plans_and_specs/ends_code_review.md`                      | Various       | Ends code review — `ends` is now substantially tested; remaining items are low-severity |
+1. Verify the `include` whitelist with `cargo package --list`.
+2. Remove or hide the DELFI guide from public docs.
+3. Make `cfDNAlab.tools` vs GitHub Pages consistent across README, Cargo metadata, and Docusaurus.
+4. Run the release checks listed above.
+5. Run your full tests.
+6. Publish/tag.
+7. Update badges and announcement links after packages/docs are live.
