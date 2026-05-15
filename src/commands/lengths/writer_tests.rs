@@ -43,7 +43,7 @@ fn read_settings(output_dir: &std::path::Path, prefix: &str) -> Value {
 fn settings_path(output_dir: &std::path::Path, prefix: &str) -> PathBuf {
     output_dir.join(crate::shared::io::dot_join(&[
         prefix,
-        "fragment_length_settings.json",
+        "length_settings.json",
     ]))
 }
 
@@ -415,7 +415,7 @@ fn settings_writer_records_non_default_interpretation_fields() {
     let window_spec = DistributionWindowSpec::Size(100);
 
     // Act
-    write_fragment_length_settings_json(
+    write_length_settings_json(
         &settings_path(out_dir.path(), "sample"),
         &config,
         &window_spec,
@@ -464,7 +464,7 @@ fn settings_writer_uses_compact_stepped_range_definition_for_dense_default() {
     let length_axis = LengthAxis::new(edges).expect("test length axis should be valid");
 
     // Act
-    write_fragment_length_settings_json(
+    write_length_settings_json(
         &settings_path(out_dir.path(), "dense"),
         &config,
         &DistributionWindowSpec::Global,
@@ -495,14 +495,14 @@ fn settings_writer_records_bed_and_grouped_window_semantics() {
         LengthAxis::new(vec![30, 31, 32]).expect("test length axis should be valid");
 
     // Act
-    write_fragment_length_settings_json(
+    write_length_settings_json(
         &settings_path(out_dir.path(), "bed"),
         &config,
         &DistributionWindowSpec::Bed(PathBuf::from("windows.bed")),
         &length_axis,
     )
     .expect("BED settings sidecar should write");
-    write_fragment_length_settings_json(
+    write_length_settings_json(
         &settings_path(out_dir.path(), "groups"),
         &config,
         &DistributionWindowSpec::GroupedBed(PathBuf::from("groups.bed")),

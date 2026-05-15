@@ -87,4 +87,4 @@ cfdna lengths \
   --indel-mode adjust
 ```
 
-This is an analysis choice, not a baseline requirement. If you are unsure, start without it.
+This is an analysis choice, not a requirement. If you are unsure, start without it.

@@ -13,10 +13,7 @@ use crate::{
             config::{LengthsConfig, validate_gc_length_trim_rare},
             counting::{LengthAxis, LengthCounts},
             tiling::{reduce_partials_for_chr, write_cross_npy, write_partials_npz},
-            writer::{
-                LengthCountRowMetadata, write_fragment_length_settings_json,
-                write_length_counts_tsv,
-            },
+            writer::{LengthCountRowMetadata, write_length_counts_tsv, write_length_settings_json},
         },
         run_statistics::{
             DEFAULT_FRAGMENT_STATISTICS_LABELS, FragmentRunStatisticsOptions, GCStatisticsSummary,
@@ -586,9 +583,9 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     let settings_path = opt
         .ioc
         .output_dir
-        .join(dot_join(&[prefix, "fragment_length_settings.json"]));
+        .join(dot_join(&[prefix, "length_settings.json"]));
     let temp_settings_path = final_outputs.temp_path_for(&settings_path)?;
-    write_fragment_length_settings_json(&temp_settings_path, opt, &window_opt, &length_axis)?;
+    write_length_settings_json(&temp_settings_path, opt, &window_opt, &length_axis)?;
     final_outputs.record(temp_settings_path, settings_path)?;
 
     final_outputs.move_into_place()?;

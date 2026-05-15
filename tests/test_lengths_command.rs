@@ -41,6 +41,8 @@ mod tests_lengths_command {
     use serde_json::Value;
     use tempfile::TempDir;
 
+    const HIGH_PRECISION_COUNT_DECIMALS: u8 = 12;
+
     fn parse_group_index_rows(text: &str) -> Vec<(u64, String, f64)> {
         let mut lines = text.lines();
         let header = lines.next().expect("length counts TSV must have a header");
@@ -288,8 +290,7 @@ mod tests_lengths_command {
         assert_eq!(arr[(0, 60 - 30)], 1.0);
         assert_eq!(arr.sum(), 1.0);
 
-        let settings_text =
-            std::fs::read_to_string(out_dir.path().join("fragment_length_settings.json"))?;
+        let settings_text = std::fs::read_to_string(out_dir.path().join("length_settings.json"))?;
         let settings: Value = serde_json::from_str(&settings_text)?;
         assert_eq!(settings["length_axis"]["column_intervals"], "half_open");
         assert_eq!(settings["length_axis"]["min_fragment_length"], 30);
@@ -1956,6 +1957,7 @@ mod tests_lengths_command {
         });
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
         cfg.set_per_bp_length_bins(61, 61);
+        cfg.set_decimals(HIGH_PRECISION_COUNT_DECIMALS);
 
         run(&cfg)?;
 
@@ -2401,6 +2403,7 @@ mod tests_lengths_command {
             cfg.set_require_proper_pair(false);
             cfg.set_tile_size(10);
             cfg.set_per_bp_length_bins(10, 14);
+            cfg.set_decimals(HIGH_PRECISION_COUNT_DECIMALS);
             cfg
         };
 
@@ -2483,6 +2486,7 @@ mod tests_lengths_command {
         cfg.set_require_proper_pair(false);
         cfg.set_scaling_factors(Some(scaling_path));
         cfg.set_per_bp_length_bins(14, 14);
+        cfg.set_decimals(HIGH_PRECISION_COUNT_DECIMALS);
 
         run(&cfg)?;
 
@@ -2557,6 +2561,7 @@ mod tests_lengths_command {
         cfg.set_require_proper_pair(false);
         cfg.set_tile_size(10);
         cfg.set_per_bp_length_bins(30, 30);
+        cfg.set_decimals(HIGH_PRECISION_COUNT_DECIMALS);
 
         run(&cfg)?;
 
@@ -2637,6 +2642,7 @@ mod tests_lengths_command {
         cfg.set_require_proper_pair(false);
         cfg.set_scaling_factors(Some(scaling_path));
         cfg.set_per_bp_length_bins(14, 14);
+        cfg.set_decimals(HIGH_PRECISION_COUNT_DECIMALS);
 
         run(&cfg)?;
 
@@ -3311,6 +3317,7 @@ mod tests_lengths_command {
         cfg.set_require_proper_pair(false);
         cfg.set_scaling_factors(Some(scaling_path));
         cfg.set_per_bp_length_bins(61, 61);
+        cfg.set_decimals(HIGH_PRECISION_COUNT_DECIMALS);
 
         run(&cfg)?;
 
@@ -3471,7 +3478,7 @@ mod tests_lengths_command {
         let settings_text = std::fs::read_to_string(
             out_dir
                 .path()
-                .join(dot_join(&["sampleA", "fragment_length_settings.json"])),
+                .join(dot_join(&["sampleA", "length_settings.json"])),
         )?;
         let settings: Value = serde_json::from_str(&settings_text)?;
 

@@ -17,7 +17,7 @@ flowchart TD
     count["Count length bins<br/>one vector per output row"]
     merge["Merge tile counts<br/>including windows crossing tile edges"]
     table["Length count table<br/>length_counts.tsv.gz"]
-    settings["Length settings<br/>fragment_length_settings.json"]
+    settings["Length settings<br/>length_settings.json"]
     plot["QC plot<br/>overall length distribution"]
     stats["Run statistics<br/>fragments counted, skipped, and filtered"]
 

@@ -184,7 +184,7 @@ fn lengths_cli_minimal_invocation_writes_output_files_with_expected_prefix() -> 
     // Arrange:
     // The command contract says lengths writes:
     // - <prefix>.length_counts.tsv.gz
-    // - <prefix>.fragment_length_settings.json
+    // - <prefix>.length_settings.json
     // We run a minimal binary invocation with a tiny deterministic BAM fixture.
     let bam_fixture = fixtures::simple_inward_bam()?;
     let out_dir = TempDir::new()?;
@@ -221,7 +221,7 @@ fn lengths_cli_minimal_invocation_writes_output_files_with_expected_prefix() -> 
         .join(format!("{output_prefix}.length_counts.tsv.gz"));
     let settings_path = out_dir
         .path()
-        .join(format!("{output_prefix}.fragment_length_settings.json"));
+        .join(format!("{output_prefix}.length_settings.json"));
     assert!(
         counts_path.exists(),
         "Expected output file to exist: {}",

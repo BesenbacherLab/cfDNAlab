@@ -30,7 +30,7 @@ const BLACKLISTED_FRACTION_DECIMALS: i32 = 3;
 /// output. Ordinary filters stay out of the sidecar unless they change how the
 /// table should be interpreted downstream.
 #[derive(Serialize)]
-struct FragmentLengthSettings<'a> {
+struct LengthSettings<'a> {
     length_axis: LengthAxisSettings<'a>,
     aggregation_level: &'static str,
     window_mode: &'static str,
@@ -53,13 +53,13 @@ struct FragmentLengthSettings<'a> {
 /// The settings are intentionally focused on interpretation. They include the
 /// length axis, row aggregation mode, assignment mode, and whether optional
 /// weighting inputs affected the counts.
-pub(super) fn write_fragment_length_settings_json(
+pub(super) fn write_length_settings_json(
     settings_path: &std::path::Path,
     opt: &LengthsConfig,
     window_opt: &DistributionWindowSpec,
     length_axis: &LengthAxis,
 ) -> Result<()> {
-    let settings = FragmentLengthSettings {
+    let settings = LengthSettings {
         length_axis: length_axis.settings(),
         aggregation_level: aggregation_level_name(window_opt),
         window_mode: window_mode_name(window_opt),
