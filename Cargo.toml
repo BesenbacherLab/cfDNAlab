@@ -13,6 +13,7 @@ include = [
     "/README.md",
     "/cfdnalab_logo_750x500_150dpi.png",
     "/src/**/*.rs",
+    "/tests/**/*.rs",
 ]
 repository = "https://github.com/BesenbacherLab/cfDNAlab"
 homepage = "https://cfDNAlab.tools/"
