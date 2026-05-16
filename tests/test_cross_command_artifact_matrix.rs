@@ -321,7 +321,7 @@ fn lengths_consumes_shared_real_artifacts_with_expected_weighted_count() -> Resu
     // Assert
     let counts_path = out_dir.join(dot_join(&[
         cfg.output_prefix.trim(),
-        "length_counts.tsv.gz",
+        "length_counts.tsv.zst",
     ]));
     let arr: Array2<f64> = read_length_counts_tsv(&counts_path)?;
     assert_eq!(arr.dim(), (1, 1));

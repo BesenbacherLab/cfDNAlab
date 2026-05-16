@@ -49,7 +49,7 @@ the actual data and coordinates.
 `cfdna lengths` is no longer the main design problem. Its main output is now:
 
 ```text
-<prefix>.length_counts.tsv.gz
+<prefix>.length_counts.tsv.zst
 <prefix>.length_settings.json
 ```
 

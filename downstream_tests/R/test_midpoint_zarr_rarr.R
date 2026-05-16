@@ -13,16 +13,16 @@ read_group_names_from_fallback <- function() {
 
 counts <- read_array("counts", index = list(NULL, NULL, NULL))
 stopifnot(identical(dim(counts), c(3L, 3L, 5L)))
-stopifnot(isTRUE(all.equal(counts[1, 1, 1], 0)))
-stopifnot(isTRUE(all.equal(counts[1, 2, 3], 1)))
-stopifnot(isTRUE(all.equal(counts[1, 2, 4], 1)))
-stopifnot(isTRUE(all.equal(counts[1, 2, 5], 0.5)))
-stopifnot(isTRUE(all.equal(counts[1, 3, 3], 1)))
-stopifnot(isTRUE(all.equal(counts[2, 2, 1], 1.5)))
-stopifnot(isTRUE(all.equal(counts[2, 2, 2], 0.5)))
-stopifnot(isTRUE(all.equal(counts[2, 3, 3], 0.5)))
-stopifnot(isTRUE(all.equal(counts[3, 1, 3], 0.5)))
-stopifnot(isTRUE(all.equal(counts[3, 1, 4], 0.5)))
+stopifnot(isTRUE(all.equal(counts[1, 1, 1], 1)))
+stopifnot(isTRUE(all.equal(counts[1, 2, 3], 1.5)))
+stopifnot(isTRUE(all.equal(counts[1, 2, 4], 0.5)))
+stopifnot(isTRUE(all.equal(counts[1, 2, 5], 0)))
+stopifnot(isTRUE(all.equal(counts[1, 3, 3], 0)))
+stopifnot(isTRUE(all.equal(counts[2, 2, 1], 0)))
+stopifnot(isTRUE(all.equal(counts[2, 2, 2], 0)))
+stopifnot(isTRUE(all.equal(counts[2, 3, 3], 0)))
+stopifnot(isTRUE(all.equal(counts[3, 1, 3], 2.5)))
+stopifnot(isTRUE(all.equal(counts[3, 1, 4], 0)))
 
 group <- read_array("group", index = list(NULL))
 length_bin <- read_array("length_bin", index = list(NULL))
@@ -72,7 +72,7 @@ rows <- do.call(rbind, lapply(seq_along(length_start_bp), function(length_index)
 
 stopifnot(identical(nrow(rows), 15L))
 stopifnot(isTRUE(all.equal(rows$count, c(
-  0, 0, 0, 0, 0,
-  0, 0, 1, 1, 0.5,
-  0, 0, 1, 0, 0
+  1, 0.5, 0, 0, 0,
+  0, 0, 1.5, 0.5, 0,
+  0, 0, 0, 0, 2
 ))))

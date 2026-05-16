@@ -15,9 +15,9 @@ def test_dask_reads_count_tensor_chunks(midpoint_zarr_path: Path) -> None:
         counts[1, :, :].compute(),
         np.array(
             [
-                [0.0, 0.0, 0.0, 0.0, 0.0],
-                [1.5, 0.5, 0.0, 0.0, 0.0],
-                [0.0, 0.0, 0.5, 0.0, 0.0],
+                [0.5, 1.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 1.5, 0.0, 0.5],
+                [0.0, 0.5, 0.0, 1.0, 0.0],
             ],
             dtype=np.float32,
         ),

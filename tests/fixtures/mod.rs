@@ -745,7 +745,7 @@ fn write_bam(
     let mut records: Vec<bam::Record> = Vec::new();
 
     for fragment in fragments {
-        let qname = format!("frag{}_{}", fragment.forward.tid, fragment.forward.pos);
+        let qname = default_fragment_qname(fragment);
         records.push(fragment.forward.to_record(qname.as_bytes()));
         records.push(fragment.reverse.to_record(qname.as_bytes()));
     }
@@ -759,6 +759,26 @@ fn write_bam(
 
     for rec in records {
         writer.write(&rec)?;
+    }
+    Ok(())
+}
+
+fn default_fragment_qname(fragment: &FragmentSpec) -> String {
+    format!("frag{}_{}", fragment.forward.tid, fragment.forward.pos)
+}
+
+fn ensure_default_fragment_qnames_are_unique(fragments: &[FragmentSpec]) -> Result<()> {
+    let mut seen = fxhash::FxHashSet::default();
+    seen.reserve(fragments.len());
+    for fragment in fragments {
+        let qname = default_fragment_qname(fragment);
+        ensure!(
+            seen.insert(qname.clone()),
+            "bam_from_specs would assign duplicate paired-read qname '{qname}'. \
+             Duplicate qnames can make synthetic paired fragments overwrite each other in the \
+             pairing stash. Use bam_from_specs_strict_identity when stacked fragments at the \
+             same start are intentional."
+        );
     }
     Ok(())
 }
@@ -834,6 +854,8 @@ pub fn bam_from_specs(
     singles: Vec<ReadSpec>,
     name: &str,
 ) -> Result<BamFixture> {
+    ensure_default_fragment_qnames_are_unique(&fragments)?;
+
     let tempdir = TempDir::new()?;
     let bam_path = tempdir.path().join(format!("{name}.bam"));
 
@@ -1123,19 +1145,12 @@ pub fn read_zst_to_string(path: &Path) -> Result<String> {
     Ok(buf)
 }
 
-/// Read a gzip-compressed length-count TSV as text.
+/// Read a zstd-compressed length-count TSV as text.
 ///
-/// `cfdna lengths` writes gzip-compressed TSV output. Tests use this helper
+/// `cfdna lengths` writes zstd-compressed TSV output. Tests use this helper
 /// when they need to inspect metadata columns directly.
 pub fn read_length_counts_text<P: AsRef<Path>>(path: P) -> Result<String> {
-    let path = path.as_ref();
-    let file = File::open(path).with_context(|| format!("opening {}", path.display()))?;
-    let mut decoder = flate2::read::MultiGzDecoder::new(file);
-    let mut text = String::new();
-    decoder
-        .read_to_string(&mut text)
-        .with_context(|| format!("reading {}", path.display()))?;
-    Ok(text)
+    read_zst_to_string(path.as_ref())
 }
 
 /// Read a length-count TSV and return only the numeric `count_*` columns.

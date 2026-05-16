@@ -4,7 +4,7 @@
 
 ## Output Contract
 
-- Main output is `<prefix>.length_counts.tsv.gz`, or `length_counts.tsv.gz` with an empty prefix.
+- Main output is `<prefix>.length_counts.tsv.zst`, or `length_counts.tsv.zst` with an empty prefix.
 - Single-bp count columns are named `count_<length>` and represent half-open length bins `[length, length + 1)`.
 - Wider count columns are named `count_<start>_<end>` and represent half-open length bins `[start, end)`.
 - Global mode writes one row with only count columns.

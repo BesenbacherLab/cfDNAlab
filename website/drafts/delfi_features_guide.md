@@ -113,7 +113,7 @@ To calculate the short/long fragment length ratios, we take the following steps:
 
 
 ```bash
-LEN_COUNTS="$LEN_DIR/$SAMPLE_ID.length_counts.tsv.gz"
+LEN_COUNTS="$LEN_DIR/$SAMPLE_ID.length_counts.tsv.zst"
 DELFI_LENGTHS="$LEN_DIR/$SAMPLE_ID.delfi_short_long.npy"
 ```
 
@@ -129,7 +129,7 @@ len_dir = Path.home() / "delfi_features" / "output" / sample_id / "lengths"
 
 # Load lengths and extract short/long columns.
 # count_100_151 is [100,151), count_151_221 is [151,221).
-length_counts = pd.read_csv(len_dir / f"{sample_id}.length_counts.tsv.gz", sep="\t")
+length_counts = pd.read_csv(len_dir / f"{sample_id}.length_counts.tsv.zst", sep="\t")
 short_counts = length_counts["count_100_151"].to_numpy()
 long_counts = length_counts["count_151_221"].to_numpy()
 

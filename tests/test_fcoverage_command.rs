@@ -2977,7 +2977,7 @@ fn fcoverage_and_lengths_agree_on_the_single_fragment_that_survives_mapq_filteri
     // Assert
     let lengths_path = lengths_out.path().join(dot_join(&[
         lengths_cfg.output_prefix.trim(),
-        "length_counts.tsv.gz",
+        "length_counts.tsv.zst",
     ]));
     let lengths_arr = read_length_counts_tsv(&lengths_path)?;
     assert_eq!(lengths_arr.shape(), &[1, 191]);

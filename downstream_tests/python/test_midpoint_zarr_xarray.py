@@ -44,19 +44,19 @@ def test_xarray_builds_dataframe_for_one_group(midpoint_zarr_path: Path) -> None
     assert frame.shape == (15, 7)
     assert frame["group_name"].unique().tolist() == ["alpha"]
     assert frame["count"].tolist() == [
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        1.0,
         1.0,
         0.5,
         0.0,
         0.0,
-        1.0,
         0.0,
         0.0,
+        0.0,
+        1.5,
+        0.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        2.0,
     ]

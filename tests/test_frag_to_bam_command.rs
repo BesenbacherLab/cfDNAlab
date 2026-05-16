@@ -2306,11 +2306,11 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_then_roundtrip_match
 
     let original_counts = read_length_counts_tsv(&original_out.path().join(dot_join(&[
         original_cfg.output_prefix.trim(),
-        "length_counts.tsv.gz",
+        "length_counts.tsv.zst",
     ])))?;
     let restored_counts = read_length_counts_tsv(&restored_out.path().join(dot_join(&[
         restored_cfg.output_prefix.trim(),
-        "length_counts.tsv.gz",
+        "length_counts.tsv.zst",
     ])))?;
 
     // Assert:
@@ -2395,11 +2395,11 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_with_blacklist_then_
     // Assert
     let original_counts = read_length_counts_tsv(&original_out.path().join(dot_join(&[
         original_cfg.output_prefix.trim(),
-        "length_counts.tsv.gz",
+        "length_counts.tsv.zst",
     ])))?;
     let restored_counts = read_length_counts_tsv(&restored_out.path().join(dot_join(&[
         restored_cfg.output_prefix.trim(),
-        "length_counts.tsv.gz",
+        "length_counts.tsv.zst",
     ])))?;
 
     assert_eq!(original_counts.dim(), (1, 91));

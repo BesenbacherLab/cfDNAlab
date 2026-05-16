@@ -62,7 +62,7 @@ def test_cfdnalab_package_resolves_fixture_indices_and_slices(
 
     np.testing.assert_allclose(
         profiles.array_for_profile(group_idx=1, length_bin=1),
-        np.array([1.5, 0.5, 0.0, 0.0, 0.0], dtype=np.float32),
+        np.array([0.0, 0.0, 1.5, 0.0, 0.5], dtype=np.float32),
     )
     np.testing.assert_allclose(profiles.array_from_group("alpha"), EXPECTED_COUNTS[0])
     np.testing.assert_allclose(profiles.array_from_length(70), EXPECTED_COUNTS[:, 2, :])
@@ -88,7 +88,7 @@ def test_cfdnalab_package_builds_profile_dataframe_from_fixture(
                 "position": np.array([0, 1, 2, 3, 4], dtype=np.int32),
                 "position_bin_start_bp": np.array([0, 2, 4, 6, 8], dtype=np.int32),
                 "position_bin_end_bp": np.array([2, 4, 6, 8, 10], dtype=np.int32),
-                "count": np.array([0.0, 0.0, 1.0, 1.0, 0.5], dtype=np.float32),
+                "count": np.array([0.0, 0.0, 1.5, 0.5, 0.0], dtype=np.float32),
             }
         ),
     )
@@ -107,20 +107,20 @@ def test_cfdnalab_package_builds_group_and_length_dataframes_from_fixture(
     assert group_frame["length_bin"].tolist() == [0] * 5 + [1] * 5 + [2] * 5
     assert group_frame["position"].tolist() == [0, 1, 2, 3, 4] * 3
     assert group_frame["count"].tolist() == [
+        0.5,
+        1.0,
         0.0,
         0.0,
         0.0,
         0.0,
         0.0,
         1.5,
-        0.5,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
         0.0,
         0.5,
         0.0,
+        0.5,
+        0.0,
+        1.0,
         0.0,
     ]
 
@@ -133,17 +133,17 @@ def test_cfdnalab_package_builds_group_and_length_dataframes_from_fixture(
     assert length_frame["count"].tolist() == [
         0.0,
         0.0,
-        1.0,
         0.0,
+        0.0,
+        2.0,
+        0.0,
+        0.5,
+        0.0,
+        1.0,
         0.0,
         0.0,
         0.0,
         0.5,
         0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
+        1.0,
     ]

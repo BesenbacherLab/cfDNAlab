@@ -10,8 +10,8 @@ use cfdnalab::commands::{
     },
 };
 use fixtures::{
-    bam_from_specs, paired_fragment, read_midpoint_zarr_counts, read_midpoint_zarr_i32_1d,
-    read_midpoint_zarr_u32_1d, write_bed,
+    bam_from_specs_strict_identity, paired_fragment, read_midpoint_zarr_counts,
+    read_midpoint_zarr_i32_1d, read_midpoint_zarr_u32_1d, write_bed,
 };
 use ndarray::arr3;
 use serde_json::Value;
@@ -28,21 +28,55 @@ fn generate_midpoint_zarr_fixture_with_cfdnalab() -> Result<()> {
         .unwrap_or_else(|| PathBuf::from("downstream_tests/tmp"));
     std::fs::create_dir_all(&output_dir)?;
 
-    let bam = bam_from_specs(
+    let bam = bam_from_specs_strict_identity(
         vec![("chr1".to_string(), 300)],
         // The midpoint set intentionally creates distinct nonzero values across
-        // the tensor, so axis swaps and over-broad downstream assertions fail.
+        // group, length, and position axes. With --bin-size 2 each raw midpoint
+        // contributes 0.5 to its final position bin, so repeated fragments create
+        // asymmetric values that catch axis swaps and broad downstream assertions.
         vec![
-            paired_fragment(20, 61, 20),
+            // alpha, length bin [30, 50)
+            paired_fragment(26, 41, 20),
+            paired_fragment(26, 41, 20),
+            paired_fragment(28, 41, 20),
+            // alpha, length bin [50, 70)
             paired_fragment(95, 61, 20),
-            paired_fragment(125, 81, 20),
+            paired_fragment(95, 61, 20),
+            paired_fragment(95, 61, 20),
+            paired_fragment(97, 61, 20),
+            // alpha, length bin [70, 100)
+            paired_fragment(89, 81, 20),
+            paired_fragment(89, 81, 20),
+            paired_fragment(89, 81, 20),
+            paired_fragment(89, 81, 20),
+            // beta-site, length bin [30, 50)
+            paired_fragment(141, 41, 20),
+            paired_fragment(143, 41, 20),
+            paired_fragment(143, 41, 20),
+            // beta-site, length bin [50, 70)
+            paired_fragment(25, 61, 20),
+            paired_fragment(25, 61, 20),
+            paired_fragment(25, 61, 20),
+            paired_fragment(29, 61, 20),
+            // beta-site, length bin [70, 100)
+            paired_fragment(123, 81, 20),
+            paired_fragment(127, 81, 20),
+            paired_fragment(127, 81, 20),
+            // gamma_long, length bin [30, 50)
             paired_fragment(55, 41, 20),
-            paired_fragment(21, 61, 20),
-            paired_fragment(20, 63, 20),
-            paired_fragment(23, 61, 20),
-            paired_fragment(85, 81, 20),
-            paired_fragment(84, 81, 20),
-            paired_fragment(56, 41, 20),
+            paired_fragment(55, 41, 20),
+            paired_fragment(55, 41, 20),
+            paired_fragment(55, 41, 20),
+            paired_fragment(55, 41, 20),
+            // gamma_long, length bin [50, 70)
+            paired_fragment(41, 61, 20),
+            paired_fragment(47, 61, 20),
+            paired_fragment(47, 61, 20),
+            paired_fragment(47, 61, 20),
+            // gamma_long, length bin [70, 100)
+            paired_fragment(35, 81, 20),
+            paired_fragment(39, 81, 20),
+            paired_fragment(39, 81, 20),
         ],
         Vec::new(),
         "downstream_midpoint_fixture",
@@ -97,23 +131,23 @@ fn generate_midpoint_zarr_fixture_with_cfdnalab() -> Result<()> {
         counts,
         arr3(&[
             [
-                [0.0_f32, 0.0, 0.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 1.0, 0.5],
-                [0.0, 0.0, 1.0, 0.0, 0.0],
+                [1.0_f32, 0.5, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 1.5, 0.5, 0.0],
+                [0.0, 0.0, 0.0, 0.0, 2.0],
             ],
             [
-                [0.0, 0.0, 0.0, 0.0, 0.0],
-                [1.5, 0.5, 0.0, 0.0, 0.0],
-                [0.0, 0.0, 0.5, 0.0, 0.0],
+                [0.5, 1.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 1.5, 0.0, 0.5],
+                [0.0, 0.5, 0.0, 1.0, 0.0],
             ],
             [
-                [0.0, 0.0, 0.5, 0.5, 0.0],
-                [0.0, 0.0, 0.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 2.5, 0.0, 0.0],
+                [0.5, 0.0, 0.0, 1.5, 0.0],
+                [0.0, 0.0, 0.5, 0.0, 1.0],
             ],
         ])
     );
-    assert_eq!(counts.sum(), 7.0);
+    assert_eq!(counts.sum(), 16.5);
 
     assert_eq!(
         read_midpoint_zarr_i32_1d(&zarr_path, "/group")?,
@@ -155,7 +189,7 @@ fn generate_midpoint_zarr_fixture_with_cfdnalab() -> Result<()> {
     let group_index = std::fs::read_to_string(group_index_path)?;
     assert_eq!(
         group_index,
-        "group_idx\tgroup_name\teligible_windows\n0\talpha\t2\n1\tbeta-site\t2\n2\tgamma_long\t2\n"
+        "group_idx\tgroup_name\teligible_intervals\n0\talpha\t2\n1\tbeta-site\t2\n2\tgamma_long\t2\n"
     );
 
     let settings: Value = serde_json::from_str(&std::fs::read_to_string(settings_path)?)?;

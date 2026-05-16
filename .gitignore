@@ -40,3 +40,5 @@ plans_and_specs/lionheart-main/
 .gwf/
 
 other_software/
+
+downstream_tests/tmp/

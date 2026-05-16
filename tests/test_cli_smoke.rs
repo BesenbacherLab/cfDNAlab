@@ -183,7 +183,7 @@ fn ends_help_only_shows_collapse_complements_when_experimental_feature_is_enable
 fn lengths_cli_minimal_invocation_writes_output_files_with_expected_prefix() -> Result<()> {
     // Arrange:
     // The command contract says lengths writes:
-    // - <prefix>.length_counts.tsv.gz
+    // - <prefix>.length_counts.tsv.zst
     // - <prefix>.length_settings.json
     // We run a minimal binary invocation with a tiny deterministic BAM fixture.
     let bam_fixture = fixtures::simple_inward_bam()?;
@@ -218,7 +218,7 @@ fn lengths_cli_minimal_invocation_writes_output_files_with_expected_prefix() -> 
     // Assert
     let counts_path = out_dir
         .path()
-        .join(format!("{output_prefix}.length_counts.tsv.gz"));
+        .join(format!("{output_prefix}.length_counts.tsv.zst"));
     let settings_path = out_dir
         .path()
         .join(format!("{output_prefix}.length_settings.json"));

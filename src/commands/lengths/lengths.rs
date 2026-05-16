@@ -539,7 +539,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     let final_counts_path = opt
         .ioc
         .output_dir
-        .join(dot_join(&[prefix, "length_counts.tsv.gz"]));
+        .join(dot_join(&[prefix, "length_counts.tsv.zst"]));
     let temp_counts_path = final_outputs.temp_path_for(&final_counts_path)?;
     let row_metadata = match &window_opt {
         DistributionWindowSpec::Global => LengthCountRowMetadata::Global,

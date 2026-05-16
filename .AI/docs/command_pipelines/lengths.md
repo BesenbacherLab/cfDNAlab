@@ -16,7 +16,7 @@ flowchart TD
     weights["Apply requested weights<br/>GC correction and scaling TSVs"]
     count["Count length bins<br/>one vector per output row"]
     merge["Merge tile counts<br/>including windows crossing tile edges"]
-    table["Length count table<br/>length_counts.tsv.gz"]
+    table["Length count table<br/>length_counts.tsv.zst"]
     settings["Length settings<br/>length_settings.json"]
     plot["QC plot<br/>overall length distribution"]
     stats["Run statistics<br/>fragments counted, skipped, and filtered"]
@@ -56,4 +56,4 @@ The default assignment counts a fragment in every overlapping row. Other assignm
 
 ## Outputs
 
-The main output is `<prefix>.length_counts.tsv.gz`, with one row per output window or group and one count column per half-open length bin. Single-bp bins use `count_<length>`, while wider bins use `count_<start>_<end>`. Fixed-window and BED rows include genomic coordinates directly. Grouped-BED rows include `group_name` and `eligible_windows`. Count values are rounded only when written, using `--decimals`. Blacklist fractions are rounded only when written, always to three decimals. The settings JSON records the length-bin and counting configuration, including count output decimals and whether blacklist, GC correction, or scaling factors were used. When plotting is enabled, the command also writes an overall length-distribution PNG.
+The main output is `<prefix>.length_counts.tsv.zst`, with one row per output window or group and one count column per half-open length bin. Single-bp bins use `count_<length>`, while wider bins use `count_<start>_<end>`. Fixed-window and BED rows include genomic coordinates directly. Grouped-BED rows include `group_name` and `eligible_windows`. Count values are rounded only when written, using `--decimals`. Blacklist fractions are rounded only when written, always to three decimals. The settings JSON records the length-bin and counting configuration, including count output decimals and whether blacklist, GC correction, or scaling factors were used. When plotting is enabled, the command also writes an overall length-distribution PNG.
