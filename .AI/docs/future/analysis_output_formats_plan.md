@@ -8,7 +8,7 @@ harder to misinterpret than raw arrays plus loosely related sidecars.
 
 - `lengths`: settled as a wide compressed TSV plus settings JSON.
 - `midpoints`: first Zarr implementation is in place on the development branch.
-  The next step is downstream loading examples in R and Python.
+  Downstream loading examples and CI-only compatibility tests now exist.
 - `ends`: later target. Dense motif arrays and sparse motif arrays should move
   together so users do not have to learn both Zarr and SciPy-style `.npz` for the
   same command family.
@@ -205,9 +205,14 @@ Sparse tile partials are an implementation detail. Do not expose sparse public
 midpoint output in v1 of this transition unless there is a concrete user need,
 because smoothed profiles are generally dense anyway.
 
-### Python Loading Sketch
+### Python Loading
 
-The best Python experience should be xarray-first:
+The guide currently shows direct `zarr` loading because it is explicit and close
+to the on-disk schema. The downstream workflow also tests `xarray` and
+`dask.array`.
+
+The best high-level Python experience should still be xarray-first once the
+package behavior is confirmed in CI:
 
 ```python
 import xarray as xr
@@ -240,53 +245,329 @@ position_bin_end_bp
 Docs must tell users to subset before converting a full 3D array to a dataframe.
 A full dataframe can be much larger than the Zarr store.
 
-### R Loading Sketch
+### Sourceable Helper Scripts
 
-R support should be tested before finalizing the exact Zarr version, string
-encoding, and codec. The target user workflow should look like:
+Raw Zarr access is a compatibility layer, not a good user-facing analysis API.
+Before turning anything into real Python or R packages, add sourceable midpoint
+helper scripts that can load a `.midpoint_profiles.zarr` path and expose the
+operations users are most likely to need.
 
-```r
-library(zarr)
+Initial Python helper:
 
-profiles <- open_zarr("sample.midpoint_profiles.zarr", mode = "r")
+```python
+from cfdnalab_midpoints import read_midpoint_profiles
 
-counts <- profiles[["counts"]][1:10, , ]
-group_name <- profiles[["group_name"]][1:10]
-eligible_intervals <- profiles[["eligible_intervals"]][1:10]
-length_start_bp <- profiles[["length_start_bp"]][]
-length_end_bp <- profiles[["length_end_bp"]][]
-position_bin_start_bp <- profiles[["position_bin_start_bp"]][]
-position_bin_end_bp <- profiles[["position_bin_end_bp"]][]
+profiles = read_midpoint_profiles("sample.midpoint_profiles.zarr")
+group_frame = profiles.dataframe_for_group("CTCF")
+length_frame = profiles.dataframe_for_length_bin((120, 180))
+group_matrix = profiles.profile_for_group("CTCF")
+all_counts = profiles.counts_array()
 ```
 
-If the final R reader is `Rarr` or `ZarrArray` instead of `zarr`, adjust the docs
-to that package. The design requirement is not a specific R package. The
-requirement is that an R user can load counts and axis metadata without Python.
+Initial R helper:
+
+```r
+source("cfdnalab_midpoints.R")
+
+profiles <- read_midpoint_profiles("sample.midpoint_profiles.zarr")
+group_frame <- data_frame_for_group(profiles, "CTCF")
+length_frame <- data_frame_for_length_bin(profiles, c(120, 180))
+group_matrix <- profile_for_group(profiles, "CTCF")
+all_counts <- counts_array(profiles)
+```
+
+Required helper operations:
+
+- validate midpoint schema name and version
+- expose group metadata, length-bin metadata, and position-bin metadata
+- return raw arrays or matrices for group-indexed and length-bin-indexed slices
+- build long dataframes for one group across all length/position bins
+- build long dataframes for one length bin across all groups/positions
+- resolve groups by `group_idx` or `group_name`
+- resolve length bins by index or by `(length_start_bp, length_end_bp)`
+
+The first scripts should not include plotting. Dataframe builders are the useful
+boundary. Plot helpers can be added later if repeated workflows converge on the
+same plot shapes.
+
+These helper scripts should live with downstream tests first and be tested in
+the downstream workflow against cfDNAlab-generated Zarr output. Promote them to
+actual Python/R packages only after the API has survived real examples and ends
+needs the same style of helper layer.
+
+### R Loading
+
+The guide currently shows `Rarr` because it has a direct array-level read path.
+The downstream workflow also tests CRAN `zarr`.
+
+The target user workflow should stay close to:
+
+```r
+library(Rarr)
+
+store <- "sample.midpoint_profiles.zarr"
+
+counts <- read_zarr_array(file.path(store, "counts"), index = list(1:10, NULL, NULL))
+group_name <- read_zarr_array(file.path(store, "group_name"), index = list(1:10))
+eligible_intervals <- read_zarr_array(file.path(store, "eligible_intervals"), index = list(1:10))
+length_start_bp <- read_zarr_array(file.path(store, "length_start_bp"), index = list(NULL))
+length_end_bp <- read_zarr_array(file.path(store, "length_end_bp"), index = list(NULL))
+position_bin_start_bp <- read_zarr_array(file.path(store, "position_bin_start_bp"), index = list(NULL))
+position_bin_end_bp <- read_zarr_array(file.path(store, "position_bin_end_bp"), index = list(NULL))
+```
+
+The design requirement is not a specific R package. The requirement is that an R
+user can load counts and axis metadata without Python.
 
 ## Ends Later
 
-`cfdna ends` has both dense and sparse public motif outputs. If it moves to Zarr,
-move both modes under one conceptual format.
+`cfdna ends` has both dense and sparse public motif outputs. Move both modes to
+Zarr together so users do not have to learn `.npy`, SciPy-style `.npz`, motif
+text files, `bins.tsv`, and `group_index.tsv` as separate contracts.
+
+The target public package should be:
+
+```text
+<prefix>.end_motifs.zarr/
+<prefix>.end_settings.json
+```
+
+The current settings sidecar is `<prefix>.end_motif_settings.json`. Rename it to
+`<prefix>.end_settings.json` during the Zarr transition for consistency with the
+other command settings files. The settings JSON should remain human-readable
+command provenance. The Zarr store should carry the machine-readable arrays
+needed for downstream analysis.
+
+Root attrs:
+
+```json
+{
+  "cfdnalab_schema": "end_motif_counts",
+  "cfdnalab_schema_version": 1,
+  "storage_mode": "dense",
+  "row_mode": "global|size|bed|grouped_bed",
+  "primary_array": "counts",
+  "count_units": "weighted_end_motif_count"
+}
+```
+
+For sparse output, `storage_mode` should be `"sparse_coo"` and `primary_array`
+should be omitted or replaced with:
+
+```json
+{
+  "primary_group": "sparse",
+  "sparse_format": "coo",
+  "sparse_indices_base": 0
+}
+```
+
+Do not store general command options only as Zarr attrs. Keep motif-definition,
+filtering, correction flags, dense/sparse mode, row mode, and other provenance
+in `<prefix>.end_settings.json`.
+
+### Shared Axes
+
+Both dense and sparse stores should carry the same row and motif metadata.
+
+Motif axis:
+
+```text
+motif                  string[motif]
+motif_utf8             uint8[motif, motif_byte]
+motif_nbytes           uint32[motif]
+motif_byte             int32[motif_byte]
+```
+
+`motif` is the user-facing label in `<outside>_<inside>` form. Keep the byte
+fallback at least until downstream tests decide whether Zarr strings are safe
+for all target R/Python readers. Motif labels are ASCII and fixed-width for a
+given run, so the byte fallback is cheap and easier to decode than arbitrary
+variable-width strings.
+
+Row axis, all modes:
+
+```text
+row                    int32[row]
+```
+
+`row` is a zero-based coordinate label for the matrix row. It is not the
+domain-level key. The domain key depends on `row_mode`.
+
+Global mode:
+
+```text
+row_label              string[row]       # value: "global"
+```
+
+Fixed-size and BED modes:
+
+```text
+chromosome             int32[chromosome]
+chromosome_name        string[chromosome]
+chromosome_name_utf8   uint8[chromosome, chromosome_name_byte]
+chromosome_name_nbytes uint32[chromosome]
+chromosome_name_byte   int32[chromosome_name_byte]
+row_chromosome         int32[row]
+row_start_bp           uint64[row]
+row_end_bp             uint64[row]
+blacklisted_fraction   float64[row]
+```
+
+Use a chromosome dictionary instead of repeating chromosome strings for every
+row. `row_chromosome[row]` indexes `chromosome_name[chromosome]`. For BED mode,
+rows must preserve the original BED row order after chromosome filtering, just
+as current `bins.tsv` is keyed by the preserved output index.
+
+Grouped BED mode:
+
+```text
+group                  int32[row]
+group_name             string[row]
+group_name_utf8        uint8[row, group_name_byte]
+group_name_nbytes      uint32[row]
+group_name_byte        int32[group_name_byte]
+eligible_windows       uint32[row]
+blacklisted_fraction   float64[row]
+```
+
+`group[row]` must be the same zero-based `group_idx` used by the count rows.
+Reject non-contiguous group indices instead of reordering counts blindly. Add
+`eligible_windows` during the transition; current ends group metadata does not
+include it, but it is needed to interpret grouped counts and keeps the command
+consistent with the new `lengths` grouped output.
+
+### Dense Output
 
 Dense output:
 
 ```text
 counts                  float64[row, motif]
-motif                  string[motif]
 ```
+
+Dense output corresponds to current `--all-motifs`. It should include all motif
+labels in deterministic order, including motifs with zero counts. The dense size
+guard should remain, but update the error message to mention Zarr rather than
+`.npy`.
+
+Chunking should favor common reads:
+
+- small dense matrices: one chunk
+- larger matrices: chunk by rows while keeping the motif axis whole when
+  possible
+- target chunk size should be in the same rough range as midpoint counts
+  chunks, adjusted for `float64`
+
+This keeps "read a subset of rows with all motifs" efficient, which is the
+likely dataframe/plotting workflow.
+
+### Sparse Output
 
 Sparse output should be explicit COO inside the Zarr package:
 
 ```text
 sparse/row              uint64[nnz]
-sparse/col              uint64[nnz]
-sparse/data             float64[nnz]
-sparse/shape            uint64[2]
-motif                   string[motif]
+sparse/motif            uint64[nnz]
+sparse/count            float64[nnz]
+sparse/shape            uint64[sparse_dimension]   # [n_rows, n_motifs]
+sparse/dimension        string[sparse_dimension]   # ["row", "motif"]
 ```
 
-Use zero-based sparse coordinates on disk. R examples should add 1 when
-constructing `Matrix::sparseMatrix`.
+Use zero-based sparse coordinates on disk. R examples must add 1 when
+constructing `Matrix::sparseMatrix`. Python examples can construct
+`scipy.sparse.coo_matrix((count, (row, motif)), shape=shape)`.
+
+COO entries should be sorted by `(row, motif)` before writing. The current sparse
+`.npz` helper preserves the matrix mathematically, but the Zarr transition is an
+opportunity to make sparse payloads deterministic and easy to diff. Duplicate
+`(row, motif)` entries should be rejected in the final writer because reduction
+should already have merged them.
+
+Sparse output should keep only observed motifs, matching current default ends
+behavior. If users need a full motif universe, they should use dense
+`--all-motifs` unless there is a later concrete use case for "sparse with all
+motif labels".
+
+### Downstream Loading Targets
+
+Python dense:
+
+```python
+import pandas as pd
+import zarr
+
+store = zarr.open_group("sample.end_motifs.zarr", mode="r", zarr_format=3)
+counts = store["counts"][:]
+motifs = store["motif"][:]
+```
+
+Python sparse:
+
+```python
+import scipy.sparse
+import zarr
+
+store = zarr.open_group("sample.end_motifs.zarr", mode="r", zarr_format=3)
+sparse = store["sparse"]
+mat = scipy.sparse.coo_matrix(
+    (sparse["count"][:], (sparse["row"][:], sparse["motif"][:])),
+    shape=tuple(sparse["shape"][:]),
+)
+```
+
+R sparse:
+
+```r
+library(Matrix)
+library(Rarr)
+
+store <- "sample.end_motifs.zarr"
+row <- read_zarr_array(file.path(store, "sparse", "row"), index = list(NULL))
+motif <- read_zarr_array(file.path(store, "sparse", "motif"), index = list(NULL))
+count <- read_zarr_array(file.path(store, "sparse", "count"), index = list(NULL))
+shape <- read_zarr_array(file.path(store, "sparse", "shape"), index = list(NULL))
+
+mat <- sparseMatrix(
+  i = as.integer(row) + 1L,
+  j = as.integer(motif) + 1L,
+  x = count,
+  dims = as.integer(shape)
+)
+```
+
+Docs should show one dense and one sparse example only if both are common. If one
+example is preferred, show sparse because it is the default output path and the
+one most likely to trip users up.
+
+### Ends Implementation Notes
+
+Keep dense and sparse Zarr writers in the ends command, but extract small shared
+Zarr helpers once the second command needs them. Useful shared helpers:
+
+- filesystem store creation
+- root metadata writing
+- generic Zarr V3 array creation with zstd and dimension names
+- single-chunk coordinate/metadata array writing
+- checked `usize`/`u64` to public `i32`, `u32`, and `uint64` conversions
+- string plus UTF-8 byte fallback writing
+- 2D dense chunk-shape selection
+- COO sparse matrix writing
+
+Do not build a broad generic "Zarr dataset builder" yet. The midpoint and ends
+schemas are different enough that command-specific writers should remain the
+readable entry points. The shared code should only cover mechanical Zarr
+serialization and low-level dtype validation.
+
+Reuse existing row metadata logic instead of recomputing it inside the Zarr
+writer. The current code writes `bins.tsv` from `WindowBinInfo` and grouped rows
+through `write_group_index_with_blacklist_tsv`. For Zarr, split the data
+construction from TSV writing so both TSV and Zarr paths can consume the same
+row summaries. This avoids the grouped-row ordering and blacklist-fraction drift
+risks already encountered in the midpoint/length output work.
+
+The sparse COO writer can later be reused by fragment-kmer positional sparse
+outputs and any remaining SciPy `.npz` sparse outputs, but do not migrate those
+commands as part of the first ends Zarr transition.
 
 ## Shared Rules
 
@@ -303,27 +584,66 @@ constructing `Matrix::sparseMatrix`.
 
 ## Open Decisions For Midpoints
 
-- Exact safe Zarr V3 subset.
-- Codec and chunk layout.
-- Exact dimension metadata needed for `xarray.open_zarr()`.
+- Whether downstream CI confirms the current Zarr V3 safe subset across the
+  target Python and R package set.
+- Whether zstd remains acceptable across the target R readers.
 - Whether `counts` should stay `float32` on disk or move to `float64`.
 - Whether `group_name` should be a string array or explicit UTF-8 byte matrix.
-- Whether the settings should live entirely in root attrs or as a JSON object/file
-  inside the package.
 - Whether the package should include a small `README.txt` with the schema version
   and loading pointers.
 - Whether any optional export should produce a long TSV for small selected
   profiles. This should not replace the primary Zarr output.
 
+## Open Decisions For Ends
+
+- Whether the output store should include only one representation per run, or
+  allow both dense and sparse groups in the same store when `--all-motifs` is
+  requested. Prefer one representation per run unless a user need appears.
+- Whether `motif` and row label strings can rely on Zarr string arrays, or need
+  documented byte-fallback decoding just like midpoint group names.
+- Whether chromosome row metadata should use a dictionary (`row_chromosome` plus
+  `chromosome_name`) or repeat `chrom` as a string array per row. Prefer the
+  dictionary unless downstream examples become too clumsy.
+- Whether `blacklisted_fraction` should be present for every row mode with
+  all-zero values when no blacklist was used, or only when blacklists were
+  supplied. Prefer always present for ordinary window and grouped modes.
+- Whether grouped ends should add `eligible_windows` now. The answer should
+  probably be yes, but this is a small behavior addition compared with the
+  current `group_index.tsv`.
+- Whether sparse coordinates should be stored as `uint64` or `int64`. `uint64`
+  is semantically correct, but some R sparse constructors want signed integer
+  vectors after loading.
+- Exact dense and sparse chunk shapes.
+- Whether to preserve `end_motifs` in the store name or rename to `end_counts`.
+  Prefer `end_motifs.zarr` because it matches existing user-facing terminology.
+
 ## Implementation Order
 
-1. Run a compatibility spike with a tiny midpoint Zarr package.
-2. Verify loading in Python with `zarr` and `xarray`.
-3. Verify loading in R with the current best Zarr reader.
-4. Confirm Zarr V3 subset, codec, chunk layout, and group-name encoding.
-5. Implement midpoint Zarr writing behind the normal public output path.
-6. Update command docs and website loading examples.
-7. Only then revisit `ends`.
+Midpoints:
+
+1. Implement midpoint Zarr writing behind the normal public output path. Done.
+2. Add website loading examples for Python and R. Done.
+3. Add CI-only downstream compatibility checks. Done as an initial workflow.
+4. Run the downstream workflow and decide whether native `group_name` is safe
+   enough to keep without the byte fallback.
+5. Confirm Zarr V3 subset, codec, chunk layout, and group-name encoding before
+   release.
+6. Add sourceable Python and R midpoint helper scripts, then update the guide to
+   use one helper-based example per language.
+
+Ends:
+
+1. Split ends row metadata construction from TSV writing so Zarr and optional
+   TSV outputs cannot drift.
+2. Extract only the low-level Zarr helpers already duplicated by midpoint and
+   needed by ends.
+3. Implement dense `counts[row, motif]` Zarr output for `--all-motifs`.
+4. Implement sparse COO Zarr output for the default path.
+5. Add ends fixtures to the downstream compatibility workflow for Python
+   `zarr`, Python sparse reconstruction, R `Rarr`, and R `Matrix`.
+6. Update the ends guide with the sparse loading example first, and dense only
+   if it remains useful for users.
+7. Distill the final ends schema into `.AI/docs/specs/ends_spec.md`.
 
 The downstream compatibility workflow is tracked separately in
 `downstream_testing.md`.

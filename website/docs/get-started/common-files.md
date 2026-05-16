@@ -121,8 +121,13 @@ project/
         ├── scaling_factors/
         │    ├── sample_01.coverage.scaling_factors.tsv
         │    └── sample_01.fragment_counts.scaling_factors.tsv
-        └── lengths/
-             └── sample_01.length_counts.tsv.gz
+        ├── lengths/
+        │    ├── sample_01.length_counts.tsv.gz
+        │    └── sample_01.length_settings.json
+        └── midpoints/
+             ├── sample_01.midpoint_profiles.zarr/
+             ├── sample_01.group_index.tsv
+             └── sample_01.midpoint_settings.json
 ```
 
 ## Next step

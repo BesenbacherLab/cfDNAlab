@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use anyhow::{Context, Result, anyhow, ensure};
+use anyhow::{anyhow, ensure, Context, Result};
 use cfdnalab::commands::cli_common::{BaseSelectionArgs, FragmentPositionSelectionArgs};
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
 use cfdnalab::commands::cli_common::{
@@ -63,6 +63,21 @@ pub fn read_midpoint_zarr_i32_1d<P: AsRef<Path>>(
     store_path: P,
     array_path: &str,
 ) -> Result<Vec<i32>> {
+    let array = open_zarr_array(store_path.as_ref(), array_path)?;
+    ensure!(
+        array.shape().len() == 1,
+        "expected midpoint Zarr array {array_path} to be rank 1"
+    );
+    array
+        .retrieve_array_subset(&array.subset_all())
+        .with_context(|| format!("reading midpoint Zarr array {array_path}"))
+}
+
+/// Read a one-dimensional unsigned-integer array from a midpoint Zarr output.
+pub fn read_midpoint_zarr_u32_1d<P: AsRef<Path>>(
+    store_path: P,
+    array_path: &str,
+) -> Result<Vec<u32>> {
     let array = open_zarr_array(store_path.as_ref(), array_path)?;
     ensure!(
         array.shape().len() == 1,

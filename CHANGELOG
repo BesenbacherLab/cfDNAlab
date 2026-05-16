@@ -17,6 +17,7 @@ more self-contained formats for a better and safer experience.
 **Other changes**:
 
 - Adds `zarr=0.23.11` dependency.
+- Adds downstream Zarr compatibility checks for Python and R reader packages.
 
 ## cfDNAlab 0.1.0
 
