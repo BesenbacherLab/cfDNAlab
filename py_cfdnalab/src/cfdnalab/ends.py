@@ -297,20 +297,22 @@ class EndMotifCounts:
         """
         Return non-zero COO entries as a data frame.
 
+        This method is only available for sparse stores. Dense stores would
+        need to load the full dense matrix first.
+
         Returns
         -------
         pandas.DataFrame
             One row per stored non-zero count.
         """
-        if self.end_motifs.storage_mode == "sparse_coo":
-            row_index = _required(self.end_motifs.sparse_row, "sparse/row")
-            motif_index = _required(self.end_motifs.sparse_motif, "sparse/motif")
-            count = _required(self.end_motifs.sparse_count, "sparse/count")
-        else:
-            coo = self.sparse_coo()
-            row_index = coo.row
-            motif_index = coo.col
-            count = coo.data
+        if self.end_motifs.storage_mode != "sparse_coo":
+            raise ValueError(
+                "sparse_coo_data_frame() is only available for sparse_coo output"
+            )
+
+        row_index = _required(self.end_motifs.sparse_row, "sparse/row")
+        motif_index = _required(self.end_motifs.sparse_motif, "sparse/motif")
+        count = _required(self.end_motifs.sparse_count, "sparse/count")
         motif_lookup_index = motif_index.astype(int)
         return pd.DataFrame(
             {
@@ -595,6 +597,19 @@ class WindowedEndMotifCounts(EndMotifCounts):
             Sparse matrix with shape `(1, motif)`.
         """
         window_idx = self._validate_row(window_idx)
+        if self.end_motifs.storage_mode == "sparse_coo":
+            sparse_row_index = _required(self.end_motifs.sparse_row, "sparse/row")
+            sparse_motif_index = _required(
+                self.end_motifs.sparse_motif, "sparse/motif"
+            )
+            sparse_count = _required(self.end_motifs.sparse_count, "sparse/count")
+            matches = sparse_row_index == window_idx
+            row_index = np.zeros(int(matches.sum()), dtype=np.int64)
+            motif_index = sparse_motif_index[matches].astype(np.int64, copy=False)
+            return sparse.coo_matrix(
+                (sparse_count[matches], (row_index, motif_index)),
+                shape=(1, len(self.end_motifs.motif_index)),
+            )
         return self.sparse_coo().tocsr()[window_idx, :].tocoo()
 
     def dense_counts_for_window(self, window_idx: int) -> np.ndarray:
@@ -696,6 +711,19 @@ class GroupedEndMotifCounts(EndMotifCounts):
             Sparse matrix with shape `(1, motif)`.
         """
         group_idx = self._resolve_group(group)
+        if self.end_motifs.storage_mode == "sparse_coo":
+            sparse_row_index = _required(self.end_motifs.sparse_row, "sparse/row")
+            sparse_motif_index = _required(
+                self.end_motifs.sparse_motif, "sparse/motif"
+            )
+            sparse_count = _required(self.end_motifs.sparse_count, "sparse/count")
+            matches = sparse_row_index == group_idx
+            row_index = np.zeros(int(matches.sum()), dtype=np.int64)
+            motif_index = sparse_motif_index[matches].astype(np.int64, copy=False)
+            return sparse.coo_matrix(
+                (sparse_count[matches], (row_index, motif_index)),
+                shape=(1, len(self.end_motifs.motif_index)),
+            )
         return self.sparse_coo().tocsr()[group_idx, :].tocoo()
 
     def dense_counts_for_group(self, group: int | str) -> np.ndarray:

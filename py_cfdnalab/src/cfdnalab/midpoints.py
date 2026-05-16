@@ -243,7 +243,7 @@ class MidpointProfiles:
         )
 
     def data_frame_for_profile(
-        self, group_idx: int, length_bin: int
+        self, group_idx: int, length_bin_idx: int
     ) -> pd.DataFrame:
         """
         Build a long data frame for one group and one length bin.
@@ -255,7 +255,7 @@ class MidpointProfiles:
         ----------
         group_idx
             Zero-based group index to extract.
-        length_bin
+        length_bin_idx
             Zero-based length-bin index to extract.
 
         Returns
@@ -264,17 +264,17 @@ class MidpointProfiles:
             Counts and position metadata for one profile.
         """
         group_idx = self._validate_group_idx(group_idx)
-        length_bin = self._validate_length_bin(length_bin)
-        profile = self.array_for_profile(group_idx, length_bin)
+        length_bin_idx = self._validate_length_bin_idx(length_bin_idx)
+        profile = self.array_for_profile(group_idx, length_bin_idx)
 
         return pd.DataFrame(
             {
                 "group_idx": int(self.profiles.group_idx[group_idx]),
                 "group_name": self.profiles.group_names[group_idx],
                 "eligible_intervals": int(self.profiles.eligible_intervals[group_idx]),
-                "length_bin": int(self.profiles.length_bin[length_bin]),
-                "length_start_bp": int(self.profiles.length_start_bp[length_bin]),
-                "length_end_bp": int(self.profiles.length_end_bp[length_bin]),
+                "length_bin": int(self.profiles.length_bin[length_bin_idx]),
+                "length_start_bp": int(self.profiles.length_start_bp[length_bin_idx]),
+                "length_end_bp": int(self.profiles.length_end_bp[length_bin_idx]),
                 "position": self.profiles.position,
                 "position_bin_start_bp": self.profiles.position_bin_start_bp,
                 "position_bin_end_bp": self.profiles.position_bin_end_bp,
@@ -350,16 +350,16 @@ class MidpointProfiles:
         pandas.DataFrame
             Counts and group/position metadata for the matching length bin.
         """
-        length_bin = self._resolve_length(length)
-        return self.data_frame_from_length_bin(length_bin)
+        length_bin_idx = self._resolve_length(length)
+        return self.data_frame_from_length_bin(length_bin_idx)
 
-    def data_frame_from_length_bin(self, length_bin: int) -> pd.DataFrame:
+    def data_frame_from_length_bin(self, length_bin_idx: int) -> pd.DataFrame:
         """
         Build a long data frame for one length-bin index.
 
         Parameters
         ----------
-        length_bin
+        length_bin_idx
             Zero-based length-bin index to extract.
 
         Returns
@@ -367,8 +367,8 @@ class MidpointProfiles:
         pandas.DataFrame
             Counts and group/position metadata for the length bin.
         """
-        length_bin = self._validate_length_bin(length_bin)
-        profile = self.array_from_length_bin(length_bin)
+        length_bin_idx = self._validate_length_bin_idx(length_bin_idx)
+        profile = self.array_from_length_bin(length_bin_idx)
         group_index, position_index = np.indices(profile.shape)
 
         return pd.DataFrame(
@@ -378,9 +378,9 @@ class MidpointProfiles:
                 "eligible_intervals": self.profiles.eligible_intervals[
                     group_index.ravel()
                 ],
-                "length_bin": int(self.profiles.length_bin[length_bin]),
-                "length_start_bp": int(self.profiles.length_start_bp[length_bin]),
-                "length_end_bp": int(self.profiles.length_end_bp[length_bin]),
+                "length_bin": int(self.profiles.length_bin[length_bin_idx]),
+                "length_start_bp": int(self.profiles.length_start_bp[length_bin_idx]),
+                "length_end_bp": int(self.profiles.length_end_bp[length_bin_idx]),
                 "position": self.profiles.position[position_index.ravel()],
                 "position_bin_start_bp": self.profiles.position_bin_start_bp[
                     position_index.ravel()
@@ -392,7 +392,7 @@ class MidpointProfiles:
             }
         )
 
-    def array_for_profile(self, group_idx: int, length_bin: int) -> np.ndarray:
+    def array_for_profile(self, group_idx: int, length_bin_idx: int) -> np.ndarray:
         """
         Load counts for one group and one length bin.
 
@@ -403,7 +403,7 @@ class MidpointProfiles:
         ----------
         group_idx
             Zero-based group index to extract.
-        length_bin
+        length_bin_idx
             Zero-based length-bin index to extract.
 
         Returns
@@ -412,8 +412,8 @@ class MidpointProfiles:
             Count array with shape `(position,)`.
         """
         group_idx = self._validate_group_idx(group_idx)
-        length_bin = self._validate_length_bin(length_bin)
-        return np.asarray(self.profiles.counts[group_idx, length_bin, :])
+        length_bin_idx = self._validate_length_bin_idx(length_bin_idx)
+        return np.asarray(self.profiles.counts[group_idx, length_bin_idx, :])
 
     def array(self) -> np.ndarray:
         """
@@ -474,16 +474,16 @@ class MidpointProfiles:
         numpy.ndarray
             Count array with shape `(group, position)`.
         """
-        length_bin = self._resolve_length(length)
-        return self.array_from_length_bin(length_bin)
+        length_bin_idx = self._resolve_length(length)
+        return self.array_from_length_bin(length_bin_idx)
 
-    def array_from_length_bin(self, length_bin: int) -> np.ndarray:
+    def array_from_length_bin(self, length_bin_idx: int) -> np.ndarray:
         """
         Load counts for one length-bin index.
 
         Parameters
         ----------
-        length_bin
+        length_bin_idx
             Zero-based length-bin index to extract.
 
         Returns
@@ -491,8 +491,8 @@ class MidpointProfiles:
         numpy.ndarray
             Count array with shape `(group, position)`.
         """
-        length_bin = self._validate_length_bin(length_bin)
-        return np.asarray(self.profiles.counts[:, length_bin, :])
+        length_bin_idx = self._validate_length_bin_idx(length_bin_idx)
+        return np.asarray(self.profiles.counts[:, length_bin_idx, :])
 
     def _resolve_group_name(self, group_name: str) -> int:
         """
@@ -557,13 +557,13 @@ class MidpointProfiles:
         """
         return _validate_index(group_idx, len(self.profiles.group_idx), "group_idx")
 
-    def _validate_length_bin(self, length_bin: int) -> int:
+    def _validate_length_bin_idx(self, length_bin_idx: int) -> int:
         """
         Validate and normalize a length-bin index.
 
         Parameters
         ----------
-        length_bin
+        length_bin_idx
             Zero-based length-bin index.
 
         Returns
@@ -571,7 +571,9 @@ class MidpointProfiles:
         int
             Validated length-bin index.
         """
-        return _validate_index(length_bin, len(self.profiles.length_bin), "length_bin")
+        return _validate_index(
+            length_bin_idx, len(self.profiles.length_bin), "length_bin_idx"
+        )
 
 
 def load_midpoints(path: pathlib.Path | str) -> MidpointProfiles:

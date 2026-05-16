@@ -258,7 +258,7 @@ import cfdnalab as cfl
 profiles = cfl.load_midpoints("sample.midpoint_profiles.zarr")
 group_frame = profiles.data_frame_from_group("CTCF")
 length_frame = profiles.data_frame_from_length_bin(0)
-profile = profiles.data_frame_for_profile(group_idx=0, length_bin=0)
+profile = profiles.data_frame_for_profile(group_idx=0, length_bin_idx=0)
 all_counts = profiles.array()
 ```
 
@@ -726,6 +726,10 @@ Python helper cleanup before release:
   reconstruct dense data. Done.
 - Optimize `sparse_coo_for_motif_idx` for sparse stores by filtering stored COO
   arrays directly instead of converting the full matrix through CSR. Done.
+- Optimize sparse row-slice helpers (`sparse_coo_for_window` and
+  `sparse_coo_for_group`) the same way. Done.
+- Keep `sparse_coo_data_frame` sparse-only so dense stores do not silently load
+  the full dense matrix to build a COO payload. Done.
 - Add one Python fixture for `storage_mode == "dense"` and `row_mode ==
   "global"` so the helper tests cover the storage-mode by row-mode cross product
   used by the public schema. Done.

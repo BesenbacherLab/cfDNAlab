@@ -1,4 +1,4 @@
-# cfDNAlab | Python Loaders <img src='https://raw.githubusercontent.com/BesenbacherLab/cfDNAlab/refs/heads/main/cfdnalab_logo_little_guy_172x200_144dpi.png' align="right" height="160" />
+# cfDNAlab | Python Loaders <img src='https://raw.githubusercontent.com/BesenbacherLab/cfDNAlab/refs/heads/main/cfdnalab_logo_little_guy_172x200_144dpi.png' align="right" height="155" />
 
 Python helpers for loading [**cfDNAlab**](https://github.com/BesenbacherLab/cfDNAlab) output files.
 
@@ -27,6 +27,8 @@ cd py_cfdnalab
 uv pip install -e .
 ```
 
+<br>
+
 ## Load Midpoint Profiles
 
 ```python
@@ -53,11 +55,11 @@ Use `group_idx()` and `length_bin_idx()` when selecting by names or bp lengths:
 
 ```python
 group_idx = midpoints.group_idx("CTCF")
-length_bin = midpoints.length_bin_idx(167)
+length_bin_idx = midpoints.length_bin_idx(167)
 
 profile = midpoints.data_frame_for_profile(
     group_idx=group_idx,
-    length_bin=length_bin,
+    length_bin_idx=length_bin_idx,
 )
 ```
 
@@ -74,16 +76,16 @@ for _, group in midpoints.groups().iterrows():
 
     profile = midpoints.data_frame_for_profile(
         group_idx=group["group_idx"],
-        length_bin=0,
+        length_bin_idx=0,
     )
 ```
 
 ### Extract NumPy Arrays
 
 ```python
-profile = midpoints.array_for_profile(group_idx=0, length_bin=0)
+profile = midpoints.array_for_profile(group_idx=0, length_bin_idx=0)
 group_counts = midpoints.array_from_group_idx(group_idx=0)
-length_counts = midpoints.array_from_length_bin(length_bin=0)
+length_counts = midpoints.array_from_length_bin(length_bin_idx=0)
 ```
 
 `array()` loads the full 3D count tensor into RAM:
@@ -112,11 +114,11 @@ Start by checking whether the counts were stored as a dense matrix or sparse COO
 ends.storage_mode()
 ```
 
-If the storage mode is `"sparse_coo"`, the `sparse_coo*()` methods use the stored COO arrays without densifying. Use the `dense_*()` methods when you explicitly want dense NumPy arrays or dense data frames.
+For sparse output, `sparse_coo_data_frame()` is usually the easiest way to inspect or plot the non-zero motif counts. Use `sparse_coo()` or the sparse slice helpers when you want SciPy sparse matrices. Use `dense_*()` methods only when you want dense data frames or NumPy arrays.
 
-If the storage mode is `"dense"`, `sparse_coo*()` methods still work, but they first read the dense count matrix and convert it to a SciPy sparse object.
-Use `dense_counts_zarr_array()` to get the lazy Zarr array handle for dense output without loading the full matrix.
-Use `dense_counts_matrix()` only when you want the full in-memory dense count matrix.
+For dense output, the `dense_data_frame*()` methods are usually the most convenient starting point. Use `dense_counts_zarr_array()` when you want the on-disk Zarr array and `dense_counts_matrix()` when you want the full NumPy matrix in memory.
+
+`sparse_coo_data_frame()` is only available for sparse output.
 
 ### Inspect End-Motif Metadata
 
@@ -124,7 +126,11 @@ Use `dense_counts_matrix()` only when you want the full in-memory dense count ma
 motifs = ends.motif_metadata()
 ```
 
-`load_end_motifs()` returns a mode-specific object. Windowed output has `windows()`. Grouped output has `groups()` and `group_idx()`. Global output has `dense_counts_vec()` and `dense_data_frame()`.
+`load_end_motifs()` returns a mode-specific object.
+
+- Windowed output has `windows()`.
+- Grouped output has `groups()` and `group_idx()`.
+- Global output has `dense_counts_vec()` and `dense_data_frame()`.
 
 ### Extract End-Motif Counts
 
@@ -156,4 +162,4 @@ groups = ends.groups()
 group_counts = ends.dense_data_frame_for_group("CTCF")
 ```
 
-Methods prefixed with `dense_` may densify sparse output. Prefer `sparse_coo()`, `sparse_coo_data_frame()`, and the sparse slice helpers when working with large end-motif outputs.
+Methods prefixed with `dense_` may densify sparse output. For sparse stores, prefer `sparse_coo()`, `sparse_coo_data_frame()`, and the sparse slice helpers when working with large end-motif outputs.

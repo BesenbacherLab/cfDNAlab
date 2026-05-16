@@ -146,7 +146,11 @@ def test_sparse_grouped_end_motifs_reconstruct_dense_matrix_and_metadata(
     np.testing.assert_array_equal(motif_coo.col, np.array([0, 0], dtype=np.int32))
     np.testing.assert_array_equal(motif_coo.data, np.array([1.0, 0.75]))
     assert ends.group_idx("long_group") == 1
-    assert ends.sparse_coo_for_group("long_group").shape == (1, 3)
+    group_coo = ends.sparse_coo_for_group("long_group")
+    assert group_coo.shape == (1, 3)
+    np.testing.assert_array_equal(group_coo.row, np.array([0], dtype=np.int32))
+    np.testing.assert_array_equal(group_coo.col, np.array([1], dtype=np.int32))
+    np.testing.assert_array_equal(group_coo.data, np.array([4.25]))
 
 
 def test_sparse_coo_data_frame_preserves_sorted_payload(tmp_path: Path) -> None:
@@ -164,6 +168,30 @@ def test_sparse_coo_data_frame_preserves_sorted_payload(tmp_path: Path) -> None:
             }
         ),
     )
+
+
+def test_sparse_windowed_end_motifs_slice_window_without_dense_roundtrip(
+    tmp_path: Path,
+) -> None:
+    store_path = _write_sparse_window_store(tmp_path / "sample.end_motifs.zarr")
+    ends = cfdnalab.load_end_motifs(store_path)
+
+    assert isinstance(ends, cfdnalab.WindowedEndMotifCounts)
+    assert ends.storage_mode() == "sparse_coo"
+    window_coo = ends.sparse_coo_for_window(1)
+
+    assert window_coo.shape == (1, 3)
+    np.testing.assert_array_equal(window_coo.row, np.array([0], dtype=np.int32))
+    np.testing.assert_array_equal(window_coo.col, np.array([1], dtype=np.int32))
+    np.testing.assert_array_equal(window_coo.data, np.array([4.0]))
+
+
+def test_sparse_coo_data_frame_rejects_dense_stores(tmp_path: Path) -> None:
+    store_path = _write_dense_window_store(tmp_path / "sample.end_motifs.zarr")
+    ends = cfdnalab.load_end_motifs(store_path)
+
+    with pytest.raises(ValueError, match="only available for sparse_coo output"):
+        ends.sparse_coo_data_frame()
 
 
 def test_global_end_motifs_read_row_label_from_json_attrs(tmp_path: Path) -> None:
@@ -356,6 +384,78 @@ def _write_dense_global_store(path: Path) -> Path:
         np.array([[1.0, 0.0, 2.5]], dtype=np.float64),
         chunks=(1, 3),
         dimension_names=("row", "motif"),
+    )
+
+    return path
+
+
+def _write_sparse_window_store(path: Path) -> Path:
+    root = zarr.open_group(str(path), mode="w", zarr_format=3)
+    root.attrs["cfdnalab_schema"] = "end_motif_counts"
+    root.attrs["cfdnalab_schema_version"] = 1
+    root.attrs["storage_mode"] = "sparse_coo"
+    root.attrs["row_mode"] = "bed"
+
+    _create_motif_axis(root, MOTIF_NAMES)
+    _create_array(root, "row", np.array([0, 1], dtype=np.int32), chunks=(2,))
+    _create_labeled_axis(
+        root,
+        "chromosome",
+        np.array([0, 1], dtype=np.int32),
+        "chromosome_name",
+        np.array(["chr2", "chr10"], dtype=object),
+    )
+    _create_array(
+        root,
+        "row_chromosome",
+        np.array([0, 1], dtype=np.int32),
+        chunks=(2,),
+    )
+    _create_array(root, "row_start_bp", np.array([10, 40], dtype=np.uint64), chunks=(2,))
+    _create_array(root, "row_end_bp", np.array([20, 60], dtype=np.uint64), chunks=(2,))
+    _create_array(
+        root,
+        "blacklisted_fraction",
+        np.array([0.25, 0.0], dtype=np.float64),
+        chunks=(2,),
+    )
+
+    sparse = root.create_group("sparse")
+    _create_array(
+        sparse,
+        "row",
+        np.array([0, 0, 1], dtype=np.uint64),
+        chunks=(3,),
+        dimension_names=("nnz",),
+    )
+    _create_array(
+        sparse,
+        "motif",
+        np.array([0, 2, 1], dtype=np.uint64),
+        chunks=(3,),
+        dimension_names=("nnz",),
+    )
+    _create_array(
+        sparse,
+        "count",
+        np.array([1.0, 2.5, 4.0], dtype=np.float64),
+        chunks=(3,),
+        dimension_names=("nnz",),
+    )
+    _create_array(
+        sparse,
+        "shape",
+        np.array([2, 3], dtype=np.uint64),
+        chunks=(2,),
+        dimension_names=("sparse_dimension",),
+    )
+    _create_labeled_axis(
+        sparse,
+        "sparse_dimension",
+        np.array([0, 1], dtype=np.int32),
+        "sparse_dimension_name",
+        np.array(["row", "motif"], dtype=object),
+        dimension_names=("sparse_dimension",),
     )
 
     return path

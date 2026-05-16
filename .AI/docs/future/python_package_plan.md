@@ -155,18 +155,18 @@ midpoints.positions()
 midpoints.group_idx(group_name="CTCF")
 midpoints.length_bin_idx(length=167)
 
-midpoints.data_frame_for_profile(group_idx=0, length_bin=0)
+midpoints.data_frame_for_profile(group_idx=0, length_bin_idx=0)
 midpoints.data_frame_from_group(group_name="CTCF")
 midpoints.data_frame_from_group_idx(group_idx=0)
 midpoints.data_frame_from_length(length=167)
-midpoints.data_frame_from_length_bin(length_bin=0)
+midpoints.data_frame_from_length_bin(length_bin_idx=0)
 
-midpoints.array_for_profile(group_idx=0, length_bin=0)
+midpoints.array_for_profile(group_idx=0, length_bin_idx=0)
 midpoints.array()
 midpoints.array_from_group(group_name="CTCF")
 midpoints.array_from_group_idx(group_idx=0)
 midpoints.array_from_length(length=167)
-midpoints.array_from_length_bin(length_bin=0)
+midpoints.array_from_length_bin(length_bin_idx=0)
 ```
 
 `array()` must be documented as loading the full 3D tensor into RAM. Examples
@@ -228,7 +228,7 @@ pip install cfdnalab
 import cfdnalab as cfl
 
 midpoints = cfl.load_midpoints("sample.midpoint_profiles.zarr")
-profile = midpoints.data_frame_for_profile(group_idx=0, length_bin=0)
+profile = midpoints.data_frame_for_profile(group_idx=0, length_bin_idx=0)
 ```
 
 ## Release Notes

@@ -79,7 +79,7 @@ def test_profile_dataframe_uses_selected_group_length_and_positions(
     store_path = _write_midpoint_store(tmp_path / "sample.midpoint_profiles.zarr")
     profiles = cfdnalab.load_midpoints(store_path)
 
-    data_frame = profiles.data_frame_for_profile(group_idx=1, length_bin=0)
+    data_frame = profiles.data_frame_for_profile(group_idx=1, length_bin_idx=0)
 
     pd.testing.assert_frame_equal(
         data_frame,
@@ -217,7 +217,7 @@ def test_invalid_indices_raise_helpful_errors(tmp_path: Path) -> None:
         profiles.array_for_profile("0", 0)  # type: ignore[arg-type]
     with pytest.raises(IndexError, match="group_idx 3 is outside 0..2"):
         profiles.array_for_profile(3, 0)
-    with pytest.raises(IndexError, match="length_bin 2 is outside 0..1"):
+    with pytest.raises(IndexError, match="length_bin_idx 2 is outside 0..1"):
         profiles.array_for_profile(0, 2)
 
 
