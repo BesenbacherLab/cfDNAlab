@@ -66,7 +66,8 @@
 ## Output Contract
 
 - Main output is `<prefix>.midpoint_profiles.zarr/`. Its primary `counts` array has shape `(group, length_bin, position)` and stores `f32` weighted midpoint counts.
-- The Zarr store also carries coordinate and metadata arrays for `group`, `group_name`, `length_bin`, `position`, `eligible_intervals`, `length_start_bp`, `length_end_bp`, `position_bin_start_bp`, `position_bin_end_bp`, and temporary UTF-8 byte fallback arrays for group names. The `group` coordinate is the same zero-based `group_idx` used by `<prefix>.group_index.tsv` and axis 0 of `counts`.
+- The Zarr store also carries coordinate and metadata arrays for `group`, `length_bin`, `position`, `eligible_intervals`, `length_start_bp`, `length_end_bp`, `position_bin_start_bp`, and `position_bin_end_bp`.
+- Human-readable group names are stored as JSON attributes on the `group` array with `label_field = "group_name"` and `labels` in count-row order. The `group` coordinate is the same zero-based `group_idx` used by `<prefix>.group_index.tsv` and axis 0 of `counts`.
 - The command writes one selected profile output. Users who want multiple transforms, such as unsmoothed and smoothed profiles, should run the command with separate output prefixes.
 - Group index output is `<prefix>.group_index.tsv` with columns `group_idx`, `group_name`, and `eligible_intervals`.
 - `eligible_intervals` is the number of intervals retained in each group after chromosome filtering and interval-level blacklist prefiltering. It is independent of fragment overlap, so an interval still counts when no fragment midpoint lands inside it.

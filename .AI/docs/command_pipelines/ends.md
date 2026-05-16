@@ -17,9 +17,9 @@ flowchart TD
     count["Count end motifs<br/>outside_inside labels per output row"]
     merge["Merge tile counts"]
     output_choice{"Motif output"}
-    sparse["Sparse observed motifs<br/>end_motifs.sparse.npz"]
-    dense["Dense full motif set<br/>end_motifs.npy"]
-    labels["Motif labels and settings<br/>end_motifs.txt and JSON"]
+    sparse["Sparse observed motifs<br/>end_motifs.zarr sparse group"]
+    dense["Dense full motif set<br/>end_motifs.zarr counts array"]
+    labels["Motif labels, row metadata, and settings<br/>Zarr arrays and JSON"]
     metadata["Window metadata<br/>bins.tsv or group_index.tsv"]
     stats["Run statistics<br/>fragments and end motifs counted"]
 
@@ -62,4 +62,4 @@ The default assignment counts each motif in the row containing its endpoint. Oth
 
 ## Outputs
 
-By default, the command writes only observed motif columns in a sparse `.npz` matrix. With `--all-motifs`, it writes a dense `.npy` matrix containing every possible motif for the selected inside/outside lengths. The motif label file and settings JSON describe how to interpret the matrix, while `bins.tsv` or `group_index.tsv` describes the output rows when windowing is used.
+By default, the command writes only observed motif columns as sparse COO arrays inside `end_motifs.zarr`. With `--all-motifs`, it writes a dense `counts[row, motif]` array containing every possible motif for the selected inside/outside lengths. The Zarr store contains motif labels and row metadata, while `end_settings.json` keeps the human-readable command settings. Window metadata TSVs are still written for direct inspection.

@@ -354,7 +354,8 @@ mod tests_lengths_command {
         run(&cfg)?;
 
         // Assert
-        let arr: Array2<f64> = read_length_counts_tsv(out_dir.path().join("length_counts.tsv.zst"))?;
+        let arr: Array2<f64> =
+            read_length_counts_tsv(out_dir.path().join("length_counts.tsv.zst"))?;
         assert_eq!(arr.shape(), &[1, 2]);
         assert_eq!(arr[(0, 0)], 2.0);
         assert_eq!(arr[(0, 1)], 0.0);
@@ -393,7 +394,8 @@ mod tests_lengths_command {
         run(&cfg)?;
 
         // Assert
-        let arr: Array2<f64> = read_length_counts_tsv(out_dir.path().join("length_counts.tsv.zst"))?;
+        let arr: Array2<f64> =
+            read_length_counts_tsv(out_dir.path().join("length_counts.tsv.zst"))?;
         assert_eq!(arr.shape(), &[1, 1]);
         assert_eq!(arr[(0, 0)], 1.0);
         assert_eq!(arr.sum(), 1.0);
@@ -1091,7 +1093,9 @@ mod tests_lengths_command {
 
         // Assert
         let read_counts = |dir: &TempDir, prefix: &str| -> Result<Array2<f64>> {
-            let npy_path = dir.path().join(dot_join(&[prefix, "length_counts.tsv.zst"]));
+            let npy_path = dir
+                .path()
+                .join(dot_join(&[prefix, "length_counts.tsv.zst"]));
             read_length_counts_tsv(&npy_path).map_err(Into::into)
         };
 
@@ -4335,7 +4339,8 @@ mod tests_lengths_command {
         cfg.set_per_bp_length_bins(61, 61);
 
         run(&cfg)?;
-        let arr: Array2<f64> = read_length_counts_tsv(out_dir.path().join("length_counts.tsv.zst"))?;
+        let arr: Array2<f64> =
+            read_length_counts_tsv(out_dir.path().join("length_counts.tsv.zst"))?;
 
         assert_eq!(arr.shape(), &[1, 1]);
         assert_eq!(arr[(0, 0)], 2.0);

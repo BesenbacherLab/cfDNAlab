@@ -43,10 +43,8 @@ Counts (`<outside>_<inside>`): `AT_CG: 1`, `GA_TG: 1`
 "#,
     "\n",
     "## Output files\n\n",
-    "Writes either:\n\n",
-    "- a dense `.npy` matrix with shape `(# windows, # motifs)` when `--all-motifs` is enabled\n\n",
-    "- or a sparse `.npz` matrix otherwise\n\n",
-    "along with a text file with the matching motif labels.\n\n",
+    "Writes a self-contained `.end_motifs.zarr` store. The store contains either dense ",
+    "`counts[row, motif]` when `--all-motifs` is enabled, or sparse COO arrays otherwise.\n\n",
     "Motif labels are saved as `<outside>_<inside>`.\n\n",
     "## GC correction\n\n",
     "Weight the contribution of each fragment based on their GC contents per fragment length.\n\n",
@@ -99,8 +97,8 @@ pub struct EndsConfig {
     /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
     ///
     /// Examples produce files like:
-    ///   `<prefix>.end_motifs.npy`
-    ///   `<prefix>.end_motifs.sparse.npz`
+    ///   `<prefix>.end_motifs.zarr`
+    ///   `<prefix>.end_settings.json`
     #[cfg_attr(
         feature = "cli",
         clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, value_parser = crate::commands::cli_common::parse_output_prefix, help_heading = "Core")

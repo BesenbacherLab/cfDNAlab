@@ -4,15 +4,15 @@
 
 **BREAKING CHANGES**:
 
-The output formats are changed to simplify downstream work in R and python. While the previous NumPy `.npy` 
-format was easy to load in python, the user had to infer the column names, etc. We are moving towards
-more self-contained formats for a better and safer experience.
+The output formats are changed to simplify downstream work in R and python. While the previous NumPy `.npy` format was easy to load in python, the user had to infer the column names, etc. We are moving towards more self-contained formats for a better and safer experience.
 
- - `cfdna lengths` now outputs a wide-format Zstandard-compressed TSV (`.tsv.zst`) file with one row per window/group.
+ - `cfdna lengths` now outputs a wide-format Zstandard-compressed TSV (`.tsv.zst`) file with one row per window/group. This is readable by `pandas` in Python and `fread(cmd = "zstd -dc file.tsv.zst")` in R.
  - `cfdna lengths` writes command settings to `length_settings.json`.
  - `cfdna lengths` adds `--decimals` to control written count precision.
  - `cfdna midpoints` now outputs profiles as a self-contained Zarr store at `midpoint_profiles.zarr`.
  - `cfdna midpoints` writes command settings to `midpoint_settings.json`.
+ - `cfdna ends` now outputs dense and sparse motif counts as a self-contained Zarr store at `end_motifs.zarr`.
+ - `cfdna ends` writes command settings to `end_settings.json`.
 
 **Other changes**:
 

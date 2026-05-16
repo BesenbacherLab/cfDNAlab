@@ -56,68 +56,6 @@ fn expected_settings_json(
 }
 
 #[test]
-fn stack_end_motif_counts_places_values_in_the_expected_rows_and_columns() {
-    // Arrange: two windows and two motif columns.
-    //
-    // Mental derivation:
-    // - row 0 contains `_A = 1.0` and `_G = 2.5`
-    // - row 1 contains only `_G = 3.0`
-    // - any missing row/column pair must stay at the dense default 0.0
-    let bins = vec![
-        FxHashMap::from_iter([("_A".to_string(), 1.0), ("_G".to_string(), 2.5)]),
-        FxHashMap::from_iter([("_G".to_string(), 3.0)]),
-    ];
-    let motifs = vec!["_A".to_string(), "_G".to_string()];
-
-    let matrix = stack_end_motif_counts(&bins, &motifs).expect("dense matrix should build");
-
-    assert_eq!(matrix.shape(), &[2, 2]);
-    assert_eq!(matrix[(0, 0)], 1.0);
-    assert_eq!(matrix[(0, 1)], 2.5);
-    assert_eq!(matrix[(1, 0)], 0.0);
-    assert_eq!(matrix[(1, 1)], 3.0);
-}
-
-#[test]
-fn stack_end_motif_counts_errors_when_a_bin_contains_an_unknown_motif() {
-    // Arrange: the sparse bin mentions `_C`, but the declared dense column order only contains
-    // `_A`. Silently dropping `_C` would corrupt the output, so this must be an error.
-    let bins = vec![FxHashMap::from_iter([("_C".to_string(), 1.0)])];
-    let motifs = vec!["_A".to_string()];
-
-    let err = stack_end_motif_counts(&bins, &motifs)
-        .expect_err("unknown motif labels should fail loudly");
-
-    assert!(
-        err.to_string()
-            .contains("missing dense output column for motif label '_C'")
-    );
-}
-
-#[test]
-fn write_end_motif_outputs_returns_the_paths_it_writes() {
-    // Arrange: dense output writes the matrix path and the motif-label path.
-    let out_dir = TempDir::new().expect("tempdir");
-    let bins = vec![FxHashMap::from_iter([("_A".to_string(), 1.0)])];
-    let motifs = vec!["_A".to_string()];
-
-    // Act
-    let written_paths =
-        write_end_motif_outputs(out_dir.path(), "ends", &bins, &motifs, true)
-            .expect("dense end motif outputs should write");
-
-    // Assert
-    let counts_path = out_dir.path().join("ends.end_motifs.npy");
-    let motifs_path = out_dir.path().join("ends.end_motifs.txt");
-    assert_eq!(written_paths, vec![counts_path.clone(), motifs_path.clone()]);
-    assert!(counts_path.exists());
-    assert_eq!(
-        std::fs::read_to_string(motifs_path).expect("motif labels should be readable"),
-        "_A\n"
-    );
-}
-
-#[test]
 fn write_end_settings_json_writes_the_minimal_interpretation_sidecar() {
     // Arrange: the minimal default config has
     // - k_inside: 1
@@ -135,7 +73,7 @@ fn write_end_settings_json_writes_the_minimal_interpretation_sidecar() {
     // Act
     let settings_path =
         write_end_settings_json(out_dir.path(), "ends", &cfg).expect("settings json should write");
-    assert_eq!(settings_path, out_dir.path().join("ends.end_motif_settings.json"));
+    assert_eq!(settings_path, out_dir.path().join("ends.end_settings.json"));
     let settings =
         std::fs::read_to_string(settings_path).expect("settings json should be readable");
 
@@ -156,7 +94,7 @@ fn write_end_settings_json_includes_non_default_indel_filter() {
 
     // Act
     write_end_settings_json(out_dir.path(), "ends", &cfg).expect("settings json should write");
-    let settings = std::fs::read_to_string(out_dir.path().join("ends.end_motif_settings.json"))
+    let settings = std::fs::read_to_string(out_dir.path().join("ends.end_settings.json"))
         .expect("settings json should be readable");
     let parsed = parse_json(&settings);
 
@@ -180,7 +118,7 @@ fn write_end_settings_json_resolves_auto_indel_filter_for_reference_inside_bases
 
     // Act
     write_end_settings_json(out_dir.path(), "ends", &cfg).expect("settings json should write");
-    let settings = std::fs::read_to_string(out_dir.path().join("ends.end_motif_settings.json"))
+    let settings = std::fs::read_to_string(out_dir.path().join("ends.end_settings.json"))
         .expect("settings json should be readable");
     let parsed = parse_json(&settings);
 
@@ -209,7 +147,7 @@ fn write_end_settings_json_includes_base_quality_filters_when_present() {
 
     // Act
     write_end_settings_json(out_dir.path(), "ends", &cfg).expect("settings json should write");
-    let settings = std::fs::read_to_string(out_dir.path().join("ends.end_motif_settings.json"))
+    let settings = std::fs::read_to_string(out_dir.path().join("ends.end_settings.json"))
         .expect("settings json should be readable");
     let parsed = parse_json(&settings);
 

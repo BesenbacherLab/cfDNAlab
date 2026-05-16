@@ -24,7 +24,11 @@ use crate::{
                 TileResult, build_tile_payload, deserialize_tile_counts, merge_tile_payload,
                 serialize_tile_counts,
             },
-            write::{write_end_motif_outputs, write_end_settings_json},
+            write::write_end_settings_json,
+            zarr::{
+                EndMotifRowMetadata, EndWindowRowMode, grouped_end_row_metadata,
+                write_end_motif_zarr,
+            },
         },
         gc_bias::{
             correct::{GCCorrector, load_gc_corrector},
@@ -452,19 +456,44 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
         ensure_dense_end_motif_output_size(all_bins.len(), motif_order.len())?;
     }
 
+    let row_metadata = match &window_opt {
+        DistributionWindowSpec::Global => EndMotifRowMetadata::Global,
+        DistributionWindowSpec::GroupedBed(_) => {
+            let group_idx_to_name = group_idx_to_name
+                .as_ref()
+                .context("group_idx_to_name missing when writing grouped outputs")?;
+            let grouped_windows_map = grouped_windows_map
+                .as_ref()
+                .context("grouped windows missing when writing grouped outputs")?;
+            EndMotifRowMetadata::Groups(grouped_end_row_metadata(
+                group_idx_to_name,
+                &chromosomes,
+                grouped_windows_map,
+                &blacklist_map,
+            )?)
+        }
+        DistributionWindowSpec::Size(_) => EndMotifRowMetadata::Windows {
+            bin_info: &bin_info,
+            row_mode: EndWindowRowMode::Size,
+        },
+        DistributionWindowSpec::Bed(_) => EndMotifRowMetadata::Windows {
+            bin_info: &bin_info,
+            row_mode: EndWindowRowMode::Bed,
+        },
+    };
+
     // Write every final output to the temp directory before moving any of them into place
     // This keeps failed writes from leaving a mix of old and new final files
-    let temp_motif_output_paths = write_end_motif_outputs(
+    let temp_motif_output_path = write_end_motif_zarr(
         final_outputs.temp_dir(),
         prefix,
         &all_bins,
         &motif_order,
+        row_metadata,
         write_dense_output,
     )?;
-    // These files were written to final_outputs.temp_dir() with their final filenames
-    // Record each one as output_dir/<file name>, then move all outputs at the end
     final_outputs
-        .record_temp_files_with_same_names_in(temp_motif_output_paths, &opt.ioc.output_dir)?;
+        .record_temp_files_with_same_names_in([temp_motif_output_path], &opt.ioc.output_dir)?;
 
     let temp_settings_path = write_end_settings_json(final_outputs.temp_dir(), prefix, opt)?;
     let settings_file_name = temp_settings_path.file_name().with_context(|| {

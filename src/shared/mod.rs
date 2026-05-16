@@ -33,6 +33,7 @@ pub mod visualization;
 pub mod window_fetch;
 pub mod windowing;
 pub mod writers;
+pub(crate) mod zarr;
 // Plotting helpers gated behind the plotters feature
 #[cfg(feature = "plotters")]
 pub mod plotters;

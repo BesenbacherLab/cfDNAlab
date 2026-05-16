@@ -1,21 +1,24 @@
 use super::{
-    checked_i32, checked_index_axis, checked_u32, counts_chunk_shape, create_store, element_count,
-    encode_group_names, json_object, length_axis_coordinate_arrays, position_bin_coordinate_arrays,
-    usize_slice_to_u64_vec, write_count_tensor_array, write_midpoint_profiles_zarr,
+    counts_chunk_shape, length_axis_coordinate_arrays, position_bin_coordinate_arrays,
+    write_count_tensor_array, write_midpoint_profiles_zarr,
 };
 use crate::{
     commands::midpoints::{
-        group_index::MidpointGroupSummary, postprocess::ProfileLayout,
-        smoothing::MidpointSmoothing,
+        postprocess::ProfileLayout, smoothing::MidpointSmoothing,
     },
-    shared::length_axis::LengthAxis,
+    shared::{
+        length_axis::LengthAxis,
+        zarr::{
+            checked_i32, checked_index_axis, checked_u32, create_zarr_store, element_count,
+            json_object, usize_slice_to_u64_vec,
+        },
+    },
 };
 use fxhash::FxHashMap;
 use ndarray::Array3;
 use serde_json::Value;
-use std::sync::Arc;
 use tempfile::TempDir;
-use zarrs::{array::Array, filesystem::FilesystemStore};
+use zarrs::array::Array;
 
 #[test]
 fn midpoint_zarr_writes_counts_axes_and_group_metadata() {
@@ -106,22 +109,16 @@ fn midpoint_zarr_writes_counts_axes_and_group_metadata() {
         read_u32_chunk(&store_path.join("eligible_intervals/c/0")),
         vec![4, 7]
     );
-    let group_name_metadata = read_json(&store_path.join("group_name/zarr.json"));
-    assert_eq!(group_name_metadata["data_type"], "string");
-    assert_eq!(group_name_metadata["codecs"][0]["name"], "vlen-utf8");
-    assert_eq!(group_name_metadata["codecs"][1]["name"], "zstd");
+    let group_metadata = read_json(&store_path.join("group/zarr.json"));
+    assert_eq!(group_metadata["attributes"]["label_field"], "group_name");
     assert_eq!(
-        read_string_array(&store_path, "/group_name"),
-        vec!["alpha".to_string(), "beta".to_string()]
+        group_metadata["attributes"]["labels"],
+        serde_json::json!(["alpha", "beta"])
     );
-    assert_eq!(
-        read_group_names_from_byte_fallback(&store_path),
-        vec!["alpha".to_string(), "beta".to_string()]
-    );
-    assert_eq!(
-        read_i32_chunk(&store_path.join("group_name_byte/c/0")),
-        vec![0, 1, 2, 3, 4]
-    );
+    assert!(!store_path.join("group_name").exists());
+    assert!(!store_path.join("group_name_utf8").exists());
+    assert!(!store_path.join("group_name_nbytes").exists());
+    assert!(!store_path.join("group_name_byte").exists());
 }
 
 #[test]
@@ -167,7 +164,7 @@ fn count_tensor_array_round_trips_when_chunk_grid_has_partial_boundary_chunk() {
     // This is the smallest useful regression case for boundary chunks that extend past the array shape
     let temp = TempDir::new().expect("temp dir should be created");
     let store_path = temp.path().join("partial.midpoint_profiles.zarr");
-    let store = create_store(&store_path).expect("Zarr store should be created");
+    let store = create_zarr_store(&store_path, "midpoint").expect("Zarr store should be created");
     let counts = Array3::from_shape_vec(
         (3, 2, 2),
         vec![0.0, 1.0, 10.0, 11.0, 100.0, 101.0, 110.0, 111.0, 200.0, 201.0, 210.0, 211.0],
@@ -263,33 +260,6 @@ fn position_bin_coordinate_arrays_record_short_final_bin() {
     // Assert
     assert_eq!(starts, vec![0, 2, 4]);
     assert_eq!(ends, vec![2, 4, 5]);
-}
-
-#[test]
-fn encode_group_names_builds_padded_utf8_fallback_matrix() {
-    // Arrange
-    // The longest name has width four, so the one-byte name is padded with three zero bytes
-    let groups = vec![
-        MidpointGroupSummary {
-            group_idx: 0,
-            group_name: "A",
-            eligible_intervals: 1,
-        },
-        MidpointGroupSummary {
-            group_idx: 1,
-            group_name: "long",
-            eligible_intervals: 2,
-        },
-    ];
-
-    // Act
-    let (encoded, lengths, width) =
-        encode_group_names(&groups).expect("group names should encode");
-
-    // Assert
-    assert_eq!(width, 4);
-    assert_eq!(lengths, vec![1, 4]);
-    assert_eq!(encoded, vec![b'A', 0, 0, 0, b'l', b'o', b'n', b'g']);
 }
 
 #[test]
@@ -396,28 +366,5 @@ fn read_i32_chunk(path: &std::path::Path) -> Vec<i32> {
     read_chunk_bytes(path)
         .chunks_exact(4)
         .map(|bytes| i32::from_le_bytes(bytes.try_into().unwrap()))
-        .collect()
-}
-
-fn read_string_array(store_path: &std::path::Path, array_path: &str) -> Vec<String> {
-    let store = Arc::new(FilesystemStore::new(store_path).expect("Zarr store should open"));
-    let array = Array::open(store, array_path).expect("Zarr string array should open");
-    array
-        .retrieve_array_subset(&array.subset_all())
-        .expect("Zarr string array should read")
-}
-
-fn read_group_names_from_byte_fallback(store_path: &std::path::Path) -> Vec<String> {
-    let name_bytes = read_chunk_bytes(&store_path.join("group_name_utf8/c/0/0"));
-    let name_lengths = read_u32_chunk(&store_path.join("group_name_nbytes/c/0"));
-    let width = name_bytes.len() / name_lengths.len();
-    name_lengths
-        .iter()
-        .enumerate()
-        .map(|(group_index, name_len)| {
-            let start = group_index * width;
-            let end = start + *name_len as usize;
-            String::from_utf8(name_bytes[start..end].to_vec()).expect("valid UTF-8 group name")
-        })
         .collect()
 }

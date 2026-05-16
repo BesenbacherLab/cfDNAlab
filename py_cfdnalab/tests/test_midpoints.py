@@ -8,7 +8,6 @@ import pytest
 import zarr
 
 import cfdnalab
-from cfdnalab import midpoints as midpoint_module
 
 
 GROUP_NAMES = np.array(["alpha", "beta long", "gamma-unicode-aa"], dtype=object)
@@ -262,6 +261,10 @@ def test_loader_rejects_schema_and_shape_problems(tmp_path: Path) -> None:
         tmp_path / "shape_mismatch.midpoint_profiles.zarr",
         counts=COUNTS[:, :, :3],
     )
+    missing_group_labels = _write_midpoint_store(
+        tmp_path / "missing_group_labels.midpoint_profiles.zarr",
+        group_labels=None,
+    )
 
     with pytest.raises(ValueError, match="Expected cfdnalab_schema"):
         cfdnalab.load_midpoints(wrong_schema)
@@ -275,26 +278,8 @@ def test_loader_rejects_schema_and_shape_problems(tmp_path: Path) -> None:
         cfdnalab.load_midpoints(noncontiguous_axis)
     with pytest.raises(ValueError, match="counts shape does not match"):
         cfdnalab.load_midpoints(shape_mismatch)
-
-
-def test_group_name_byte_fallback_decodes_utf8_rows() -> None:
-    store = {
-        "group_name": _BrokenArray(),
-        "group_name_utf8": _Array(
-            np.array(
-                [
-                    [97, 108, 112, 104, 97, 0, 0, 0, 0],
-                    [206, 178, 101, 116, 97, 95, 108, 111, 110],
-                ],
-                dtype=np.uint8,
-            )
-        ),
-        "group_name_nbytes": _Array(np.array([5, 9], dtype=np.uint32)),
-    }
-
-    names = midpoint_module._read_group_names(store)
-
-    np.testing.assert_array_equal(names, np.array(["alpha", "βeta_lon"], dtype=str))
+    with pytest.raises(ValueError, match="group array is missing group-name labels"):
+        cfdnalab.load_midpoints(missing_group_labels)
 
 
 def _write_midpoint_store(
@@ -304,6 +289,7 @@ def _write_midpoint_store(
     schema_version: int = 1,
     omit: set[str] | None = None,
     group_axis: np.ndarray = GROUP_AXIS,
+    group_labels: list[str] | None = GROUP_NAMES.tolist(),
     counts: np.ndarray = COUNTS,
     counts_dimension_names: tuple[str, str, str] = ("group", "length_bin", "position"),
 ) -> Path:
@@ -319,9 +305,10 @@ def _write_midpoint_store(
         chunks=(2, 2, 3),
         dimension_names=counts_dimension_names,
     )
-    _create_array(root, "group", group_axis, chunks=(len(group_axis),))
-    _create_group_name_array(root, GROUP_NAMES)
-    _create_group_name_byte_arrays(root, GROUP_NAMES)
+    group = _create_array(root, "group", group_axis, chunks=(len(group_axis),))
+    group.attrs["label_field"] = "group_name"
+    if group_labels is not None:
+        group.attrs["labels"] = group_labels
     _create_array(root, "eligible_intervals", ELIGIBLE_INTERVALS, chunks=(3,))
     _create_array(root, "length_bin", LENGTH_BIN, chunks=(2,))
     _create_array(root, "length_start_bp", LENGTH_START_BP, chunks=(2,))
@@ -343,53 +330,10 @@ def _create_array(
     *,
     chunks: tuple[int, ...],
     dimension_names: tuple[str, ...] | None = None,
-) -> None:
-    root.create_array(
+) -> zarr.Array:
+    return root.create_array(
         name,
         data=values,
         chunks=chunks,
         dimension_names=dimension_names,
     )
-
-
-def _create_group_name_array(root: zarr.Group, group_names: np.ndarray) -> None:
-    array = root.create_array(
-        "group_name",
-        shape=(len(group_names),),
-        dtype=str,
-        chunks=(len(group_names),),
-    )
-    array[:] = group_names
-
-
-def _create_group_name_byte_arrays(root: zarr.Group, group_names: np.ndarray) -> None:
-    encoded_names = [str(group_name).encode("utf-8") for group_name in group_names]
-    max_width = max(len(encoded_name) for encoded_name in encoded_names)
-    byte_matrix = np.zeros((len(encoded_names), max_width), dtype=np.uint8)
-    nbytes = np.zeros(len(encoded_names), dtype=np.uint32)
-
-    for group_index, encoded_name in enumerate(encoded_names):
-        byte_matrix[group_index, : len(encoded_name)] = list(encoded_name)
-        nbytes[group_index] = len(encoded_name)
-
-    _create_array(root, "group_name_utf8", byte_matrix, chunks=byte_matrix.shape)
-    _create_array(root, "group_name_nbytes", nbytes, chunks=(len(nbytes),))
-    _create_array(
-        root,
-        "group_name_byte",
-        np.arange(max_width, dtype=np.int32),
-        chunks=(max_width,),
-    )
-
-
-class _Array:
-    def __init__(self, values: np.ndarray) -> None:
-        self.values = values
-
-    def __getitem__(self, key: object) -> np.ndarray:
-        return self.values[key]
-
-
-class _BrokenArray:
-    def __getitem__(self, key: object) -> np.ndarray:
-        raise RuntimeError("primary string array is unreadable")

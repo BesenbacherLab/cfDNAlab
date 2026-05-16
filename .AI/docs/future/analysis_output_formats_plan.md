@@ -9,9 +9,8 @@ harder to misinterpret than raw arrays plus loosely related sidecars.
 - `lengths`: settled as a wide compressed TSV plus settings JSON.
 - `midpoints`: first Zarr implementation is in place on the development branch.
   Downstream loading examples and CI-only compatibility tests now exist.
-- `ends`: later target. Dense motif arrays and sparse motif arrays should move
-  together so users do not have to learn both Zarr and SciPy-style `.npz` for the
-  same command family.
+- `ends`: dense and sparse motif outputs now use one Zarr schema on the
+  development branch.
 - Commands without a human-readable settings JSON should get one for
   consistency.
 - Internal temporary files can keep their current formats unless a separate
@@ -104,7 +103,6 @@ Core arrays:
 ```text
 counts                  float32[group, length_bin, position]
 group                   int32[group]
-group_name              string[group]
 eligible_intervals      uint32[group]
 length_start_bp         uint32[length_bin]
 length_end_bp           uint32[length_bin]
@@ -112,20 +110,18 @@ position_bin_start_bp   int32[position]
 position_bin_end_bp     int32[position]
 ```
 
-The current implementation also writes explicit byte storage for group names as
-a temporary compatibility fallback:
+Human-readable group names are stored as JSON attributes on the `group` array:
 
-```text
-group_name_utf8         uint8[group, max_name_bytes]
-group_name_nbytes       uint32[group]
+```json
+{
+  "label_field": "group_name",
+  "labels": ["group_a", "group_b"]
+}
 ```
 
-Release blocker: before the next release, decide whether `group_name[group]`
-encoded as Zarr `string` plus `vlen-utf8` is supported well enough by the target
-Python and R readers. If yes, remove the byte fallback and document
-`group_name` as the only public group-name array. If no, keep the fallback and
-provide copy-paste decoding helpers in the R/Python docs. Do not ship the final
-format with this undecided.
+This keeps the Zarr arrays numeric-only for the first public schema and avoids
+depending on Zarr V3 string-array support in every R reader. Downstream helper
+packages should expose these labels as normal group metadata.
 
 `group` is the same zero-based `group_idx` used by `<prefix>.group_index.tsv`
 and by axis 0 of `counts`. The writer must reject non-contiguous group indices
@@ -245,24 +241,90 @@ position_bin_end_bp
 Docs must tell users to subset before converting a full 3D array to a dataframe.
 A full dataframe can be much larger than the Zarr store.
 
-### Sourceable Helper Scripts
+### Helper Packages
 
 Raw Zarr access is a compatibility layer, not a good user-facing analysis API.
-Before turning anything into real Python or R packages, add sourceable midpoint
-helper scripts that can load a `.midpoint_profiles.zarr` path and expose the
-operations users are most likely to need.
+The Python package should load midpoint and ends Zarr paths and expose the
+operations users are most likely to need. The R helper can start sourceable and
+graduate to a package when the API settles.
 
-Initial Python helper:
+Initial Python midpoint helper:
 
 ```python
-from cfdnalab_midpoints import read_midpoint_profiles
+import cfdnalab as cfl
 
-profiles = read_midpoint_profiles("sample.midpoint_profiles.zarr")
-group_frame = profiles.dataframe_for_group("CTCF")
-length_frame = profiles.dataframe_for_length_bin((120, 180))
-group_matrix = profiles.profile_for_group("CTCF")
-all_counts = profiles.counts_array()
+profiles = cfl.load_midpoints("sample.midpoint_profiles.zarr")
+group_frame = profiles.data_frame_from_group("CTCF")
+length_frame = profiles.data_frame_from_length_bin(0)
+profile = profiles.data_frame_for_profile(group_idx=0, length_bin=0)
+all_counts = profiles.array()
 ```
+
+Initial Python ends helper:
+
+```python
+import cfdnalab as cfl
+
+ends = cfl.load_end_motifs("sample.end_motifs.zarr")
+motifs = ends.motif_metadata()
+motif_frame = ends.dense_data_frame_for_motif("_AA")
+```
+
+The ends loader should inspect `row_mode` and return a mode-specific helper
+class rather than forcing every mode through generic `row` terminology:
+
+```text
+GlobalEndMotifCounts
+WindowedEndMotifCounts
+GroupedEndMotifCounts
+```
+
+Shared methods belong on a small base class:
+
+```text
+storage_mode()
+row_mode()
+motifs()
+motif_idx()
+motif_metadata()
+sparse_coo()
+sparse_coo_data_frame()
+sparse_coo_for_motif()
+sparse_coo_for_motif_idx()
+dense_array()
+dense_array_for_motif()
+dense_array_for_motif_idx()
+dense_data_frame_for_motif()
+dense_data_frame_for_motif_idx()
+```
+
+Mode-specific methods should use domain vocabulary:
+
+```text
+GlobalEndMotifCounts:
+  counts()
+  data_frame()
+
+WindowedEndMotifCounts:
+  windows()
+  sparse_coo_for_window(window_idx)
+  dense_array_for_window(window_idx)
+  dense_data_frame_for_window(window_idx)
+
+GroupedEndMotifCounts:
+  groups()
+  group_idx(group_name)
+  sparse_coo_for_group(group)
+  dense_array_for_group(group)
+  dense_data_frame_for_group(group)
+```
+
+Avoid making group-specific methods available for non-grouped outputs, and avoid
+using `row` in public method names when the row has a clearer meaning such as
+window or group. Internally the matrix still has a row axis; the public helper
+API should speak the selected output mode. Ends helpers should also avoid
+innocent names like `array()` because they can hide sparse-to-dense conversion;
+use explicit `sparse_*` and `dense_*` names instead.
 
 Initial R helper:
 
@@ -283,17 +345,19 @@ Required helper operations:
 - return raw arrays or matrices for group-indexed and length-bin-indexed slices
 - build long dataframes for one group across all length/position bins
 - build long dataframes for one length bin across all groups/positions
+- build narrow dataframes for one group and one length bin
 - resolve groups by `group_idx` or `group_name`
 - resolve length bins by index or by `(length_start_bp, length_end_bp)`
+- for ends, expose motifs, dense motif slices, sparse COO entries, and
+  mode-specific window/group/global helpers
 
-The first scripts should not include plotting. Dataframe builders are the useful
-boundary. Plot helpers can be added later if repeated workflows converge on the
-same plot shapes.
+The first package helpers should not include plotting. Dataframe builders are
+the useful boundary. Plot helpers can be added later if repeated workflows
+converge on the same plot shapes.
 
-These helper scripts should live with downstream tests first and be tested in
-the downstream workflow against cfDNAlab-generated Zarr output. Promote them to
-actual Python/R packages only after the API has survived real examples and ends
-needs the same style of helper layer.
+The Python helper is being promoted into `py_cfdnalab`. Keep downstream tests
+against cfDNAlab-generated Zarr output so the package cannot drift away from the
+Rust schema.
 
 ### R Loading
 
@@ -304,11 +368,12 @@ The target user workflow should stay close to:
 
 ```r
 library(Rarr)
+library(jsonlite)
 
 store <- "sample.midpoint_profiles.zarr"
 
 counts <- read_zarr_array(file.path(store, "counts"), index = list(1:10, NULL, NULL))
-group_name <- read_zarr_array(file.path(store, "group_name"), index = list(1:10))
+group_labels <- fromJSON(file.path(store, "group", "zarr.json"))$attributes$labels
 eligible_intervals <- read_zarr_array(file.path(store, "eligible_intervals"), index = list(1:10))
 length_start_bp <- read_zarr_array(file.path(store, "length_start_bp"), index = list(NULL))
 length_end_bp <- read_zarr_array(file.path(store, "length_end_bp"), index = list(NULL))
@@ -319,11 +384,11 @@ position_bin_end_bp <- read_zarr_array(file.path(store, "position_bin_end_bp"), 
 The design requirement is not a specific R package. The requirement is that an R
 user can load counts and axis metadata without Python.
 
-## Ends Later
+## Ends Status
 
-`cfdna ends` has both dense and sparse public motif outputs. Move both modes to
-Zarr together so users do not have to learn `.npy`, SciPy-style `.npz`, motif
-text files, `bins.tsv`, and `group_index.tsv` as separate contracts.
+`cfdna ends` has both dense and sparse public motif outputs. Both modes now use
+Zarr so users do not have to learn `.npy`, SciPy-style `.npz`, motif text files,
+`bins.tsv`, and `group_index.tsv` as separate contracts.
 
 The target public package should be:
 
@@ -332,11 +397,10 @@ The target public package should be:
 <prefix>.end_settings.json
 ```
 
-The current settings sidecar is `<prefix>.end_motif_settings.json`. Rename it to
-`<prefix>.end_settings.json` during the Zarr transition for consistency with the
-other command settings files. The settings JSON should remain human-readable
-command provenance. The Zarr store should carry the machine-readable arrays
-needed for downstream analysis.
+The settings sidecar is `<prefix>.end_settings.json` for consistency with the
+other command settings files. The settings JSON remains human-readable command
+provenance. The Zarr store carries the machine-readable arrays needed for
+downstream analysis.
 
 Root attrs:
 
@@ -373,17 +437,21 @@ Both dense and sparse stores should carry the same row and motif metadata.
 Motif axis:
 
 ```text
-motif                  string[motif]
-motif_utf8             uint8[motif, motif_byte]
-motif_nbytes           uint32[motif]
+motif_index            int32[motif]
 motif_byte             int32[motif_byte]
+motif_ascii            uint8[motif, motif_byte]
 ```
 
-`motif` is the user-facing label in `<outside>_<inside>` form. Keep the byte
-fallback at least until downstream tests decide whether Zarr strings are safe
-for all target R/Python readers. Motif labels are ASCII and fixed-width for a
-given run, so the byte fallback is cheap and easier to decode than arbitrary
-variable-width strings.
+Motif labels are fixed-width ASCII for a given run because every label has
+`k_outside` bases, one underscore, and `k_inside` bases. Do not store large
+motif label sets as JSON attrs. JSON attrs are loaded as metadata and become a
+bad fit when dense outputs can enumerate thousands or millions of motifs.
+
+`motif_ascii[motif, motif_byte]` stores one row per motif label. No
+`motif_nbytes` array is needed because all motif labels have the same width in a
+run. Downstream helpers decode each row as ASCII and expose normal string labels
+through their public APIs. This keeps labels chunkable, compressible as array
+payload, and independent of Zarr string dtype support.
 
 Row axis, all modes:
 
@@ -396,18 +464,12 @@ domain-level key. The domain key depends on `row_mode`.
 
 Global mode:
 
-```text
-row_label              string[row]       # value: "global"
-```
+`row` has `label_field = "row_label"` and `labels = ["global"]`.
 
 Fixed-size and BED modes:
 
 ```text
 chromosome             int32[chromosome]
-chromosome_name        string[chromosome]
-chromosome_name_utf8   uint8[chromosome, chromosome_name_byte]
-chromosome_name_nbytes uint32[chromosome]
-chromosome_name_byte   int32[chromosome_name_byte]
 row_chromosome         int32[row]
 row_start_bp           uint64[row]
 row_end_bp             uint64[row]
@@ -415,27 +477,26 @@ blacklisted_fraction   float64[row]
 ```
 
 Use a chromosome dictionary instead of repeating chromosome strings for every
-row. `row_chromosome[row]` indexes `chromosome_name[chromosome]`. For BED mode,
-rows must preserve the original BED row order after chromosome filtering, just
-as current `bins.tsv` is keyed by the preserved output index.
+row. `row_chromosome[row]` indexes `chromosome[chromosome]`, whose JSON attrs
+store `label_field = "chromosome_name"` and the chromosome-name labels. For BED
+mode, rows must preserve the original BED row order after chromosome filtering,
+just as current `bins.tsv` is keyed by the preserved output index.
 
 Grouped BED mode:
 
 ```text
 group                  int32[row]
-group_name             string[row]
-group_name_utf8        uint8[row, group_name_byte]
-group_name_nbytes      uint32[row]
-group_name_byte        int32[group_name_byte]
 eligible_windows       uint32[row]
 blacklisted_fraction   float64[row]
 ```
 
 `group[row]` must be the same zero-based `group_idx` used by the count rows.
-Reject non-contiguous group indices instead of reordering counts blindly. Add
-`eligible_windows` during the transition; current ends group metadata does not
-include it, but it is needed to interpret grouped counts and keeps the command
-consistent with the new `lengths` grouped output.
+Group names are stored as JSON attrs on `group` with `label_field =
+"group_name"` and the label array. Reject non-contiguous group indices instead
+of reordering counts blindly. Add `eligible_windows` during the transition;
+current ends group metadata does not include it, but it is needed to interpret
+grouped counts and keeps the command consistent with the new `lengths` grouped
+output.
 
 ### Dense Output
 
@@ -470,7 +531,7 @@ sparse/row              uint64[nnz]
 sparse/motif            uint64[nnz]
 sparse/count            float64[nnz]
 sparse/shape            uint64[sparse_dimension]   # [n_rows, n_motifs]
-sparse/dimension        string[sparse_dimension]   # ["row", "motif"]
+sparse/sparse_dimension int32[sparse_dimension]    # labels attr: ["row", "motif"]
 ```
 
 Use zero-based sparse coordinates on disk. R examples must add 1 when
@@ -483,10 +544,8 @@ opportunity to make sparse payloads deterministic and easy to diff. Duplicate
 `(row, motif)` entries should be rejected in the final writer because reduction
 should already have merged them.
 
-Sparse output should keep only observed motifs, matching current default ends
-behavior. If users need a full motif universe, they should use dense
-`--all-motifs` unless there is a later concrete use case for "sparse with all
-motif labels".
+Sparse output keeps the observed motif axis written by the command. Dense
+`--all-motifs` remains the path for users who need the full motif universe.
 
 ### Downstream Loading Targets
 
@@ -498,7 +557,7 @@ import zarr
 
 store = zarr.open_group("sample.end_motifs.zarr", mode="r", zarr_format=3)
 counts = store["counts"][:]
-motifs = store["motif"][:]
+motifs = ["".join(map(chr, row)) for row in store["motif_ascii"][:]]
 ```
 
 Python sparse:
@@ -542,14 +601,15 @@ one most likely to trip users up.
 ### Ends Implementation Notes
 
 Keep dense and sparse Zarr writers in the ends command, but extract small shared
-Zarr helpers once the second command needs them. Useful shared helpers:
+Zarr helpers once the current schema has settled. Useful shared helpers:
 
 - filesystem store creation
 - root metadata writing
 - generic Zarr V3 array creation with zstd and dimension names
 - single-chunk coordinate/metadata array writing
 - checked `usize`/`u64` to public `i32`, `u32`, and `uint64` conversions
-- string plus UTF-8 byte fallback writing
+- public label validation for labels stored in JSON attrs
+- fixed-width ASCII label-array writing for high-cardinality motif labels
 - 2D dense chunk-shape selection
 - COO sparse matrix writing
 
@@ -557,6 +617,23 @@ Do not build a broad generic "Zarr dataset builder" yet. The midpoint and ends
 schemas are different enough that command-specific writers should remain the
 readable entry points. The shared code should only cover mechanical Zarr
 serialization and low-level dtype validation.
+
+Current reuse assessment after midpoint and ends:
+
+- Extract now-ish: store creation, generic V3 array creation, single-chunk
+  metadata arrays, JSON attribute validation, integer narrowing, and
+  public label validation. These are duplicated and testable once.
+- Extract with the motif-label change: fixed-width ASCII label-array writing and
+  decoding tests. Motifs are high-cardinality enough that they should not share
+  the JSON-attrs path used for group and chromosome labels.
+- Keep command-specific: root schema attrs, axis names, row metadata
+  construction, group ordering validation, chromosome dictionaries, and
+  midpoint/ends chunk policy.
+- Keep manual: sparse COO layout. Zarr itself does not define a sparse matrix
+  schema, so cfDNAlab must own `sparse/row`, `sparse/motif`, `sparse/count`,
+  `sparse/shape`, ordering, and duplicate rejection.
+- Let `zarrs` own: Zarr V3 metadata format, dimension-name metadata,
+  compression, chunk serialization, and boundary chunk handling.
 
 Reuse existing row metadata logic instead of recomputing it inside the Zarr
 writer. The current code writes `bins.tsv` from `WindowBinInfo` and grouped rows
@@ -588,7 +665,8 @@ commands as part of the first ends Zarr transition.
   target Python and R package set.
 - Whether zstd remains acceptable across the target R readers.
 - Whether `counts` should stay `float32` on disk or move to `float64`.
-- Whether `group_name` should be a string array or explicit UTF-8 byte matrix.
+- Whether JSON-attribute label arrays are acceptable for long-term R/Python
+  downstream use, or whether a future schema needs separate label sidecars.
 - Whether the package should include a small `README.txt` with the schema version
   and loading pointers.
 - Whether any optional export should produce a long TSV for small selected
@@ -599,11 +677,10 @@ commands as part of the first ends Zarr transition.
 - Whether the output store should include only one representation per run, or
   allow both dense and sparse groups in the same store when `--all-motifs` is
   requested. Prefer one representation per run unless a user need appears.
-- Whether `motif` and row label strings can rely on Zarr string arrays, or need
-  documented byte-fallback decoding just like midpoint group names.
-- Whether chromosome row metadata should use a dictionary (`row_chromosome` plus
-  `chromosome_name`) or repeat `chrom` as a string array per row. Prefer the
-  dictionary unless downstream examples become too clumsy.
+- Whether chromosome row metadata should keep the current dictionary
+  (`row_chromosome` plus labels on `chromosome`) or repeat `chrom` per row in a
+  helper dataframe. Prefer the dictionary on disk unless downstream examples
+  become too clumsy.
 - Whether `blacklisted_fraction` should be present for every row mode with
   all-zero values when no blacklist was used, or only when blacklists were
   supplied. Prefer always present for ordinary window and grouped modes.
@@ -624,26 +701,30 @@ Midpoints:
 1. Implement midpoint Zarr writing behind the normal public output path. Done.
 2. Add website loading examples for Python and R. Done.
 3. Add CI-only downstream compatibility checks. Done as an initial workflow.
-4. Run the downstream workflow and decide whether native `group_name` is safe
-   enough to keep without the byte fallback.
-5. Confirm Zarr V3 subset, codec, chunk layout, and group-name encoding before
-   release.
-6. Add sourceable Python and R midpoint helper scripts, then update the guide to
-   use one helper-based example per language.
+4. Validate the JSON-attribute label design in downstream tests before release.
+5. Confirm Zarr V3 subset, codec, chunk layout, and label-attribute handling
+   before release.
+6. Add Python and R helper packages, then update the guide to use one
+   helper-based example per language.
 
 Ends:
 
 1. Split ends row metadata construction from TSV writing so Zarr and optional
-   TSV outputs cannot drift.
+   TSV outputs cannot drift. Done.
 2. Extract only the low-level Zarr helpers already duplicated by midpoint and
-   needed by ends.
-3. Implement dense `counts[row, motif]` Zarr output for `--all-motifs`.
-4. Implement sparse COO Zarr output for the default path.
+   needed by ends. Done.
+3. Implement dense `counts[row, motif]` Zarr output for `--all-motifs`. Done.
+4. Implement sparse COO Zarr output for the default path. Done.
 5. Add ends fixtures to the downstream compatibility workflow for Python
    `zarr`, Python sparse reconstruction, R `Rarr`, and R `Matrix`.
-6. Update the ends guide with the sparse loading example first, and dense only
+6. Move motif labels from JSON attrs to fixed-width `motif_ascii` arrays and
+   update Python/R helper decoding. Done for the Rust writer and Python helper.
+7. Refactor the Python ends helper into mode-specific classes returned by the
+   loader. Done.
+8. Update the ends guide with the sparse loading example first, and dense only
    if it remains useful for users.
-7. Distill the final ends schema into `.AI/docs/specs/ends_spec.md`.
+9. Distill the final ends schema into `.AI/docs/specs/ends_spec.md` after the
+   motif-label and helper API decisions are implemented.
 
 The downstream compatibility workflow is tracked separately in
 `downstream_testing.md`.
@@ -659,3 +740,14 @@ The midpoint transition is successful when:
   bins, position bins, and counts.
 - Users do not have to manually reconcile `.npy`, `group_index.tsv`, and settings
   JSON files to trust the result.
+
+The ends transition is successful when:
+
+- Dense and sparse outputs share one Zarr schema for row and motif metadata.
+- Sparse COO reconstructs the expected count matrix in Python and R.
+- Motif labels are readable from fixed-width byte arrays without Zarr string
+  dtype support or huge JSON metadata.
+- Chromosome, sparse-dimension, row-label, and group labels are readable from
+  JSON attributes without Zarr string-array support.
+- Users can build window-indexed, group-indexed, and motif-indexed dataframes
+  from the Python helper without manually joining sidecar files.

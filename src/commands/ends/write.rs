@@ -6,69 +6,13 @@ use crate::{
     shared::{
         indel_mode::IndelMotifFilterPolicy,
         io::{create_text_writer, dot_join},
-        kmers::write::write_category_sparse_with_paths,
     },
 };
 use anyhow::{Context, Result};
-use fxhash::FxHashMap;
-use ndarray::Array2;
-use ndarray_npy::write_npy;
 use std::{
     io::Write,
     path::{Path, PathBuf},
 };
-
-/// Write the final end-motif count outputs.
-///
-/// Dense output writes one `.npy` matrix with a shared motif order. Sparse
-/// output writes a COO-style `.npz` plus the matching motif label file.
-///
-/// Parameters
-/// ----------
-/// - `output_dir`:
-///   Directory where the final files should be written
-/// - `prefix`:
-///   Optional output-file prefix
-/// - `bins`:
-///   Final decoded per-window motif maps
-/// - `motifs`:
-///   Final motif column order
-/// - `write_dense_output`:
-///   Whether to write dense `.npy` output instead of sparse `.npz`
-///
-/// Returns
-/// -------
-/// - `Result<Vec<PathBuf>>`:
-///   Paths written by this helper
-pub fn write_end_motif_outputs(
-    output_dir: &Path,
-    prefix: &str,
-    bins: &[FxHashMap<String, f64>],
-    motifs: &[String],
-    write_dense_output: bool,
-) -> Result<Vec<PathBuf>> {
-    let motifs_path = output_dir.join(dot_join(&[prefix, "end_motifs.txt"]));
-    if write_dense_output {
-        let counts_path = output_dir.join(dot_join(&[prefix, "end_motifs.npy"]));
-        write_npy(&counts_path, &stack_end_motif_counts(bins, motifs)?)
-            .with_context(|| format!("writing {}", counts_path.display()))?;
-
-        let mut motifs_writer = create_text_writer(&motifs_path)
-            .with_context(|| format!("create {}", motifs_path.display()))?;
-        for motif in motifs {
-            writeln!(motifs_writer, "{motif}")
-                .with_context(|| format!("write {}", motifs_path.display()))?;
-        }
-        motifs_writer
-            .finish()
-            .with_context(|| format!("finalize {}", motifs_path.display()))?;
-        Ok(vec![counts_path, motifs_path])
-    } else {
-        let counts_path = output_dir.join(dot_join(&[prefix, "end_motifs.sparse.npz"]));
-        write_category_sparse_with_paths(bins, motifs, &counts_path, &motifs_path)?;
-        Ok(vec![counts_path, motifs_path])
-    }
-}
 
 /// Write the small settings sidecar needed to interpret end-motif outputs.
 ///
@@ -94,7 +38,7 @@ pub fn write_end_settings_json(
     prefix: &str,
     opt: &EndsConfig,
 ) -> Result<PathBuf> {
-    let settings_path = output_dir.join(dot_join(&[prefix, "end_motif_settings.json"]));
+    let settings_path = output_dir.join(dot_join(&[prefix, "end_settings.json"]));
     let mut settings_writer = create_text_writer(&settings_path)
         .with_context(|| format!("create {}", settings_path.display()))?;
     let settings_entries: Vec<String> = [
@@ -172,44 +116,6 @@ fn base_quality_filter_settings_entry(filters: &[BaseQualityFilter]) -> Option<S
         .collect::<Vec<_>>()
         .join(", ");
     Some(format!("  \"bq_filters\": [{joined}]"))
-}
-
-/// Stack sparse per-window motif maps into a dense matrix with a fixed column order.
-///
-/// Parameters
-/// ----------
-/// - `bins`:
-///   Final decoded per-window motif maps
-/// - `motifs`:
-///   Fixed motif column order
-///
-/// Returns
-/// -------
-/// - `Result<Array2<f64>>`:
-///   Dense matrix with one row per window and one column per motif
-fn stack_end_motif_counts(
-    bins: &[FxHashMap<String, f64>],
-    motifs: &[String],
-) -> Result<Array2<f64>> {
-    let n_rows = bins.len();
-    let n_cols = motifs.len();
-    let mut mat = Array2::<f64>::zeros((n_rows, n_cols));
-    let motif_columns: FxHashMap<&String, usize> = motifs
-        .iter()
-        .enumerate()
-        .map(|(col, motif)| (motif, col))
-        .collect();
-
-    for (row, bin) in bins.iter().enumerate() {
-        for (motif, &count) in bin {
-            let col = motif_columns.get(motif).copied().with_context(|| {
-                format!("missing dense output column for motif label '{motif}'")
-            })?;
-            mat[(row, col)] = count;
-        }
-    }
-
-    Ok(mat)
 }
 
 /// Convert the inside-source enum to its JSON-sidecar string form.

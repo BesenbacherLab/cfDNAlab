@@ -17,10 +17,6 @@ SUPPORTED_SCHEMA_VERSION = 1
 REQUIRED_ARRAYS = {
     "counts",
     "group",
-    "group_name",
-    "group_name_utf8",
-    "group_name_nbytes",
-    "group_name_byte",
     "eligible_intervals",
     "length_bin",
     "length_start_bp",
@@ -646,16 +642,15 @@ def _read_array(store: Any, name: str) -> np.ndarray:
 
 
 def _read_group_names(store: Any) -> np.ndarray:
-    try:
-        return np.asarray(store["group_name"][:], dtype=str)
-    except Exception:
-        group_name_utf8 = _read_array(store, "group_name_utf8")
-        group_name_nbytes = _read_array(store, "group_name_nbytes")
-        names = []
-        for group_index, nbytes in enumerate(group_name_nbytes):
-            raw_name = bytes(group_name_utf8[group_index, : int(nbytes)])
-            names.append(raw_name.decode("utf-8"))
-        return np.asarray(names, dtype=str)
+    label_field = store["group"].attrs.get("label_field")
+    if label_field != "group_name":
+        raise ValueError(
+            f"group labels must have label_field='group_name', found {label_field!r}"
+        )
+    labels = store["group"].attrs.get("labels")
+    if labels is None:
+        raise ValueError("group array is missing group-name labels")
+    return np.asarray(labels, dtype=str)
 
 
 def _validate_axis(values: np.ndarray, name: str) -> None:
