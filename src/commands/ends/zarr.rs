@@ -248,6 +248,8 @@ fn write_root_metadata(
         "storage_mode": storage_mode,
         "row_mode": row_mode,
         "count_units": "weighted_end_motif_count",
+        "primary_array": null,
+        "primary_group": null,
     });
     if storage_mode == "dense" {
         attributes["primary_array"] = json!("counts");

@@ -13,7 +13,8 @@ import numpy as np
 import pandas as pd
 import zarr
 
-SUPPORTED_SCHEMA_VERSION = 1
+MIN_SUPPORTED_SCHEMA_VERSION = 1
+MAX_SUPPORTED_SCHEMA_VERSION = 1
 REQUIRED_ARRAYS = {
     "counts",
     "group",
@@ -174,7 +175,7 @@ class MidpointProfiles:
         """
         return self._resolve_group_name(group_name)
 
-    def length_bin(self, length: int) -> int:
+    def length_bin_idx(self, length: int) -> int:
         """
         Return the length-bin index for a fragment length.
 
@@ -247,7 +248,7 @@ class MidpointProfiles:
         """
         Build a long data frame for one group and one length bin.
 
-        Use `.group_idx(group_name=)` and `.length_bin(length=)` to get the
+        Use `.group_idx(group_name=)` and `.length_bin_idx(length=)` to get the
         indices for a group name and fragment length.
 
         Parameters
@@ -395,7 +396,7 @@ class MidpointProfiles:
         """
         Load counts for one group and one length bin.
 
-        Use `.group_idx(group_name=)` and `.length_bin(length=)` to get the
+        Use `.group_idx(group_name=)` and `.length_bin_idx(length=)` to get the
         indices for a group name and fragment length.
 
         Parameters
@@ -615,17 +616,28 @@ def _validate_root_metadata(store: Any) -> None:
         )
 
     schema_version = store.attrs.get("cfdnalab_schema_version")
-    if schema_version != SUPPORTED_SCHEMA_VERSION:
+    if not isinstance(schema_version, numbers.Integral) or not (
+        MIN_SUPPORTED_SCHEMA_VERSION <= int(schema_version) <= MAX_SUPPORTED_SCHEMA_VERSION
+    ):
         raise ValueError(
             "Unsupported midpoint schema version: "
-            f"{schema_version!r}. Supported version: {SUPPORTED_SCHEMA_VERSION}"
+            f"{schema_version!r}. Supported range: "
+            f"{MIN_SUPPORTED_SCHEMA_VERSION}..{MAX_SUPPORTED_SCHEMA_VERSION}"
         )
 
 
 def _validate_required_arrays(store: Any) -> None:
-    missing = sorted(REQUIRED_ARRAYS.difference(store.array_keys()))
+    missing = sorted(name for name in REQUIRED_ARRAYS if not _has_array(store, name))
     if missing:
         raise ValueError(f"Midpoint Zarr store is missing arrays: {missing}")
+
+
+def _has_array(store: Any, name: str) -> bool:
+    try:
+        store[name]
+    except Exception:
+        return False
+    return True
 
 
 def _validate_counts_dimensions(counts: Any) -> None:

@@ -14,6 +14,10 @@ The output formats are changed to simplify downstream work in R and python. Whil
  - `cfdna ends` now outputs dense and sparse motif counts as a self-contained Zarr store at `end_motifs.zarr`.
  - `cfdna ends` writes command settings to `end_settings.json`.
 
+**Major changes**:
+
+ - Adds the python `cfDNAlab` package for loading the `.zarr` outputs of the CLI tool. The `.zarr` format is self-contained and works in both R and python. For friendlier loading and conversion to data frames or arrays for downstream analysis, we provide these loaders. An R package will follow soon as well.
+
 **Other changes**:
 
 - Adds `zarr=0.23.11` dependency.

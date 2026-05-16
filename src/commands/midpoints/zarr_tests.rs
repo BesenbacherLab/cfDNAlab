@@ -67,6 +67,10 @@ fn midpoint_zarr_writes_counts_axes_and_group_metadata() {
         root_metadata["attributes"]["cfdnalab_schema_version"],
         serde_json::json!(1)
     );
+    assert!(
+        root_metadata["attributes"].get("dimension_names").is_none(),
+        "Root attrs should not duplicate native Zarr V3 array dimension names"
+    );
 
     let counts_metadata = read_json(&store_path.join("counts/zarr.json"));
     assert_eq!(counts_metadata["shape"], serde_json::json!([2, 2, 3]));

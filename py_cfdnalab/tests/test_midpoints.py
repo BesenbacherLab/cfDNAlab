@@ -196,17 +196,17 @@ def test_lookup_helpers_use_names_and_half_open_length_bins(tmp_path: Path) -> N
 
     assert profiles.group_idx("alpha") == 0
     assert profiles.group_idx("gamma-unicode-aa") == 2
-    assert profiles.length_bin(30) == 0
-    assert profiles.length_bin(59) == 0
-    assert profiles.length_bin(60) == 1
-    assert profiles.length_bin(89) == 1
+    assert profiles.length_bin_idx(30) == 0
+    assert profiles.length_bin_idx(59) == 0
+    assert profiles.length_bin_idx(60) == 1
+    assert profiles.length_bin_idx(89) == 1
 
     with pytest.raises(KeyError, match="Unknown midpoint group name"):
         profiles.group_idx("missing")
     with pytest.raises(KeyError, match="No midpoint length bin contains length 90"):
-        profiles.length_bin(90)
+        profiles.length_bin_idx(90)
     with pytest.raises(ValueError, match="Fragment length must be non-negative"):
-        profiles.length_bin(-1)
+        profiles.length_bin_idx(-1)
 
 
 def test_invalid_indices_raise_helpful_errors(tmp_path: Path) -> None:

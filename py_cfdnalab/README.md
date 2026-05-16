@@ -1,4 +1,4 @@
-# cfDNAlab <img src='https://raw.githubusercontent.com/BesenbacherLab/cfDNAlab/refs/heads/main/cfdnalab_logo_little_guy_172x200_144dpi.png' align="right" height="140" />
+# cfDNAlab | Python Loaders <img src='https://raw.githubusercontent.com/BesenbacherLab/cfDNAlab/refs/heads/main/cfdnalab_logo_little_guy_172x200_144dpi.png' align="right" height="160" />
 
 Python helpers for loading [**cfDNAlab**](https://github.com/BesenbacherLab/cfDNAlab) output files.
 
@@ -8,6 +8,8 @@ running cfDNAlab to load and analyze output files.
 
 The first supported output types are midpoint and end-motif Zarr outputs:
 `<prefix>.midpoint_profiles.zarr` and `<prefix>.end_motifs.zarr`.
+
+<br>
 
 ## Install
 
@@ -47,11 +49,11 @@ half-open bp coordinates.
 
 ### Extract One Profile
 
-Use `group_idx()` and `length_bin()` when selecting by names or bp lengths:
+Use `group_idx()` and `length_bin_idx()` when selecting by names or bp lengths:
 
 ```python
 group_idx = midpoints.group_idx("CTCF")
-length_bin = midpoints.length_bin(167)
+length_bin = midpoints.length_bin_idx(167)
 
 profile = midpoints.data_frame_for_profile(
     group_idx=group_idx,
@@ -92,6 +94,8 @@ counts = midpoints.array()
 
 Prefer the slice helpers when possible.
 
+<br>
+
 ## Load End-Motif Counts
 
 ```python
@@ -111,6 +115,8 @@ ends.storage_mode()
 If the storage mode is `"sparse_coo"`, the `sparse_coo*()` methods use the stored COO arrays without densifying. Use the `dense_*()` methods when you explicitly want dense NumPy arrays or dense data frames.
 
 If the storage mode is `"dense"`, `sparse_coo*()` methods still work, but they first read the dense count matrix and convert it to a SciPy sparse object.
+Use `dense_counts_zarr_array()` to get the lazy Zarr array handle for dense output without loading the full matrix.
+Use `dense_counts_matrix()` only when you want the full in-memory dense count matrix.
 
 ### Inspect End-Motif Metadata
 
@@ -118,7 +124,7 @@ If the storage mode is `"dense"`, `sparse_coo*()` methods still work, but they f
 motifs = ends.motif_metadata()
 ```
 
-`load_end_motifs()` returns a mode-specific object. Windowed output has `windows()`. Grouped output has `groups()` and `group_idx()`. Global output has `counts()` and `data_frame()`.
+`load_end_motifs()` returns a mode-specific object. Windowed output has `windows()`. Grouped output has `groups()` and `group_idx()`. Global output has `dense_counts_vec()` and `dense_data_frame()`.
 
 ### Extract End-Motif Counts
 
@@ -133,7 +139,7 @@ Sparse output stays sparse unless you ask for dense arrays:
 ```python
 sparse_counts = ends.sparse_coo()
 sparse_payload = ends.sparse_coo_data_frame()
-motif_array = ends.dense_array_for_motif("_AA")
+motif_array = ends.dense_counts_for_motif("_AA")
 ```
 
 For windowed output:
@@ -151,10 +157,3 @@ group_counts = ends.dense_data_frame_for_group("CTCF")
 ```
 
 Methods prefixed with `dense_` may densify sparse output. Prefer `sparse_coo()`, `sparse_coo_data_frame()`, and the sparse slice helpers when working with large end-motif outputs.
-
-## Test
-
-```bash
-cd py_cfdnalab
-uv run pytest
-```

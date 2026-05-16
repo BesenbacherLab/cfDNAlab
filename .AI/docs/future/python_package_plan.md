@@ -153,7 +153,7 @@ midpoints.length_bins()
 midpoints.positions()
 
 midpoints.group_idx(group_name="CTCF")
-midpoints.length_bin(length=167)
+midpoints.length_bin_idx(length=167)
 
 midpoints.data_frame_for_profile(group_idx=0, length_bin=0)
 midpoints.data_frame_from_group(group_name="CTCF")

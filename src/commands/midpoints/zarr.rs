@@ -276,7 +276,6 @@ fn write_group_metadata(store: Arc<FilesystemStore>) -> Result<()> {
             "cfdnalab_schema": "midpoint_profiles",
             "cfdnalab_schema_version": CFDNALAB_MIDPOINT_SCHEMA_VERSION,
             "primary_array": "counts",
-            "dimension_names": ["group", "length_bin", "position"],
             "count_units": "weighted_midpoint_count",
         }),
     )

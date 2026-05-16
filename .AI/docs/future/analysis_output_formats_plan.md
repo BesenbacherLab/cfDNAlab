@@ -141,10 +141,12 @@ Root attrs should record the interpretation contract:
   "cfdnalab_schema": "midpoint_profiles",
   "cfdnalab_schema_version": 1,
   "primary_array": "counts",
-  "dimension_names": ["group", "length_bin", "position"],
   "count_units": "weighted_midpoint_count"
 }
 ```
+
+The count array itself carries native Zarr V3 `dimension_names`. The root attrs
+should not duplicate them.
 
 Do not move general command settings into Zarr attrs. Keep them in
 `<prefix>.midpoint_settings.json` so the run can be inspected without any Zarr
@@ -291,9 +293,10 @@ sparse_coo()
 sparse_coo_data_frame()
 sparse_coo_for_motif()
 sparse_coo_for_motif_idx()
-dense_array()
-dense_array_for_motif()
-dense_array_for_motif_idx()
+dense_counts_zarr_array()
+dense_counts_matrix()
+dense_counts_for_motif()
+dense_counts_for_motif_idx()
 dense_data_frame_for_motif()
 dense_data_frame_for_motif_idx()
 ```
@@ -302,20 +305,20 @@ Mode-specific methods should use domain vocabulary:
 
 ```text
 GlobalEndMotifCounts:
-  counts()
-  data_frame()
+  dense_counts_vec()
+  dense_data_frame()
 
 WindowedEndMotifCounts:
   windows()
   sparse_coo_for_window(window_idx)
-  dense_array_for_window(window_idx)
+  dense_counts_for_window(window_idx)
   dense_data_frame_for_window(window_idx)
 
 GroupedEndMotifCounts:
   groups()
   group_idx(group_name)
   sparse_coo_for_group(group)
-  dense_array_for_group(group)
+  dense_counts_for_group(group)
   dense_data_frame_for_group(group)
 ```
 
@@ -646,6 +649,87 @@ The sparse COO writer can later be reused by fragment-kmer positional sparse
 outputs and any remaining SciPy `.npz` sparse outputs, but do not migrate those
 commands as part of the first ends Zarr transition.
 
+## Zarr Schema Cleanup Before Release
+
+Write a concise current schema spec before the next release, either as
+`.AI/docs/specs/zarr_schema.md` or split by command specs if that stays clearer.
+The spec must list, for each public Zarr store:
+
+- root attributes, their types, and allowed values
+- array names, shapes, dtypes, dimension names, and array attributes
+- which arrays are coordinates and which arrays are payloads
+- the R conversion strategy for unsigned integer arrays
+
+R needs explicit dtype guidance because it has no native `uint64`. The R helper
+should convert on purpose instead of inheriting whatever a reader package does:
+
+- `uint64` genomic coordinates and sparse coordinates should become
+  `bit64::integer64` when exact integer values matter.
+- `uint64` sparse coordinates may be range-checked and converted to ordinary
+  signed integers when constructing `Matrix::sparseMatrix`, because R sparse
+  indices are 1-based signed integers.
+- `uint32` values should become ordinary R integers only after an overflow
+  check; otherwise use a wider representation.
+
+Root metadata should not duplicate native Zarr V3 dimension metadata. Midpoint
+previously had a root-level `dimension_names` copy while each array also
+carried native V3 dimension names. The root copy has been dropped; treat the
+array metadata as the source of truth.
+
+Root metadata should use symmetric discovery keys. For ends, write both
+`primary_array` and `primary_group`, with `null` for the inactive representation,
+or choose one explicit object such as:
+
+```json
+{
+  "primary_data": {
+    "storage_mode": "sparse_coo",
+    "group": "sparse"
+  }
+}
+```
+
+The chosen form should be used consistently across dense and sparse stores so
+naive readers do not need special-case missing keys.
+
+Python and R loaders should require both the public `.zarr` suffix and the
+expected schema attrs. The suffix is part of the cfDNAlab output contract, while
+the schema attrs prove that the directory is the expected cfDNAlab Zarr store.
+We do not need to support users renaming output directories.
+
+Use the same required-array probing strategy in every helper. Prefer the ends
+style that checks `store["path/to/array"]` and catches lookup errors, because it
+works for nested arrays such as `sparse/row`. Do not use `array_keys()` for
+required arrays if nested paths are possible.
+
+Sparse arrays should validate their own dimension names. Ends already validates
+dense `counts` dimension names; add equivalent checks that `sparse/row`,
+`sparse/motif`, and `sparse/count` use the `nnz` dimension and that
+`sparse/shape` and `sparse/sparse_dimension` use the `sparse_dimension`
+dimension.
+
+Document schema-version compatibility before the first helper-package release.
+Exact-match version checks are fine for schema version 1, but future loaders
+should have an explicit `MIN_SUPPORTED_SCHEMA_VERSION` and
+`MAX_SUPPORTED_SCHEMA_VERSION`, or a written decision that helper versions are
+strictly tied to schema versions.
+
+Python helper cleanup before release:
+
+- `MidpointProfiles.length_bin_idx(length)` resolves a fragment length to a
+  length-bin index without being confused with the stored `length_bin` axis.
+  Done.
+- Expose a chunked/lazy handle for dense ends output, for example
+  `dense_counts_zarr_array`, so users who need chunked iteration do not have to
+  reach into private fields. Done.
+- Add docstring warnings to `dense_*` ends methods that they may load or
+  reconstruct dense data. Done.
+- Optimize `sparse_coo_for_motif_idx` for sparse stores by filtering stored COO
+  arrays directly instead of converting the full matrix through CSR. Done.
+- Add one Python fixture for `storage_mode == "dense"` and `row_mode ==
+  "global"` so the helper tests cover the storage-mode by row-mode cross product
+  used by the public schema. Done.
+
 ## Shared Rules
 
 - Simple two-dimensional tables should stay TSV when TSV is compact enough.
@@ -706,6 +790,9 @@ Midpoints:
    before release.
 6. Add Python and R helper packages, then update the guide to use one
    helper-based example per language.
+7. Apply the Zarr schema cleanup items: remove duplicate root dimension names,
+   keep strict suffix and schema validation, unify required-array probing,
+   and document dtype conversion for R. Done.
 
 Ends:
 
@@ -723,8 +810,12 @@ Ends:
    loader. Done.
 8. Update the ends guide with the sparse loading example first, and dense only
    if it remains useful for users.
-9. Distill the final ends schema into `.AI/docs/specs/ends_spec.md` after the
-   motif-label and helper API decisions are implemented.
+9. Apply the Zarr schema cleanup items: symmetric primary-data attrs, strict
+   suffix and schema validation, nested required-array probing, sparse
+   dimension-name validation, direct sparse motif slicing, and dense-method
+   docstring warnings. Done.
+10. Distill the final ends schema into `.AI/docs/specs/ends_spec.md` after the
+   motif-label and helper API decisions are implemented. Done.
 
 The downstream compatibility workflow is tracked separately in
 `downstream_testing.md`.

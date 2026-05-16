@@ -52,6 +52,8 @@ fn dense_end_motif_zarr_writes_counts_motifs_and_window_metadata() {
     );
     assert_eq!(root_metadata["attributes"]["storage_mode"], "dense");
     assert_eq!(root_metadata["attributes"]["row_mode"], "bed");
+    assert_eq!(root_metadata["attributes"]["primary_array"], "counts");
+    assert!(root_metadata["attributes"]["primary_group"].is_null());
     assert_eq!(
         read_f64_array(&store_path, "/counts"),
         vec![1.0, 2.5, 0.0, 3.0]
@@ -110,6 +112,8 @@ fn sparse_end_motif_zarr_writes_sorted_coo_arrays() {
 
     let root_metadata = read_json(&store_path.join("zarr.json"));
     assert_eq!(root_metadata["attributes"]["storage_mode"], "sparse_coo");
+    assert!(root_metadata["attributes"]["primary_array"].is_null());
+    assert_eq!(root_metadata["attributes"]["primary_group"], "sparse");
     assert_eq!(root_metadata["attributes"]["sparse_format"], "coo");
     assert_eq!(read_u64_array(&store_path, "/sparse/row"), vec![0, 0]);
     assert_eq!(read_u64_array(&store_path, "/sparse/motif"), vec![0, 1]);
@@ -206,6 +210,7 @@ fn sparse_end_motif_zarr_round_trips_to_dense_matrix_and_metadata() {
     let root_metadata = read_json(&store_path.join("zarr.json"));
     assert_eq!(root_metadata["attributes"]["storage_mode"], "sparse_coo");
     assert_eq!(root_metadata["attributes"]["row_mode"], "size");
+    assert!(root_metadata["attributes"]["primary_array"].is_null());
     assert_eq!(root_metadata["attributes"]["primary_group"], "sparse");
     let sparse_dimension_metadata = read_json(&store_path.join("sparse/sparse_dimension/zarr.json"));
     assert_eq!(
@@ -315,6 +320,8 @@ fn grouped_end_motif_zarr_writes_group_metadata_and_dense_counts() {
     let root_metadata = read_json(&store_path.join("zarr.json"));
     assert_eq!(root_metadata["attributes"]["storage_mode"], "dense");
     assert_eq!(root_metadata["attributes"]["row_mode"], "grouped_bed");
+    assert_eq!(root_metadata["attributes"]["primary_array"], "counts");
+    assert!(root_metadata["attributes"]["primary_group"].is_null());
     assert_eq!(
         read_f64_array(&store_path, "/counts"),
         vec![1.0, 0.0, 0.0, 2.5, 0.0, 0.0]

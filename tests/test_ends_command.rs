@@ -794,6 +794,8 @@ fn read_sparse_output(out_dir: &Path) -> Result<(Vec<String>, Array2<f64>)> {
 
 fn read_motif_labels(store_path: &Path) -> Result<Vec<String>> {
     let motif_index: Vec<i32> = read_zarr_array(store_path, "/motif_index")?;
+    let motif_byte: Vec<i32> = read_zarr_array(store_path, "/motif_byte")?;
+    let motif_ascii: Vec<u8> = read_zarr_array(store_path, "/motif_ascii")?;
     let metadata = parse_json(&read_text_file(
         &store_path.join("motif_index").join("zarr.json"),
     )?);
@@ -802,28 +804,32 @@ fn read_motif_labels(store_path: &Path) -> Result<Vec<String>> {
         .and_then(Value::as_object)
         .context("motif_index metadata must contain attributes")?;
     ensure!(
-        attributes.get("label_field") == Some(&Value::String("motif".to_string())),
-        "motif_index metadata must declare label_field = motif"
+        attributes.get("label_array") == Some(&Value::String("motif_ascii".to_string())),
+        "motif_index metadata must declare label_array = motif_ascii"
     );
-    let labels = attributes
-        .get("labels")
-        .and_then(Value::as_array)
-        .context("motif_index metadata must contain motif labels")?;
+
+    let motif_width = motif_byte.len();
     ensure!(
-        labels.len() == motif_index.len(),
-        "motif label count ({}) did not match motif_index length ({})",
-        labels.len(),
-        motif_index.len()
+        motif_ascii.len() == motif_index.len() * motif_width,
+        "motif_ascii length ({}) did not match motif_index length ({}) times motif width ({})",
+        motif_ascii.len(),
+        motif_index.len(),
+        motif_width
     );
-    labels
-        .iter()
-        .map(|value| {
-            value
-                .as_str()
-                .map(str::to_string)
-                .context("motif label must be a string")
+    if motif_width == 0 {
+        ensure!(
+            motif_index.is_empty(),
+            "motif_byte width was zero but motif_index contained {} entries",
+            motif_index.len()
+        );
+        return Ok(Vec::new());
+    }
+    motif_ascii
+        .chunks_exact(motif_width)
+        .map(|bytes| {
+            String::from_utf8(bytes.to_vec()).context("motif_ascii row must be valid UTF-8")
         })
-        .collect()
+        .collect::<Result<Vec<_>>>()
 }
 
 fn read_zarr_array<T>(store_path: &Path, array_path: &str) -> Result<Vec<T>>

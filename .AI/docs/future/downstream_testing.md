@@ -214,6 +214,17 @@ mode has a clearer user-facing concept such as window or group. It should also
 avoid unqualified `array()` for ends because sparse-to-dense conversion must be
 visible in the method name.
 
+The helper tests should also cover loader behavior that matters for future R
+parity:
+
+- loader validation requires both the public `.zarr` suffix and the expected
+  schema attrs
+- required-array checks handle nested paths such as `sparse/row`
+- sparse arrays carry expected dimension names, especially `nnz` and
+  `sparse_dimension`
+- schema-version checks follow the documented compatibility policy
+- dense helpers document that they may load or reconstruct dense data
+
 ### R Helper Contract
 
 The R helper should be sourceable:
@@ -462,6 +473,25 @@ motif_ascii            uint8[motif, motif_byte]
 
 The downstream tests must decode `motif_ascii` in Python and R and verify that
 the decoded labels match the count-matrix motif axis.
+
+## R Integer Strategy
+
+The R tests must check integer conversion deliberately instead of accepting the
+reader package default. Public Zarr schemas use unsigned integer dtypes where
+that is the correct on-disk domain type:
+
+- genomic coordinates such as `row_start_bp` and `row_end_bp` may be `uint64`
+- sparse coordinates such as `sparse/row`, `sparse/motif`, and `sparse/shape`
+  may be `uint64`
+- counts of windows or intervals may be `uint32`
+
+The R helper should read exact `uint64` values as `bit64::integer64` when they
+are retained as metadata. When constructing `Matrix::sparseMatrix`, sparse
+coordinates should be range-checked, converted to signed integer vectors, and
+shifted from zero-based Zarr coordinates to one-based R indices.
+
+The public schema spec should list every array dtype and the intended R cast so
+the R package does not have to infer policy from examples.
 
 ## Chunking Checks
 

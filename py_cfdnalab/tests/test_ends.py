@@ -45,9 +45,10 @@ def test_dense_windowed_end_motifs_load_metadata_and_arrays(tmp_path: Path) -> N
         ),
     )
     np.testing.assert_array_equal(
-        ends.dense_array(),
+        ends.dense_counts_matrix(),
         np.array([[1.0, 0.0, 2.5], [0.5, 4.0, 0.0]], dtype=np.float64),
     )
+    assert ends.dense_counts_zarr_array().shape == (2, 3)
     assert sparse.isspmatrix_coo(ends.sparse_coo())
 
 
@@ -93,10 +94,11 @@ def test_dense_windowed_end_motif_slice_helpers_return_expected_frames(
         ),
     )
     np.testing.assert_array_equal(
-        ends.dense_array_for_window(1), np.array([0.5, 4.0, 0.0], dtype=np.float64)
+        ends.dense_counts_for_window(1),
+        np.array([0.5, 4.0, 0.0], dtype=np.float64),
     )
     np.testing.assert_array_equal(
-        ends.dense_array_for_motif_idx(2), np.array([2.5, 0.0], dtype=np.float64)
+        ends.dense_counts_for_motif_idx(2), np.array([2.5, 0.0], dtype=np.float64)
     )
     assert ends.sparse_coo_for_window(1).shape == (1, 3)
 
@@ -124,18 +126,25 @@ def test_sparse_grouped_end_motifs_reconstruct_dense_matrix_and_metadata(
         ),
     )
     np.testing.assert_array_equal(
-        ends.dense_array(),
+        ends.dense_counts_matrix(),
         np.array(
             [[1.0, 0.0, 2.5], [0.0, 4.25, 0.0], [0.75, 0.0, 0.0]],
             dtype=np.float64,
         ),
     )
     np.testing.assert_array_equal(
-        ends.dense_array_for_group("A"), np.array([1.0, 0.0, 2.5], dtype=np.float64)
+        ends.dense_counts_for_group("A"),
+        np.array([1.0, 0.0, 2.5], dtype=np.float64),
     )
     np.testing.assert_array_equal(
-        ends.dense_array_for_motif("_AA"), np.array([1.0, 0.0, 0.75], dtype=np.float64)
+        ends.dense_counts_for_motif("_AA"),
+        np.array([1.0, 0.0, 0.75], dtype=np.float64),
     )
+    motif_coo = ends.sparse_coo_for_motif("_AA")
+    assert motif_coo.shape == (3, 1)
+    np.testing.assert_array_equal(motif_coo.row, np.array([0, 2], dtype=np.int32))
+    np.testing.assert_array_equal(motif_coo.col, np.array([0, 0], dtype=np.int32))
+    np.testing.assert_array_equal(motif_coo.data, np.array([1.0, 0.75]))
     assert ends.group_idx("long_group") == 1
     assert ends.sparse_coo_for_group("long_group").shape == (1, 3)
 
@@ -178,8 +187,33 @@ def test_global_end_motifs_read_row_label_from_json_attrs(tmp_path: Path) -> Non
         ),
     )
     np.testing.assert_array_equal(
-        ends.counts(),
+        ends.dense_counts_vec(),
         np.array([1.25, 0.0, 3.5], dtype=np.float64),
+    )
+
+
+def test_dense_global_end_motifs_load_without_sparse_arrays(tmp_path: Path) -> None:
+    store_path = _write_dense_global_store(tmp_path / "sample.end_motifs.zarr")
+
+    ends = cfdnalab.load_end_motifs(store_path)
+
+    assert isinstance(ends, cfdnalab.GlobalEndMotifCounts)
+    assert ends.storage_mode() == "dense"
+    assert ends.row_mode() == "global"
+    assert ends.dense_counts_zarr_array().shape == (1, 3)
+    np.testing.assert_array_equal(
+        ends.dense_counts_vec(),
+        np.array([1.0, 0.0, 2.5], dtype=np.float64),
+    )
+    pd.testing.assert_frame_equal(
+        ends.dense_data_frame(),
+        pd.DataFrame(
+            {
+                "motif_index": MOTIF_INDEX,
+                "motif": MOTIF_NAMES,
+                "count": np.array([1.0, 0.0, 2.5], dtype=np.float64),
+            }
+        ),
     )
 
 
@@ -219,6 +253,14 @@ def test_end_motif_loader_rejects_schema_and_shape_problems(tmp_path: Path) -> N
         tmp_path / "shape_mismatch.end_motifs.zarr",
         sparse_shape=np.array([3, 2], dtype=np.uint64),
     )
+    wrong_sparse_dimensions = _write_sparse_grouped_store(
+        tmp_path / "wrong_sparse_dimensions.end_motifs.zarr",
+        sparse_row_dimension_names=("row",),
+    )
+    wrong_sparse_dimension_labels = _write_sparse_grouped_store(
+        tmp_path / "wrong_sparse_dimension_labels.end_motifs.zarr",
+        sparse_dimension_labels=np.array(["motif", "row"], dtype=object),
+    )
     missing_motif_ascii = _write_dense_window_store(
         tmp_path / "missing_motif_ascii.end_motifs.zarr",
         omit={"motif_ascii"},
@@ -234,6 +276,10 @@ def test_end_motif_loader_rejects_schema_and_shape_problems(tmp_path: Path) -> N
         cfdnalab.load_end_motifs(wrong_dimensions)
     with pytest.raises(ValueError, match="sparse/shape does not match"):
         cfdnalab.load_end_motifs(shape_mismatch)
+    with pytest.raises(ValueError, match="sparse/row dimensions must be"):
+        cfdnalab.load_end_motifs(wrong_sparse_dimensions)
+    with pytest.raises(ValueError, match="sparse_dimension labels must be"):
+        cfdnalab.load_end_motifs(wrong_sparse_dimension_labels)
     with pytest.raises(ValueError, match="missing arrays: \\['motif_ascii'\\]"):
         cfdnalab.load_end_motifs(missing_motif_ascii)
 
@@ -289,10 +335,38 @@ def _write_dense_window_store(
     return path
 
 
+def _write_dense_global_store(path: Path) -> Path:
+    root = zarr.open_group(str(path), mode="w", zarr_format=3)
+    root.attrs["cfdnalab_schema"] = "end_motif_counts"
+    root.attrs["cfdnalab_schema_version"] = 1
+    root.attrs["storage_mode"] = "dense"
+    root.attrs["row_mode"] = "global"
+
+    _create_motif_axis(root, MOTIF_NAMES)
+    _create_labeled_axis(
+        root,
+        "row",
+        np.array([0], dtype=np.int32),
+        "row_label",
+        np.array(["global"], dtype=object),
+    )
+    _create_array(
+        root,
+        "counts",
+        np.array([[1.0, 0.0, 2.5]], dtype=np.float64),
+        chunks=(1, 3),
+        dimension_names=("row", "motif"),
+    )
+
+    return path
+
+
 def _write_sparse_grouped_store(
     path: Path,
     *,
     sparse_shape: np.ndarray = np.array([3, 3], dtype=np.uint64),
+    sparse_row_dimension_names: tuple[str, ...] = ("nnz",),
+    sparse_dimension_labels: np.ndarray = np.array(["row", "motif"], dtype=object),
 ) -> Path:
     root = zarr.open_group(str(path), mode="w", zarr_format=3)
     root.attrs["cfdnalab_schema"] = "end_motif_counts"
@@ -323,26 +397,41 @@ def _write_sparse_grouped_store(
     )
 
     sparse = root.create_group("sparse")
-    _create_array(sparse, "row", np.array([0, 0, 1, 2], dtype=np.uint64), chunks=(4,))
+    _create_array(
+        sparse,
+        "row",
+        np.array([0, 0, 1, 2], dtype=np.uint64),
+        chunks=(4,),
+        dimension_names=sparse_row_dimension_names,
+    )
     _create_array(
         sparse,
         "motif",
         np.array([0, 2, 1, 0], dtype=np.uint64),
         chunks=(4,),
+        dimension_names=("nnz",),
     )
     _create_array(
         sparse,
         "count",
         np.array([1.0, 2.5, 4.25, 0.75], dtype=np.float64),
         chunks=(4,),
+        dimension_names=("nnz",),
     )
-    _create_array(sparse, "shape", sparse_shape, chunks=(2,))
+    _create_array(
+        sparse,
+        "shape",
+        sparse_shape,
+        chunks=(2,),
+        dimension_names=("sparse_dimension",),
+    )
     _create_labeled_axis(
         sparse,
         "sparse_dimension",
         np.array([0, 1], dtype=np.int32),
         "sparse_dimension_name",
-        np.array(["row", "motif"], dtype=object),
+        sparse_dimension_labels,
+        dimension_names=("sparse_dimension",),
     )
 
     return path
@@ -365,21 +454,41 @@ def _write_sparse_global_store(path: Path) -> Path:
     )
 
     sparse = root.create_group("sparse")
-    _create_array(sparse, "row", np.array([0, 0], dtype=np.uint64), chunks=(2,))
-    _create_array(sparse, "motif", np.array([0, 2], dtype=np.uint64), chunks=(2,))
+    _create_array(
+        sparse,
+        "row",
+        np.array([0, 0], dtype=np.uint64),
+        chunks=(2,),
+        dimension_names=("nnz",),
+    )
+    _create_array(
+        sparse,
+        "motif",
+        np.array([0, 2], dtype=np.uint64),
+        chunks=(2,),
+        dimension_names=("nnz",),
+    )
     _create_array(
         sparse,
         "count",
         np.array([1.25, 3.5], dtype=np.float64),
         chunks=(2,),
+        dimension_names=("nnz",),
     )
-    _create_array(sparse, "shape", np.array([1, 3], dtype=np.uint64), chunks=(2,))
+    _create_array(
+        sparse,
+        "shape",
+        np.array([1, 3], dtype=np.uint64),
+        chunks=(2,),
+        dimension_names=("sparse_dimension",),
+    )
     _create_labeled_axis(
         sparse,
         "sparse_dimension",
         np.array([0, 1], dtype=np.int32),
         "sparse_dimension_name",
         np.array(["row", "motif"], dtype=object),
+        dimension_names=("sparse_dimension",),
     )
 
     return path
@@ -391,8 +500,15 @@ def _create_labeled_axis(
     values: np.ndarray,
     label_field: str,
     labels: list[str] | np.ndarray | None,
+    dimension_names: tuple[str, ...] | None = None,
 ) -> zarr.Array:
-    axis = _create_array(root, name, values, chunks=(len(values),))
+    axis = _create_array(
+        root,
+        name,
+        values,
+        chunks=(len(values),),
+        dimension_names=dimension_names,
+    )
     axis.attrs["label_field"] = label_field
     if labels is not None:
         if isinstance(labels, np.ndarray):
