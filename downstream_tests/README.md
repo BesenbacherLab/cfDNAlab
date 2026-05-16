@@ -6,8 +6,8 @@ Rust test suite because they install Python/R scientific stacks and should not b
 part of the local development loop.
 
 The current fixture is a small midpoint profile Zarr V3 store. Python checks
-use `zarr`, `xarray`, and `dask.array`; R checks use CRAN `zarr` and
-Bioconductor `Rarr`.
+use the local `cfdnalab` helper package plus direct `zarr`, `xarray`, and
+`dask.array` readers; R checks use CRAN `zarr` and Bioconductor `Rarr`.
 
 ```text
 counts[group, length_bin, position]
@@ -25,6 +25,8 @@ Run locally only when you want to check downstream package compatibility:
 ```bash
 cargo test --no-default-features --features cmd_midpoints --test generate_downstream_midpoint_fixture -- --ignored --exact generate_midpoint_zarr_fixture_with_cfdnalab
 python -m pip install -r downstream_tests/requirements-python.txt
+python -m pip install -e py_cfdnalab
+(cd py_cfdnalab && uv run pytest)
 CFDNALAB_MIDPOINT_ZARR=downstream_tests/tmp/tiny.midpoint_profiles.zarr pytest downstream_tests/python
 ```
 
