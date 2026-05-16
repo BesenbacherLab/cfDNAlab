@@ -11,6 +11,7 @@ use zstd::Encoder as ZstdEncoder;
 
 const BUF_CAP: usize = 1 << 20;
 const DEFAULT_ZSTD_LEVEL: i32 = 3;
+const REPLACEABLE_DIRECTORY_EXTENSIONS: &[&str] = &["zarr"];
 
 /// Join dot-separated name segments while skipping empty parts.
 ///
@@ -222,9 +223,11 @@ impl FinalOutputFiles {
     /// Move recorded temp files to their final paths one by one.
     ///
     /// Each recorded artifact has already been fully written in the temp directory, so callers do
-    /// not expose half-written individual files. This helper is still best-effort across multiple
-    /// artifacts: if a later rename fails, earlier files may already be visible at their final
-    /// paths and the error is returned to the caller.
+    /// not expose half-written individual files. Directory outputs replace an existing directory
+    /// at the final path before the rename only for explicitly supported directory-backed formats,
+    /// such as Zarr. This helper is still best-effort across multiple artifacts: if a later move
+    /// fails, earlier artifacts may already be visible at their final paths and the error is
+    /// returned to the caller.
     pub(crate) fn move_into_place(self) -> Result<()> {
         for (temp_path, final_path) in self.paths {
             move_output_file_into_place(&temp_path, &final_path)?;
@@ -257,8 +260,31 @@ fn output_path_in_dir(directory: &Path, final_path: &Path) -> Result<PathBuf> {
     Ok(directory.join(file_name.as_ref()))
 }
 
-/// Move a fully written output file into place.
+/// Move a fully written output artifact into place.
+///
+/// File outputs rely on platform rename behavior. Directory outputs cannot be renamed over an
+/// existing directory, so an existing final directory is removed first after validating that the
+/// path has an explicitly supported directory-backed output extension. Replacing a file with a
+/// directory is treated as an error because that usually means the output contract changed or the
+/// destination path is wrong.
 fn move_output_file_into_place(temp_path: &Path, final_path: &Path) -> Result<()> {
+    if temp_path.is_dir() && final_path.exists() {
+        if final_path.is_dir() {
+            ensure_safe_directory_replacement_path(final_path)?;
+            std::fs::remove_dir_all(final_path).with_context(|| {
+                format!(
+                    "removing previous output directory {}",
+                    final_path.display()
+                )
+            })?;
+        } else {
+            anyhow::bail!(
+                "cannot replace output file {} with output directory {}",
+                final_path.display(),
+                temp_path.display()
+            );
+        }
+    }
     std::fs::rename(temp_path, final_path).with_context(|| {
         format!(
             "moving output file {} to {}",
@@ -266,6 +292,41 @@ fn move_output_file_into_place(temp_path: &Path, final_path: &Path) -> Result<()
             final_path.display()
         )
     })
+}
+
+fn ensure_safe_directory_replacement_path(final_path: &Path) -> Result<()> {
+    anyhow::ensure!(
+        final_path.file_name().is_some(),
+        "refusing to replace output directory {} because it has no final path component",
+        final_path.display()
+    );
+    anyhow::ensure!(
+        has_replaceable_directory_extension(final_path),
+        "refusing to replace output directory {} because its extension is not one of: {}",
+        final_path.display(),
+        REPLACEABLE_DIRECTORY_EXTENSIONS.join(", ")
+    );
+    let canonical_path = final_path
+        .canonicalize()
+        .with_context(|| format!("canonicalizing output directory {}", final_path.display()))?;
+    anyhow::ensure!(
+        canonical_path.file_name().is_some(),
+        "refusing to replace output directory {} because it resolves to {}",
+        final_path.display(),
+        canonical_path.display()
+    );
+    Ok(())
+}
+
+fn has_replaceable_directory_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| {
+            REPLACEABLE_DIRECTORY_EXTENSIONS
+                .iter()
+                .any(|allowed| extension.eq_ignore_ascii_case(allowed))
+        })
+        .unwrap_or(false)
 }
 
 #[cfg(test)]

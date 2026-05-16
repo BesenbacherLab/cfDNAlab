@@ -78,11 +78,13 @@ The fixture should be tiny but structurally complete:
 ```text
 counts[group, length_bin, position]
 group_name[group]
+group_name_utf8[group, max_name_bytes]
+group_name_nbytes[group]
 eligible_intervals[group]
 length_start_bp[length_bin]
 length_end_bp[length_bin]
-position_start_bp[position]
-position_end_bp[position]
+position_bin_start_bp[position]
+position_bin_end_bp[position]
 ```
 
 Use at least:

@@ -42,8 +42,6 @@ use flate2::read::MultiGzDecoder;
 use ndarray::Array3;
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
 use ndarray::array;
-#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
-use ndarray_npy::read_npy as read_npy_midpoints;
 use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::record::Aux;
 use rust_htslib::bam::{self, Read};
@@ -55,6 +53,8 @@ use tempfile::TempDir;
 
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_lengths"))]
 use fixtures::read_length_counts_tsv;
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
+use fixtures::read_midpoint_zarr_counts;
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_fcoverage"))]
 use fixtures::read_zst_to_string;
 #[cfg(feature = "cmd_bam_to_frag")]
@@ -2830,11 +2830,11 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_midpoints_then_roundtrip_mat
 
     // Assert
     let original_arr: Array3<f32> =
-        read_npy_midpoints(original_out.path().join("origmid.midpoint_profiles.npy"))?;
-    let restored_arr: Array3<f32> = read_npy_midpoints(
+        read_midpoint_zarr_counts(original_out.path().join("origmid.midpoint_profiles.zarr"))?;
+    let restored_arr: Array3<f32> = read_midpoint_zarr_counts(
         restored_out
             .path()
-            .join("restoredmid.midpoint_profiles.npy"),
+            .join("restoredmid.midpoint_profiles.zarr"),
     )?;
     let original_groups = fs::read_to_string(original_out.path().join("origmid.group_index.tsv"))?;
     let restored_groups =
@@ -2999,15 +2999,15 @@ fn given_bam_to_frag_gc_weights_then_frag_to_bam_then_midpoints_gc_tag_matches_o
     run_midpoints(&restored_midpoints_cfg)?;
 
     // Assert
-    let original_arr: Array3<f32> = read_npy_midpoints(
+    let original_arr: Array3<f32> = read_midpoint_zarr_counts(
         original_midpoints_out
             .path()
-            .join("origsites.midpoint_profiles.npy"),
+            .join("origsites.midpoint_profiles.zarr"),
     )?;
-    let restored_arr: Array3<f32> = read_npy_midpoints(
+    let restored_arr: Array3<f32> = read_midpoint_zarr_counts(
         restored_midpoints_out
             .path()
-            .join("restoredsites.midpoint_profiles.npy"),
+            .join("restoredsites.midpoint_profiles.zarr"),
     )?;
     let restored_tags = read_aux_tags(&output_bam_path(frag_to_bam_out.path(), "restored"))?;
 
@@ -3196,15 +3196,15 @@ fn given_bam_to_frag_real_non_neutral_gc_then_frag_to_bam_then_midpoints_gc_tag_
     run_midpoints(&restored_midpoints_cfg)?;
 
     // Assert
-    let original_arr: Array3<f32> = read_npy_midpoints(
+    let original_arr: Array3<f32> = read_midpoint_zarr_counts(
         original_midpoints_out
             .path()
-            .join("origsites.midpoint_profiles.npy"),
+            .join("origsites.midpoint_profiles.zarr"),
     )?;
-    let restored_arr: Array3<f32> = read_npy_midpoints(
+    let restored_arr: Array3<f32> = read_midpoint_zarr_counts(
         restored_midpoints_out
             .path()
-            .join("restoredsites.midpoint_profiles.npy"),
+            .join("restoredsites.midpoint_profiles.zarr"),
     )?;
     let restored_tags = read_aux_tags(&output_bam_path(frag_to_bam_out.path(), "restored"))?;
 

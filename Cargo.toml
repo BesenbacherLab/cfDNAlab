@@ -90,6 +90,7 @@ tempfile = "3.20.0"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["fmt"] }
 twobit = "0.2.2"
+zarrs = "0.23.11"
 zip = { version = "4.6.1", default-features = false, features = ["deflate"] }
 zstd = { version = "0.13.3", features = ["zstdmt"] }
 

@@ -7,13 +7,42 @@ harder to misinterpret than raw arrays plus loosely related sidecars.
 ## Current Direction
 
 - `lengths`: settled as a wide compressed TSV plus settings JSON.
-- `midpoints`: next output-format target. The natural output is a labeled
-  three-dimensional array.
+- `midpoints`: first Zarr implementation is in place on the development branch.
+  The next step is downstream loading examples in R and Python.
 - `ends`: later target. Dense motif arrays and sparse motif arrays should move
   together so users do not have to learn both Zarr and SciPy-style `.npz` for the
   same command family.
+- Commands without a human-readable settings JSON should get one for
+  consistency.
 - Internal temporary files can keep their current formats unless a separate
   performance or correctness reason appears.
+
+## Command Settings JSON
+
+Every public analysis command should write a plain JSON settings file. This file
+is for human-readable command provenance and interpretation. Users should not
+need to open a Zarr store, inspect a binary package, or parse a log file just to
+understand the major settings that produced an output.
+
+Recommended naming:
+
+```text
+<prefix>.<command>_settings.json
+```
+
+Examples:
+
+```text
+<prefix>.length_settings.json
+<prefix>.midpoint_settings.json
+<prefix>.end_settings.json
+```
+
+The JSON should record command-level settings, selected modes, key filters,
+normalization flags, and enough schema information to understand the primary
+output. It can duplicate axis summaries that also exist as TSV columns or Zarr
+coordinate arrays. The machine-readable primary output remains authoritative for
+the actual data and coordinates.
 
 ## Lengths Status
 
@@ -41,13 +70,16 @@ new use case changes the requirements.
 
 ## Midpoints Design Target
 
-`cfdna midpoints` currently writes:
+`cfdna midpoints` now writes on the development branch:
 
 ```text
-<prefix>.midpoint_profiles.npy
+<prefix>.midpoint_profiles.zarr/
 <prefix>.group_index.tsv
-<prefix>.midpoint_profile_settings.json
+<prefix>.midpoint_settings.json
 ```
+
+The settings file remains a plain, human-readable JSON file. Users should be
+able to inspect command settings and provenance without opening the Zarr store.
 
 The main array has shape:
 
@@ -60,42 +92,49 @@ multidimensional and because axis metadata is required for correct analysis.
 
 ### Recommended Public Package
 
-Prefer one self-contained output directory:
+Prefer one primary Zarr output plus one human-readable settings file:
 
 ```text
 <prefix>.midpoint_profiles.zarr/
+<prefix>.midpoint_settings.json
 ```
 
 Core arrays:
 
 ```text
 counts                  float32[group, length_bin, position]
-group_id                uint64[group]
-eligible_intervals      uint64[group]
+group                   int32[group]
+group_name              string[group]
+eligible_intervals      uint32[group]
 length_start_bp         uint32[length_bin]
 length_end_bp           uint32[length_bin]
-position_start_bp       int32[position]
-position_end_bp         int32[position]
+position_bin_start_bp   int32[position]
+position_bin_end_bp     int32[position]
 ```
 
-The group-name storage needs a small compatibility spike before locking the
-contract. The preferred version is:
-
-```text
-group_name              string[group]
-```
-
-If R string-array support is not reliable across the chosen Zarr version and
-codec, use an explicit byte representation instead:
+The current implementation also writes explicit byte storage for group names as
+a temporary compatibility fallback:
 
 ```text
 group_name_utf8         uint8[group, max_name_bytes]
 group_name_nbytes       uint32[group]
 ```
 
-Do not keep `group_idx` as a public join key if the Zarr package can expose
-`group_name` directly. `group_id` is still useful internally and for stable row
-identity, but users should not need it for normal plotting.
+Release blocker: before the next release, decide whether `group_name[group]`
+encoded as Zarr `string` plus `vlen-utf8` is supported well enough by the target
+Python and R readers. If yes, remove the byte fallback and document
+`group_name` as the only public group-name array. If no, keep the fallback and
+provide copy-paste decoding helpers in the R/Python docs. Do not ship the final
+format with this undecided.
+
+`group` is the same zero-based `group_idx` used by `<prefix>.group_index.tsv`
+and by axis 0 of `counts`. The writer must reject non-contiguous group indices
+because otherwise metadata rows could describe the wrong count rows.
+
+The Zarr package should be self-contained for downstream analysis. The
+plain-text `group_index.tsv` can remain as an auxiliary human-readable summary,
+but users should not need it for normal plotting once the Zarr reader examples
+are settled.
 
 ### Root Metadata
 
@@ -107,16 +146,17 @@ Root attrs should record the interpretation contract:
   "cfdnalab_schema_version": 1,
   "primary_array": "counts",
   "dimension_names": ["group", "length_bin", "position"],
-  "count_units": "weighted_midpoint_count",
-  "settings": {
-    "...": "current midpoint_profile_settings.json content"
-  }
+  "count_units": "weighted_midpoint_count"
 }
 ```
 
-The settings JSON can move into root attrs or stay as a JSON file inside the
-package during the transition. The important point is that the package is one
-unit: users should not have to manually discover sibling files.
+Do not move general command settings into Zarr attrs. Keep them in
+`<prefix>.midpoint_settings.json` so the run can be inspected without any Zarr
+reader. The Zarr store should carry the arrays and small attrs needed for
+downstream analysis. The JSON file should carry human-readable command settings,
+provenance, and interpretation notes. Some duplication is acceptable when it
+improves human readability, but the Zarr arrays remain the machine-readable
+source for axis coordinates.
 
 The store should also be written with the dimension metadata expected by the
 target Python reader. For xarray, a raw Zarr group is not enough. Each array must
@@ -128,15 +168,15 @@ dataset instead of failing or exposing anonymous axes.
 The position axis should use half-open interval-relative bins:
 
 ```text
-position_start_bp[position]
-position_end_bp[position]
+position_bin_start_bp[position]
+position_bin_end_bp[position]
 ```
 
 For `--bin-size 1`, this is equivalent to base offsets:
 
 ```text
-position_start_bp = 0, 1, 2, ...
-position_end_bp   = 1, 2, 3, ...
+position_bin_start_bp = 0, 1, 2, ...
+position_bin_end_bp   = 1, 2, 3, ...
 ```
 
 For larger `--bin-size`, it records the actual output bins, including a shorter
@@ -193,8 +233,8 @@ group_name
 eligible_intervals
 length_start_bp
 length_end_bp
-position_start_bp
-position_end_bp
+position_bin_start_bp
+position_bin_end_bp
 ```
 
 Docs must tell users to subset before converting a full 3D array to a dataframe.
@@ -215,8 +255,8 @@ group_name <- profiles[["group_name"]][1:10]
 eligible_intervals <- profiles[["eligible_intervals"]][1:10]
 length_start_bp <- profiles[["length_start_bp"]][]
 length_end_bp <- profiles[["length_end_bp"]][]
-position_start_bp <- profiles[["position_start_bp"]][]
-position_end_bp <- profiles[["position_end_bp"]][]
+position_bin_start_bp <- profiles[["position_bin_start_bp"]][]
+position_bin_end_bp <- profiles[["position_bin_end_bp"]][]
 ```
 
 If the final R reader is `Rarr` or `ZarrArray` instead of `zarr`, adjust the docs

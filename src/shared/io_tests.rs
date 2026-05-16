@@ -80,3 +80,57 @@ fn final_output_files_moves_all_recorded_files_after_temp_writes() -> Result<()>
 
     Ok(())
 }
+
+#[test]
+fn move_output_file_replaces_existing_directory_output() -> Result<()> {
+    let root = TempDir::new()?;
+    let temp_path = root.path().join("temp.zarr");
+    let final_path = root.path().join("sample.zarr");
+    fs::create_dir(&temp_path)?;
+    fs::create_dir(&final_path)?;
+    fs::write(temp_path.join("zarr.json"), "new\n")?;
+    fs::write(final_path.join("zarr.json"), "old\n")?;
+
+    move_output_file_into_place(&temp_path, &final_path)?;
+
+    assert!(!temp_path.exists());
+    assert_eq!(fs::read_to_string(final_path.join("zarr.json"))?, "new\n");
+    Ok(())
+}
+
+#[test]
+fn move_output_file_rejects_directory_replacement_without_filename() -> Result<()> {
+    let root = TempDir::new()?;
+    let temp_path = root.path().join("temp.zarr");
+    fs::create_dir(&temp_path)?;
+
+    let err = move_output_file_into_place(&temp_path, Path::new("."))
+        .expect_err("directory replacement without a filename should fail");
+
+    assert!(
+        err.to_string().contains("no final path component"),
+        "unexpected error: {err:#}"
+    );
+    assert!(temp_path.exists());
+    Ok(())
+}
+
+#[test]
+fn move_output_file_rejects_directory_replacement_without_allowed_extension() -> Result<()> {
+    let root = TempDir::new()?;
+    let temp_path = root.path().join("temp.zarr");
+    let final_path = root.path().join("sample.output_dir");
+    fs::create_dir(&temp_path)?;
+    fs::create_dir(&final_path)?;
+
+    let err = move_output_file_into_place(&temp_path, &final_path)
+        .expect_err("directory replacement without an allowed extension should fail");
+
+    assert!(
+        err.to_string().contains("extension is not one of"),
+        "unexpected error: {err:#}"
+    );
+    assert!(temp_path.exists());
+    assert!(final_path.exists());
+    Ok(())
+}

@@ -15,15 +15,17 @@ use cfdnalab::commands::ref_gc_bias::{
 use cfdnalab::shared::positioning::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
 use cfdnalab::shared::reference::twobit_contig_lengths;
-use ndarray::Array2;
+use ndarray::{Array2, Array3};
 use rust_htslib::bam::{self, header::HeaderRecord, record::Cigar, record::CigarString};
 use std::{
     fs::{File, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 use tempfile::TempDir;
 use twobit::convert::{fasta::FastaReader, to_2bit};
+use zarrs::{array::Array, filesystem::FilesystemStore};
 use zstd::stream::read::Decoder as ZstdDecoder;
 
 const FLAG_FIRST_MATE: u16 = 0x40;
@@ -35,6 +37,54 @@ pub const LONG_FRAGMENT_LENGTH: i64 = 600;
 pub const LONG_FRAGMENT_READ_LENGTH: i64 = 100;
 pub const LONG_FRAGMENT_STARTS: [i64; 10] =
     [0, 400, 800, 1_200, 1_600, 2_000, 2_400, 2_800, 3_200, 3_600];
+
+/// Read the `counts` array from a midpoint Zarr output.
+pub fn read_midpoint_zarr_counts<P: AsRef<Path>>(store_path: P) -> Result<Array3<f32>> {
+    let array = open_zarr_array(store_path.as_ref(), "/counts")?;
+    let shape = array.shape();
+    ensure!(
+        shape.len() == 3,
+        "expected midpoint Zarr counts to be rank 3 but found rank {}",
+        shape.len()
+    );
+    let values: Vec<f32> = array
+        .retrieve_array_subset(&array.subset_all())
+        .context("reading midpoint Zarr counts")?;
+    let shape = (
+        usize::try_from(shape[0]).context("group dimension exceeds usize")?,
+        usize::try_from(shape[1]).context("length_bin dimension exceeds usize")?,
+        usize::try_from(shape[2]).context("position dimension exceeds usize")?,
+    );
+    Array3::from_shape_vec(shape, values).context("building midpoint count array from Zarr values")
+}
+
+/// Read a one-dimensional signed-integer array from a midpoint Zarr output.
+pub fn read_midpoint_zarr_i32_1d<P: AsRef<Path>>(
+    store_path: P,
+    array_path: &str,
+) -> Result<Vec<i32>> {
+    let array = open_zarr_array(store_path.as_ref(), array_path)?;
+    ensure!(
+        array.shape().len() == 1,
+        "expected midpoint Zarr array {array_path} to be rank 1"
+    );
+    array
+        .retrieve_array_subset(&array.subset_all())
+        .with_context(|| format!("reading midpoint Zarr array {array_path}"))
+}
+
+fn open_zarr_array(store_path: &Path, array_path: &str) -> Result<Array<FilesystemStore>> {
+    let store = Arc::new(
+        FilesystemStore::new(store_path)
+            .with_context(|| format!("opening Zarr store {}", store_path.display()))?,
+    );
+    Array::open(store, array_path).with_context(|| {
+        format!(
+            "opening Zarr array {array_path} in {}",
+            store_path.display()
+        )
+    })
+}
 
 #[derive(Debug)]
 pub struct BamFixture {

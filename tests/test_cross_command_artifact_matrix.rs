@@ -30,10 +30,10 @@ use cfdnalab::shared::{indel_mode::IndelMode, io::dot_join};
 use fixtures::{
     BamFixture, TwoBitFixture, bam_from_specs, build_real_neutral_gc_package,
     build_real_neutral_gc_package_for_range, paired_fragment, read_length_counts_tsv,
-    read_zst_to_string, simple_inward_bam, simple_reference_twobit, write_bed,
+    read_midpoint_zarr_counts, read_zst_to_string, simple_inward_bam, simple_reference_twobit,
+    write_bed,
 };
 use ndarray::{Array2, Array3};
-use ndarray_npy::read_npy;
 use rust_htslib::bam::{Read, Reader, record::Aux};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -377,8 +377,8 @@ fn midpoints_consumes_shared_real_artifacts_with_expected_profile_mass() -> Resu
     run_midpoints(&cfg)?;
 
     // Assert
-    let counts_path = out_dir.join("sites.midpoint_profiles.npy");
-    let arr: Array3<f32> = read_npy(&counts_path)?;
+    let counts_path = out_dir.join("sites.midpoint_profiles.zarr");
+    let arr: Array3<f32> = read_midpoint_zarr_counts(&counts_path)?;
     assert_eq!(arr.shape(), &[1, 1, 11]);
     for (position, value) in arr.slice(ndarray::s![0, 0, ..]).iter().enumerate() {
         let expected = if position == 5 {

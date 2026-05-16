@@ -65,11 +65,12 @@
 
 ## Output Contract
 
-- Main output is `<prefix>.midpoint_profiles.npy` with shape `(group, length_bin, position)`.
+- Main output is `<prefix>.midpoint_profiles.zarr/`. Its primary `counts` array has shape `(group, length_bin, position)` and stores `f32` weighted midpoint counts.
+- The Zarr store also carries coordinate and metadata arrays for `group`, `group_name`, `length_bin`, `position`, `eligible_intervals`, `length_start_bp`, `length_end_bp`, `position_bin_start_bp`, `position_bin_end_bp`, and temporary UTF-8 byte fallback arrays for group names. The `group` coordinate is the same zero-based `group_idx` used by `<prefix>.group_index.tsv` and axis 0 of `counts`.
 - The command writes one selected profile output. Users who want multiple transforms, such as unsmoothed and smoothed profiles, should run the command with separate output prefixes.
 - Group index output is `<prefix>.group_index.tsv` with columns `group_idx`, `group_name`, and `eligible_intervals`.
 - `eligible_intervals` is the number of intervals retained in each group after chromosome filtering and interval-level blacklist prefiltering. It is independent of fragment overlap, so an interval still counts when no fragment midpoint lands inside it.
-- Settings output is `<prefix>.midpoint_profile_settings.json`. It records array axes, length-bin edges, output interval length, counted interval length, final position bin size, bin aggregation, last bin width, smoothing method, smoothing window, smoothing order, computation flank, correction flags, and interval blacklist prefilter state and margin.
+- Settings output is `<prefix>.midpoint_settings.json`. It records array axes, length-bin edges, output interval length, counted interval length, final position bin size, bin aggregation, last bin width, smoothing method, smoothing window, smoothing order, computation flank, correction flags, and interval blacklist prefilter state and margin.
 - With the `plotters` feature, selected group indices can emit quick QC line plots and length-bin heatmaps.
 - Run statistics include counted fragments, intervals after chromosome filtering, blacklist-prefiltered intervals, intervals retained for counting, blacklist exclusions, and GC failure summaries when relevant. When interval blacklist prefiltering is active, the reported run statistics also include the prefilter margin.
 

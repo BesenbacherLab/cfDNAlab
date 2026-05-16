@@ -174,7 +174,7 @@ fn write_sparse_profile_partial_file_npz(
 /// Dense midpoint profile accumulator used for final output.
 ///
 /// This type owns the dense count vector that eventually becomes
-/// `<prefix>.midpoint_profiles.npy`. During current midpoint runs, per-tile counting uses
+/// `<prefix>.midpoint_profiles.zarr`. During current midpoint runs, per-tile counting uses
 /// `SparseProfileGroupsCounts` to reduce temporary file size, then sparse partial files are merged
 /// into one `ProfileGroupsCounts` before writing the public dense output.
 ///

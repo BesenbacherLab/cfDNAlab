@@ -71,7 +71,7 @@ fn midpoint_settings_json_records_savgol_and_final_position_binning() {
     // so counting spans 13 bp. Final 3 bp binning yields three position bins, where the last bin
     // averages one retained base because 7 = 3 + 3 + 1.
     let temp = TempDir::new().expect("temp dir should be created");
-    let settings_path = temp.path().join("sites.midpoint_profile_settings.json");
+    let settings_path = temp.path().join("sites.midpoint_settings.json");
     let mut config = settings_test_config();
     config.set_smoothing(MidpointSmoothing::SavGol { window_bp: 7 });
     config.set_bin_size(3);
@@ -82,7 +82,7 @@ fn midpoint_settings_json_records_savgol_and_final_position_binning() {
         .expect("profile layout should resolve for 7 bp SavGol over a 7 bp interval");
 
     // Act
-    super::write_midpoint_profile_settings_json(
+    super::write_midpoint_settings_json(
         &settings_path,
         &config,
         &length_axis,
@@ -135,7 +135,7 @@ fn midpoint_settings_json_records_unsmoothed_explicit_length_edges_without_savgo
     // identical to the public interval. Explicit non-uniform length edges must be written back as
     // explicit edges so downstream readers do not infer a fake step size.
     let temp = TempDir::new().expect("temp dir should be created");
-    let settings_path = temp.path().join("raw.midpoint_profile_settings.json");
+    let settings_path = temp.path().join("raw.midpoint_settings.json");
     let mut config = settings_test_config();
     config.set_smoothing(MidpointSmoothing::None);
     let length_axis =
@@ -144,7 +144,7 @@ fn midpoint_settings_json_records_unsmoothed_explicit_length_edges_without_savgo
         .expect("unsmoothed profile layout should resolve");
 
     // Act
-    super::write_midpoint_profile_settings_json(
+    super::write_midpoint_settings_json(
         &settings_path,
         &config,
         &length_axis,

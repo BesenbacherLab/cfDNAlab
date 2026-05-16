@@ -11,6 +11,12 @@ more self-contained formats for a better and safer experience.
  - `cfdna lengths` now outputs a wide-format TSV (`.tsv.gz`) file with one row per window/group.
  - `cfdna lengths` writes command settings to `length_settings.json`.
  - `cfdna lengths` adds `--decimals` to control written count precision.
+ - `cfdna midpoints` now outputs profiles as a self-contained Zarr store at `midpoint_profiles.zarr`.
+ - `cfdna midpoints` writes command settings to `midpoint_settings.json`.
+
+**Other changes**:
+
+- Adds `zarr=0.23.11` dependency.
 
 ## cfDNAlab 0.1.0
 

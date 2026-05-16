@@ -482,7 +482,7 @@ fn midpoints_cli_minimal_invocation_writes_profiles_and_group_index() -> Result<
     // Assert
     let profiles_path = out_dir
         .path()
-        .join(format!("{output_prefix}.midpoint_profiles.npy"));
+        .join(format!("{output_prefix}.midpoint_profiles.zarr"));
     let group_index_path = out_dir
         .path()
         .join(format!("{output_prefix}.group_index.tsv"));
