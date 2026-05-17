@@ -113,6 +113,15 @@ const config = {
     }
   },
 
+  scripts: [
+    // Site analytics with no tracking etc.
+    {
+      src: 'https://gc.zgo.at/count.js',
+      async: true,
+      'data-goatcounter': 'https://cfdnalab.goatcounter.com/count'
+    }
+  ],
+
   headTags: [
     {
       tagName: 'meta',
