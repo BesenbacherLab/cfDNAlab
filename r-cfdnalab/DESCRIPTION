@@ -13,7 +13,7 @@ Description: Helpers for loading cfDNAlab Zarr outputs into R data frames,
     arrays, and sparse matrices. This package does not install or wrap the
     cfDNAlab command-line tool.
 License: MIT + file LICENSE
-URL: https://github.com/BesenbacherLab/cfDNAlab/r-cfdnalab
+URL: https://github.com/BesenbacherLab/cfDNAlab/tree/main/r-cfdnalab
 BugReports: https://github.com/BesenbacherLab/cfDNAlab/issues
 Encoding: UTF-8
 LazyData: true

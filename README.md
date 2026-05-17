@@ -23,7 +23,7 @@ Works on cfDNA **fragments** from either *paired-end* sequencing data or unpaire
 
 The commands are **highly flexible** with many options and good default settings. Start with the simple [examples](#examples) in this README and then check the full guides in the [docs](https://cfdnalab.tools/).
 
-Load the `Zarr` outputs with the **accompanying [R](/r-cfdnalab) and [Python](/py-cfdnalab) packages** for easier downstream usage (*installed separately*).
+Load the `Zarr` outputs with the **accompanying [R](https://github.com/BesenbacherLab/cfDNAlab/tree/main/r-cfdnalab) and [Python](https://github.com/BesenbacherLab/cfDNAlab/tree/main/py-cfdnalab) packages** for easier downstream usage (*installed separately*).
 
 **Workflow-safe outputs**: The output files are only moved to their final location once all files have been fully written, so workflow managers don't confuse partially written files as successful completion.
 
@@ -762,12 +762,12 @@ Most commands write one of these output types:
 
 | Format          | Use                            | Read with                                                |
 | --------------- | ------------------------------ | -------------------------------------------------------- |
-| `.zarr`         | array(s) with meta data        | Our [R](/r-cfdnalab) and [Python](/py-cfdnalab) packages |
+| `.zarr`         | array(s) with meta data        | Our [R](https://github.com/BesenbacherLab/cfDNAlab/tree/main/r-cfdnalab) and [Python](https://github.com/BesenbacherLab/cfDNAlab/tree/main/py-cfdnalab) packages |
 | `.tsv.zst`      | tabular outputs                | `zstdcat`, Pandas in Python, fread in R                  |
 | `.bedgraph.zst` | positional tracks              | `zstdcat`, Convert to bigWig                             |
 | `.json`, `.txt` | settings and auxiliary outputs | any text reader                                          |
 
-The Zarr directories can be read with our [R](/r-cfdnalab) and [Python](/py-cfdnalab) packages (*installed separately*):
+The Zarr directories can be read with our [R](https://github.com/BesenbacherLab/cfDNAlab/tree/main/r-cfdnalab) and [Python](https://github.com/BesenbacherLab/cfDNAlab/tree/main/py-cfdnalab) packages (*installed separately*):
 
 Python:
 

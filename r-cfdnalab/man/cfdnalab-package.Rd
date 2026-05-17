@@ -17,7 +17,7 @@ The command-line tool that creates the output files is located at
 \seealso{
 Useful links:
 \itemize{
-  \item \url{https://github.com/BesenbacherLab/cfDNAlab/r-cfdnalab}
+  \item \url{https://github.com/BesenbacherLab/cfDNAlab/tree/main/r-cfdnalab}
   \item Report bugs at \url{https://github.com/BesenbacherLab/cfDNAlab/issues}
 }
 

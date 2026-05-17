@@ -32,7 +32,7 @@ cfdna ends \
   --by-size 1000000 \
   --k-inside 2 \
   --k-outside 2 \
-  --gc-file <sample_directory>/gc_bias/gc_bias_correction.zarr \
+  --gc-file <sample_directory>/gc_bias/<sample_id>.gc_bias_correction.zarr \
   --ref-2bit <path>/hg38.2bit
 ```
 
@@ -49,7 +49,7 @@ cfdna ends \
   --by-size 1000000 \
   --k-inside 2 \
   --k-outside 2 \
-  --scaling-factors <sample_directory>/coverage_weights/<sample_id>.scaling_factors.tsv
+  --scaling-factors <sample_directory>/scaling_factors/<sample_id>.fragment_counts.scaling_factors.tsv
 ```
 
 ## GC-bias correction + genomic smoothing
@@ -65,9 +65,51 @@ cfdna ends \
   --by-size 1000000 \
   --k-inside 2 \
   --k-outside 2 \
-  --gc-file <sample_directory>/gc_bias/gc_bias_correction.zarr \
+  --gc-file <sample_directory>/gc_bias/<sample_id>.gc_bias_correction.zarr \
   --ref-2bit <path>/hg38.2bit \
-  --scaling-factors <sample_directory>/coverage_weights/<sample_id>.scaling_factors.tsv
+  --scaling-factors <sample_directory>/scaling_factors/<sample_id>.fragment_counts.scaling_factors.tsv
+```
+
+## Downstream usage
+
+`cfdna ends` writes `<sample_id>.end_motifs.zarr`. The helper packages give a smaller user-facing API than working with the Zarr arrays directly.
+
+In Python:
+
+```python
+import cfdnalab as cfl
+
+ends = cfl.read_end_motifs("<sample_id>.end_motifs.zarr")
+
+print(ends.storage_mode())
+print(ends.row_mode())
+print(ends.motif_metadata().head())
+
+motif = ends.motifs()[0]
+if ends.storage_mode() == "sparse_coo":
+    nonzero_counts = ends.sparse_coo_data_frame()
+    motif_counts = nonzero_counts[nonzero_counts["motif"] == motif]
+else:
+    motif_counts = ends.dense_data_frame_for_motif(motif)
+```
+
+In R:
+
+```r
+library(cfdnalab)
+
+ends <- read_end_motifs("<sample_id>.end_motifs.zarr")
+
+storage_mode(ends)
+row_mode(ends)
+head(motifs(ends))
+
+motif <- motifs(ends)$motif[[1]]
+if (storage_mode(ends) == "sparse_coo") {
+  motif_counts <- sparse_data_frame_for_motif(ends, motif)
+} else {
+  motif_counts <- dense_data_frame_for_motif(ends, motif)
+}
 ```
 
 ## Handling clipped ends
