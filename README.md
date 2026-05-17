@@ -34,8 +34,6 @@ Suggest a tool or feature [here](https://github.com/BesenbacherLab/cfDNAlab/issu
 
 ## Installation
 
-### Compile from source
-
 You may need a few dependencies that can be installed as a conda environment with:
 
 ```bash
@@ -46,12 +44,13 @@ conda activate cfdnalab
 Compile and install:
 
 ```bash
+# Install latest release
+cargo install cfdnalab
+cfdna --help
+
+# Latest development version
 cargo install --git https://github.com/BesenbacherLab/cfDNAlab
 cfdna --help
-# or clone + build
-git clone https://github.com/BesenbacherLab/cfDNAlab
-cd cfdnalab && cargo build --release
-target/release/cfdna --help
 ```
 
 <br>
@@ -78,7 +77,7 @@ The following commands are currently available:
 `cfdna fcoverage`, `cfdna midpoints`, `cfdna ends`, `cfdna lengths`, `cfdna gc-bias`, `cfdna ref-gc-bias`, `cfdna fragment-count-weights`, `cfdna coverage-weights`, `cfdna bam-to-bam`, `cfdna bam-to-frag`, `cfdna frag-to-bam`.
 
 <p align="center">
-  <img src="cfdnalab_command_overview.png" height="450" alt="Overview of main commands" />
+  <img src="cfdnalab_command_overview.png" width="100%" alt="Overview of main commands" />
 </p>  
 <p align="center">
   <b>Figure 1</b>: Overview of the main commands and input files. Non-exhaustive.
