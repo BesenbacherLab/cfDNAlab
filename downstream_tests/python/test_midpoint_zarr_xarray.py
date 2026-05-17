@@ -20,12 +20,13 @@ def test_xarray_opens_counts_with_named_dimensions(midpoint_zarr_path: Path) -> 
 def test_xarray_builds_dataframe_for_one_group(midpoint_zarr_path: Path) -> None:
     dataset = xr.open_zarr(str(midpoint_zarr_path), consolidated=False)
     group_index = 0
+    group_names = dataset["group"].attrs["labels"]
     profile = dataset["counts"].isel(group=group_index).values
     length_index, position_index = np.indices(profile.shape)
 
     frame = pd.DataFrame(
         {
-            "group_name": str(dataset["group_name"].isel(group=group_index).values),
+            "group_name": group_names[group_index],
             "eligible_intervals": int(
                 dataset["eligible_intervals"].isel(group=group_index).values
             ),

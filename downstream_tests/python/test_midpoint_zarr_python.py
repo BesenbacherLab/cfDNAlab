@@ -30,10 +30,6 @@ EXPECTED_COUNTS = np.array(
 EXPECTED_ARRAYS = {
     "counts",
     "group",
-    "group_name",
-    "group_name_utf8",
-    "group_name_nbytes",
-    "group_name_byte",
     "eligible_intervals",
     "length_bin",
     "length_start_bp",
@@ -57,10 +53,8 @@ def test_python_zarr_reads_midpoint_profile_schema(midpoint_zarr_path: Path) -> 
         "length_bin",
         "position",
     )
-    assert tuple(store["group_name_utf8"].metadata.dimension_names) == (
-        "group",
-        "group_name_byte",
-    )
+    assert store["group"].attrs["label_field"] == "group_name"
+    assert store["group"].attrs["labels"] == ["alpha", "beta-site", "gamma_long"]
     np.testing.assert_allclose(store["counts"][:], EXPECTED_COUNTS)
     np.testing.assert_array_equal(store["group"][:], np.array([0, 1, 2], dtype=np.int32))
     np.testing.assert_array_equal(
@@ -91,36 +85,20 @@ def test_python_zarr_reads_midpoint_profile_schema(midpoint_zarr_path: Path) -> 
         store["position_bin_end_bp"][:],
         np.array([2, 4, 6, 8, 10], dtype=np.int32),
     )
-    np.testing.assert_array_equal(
-        store["group_name_nbytes"][:],
-        np.array([5, 9, 10], dtype=np.uint32),
-    )
-    np.testing.assert_array_equal(
-        store["group_name_byte"][:],
-        np.arange(10, dtype=np.int32),
-    )
-    assert store["group_name"][:].tolist() == ["alpha", "beta-site", "gamma_long"]
-
-    group_name_utf8 = store["group_name_utf8"][:]
-    group_name_nbytes = store["group_name_nbytes"][:]
-    fallback_names = [
-        bytes(
-            group_name_utf8[group_index, : int(group_name_nbytes[group_index])]
-        ).decode("utf-8")
-        for group_index in range(group_name_utf8.shape[0])
-    ]
-    assert fallback_names == ["alpha", "beta-site", "gamma_long"]
 
 
-def test_python_zarr_builds_plotting_dataframe_for_one_group(midpoint_zarr_path: Path) -> None:
+def test_python_zarr_builds_plotting_dataframe_for_one_group(
+    midpoint_zarr_path: Path,
+) -> None:
     store = zarr.open_group(str(midpoint_zarr_path), mode="r", zarr_format=3)
     group_index = 1
+    group_names = store["group"].attrs["labels"]
     profile = store["counts"][group_index, :, :]
     length_index, position_index = np.indices(profile.shape)
 
     frame = pd.DataFrame(
         {
-            "group_name": store["group_name"][group_index],
+            "group_name": group_names[group_index],
             "eligible_intervals": int(store["eligible_intervals"][group_index]),
             "length_start_bp": store["length_start_bp"][:][length_index.ravel()],
             "length_end_bp": store["length_end_bp"][:][length_index.ravel()],

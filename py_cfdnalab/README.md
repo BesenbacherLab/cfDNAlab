@@ -124,6 +124,7 @@ For dense output, the `dense_data_frame*()` methods are usually the most conveni
 
 ```python
 motifs = ends.motif_metadata()
+ends.has_motif("_AA")
 ```
 
 `load_end_motifs()` returns a mode-specific object.

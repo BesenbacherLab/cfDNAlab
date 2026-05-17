@@ -186,12 +186,12 @@ output files:
 
 ```bash
 # local or CI-equivalent
-cargo test --no-default-features --features cmd_midpoints \
-  --test generate_downstream_midpoint_fixture \
-  -- --ignored --exact generate_midpoint_zarr_fixture_with_cfdnalab
+cargo test --no-default-features --features cmd_midpoints,cmd_ends \
+  --test generate_downstream_zarr_fixtures \
+  -- --ignored
 ```
 
-Then run the downstream Python and R reader checks against the generated store.
+Then run the downstream Python and R reader checks against the generated stores.
 
 The downstream fixture must be produced by cfDNAlab itself. A hand-authored Zarr
 fixture is not enough for release validation because it cannot catch writer

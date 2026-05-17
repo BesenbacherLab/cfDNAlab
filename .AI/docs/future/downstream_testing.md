@@ -29,30 +29,35 @@ downstream_tests/
   requirements-python.txt
   python/
     conftest.py
+    test_end_motif_zarr_cfdnalab_package.py
+    test_end_motif_zarr_python.py
     test_midpoint_zarr_python.py
+    test_midpoint_zarr_cfdnalab_package.py
     test_midpoint_zarr_xarray.py
     test_midpoint_zarr_dask.py
   R/
     common.R
+    test_end_motif_zarr_cran_zarr.R
+    test_end_motif_zarr_rarr.R
     test_midpoint_zarr_cran_zarr.R
     test_midpoint_zarr_rarr.R
 tests/
-  generate_downstream_midpoint_fixture.rs
+  generate_downstream_zarr_fixtures.rs
 ```
 
-`generate_downstream_midpoint_fixture.rs` creates a small BAM plus interval
-file, runs the real `cfdna midpoints` command, and leaves the resulting Zarr
-store under `downstream_tests/tmp`. This is required: the downstream suite
-exists to catch cfDNAlab output-schema drift, so the file consumed by Python and
-R must be written by cfDNAlab itself.
+`generate_downstream_zarr_fixtures.rs` creates small BAM/interval inputs, runs
+the real `cfdna midpoints` and `cfdna ends` commands, and leaves the resulting
+Zarr stores under `downstream_tests/tmp`. This is required: the downstream suite
+exists to catch cfDNAlab output-schema drift, so the files consumed by Python
+and R must be written by cfDNAlab itself.
 
 The Python and R tests should fail when the cfDNAlab-generated fixture is
 missing. They should not create a hand-authored Zarr store as a fallback.
 
-When ends moves to Zarr, add separate dense and sparse fixtures rather than
-folding them into the midpoint fixture. Ends compatibility has a different
-success condition: reconstructing motif matrices and sparse matrices with row
-and motif metadata intact.
+The same ignored fixture test also runs `cfdna ends` to create dense global,
+sparse windowed, and sparse grouped Zarr stores. Ends compatibility has a
+different success condition: reconstructing motif matrices and sparse matrices
+with row and motif metadata intact.
 
 ## GitHub Actions Workflow
 
@@ -75,8 +80,7 @@ on:
       - "src/commands/midpoints/**"
       - "src/commands/ends/**"
       - "src/shared/**zarr**"
-      - "tests/generate_downstream_midpoint_fixture.rs"
-      - "tests/generate_downstream_end_fixture.rs"
+      - "tests/generate_downstream_zarr_fixtures.rs"
       - "tests/fixtures/**"
       - "downstream_tests/**"
       - "py_cfdnalab/**"
@@ -92,10 +96,10 @@ Keep the workflow optional at first. Once the midpoint Zarr writer and supported
 downstream package set are stable, it can become required for PRs that touch the
 Zarr writer or output schema.
 
-The first workflow jobs are:
+The workflow jobs are:
 
 - Fixture generation: Rust ignored integration test that runs `cfdna midpoints`
-- Fixture generation: Rust ignored integration test that runs `cfdna ends`
+  and `cfdna ends`
 - Python: `zarr`, `xarray`, and `dask.array`
 - R: CRAN `zarr` and Bioconductor `Rarr`
 
@@ -202,11 +206,11 @@ Returned object responsibilities:
 
 Mode-specific object responsibilities:
 
-- `GlobalEndMotifCounts` exposes `counts()` and `data_frame()`
+- `GlobalEndMotifCounts` exposes `dense_counts_vec()` and `dense_data_frame()`
 - `WindowedEndMotifCounts` exposes `windows()`, `sparse_coo_for_window()`,
-  `dense_array_for_window()`, and `dense_data_frame_for_window()`
+  `dense_counts_for_window()`, and `dense_data_frame_for_window()`
 - `GroupedEndMotifCounts` exposes `groups()`, `group_idx()`,
-  `sparse_coo_for_group()`, `dense_array_for_group()`, and
+  `sparse_coo_for_group()`, `dense_counts_for_group()`, and
   `dense_data_frame_for_group()`
 
 The helper API should avoid generic `row` method names when the selected output
@@ -370,28 +374,29 @@ APIs.
 
 ## Required Ends Checks
 
-Add ignored Rust fixture-generation tests that run the real `cfdna ends` command
-and create two tiny stores:
+The ignored Rust fixture-generation test runs the real `cfdna ends` command and
+creates three tiny stores:
 
 ```text
-tiny.end_motifs.dense.zarr/
-tiny.end_motifs.sparse.zarr/
+tiny_dense_global.end_motifs.zarr/
+tiny_sparse_windowed.end_motifs.zarr/
+tiny_sparse_grouped.end_motifs.zarr/
 ```
 
-Both fixtures should contain:
+Together the fixtures should contain:
 
-- two rows
-- three motifs
-- non-integer counts
-- one zero dense count
+- global, windowed, and grouped row modes
+- dense and sparse COO storage modes
+- repeated group accumulation
+- at least one empty group row
 - motif labels stored as fixed-width `motif_ascii[motif, motif_byte]`
-- enough row metadata to cover one ordinary window mode
+- row metadata for ordinary windows and grouped BED output
 
-The sparse fixture should contain a COO matrix with:
+The sparse fixtures should contain COO matrices with:
 
 - sorted `(row, motif)` coordinates
-- at least one nonzero value in each row
-- one missing row/motif pair that reconstructs as zero
+- at least one missing row/motif pair that reconstructs as zero
+- a grouped row with no counts, so empty rows remain visible through metadata
 
 Python ends checks:
 
@@ -408,7 +413,7 @@ R ends checks:
 
 - `Rarr` reads dense counts, sparse COO arrays, motif labels from `motif_ascii`,
   and row metadata.
-- Sparse COO arrays reconstruct a `Matrix::sparseMatrix` after converting
+- Sparse COO arrays reconstruct the expected count matrix after converting
   zero-based coordinates to one-based R indices.
 - Motif labels decode without depending on Zarr string arrays or JSON attrs.
 

@@ -249,6 +249,25 @@ class EndMotifCounts:
         """
         return self._resolve_motif(motif)
 
+    def has_motif(self, motif: str) -> bool:
+        """
+        Return whether a motif label exists in this output.
+
+        Sparse output only stores observed motifs, so an unobserved motif will
+        return `False` even if it is part of the theoretical motif universe.
+
+        Parameters
+        ----------
+        motif
+            Motif label to check.
+
+        Returns
+        -------
+        bool
+            Whether the motif can be resolved in this output.
+        """
+        return bool(np.any(self.end_motifs.motif_names == motif))
+
     def motif_metadata(self) -> pd.DataFrame:
         """
         Return motif metadata.

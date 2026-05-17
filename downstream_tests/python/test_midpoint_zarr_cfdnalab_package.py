@@ -56,12 +56,12 @@ def test_cfdnalab_package_resolves_fixture_indices_and_slices(
     profiles = cfdnalab.load_midpoints(midpoint_zarr_path)
 
     assert profiles.group_idx("beta-site") == 1
-    assert profiles.length_bin(49) == 0
-    assert profiles.length_bin(50) == 1
-    assert profiles.length_bin(70) == 2
+    assert profiles.length_bin_idx(49) == 0
+    assert profiles.length_bin_idx(50) == 1
+    assert profiles.length_bin_idx(70) == 2
 
     np.testing.assert_allclose(
-        profiles.array_for_profile(group_idx=1, length_bin=1),
+        profiles.array_for_profile(group_idx=1, length_bin_idx=1),
         np.array([0.0, 0.0, 1.5, 0.0, 0.5], dtype=np.float32),
     )
     np.testing.assert_allclose(profiles.array_from_group("alpha"), EXPECTED_COUNTS[0])
@@ -73,7 +73,7 @@ def test_cfdnalab_package_builds_profile_dataframe_from_fixture(
 ) -> None:
     profiles = cfdnalab.load_midpoints(midpoint_zarr_path)
 
-    frame = profiles.data_frame_for_profile(group_idx=0, length_bin=1)
+    frame = profiles.data_frame_for_profile(group_idx=0, length_bin_idx=1)
 
     pd.testing.assert_frame_equal(
         frame,

@@ -26,6 +26,8 @@ def test_dense_windowed_end_motifs_load_metadata_and_arrays(tmp_path: Path) -> N
     assert ends.storage_mode() == "dense"
     assert ends.row_mode() == "bed"
     assert ends.motifs() == ["_AA", "_CC", "_GG"]
+    assert ends.has_motif("_AA")
+    assert not ends.has_motif("_TT")
     assert ends.motif_idx("_GG") == 2
     pd.testing.assert_frame_equal(
         ends.motif_metadata(),
@@ -68,12 +70,12 @@ def test_dense_windowed_end_motif_slice_helpers_return_expected_frames(
                 "motif_index": MOTIF_INDEX,
                 "motif": MOTIF_NAMES,
                 "count": np.array([1.0, 0.0, 2.5], dtype=np.float64),
-                "window_idx": np.array([0, 0, 0], dtype=np.int32),
-                "chromosome": np.array([0, 0, 0], dtype=np.int32),
-                "chromosome_name": np.array(["chr2", "chr2", "chr2"], dtype=object),
-                "window_start_bp": np.array([10, 10, 10], dtype=np.uint64),
-                "window_end_bp": np.array([20, 20, 20], dtype=np.uint64),
-                "blacklisted_fraction": np.array([0.25, 0.25, 0.25], dtype=np.float64),
+                "window_idx": [0, 0, 0],
+                "chromosome": [0, 0, 0],
+                "chromosome_name": ["chr2", "chr2", "chr2"],
+                "window_start_bp": [10, 10, 10],
+                "window_end_bp": [20, 20, 20],
+                "blacklisted_fraction": [0.25, 0.25, 0.25],
             }
         ),
     )
@@ -178,6 +180,10 @@ def test_sparse_windowed_end_motifs_slice_window_without_dense_roundtrip(
 
     assert isinstance(ends, cfdnalab.WindowedEndMotifCounts)
     assert ends.storage_mode() == "sparse_coo"
+    assert ends.has_motif("_CC")
+    assert not ends.has_motif("_TT")
+    with pytest.raises(KeyError, match="Unknown end-motif label"):
+        ends.dense_counts_for_motif("_TT")
     window_coo = ends.sparse_coo_for_window(1)
 
     assert window_coo.shape == (1, 3)

@@ -11,12 +11,6 @@ read_node <- function(name) {
   node[]
 }
 
-read_group_names_from_fallback <- function() {
-  bytes <- read_node("group_name_utf8")
-  nbytes <- read_node("group_name_nbytes")
-  decode_group_names(bytes, nbytes)
-}
-
 counts <- read_node("counts")
 stopifnot(identical(dim(counts), c(3L, 3L, 5L)))
 stopifnot(isTRUE(all.equal(counts[1, 1, 1], 1)))
@@ -37,28 +31,20 @@ stopifnot(identical(as.integer(group), c(0L, 1L, 2L)))
 stopifnot(identical(as.integer(length_bin), c(0L, 1L, 2L)))
 stopifnot(identical(as.integer(position), c(0L, 1L, 2L, 3L, 4L)))
 
-group_names <- tryCatch(
-  read_node("group_name"),
-  error = function(error) read_group_names_from_fallback()
-)
+group_names <- labels_from_array_attributes(store_path, "group", "group_name")
 stopifnot(identical(as.character(group_names), c("alpha", "beta-site", "gamma_long")))
-stopifnot(identical(read_group_names_from_fallback(), c("alpha", "beta-site", "gamma_long")))
 
 length_start_bp <- read_node("length_start_bp")
 length_end_bp <- read_node("length_end_bp")
 position_bin_start_bp <- read_node("position_bin_start_bp")
 position_bin_end_bp <- read_node("position_bin_end_bp")
 eligible_intervals <- read_node("eligible_intervals")
-group_name_nbytes <- read_node("group_name_nbytes")
-group_name_byte <- read_node("group_name_byte")
 
 stopifnot(identical(as.integer(length_start_bp), c(30L, 50L, 70L)))
 stopifnot(identical(as.integer(length_end_bp), c(50L, 70L, 100L)))
 stopifnot(identical(as.integer(position_bin_start_bp), c(0L, 2L, 4L, 6L, 8L)))
 stopifnot(identical(as.integer(position_bin_end_bp), c(2L, 4L, 6L, 8L, 10L)))
 stopifnot(identical(as.integer(eligible_intervals), c(2L, 2L, 2L)))
-stopifnot(identical(as.integer(group_name_nbytes), c(5L, 9L, 10L)))
-stopifnot(identical(as.integer(group_name_byte), 0:9))
 
 profile <- counts[2, , ]
 
