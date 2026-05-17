@@ -41,7 +41,7 @@ requires-dist = [
     { name = "pandas" },
     { name = "pytest", marker = "extra == 'test'" },
     { name = "scipy" },
-    { name = "zarr", specifier = ">=3" },
+    { name = "zarr", specifier = ">=3,<4" },
 ]
 provides-extras = ["test"]
 

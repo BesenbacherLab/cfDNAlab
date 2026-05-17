@@ -9,12 +9,15 @@ from .ends import (
 )
 from .midpoints import MidpointProfiles, read_midpoints
 
+__version__ = "0.1.0"
+
 __all__ = [
     "EndMotifCounts",
     "GlobalEndMotifCounts",
     "GroupedEndMotifCounts",
     "MidpointProfiles",
     "WindowedEndMotifCounts",
+    "__version__",
     "read_end_motifs",
     "read_midpoints",
 ]
