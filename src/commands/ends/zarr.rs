@@ -21,7 +21,7 @@ use crate::shared::{
         ZARR_ASCII_FILL_VALUE, ZARR_FLOAT64_FILL_VALUE, ZARR_INT32_FILL_VALUE,
         ZARR_UINT64_FILL_VALUE, checked_i32, checked_index_axis, create_zarr_array,
         create_zarr_store, validate_zarr_label, write_single_chunk_zarr_array,
-        write_zarr_root_metadata,
+        write_zarr_group_metadata, write_zarr_root_metadata,
     },
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -631,6 +631,17 @@ fn write_sparse_counts(
     bins: &[FxHashMap<String, f64>],
     motifs: &[String],
 ) -> Result<()> {
+    write_zarr_group_metadata(
+        store.clone(),
+        "/sparse",
+        "end-motif sparse counts",
+        json!({
+            "long_name": "Sparse COO end-motif count arrays",
+            "sparse_format": "coo",
+            "sparse_indices_base": 0,
+        }),
+    )?;
+
     let motif_columns: FxHashMap<&String, i32> = motifs
         .iter()
         .enumerate()

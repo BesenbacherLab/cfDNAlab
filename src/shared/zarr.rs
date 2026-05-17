@@ -90,14 +90,27 @@ pub(crate) fn write_zarr_root_metadata(
     output_description: &str,
     attributes: Value,
 ) -> Result<()> {
+    write_zarr_group_metadata(store, "/", output_description, attributes)
+}
+
+/// Write Zarr V3 group metadata for a non-root group.
+///
+/// Nested arrays such as `sparse/row` need their parent group metadata for readers that discover
+/// arrays through the Zarr hierarchy rather than by direct filesystem paths.
+pub(crate) fn write_zarr_group_metadata(
+    store: Arc<FilesystemStore>,
+    group_path: &str,
+    output_description: &str,
+    attributes: Value,
+) -> Result<()> {
     let mut builder = GroupBuilder::new();
     builder.attributes(json_object(attributes)?);
     let group = builder
-        .build(store, "/")
-        .with_context(|| format!("build {output_description} Zarr root group"))?;
+        .build(store, group_path)
+        .with_context(|| format!("build {output_description} Zarr group {group_path}"))?;
     group
         .store_metadata()
-        .with_context(|| format!("write {output_description} Zarr root metadata"))
+        .with_context(|| format!("write {output_description} Zarr group {group_path} metadata"))
 }
 
 /// Write a small coordinate or metadata array as one chunk.

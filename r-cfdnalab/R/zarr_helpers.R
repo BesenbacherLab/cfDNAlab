@@ -220,7 +220,7 @@ cf_zarr_path <- function(array_name) {
 #' @noRd
 cf_get_array <- function(store, array_name, label) {
   node <- tryCatch(
-    store[[cf_zarr_path(array_name)]],
+    cf_get_zarr_node(store, array_name),
     error = function(error) {
       stop(
         label,
@@ -236,6 +236,25 @@ cf_get_array <- function(store, array_name, label) {
     stop(label, " Zarr store is missing array '", array_name, "'", call. = FALSE)
   }
   node
+}
+
+#' Get a Zarr node by path.
+#'
+#' The CRAN `zarr` package exposes nested V3 arrays through `get_node()` after
+#' their parent group metadata has been discovered. Direct `[[` lookup works for
+#' top-level arrays but returns `NULL` for nested paths such as `sparse/row`.
+#'
+#' @param store Open Zarr store.
+#' @param array_name Slash-separated array path within the store.
+#'
+#' @return A Zarr node or `NULL`.
+#' @noRd
+cf_get_zarr_node <- function(store, array_name) {
+  node_path <- cf_zarr_path(array_name)
+  if (!is.null(store$get_node) && is.function(store$get_node)) {
+    return(store$get_node(node_path))
+  }
+  store[[node_path]]
 }
 
 #' Read a full Zarr array.
@@ -292,7 +311,7 @@ cf_read_slice <- function(array, selection, label) {
 cf_required_arrays <- function(store, array_names, label) {
   missing <- character()
   for (array_name in array_names) {
-    node <- tryCatch(store[[cf_zarr_path(array_name)]], error = function(error) NULL)
+    node <- tryCatch(cf_get_zarr_node(store, array_name), error = function(error) NULL)
     if (is.null(node)) {
       missing <- c(missing, array_name)
     }

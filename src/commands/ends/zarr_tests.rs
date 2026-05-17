@@ -115,6 +115,12 @@ fn sparse_end_motif_zarr_writes_sorted_coo_arrays() {
     assert!(root_metadata["attributes"]["primary_array"].is_null());
     assert_eq!(root_metadata["attributes"]["primary_group"], "sparse");
     assert_eq!(root_metadata["attributes"]["sparse_format"], "coo");
+    let sparse_group_metadata = read_json(&store_path.join("sparse/zarr.json"));
+    assert_eq!(sparse_group_metadata["node_type"], "group");
+    assert_eq!(
+        sparse_group_metadata["attributes"]["sparse_format"],
+        serde_json::json!("coo")
+    );
     assert_eq!(read_i32_array(&store_path, "/sparse/row"), vec![0, 0]);
     assert_eq!(read_i32_array(&store_path, "/sparse/motif"), vec![0, 1]);
     assert_eq!(read_f64_array(&store_path, "/sparse/count"), vec![1.0, 2.5]);
