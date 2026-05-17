@@ -13,16 +13,16 @@ from test_midpoint_zarr_python import EXPECTED_COUNTS
 def test_cfdnalab_package_reads_midpoint_fixture_metadata(
     midpoint_zarr_path: Path,
 ) -> None:
-    profiles = cfdnalab.load_midpoints(midpoint_zarr_path)
+    profiles = cfdnalab.read_midpoints(midpoint_zarr_path)
 
-    assert profiles.group_names() == ["alpha", "beta-site", "gamma_long"]
+    assert profiles.group_names() == ["LYL1", "beta-site", "gamma_long"]
     assert profiles.eligible_intervals() == [2, 2, 2]
     pd.testing.assert_frame_equal(
         profiles.groups(),
         pd.DataFrame(
             {
                 "group_idx": np.array([0, 1, 2], dtype=np.int32),
-                "group_name": np.array(["alpha", "beta-site", "gamma_long"], dtype=str),
+                "group_name": np.array(["LYL1", "beta-site", "gamma_long"], dtype=str),
                 "eligible_intervals": np.array([2, 2, 2], dtype=np.uint32),
             }
         ),
@@ -53,7 +53,7 @@ def test_cfdnalab_package_reads_midpoint_fixture_metadata(
 def test_cfdnalab_package_resolves_fixture_indices_and_slices(
     midpoint_zarr_path: Path,
 ) -> None:
-    profiles = cfdnalab.load_midpoints(midpoint_zarr_path)
+    profiles = cfdnalab.read_midpoints(midpoint_zarr_path)
 
     assert profiles.group_idx("beta-site") == 1
     assert profiles.length_bin_idx(49) == 0
@@ -64,14 +64,14 @@ def test_cfdnalab_package_resolves_fixture_indices_and_slices(
         profiles.array_for_profile(group_idx=1, length_bin_idx=1),
         np.array([0.0, 0.0, 1.5, 0.0, 0.5], dtype=np.float32),
     )
-    np.testing.assert_allclose(profiles.array_from_group("alpha"), EXPECTED_COUNTS[0])
+    np.testing.assert_allclose(profiles.array_from_group("LYL1"), EXPECTED_COUNTS[0])
     np.testing.assert_allclose(profiles.array_from_length(70), EXPECTED_COUNTS[:, 2, :])
 
 
 def test_cfdnalab_package_builds_profile_dataframe_from_fixture(
     midpoint_zarr_path: Path,
 ) -> None:
-    profiles = cfdnalab.load_midpoints(midpoint_zarr_path)
+    profiles = cfdnalab.read_midpoints(midpoint_zarr_path)
 
     frame = profiles.data_frame_for_profile(group_idx=0, length_bin_idx=1)
 
@@ -80,7 +80,7 @@ def test_cfdnalab_package_builds_profile_dataframe_from_fixture(
         pd.DataFrame(
             {
                 "group_idx": [0, 0, 0, 0, 0],
-                "group_name": ["alpha"] * 5,
+                "group_name": ["LYL1"] * 5,
                 "eligible_intervals": [2, 2, 2, 2, 2],
                 "length_bin": [1, 1, 1, 1, 1],
                 "length_start_bp": [50, 50, 50, 50, 50],
@@ -97,7 +97,7 @@ def test_cfdnalab_package_builds_profile_dataframe_from_fixture(
 def test_cfdnalab_package_builds_group_and_length_dataframes_from_fixture(
     midpoint_zarr_path: Path,
 ) -> None:
-    profiles = cfdnalab.load_midpoints(midpoint_zarr_path)
+    profiles = cfdnalab.read_midpoints(midpoint_zarr_path)
 
     group_frame = profiles.data_frame_from_group("beta-site")
     length_frame = profiles.data_frame_from_length_bin(2)
@@ -127,7 +127,7 @@ def test_cfdnalab_package_builds_group_and_length_dataframes_from_fixture(
     assert length_frame.shape == (15, 10)
     assert length_frame["length_bin"].unique().tolist() == [2]
     assert length_frame["group_name"].tolist() == (
-        ["alpha"] * 5 + ["beta-site"] * 5 + ["gamma_long"] * 5
+        ["LYL1"] * 5 + ["beta-site"] * 5 + ["gamma_long"] * 5
     )
     assert length_frame["position"].tolist() == [0, 1, 2, 3, 4] * 3
     assert length_frame["count"].tolist() == [

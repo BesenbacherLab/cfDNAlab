@@ -18,8 +18,10 @@ use crate::shared::{
     io::dot_join,
     windowing::WindowBinInfo,
     zarr::{
-        checked_i32, checked_index_axis, checked_u32, create_zarr_array, create_zarr_store,
-        validate_zarr_label, write_single_chunk_zarr_array, write_zarr_root_metadata,
+        ZARR_ASCII_FILL_VALUE, ZARR_FLOAT64_FILL_VALUE, ZARR_INT32_FILL_VALUE,
+        ZARR_UINT64_FILL_VALUE, checked_i32, checked_index_axis, create_zarr_array,
+        create_zarr_store, validate_zarr_label, write_single_chunk_zarr_array,
+        write_zarr_root_metadata,
     },
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -279,7 +281,7 @@ fn write_motif_metadata(store: Arc<FilesystemStore>, motifs: &[String]) -> Resul
         &["motif"],
         &motif_axis,
         data_type::int32(),
-        0i32,
+        ZARR_INT32_FILL_VALUE,
         json!({
             "long_name": "zero-based motif column index",
             "label_array": "motif_ascii",
@@ -292,7 +294,7 @@ fn write_motif_metadata(store: Arc<FilesystemStore>, motifs: &[String]) -> Resul
         &["motif_byte"],
         &motif_byte_axis,
         data_type::int32(),
-        0i32,
+        ZARR_INT32_FILL_VALUE,
         json!({ "long_name": "zero-based byte offset within motif labels" }),
     )?;
     write_single_chunk_zarr_array(
@@ -302,7 +304,7 @@ fn write_motif_metadata(store: Arc<FilesystemStore>, motifs: &[String]) -> Resul
         &["motif", "motif_byte"],
         &motif_ascii,
         data_type::uint8(),
-        0u8,
+        ZARR_ASCII_FILL_VALUE,
         json!({
             "long_name": "fixed-width ASCII motif labels",
             "description": "Decode each [motif, motif_byte] row as ASCII to recover the motif label.",
@@ -377,7 +379,7 @@ fn write_row_metadata(
         &["row"],
         &row,
         data_type::int32(),
-        0i32,
+        ZARR_INT32_FILL_VALUE,
         row_attributes,
     )?;
 
@@ -442,7 +444,7 @@ fn write_window_row_metadata(
         &["chromosome"],
         &chromosome_axis,
         data_type::int32(),
-        0i32,
+        ZARR_INT32_FILL_VALUE,
         json!({
             "long_name": "zero-based chromosome index",
             "label_field": "chromosome_name",
@@ -456,7 +458,7 @@ fn write_window_row_metadata(
         &["row"],
         &row_chromosome,
         data_type::int32(),
-        0i32,
+        ZARR_INT32_FILL_VALUE,
         json!({ "long_name": "chromosome index for each count row" }),
     )?;
     write_single_chunk_zarr_array(
@@ -466,7 +468,7 @@ fn write_window_row_metadata(
         &["row"],
         &row_start_bp,
         data_type::uint64(),
-        0u64,
+        ZARR_UINT64_FILL_VALUE,
         json!({ "long_name": "inclusive row start coordinate", "units": "bp" }),
     )?;
     write_single_chunk_zarr_array(
@@ -476,7 +478,7 @@ fn write_window_row_metadata(
         &["row"],
         &row_end_bp,
         data_type::uint64(),
-        0u64,
+        ZARR_UINT64_FILL_VALUE,
         json!({ "long_name": "exclusive row end coordinate", "units": "bp" }),
     )?;
     write_single_chunk_zarr_array(
@@ -486,7 +488,7 @@ fn write_window_row_metadata(
         &["row"],
         &blacklisted_fraction,
         data_type::float64(),
-        0.0f64,
+        ZARR_FLOAT64_FILL_VALUE,
         json!({ "long_name": "fraction of row coordinates overlapping blacklist intervals" }),
     )?;
 
@@ -517,9 +519,9 @@ fn write_group_row_metadata(
         .map(|group| checked_i32(group.group_idx, "group_idx"))
         .collect::<Result<Vec<_>>>()?;
     let group_name_refs: Vec<&str> = groups.iter().map(|group| group.group_name).collect();
-    let eligible_windows: Vec<u32> = groups
+    let eligible_windows: Vec<i32> = groups
         .iter()
-        .map(|group| checked_u32(group.eligible_windows, "eligible_windows"))
+        .map(|group| checked_i32(group.eligible_windows, "eligible_windows"))
         .collect::<Result<Vec<_>>>()?;
     let blacklisted_fraction: Vec<f64> = groups
         .iter()
@@ -533,7 +535,7 @@ fn write_group_row_metadata(
         &["row"],
         &group,
         data_type::int32(),
-        0i32,
+        ZARR_INT32_FILL_VALUE,
         json!({
             "long_name": "zero-based group index",
             "description": "For grouped BED output, this matches the count row index.",
@@ -547,8 +549,8 @@ fn write_group_row_metadata(
         &[n_rows],
         &["row"],
         &eligible_windows,
-        data_type::uint32(),
-        0u32,
+        data_type::int32(),
+        ZARR_INT32_FILL_VALUE,
         json!({ "long_name": "eligible grouped BED windows retained per group" }),
     )?;
     write_single_chunk_zarr_array(
@@ -558,7 +560,7 @@ fn write_group_row_metadata(
         &["row"],
         &blacklisted_fraction,
         data_type::float64(),
-        0.0f64,
+        ZARR_FLOAT64_FILL_VALUE,
         json!({ "long_name": "length-weighted blacklisted fraction across group windows" }),
     )?;
 
@@ -583,7 +585,7 @@ fn write_dense_counts(store: Arc<FilesystemStore>, counts: ArrayView2<'_, f64>) 
         &chunk_shape,
         &["row", "motif"],
         data_type::float64(),
-        0.0f64,
+        ZARR_FLOAT64_FILL_VALUE,
         json!({
             "long_name": "weighted end-motif count",
             "units": "weighted_end_motif_count",
@@ -629,19 +631,20 @@ fn write_sparse_counts(
     bins: &[FxHashMap<String, f64>],
     motifs: &[String],
 ) -> Result<()> {
-    let motif_columns: FxHashMap<&String, u64> = motifs
+    let motif_columns: FxHashMap<&String, i32> = motifs
         .iter()
         .enumerate()
-        .map(|(column, motif)| (motif, column as u64))
-        .collect();
+        .map(|(column, motif)| Ok((motif, checked_i32(column, "motif index")?)))
+        .collect::<Result<_>>()?;
     let mut entries = Vec::new();
     for (row, bin) in bins.iter().enumerate() {
+        let row_index = checked_i32(row, "row index")?;
         for (motif, &count) in bin {
             let motif_index = motif_columns.get(motif).copied().with_context(|| {
                 format!("missing sparse output column for end-motif label '{motif}'")
             })?;
             if count != 0.0 {
-                entries.push((row as u64, motif_index, count));
+                entries.push((row_index, motif_index, count));
             }
         }
     }
@@ -655,10 +658,13 @@ fn write_sparse_counts(
         );
     }
 
-    let row: Vec<u64> = entries.iter().map(|entry| entry.0).collect();
-    let motif: Vec<u64> = entries.iter().map(|entry| entry.1).collect();
+    let row: Vec<i32> = entries.iter().map(|entry| entry.0).collect();
+    let motif: Vec<i32> = entries.iter().map(|entry| entry.1).collect();
     let count: Vec<f64> = entries.iter().map(|entry| entry.2).collect();
-    let shape = vec![bins.len() as u64, motifs.len() as u64];
+    let shape = vec![
+        checked_i32(bins.len(), "sparse row count")?,
+        checked_i32(motifs.len(), "sparse motif count")?,
+    ];
     let sparse_dimension = checked_index_axis(2, "sparse_dimension")?;
     let nnz = entries.len();
 
@@ -668,8 +674,8 @@ fn write_sparse_counts(
         &[nnz],
         &["nnz"],
         &row,
-        data_type::uint64(),
-        0u64,
+        data_type::int32(),
+        ZARR_INT32_FILL_VALUE,
         json!({ "long_name": "COO row index" }),
     )?;
     write_single_chunk_zarr_array(
@@ -678,8 +684,8 @@ fn write_sparse_counts(
         &[nnz],
         &["nnz"],
         &motif,
-        data_type::uint64(),
-        0u64,
+        data_type::int32(),
+        ZARR_INT32_FILL_VALUE,
         json!({ "long_name": "COO motif index" }),
     )?;
     write_single_chunk_zarr_array(
@@ -689,7 +695,7 @@ fn write_sparse_counts(
         &["nnz"],
         &count,
         data_type::float64(),
-        0.0f64,
+        ZARR_FLOAT64_FILL_VALUE,
         json!({
             "long_name": "weighted end-motif count",
             "units": "weighted_end_motif_count",
@@ -701,8 +707,8 @@ fn write_sparse_counts(
         &[2],
         &["sparse_dimension"],
         &shape,
-        data_type::uint64(),
-        0u64,
+        data_type::int32(),
+        ZARR_INT32_FILL_VALUE,
         json!({ "long_name": "dense shape represented by sparse COO arrays" }),
     )?;
     write_single_chunk_zarr_array(
@@ -712,7 +718,7 @@ fn write_sparse_counts(
         &["sparse_dimension"],
         &sparse_dimension,
         data_type::int32(),
-        0i32,
+        ZARR_INT32_FILL_VALUE,
         json!({
             "long_name": "zero-based sparse shape dimension index",
             "label_field": "sparse_dimension_name",

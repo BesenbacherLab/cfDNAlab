@@ -12,7 +12,8 @@
 //! module so a large run does not create one huge Zarr chunk.
 //!
 //! Coordinate arrays use signed `i32` values for smoother R handling. Count-like metadata uses
-//! unsigned `u32` values because those fields are never labels.
+//! signed `i32` values as well when values are small and non-negative, so R readers can keep native
+//! integer columns without extra unsigned handling.
 
 use crate::{
     commands::midpoints::{
@@ -21,8 +22,9 @@ use crate::{
     shared::{
         length_axis::LengthAxis,
         zarr::{
-            checked_i32, checked_index_axis, checked_u32, create_zarr_array, create_zarr_store,
-            validate_zarr_label, write_single_chunk_zarr_array, write_zarr_root_metadata,
+            ZARR_FLOAT32_FILL_VALUE, ZARR_INT32_FILL_VALUE, checked_i32, checked_index_axis,
+            create_zarr_array, create_zarr_store, validate_zarr_label,
+            write_single_chunk_zarr_array, write_zarr_root_metadata,
         },
     },
 };
@@ -96,9 +98,9 @@ pub(super) fn write_midpoint_profiles_zarr(
         .collect::<Result<Vec<_>>>()?;
     let length_bin: Vec<i32> = checked_index_axis(num_length_bins, "length_bin")?;
     let position: Vec<i32> = checked_index_axis(num_positions, "position")?;
-    let eligible_intervals: Vec<u32> = ordered_groups
+    let eligible_intervals: Vec<i32> = ordered_groups
         .iter()
-        .map(|group| checked_u32(group.eligible_intervals, "eligible_intervals"))
+        .map(|group| checked_i32(group.eligible_intervals, "eligible_intervals"))
         .collect::<Result<Vec<_>>>()?;
     let group_names: Vec<&str> = ordered_groups
         .iter()
@@ -107,7 +109,7 @@ pub(super) fn write_midpoint_profiles_zarr(
     for group_name in &group_names {
         validate_zarr_label(group_name, "group_name")?;
     }
-    let (length_start_bp, length_end_bp) = length_axis_coordinate_arrays(length_axis);
+    let (length_start_bp, length_end_bp) = length_axis_coordinate_arrays(length_axis)?;
     let (position_bin_start_bp, position_bin_end_bp) =
         position_bin_coordinate_arrays(profile_layout)?;
 
@@ -135,7 +137,7 @@ pub(super) fn write_midpoint_profiles_zarr(
         &["group"],
         &group,
         data_type::int32(),
-        0i32,
+        ZARR_INT32_FILL_VALUE,
         json!({
             "long_name": "zero-based group index",
             "description": "Matches group_idx in group_index.tsv and indexes axis 0 of counts",
@@ -149,8 +151,8 @@ pub(super) fn write_midpoint_profiles_zarr(
         &[num_groups],
         &["group"],
         &eligible_intervals,
-        data_type::uint32(),
-        0u32,
+        data_type::int32(),
+        ZARR_INT32_FILL_VALUE,
         json!({
             "long_name": "profile-eligible input intervals retained per group",
         }),
@@ -163,7 +165,7 @@ pub(super) fn write_midpoint_profiles_zarr(
         &["length_bin"],
         &length_bin,
         data_type::int32(),
-        0i32,
+        ZARR_INT32_FILL_VALUE,
         json!({}),
     )?;
     write_single_chunk_zarr_array(
@@ -172,8 +174,8 @@ pub(super) fn write_midpoint_profiles_zarr(
         &[num_length_bins],
         &["length_bin"],
         &length_start_bp,
-        data_type::uint32(),
-        0u32,
+        data_type::int32(),
+        ZARR_INT32_FILL_VALUE,
         json!({
             "long_name": "inclusive fragment length bin start",
             "units": "bp",
@@ -185,8 +187,8 @@ pub(super) fn write_midpoint_profiles_zarr(
         &[num_length_bins],
         &["length_bin"],
         &length_end_bp,
-        data_type::uint32(),
-        0u32,
+        data_type::int32(),
+        ZARR_INT32_FILL_VALUE,
         json!({
             "long_name": "exclusive fragment length bin end",
             "units": "bp",
@@ -201,7 +203,7 @@ pub(super) fn write_midpoint_profiles_zarr(
         &["position"],
         &position,
         data_type::int32(),
-        0i32,
+        ZARR_INT32_FILL_VALUE,
         json!({}),
     )?;
     write_single_chunk_zarr_array(
@@ -211,7 +213,7 @@ pub(super) fn write_midpoint_profiles_zarr(
         &["position"],
         &position_bin_start_bp,
         data_type::int32(),
-        0i32,
+        ZARR_INT32_FILL_VALUE,
         json!({
             "long_name": "inclusive interval-relative position bin start",
             "units": "bp",
@@ -224,7 +226,7 @@ pub(super) fn write_midpoint_profiles_zarr(
         &["position"],
         &position_bin_end_bp,
         data_type::int32(),
-        0i32,
+        ZARR_INT32_FILL_VALUE,
         json!({
             "long_name": "exclusive interval-relative position bin end",
             "units": "bp",
@@ -239,10 +241,16 @@ pub(super) fn write_midpoint_profiles_zarr(
 /// `LengthAxis` stores bin edges as `[start0, start1, ..., final_end]`. Zarr readers should not
 /// have to reconstruct the half-open bins from settings JSON, so the writer stores start and end
 /// arrays directly.
-fn length_axis_coordinate_arrays(length_axis: &LengthAxis) -> (Vec<u32>, Vec<u32>) {
-    let starts = length_axis.edges()[..length_axis.num_bins()].to_vec();
-    let ends = length_axis.edges()[1..].to_vec();
-    (starts, ends)
+fn length_axis_coordinate_arrays(length_axis: &LengthAxis) -> Result<(Vec<i32>, Vec<i32>)> {
+    let starts = length_axis.edges()[..length_axis.num_bins()]
+        .iter()
+        .map(|value| checked_i32(*value, "length_start_bp"))
+        .collect::<Result<Vec<_>>>()?;
+    let ends = length_axis.edges()[1..]
+        .iter()
+        .map(|value| checked_i32(*value, "length_end_bp"))
+        .collect::<Result<Vec<_>>>()?;
+    Ok((starts, ends))
 }
 
 /// Build half-open position-bin coordinate arrays.
@@ -308,7 +316,7 @@ fn write_count_tensor_array(
         chunk_shape,
         dimension_names,
         data_type::float32(),
-        0.0f32,
+        ZARR_FLOAT32_FILL_VALUE,
         attributes,
     )?;
 

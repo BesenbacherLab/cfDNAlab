@@ -5,9 +5,9 @@ from .ends import (
     GlobalEndMotifCounts,
     GroupedEndMotifCounts,
     WindowedEndMotifCounts,
-    load_end_motifs,
+    read_end_motifs,
 )
-from .midpoints import MidpointProfiles, load_midpoints
+from .midpoints import MidpointProfiles, read_midpoints
 
 __all__ = [
     "EndMotifCounts",
@@ -15,6 +15,6 @@ __all__ = [
     "GroupedEndMotifCounts",
     "MidpointProfiles",
     "WindowedEndMotifCounts",
-    "load_end_motifs",
-    "load_midpoints",
+    "read_end_motifs",
+    "read_midpoints",
 ]

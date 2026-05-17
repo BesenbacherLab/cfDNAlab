@@ -134,13 +134,13 @@ The package-level API should be:
 ```python
 import cfdnalab as cfl
 
-midpoints = cfl.load_midpoints("sample.midpoint_profiles.zarr")
+midpoints = cfl.read_midpoints("sample.midpoint_profiles.zarr")
 ```
 
 `cfdnalab.__init__` should re-export only stable public entry points:
 
 ```python
-from .midpoints import MidpointProfiles, load_midpoints
+from .midpoints import MidpointProfiles, read_midpoints
 ```
 
 Initial midpoint helper methods:
@@ -152,18 +152,18 @@ midpoints.eligible_intervals()
 midpoints.length_bins()
 midpoints.positions()
 
-midpoints.group_idx(group_name="CTCF")
+midpoints.group_idx(group_name="LYL1")
 midpoints.length_bin_idx(length=167)
 
 midpoints.data_frame_for_profile(group_idx=0, length_bin_idx=0)
-midpoints.data_frame_from_group(group_name="CTCF")
+midpoints.data_frame_from_group(group_name="LYL1")
 midpoints.data_frame_from_group_idx(group_idx=0)
 midpoints.data_frame_from_length(length=167)
 midpoints.data_frame_from_length_bin(length_bin_idx=0)
 
 midpoints.array_for_profile(group_idx=0, length_bin_idx=0)
 midpoints.array()
-midpoints.array_from_group(group_name="CTCF")
+midpoints.array_from_group(group_name="LYL1")
 midpoints.array_from_group_idx(group_idx=0)
 midpoints.array_from_length(length=167)
 midpoints.array_from_length_bin(length_bin_idx=0)
@@ -227,7 +227,7 @@ pip install cfdnalab
 ```python
 import cfdnalab as cfl
 
-midpoints = cfl.load_midpoints("sample.midpoint_profiles.zarr")
+midpoints = cfl.read_midpoints("sample.midpoint_profiles.zarr")
 profile = midpoints.data_frame_for_profile(group_idx=0, length_bin_idx=0)
 ```
 

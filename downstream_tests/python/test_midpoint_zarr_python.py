@@ -54,7 +54,7 @@ def test_python_zarr_reads_midpoint_profile_schema(midpoint_zarr_path: Path) -> 
         "position",
     )
     assert store["group"].attrs["label_field"] == "group_name"
-    assert store["group"].attrs["labels"] == ["alpha", "beta-site", "gamma_long"]
+    assert store["group"].attrs["labels"] == ["LYL1", "beta-site", "gamma_long"]
     np.testing.assert_allclose(store["counts"][:], EXPECTED_COUNTS)
     np.testing.assert_array_equal(store["group"][:], np.array([0, 1, 2], dtype=np.int32))
     np.testing.assert_array_equal(

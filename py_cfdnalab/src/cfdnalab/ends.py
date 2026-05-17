@@ -14,8 +14,8 @@ import pandas as pd
 import scipy.sparse as sparse
 import zarr
 
-MIN_SUPPORTED_SCHEMA_VERSION = 1
-MAX_SUPPORTED_SCHEMA_VERSION = 1
+END_MOTIF_MIN_SUPPORTED_SCHEMA_VERSION = 1
+END_MOTIF_MAX_SUPPORTED_SCHEMA_VERSION = 1
 VALID_STORAGE_MODES = {"dense", "sparse_coo"}
 VALID_ROW_MODES = {"global", "size", "bed", "grouped_bed"}
 
@@ -61,7 +61,7 @@ class EndMotifCounts:
         path
             Path to a `<prefix>.end_motifs.zarr` directory.
         loaded_end_motifs
-            Preloaded store data used by `load_end_motifs`.
+            Preloaded store data used by `read_end_motifs`.
 
         Returns
         -------
@@ -71,6 +71,24 @@ class EndMotifCounts:
         if loaded_end_motifs is None:
             loaded_end_motifs = EndMotifCounts._load_zarr(self.path)
         self.end_motifs = loaded_end_motifs
+
+    def __repr__(self) -> str:
+        schema_version = self.end_motifs.store.attrs.get("cfdnalab_schema_version")
+        if self.end_motifs.storage_mode == "dense":
+            shape = tuple(_required(self.end_motifs.counts, "counts").shape)
+        else:
+            shape = tuple(
+                _required(self.end_motifs.sparse_shape, "sparse/shape").astype(int)
+            )
+        return (
+            f"{self.__class__.__name__}("
+            f"path={str(self.path)!r}, "
+            f"schema_version={schema_version!r}, "
+            f"storage_mode={self.end_motifs.storage_mode!r}, "
+            f"row_mode={self.end_motifs.row_mode!r}, "
+            f"shape={shape!r}"
+            ")"
+        )
 
     @staticmethod
     def _load_zarr(path: pathlib.Path | str) -> LoadedEndMotifs:
@@ -407,11 +425,17 @@ class EndMotifCounts:
             )
         return _required(self.end_motifs.counts, "counts")
 
-    def dense_counts_matrix(self) -> np.ndarray:
+    def dense_counts_matrix(self, allow_densify: bool = False) -> np.ndarray:
         """
         Load or reconstruct the full dense count matrix.
 
-        For sparse stores, this reconstructs the full dense matrix in memory.
+        Sparse stores are only densified when `allow_densify=True`.
+
+        Parameters
+        ----------
+        allow_densify
+            If `True`, allow sparse stores to be converted to a dense in-memory
+            matrix.
 
         Returns
         -------
@@ -421,9 +445,12 @@ class EndMotifCounts:
         if self.end_motifs.storage_mode == "dense":
             counts = _required(self.end_motifs.counts, "counts")
             return np.asarray(counts[:])
+        _require_densify(allow_densify, "dense_counts_matrix")
         return self.sparse_coo().toarray()
 
-    def dense_counts_for_motif(self, motif: str) -> np.ndarray:
+    def dense_counts_for_motif(
+        self, motif: str, allow_densify: bool = False
+    ) -> np.ndarray:
         """
         Return dense counts for one motif.
 
@@ -431,24 +458,32 @@ class EndMotifCounts:
         ----------
         motif
             Motif label to extract.
+        allow_densify
+            If `True`, allow sparse stores to be converted to a dense vector.
 
         Returns
         -------
         numpy.ndarray
             Dense count vector with shape `(row,)`.
         """
-        return self.dense_counts_for_motif_idx(self._resolve_motif(motif))
+        return self.dense_counts_for_motif_idx(
+            self._resolve_motif(motif), allow_densify=allow_densify
+        )
 
-    def dense_counts_for_motif_idx(self, motif_idx: int) -> np.ndarray:
+    def dense_counts_for_motif_idx(
+        self, motif_idx: int, allow_densify: bool = False
+    ) -> np.ndarray:
         """
         Return dense counts for one motif index.
 
-        For sparse stores, this creates a dense vector with one value per row.
+        Sparse stores are only densified when `allow_densify=True`.
 
         Parameters
         ----------
         motif_idx
             Zero-based motif index to extract.
+        allow_densify
+            If `True`, allow sparse stores to be converted to a dense vector.
 
         Returns
         -------
@@ -460,6 +495,7 @@ class EndMotifCounts:
             counts = _required(self.end_motifs.counts, "counts")
             return np.asarray(counts[:, motif_idx])
 
+        _require_densify(allow_densify, "dense_counts_for_motif_idx")
         values = np.zeros(len(self.end_motifs.row), dtype=float)
         sparse_row_index = _required(self.end_motifs.sparse_row, "sparse/row")
         sparse_motif_index = _required(self.end_motifs.sparse_motif, "sparse/motif")
@@ -468,7 +504,9 @@ class EndMotifCounts:
         values[sparse_row_index[matches].astype(int)] = sparse_count[matches]
         return values
 
-    def dense_data_frame_for_motif(self, motif: str) -> pd.DataFrame:
+    def dense_data_frame_for_motif(
+        self, motif: str, allow_densify: bool = False
+    ) -> pd.DataFrame:
         """
         Build a dense data frame for one motif across all output rows.
 
@@ -476,25 +514,32 @@ class EndMotifCounts:
         ----------
         motif
             Motif label to extract.
+        allow_densify
+            If `True`, allow sparse stores to be converted to dense counts.
 
         Returns
         -------
         pandas.DataFrame
             Row metadata and counts for one motif.
         """
-        return self.dense_data_frame_for_motif_idx(self._resolve_motif(motif))
+        return self.dense_data_frame_for_motif_idx(
+            self._resolve_motif(motif), allow_densify=allow_densify
+        )
 
-    def dense_data_frame_for_motif_idx(self, motif_idx: int) -> pd.DataFrame:
+    def dense_data_frame_for_motif_idx(
+        self, motif_idx: int, allow_densify: bool = False
+    ) -> pd.DataFrame:
         """
         Build a dense data frame for one motif index across all output rows.
 
-        For sparse stores, this creates a dense count column with one value per
-        row.
+        Sparse stores are only densified when `allow_densify=True`.
 
         Parameters
         ----------
         motif_idx
             Zero-based motif index to extract.
+        allow_densify
+            If `True`, allow sparse stores to be converted to dense counts.
 
         Returns
         -------
@@ -505,7 +550,9 @@ class EndMotifCounts:
         frame = self._row_metadata_frame()
         frame["motif_index"] = int(self.end_motifs.motif_index[motif_idx])
         frame["motif"] = self.end_motifs.motif_names[motif_idx]
-        frame["count"] = self.dense_counts_for_motif_idx(motif_idx)
+        frame["count"] = self.dense_counts_for_motif_idx(
+            motif_idx, allow_densify=allow_densify
+        )
         return frame
 
     def _row_metadata_frame(self) -> pd.DataFrame:
@@ -558,24 +605,34 @@ class EndMotifCounts:
 class GlobalEndMotifCounts(EndMotifCounts):
     """End-motif counts for global output."""
 
-    def dense_counts_vec(self) -> np.ndarray:
+    def dense_counts_vec(self, allow_densify: bool = False) -> np.ndarray:
         """
         Return the global dense count vector.
 
-        For sparse stores, this reconstructs a dense vector in memory.
+        Sparse stores are only densified when `allow_densify=True`.
+
+        Parameters
+        ----------
+        allow_densify
+            If `True`, allow sparse stores to be converted to dense counts.
 
         Returns
         -------
         numpy.ndarray
             Dense count vector with shape `(motif,)`.
         """
-        return self.dense_counts_matrix()[0, :]
+        return self.dense_counts_matrix(allow_densify=allow_densify)[0, :]
 
-    def dense_data_frame(self) -> pd.DataFrame:
+    def dense_data_frame(self, allow_densify: bool = False) -> pd.DataFrame:
         """
         Build a dense motif count data frame for global output.
 
-        For sparse stores, this reconstructs a dense count column.
+        Sparse stores are only densified when `allow_densify=True`.
+
+        Parameters
+        ----------
+        allow_densify
+            If `True`, allow sparse stores to be converted to dense counts.
 
         Returns
         -------
@@ -583,7 +640,7 @@ class GlobalEndMotifCounts(EndMotifCounts):
             One row per motif.
         """
         frame = self.motif_metadata()
-        frame["count"] = self.dense_counts_vec()
+        frame["count"] = self.dense_counts_vec(allow_densify=allow_densify)
         return frame
 
 
@@ -631,16 +688,20 @@ class WindowedEndMotifCounts(EndMotifCounts):
             )
         return self.sparse_coo().tocsr()[window_idx, :].tocoo()
 
-    def dense_counts_for_window(self, window_idx: int) -> np.ndarray:
+    def dense_counts_for_window(
+        self, window_idx: int, allow_densify: bool = False
+    ) -> np.ndarray:
         """
         Return dense counts for one window.
 
-        For sparse stores, this creates a dense vector with one value per motif.
+        Sparse stores are only densified when `allow_densify=True`.
 
         Parameters
         ----------
         window_idx
             Zero-based window index to extract.
+        allow_densify
+            If `True`, allow sparse stores to be converted to dense counts.
 
         Returns
         -------
@@ -651,19 +712,23 @@ class WindowedEndMotifCounts(EndMotifCounts):
         if self.end_motifs.storage_mode == "dense":
             counts = _required(self.end_motifs.counts, "counts")
             return np.asarray(counts[window_idx, :])
+        _require_densify(allow_densify, "dense_counts_for_window")
         return self.sparse_coo_for_window(window_idx).toarray()[0, :]
 
-    def dense_data_frame_for_window(self, window_idx: int) -> pd.DataFrame:
+    def dense_data_frame_for_window(
+        self, window_idx: int, allow_densify: bool = False
+    ) -> pd.DataFrame:
         """
         Build a dense motif count data frame for one window.
 
-        For sparse stores, this creates a dense count column with one value per
-        motif.
+        Sparse stores are only densified when `allow_densify=True`.
 
         Parameters
         ----------
         window_idx
             Zero-based window index to extract.
+        allow_densify
+            If `True`, allow sparse stores to be converted to dense counts.
 
         Returns
         -------
@@ -672,7 +737,9 @@ class WindowedEndMotifCounts(EndMotifCounts):
         """
         window_idx = self._validate_row(window_idx)
         frame = self.motif_metadata()
-        frame["count"] = self.dense_counts_for_window(window_idx)
+        frame["count"] = self.dense_counts_for_window(
+            window_idx, allow_densify=allow_densify
+        )
         window_metadata = self.windows().iloc[window_idx].to_dict()
         for name, value in window_metadata.items():
             frame[name] = value
@@ -745,16 +812,20 @@ class GroupedEndMotifCounts(EndMotifCounts):
             )
         return self.sparse_coo().tocsr()[group_idx, :].tocoo()
 
-    def dense_counts_for_group(self, group: int | str) -> np.ndarray:
+    def dense_counts_for_group(
+        self, group: int | str, allow_densify: bool = False
+    ) -> np.ndarray:
         """
         Return dense counts for one group.
 
-        For sparse stores, this creates a dense vector with one value per motif.
+        Sparse stores are only densified when `allow_densify=True`.
 
         Parameters
         ----------
         group
             Group index or group name to extract.
+        allow_densify
+            If `True`, allow sparse stores to be converted to dense counts.
 
         Returns
         -------
@@ -765,19 +836,23 @@ class GroupedEndMotifCounts(EndMotifCounts):
         if self.end_motifs.storage_mode == "dense":
             counts = _required(self.end_motifs.counts, "counts")
             return np.asarray(counts[group_idx, :])
+        _require_densify(allow_densify, "dense_counts_for_group")
         return self.sparse_coo_for_group(group_idx).toarray()[0, :]
 
-    def dense_data_frame_for_group(self, group: int | str) -> pd.DataFrame:
+    def dense_data_frame_for_group(
+        self, group: int | str, allow_densify: bool = False
+    ) -> pd.DataFrame:
         """
         Build a dense motif count data frame for one group.
 
-        For sparse stores, this creates a dense count column with one value per
-        motif.
+        Sparse stores are only densified when `allow_densify=True`.
 
         Parameters
         ----------
         group
             Group index or group name to extract.
+        allow_densify
+            If `True`, allow sparse stores to be converted to dense counts.
 
         Returns
         -------
@@ -786,7 +861,9 @@ class GroupedEndMotifCounts(EndMotifCounts):
         """
         group_idx = self._resolve_group(group)
         frame = self.motif_metadata()
-        frame["count"] = self.dense_counts_for_group(group_idx)
+        frame["count"] = self.dense_counts_for_group(
+            group_idx, allow_densify=allow_densify
+        )
         group_metadata = self.groups().iloc[group_idx].to_dict()
         for name, value in group_metadata.items():
             frame[name] = value
@@ -798,7 +875,7 @@ class GroupedEndMotifCounts(EndMotifCounts):
         return _validate_index(group, len(self.end_motifs.row), "group")
 
 
-def load_end_motifs(path: pathlib.Path | str) -> EndMotifCounts:
+def read_end_motifs(path: pathlib.Path | str) -> EndMotifCounts:
     """
     Load an end-motif count Zarr store.
 
@@ -849,12 +926,14 @@ def _validate_root_metadata(store: Any) -> tuple[str, str]:
 
     schema_version = store.attrs.get("cfdnalab_schema_version")
     if not isinstance(schema_version, numbers.Integral) or not (
-        MIN_SUPPORTED_SCHEMA_VERSION <= int(schema_version) <= MAX_SUPPORTED_SCHEMA_VERSION
+        END_MOTIF_MIN_SUPPORTED_SCHEMA_VERSION
+        <= int(schema_version)
+        <= END_MOTIF_MAX_SUPPORTED_SCHEMA_VERSION
     ):
         raise ValueError(
             "Unsupported end-motif schema version: "
             f"{schema_version!r}. Supported range: "
-            f"{MIN_SUPPORTED_SCHEMA_VERSION}..{MAX_SUPPORTED_SCHEMA_VERSION}"
+            f"{END_MOTIF_MIN_SUPPORTED_SCHEMA_VERSION}..{END_MOTIF_MAX_SUPPORTED_SCHEMA_VERSION}"
         )
 
     storage_mode = store.attrs.get("storage_mode")
@@ -1053,7 +1132,17 @@ def _validate_index(index: int, size: int, name: str) -> int:
     return index
 
 
-def _required(value: np.ndarray | zarr.Array | None, name: str) -> np.ndarray | zarr.Array:
+def _require_densify(allow_densify: bool, method_name: str) -> None:
+    if not allow_densify:
+        raise ValueError(
+            f"{method_name}() would densify a sparse end-motif store. "
+            "Use sparse_coo() or pass allow_densify=True."
+        )
+
+
+def _required(
+    value: np.ndarray | zarr.Array | None, name: str
+) -> np.ndarray | zarr.Array:
     if value is None:
         raise ValueError(f"End-motif Zarr store does not contain {name}")
     return value

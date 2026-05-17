@@ -18,6 +18,7 @@ on:
       - "tests/fixtures/**"
       - "downstream_tests/**"
       - "py_cfdnalab/**"
+      - "r-cfdnalab/**"
       - ".github/workflows/downstream-zarr.yml"
       - "website/docs/guides/fragment_midpoints_guide.md"
       - "website/docs/guides/end_motifs_guide.md"
@@ -116,11 +117,30 @@ jobs:
       - name: Install R downstream packages
         shell: Rscript {0}
         run: |
-          install.packages(c("jsonlite", "zarr"), repos = c("https://cloud.r-project.org"))
+          install.packages(c("jsonlite", "Matrix", "testthat", "zarr"), repos = c("https://cloud.r-project.org"))
           if (!requireNamespace("BiocManager", quietly = TRUE)) {
             install.packages("BiocManager", repos = c("https://cloud.r-project.org"))
           }
           BiocManager::install("Rarr", ask = FALSE, update = FALSE)
+
+      - name: Run R helper package tests
+        env:
+          CFDNALAB_MIDPOINT_ZARR: downstream_tests/tmp/tiny.midpoint_profiles.zarr
+          CFDNALAB_ENDS_DENSE_GLOBAL_ZARR: downstream_tests/tmp/tiny_dense_global.end_motifs.zarr
+          CFDNALAB_ENDS_SPARSE_WINDOWED_ZARR: downstream_tests/tmp/tiny_sparse_windowed.end_motifs.zarr
+          CFDNALAB_ENDS_SPARSE_GROUPED_ZARR: downstream_tests/tmp/tiny_sparse_grouped.end_motifs.zarr
+        run: Rscript -e 'testthat::test_local("r-cfdnalab")'
+
+      - name: Install R helper package
+        run: R CMD INSTALL r-cfdnalab
+
+      - name: Run R helper package downstream test
+        env:
+          CFDNALAB_MIDPOINT_ZARR: downstream_tests/tmp/tiny.midpoint_profiles.zarr
+          CFDNALAB_ENDS_DENSE_GLOBAL_ZARR: downstream_tests/tmp/tiny_dense_global.end_motifs.zarr
+          CFDNALAB_ENDS_SPARSE_WINDOWED_ZARR: downstream_tests/tmp/tiny_sparse_windowed.end_motifs.zarr
+          CFDNALAB_ENDS_SPARSE_GROUPED_ZARR: downstream_tests/tmp/tiny_sparse_grouped.end_motifs.zarr
+        run: Rscript downstream_tests/R/test_cfdnalab_r_package.R
 
       - name: Run Rarr downstream test
         env:

@@ -1,0 +1,31 @@
+test_that("midpoint loader reports path problems before opening Zarr", {
+  missing_path <- file.path(tempdir(), "missing.midpoint_profiles.zarr")
+  file_path <- tempfile(fileext = ".zarr")
+  writeLines("not a directory", file_path)
+  wrong_suffix_path <- tempfile(fileext = ".not_zarr")
+  dir.create(wrong_suffix_path)
+  missing_metadata_path <- tempfile(fileext = ".zarr")
+  dir.create(missing_metadata_path)
+
+  expect_error(read_midpoints(1L), "single path string", fixed = TRUE)
+  expect_error(read_midpoints(missing_path), "does not exist", fixed = TRUE)
+  expect_error(read_midpoints(file_path), "not a directory", fixed = TRUE)
+  expect_error(read_midpoints(wrong_suffix_path), "must end in '.zarr'", fixed = TRUE)
+  expect_error(read_midpoints(missing_metadata_path), "missing root zarr.json", fixed = TRUE)
+})
+
+test_that("end-motif loader reports path problems before opening Zarr", {
+  missing_path <- file.path(tempdir(), "missing.end_motifs.zarr")
+  file_path <- tempfile(fileext = ".zarr")
+  writeLines("not a directory", file_path)
+  wrong_suffix_path <- tempfile(fileext = ".not_zarr")
+  dir.create(wrong_suffix_path)
+  missing_metadata_path <- tempfile(fileext = ".zarr")
+  dir.create(missing_metadata_path)
+
+  expect_error(read_end_motifs(1L), "single path string", fixed = TRUE)
+  expect_error(read_end_motifs(missing_path), "does not exist", fixed = TRUE)
+  expect_error(read_end_motifs(file_path), "not a directory", fixed = TRUE)
+  expect_error(read_end_motifs(wrong_suffix_path), "must end in '.zarr'", fixed = TRUE)
+  expect_error(read_end_motifs(missing_metadata_path), "missing root zarr.json", fixed = TRUE)
+})

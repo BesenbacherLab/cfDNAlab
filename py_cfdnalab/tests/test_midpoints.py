@@ -10,7 +10,7 @@ import zarr
 import cfdnalab
 
 
-GROUP_NAMES = np.array(["alpha", "beta long", "gamma-unicode-aa"], dtype=object)
+GROUP_NAMES = np.array(["LYL1", "beta long", "gamma-unicode-aa"], dtype=object)
 GROUP_AXIS = np.array([0, 1, 2], dtype=np.int32)
 ELIGIBLE_INTERVALS = np.array([4, 7, 11], dtype=np.uint32)
 LENGTH_BIN = np.array([0, 1], dtype=np.int32)
@@ -32,12 +32,19 @@ COUNTS = np.array(
 )
 
 
-def test_load_midpoints_reads_metadata_and_arrays(tmp_path: Path) -> None:
+def test_read_midpoints_reads_metadata_and_arrays(tmp_path: Path) -> None:
     store_path = _write_midpoint_store(tmp_path / "sample.midpoint_profiles.zarr")
 
-    profiles = cfdnalab.load_midpoints(store_path)
+    profiles = cfdnalab.read_midpoints(store_path)
 
     assert profiles.path == store_path
+    assert repr(profiles) == (
+        "MidpointProfiles("
+        f"path={str(store_path)!r}, "
+        "schema_version=1, "
+        "shape=(3, 2, 4)"
+        ")"
+    )
     assert profiles.group_names() == GROUP_NAMES.tolist()
     assert profiles.eligible_intervals() == [4, 7, 11]
     pd.testing.assert_frame_equal(
@@ -77,7 +84,7 @@ def test_profile_dataframe_uses_selected_group_length_and_positions(
     tmp_path: Path,
 ) -> None:
     store_path = _write_midpoint_store(tmp_path / "sample.midpoint_profiles.zarr")
-    profiles = cfdnalab.load_midpoints(store_path)
+    profiles = cfdnalab.read_midpoints(store_path)
 
     data_frame = profiles.data_frame_for_profile(group_idx=1, length_bin_idx=0)
 
@@ -85,12 +92,12 @@ def test_profile_dataframe_uses_selected_group_length_and_positions(
         data_frame,
         pd.DataFrame(
             {
-                "group_idx": [1, 1, 1, 1],
+                "group_idx": np.array([1, 1, 1, 1], dtype=np.int64),
                 "group_name": ["beta long"] * 4,
-                "eligible_intervals": [7, 7, 7, 7],
-                "length_bin": [0, 0, 0, 0],
-                "length_start_bp": [30, 30, 30, 30],
-                "length_end_bp": [60, 60, 60, 60],
+                "eligible_intervals": np.array([7, 7, 7, 7], dtype=np.int64),
+                "length_bin": np.array([0, 0, 0, 0], dtype=np.int64),
+                "length_start_bp": np.array([30, 30, 30, 30], dtype=np.int64),
+                "length_end_bp": np.array([60, 60, 60, 60], dtype=np.int64),
                 "position": POSITION,
                 "position_bin_start_bp": POSITION_BIN_START_BP,
                 "position_bin_end_bp": POSITION_BIN_END_BP,
@@ -102,7 +109,7 @@ def test_profile_dataframe_uses_selected_group_length_and_positions(
 
 def test_group_dataframe_preserves_length_position_grid(tmp_path: Path) -> None:
     store_path = _write_midpoint_store(tmp_path / "sample.midpoint_profiles.zarr")
-    profiles = cfdnalab.load_midpoints(store_path)
+    profiles = cfdnalab.read_midpoints(store_path)
 
     data_frame = profiles.data_frame_from_group("gamma-unicode-aa")
 
@@ -123,10 +130,23 @@ def test_group_dataframe_preserves_length_position_grid(tmp_path: Path) -> None:
         213.0,
     ]
 
+    data_frame_by_index = profiles.data_frame_from_group_idx(1)
+    assert data_frame_by_index["group_name"].tolist() == ["beta long"] * 8
+    assert data_frame_by_index["count"].tolist() == [
+        100.0,
+        101.0,
+        102.0,
+        103.0,
+        110.0,
+        111.0,
+        112.0,
+        113.0,
+    ]
+
 
 def test_length_dataframe_preserves_group_position_grid(tmp_path: Path) -> None:
     store_path = _write_midpoint_store(tmp_path / "sample.midpoint_profiles.zarr")
-    profiles = cfdnalab.load_midpoints(store_path)
+    profiles = cfdnalab.read_midpoints(store_path)
 
     data_frame = profiles.data_frame_from_length(60)
 
@@ -146,10 +166,10 @@ def test_length_dataframe_preserves_group_position_grid(tmp_path: Path) -> None:
         2,
     ]
     assert data_frame["group_name"].tolist() == [
-        "alpha",
-        "alpha",
-        "alpha",
-        "alpha",
+        "LYL1",
+        "LYL1",
+        "LYL1",
+        "LYL1",
         "beta long",
         "beta long",
         "beta long",
@@ -178,10 +198,27 @@ def test_length_dataframe_preserves_group_position_grid(tmp_path: Path) -> None:
         213.0,
     ]
 
+    data_frame_by_index = profiles.data_frame_from_length_bin(0)
+    assert data_frame_by_index["length_bin"].tolist() == [0] * 12
+    assert data_frame_by_index["count"].tolist() == [
+        0.0,
+        1.0,
+        2.0,
+        3.0,
+        100.0,
+        101.0,
+        102.0,
+        103.0,
+        200.0,
+        201.0,
+        202.0,
+        203.0,
+    ]
+
 
 def test_array_helpers_return_expected_slices(tmp_path: Path) -> None:
     store_path = _write_midpoint_store(tmp_path / "sample.midpoint_profiles.zarr")
-    profiles = cfdnalab.load_midpoints(store_path)
+    profiles = cfdnalab.read_midpoints(store_path)
 
     np.testing.assert_array_equal(profiles.array_for_profile(2, 1), COUNTS[2, 1, :])
     np.testing.assert_array_equal(profiles.array_from_group("beta long"), COUNTS[1, :, :])
@@ -192,9 +229,9 @@ def test_array_helpers_return_expected_slices(tmp_path: Path) -> None:
 
 def test_lookup_helpers_use_names_and_half_open_length_bins(tmp_path: Path) -> None:
     store_path = _write_midpoint_store(tmp_path / "sample.midpoint_profiles.zarr")
-    profiles = cfdnalab.load_midpoints(store_path)
+    profiles = cfdnalab.read_midpoints(store_path)
 
-    assert profiles.group_idx("alpha") == 0
+    assert profiles.group_idx("LYL1") == 0
     assert profiles.group_idx("gamma-unicode-aa") == 2
     assert profiles.length_bin_idx(30) == 0
     assert profiles.length_bin_idx(59) == 0
@@ -207,11 +244,13 @@ def test_lookup_helpers_use_names_and_half_open_length_bins(tmp_path: Path) -> N
         profiles.length_bin_idx(90)
     with pytest.raises(ValueError, match="Fragment length must be non-negative"):
         profiles.length_bin_idx(-1)
+    with pytest.raises(TypeError, match="Fragment length must be an integer"):
+        profiles.length_bin_idx(50.5)  # type: ignore[arg-type]
 
 
 def test_invalid_indices_raise_helpful_errors(tmp_path: Path) -> None:
     store_path = _write_midpoint_store(tmp_path / "sample.midpoint_profiles.zarr")
-    profiles = cfdnalab.load_midpoints(store_path)
+    profiles = cfdnalab.read_midpoints(store_path)
 
     with pytest.raises(TypeError, match="group_idx must be an integer"):
         profiles.array_for_profile("0", 0)  # type: ignore[arg-type]
@@ -229,11 +268,11 @@ def test_loader_rejects_invalid_paths(tmp_path: Path) -> None:
     wrong_suffix_path.mkdir()
 
     with pytest.raises(FileNotFoundError, match="does not exist"):
-        cfdnalab.load_midpoints(missing_path)
+        cfdnalab.read_midpoints(missing_path)
     with pytest.raises(NotADirectoryError, match="not a directory"):
-        cfdnalab.load_midpoints(file_path)
+        cfdnalab.read_midpoints(file_path)
     with pytest.raises(ValueError, match="should end with '.zarr'"):
-        cfdnalab.load_midpoints(wrong_suffix_path)
+        cfdnalab.read_midpoints(wrong_suffix_path)
 
 
 def test_loader_rejects_schema_and_shape_problems(tmp_path: Path) -> None:
@@ -267,19 +306,19 @@ def test_loader_rejects_schema_and_shape_problems(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="Expected cfdnalab_schema"):
-        cfdnalab.load_midpoints(wrong_schema)
+        cfdnalab.read_midpoints(wrong_schema)
     with pytest.raises(ValueError, match="Unsupported midpoint schema version"):
-        cfdnalab.load_midpoints(wrong_version)
+        cfdnalab.read_midpoints(wrong_version)
     with pytest.raises(ValueError, match="missing arrays: \\['eligible_intervals'\\]"):
-        cfdnalab.load_midpoints(missing_array)
+        cfdnalab.read_midpoints(missing_array)
     with pytest.raises(ValueError, match="counts dimensions must be"):
-        cfdnalab.load_midpoints(wrong_counts_dimensions)
+        cfdnalab.read_midpoints(wrong_counts_dimensions)
     with pytest.raises(ValueError, match="group axis must be contiguous"):
-        cfdnalab.load_midpoints(noncontiguous_axis)
+        cfdnalab.read_midpoints(noncontiguous_axis)
     with pytest.raises(ValueError, match="counts shape does not match"):
-        cfdnalab.load_midpoints(shape_mismatch)
+        cfdnalab.read_midpoints(shape_mismatch)
     with pytest.raises(ValueError, match="group array is missing group-name labels"):
-        cfdnalab.load_midpoints(missing_group_labels)
+        cfdnalab.read_midpoints(missing_group_labels)
 
 
 def _write_midpoint_store(

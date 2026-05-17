@@ -45,16 +45,16 @@ fn generate_midpoint_zarr_fixture_with_cfdnalab() -> Result<()> {
         // contributes 0.5 to its final position bin, so repeated fragments create
         // asymmetric values that catch axis swaps and broad downstream assertions.
         vec![
-            // alpha, length bin [30, 50)
+            // LYL1, length bin [30, 50)
             paired_fragment(26, 41, 20),
             paired_fragment(26, 41, 20),
             paired_fragment(28, 41, 20),
-            // alpha, length bin [50, 70)
+            // LYL1, length bin [50, 70)
             paired_fragment(95, 61, 20),
             paired_fragment(95, 61, 20),
             paired_fragment(95, 61, 20),
             paired_fragment(97, 61, 20),
-            // alpha, length bin [70, 100)
+            // LYL1, length bin [70, 100)
             paired_fragment(89, 81, 20),
             paired_fragment(89, 81, 20),
             paired_fragment(89, 81, 20),
@@ -95,8 +95,8 @@ fn generate_midpoint_zarr_fixture_with_cfdnalab() -> Result<()> {
     write_bed(
         &intervals,
         &[
-            ("chr1", 45, 55, "alpha"),
-            ("chr1", 120, 130, "alpha"),
+            ("chr1", 45, 55, "LYL1"),
+            ("chr1", 120, 130, "LYL1"),
             ("chr1", 50, 60, "beta-site"),
             ("chr1", 160, 170, "beta-site"),
             ("chr1", 70, 80, "gamma_long"),
@@ -196,13 +196,13 @@ fn generate_midpoint_zarr_fixture_with_cfdnalab() -> Result<()> {
     assert_eq!(group_metadata["attributes"]["label_field"], "group_name");
     assert_eq!(
         group_metadata["attributes"]["labels"],
-        serde_json::json!(["alpha", "beta-site", "gamma_long"])
+        serde_json::json!(["LYL1", "beta-site", "gamma_long"])
     );
 
     let group_index = std::fs::read_to_string(group_index_path)?;
     assert_eq!(
         group_index,
-        "group_idx\tgroup_name\teligible_intervals\n0\talpha\t2\n1\tbeta-site\t2\n2\tgamma_long\t2\n"
+        "group_idx\tgroup_name\teligible_intervals\n0\tLYL1\t2\n1\tbeta-site\t2\n2\tgamma_long\t2\n"
     );
 
     let settings: Value = serde_json::from_str(&std::fs::read_to_string(settings_path)?)?;

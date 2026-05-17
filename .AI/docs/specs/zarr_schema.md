@@ -10,14 +10,19 @@ attributes and array attributes define the biological schema.
 - Root attributes must include `cfdnalab_schema` and
   `cfdnalab_schema_version`.
 - Current schema version is `1` for all Zarr stores in this spec.
-- `int32` arrays are used for coordinate axes and small label indices that are
-  naturally loaded as native R integers.
-- `uint32` arrays are used for non-negative count-like metadata that fits in
-  32 bits.
-- `uint64` arrays are used for genomic coordinates and sparse COO indices.
+- `int32` arrays are used for coordinate axes, small label indices, and small
+  non-negative metadata that should load as native R integers.
+- `uint64` arrays are used for genomic coordinates.
 - R readers should preserve `uint64` as `bit64::integer64` or check that values
-  are below `2^53` before conversion to double. Sparse indices must be range
-  checked before conversion to R's one-based matrix indices.
+  are below `2^53` before conversion to double. Sparse indices are `int32` and
+  must be range checked before conversion to R's one-based matrix indices.
+- Public arrays use fill values outside their valid data domain where possible.
+  This prevents readers that map Zarr fill values to missing values from
+  turning valid zero counts or zero-based coordinates into missing values.
+  Current fill values are `-1` for non-negative `int32` metadata, `-1.0` for
+  non-negative floating counts/fractions, `u64::MAX` for genomic coordinates,
+  and `255` for fixed-width ASCII label bytes. The `255` fill value must not be
+  reused for arbitrary numeric `uint8` arrays where `255` could be real data.
 
 ## Midpoint Profiles
 
@@ -34,10 +39,10 @@ Arrays:
   count tensor.
 - `group[group]`: `int32`, zero-based group index. Attributes:
   `label_field = "group_name"` and `labels = [...]`.
-- `eligible_intervals[group]`: `uint32`, retained profile intervals per group.
+- `eligible_intervals[group]`: `int32`, retained profile intervals per group.
 - `length_bin[length_bin]`: `int32`, zero-based length-bin index.
-- `length_start_bp[length_bin]`: `uint32`, inclusive fragment length-bin start.
-- `length_end_bp[length_bin]`: `uint32`, exclusive fragment length-bin end.
+- `length_start_bp[length_bin]`: `int32`, inclusive fragment length-bin start.
+- `length_end_bp[length_bin]`: `int32`, exclusive fragment length-bin end.
 - `position[position]`: `int32`, zero-based profile position-bin index.
 - `position_bin_start_bp[position]`: `int32`, inclusive interval-relative
   position-bin start.
@@ -86,7 +91,7 @@ Grouped row metadata for `row_mode = "grouped_bed"`:
 
 - `group[row]`: `int32`, group index matching the count row. Attributes:
   `label_field = "group_name"` and `labels = [...]`.
-- `eligible_windows[row]`: `uint32`, retained grouped BED windows per group.
+- `eligible_windows[row]`: `int32`, retained grouped BED windows per group.
 - `blacklisted_fraction[row]`: `float64`, length-weighted group blacklist
   fraction.
 
@@ -96,10 +101,10 @@ Dense counts:
 
 Sparse counts:
 
-- `sparse/row[nnz]`: `uint64`, zero-based COO row indices.
-- `sparse/motif[nnz]`: `uint64`, zero-based COO motif indices.
+- `sparse/row[nnz]`: `int32`, zero-based COO row indices.
+- `sparse/motif[nnz]`: `int32`, zero-based COO motif indices.
 - `sparse/count[nnz]`: `float64`, weighted non-zero counts.
-- `sparse/shape[sparse_dimension]`: `uint64`, dense shape `[row, motif]`.
+- `sparse/shape[sparse_dimension]`: `int32`, dense shape `[row, motif]`.
 - `sparse/sparse_dimension[sparse_dimension]`: `int32`, axis index with
   `label_field = "sparse_dimension_name"` and `labels = ["row", "motif"]`.
 

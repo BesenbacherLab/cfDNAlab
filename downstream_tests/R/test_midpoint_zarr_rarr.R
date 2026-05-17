@@ -26,7 +26,7 @@ stopifnot(identical(as.integer(length_bin), c(0L, 1L, 2L)))
 stopifnot(identical(as.integer(position), c(0L, 1L, 2L, 3L, 4L)))
 
 group_names <- labels_from_array_attributes(store_path, "group", "group_name")
-stopifnot(identical(as.character(group_names), c("alpha", "beta-site", "gamma_long")))
+stopifnot(identical(as.character(group_names), c("LYL1", "beta-site", "gamma_long")))
 
 group_index <- 1L
 length_start_bp <- read_array("length_start_bp", index = list(NULL))

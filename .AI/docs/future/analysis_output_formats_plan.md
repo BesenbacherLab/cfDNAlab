@@ -103,9 +103,9 @@ Core arrays:
 ```text
 counts                  float32[group, length_bin, position]
 group                   int32[group]
-eligible_intervals      uint32[group]
-length_start_bp         uint32[length_bin]
-length_end_bp           uint32[length_bin]
+eligible_intervals      int32[group]
+length_start_bp         int32[length_bin]
+length_end_bp           int32[length_bin]
 position_bin_start_bp   int32[position]
 position_bin_end_bp     int32[position]
 ```
@@ -255,8 +255,8 @@ Initial Python midpoint helper:
 ```python
 import cfdnalab as cfl
 
-profiles = cfl.load_midpoints("sample.midpoint_profiles.zarr")
-group_frame = profiles.data_frame_from_group("CTCF")
+profiles = cfl.read_midpoints("sample.midpoint_profiles.zarr")
+group_frame = profiles.data_frame_from_group("LYL1")
 length_frame = profiles.data_frame_from_length_bin(0)
 profile = profiles.data_frame_for_profile(group_idx=0, length_bin_idx=0)
 all_counts = profiles.array()
@@ -267,7 +267,7 @@ Initial Python ends helper:
 ```python
 import cfdnalab as cfl
 
-ends = cfl.load_end_motifs("sample.end_motifs.zarr")
+ends = cfl.read_end_motifs("sample.end_motifs.zarr")
 motifs = ends.motif_metadata()
 motif_frame = ends.dense_data_frame_for_motif("_AA")
 ```
@@ -334,10 +334,10 @@ Initial R helper:
 ```r
 source("cfdnalab_midpoints.R")
 
-profiles <- read_midpoint_profiles("sample.midpoint_profiles.zarr")
-group_frame <- data_frame_for_group(profiles, "CTCF")
+profiles <- read_midpoints("sample.midpoint_profiles.zarr")
+group_frame <- data_frame_for_group(profiles, "LYL1")
 length_frame <- data_frame_for_length_bin(profiles, c(120, 180))
-group_matrix <- profile_for_group(profiles, "CTCF")
+group_matrix <- profile_for_group(profiles, "LYL1")
 all_counts <- counts_array(profiles)
 ```
 
@@ -489,7 +489,7 @@ Grouped BED mode:
 
 ```text
 group                  int32[row]
-eligible_windows       uint32[row]
+eligible_windows       int32[row]
 blacklisted_fraction   float64[row]
 ```
 
@@ -530,10 +530,10 @@ likely dataframe/plotting workflow.
 Sparse output should be explicit COO inside the Zarr package:
 
 ```text
-sparse/row              uint64[nnz]
-sparse/motif            uint64[nnz]
+sparse/row              int32[nnz]
+sparse/motif            int32[nnz]
 sparse/count            float64[nnz]
-sparse/shape            uint64[sparse_dimension]   # [n_rows, n_motifs]
+sparse/shape            int32[sparse_dimension]    # [n_rows, n_motifs]
 sparse/sparse_dimension int32[sparse_dimension]    # labels attr: ["row", "motif"]
 ```
 
@@ -663,13 +663,13 @@ The spec must list, for each public Zarr store:
 R needs explicit dtype guidance because it has no native `uint64`. The R helper
 should convert on purpose instead of inheriting whatever a reader package does:
 
-- `uint64` genomic coordinates and sparse coordinates should become
-  `bit64::integer64` when exact integer values matter.
-- `uint64` sparse coordinates may be range-checked and converted to ordinary
-  signed integers when constructing `Matrix::sparseMatrix`, because R sparse
-  indices are 1-based signed integers.
-- `uint32` values should become ordinary R integers only after an overflow
-  check; otherwise use a wider representation.
+- `uint64` genomic coordinates should become `bit64::integer64` when exact
+  integer values matter.
+- Sparse coordinates are `int32` because they must become ordinary signed
+  integer vectors when constructing `Matrix::sparseMatrix`, which uses one-based
+  signed indices.
+- Public small non-negative metadata should use `int32` when it is intended to
+  become an ordinary R integer.
 
 Root metadata should not duplicate native Zarr V3 dimension metadata. Midpoint
 previously had a root-level `dimension_names` copy while each array also
@@ -775,12 +775,45 @@ Python helper cleanup before release:
 - Whether grouped ends should add `eligible_windows` now. The answer should
   probably be yes, but this is a small behavior addition compared with the
   current `group_index.tsv`.
-- Whether sparse coordinates should be stored as `uint64` or `int64`. `uint64`
-  is semantically correct, but some R sparse constructors want signed integer
-  vectors after loading.
+- Whether sparse coordinate `int32` limits are acceptable for all practical
+  public sparse stores. Current decision: use `int32` to avoid noisy and fragile
+  `uint64` handling in R sparse workflows.
 - Exact dense and sparse chunk shapes.
 - Whether to preserve `end_motifs` in the store name or rename to `end_counts`.
   Prefer `end_motifs.zarr` because it matches existing user-facing terminology.
+
+## Python/R Loader API Harmonization
+
+Concrete fixes before first release:
+
+- Use per-schema supported-version ranges in both helper packages. A future
+  midpoint schema bump must not accidentally make the end-motif loader accept a
+  schema it has not been updated to read.
+- Do not silently densify sparse end-motif stores in Python dense helpers.
+  Python should match the R package policy: dense helpers on sparse stores error
+  by default and require an explicit `allow_densify = True`.
+- Add Python `repr()` summaries matching the intent of R `print()` methods so
+  interactive users can see schema version, shape, storage mode, and row mode
+  without inspecting internals.
+- Tighten Python scalar input validation where R already rejects ambiguous
+  values, especially `length_bin_idx(length=...)` with non-integer numeric
+  input.
+
+Public API decisions to make deliberately:
+
+- Decide the R public indexing policy before release. The Zarr schema is
+  zero-based, but R user-facing selectors may need to accept one-based indices
+  by default to avoid intuitive off-by-one mistakes. If R exposes zero-based
+  schema indices, docs and argument names must make that explicit.
+- Decide whether `motifs()` returns just labels in both languages or metadata
+  tables in both languages. Current state: Python returns `list[str]` and has
+  `motif_metadata()`, while R returns a metadata `data.frame`.
+- Decide whether sparse matrix naming should be harmonized. Current state:
+  Python exposes SciPy COO-specific helpers, while R exposes `Matrix` sparse
+  matrices and sparse data frames without promising a COO class.
+- Decide whether R should add selected dense/sparse slice convenience helpers
+  that match R idioms. Python can keep its broader method surface because method
+  discovery is more natural there.
 
 ## Implementation Order
 

@@ -115,10 +115,10 @@ fn sparse_end_motif_zarr_writes_sorted_coo_arrays() {
     assert!(root_metadata["attributes"]["primary_array"].is_null());
     assert_eq!(root_metadata["attributes"]["primary_group"], "sparse");
     assert_eq!(root_metadata["attributes"]["sparse_format"], "coo");
-    assert_eq!(read_u64_array(&store_path, "/sparse/row"), vec![0, 0]);
-    assert_eq!(read_u64_array(&store_path, "/sparse/motif"), vec![0, 1]);
+    assert_eq!(read_i32_array(&store_path, "/sparse/row"), vec![0, 0]);
+    assert_eq!(read_i32_array(&store_path, "/sparse/motif"), vec![0, 1]);
     assert_eq!(read_f64_array(&store_path, "/sparse/count"), vec![1.0, 2.5]);
-    assert_eq!(read_u64_array(&store_path, "/sparse/shape"), vec![1, 2]);
+    assert_eq!(read_i32_array(&store_path, "/sparse/shape"), vec![1, 2]);
     let sparse_dimension_metadata = read_json(&store_path.join("sparse/sparse_dimension/zarr.json"));
     assert_eq!(
         sparse_dimension_metadata["attributes"]["labels"],
@@ -191,16 +191,16 @@ fn sparse_end_motif_zarr_round_trips_to_dense_matrix_and_metadata() {
     .expect("sparse Zarr output should write");
 
     // Assert: sparse arrays are sorted COO and can reconstruct the original dense matrix.
-    assert_eq!(read_u64_array(&store_path, "/sparse/row"), vec![0, 0, 1, 2, 2]);
+    assert_eq!(read_i32_array(&store_path, "/sparse/row"), vec![0, 0, 1, 2, 2]);
     assert_eq!(
-        read_u64_array(&store_path, "/sparse/motif"),
+        read_i32_array(&store_path, "/sparse/motif"),
         vec![0, 2, 1, 0, 2]
     );
     assert_eq!(
         read_f64_array(&store_path, "/sparse/count"),
         vec![1.0, 2.5, 4.25, 0.75, 8.0]
     );
-    assert_eq!(read_u64_array(&store_path, "/sparse/shape"), vec![3, 3]);
+    assert_eq!(read_i32_array(&store_path, "/sparse/shape"), vec![3, 3]);
     assert_eq!(
         read_sparse_counts_as_dense(&store_path),
         vec![1.0, 0.0, 2.5, 0.0, 4.25, 0.0, 0.75, 0.0, 8.0]
@@ -268,8 +268,8 @@ fn sparse_end_motif_zarr_allows_no_observed_motifs() {
     assert_eq!(read_i32_array(&store_path, "/motif_byte"), Vec::<i32>::new());
     assert_eq!(read_u8_array(&store_path, "/motif_ascii"), Vec::<u8>::new());
     assert!(!store_path.join("motif").exists());
-    assert_eq!(read_u64_array(&store_path, "/sparse/row"), Vec::<u64>::new());
-    assert_eq!(read_u64_array(&store_path, "/sparse/shape"), vec![1, 0]);
+    assert_eq!(read_i32_array(&store_path, "/sparse/row"), Vec::<i32>::new());
+    assert_eq!(read_i32_array(&store_path, "/sparse/shape"), vec![1, 0]);
 }
 
 #[test]
@@ -337,7 +337,7 @@ fn grouped_end_motif_zarr_writes_group_metadata_and_dense_counts() {
     assert!(!store_path.join("group_name_utf8").exists());
     assert!(!store_path.join("group_name_nbytes").exists());
     assert!(!store_path.join("group_name_byte").exists());
-    assert_eq!(read_u32_array(&store_path, "/eligible_windows"), vec![1, 2, 0]);
+    assert_eq!(read_i32_array(&store_path, "/eligible_windows"), vec![1, 2, 0]);
     assert_eq!(
         read_f64_array(&store_path, "/blacklisted_fraction"),
         vec![0.0, 0.125, 0.0]
@@ -581,10 +581,6 @@ fn read_i32_array(store_path: &std::path::Path, array_path: &str) -> Vec<i32> {
     read_array(store_path, array_path)
 }
 
-fn read_u32_array(store_path: &std::path::Path, array_path: &str) -> Vec<u32> {
-    read_array(store_path, array_path)
-}
-
 fn read_u64_array(store_path: &std::path::Path, array_path: &str) -> Vec<u64> {
     read_array(store_path, array_path)
 }
@@ -594,10 +590,10 @@ fn read_u8_array(store_path: &std::path::Path, array_path: &str) -> Vec<u8> {
 }
 
 fn read_sparse_counts_as_dense(store_path: &std::path::Path) -> Vec<f64> {
-    let row_indices = read_u64_array(store_path, "/sparse/row");
-    let motif_indices = read_u64_array(store_path, "/sparse/motif");
+    let row_indices = read_i32_array(store_path, "/sparse/row");
+    let motif_indices = read_i32_array(store_path, "/sparse/motif");
     let counts = read_f64_array(store_path, "/sparse/count");
-    let shape = read_u64_array(store_path, "/sparse/shape");
+    let shape = read_i32_array(store_path, "/sparse/shape");
     assert_eq!(shape.len(), 2, "sparse shape should have row and motif dimensions");
     let n_rows = shape[0] as usize;
     let n_motifs = shape[1] as usize;

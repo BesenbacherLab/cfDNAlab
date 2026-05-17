@@ -86,13 +86,10 @@ fn validate_zarr_label_rejects_control_characters() {
 fn checked_integer_helpers_report_overflow_before_dtype_truncation() {
     // Arrange
     let i32_overflow = i32::MAX as usize + 1;
-    let u32_overflow = u32::MAX as u64 + 1;
 
     // Act and assert
     assert_eq!(checked_index_axis(3, "row").unwrap(), vec![0, 1, 2]);
     assert!(checked_i32(i32_overflow, "row").is_err());
-    assert_eq!(checked_u32(42usize, "eligible_windows").unwrap(), 42);
-    assert!(checked_u32(u32_overflow, "eligible_windows").is_err());
 }
 
 #[test]

@@ -9,7 +9,7 @@ use crate::{
     shared::{
         length_axis::LengthAxis,
         zarr::{
-            checked_i32, checked_index_axis, checked_u32, create_zarr_store, element_count,
+            checked_i32, checked_index_axis, create_zarr_store, element_count,
             json_object, usize_slice_to_u64_vec,
         },
     },
@@ -94,11 +94,11 @@ fn midpoint_zarr_writes_counts_axes_and_group_metadata() {
     );
 
     assert_eq!(
-        read_u32_chunk(&store_path.join("length_start_bp/c/0")),
+        read_i32_chunk(&store_path.join("length_start_bp/c/0")),
         vec![30, 40]
     );
     assert_eq!(
-        read_u32_chunk(&store_path.join("length_end_bp/c/0")),
+        read_i32_chunk(&store_path.join("length_end_bp/c/0")),
         vec![40, 55]
     );
     assert_eq!(
@@ -110,7 +110,7 @@ fn midpoint_zarr_writes_counts_axes_and_group_metadata() {
         vec![2, 4, 5]
     );
     assert_eq!(
-        read_u32_chunk(&store_path.join("eligible_intervals/c/0")),
+        read_i32_chunk(&store_path.join("eligible_intervals/c/0")),
         vec![4, 7]
     );
     let group_metadata = read_json(&store_path.join("group/zarr.json"));
@@ -243,7 +243,8 @@ fn length_axis_coordinate_arrays_return_half_open_bin_edges() {
         LengthAxis::new(vec![30, 40, 55]).expect("test length axis should be valid");
 
     // Act
-    let (starts, ends) = length_axis_coordinate_arrays(&length_axis);
+    let (starts, ends) =
+        length_axis_coordinate_arrays(&length_axis).expect("length axis should fit i32");
 
     // Assert
     assert_eq!(starts, vec![30, 40]);
@@ -271,7 +272,6 @@ fn checked_integer_helpers_report_overflow_before_public_dtype_truncation() {
     // Arrange
     let i32_overflow_usize = i32::MAX as usize + 1;
     let i32_overflow_u64 = i32::MAX as u64 + 1;
-    let u32_overflow_u64 = u32::MAX as u64 + 1;
 
     // Act and assert
     assert_eq!(checked_i32(42, "position").unwrap(), 42);
@@ -287,13 +287,6 @@ fn checked_integer_helpers_report_overflow_before_public_dtype_truncation() {
             .unwrap_err()
             .to_string()
             .contains("group_idx value")
-    );
-    assert_eq!(checked_u32(9usize, "eligible_intervals").unwrap(), 9);
-    assert!(
-        checked_u32(u32_overflow_u64, "eligible_intervals")
-            .unwrap_err()
-            .to_string()
-            .contains("eligible_intervals value")
     );
 }
 
@@ -356,13 +349,6 @@ fn read_f32_chunk(path: &std::path::Path) -> Vec<f32> {
     read_chunk_bytes(path)
         .chunks_exact(4)
         .map(|bytes| f32::from_le_bytes(bytes.try_into().unwrap()))
-        .collect()
-}
-
-fn read_u32_chunk(path: &std::path::Path) -> Vec<u32> {
-    read_chunk_bytes(path)
-        .chunks_exact(4)
-        .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
         .collect()
 }
 

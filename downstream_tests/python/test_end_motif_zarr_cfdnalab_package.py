@@ -12,7 +12,7 @@ import cfdnalab
 def test_cfdnalab_package_reads_dense_global_end_motifs(
     dense_global_end_zarr_path: Path,
 ) -> None:
-    end_motifs = cfdnalab.load_end_motifs(dense_global_end_zarr_path)
+    end_motifs = cfdnalab.read_end_motifs(dense_global_end_zarr_path)
 
     assert isinstance(end_motifs, cfdnalab.GlobalEndMotifCounts)
     assert end_motifs.storage_mode() == "dense"
@@ -40,7 +40,7 @@ def test_cfdnalab_package_reads_dense_global_end_motifs(
 def test_cfdnalab_package_reads_sparse_windowed_end_motifs(
     sparse_windowed_end_zarr_path: Path,
 ) -> None:
-    end_motifs = cfdnalab.load_end_motifs(sparse_windowed_end_zarr_path)
+    end_motifs = cfdnalab.read_end_motifs(sparse_windowed_end_zarr_path)
 
     assert isinstance(end_motifs, cfdnalab.WindowedEndMotifCounts)
     assert end_motifs.storage_mode() == "sparse_coo"
@@ -76,7 +76,7 @@ def test_cfdnalab_package_reads_sparse_windowed_end_motifs(
 def test_cfdnalab_package_reads_sparse_grouped_end_motifs(
     sparse_grouped_end_zarr_path: Path,
 ) -> None:
-    end_motifs = cfdnalab.load_end_motifs(sparse_grouped_end_zarr_path)
+    end_motifs = cfdnalab.read_end_motifs(sparse_grouped_end_zarr_path)
 
     assert isinstance(end_motifs, cfdnalab.GroupedEndMotifCounts)
     assert end_motifs.storage_mode() == "sparse_coo"

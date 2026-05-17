@@ -13,8 +13,8 @@ import numpy as np
 import pandas as pd
 import zarr
 
-MIN_SUPPORTED_SCHEMA_VERSION = 1
-MAX_SUPPORTED_SCHEMA_VERSION = 1
+MIDPOINT_MIN_SUPPORTED_SCHEMA_VERSION = 1
+MIDPOINT_MAX_SUPPORTED_SCHEMA_VERSION = 1
 REQUIRED_ARRAYS = {
     "counts",
     "group",
@@ -59,6 +59,17 @@ class MidpointProfiles:
         """
         self.path = pathlib.Path(path)
         self.profiles = MidpointProfiles._load_zarr(self.path)
+
+    def __repr__(self) -> str:
+        shape = tuple(self.profiles.counts.shape)
+        schema_version = self.profiles.store.attrs.get("cfdnalab_schema_version")
+        return (
+            "MidpointProfiles("
+            f"path={str(self.path)!r}, "
+            f"schema_version={schema_version!r}, "
+            f"shape={shape!r}"
+            ")"
+        )
 
     @staticmethod
     def _load_zarr(path: pathlib.Path | str) -> LoadedProfile:
@@ -529,6 +540,11 @@ class MidpointProfiles:
         int
             Zero-based length-bin index.
         """
+        if not isinstance(length, numbers.Integral):
+            raise TypeError(
+                f"Fragment length must be an integer, got {type(length).__name__}"
+            )
+        length = int(length)
         if length < 0:
             raise ValueError(f"Fragment length must be non-negative, got {length}")
         matches = np.flatnonzero(
@@ -576,7 +592,7 @@ class MidpointProfiles:
         )
 
 
-def load_midpoints(path: pathlib.Path | str) -> MidpointProfiles:
+def read_midpoints(path: pathlib.Path | str) -> MidpointProfiles:
     """
     Load a midpoint profile Zarr store.
 
@@ -619,12 +635,14 @@ def _validate_root_metadata(store: Any) -> None:
 
     schema_version = store.attrs.get("cfdnalab_schema_version")
     if not isinstance(schema_version, numbers.Integral) or not (
-        MIN_SUPPORTED_SCHEMA_VERSION <= int(schema_version) <= MAX_SUPPORTED_SCHEMA_VERSION
+        MIDPOINT_MIN_SUPPORTED_SCHEMA_VERSION
+        <= int(schema_version)
+        <= MIDPOINT_MAX_SUPPORTED_SCHEMA_VERSION
     ):
         raise ValueError(
             "Unsupported midpoint schema version: "
             f"{schema_version!r}. Supported range: "
-            f"{MIN_SUPPORTED_SCHEMA_VERSION}..{MAX_SUPPORTED_SCHEMA_VERSION}"
+            f"{MIDPOINT_MIN_SUPPORTED_SCHEMA_VERSION}..{MIDPOINT_MAX_SUPPORTED_SCHEMA_VERSION}"
         )
 
 

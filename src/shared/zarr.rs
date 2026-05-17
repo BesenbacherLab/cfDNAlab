@@ -33,6 +33,30 @@ use zarrs::{
 /// unless downstream compatibility or performance tests give a concrete reason.
 pub(crate) const DEFAULT_ZARR_ZSTD_LEVEL: i32 = 3;
 
+/// Fill value for public `int32` coordinate and metadata arrays.
+///
+/// Several downstream readers treat a Zarr array's fill value as missing data. Public cfDNAlab
+/// coordinate axes are zero-based, so using zero would turn valid index 0 values into missing
+/// values in those readers. `-1` is outside the valid domain for these arrays and should only be
+/// seen as chunk padding or metadata for empty arrays, not as real cfDNAlab data.
+pub(crate) const ZARR_INT32_FILL_VALUE: i32 = -1;
+
+/// Fill value for non-negative `float32` count arrays.
+pub(crate) const ZARR_FLOAT32_FILL_VALUE: f32 = -1.0;
+
+/// Fill value for non-negative `float64` count and fraction arrays.
+pub(crate) const ZARR_FLOAT64_FILL_VALUE: f64 = -1.0;
+
+/// Fill value for public `uint64` genomic coordinate arrays.
+pub(crate) const ZARR_UINT64_FILL_VALUE: u64 = u64::MAX;
+
+/// Fill value for fixed-width ASCII label arrays.
+///
+/// Valid ASCII labels only use byte values `0..=127`, so `255` cannot be confused with a real
+/// label byte. Do not reuse this for arbitrary numeric `uint8` arrays, where `255` may be a valid
+/// data value.
+pub(crate) const ZARR_ASCII_FILL_VALUE: u8 = u8::MAX;
+
 /// Open or create a filesystem-backed Zarr store directory.
 ///
 /// This does not remove or replace existing final outputs. Commands write into a temporary store
@@ -320,17 +344,6 @@ where
     value
         .try_into()
         .map_err(|_| anyhow::anyhow!("{field_name} value {value} exceeds i32"))
-}
-
-/// Convert a metadata value to the public `u32` Zarr dtype.
-pub(crate) fn checked_u32<T>(value: T, field_name: &str) -> Result<u32>
-where
-    T: TryInto<u32> + Copy + std::fmt::Display,
-    T::Error: std::fmt::Debug,
-{
-    value
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("{field_name} value {value} exceeds u32"))
 }
 
 /// Return the number of elements in a shape, or `None` on overflow.
