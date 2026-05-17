@@ -762,9 +762,9 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     let correction_package_path = opt
         .ioc
         .output_dir
-        .join(dot_join(&[prefix, "gc_bias_correction.npz"]));
+        .join(dot_join(&[prefix, "gc_bias_correction.zarr"]));
     let temp_correction_package_path = final_outputs.temp_path_for(&correction_package_path)?;
-    correction_pkg.write_npz(&temp_correction_package_path)?;
+    correction_pkg.write_zarr(&temp_correction_package_path)?;
     final_outputs.record(temp_correction_package_path, correction_package_path)?;
 
     // Plot the avg. gc-bias across lengths for quick QC

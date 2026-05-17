@@ -405,7 +405,7 @@ fn settings_writer_records_non_default_interpretation_fields() {
     config.set_gc_length_weighting(MarginalizeLengthsWeightingScheme::Frequency);
     config.set_gc_length_range(GCLengthRange::Package);
     config.set_gc_length_trim_rare(0.05);
-    config.gc.gc_file = Some(PathBuf::from("gc_bias_correction.npz"));
+    config.gc.gc_file = Some(PathBuf::from("gc_bias_correction.zarr"));
     config.scale_genome.scaling_factors = Some(PathBuf::from("scaling.tsv"));
     config.blacklist = Some(vec![PathBuf::from("blacklist.bed")]);
     config.set_min_mapq(17);

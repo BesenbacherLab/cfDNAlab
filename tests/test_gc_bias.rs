@@ -7,7 +7,7 @@ mod tests_gc_bias {
     use anyhow::{Context, Result};
     use fxhash::FxHashMap;
     use ndarray::array;
-    use ndarray_npy::{NpzWriter, read_npy};
+    use ndarray_npy::read_npy;
     use tempfile::{TempDir, tempdir};
 
     use cfdnalab::commands::{
@@ -30,7 +30,11 @@ mod tests_gc_bias {
             package::GCCorrectionPackage,
             support_masking::build_extreme_bins_support_mask,
         },
-        ref_gc_bias::{config::RefGCBiasConfig, ref_gc_bias::run as run_ref_gc_bias},
+        ref_gc_bias::{
+            config::RefGCBiasConfig,
+            ref_gc_bias::run as run_ref_gc_bias,
+            zarr::{ReferenceGCZarrPackage, write_reference_gc_package_zarr},
+        },
     };
     use cfdnalab::shared::constants::{
         GC_CORRECTION_SCHEMA_VERSION, MIN_ACGT_BASES_FOR_GC_FRACTION,
@@ -338,8 +342,8 @@ mod tests_gc_bias {
             reference_contig_footprint: Vec::new(),
         };
         let tmp_dir = tempdir()?;
-        let pkg_path = tmp_dir.path().join("gc_package.npz");
-        package.write_npz(&pkg_path)?;
+        let pkg_path = tmp_dir.path().join("gc_package.zarr");
+        package.write_zarr(&pkg_path)?;
 
         // Act: load the package and build a corrector.
         let loaded = GCCorrectionPackage::from_file(&pkg_path)?;
@@ -395,8 +399,8 @@ mod tests_gc_bias {
             reference_contig_footprint: twobit_contig_footprint(&reference_a.path)?,
         };
         let tmp_dir = tempdir()?;
-        let package_path = tmp_dir.path().join("gc_package.npz");
-        package.write_npz(&package_path)?;
+        let package_path = tmp_dir.path().join("gc_package.zarr");
+        package.write_zarr(&package_path)?;
 
         let standard_error =
             load_gc_corrector(Some(&package_path), Some(&reference_b.path), 30, 30)
@@ -427,23 +431,23 @@ mod tests_gc_bias {
 
     #[test]
     fn gc_correction_package_rejects_missing_path_before_opening() -> Result<()> {
-        // Arrange: point the loader at a `.npz` path that does not exist.
+        // Arrange: point the loader at a `.zarr` path that does not exist.
         let tmp_dir = tempdir()?;
-        let missing_path = tmp_dir.path().join("missing_gc_package.npz");
+        let missing_path = tmp_dir.path().join("missing_gc_package.zarr");
 
         // Act: try to load the missing package.
         let err = GCCorrectionPackage::from_file(&missing_path)
             .expect_err("missing GC correction package should fail");
 
-        // Assert: the user gets the shared "existing .npz file" contract directly instead of a
-        // lower-level IO or NPZ parsing error.
+        // Assert: the user gets the shared "existing .zarr directory" contract directly instead
+        // of a lower-level storage error.
         let msg = err.to_string();
         assert!(
-            msg.contains("must point to an existing .npz file"),
+            msg.contains("must point to an existing .zarr directory"),
             "unexpected error message: {msg}"
         );
         assert!(
-            msg.contains("missing_gc_package.npz"),
+            msg.contains("missing_gc_package.zarr"),
             "unexpected error message: {msg}"
         );
 
@@ -451,20 +455,20 @@ mod tests_gc_bias {
     }
 
     #[test]
-    fn gc_correction_package_rejects_non_npz_extension_before_parsing() -> Result<()> {
+    fn gc_correction_package_rejects_regular_file_before_parsing() -> Result<()> {
         // Arrange: create a regular file with the wrong extension.
         let tmp_dir = tempdir()?;
         let wrong_extension_path = tmp_dir.path().join("gc_package.txt");
-        std::fs::write(&wrong_extension_path, b"not an npz archive")?;
+        std::fs::write(&wrong_extension_path, b"not a zarr store")?;
 
-        // Act: try to load the non-`.npz` file.
+        // Act: try to load the non-directory path.
         let err = GCCorrectionPackage::from_file(&wrong_extension_path)
             .expect_err("wrong extension should fail");
 
-        // Assert: extension validation runs before the NPZ reader.
+        // Assert: directory validation runs before opening the Zarr store.
         let msg = err.to_string();
         assert!(
-            msg.contains("must point to a .npz file"),
+            msg.contains("must point to an existing .zarr directory"),
             "unexpected error message: {msg}"
         );
         assert!(
@@ -775,7 +779,7 @@ mod tests_gc_bias {
         let mut cfg = GCConfig::new(
             ioc,
             reference_path.to_path_buf(),
-            ref_gc_dir.join("ref_gc_package.npz"),
+            ref_gc_dir.join("ref_gc_package.zarr"),
             ChromosomeArgs {
                 chromosomes: Some(vec!["chr1".to_string()]),
                 chromosomes_file: None,
@@ -842,7 +846,7 @@ mod tests_gc_bias {
             let mut cfg = GCConfig::new(
                 ioc,
                 reference.path.clone(),
-                ref_gc_dir.path().join("ref_gc_package.npz"),
+                ref_gc_dir.path().join("ref_gc_package.zarr"),
                 ChromosomeArgs {
                     chromosomes: Some(vec!["chr1".to_string()]),
                     chromosomes_file: None,
@@ -1066,8 +1070,9 @@ mod tests_gc_bias {
             baseline_out_dir.path(),
         );
         run_gc_bias(&baseline_cfg)?;
-        let baseline_package =
-            GCCorrectionPackage::from_file(baseline_out_dir.path().join("gc_bias_correction.npz"))?;
+        let baseline_package = GCCorrectionPackage::from_file(
+            baseline_out_dir.path().join("gc_bias_correction.zarr"),
+        )?;
         assert_eq!(baseline_package.correction_matrix.dim(), (1, 1));
         assert!((baseline_package.correction_matrix[(0, 0)] - 1.0).abs() < 1e-12);
 
@@ -1122,7 +1127,7 @@ mod tests_gc_bias {
         // Act
         run_gc_bias(&cfg)?;
         let package =
-            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.zarr"))?;
 
         // Assert:
         // The reference is `ACGT` repeated and the only cfDNA fragment spans [20,80). With
@@ -1300,9 +1305,9 @@ mod tests_gc_bias {
         }
 
         let split_pkg =
-            GCCorrectionPackage::from_file(split_out.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(split_out.path().join("gc_bias_correction.zarr"))?;
         let merged_pkg =
-            GCCorrectionPackage::from_file(merged_out.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(merged_out.path().join("gc_bias_correction.zarr"))?;
         assert_eq!(split_pkg.version, merged_pkg.version);
         assert_eq!(split_pkg.end_offset, merged_pkg.end_offset);
         assert_eq!(split_pkg.length_edges, merged_pkg.length_edges);
@@ -1416,9 +1421,9 @@ mod tests_gc_bias {
         }
 
         let aligned_pkg =
-            GCCorrectionPackage::from_file(aligned_out.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(aligned_out.path().join("gc_bias_correction.zarr"))?;
         let misaligned_pkg =
-            GCCorrectionPackage::from_file(misaligned_out.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(misaligned_out.path().join("gc_bias_correction.zarr"))?;
         assert_eq!(aligned_pkg.version, misaligned_pkg.version);
         assert_eq!(aligned_pkg.end_offset, misaligned_pkg.end_offset);
         assert_eq!(aligned_pkg.length_edges, misaligned_pkg.length_edges);
@@ -1534,7 +1539,7 @@ mod tests_gc_bias {
         let mut cfg = GCConfig::new(
             ioc,
             reference.path.clone(),
-            ref_gc_dir.path().join("ref_gc_package.npz"),
+            ref_gc_dir.path().join("ref_gc_package.zarr"),
             ChromosomeArgs {
                 chromosomes: Some(vec!["chr1".to_string(), "chr2".to_string()]),
                 chromosomes_file: None,
@@ -1571,7 +1576,7 @@ mod tests_gc_bias {
         }
 
         let package =
-            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.zarr"))?;
         assert_eq!(package.version, GC_CORRECTION_SCHEMA_VERSION);
         assert_eq!(package.end_offset, 0);
         assert_eq!(package.length_edges, vec![10, 10]);
@@ -1695,7 +1700,7 @@ mod tests_gc_bias {
             let mut cfg = GCConfig::new(
                 ioc,
                 reference.path.clone(),
-                ref_gc_dir.path().join("ref_gc_package.npz"),
+                ref_gc_dir.path().join("ref_gc_package.zarr"),
                 ChromosomeArgs {
                     chromosomes: Some(vec!["chr1".to_string(), "chr2".to_string()]),
                     chromosomes_file: None,
@@ -1837,9 +1842,9 @@ mod tests_gc_bias {
         }
 
         let multi_tile_pkg =
-            GCCorrectionPackage::from_file(multi_tile_out.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(multi_tile_out.path().join("gc_bias_correction.zarr"))?;
         let single_tile_pkg =
-            GCCorrectionPackage::from_file(single_tile_out.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(single_tile_out.path().join("gc_bias_correction.zarr"))?;
         assert_eq!(multi_tile_pkg.version, single_tile_pkg.version);
         assert_eq!(multi_tile_pkg.end_offset, single_tile_pkg.end_offset);
         assert_eq!(multi_tile_pkg.length_edges, single_tile_pkg.length_edges);
@@ -1971,9 +1976,9 @@ mod tests_gc_bias {
         }
 
         let by_size_pkg =
-            GCCorrectionPackage::from_file(by_size_out.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(by_size_out.path().join("gc_bias_correction.zarr"))?;
         let by_bed_pkg =
-            GCCorrectionPackage::from_file(by_bed_out.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(by_bed_out.path().join("gc_bias_correction.zarr"))?;
         assert_eq!(by_size_pkg.version, by_bed_pkg.version);
         assert_eq!(by_size_pkg.end_offset, by_bed_pkg.end_offset);
         assert_eq!(by_size_pkg.length_edges, by_bed_pkg.length_edges);
@@ -2149,7 +2154,7 @@ mod tests_gc_bias {
         }
 
         let package =
-            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.zarr"))?;
         assert_eq!(package.length_edges, vec![10, 10]);
         assert_eq!(package.gc_edges, vec![0, 1, 100]);
         assert_eq!(package.correction_matrix.dim(), (1, 2));
@@ -2496,7 +2501,8 @@ mod tests_gc_bias {
                 .path()
                 .join("gc_bias.normalized_avg_cfdna_counts.1.npy"),
         )?;
-        let reference_data = load_reference_gc_data(&ref_gc_dir.path().join("ref_gc_package.npz"))?;
+        let reference_data =
+            load_reference_gc_data(&ref_gc_dir.path().join("ref_gc_package.zarr"))?;
 
         // The support mask defines exactly which cells contribute to the mean-scaling denominator.
         let mut supported_sum = 0.0_f64;
@@ -2836,9 +2842,9 @@ mod tests_gc_bias {
         }
 
         let split_package =
-            GCCorrectionPackage::from_file(split_out_dir.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(split_out_dir.path().join("gc_bias_correction.zarr"))?;
         let merged_package =
-            GCCorrectionPackage::from_file(merged_out_dir.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(merged_out_dir.path().join("gc_bias_correction.zarr"))?;
         assert_eq!(split_package.version, merged_package.version);
         assert_eq!(split_package.end_offset, merged_package.end_offset);
         assert_eq!(split_package.length_edges, merged_package.length_edges);
@@ -2886,7 +2892,7 @@ mod tests_gc_bias {
         let err = run_gc_bias(&cfg).expect_err("non-scalar reference metadata should fail");
         let msg = err.to_string();
         assert!(
-            msg.contains("skip_smoothing should be length 1"),
+            msg.contains("skip_smoothing") && msg.contains("must be a bool"),
             "unexpected error message: {msg}"
         );
 
@@ -3054,9 +3060,10 @@ mod tests_gc_bias {
         run_gc_bias(&cfg)?;
 
         let expected_footprint = twobit_contig_footprint(&reference.path)?;
-        let reference_data = load_reference_gc_data(&ref_gc_dir.path().join("ref_gc_package.npz"))?;
+        let reference_data =
+            load_reference_gc_data(&ref_gc_dir.path().join("ref_gc_package.zarr"))?;
         let correction_package =
-            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.zarr"))?;
 
         assert_eq!(
             reference_data.metadata.reference_contig_footprint,
@@ -3295,100 +3302,75 @@ mod tests_gc_bias {
         out_dir: &std::path::Path,
         fixture: ReferencePackageFixture,
     ) -> Result<()> {
-        let package_path = out_dir.join("ref_gc_package.npz");
         let counts = array![[1.0_f64, 2.0_f64], [3.0_f64, 4.0_f64]];
         let support_unobservables = array![[true, false], [true, true]];
         let support_outliers = array![[true, true], [false, true]];
         let gc_percent_widths = array![[10_u16, 20_u16], [30_u16, 40_u16]];
 
-        let file = std::fs::File::create(&package_path)?;
-        let mut npz = NpzWriter::new(file);
-        npz.add_array("counts", &counts)?;
-        npz.add_array("support_mask_unobservables", &support_unobservables)?;
-        npz.add_array("support_mask_outliers", &support_outliers)?;
-        npz.add_array("gc_percent_widths", &gc_percent_widths)?;
-        npz.add_array("version", &ndarray::Array1::from(fixture.version))?;
-        npz.add_array(
-            "length_range",
-            &ndarray::Array1::from(fixture.length_range.to_vec()),
+        write_reference_zarr_arrays(
+            out_dir,
+            &counts,
+            &support_unobservables,
+            &support_outliers,
+            &gc_percent_widths,
+            fixture.length_range[0],
+            fixture.length_range[1],
+            fixture.end_offset,
+            fixture.skip_interpolation.first().copied().unwrap_or(false),
+            fixture.smoothing_radius.first().copied().unwrap_or(2) as u8,
+            fixture.smoothing_sigma.first().copied().unwrap_or(0.55),
+            fixture.skip_smoothing.first().copied().unwrap_or(true),
+            &fixture.chromosomes,
+            &fixture.reference_contig_footprint,
         )?;
-        npz.add_array(
-            "end_offset",
-            &ndarray::Array1::from(vec![fixture.end_offset]),
-        )?;
-        npz.add_array(
-            "skip_interpolation",
-            &ndarray::Array1::from(fixture.skip_interpolation),
-        )?;
-        npz.add_array(
-            "smoothing_radius",
-            &ndarray::Array1::from(fixture.smoothing_radius),
-        )?;
-        npz.add_array(
-            "smoothing_sigma",
-            &ndarray::Array1::from(fixture.smoothing_sigma),
-        )?;
-        npz.add_array(
-            "skip_smoothing",
-            &ndarray::Array1::from(fixture.skip_smoothing),
-        )?;
-        write_reference_chromosomes_json(&mut npz, &fixture.chromosomes)?;
-        write_reference_contig_footprint(&mut npz, &fixture.reference_contig_footprint)?;
-        npz.finish()?;
+        let package_path = out_dir.join("ref_gc_package.zarr");
+        if fixture.version != vec![GC_CORRECTION_SCHEMA_VERSION] {
+            tamper_reference_gc_root_attribute(
+                &package_path,
+                "cfdnalab_schema_version",
+                serde_json::json!(fixture.version[0]),
+            )?;
+        }
+        if fixture.skip_smoothing.len() != 1 {
+            tamper_reference_gc_root_attribute(
+                &package_path,
+                "skip_smoothing",
+                serde_json::json!(fixture.skip_smoothing),
+            )?;
+        }
         Ok(())
     }
 
-    fn write_reference_chromosomes_json<S: AsRef<str>>(
-        npz: &mut NpzWriter<std::fs::File>,
-        chromosomes: &[S],
-    ) -> Result<()> {
-        let chromosome_names: Vec<&str> = chromosomes
-            .iter()
-            .map(|chromosome| chromosome.as_ref())
-            .collect();
-        let chromosomes_json = serde_json::to_vec(&chromosome_names)?;
-        npz.add_array("chromosomes_json", &ndarray::Array1::from(chromosomes_json))?;
-        Ok(())
-    }
+    fn write_reference_gc_package_with_count_row_mismatch(out_dir: &std::path::Path) -> Result<()> {
+        let counts = array![[1.0_f64, 2.0_f64], [3.0_f64, 4.0_f64], [5.0_f64, 6.0_f64]];
+        let support_unobservables = array![[true, false], [true, true], [false, true]];
+        let support_outliers = array![[true, true], [false, true], [true, false]];
+        let gc_percent_widths = array![[10_u16, 20_u16], [30_u16, 40_u16], [50_u16, 60_u16]];
 
-    fn write_reference_contig_footprint(
-        npz: &mut NpzWriter<std::fs::File>,
-        reference_contig_footprint: &[ContigFootprintEntry],
-    ) -> Result<()> {
-        npz.add_array(
-            "reference_contig_footprint_json",
-            &ndarray::Array1::from(serde_json::to_vec(reference_contig_footprint)?),
+        write_reference_zarr_arrays(
+            out_dir,
+            &counts,
+            &support_unobservables,
+            &support_outliers,
+            &gc_percent_widths,
+            30,
+            32,
+            10,
+            false,
+            2,
+            0.55,
+            true,
+            &["chr1".to_string()],
+            &[],
         )?;
-        Ok(())
+        tamper_reference_gc_array_shape(&out_dir.join("ref_gc_package.zarr"), "counts", &[2, 2])
     }
 
     fn write_reference_gc_package_with_shape_mismatch(out_dir: &std::path::Path) -> Result<()> {
-        let package_path = out_dir.join("ref_gc_package.npz");
-        let counts = array![[1.0_f64, 2.0_f64], [3.0_f64, 4.0_f64]];
-        let support_unobservables = array![[true, false]];
-        let support_outliers = array![[true, true]];
-        let gc_percent_widths = array![[10_u16, 20_u16], [30_u16, 40_u16]];
-
-        let file = std::fs::File::create(&package_path)?;
-        let mut npz = NpzWriter::new(file);
-        npz.add_array("counts", &counts)?;
-        npz.add_array("support_mask_unobservables", &support_unobservables)?;
-        npz.add_array("support_mask_outliers", &support_outliers)?;
-        npz.add_array("gc_percent_widths", &gc_percent_widths)?;
-        npz.add_array(
-            "version",
-            &ndarray::Array1::from(vec![GC_CORRECTION_SCHEMA_VERSION]),
-        )?;
-        npz.add_array("length_range", &ndarray::Array1::from(vec![30_u32, 31_u32]))?;
-        npz.add_array("end_offset", &ndarray::Array1::from(vec![10_u32]))?;
-        npz.add_array("skip_interpolation", &ndarray::Array1::from(vec![false]))?;
-        npz.add_array("smoothing_radius", &ndarray::Array1::from(vec![2_u32]))?;
-        npz.add_array("smoothing_sigma", &ndarray::Array1::from(vec![0.55_f64]))?;
-        npz.add_array("skip_smoothing", &ndarray::Array1::from(vec![true]))?;
-        write_reference_chromosomes_json(&mut npz, &["chr1"])?;
-        write_reference_contig_footprint(&mut npz, &[])?;
-        npz.finish()?;
-        Ok(())
+        write_reference_gc_package_fixture(out_dir, ReferencePackageFixture::default())?;
+        let package_path = out_dir.join("ref_gc_package.zarr");
+        tamper_reference_gc_array_shape(&package_path, "support_mask_unobservables", &[1, 2])?;
+        tamper_reference_gc_array_shape(&package_path, "support_mask_outliers", &[1, 2])
     }
 
     fn write_two_bin_reference_gc_package(
@@ -3397,7 +3379,6 @@ mod tests_gc_bias {
         chromosomes: &[&str],
         reference_contig_footprint: Vec<ContigFootprintEntry>,
     ) -> Result<()> {
-        let package_path = out_dir.join("ref_gc_package.npz");
         let n_lengths = (length_range.1 - length_range.0 + 1) as usize;
         let mut counts = ndarray::Array2::<f64>::zeros((n_lengths, 101));
         let mut support_outliers = ndarray::Array2::<bool>::from_elem((n_lengths, 101), false);
@@ -3412,28 +3393,113 @@ mod tests_gc_bias {
             support_outliers[(row_idx, 100)] = true;
         }
 
-        let file = std::fs::File::create(&package_path)?;
-        let mut npz = NpzWriter::new(file);
-        npz.add_array("counts", &counts)?;
-        npz.add_array("support_mask_unobservables", &support_unobservables)?;
-        npz.add_array("support_mask_outliers", &support_outliers)?;
-        npz.add_array("gc_percent_widths", &gc_percent_widths)?;
-        npz.add_array(
-            "version",
-            &ndarray::Array1::from(vec![GC_CORRECTION_SCHEMA_VERSION]),
+        let chromosomes: Vec<String> = chromosomes.iter().map(|name| (*name).to_string()).collect();
+        write_reference_zarr_arrays(
+            out_dir,
+            &counts,
+            &support_unobservables,
+            &support_outliers,
+            &gc_percent_widths,
+            length_range.0,
+            length_range.1,
+            0,
+            true,
+            2,
+            0.55,
+            true,
+            &chromosomes,
+            &reference_contig_footprint,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn write_reference_zarr_arrays(
+        out_dir: &std::path::Path,
+        counts: &ndarray::Array2<f64>,
+        support_unobservables: &ndarray::Array2<bool>,
+        support_outliers: &ndarray::Array2<bool>,
+        gc_percent_widths: &ndarray::Array2<u16>,
+        min_fragment_length: u32,
+        max_fragment_length: u32,
+        end_offset: u32,
+        skip_interpolation: bool,
+        smoothing_radius: u8,
+        smoothing_sigma: f64,
+        skip_smoothing: bool,
+        chromosomes: &[String],
+        reference_contig_footprint: &[ContigFootprintEntry],
+    ) -> Result<()> {
+        let writer_end_offset = u8::try_from(end_offset).unwrap_or(0);
+        write_reference_gc_package_zarr(
+            &out_dir.join("ref_gc_package.zarr"),
+            ReferenceGCZarrPackage {
+                counts,
+                support_unobservables,
+                support_outliers,
+                gc_percent_widths,
+                length_min: min_fragment_length as usize,
+                length_max: max_fragment_length as usize,
+                end_offset: writer_end_offset,
+                skip_interpolation,
+                smoothing_radius,
+                smoothing_sigma,
+                skip_smoothing,
+                chromosomes,
+                reference_contig_footprint,
+            },
         )?;
-        npz.add_array(
-            "length_range",
-            &ndarray::Array1::from(vec![length_range.0, length_range.1]),
-        )?;
-        npz.add_array("end_offset", &ndarray::Array1::from(vec![0_u32]))?;
-        npz.add_array("skip_interpolation", &ndarray::Array1::from(vec![true]))?;
-        npz.add_array("smoothing_radius", &ndarray::Array1::from(vec![2_u32]))?;
-        npz.add_array("smoothing_sigma", &ndarray::Array1::from(vec![0.55_f64]))?;
-        npz.add_array("skip_smoothing", &ndarray::Array1::from(vec![true]))?;
-        write_reference_chromosomes_json(&mut npz, chromosomes)?;
-        write_reference_contig_footprint(&mut npz, &reference_contig_footprint)?;
-        npz.finish()?;
+        if u8::try_from(end_offset).is_err() {
+            tamper_reference_gc_root_attribute(
+                &out_dir.join("ref_gc_package.zarr"),
+                "end_offset",
+                serde_json::json!(end_offset),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn tamper_reference_gc_root_attribute(
+        package_path: &std::path::Path,
+        field_name: &str,
+        value: serde_json::Value,
+    ) -> Result<()> {
+        let metadata_path = package_path.join("zarr.json");
+        let mut metadata: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&metadata_path)?)?;
+        metadata
+            .get_mut("attributes")
+            .and_then(serde_json::Value::as_object_mut)
+            .context("reference GC Zarr root metadata should have attributes")?
+            .insert(field_name.to_string(), value);
+        std::fs::write(&metadata_path, serde_json::to_vec_pretty(&metadata)?)?;
+        Ok(())
+    }
+
+    fn tamper_reference_gc_array_shape(
+        package_path: &std::path::Path,
+        array_name: &str,
+        shape: &[usize],
+    ) -> Result<()> {
+        let metadata_path = package_path.join(array_name).join("zarr.json");
+        let mut metadata: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&metadata_path)?)?;
+        *metadata
+            .get_mut("shape")
+            .with_context(|| format!("{array_name} Zarr metadata should have a shape field"))? =
+            serde_json::json!(shape);
+        std::fs::write(&metadata_path, serde_json::to_vec_pretty(&metadata)?)?;
+        Ok(())
+    }
+
+    fn overwrite_reference_gc_length_axis(
+        package_path: &std::path::Path,
+        values: &[i32],
+    ) -> Result<()> {
+        let store = std::sync::Arc::new(zarrs::filesystem::FilesystemStore::new(package_path)?);
+        let array = zarrs::array::Array::open(store, "/length")?;
+        array
+            .store_chunk(&[0], values)
+            .context("overwrite malformed reference GC length axis")?;
         Ok(())
     }
 
@@ -3441,8 +3507,6 @@ mod tests_gc_bias {
         out_dir: &std::path::Path,
         reference_contig_footprint: Vec<ContigFootprintEntry>,
     ) -> Result<()> {
-        let package_path = out_dir.join("ref_gc_package.npz");
-
         // Hand-built but still realistic reference package for run-level outlier tests.
         //
         // The package covers two fragment lengths, 10 and 11. We intentionally place reference
@@ -3479,34 +3543,28 @@ mod tests_gc_bias {
         support_outliers[(1, 0)] = true;
         support_outliers[(1, 100)] = true;
 
-        let file = std::fs::File::create(&package_path)?;
-        let mut npz = NpzWriter::new(file);
-        npz.add_array("counts", &counts)?;
-        npz.add_array("support_mask_unobservables", &support_unobservables)?;
-        npz.add_array("support_mask_outliers", &support_outliers)?;
-        npz.add_array("gc_percent_widths", &gc_percent_widths)?;
-        npz.add_array(
-            "version",
-            &ndarray::Array1::from(vec![GC_CORRECTION_SCHEMA_VERSION]),
-        )?;
-        npz.add_array("length_range", &ndarray::Array1::from(vec![10_u32, 11_u32]))?;
-        npz.add_array("end_offset", &ndarray::Array1::from(vec![0_u32]))?;
-        npz.add_array("skip_interpolation", &ndarray::Array1::from(vec![true]))?;
-        npz.add_array("smoothing_radius", &ndarray::Array1::from(vec![2_u32]))?;
-        npz.add_array("smoothing_sigma", &ndarray::Array1::from(vec![0.55_f64]))?;
-        npz.add_array("skip_smoothing", &ndarray::Array1::from(vec![true]))?;
-        write_reference_chromosomes_json(&mut npz, &["chr1"])?;
-        write_reference_contig_footprint(&mut npz, &reference_contig_footprint)?;
-        npz.finish()?;
-        Ok(())
+        write_reference_zarr_arrays(
+            out_dir,
+            &counts,
+            &support_unobservables,
+            &support_outliers,
+            &gc_percent_widths,
+            10,
+            11,
+            0,
+            true,
+            2,
+            0.55,
+            true,
+            &["chr1".to_string()],
+            &reference_contig_footprint,
+        )
     }
 
     fn write_three_bin_reference_gc_package(
         out_dir: &std::path::Path,
         reference_contig_footprint: Vec<ContigFootprintEntry>,
     ) -> Result<()> {
-        let package_path = out_dir.join("ref_gc_package.npz");
-
         // One fragment length, with reference mass only at GC% 0, 50, and 100.
         //
         // As above, keep the metadata realistic:
@@ -3527,26 +3585,22 @@ mod tests_gc_bias {
         support_outliers[(0, 50)] = true;
         support_outliers[(0, 100)] = true;
 
-        let file = std::fs::File::create(&package_path)?;
-        let mut npz = NpzWriter::new(file);
-        npz.add_array("counts", &counts)?;
-        npz.add_array("support_mask_unobservables", &support_unobservables)?;
-        npz.add_array("support_mask_outliers", &support_outliers)?;
-        npz.add_array("gc_percent_widths", &gc_percent_widths)?;
-        npz.add_array(
-            "version",
-            &ndarray::Array1::from(vec![GC_CORRECTION_SCHEMA_VERSION]),
-        )?;
-        npz.add_array("length_range", &ndarray::Array1::from(vec![10_u32, 10_u32]))?;
-        npz.add_array("end_offset", &ndarray::Array1::from(vec![0_u32]))?;
-        npz.add_array("skip_interpolation", &ndarray::Array1::from(vec![true]))?;
-        npz.add_array("smoothing_radius", &ndarray::Array1::from(vec![2_u32]))?;
-        npz.add_array("smoothing_sigma", &ndarray::Array1::from(vec![0.55_f64]))?;
-        npz.add_array("skip_smoothing", &ndarray::Array1::from(vec![true]))?;
-        write_reference_chromosomes_json(&mut npz, &["chr1"])?;
-        write_reference_contig_footprint(&mut npz, &reference_contig_footprint)?;
-        npz.finish()?;
-        Ok(())
+        write_reference_zarr_arrays(
+            out_dir,
+            &counts,
+            &support_unobservables,
+            &support_outliers,
+            &gc_percent_widths,
+            10,
+            10,
+            0,
+            true,
+            2,
+            0.55,
+            true,
+            &["chr1".to_string()],
+            &reference_contig_footprint,
+        )
     }
 
     fn make_two_length_outlier_fixture() -> Result<(fixtures::TwoBitFixture, fixtures::BamFixture)>
@@ -3694,7 +3748,7 @@ mod tests_gc_bias {
         write_reference_gc_package_fixture(tmp.path(), ReferencePackageFixture::default())?;
 
         // Act
-        let loaded = load_reference_gc_data(&tmp.path().join("ref_gc_package.npz"))?;
+        let loaded = load_reference_gc_data(&tmp.path().join("ref_gc_package.zarr"))?;
 
         // Assert: arrays and scalar metadata survive round-trip exactly.
         assert_eq!(
@@ -3739,14 +3793,13 @@ mod tests_gc_bias {
         )?;
 
         // Act
-        let error = load_reference_gc_data(&tmp.path().join("ref_gc_package.npz"))
+        let error = load_reference_gc_data(&tmp.path().join("ref_gc_package.zarr"))
             .expect_err("expected scalar-length error");
 
         // Assert
         assert!(
-            error
-                .to_string()
-                .contains("skip_smoothing should be length 1")
+            error.to_string().contains("skip_smoothing")
+                && error.to_string().contains("must be a bool")
         );
         Ok(())
     }
@@ -3764,7 +3817,7 @@ mod tests_gc_bias {
         )?;
 
         // Act
-        let error = load_reference_gc_data(&tmp.path().join("ref_gc_package.npz"))
+        let error = load_reference_gc_data(&tmp.path().join("ref_gc_package.zarr"))
             .expect_err("expected schema version mismatch");
 
         // Assert
@@ -3777,52 +3830,41 @@ mod tests_gc_bias {
     }
 
     #[test]
-    fn rejects_reference_gc_package_with_row_count_mismatched_to_length_range() -> Result<()> {
-        // Arrange: the package has two matrix rows, but `length_range = [30, 32]` names three
-        // concrete fragment-length rows: 30, 31, and 32.
+    fn rejects_reference_gc_package_with_row_count_mismatched_to_length_axis() -> Result<()> {
+        // Arrange: the package has two count rows, but the Zarr length axis names three concrete
+        // fragment-length rows: 30, 31, and 32.
         let tmp = tempdir()?;
-        write_reference_gc_package_fixture(
-            tmp.path(),
-            ReferencePackageFixture {
-                length_range: [30, 32],
-                ..ReferencePackageFixture::default()
-            },
-        )?;
+        write_reference_gc_package_with_count_row_mismatch(tmp.path())?;
 
         // Act
-        let error = load_reference_gc_data(&tmp.path().join("ref_gc_package.npz"))
+        let error = load_reference_gc_data(&tmp.path().join("ref_gc_package.zarr"))
             .expect_err("expected row-count mismatch");
 
         // Assert
         assert!(
             error
                 .to_string()
-                .contains("row count 2 does not match length_range [30, 32] (expected 3)")
+                .contains("row count 2 does not match length axis [30, 32] (expected 3)")
         );
         Ok(())
     }
 
     #[test]
-    fn rejects_reference_gc_package_with_inverted_length_range() -> Result<()> {
-        // Arrange: `[31, 30]` cannot name an inclusive set of length rows.
+    fn rejects_reference_gc_package_with_inverted_length_axis() -> Result<()> {
+        // Arrange: `[31, 30]` cannot name an ordered inclusive set of length rows.
         let tmp = tempdir()?;
-        write_reference_gc_package_fixture(
-            tmp.path(),
-            ReferencePackageFixture {
-                length_range: [31, 30],
-                ..ReferencePackageFixture::default()
-            },
-        )?;
+        write_reference_gc_package_fixture(tmp.path(), ReferencePackageFixture::default())?;
+        overwrite_reference_gc_length_axis(&tmp.path().join("ref_gc_package.zarr"), &[31, 30])?;
 
         // Act
-        let error = load_reference_gc_data(&tmp.path().join("ref_gc_package.npz"))
-            .expect_err("expected inverted length_range error");
+        let error = load_reference_gc_data(&tmp.path().join("ref_gc_package.zarr"))
+            .expect_err("expected inverted length axis error");
 
         // Assert
         assert!(
             error
                 .to_string()
-                .contains("length_range must be ordered as [min, max]. Found [31, 30]")
+                .contains("length axis must contain contiguous integer values")
         );
         Ok(())
     }
@@ -3841,7 +3883,7 @@ mod tests_gc_bias {
         )?;
 
         // Act
-        let error = load_reference_gc_data(&tmp.path().join("ref_gc_package.npz"))
+        let error = load_reference_gc_data(&tmp.path().join("ref_gc_package.zarr"))
             .expect_err("expected out-of-range end_offset error");
 
         // Assert
@@ -3868,7 +3910,7 @@ mod tests_gc_bias {
         )?;
 
         // Act
-        let error = load_reference_gc_data(&tmp.path().join("ref_gc_package.npz"))
+        let error = load_reference_gc_data(&tmp.path().join("ref_gc_package.zarr"))
             .expect_err("expected invalid effective minimum length");
 
         // Assert
@@ -4003,9 +4045,9 @@ mod tests_gc_bias {
 
         // Assert
         let package_none =
-            GCCorrectionPackage::from_file(out_none.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(out_none.path().join("gc_bias_correction.zarr"))?;
         let package_quantile =
-            GCCorrectionPackage::from_file(out_quantile.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(out_quantile.path().join("gc_bias_correction.zarr"))?;
 
         assert_eq!(package_none.correction_matrix.dim(), (2, 2));
         assert_eq!(package_quantile.correction_matrix.dim(), (2, 2));
@@ -4115,9 +4157,9 @@ mod tests_gc_bias {
 
         // Assert
         let package_per_length =
-            GCCorrectionPackage::from_file(out_per_length.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(out_per_length.path().join("gc_bias_correction.zarr"))?;
         let package_global =
-            GCCorrectionPackage::from_file(out_global.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(out_global.path().join("gc_bias_correction.zarr"))?;
 
         assert_eq!(package_per_length.correction_matrix.dim(), (2, 2));
         assert_eq!(package_global.correction_matrix.dim(), (2, 2));
@@ -4222,7 +4264,7 @@ mod tests_gc_bias {
 
         // Assert
         let package =
-            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.zarr"))?;
         assert_eq!(package.correction_matrix.dim(), (2, 2));
         assert_eq!(package.gc_edges, vec![0, 1, 100]);
 
@@ -4289,7 +4331,7 @@ mod tests_gc_bias {
 
         // Assert
         let package =
-            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.zarr"))?;
         assert_eq!(package.correction_matrix.dim(), (2, 2));
         assert_eq!(package.gc_edges, vec![0, 1, 100]);
 
@@ -4365,7 +4407,7 @@ mod tests_gc_bias {
 
         // Assert
         let package =
-            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.zarr"))?;
         assert_eq!(package.correction_matrix.dim(), (2, 2));
         assert_eq!(package.gc_edges, vec![0, 1, 100]);
 
@@ -4475,7 +4517,7 @@ mod tests_gc_bias {
 
         // Assert
         let package =
-            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.zarr"))?;
         assert_eq!(package.correction_matrix.dim(), (1, 2));
         assert_eq!(package.gc_edges, vec![0, 1, 100]);
         assert!((package.correction_matrix[(0, 0)] - 10.49).abs() < 1e-12);
@@ -4537,7 +4579,7 @@ mod tests_gc_bias {
 
         // Assert
         let package =
-            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.zarr"))?;
         assert_eq!(package.correction_matrix.dim(), (1, 2));
         assert_eq!(package.length_edges, vec![10, 11]);
         assert_eq!(package.gc_edges, vec![0, 1, 100]);
@@ -4624,9 +4666,9 @@ mod tests_gc_bias {
 
         // Assert
         let baseline_package =
-            GCCorrectionPackage::from_file(baseline_out.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(baseline_out.path().join("gc_bias_correction.zarr"))?;
         let masked_package =
-            GCCorrectionPackage::from_file(masked_out.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(masked_out.path().join("gc_bias_correction.zarr"))?;
 
         assert_eq!(baseline_package.correction_matrix.dim(), (2, 2));
         assert_eq!(masked_package.correction_matrix.dim(), (2, 2));
@@ -4721,9 +4763,9 @@ mod tests_gc_bias {
 
         // Assert
         let baseline_package =
-            GCCorrectionPackage::from_file(baseline_out.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(baseline_out.path().join("gc_bias_correction.zarr"))?;
         let masked_package =
-            GCCorrectionPackage::from_file(masked_out.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(masked_out.path().join("gc_bias_correction.zarr"))?;
 
         assert_eq!(baseline_package.correction_matrix.dim(), (2, 2));
         assert_eq!(masked_package.correction_matrix.dim(), (2, 2));
@@ -4832,9 +4874,9 @@ mod tests_gc_bias {
 
         // Assert
         let baseline_package =
-            GCCorrectionPackage::from_file(baseline_out.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(baseline_out.path().join("gc_bias_correction.zarr"))?;
         let merged_package =
-            GCCorrectionPackage::from_file(merged_out.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(merged_out.path().join("gc_bias_correction.zarr"))?;
 
         assert_eq!(baseline_package.correction_matrix.dim(), (2, 2));
         assert_eq!(merged_package.correction_matrix.dim(), (1, 2));
@@ -4946,9 +4988,9 @@ mod tests_gc_bias {
 
         // Assert
         let baseline_package =
-            GCCorrectionPackage::from_file(baseline_out.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(baseline_out.path().join("gc_bias_correction.zarr"))?;
         let merged_package =
-            GCCorrectionPackage::from_file(merged_out.path().join("gc_bias_correction.npz"))?;
+            GCCorrectionPackage::from_file(merged_out.path().join("gc_bias_correction.zarr"))?;
 
         assert_eq!(baseline_package.correction_matrix.dim(), (1, 3));
         assert_eq!(baseline_package.gc_edges, vec![0, 1, 51, 100]);

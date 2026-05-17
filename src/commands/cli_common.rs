@@ -742,7 +742,7 @@ pub struct ScaleGenomeArgs {
 pub struct ApplyGCArgs {
     /// Optional path to GC correction file *made from the same BAM file* with `cfdna gc-bias` `[path]`
     ///
-    /// The file is usually called `gc_bias_correction.npz`.
+    /// The file produced by `cfdna gc-bias` is `<prefix>.gc_bias_correction.zarr`.
     ///
     /// **NOTE**: Requires specifying the reference genome 2bit file as well.
     #[cfg_attr(
@@ -810,7 +810,7 @@ impl ApplyGCArgs {
 pub struct ApplyGCArgFileOnly {
     /// Optional path to GC correction file *made from the same BAM file* with `cfdna gc-bias` `[path]`
     ///
-    /// The file is usually called `gc_bias_correction.npz`.
+    /// The file produced by `gc-bias` is `<prefix>.gc_bias_correction.zarr`.
     ///
     /// **NOTE**: Requires specifying the reference genome 2bit file as well.
     #[cfg_attr(

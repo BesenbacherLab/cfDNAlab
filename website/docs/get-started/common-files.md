@@ -16,11 +16,11 @@ In general, we recommend reusing the same blacklists across all steps in the ana
 
 The following files are made with cfDNAlab and passed to the main feature extraction commands (except the `Reference GC file` which is necessary for calculating the GC-bias):
 
-| File                      | Format                                  | Argument            | How to make it                                                                        |
-| ------------------------- | --------------------------------------- | ------------------- | ------------------------------------------------------------------------------------- |
-| Sample scaling factors    | `.scaling_factors.tsv`                  | `--scaling-factors` | Create with `cfdna fragment-count-weights` and/or `cfdna coverage-weights` per sample |
-| Sample GC correction file | `gc_bias_correction.npz`                | `--gc-file`         | Create with `cfdna gc-bias` per sample                                                |
-| Reference GC file         | Package produced by `cfdna ref-gc-bias` | `--ref-gc-file`     | Create once per assembly, then reuse it across samples when calling `cfdna gc-bias`   |
+| File                      | Format                             | Argument            | How to make it                                                                                               |
+| ------------------------- | ---------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Sample scaling factors    | `<prefix>.scaling_factors.tsv`     | `--scaling-factors` | Create with `cfdna fragment-count-weights` and/or `cfdna coverage-weights` per sample                        |
+| Sample GC correction file | `<prefix>.gc_bias_correction.zarr` | `--gc-file`         | Create with `cfdna gc-bias` per sample                                                                       |
+| Reference GC file         | `<prefix>.ref_gc_package.zarr`     | `--ref-gc-file`     | Create once per assembly with `cfdna ref-gc-bias`, then reuse it across samples when calling `cfdna gc-bias` |
 
 ## Quick explanation
 
@@ -45,7 +45,7 @@ Tip: Use quotes around variable values and around variable expansions in command
 # Project / assembly level
 PROJECT_DIR="$HOME/cfdna_project"
 REF_2BIT="$PROJECT_DIR/refs/hg38.2bit"
-REF_GC_FILE="$PROJECT_DIR/refs/ref_gc/hg38.ref_gc_package.npz"
+REF_GC_FILE="$PROJECT_DIR/refs/ref_gc/hg38.ref_gc_package.zarr"
 WINDOWS="$PROJECT_DIR/regions/windows.bed"
 INTERVALS="$PROJECT_DIR/regions/intervals.bed"
 
@@ -59,7 +59,7 @@ BLACKLIST_ARGS=(
 # Sample level
 SAMPLE_ID="sample_01"
 BAM="$PROJECT_DIR/inputs/$SAMPLE_ID.bam"
-GC_FILE="$PROJECT_DIR/outputs/$SAMPLE_ID/gc_bias/gc_bias_correction.npz"
+GC_FILE="$PROJECT_DIR/outputs/$SAMPLE_ID/gc_bias/gc_bias_correction.zarr"
 SCALING_FACTORS="$PROJECT_DIR/outputs/$SAMPLE_ID/scaling_factors/$SAMPLE_ID.scaling_factors.tsv"
 ```
 
@@ -117,7 +117,7 @@ project/
 └── outputs/
     └── sample_01/
         ├── gc_bias/
-        │   └── sample_01.gc_bias_correction.npz
+        │   └── sample_01.gc_bias_correction.zarr
         ├── scaling_factors/
         │    ├── sample_01.coverage.scaling_factors.tsv
         │    └── sample_01.fragment_counts.scaling_factors.tsv

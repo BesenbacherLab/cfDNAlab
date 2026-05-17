@@ -2,7 +2,6 @@
 
 use anyhow::Result;
 use ndarray::array;
-use ndarray_npy::NpzReader;
 use std::path::Path;
 use tempfile::TempDir;
 
@@ -12,12 +11,13 @@ use cfdnalab::{
         GCCounts, build_gc_prefixes, count_reference_gc_and_length_by_window,
         get_gc_integer_percentage_for_window,
     },
+    commands::gc_bias::load_reference_bias::load_reference_gc_data,
     commands::gc_bias::support_masking::create_support_mask_threshold_per_mb,
     commands::ref_gc_bias::{config::RefGCBiasConfig, ref_gc_bias::run},
     shared::{
         blacklist::apply_blacklist_mask_to_seq,
         interval::{IndexedInterval, Interval},
-        reference::{ContigFootprintEntry, twobit_contig_footprint},
+        reference::twobit_contig_footprint,
     },
 };
 mod fixtures;
@@ -30,17 +30,12 @@ fn load_ref_gc_package_arrays(
     ndarray::Array2<bool>,
     ndarray::Array2<u16>,
 )> {
-    let file = std::fs::File::open(package_path)?;
-    let mut npz = NpzReader::new(file)?;
-    let counts: ndarray::Array2<f64> = npz.by_name("counts")?;
-    let support_unobservables: ndarray::Array2<bool> = npz.by_name("support_mask_unobservables")?;
-    let support_outliers: ndarray::Array2<bool> = npz.by_name("support_mask_outliers")?;
-    let gc_percent_widths: ndarray::Array2<u16> = npz.by_name("gc_percent_widths")?;
+    let loaded = load_reference_gc_data(package_path)?;
     Ok((
-        counts,
-        support_unobservables,
-        support_outliers,
-        gc_percent_widths,
+        loaded.counts,
+        loaded.unobservables_support_mask,
+        loaded.outliers_support_mask,
+        loaded.gc_percent_widths,
     ))
 }
 
@@ -348,57 +343,33 @@ fn ref_gc_bias_run_writes_expected_prefixed_package_metadata_and_shapes() -> Res
 
     let package_path = out_dir
         .path()
-        .join(format!("{output_prefix}.ref_gc_package.npz"));
+        .join(format!("{output_prefix}.ref_gc_package.zarr"));
     assert!(
-        !out_dir.path().join("ref_gc_package.npz").exists(),
+        !out_dir.path().join("ref_gc_package.zarr").exists(),
         "Did not expect unprefixed package when output_prefix is set"
     );
-    let file = std::fs::File::open(&package_path)?;
-    let mut npz = NpzReader::new(file)?;
-
-    let counts: ndarray::Array2<f64> = npz.by_name("counts")?;
-    let support_unobservables: ndarray::Array2<bool> = npz.by_name("support_mask_unobservables")?;
-    let support_outliers: ndarray::Array2<bool> = npz.by_name("support_mask_outliers")?;
-    let gc_percent_widths: ndarray::Array2<u16> = npz.by_name("gc_percent_widths")?;
-    let version: ndarray::Array1<u32> = npz.by_name("version")?;
-    let length_range: ndarray::Array1<u32> = npz.by_name("length_range")?;
-    let end_offset: ndarray::Array1<u32> = npz.by_name("end_offset")?;
-    let skip_interpolation: ndarray::Array1<bool> = npz.by_name("skip_interpolation")?;
-    let smoothing_radius: ndarray::Array1<u32> = npz.by_name("smoothing_radius")?;
-    let smoothing_sigma: ndarray::Array1<f64> = npz.by_name("smoothing_sigma")?;
-    let skip_smoothing: ndarray::Array1<bool> = npz.by_name("skip_smoothing")?;
-    let chromosomes_json: ndarray::Array1<u8> = npz.by_name("chromosomes_json")?;
-    let reference_contig_footprint_json: ndarray::Array1<u8> =
-        npz.by_name("reference_contig_footprint_json")?;
-    let reference_contig_footprint: Vec<ContigFootprintEntry> = serde_json::from_slice(
-        reference_contig_footprint_json
-            .as_slice()
-            .expect("reference_contig_footprint_json should be contiguous"),
-    )?;
-    let chromosomes: Vec<String> = serde_json::from_slice(
-        chromosomes_json
-            .as_slice()
-            .expect("chromosomes_json should be contiguous"),
-    )?;
+    let loaded = load_reference_gc_data(&package_path)?;
+    let counts = loaded.counts;
+    let support_unobservables = loaded.unobservables_support_mask;
+    let support_outliers = loaded.outliers_support_mask;
+    let gc_percent_widths = loaded.gc_percent_widths;
+    let metadata = loaded.metadata;
 
     assert_eq!(counts.dim(), (3, 101));
     assert_eq!(support_unobservables.dim(), (3, 101));
     assert_eq!(support_outliers.dim(), (3, 101));
     assert_eq!(gc_percent_widths.dim(), (3, 101));
 
+    assert_eq!(metadata.min_fragment_length, 10);
+    assert_eq!(metadata.max_fragment_length, 12);
+    assert_eq!(metadata.end_offset, 0);
+    assert!(metadata.skip_interpolation);
+    assert_eq!(metadata.smoothing_radius, 2);
+    assert_eq!(metadata.smoothing_sigma, 0.55);
+    assert!(metadata.skip_smoothing);
+    assert_eq!(metadata.chromosomes, vec!["chr1".to_string()]);
     assert_eq!(
-        version.to_vec(),
-        vec![cfdnalab::shared::constants::GC_CORRECTION_SCHEMA_VERSION]
-    );
-    assert_eq!(length_range.to_vec(), vec![10, 12]);
-    assert_eq!(end_offset.to_vec(), vec![0]);
-    assert_eq!(skip_interpolation.to_vec(), vec![true]);
-    assert_eq!(smoothing_radius.to_vec(), vec![2]);
-    assert_eq!(smoothing_sigma.to_vec(), vec![0.55]);
-    assert_eq!(skip_smoothing.to_vec(), vec![true]);
-    assert_eq!(chromosomes, vec!["chr1".to_string()]);
-    assert_eq!(
-        reference_contig_footprint,
+        metadata.reference_contig_footprint,
         twobit_contig_footprint(&reference.path)?
     );
 
@@ -553,7 +524,7 @@ fn ref_gc_bias_run_counts_expected_two_bin_reference_distribution() -> Result<()
     run(&cfg)?;
 
     // Assert
-    let package_path = out_dir.path().join("ref_gc_package.npz");
+    let package_path = out_dir.path().join("ref_gc_package.zarr");
     let (counts, support_unobservables, support_outliers, gc_percent_widths) =
         load_ref_gc_package_arrays(&package_path)?;
 
@@ -687,7 +658,7 @@ fn ref_gc_bias_run_blacklist_removes_exactly_the_overlapping_start_positions() -
     run(&cfg)?;
 
     // Assert
-    let package_path = out_dir.path().join("ref_gc_package.npz");
+    let package_path = out_dir.path().join("ref_gc_package.zarr");
     let (counts, support_unobservables, support_outliers, gc_percent_widths) =
         load_ref_gc_package_arrays(&package_path)?;
 
@@ -835,7 +806,7 @@ fn ref_gc_bias_run_end_offset_counts_expected_trimmed_two_bin_distribution() -> 
     run(&cfg)?;
 
     // Assert
-    let package_path = out_dir.path().join("ref_gc_package.npz");
+    let package_path = out_dir.path().join("ref_gc_package.zarr");
     let (counts, support_unobservables, support_outliers, gc_percent_widths) =
         load_ref_gc_package_arrays(&package_path)?;
 
@@ -969,7 +940,7 @@ fn ref_gc_bias_run_blacklist_with_end_offset_drops_only_trimmed_overlaps() -> Re
     run(&cfg)?;
 
     // Assert
-    let package_path = out_dir.path().join("ref_gc_package.npz");
+    let package_path = out_dir.path().join("ref_gc_package.zarr");
     let (counts, support_unobservables, support_outliers, gc_percent_widths) =
         load_ref_gc_package_arrays(&package_path)?;
 
@@ -1114,7 +1085,7 @@ fn ref_gc_bias_run_smoothing_enabled_spreads_three_gc_anchors_by_known_kernel() 
     run(&cfg)?;
 
     // Assert
-    let package_path = out_dir.path().join("ref_gc_package.npz");
+    let package_path = out_dir.path().join("ref_gc_package.zarr");
     let (counts, support_unobservables, support_outliers, gc_percent_widths) =
         load_ref_gc_package_arrays(&package_path)?;
 
@@ -1231,7 +1202,7 @@ fn ref_gc_bias_run_interpolation_enabled_fills_between_equal_supported_anchors()
     run(&cfg)?;
 
     // Assert
-    let package_path = out_dir.path().join("ref_gc_package.npz");
+    let package_path = out_dir.path().join("ref_gc_package.zarr");
     let (counts, support_unobservables, support_outliers, gc_percent_widths) =
         load_ref_gc_package_arrays(&package_path)?;
 
@@ -1310,8 +1281,8 @@ fn overlapping_and_touching_bed_windows_match_explicitly_merged_ref_gc_bias_run(
     run(&make_cfg(split_out_dir.path(), &bed_split))?;
     run(&make_cfg(merged_out_dir.path(), &bed_merged))?;
 
-    let split_package = split_out_dir.path().join("ref_gc_package.npz");
-    let merged_package = merged_out_dir.path().join("ref_gc_package.npz");
+    let split_package = split_out_dir.path().join("ref_gc_package.zarr");
+    let merged_package = merged_out_dir.path().join("ref_gc_package.zarr");
     let (
         split_counts,
         split_support_unobservables,
@@ -1396,8 +1367,8 @@ fn overlapping_and_touching_bed_windows_with_blacklist_match_explicitly_merged_r
     run(&make_cfg(merged_out_dir.path(), &bed_merged))?;
 
     // Assert
-    let split_package = split_out_dir.path().join("ref_gc_package.npz");
-    let merged_package = merged_out_dir.path().join("ref_gc_package.npz");
+    let split_package = split_out_dir.path().join("ref_gc_package.zarr");
+    let merged_package = merged_out_dir.path().join("ref_gc_package.zarr");
     let (
         split_counts,
         split_support_unobservables,
@@ -1474,8 +1445,8 @@ fn full_chromosome_bed_window_matches_global_ref_gc_bias_run() -> Result<()> {
     run(&make_bed_cfg(bed_out_dir.path()))?;
 
     // Assert
-    let global_package = global_out_dir.path().join("ref_gc_package.npz");
-    let bed_package = bed_out_dir.path().join("ref_gc_package.npz");
+    let global_package = global_out_dir.path().join("ref_gc_package.zarr");
+    let bed_package = bed_out_dir.path().join("ref_gc_package.zarr");
     let (
         global_counts,
         global_support_unobservables,
@@ -1557,8 +1528,8 @@ fn full_chromosome_bed_window_with_blacklist_matches_global_ref_gc_bias_run() ->
     run(&make_bed_cfg(bed_out_dir.path()))?;
 
     // Assert
-    let global_package = global_out_dir.path().join("ref_gc_package.npz");
-    let bed_package = bed_out_dir.path().join("ref_gc_package.npz");
+    let global_package = global_out_dir.path().join("ref_gc_package.zarr");
+    let bed_package = bed_out_dir.path().join("ref_gc_package.zarr");
     let (
         global_counts,
         global_support_unobservables,
@@ -1641,8 +1612,8 @@ fn multiple_blacklist_files_with_touching_intervals_match_single_merged_ref_gc_b
     run(&make_cfg(merged_out_dir.path(), vec![merged.clone()]))?;
 
     // Assert
-    let split_package = split_out_dir.path().join("ref_gc_package.npz");
-    let merged_package = merged_out_dir.path().join("ref_gc_package.npz");
+    let split_package = split_out_dir.path().join("ref_gc_package.zarr");
+    let merged_package = merged_out_dir.path().join("ref_gc_package.zarr");
     let (
         split_counts,
         split_support_unobservables,
@@ -1757,8 +1728,8 @@ fn fixed_seed_ref_gc_bias_is_invariant_to_thread_count() -> Result<()> {
     run(&make_cfg(single_thread_out.path(), 1))?;
     run(&make_cfg(two_thread_out.path(), 2))?;
 
-    let single_package = single_thread_out.path().join("ref_gc_package.npz");
-    let two_package = two_thread_out.path().join("ref_gc_package.npz");
+    let single_package = single_thread_out.path().join("ref_gc_package.zarr");
+    let two_package = two_thread_out.path().join("ref_gc_package.zarr");
     let (
         single_counts,
         single_support_unobservables,
@@ -1831,8 +1802,8 @@ fn fixed_seed_ref_gc_bias_with_blacklist_and_bed_is_invariant_to_thread_count() 
     run(&make_cfg(two_thread_out.path(), 2))?;
 
     // Assert
-    let single_package = single_thread_out.path().join("ref_gc_package.npz");
-    let two_package = two_thread_out.path().join("ref_gc_package.npz");
+    let single_package = single_thread_out.path().join("ref_gc_package.zarr");
+    let two_package = two_thread_out.path().join("ref_gc_package.zarr");
     let (
         single_counts,
         single_support_unobservables,
@@ -1893,8 +1864,8 @@ fn fixed_seed_ref_gc_bias_is_deterministic_for_same_tile_size() -> Result<()> {
     run(&make_cfg(first_out.path()))?;
     run(&make_cfg(second_out.path()))?;
 
-    let first_package = first_out.path().join("ref_gc_package.npz");
-    let second_package = second_out.path().join("ref_gc_package.npz");
+    let first_package = first_out.path().join("ref_gc_package.zarr");
+    let second_package = second_out.path().join("ref_gc_package.zarr");
     let (
         first_counts,
         first_support_unobservables,

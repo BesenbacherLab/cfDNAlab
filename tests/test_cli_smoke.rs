@@ -636,7 +636,7 @@ fn frag_to_bam_cli_minimal_invocation_writes_output_bam() -> Result<()> {
 fn ref_gc_bias_cli_minimal_invocation_writes_reference_package() -> Result<()> {
     // Arrange: Use tiny deterministic reference and conservative settings.
     // With `--output-prefix`, the command contract says the package should be written as
-    // `<prefix>.ref_gc_package.npz`.
+    // `<prefix>.ref_gc_package.zarr`.
     let reference = fixtures::simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
     let output_prefix = "cli_smoke_ref_gc";
@@ -674,10 +674,10 @@ fn ref_gc_bias_cli_minimal_invocation_writes_reference_package() -> Result<()> {
     // Assert
     let package_path = out_dir
         .path()
-        .join(format!("{output_prefix}.ref_gc_package.npz"));
+        .join(format!("{output_prefix}.ref_gc_package.zarr"));
     assert!(package_path.exists(), "Expected {}", package_path.display());
     assert!(
-        !out_dir.path().join("ref_gc_package.npz").exists(),
+        !out_dir.path().join("ref_gc_package.zarr").exists(),
         "Did not expect unprefixed package when --output-prefix is supplied"
     );
 
@@ -701,7 +701,7 @@ fn gc_bias_cli_minimal_invocation_writes_correction_package() -> Result<()> {
     let ref_gc_file = path_text(
         &ref_gc_dir
             .path()
-            .join(format!("{ref_gc_prefix}.ref_gc_package.npz")),
+            .join(format!("{ref_gc_prefix}.ref_gc_package.zarr")),
     );
     let ref_gc_output = command_output(
         "ref-gc-bias",
@@ -735,7 +735,7 @@ fn gc_bias_cli_minimal_invocation_writes_correction_package() -> Result<()> {
     assert!(
         ref_gc_dir
             .path()
-            .join(format!("{ref_gc_prefix}.ref_gc_package.npz"))
+            .join(format!("{ref_gc_prefix}.ref_gc_package.zarr"))
             .exists(),
         "Expected reference package before running gc-bias"
     );
@@ -766,7 +766,7 @@ fn gc_bias_cli_minimal_invocation_writes_correction_package() -> Result<()> {
     assert_success_with_logs(&gc_output, "cfdna gc-bias minimal invocation");
 
     // Assert
-    let correction_path = gc_out_dir.path().join("gc_bias_correction.npz");
+    let correction_path = gc_out_dir.path().join("gc_bias_correction.zarr");
     assert!(
         correction_path.exists(),
         "Expected {}",

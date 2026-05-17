@@ -24,7 +24,7 @@ mod tests_stream_helpers_and_finalizer {
         let mut cfg = GCConfig::new(
             ioc,
             tmp.path().join("ref.2bit"),
-            tmp.path().join("ref_gc_package.npz"),
+            tmp.path().join("ref_gc_package.zarr"),
             ChromosomeArgs::default(),
         );
         cfg.set_min_window_acgt_pct(0);
@@ -304,7 +304,7 @@ mod tests_streaming_parts {
         let mut cfg = GCConfig::new(
             ioc,
             tmp.path().join("ref.2bit"),
-            tmp.path().join("ref_gc_package.npz"),
+            tmp.path().join("ref_gc_package.zarr"),
             ChromosomeArgs::default(),
         );
         cfg.set_min_window_acgt_pct(0);

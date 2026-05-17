@@ -37,19 +37,19 @@ use crate::{
                 build_theoretical_support_mask, create_support_mask_threshold_per_mb,
             },
         },
-        ref_gc_bias::config::RefGCBiasConfig,
+        ref_gc_bias::{
+            config::RefGCBiasConfig,
+            zarr::{ReferenceGCZarrPackage, write_reference_gc_package_zarr},
+        },
     },
     shared::{
         bam::Contigs,
         bed::{Windows, load_windows_from_bed},
         blacklist::apply_blacklist_mask_to_seq,
-        constants::GC_CORRECTION_SCHEMA_VERSION,
         interval::{IndexedInterval, Interval},
         io::{FinalOutputFiles, dot_join},
         progress::ProgressFactory,
-        reference::{
-            ContigFootprintEntry, read_seq_in_range, twobit_contig_footprint, twobit_contig_lengths,
-        },
+        reference::{read_seq_in_range, twobit_contig_footprint, twobit_contig_lengths},
         sampling::{sample_starts_in_core, sampling_density},
         thread_pool::init_global_pool,
         tiled_run::{
@@ -61,8 +61,6 @@ use crate::{
 };
 use anyhow::{Context, Result, ensure};
 use fxhash::FxHashMap;
-use ndarray::{Array1, Array2};
-use ndarray_npy::NpzWriter;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use rayon::prelude::*;
 use std::{sync::Arc, time::Instant};
@@ -363,23 +361,25 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
     // This keeps failed writes from appearing completed
     let ref_gc_package_path = opt
         .output_dir
-        .join(dot_join(&[prefix, "ref_gc_package.npz"]));
+        .join(dot_join(&[prefix, "ref_gc_package.zarr"]));
     let temp_ref_gc_package_path = final_outputs.temp_path_for(&ref_gc_package_path)?;
-    write_reference_gc_package(
+    write_reference_gc_package_zarr(
         &temp_ref_gc_package_path,
-        &global_grid,
-        &unobservable_support_mask,
-        &outlier_support_mask,
-        &gc_percent_widths,
-        opt.fragment_lengths.min_fragment_length as usize,
-        opt.fragment_lengths.max_fragment_length as usize,
-        opt.end_offset,
-        opt.skip_interpolation,
-        opt.smoothing_radius,
-        opt.smoothing_sigma,
-        opt.skip_smoothing,
-        &chromosomes,
-        &twobit_contig_footprint(&opt.ref_genome.ref_2bit)?,
+        ReferenceGCZarrPackage {
+            counts: &global_grid,
+            support_unobservables: &unobservable_support_mask,
+            support_outliers: &outlier_support_mask,
+            gc_percent_widths: &gc_percent_widths,
+            length_min: opt.fragment_lengths.min_fragment_length as usize,
+            length_max: opt.fragment_lengths.max_fragment_length as usize,
+            end_offset: opt.end_offset,
+            skip_interpolation: opt.skip_interpolation,
+            smoothing_radius: opt.smoothing_radius,
+            smoothing_sigma: opt.smoothing_sigma,
+            skip_smoothing: opt.skip_smoothing,
+            chromosomes: &chromosomes,
+            reference_contig_footprint: &twobit_contig_footprint(&opt.ref_genome.ref_2bit)?,
+        },
     )
     .context("Writing reference GC package failed")?;
     final_outputs.record(temp_ref_gc_package_path, ref_gc_package_path)?;
@@ -397,54 +397,6 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
         used_start_positions, opt.fragment_lengths.min_fragment_length
     );
     info!(target: COMMAND_TARGET, "Elapsed time: {:.2?}", elapsed);
-    Ok(())
-}
-
-fn write_reference_gc_package(
-    path: &std::path::Path,
-    counts: &Array2<f64>,
-    support_unobservables: &Array2<bool>,
-    support_outliers: &Array2<bool>,
-    gc_percent_widths: &Array2<u16>,
-    length_min: usize,
-    length_max: usize,
-    end_offset: u8,
-    skip_interpolation: bool,
-    smoothing_radius: u8,
-    smoothing_sigma: f64,
-    skip_smoothing: bool,
-    chromosomes: &[String],
-    reference_contig_footprint: &[ContigFootprintEntry],
-) -> Result<()> {
-    let file = std::fs::File::create(path)?;
-    let mut npz = NpzWriter::new(file);
-    npz.add_array("counts", counts)?;
-    npz.add_array("support_mask_unobservables", support_unobservables)?;
-    npz.add_array("support_mask_outliers", support_outliers)?;
-    npz.add_array("gc_percent_widths", gc_percent_widths)?;
-    npz.add_array("version", &Array1::from(vec![GC_CORRECTION_SCHEMA_VERSION]))?;
-    npz.add_array(
-        "length_range",
-        &Array1::from(vec![length_min as u32, length_max as u32]),
-    )?;
-    npz.add_array("end_offset", &Array1::from(vec![end_offset as u32]))?;
-    npz.add_array(
-        "skip_interpolation",
-        &Array1::from(vec![skip_interpolation]),
-    )?;
-    npz.add_array(
-        "smoothing_radius",
-        &Array1::from(vec![smoothing_radius as u32]),
-    )?;
-    npz.add_array("smoothing_sigma", &Array1::from(vec![smoothing_sigma]))?;
-    npz.add_array("skip_smoothing", &Array1::from(vec![skip_smoothing]))?;
-    let chromosomes_json = serde_json::to_vec(chromosomes)?;
-    npz.add_array("chromosomes_json", &Array1::from(chromosomes_json))?;
-    npz.add_array(
-        "reference_contig_footprint_json",
-        &Array1::from(serde_json::to_vec(reference_contig_footprint)?),
-    )?;
-    npz.finish()?;
     Ok(())
 }
 

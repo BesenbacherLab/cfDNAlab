@@ -51,14 +51,14 @@ cfdna ref-gc-bias \
 With the reference bias ready, we can calculate the gc-bias correction matrix for our BAM file:
 
 ```bash
-GC_FILE="$GC_DIR/gc_bias_correction.npz"
+GC_FILE="$GC_DIR/gc_bias_correction.zarr"
 
 cfdna gc-bias \
   --bam "$BAM" \
   --output-dir "$GC_DIR" \
   --n-threads $N_CORES \
   --ref-2bit "$REF_2BIT" \
-  --ref-gc-file "$REF_GC_DIR/hg38.ref_gc_package.npz" \
+  --ref-gc-file "$REF_GC_DIR/hg38.ref_gc_package.zarr" \
   --blacklist "$BLACKLIST"
 ```
 

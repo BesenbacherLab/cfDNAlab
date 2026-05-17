@@ -18,7 +18,7 @@ pipelines. If the public package format changes later, users either rerun
 `ref-gc-bias` and `gc-bias` or need conversion tooling. That is a bigger
 disruption than changing one terminal analysis output.
 
-## Current Public Surface
+## Previous Public Surface
 
 Reference package:
 
@@ -62,8 +62,8 @@ length_bin_frequencies
 reference_contig_footprint_json
 ```
 
-Downstream commands currently validate `--gc-file` as an existing `.npz` file
-and load it through `GCCorrectionPackage::from_file`.
+The Zarr transition is a replacement, not a dual-format compatibility layer.
+Downstream commands should validate public GC packages as `.zarr` directories.
 
 ## Target Public Surface
 
@@ -82,9 +82,8 @@ Sample correction package:
 The package directories are Zarr V3 stores written through `zarrs` with the same
 shared Zarr helper layer used by midpoint and ends outputs. Use zstd compression.
 
-The public package format should be a replacement for the `.npz` package
-contract, not a second parallel output, unless a deliberate compatibility
-decision is made before implementation.
+The public package format is a replacement for the `.npz` package contract, not
+a second parallel output.
 
 ## Root Metadata
 
@@ -95,7 +94,7 @@ Reference root attributes:
   "cfdnalab_schema": "reference_gc_package",
   "cfdnalab_schema_version": 1,
   "package_role": "reference_gc",
-  "count_units": "reference_fragment_count",
+  "value_units": "reference_fragment_mass",
   "gc_percent_rounding": "integer_half_up",
   "minimum_acgt_bases_for_gc_fraction": 10
 }
@@ -244,8 +243,7 @@ Reference writer:
 - Add a dedicated `src/commands/ref_gc_bias/zarr.rs` writer or move shared GC
   package writing into `src/commands/gc_bias/package_zarr.rs` if that keeps
   ownership clearer.
-- Write the package store through `FinalOutputFiles` just like the current
-  `.npz` file.
+- Write the package store through `FinalOutputFiles`.
 - Replace final path construction with:
 
 ```text
@@ -254,7 +252,7 @@ dot_join(&[prefix, "ref_gc_package.zarr"])
 
 Sample writer:
 
-- Add `GCCorrectionPackage::write_zarr` or replace `write_npz` outright.
+- Replace `write_npz` with `GCCorrectionPackage::write_zarr`.
 - Replace final path construction with:
 
 ```text

@@ -234,7 +234,7 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
     )?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("late_window.bed");
-    let gc_path = out_dir.path().join("two_bin_gc_package.npz");
+    let gc_path = out_dir.path().join("two_bin_gc_package.zarr");
     write_bed(&bed_path, &[("chr1", 925, 936, "late")])?;
     write_two_bin_gc_package(
         &gc_path,

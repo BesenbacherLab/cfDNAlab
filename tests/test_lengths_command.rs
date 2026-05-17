@@ -1525,7 +1525,7 @@ mod tests_lengths_command {
             reference_contig_footprint,
             correction_matrix,
         };
-        package.write_npz(path)?;
+        package.write_zarr(path)?;
         Ok(())
     }
 
@@ -1534,7 +1534,7 @@ mod tests_lengths_command {
         let bam = simple_inward_bam()?;
         let ref_twobit = simple_reference_twobit()?;
         let gc_dir = TempDir::new()?;
-        let gc_path = gc_dir.path().join("gc_pkg.npz");
+        let gc_path = gc_dir.path().join("gc_pkg.zarr");
         build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
 
         let expected = |scheme: MarginalizeLengthsWeightingScheme| -> f64 {
@@ -1614,7 +1614,7 @@ mod tests_lengths_command {
         let bam = simple_inward_bam()?;
         let ref_twobit = simple_reference_twobit()?;
         let gc_dir = TempDir::new()?;
-        let gc_path = gc_dir.path().join("gc_pkg_trim_rare.npz");
+        let gc_path = gc_dir.path().join("gc_pkg_trim_rare.zarr");
         build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
         let out_dir = TempDir::new()?;
         let mut cfg = LengthsConfig::new(
@@ -1668,7 +1668,7 @@ mod tests_lengths_command {
         let bam = simple_inward_bam()?;
         let ref_twobit = simple_reference_twobit()?;
         let gc_dir = TempDir::new()?;
-        let gc_path = gc_dir.path().join("gc_pkg_range.npz");
+        let gc_path = gc_dir.path().join("gc_pkg_range.zarr");
         build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
 
         let run_with_range = |gc_length_range: GCLengthRange| -> Result<f64> {
@@ -1919,7 +1919,7 @@ mod tests_lengths_command {
             10,
             200,
         )?;
-        let gc_path = out_dir.path().join("constant_gc_pkg.npz");
+        let gc_path = out_dir.path().join("constant_gc_pkg.zarr");
         let package = GCCorrectionPackage {
             version: GC_CORRECTION_SCHEMA_VERSION,
             end_offset: 0,
@@ -1929,7 +1929,7 @@ mod tests_lengths_command {
             reference_contig_footprint: twobit_contig_footprint(&ref_twobit.path)?,
             correction_matrix: array![[3.0_f64]],
         };
-        package.write_npz(&gc_path)?;
+        package.write_zarr(&gc_path)?;
         scaling_cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgs {
             gc_file: Some(weights_gc_path),
             gc_tag: None,
@@ -2000,7 +2000,7 @@ mod tests_lengths_command {
         let bam = simple_inward_bam()?;
         let ref_twobit = simple_reference_twobit()?;
         let out_dir = TempDir::new()?;
-        let gc_path = out_dir.path().join("gc_pkg_short.npz");
+        let gc_path = out_dir.path().join("gc_pkg_short.zarr");
         let package = GCCorrectionPackage {
             version: GC_CORRECTION_SCHEMA_VERSION,
             end_offset: 0,
@@ -2010,7 +2010,7 @@ mod tests_lengths_command {
             reference_contig_footprint: twobit_contig_footprint(&ref_twobit.path)?,
             correction_matrix: array![[1.0_f64]],
         };
-        package.write_npz(&gc_path)?;
+        package.write_zarr(&gc_path)?;
 
         let mut cfg = LengthsConfig::new(
             IOCArgs {
@@ -2054,7 +2054,7 @@ mod tests_lengths_command {
         let bam = simple_inward_bam()?;
         let ref_twobit = simple_reference_twobit()?;
         let out_dir = TempDir::new()?;
-        let gc_path = out_dir.path().join("gc_pkg_bad_version.npz");
+        let gc_path = out_dir.path().join("gc_pkg_bad_version.zarr");
         let package = GCCorrectionPackage {
             version: GC_CORRECTION_SCHEMA_VERSION + 1,
             end_offset: 0,
@@ -2064,7 +2064,7 @@ mod tests_lengths_command {
             reference_contig_footprint: twobit_contig_footprint(&ref_twobit.path)?,
             correction_matrix: array![[1.0_f64]],
         };
-        package.write_npz(&gc_path)?;
+        package.write_zarr(&gc_path)?;
 
         let mut cfg = LengthsConfig::new(
             IOCArgs {
@@ -2102,7 +2102,7 @@ mod tests_lengths_command {
     fn gc_requires_ref_2bit_errors() -> Result<()> {
         let bam = simple_inward_bam()?;
         let gc_dir = TempDir::new()?;
-        let gc_path = gc_dir.path().join("gc_pkg.npz");
+        let gc_path = gc_dir.path().join("gc_pkg.zarr");
         let ref_twobit = simple_reference_twobit()?;
         build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
 
@@ -2140,7 +2140,7 @@ mod tests_lengths_command {
         let bam = simple_inward_bam()?;
         let ref_twobit = simple_reference_twobit()?;
         let gc_dir = TempDir::new()?;
-        let gc_path = gc_dir.path().join("gc_pkg.npz");
+        let gc_path = gc_dir.path().join("gc_pkg.zarr");
         // Choose large end_offset so offset_start >= offset_end, causing GC weight failure
         build_gc_package(&gc_path, 40, twobit_contig_footprint(&ref_twobit.path)?)?;
 
@@ -4120,7 +4120,7 @@ mod tests_lengths_command {
         let reference = simple_reference_twobit()?;
         let out_dir = TempDir::new()?;
         let grouped_bed = out_dir.path().join("grouped_gc.bed");
-        let gc_path = out_dir.path().join("grouped_gc_package.npz");
+        let gc_path = out_dir.path().join("grouped_gc_package.zarr");
         let package = GCCorrectionPackage {
             version: GC_CORRECTION_SCHEMA_VERSION,
             end_offset: 0,
@@ -4130,7 +4130,7 @@ mod tests_lengths_command {
             reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
             correction_matrix: array![[3.0_f64, 1.0_f64], [1.0_f64, 1.0_f64]],
         };
-        package.write_npz(&gc_path)?;
+        package.write_zarr(&gc_path)?;
         write_bed(
             &grouped_bed,
             &[("chr1", 10, 20, "beta"), ("chr1", 30, 40, "gamma")],
@@ -4216,7 +4216,7 @@ mod tests_lengths_command {
         )?;
         let out_dir = TempDir::new()?;
         let bed_path = out_dir.path().join("late_window.bed");
-        let gc_path = out_dir.path().join("two_bin_gc_package.npz");
+        let gc_path = out_dir.path().join("two_bin_gc_package.zarr");
         write_bed(&bed_path, &[("chr1", 930, 941, "late")])?;
         write_two_bin_gc_package(
             &gc_path,
@@ -4300,7 +4300,7 @@ mod tests_lengths_command {
         )?;
         let out_dir = TempDir::new()?;
         let bed_path = out_dir.path().join("right_end_window.bed");
-        let gc_path = out_dir.path().join("two_bin_gc_package.npz");
+        let gc_path = out_dir.path().join("two_bin_gc_package.zarr");
         write_bed(&bed_path, &[("chr1", 1010, 1022, "right_end")])?;
         write_two_bin_gc_package(
             &gc_path,

@@ -116,7 +116,7 @@ pub struct GCConfig {
     /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
     ///
     /// Examples produce files like:
-    ///   `<prefix>.gc_bias_correction.npz`
+    ///   `<prefix>.gc_bias_correction.zarr`
     #[cfg_attr(
         feature = "cli",
         clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, value_parser = crate::commands::cli_common::parse_output_prefix, help_heading = "Core")
@@ -128,8 +128,7 @@ pub struct GCConfig {
 
     /// Path to file with reference GC bias to correct against `[path]`
     ///
-    /// Precompute with `cfdna ref-gc-bias`. The file is either named
-    /// `ref_gc_package.npz` or `<prefix>.ref_gc_package.npz`.
+    /// Precompute with `cfdna ref-gc-bias`. The file is `<prefix>.ref_gc_package.zarr`.
     #[cfg_attr(
         feature = "cli",
         clap(long, value_parser, required = true, help_heading = "Core")

@@ -1507,7 +1507,7 @@ fn gc_file_weights_each_counted_end_motif_by_the_fragment_gc_correction() -> Res
     let bam = simple_paired_fragment_bam("ends_gc_weight", 10, 10, 4)?;
     let reference = simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
-    let gc_path = out_dir.path().join("gc_package.npz");
+    let gc_path = out_dir.path().join("gc_package.zarr");
     let package = GCCorrectionPackage {
         version: GC_CORRECTION_SCHEMA_VERSION,
         end_offset: 0,
@@ -1517,7 +1517,7 @@ fn gc_file_weights_each_counted_end_motif_by_the_fragment_gc_correction() -> Res
         reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![[3.0_f64, 1.0_f64], [1.0_f64, 1.0_f64]],
     };
-    package.write_npz(&gc_path)?;
+    package.write_zarr(&gc_path)?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -1569,7 +1569,7 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
     )?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("late_window.bed");
-    let gc_path = out_dir.path().join("two_bin_gc_package.npz");
+    let gc_path = out_dir.path().join("two_bin_gc_package.zarr");
     write_bed(&bed_path, &[("chr1", 900, 961, "late")])?;
     write_two_bin_gc_package(
         &gc_path,
@@ -1678,7 +1678,7 @@ fn include_at_shifted_boundary_gc_file_warns_once_and_counts_aligned_length_fail
         ],
     )?;
 
-    let gc_path = out_dir.path().join("gc_package.npz");
+    let gc_path = out_dir.path().join("gc_package.zarr");
     let package = GCCorrectionPackage {
         version: GC_CORRECTION_SCHEMA_VERSION,
         end_offset: 0,
@@ -1688,7 +1688,7 @@ fn include_at_shifted_boundary_gc_file_warns_once_and_counts_aligned_length_fail
         reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![[1.0_f64]],
     };
-    package.write_npz(&gc_path)?;
+    package.write_zarr(&gc_path)?;
 
     let binary = cfdna_binary_path()?;
 
@@ -1912,7 +1912,7 @@ fn blacklist_gc_and_scaling_weights_combine_to_the_exact_expected_endpoint_count
         ),
     )?;
 
-    let gc_path = out_dir.path().join("gc_package.npz");
+    let gc_path = out_dir.path().join("gc_package.zarr");
     let package = GCCorrectionPackage {
         version: GC_CORRECTION_SCHEMA_VERSION,
         end_offset: 0,
@@ -1925,7 +1925,7 @@ fn blacklist_gc_and_scaling_weights_combine_to_the_exact_expected_endpoint_count
             [1.0_f64, 1.0_f64, 1.0_f64, 1.0_f64]
         ],
     };
-    package.write_npz(&gc_path)?;
+    package.write_zarr(&gc_path)?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -2038,7 +2038,7 @@ fn default_gc_behavior_skips_fragments_when_gc_correction_cannot_be_computed() -
         )],
     )?;
     let out_dir = TempDir::new()?;
-    let gc_path = out_dir.path().join("invalid_gc_package.npz");
+    let gc_path = out_dir.path().join("invalid_gc_package.zarr");
     let package = GCCorrectionPackage {
         version: GC_CORRECTION_SCHEMA_VERSION,
         end_offset: 0,
@@ -2048,7 +2048,7 @@ fn default_gc_behavior_skips_fragments_when_gc_correction_cannot_be_computed() -
         reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![[2.0_f64, 1.0_f64], [1.0_f64, 1.0_f64]],
     };
-    package.write_npz(&gc_path)?;
+    package.write_zarr(&gc_path)?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -6807,7 +6807,7 @@ fn grouped_bed_gc_correction_weights_each_grouped_end_motif() -> Result<()> {
     let reference = simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_gc.bed");
-    let gc_path = out_dir.path().join("grouped_gc_package.npz");
+    let gc_path = out_dir.path().join("grouped_gc_package.zarr");
     let package = GCCorrectionPackage {
         version: GC_CORRECTION_SCHEMA_VERSION,
         end_offset: 0,
@@ -6817,7 +6817,7 @@ fn grouped_bed_gc_correction_weights_each_grouped_end_motif() -> Result<()> {
         reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![[3.0_f64, 1.0_f64], [1.0_f64, 1.0_f64]],
     };
-    package.write_npz(&gc_path)?;
+    package.write_zarr(&gc_path)?;
     write_bed(
         &grouped_bed,
         &[("chr1", 10, 20, "beta"), ("chr1", 30, 40, "gamma")],

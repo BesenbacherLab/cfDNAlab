@@ -360,7 +360,7 @@ pub fn build_real_neutral_gc_package_for_range(
             n_threads: 1,
         },
         reference_path.to_path_buf(),
-        ref_gc_dir.path().join("ref_gc_package.npz"),
+        ref_gc_dir.path().join("ref_gc_package.zarr"),
         base_chromosomes(&["chr1"]),
     );
     configure_gc_bias_common(&mut gc_cfg);
@@ -371,7 +371,7 @@ pub fn build_real_neutral_gc_package_for_range(
     gc_cfg.set_min_length_bin_width(1);
     run_gc_bias(&gc_cfg)?;
 
-    Ok(gc_out_dir.join("gc_bias_correction.npz"))
+    Ok(gc_out_dir.join("gc_bias_correction.zarr"))
 }
 
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
@@ -401,7 +401,7 @@ pub fn write_constant_gc_package(path: &Path, fragment_length: u32, weight: f64)
         reference_contig_footprint: Vec::new(),
         correction_matrix: ndarray::array![[weight]],
     };
-    package.write_npz(path)?;
+    package.write_zarr(path)?;
     Ok(())
 }
 
@@ -422,7 +422,7 @@ pub fn write_two_bin_gc_package(
         reference_contig_footprint,
         correction_matrix: ndarray::array![[low_gc_weight, high_gc_weight]],
     };
-    package.write_npz(path)?;
+    package.write_zarr(path)?;
     Ok(())
 }
 
@@ -500,7 +500,7 @@ pub fn build_real_non_neutral_gc_package(
             n_threads: 1,
         },
         reference_path.to_path_buf(),
-        ref_gc_dir.path().join("ref_gc_package.npz"),
+        ref_gc_dir.path().join("ref_gc_package.zarr"),
         base_chromosomes(&["chr1"]),
     );
     configure_gc_bias_common(&mut gc_cfg);
@@ -509,7 +509,7 @@ pub fn build_real_non_neutral_gc_package(
     gc_cfg.set_min_length_bin_width(1);
     run_gc_bias(&gc_cfg)?;
 
-    Ok(gc_out_dir.join("gc_bias_correction.npz"))
+    Ok(gc_out_dir.join("gc_bias_correction.zarr"))
 }
 
 pub fn single_position_selection(

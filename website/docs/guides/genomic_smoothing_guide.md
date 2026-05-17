@@ -66,13 +66,13 @@ cfdna fragment-count-weights \
   --n-threads 12 \
   --blacklist <path>/hg38-blacklist.v2.bed \
   --blacklist <path>/<another_blacklist>.bed \
-  --gc-file <sample_directory>/gc_bias/gc_bias_correction.npz \
+  --gc-file <sample_directory>/gc_bias/gc_bias_correction.zarr \
   --ref-2bit <path>/hg38.2bit
 
 cfdna midpoints \
   --bam <sample>.bam \
   ... \
-  --gc-file <sample_directory>/gc_bias/gc_bias_correction.npz \
+  --gc-file <sample_directory>/gc_bias/gc_bias_correction.zarr \
   --ref-2bit <path>/hg38.2bit \
   --scaling-factors <sample_directory>/gc_corrected_count_weights/<sample_id>.scaling_factors.tsv
 ```

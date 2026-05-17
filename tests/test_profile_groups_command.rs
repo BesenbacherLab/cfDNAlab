@@ -453,7 +453,7 @@ fn write_minimal_gc_package_excluding_length_61(
         length_bin_frequencies: array![1.0_f64],
         reference_contig_footprint,
     };
-    package.write_npz(path)?;
+    package.write_zarr(path)?;
     Ok(())
 }
 
@@ -1728,7 +1728,7 @@ fn gc_file_late_tile_site_uses_reference_coordinates_after_fetch_narrowing() -> 
     )?;
     let temp = TempDir::new()?;
     let bed_path = temp.path().join("late_site.bed");
-    let gc_path = temp.path().join("two_bin_gc_package.npz");
+    let gc_path = temp.path().join("two_bin_gc_package.zarr");
     write_bed(&bed_path, &[("chr1", 925, 936, "late")])?;
     write_two_bin_gc_package(
         &gc_path,
@@ -1935,7 +1935,7 @@ fn midpoints_rejects_gc_package_when_length_bins_are_outside_supported_range() -
     let temp = TempDir::new()?;
     let bed_path = temp.path().join("windows.bed");
     write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
-    let gc_path = temp.path().join("too_short_gc_package.npz");
+    let gc_path = temp.path().join("too_short_gc_package.zarr");
     write_minimal_gc_package_excluding_length_61(
         &gc_path,
         twobit_contig_footprint(&reference.path)?,
@@ -1988,7 +1988,7 @@ fn midpoints_rejects_gc_package_with_schema_version_mismatch() -> Result<()> {
     let temp = TempDir::new()?;
     let bed_path = temp.path().join("windows.bed");
     write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
-    let gc_path = temp.path().join("gc_pkg_bad_version.npz");
+    let gc_path = temp.path().join("gc_pkg_bad_version.zarr");
     let package = GCCorrectionPackage {
         version: GC_CORRECTION_SCHEMA_VERSION + 1,
         end_offset: 0,
@@ -1998,7 +1998,7 @@ fn midpoints_rejects_gc_package_with_schema_version_mismatch() -> Result<()> {
         length_bin_frequencies: array![1.0_f64],
         reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
     };
-    package.write_npz(&gc_path)?;
+    package.write_zarr(&gc_path)?;
 
     let mut cfg = MidpointsConfig::new(
         IOCArgs {
@@ -2419,7 +2419,7 @@ fn gc_file_and_scaling_tsv_weights_multiply_in_midpoints() -> Result<()> {
         200,
     )?;
     let scaling_path = weights_out_dir.join("coverage.coverage.scaling_factors.tsv");
-    let gc_path = temp.path().join("constant_gc_pkg.npz");
+    let gc_path = temp.path().join("constant_gc_pkg.zarr");
     let bed_path = temp.path().join("windows.bed");
     write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
 
@@ -2432,7 +2432,7 @@ fn gc_file_and_scaling_tsv_weights_multiply_in_midpoints() -> Result<()> {
         reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![[3.0_f64]],
     };
-    package.write_npz(&gc_path)?;
+    package.write_zarr(&gc_path)?;
     scaling_cfg.set_gc(ApplyGCArgs {
         gc_file: Some(weights_gc_path),
         gc_tag: None,
@@ -2520,7 +2520,7 @@ fn bam_to_bam_gc_file_output_drives_midpoints_gc_tag_same_as_original_gc_file() 
     let reference = simple_reference_twobit()?;
     let temp = TempDir::new()?;
     let tagged_out_bam = temp.path().join("tagged_gc.bam");
-    let gc_path = temp.path().join("constant_gc_pkg.npz");
+    let gc_path = temp.path().join("constant_gc_pkg.zarr");
     let bed_path = temp.path().join("windows.bed");
     write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
 
@@ -2533,7 +2533,7 @@ fn bam_to_bam_gc_file_output_drives_midpoints_gc_tag_same_as_original_gc_file() 
         reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![[3.0_f64]],
     };
-    package.write_npz(&gc_path)?;
+    package.write_zarr(&gc_path)?;
 
     let mut bam_to_bam_cfg = BamToBamConfig::new(
         source_bam.bam.clone(),

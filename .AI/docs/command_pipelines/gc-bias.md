@@ -19,7 +19,7 @@ flowchart TD
     observed["Observed sample table<br/>fragment length by GC percentage"]
     compare["Compare with reference<br/>sample bias relative to expected GC"]
     stabilize["Stabilize correction factors<br/>binning, interpolation, outlier handling"]
-    package["GC correction package<br/>gc_bias_correction.npz"]
+    package["GC correction package<br/>gc_bias_correction.zarr"]
     consumer["Used by feature commands<br/>GC-aware fragment weights"]
 
     region_inputs["Optional region inputs<br/>BED windows and blacklists"]
@@ -58,4 +58,4 @@ Blacklists remove problematic reference bases before fragment GC and window-norm
 
 ## Output
 
-The main output is `<prefix>.gc_bias_correction.npz`, or `gc_bias_correction.npz` when no prefix is set. The package contains the correction matrix and metadata needed by downstream commands that apply GC-aware fragment weights. When requested, the command also writes intermediate arrays and QC plots for inspecting the fitted correction surface.
+The main output is `<prefix>.gc_bias_correction.zarr`. The package contains the correction matrix and metadata needed by downstream commands that apply GC-aware fragment weights. When requested, the command also writes intermediate arrays and QC plots for inspecting the fitted correction surface.

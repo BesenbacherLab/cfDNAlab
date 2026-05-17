@@ -366,7 +366,11 @@ fn run_end_fixture(
     run_ends(&config)?;
     let zarr_path = output_dir.join(format!("{prefix}.end_motifs.zarr"));
     assert!(zarr_path.is_dir());
-    assert!(output_dir.join(format!("{prefix}.end_settings.json")).is_file());
+    assert!(
+        output_dir
+            .join(format!("{prefix}.end_settings.json"))
+            .is_file()
+    );
     Ok(zarr_path)
 }
 
@@ -420,5 +424,9 @@ where
 fn read_zarr_shape(store_path: &Path, array_path: &str) -> Result<Vec<usize>> {
     let store = Arc::new(FilesystemStore::new(store_path)?);
     let array = Array::open(store, array_path)?;
-    Ok(array.shape().iter().map(|dimension| *dimension as usize).collect())
+    Ok(array
+        .shape()
+        .iter()
+        .map(|dimension| *dimension as usize)
+        .collect())
 }

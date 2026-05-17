@@ -30,7 +30,7 @@ cfdna midpoints \
   --blacklist <path>/hg38-blacklist.v2.bed \
   --blacklist <path>/<another_blacklist>.bed \
   --length-bins {30..1000..10} \
-  --gc-file <sample_directory>/gc_bias/gc_bias_correction.npz \
+  --gc-file <sample_directory>/gc_bias/gc_bias_correction.zarr \
   --ref-2bit <path>/hg38.2bit
 ```
 
@@ -61,7 +61,7 @@ cfdna midpoints \
   --blacklist <path>/hg38-blacklist.v2.bed \
   --blacklist <path>/<another_blacklist>.bed \
   --length-bins {30..1000..10} \
-  --gc-file <sample_directory>/gc_bias/gc_bias_correction.npz \
+  --gc-file <sample_directory>/gc_bias/gc_bias_correction.zarr \
   --ref-2bit <path>/hg38.2bit \
   --scaling-factors <sample_directory>/coverage_weights/<sample_id>.scaling_factors.tsv
 ```

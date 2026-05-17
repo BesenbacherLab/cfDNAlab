@@ -1,4 +1,4 @@
-//! Shared Zarr writing utilities.
+//! Shared Zarr I/O utilities.
 //!
 //! These helpers are deliberately low-level. They centralize the mechanical parts that should be
 //! identical across cfDNAlab Zarr outputs:
@@ -6,6 +6,8 @@
 //! - opening a filesystem-backed Zarr store
 //! - creating V3 arrays with zstd compression and native dimension names
 //! - writing small coordinate/metadata arrays as a single chunk
+//! - reading complete coordinate/metadata arrays
+//! - validating cfDNAlab root schema attributes
 //! - validating JSON attributes and public integer dtype narrowing
 //! - validating public labels stored in JSON attributes
 //!
@@ -13,10 +15,14 @@
 //! profile, end motif, group, window, or length bin means.
 
 use anyhow::{Context, Result, ensure};
+use ndarray::Array2;
 use serde_json::{Map, Value};
 use std::{fs, path::Path, sync::Arc};
 use zarrs::{
-    array::{ArrayBuilder, DataType, Element, codec::ZstdCodec},
+    array::{
+        Array, ArrayBuilder, DataType, Element, ElementOwned, FillValueMetadata,
+        builder::ArrayBuilderFillValue, codec::ZstdCodec,
+    },
     filesystem::FilesystemStore,
     group::GroupBuilder,
 };
@@ -138,8 +144,36 @@ pub(crate) fn create_zarr_array<T>(
 ) -> Result<zarrs::array::Array<FilesystemStore>>
 where
     T: Element + Copy,
-    zarrs::array::builder::ArrayBuilderFillValue: From<T>,
+    ArrayBuilderFillValue: From<T>,
 {
+    create_zarr_array_with_fill_value(
+        store,
+        name,
+        shape,
+        chunk_shape,
+        dimension_names,
+        data_type,
+        fill_value.into(),
+        attributes,
+    )
+}
+
+/// Create one Zarr V3 array using an explicit Zarr metadata fill value.
+///
+/// Most numeric arrays can use `create_zarr_array` with a Rust scalar fill value. Boolean arrays
+/// need this lower-level helper because `zarrs` accepts boolean fill values through Zarr metadata,
+/// not through the scalar conversion used for numeric primitive types.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn create_zarr_array_with_fill_value(
+    store: Arc<FilesystemStore>,
+    name: &str,
+    shape: &[usize],
+    chunk_shape: &[usize],
+    dimension_names: &[&str],
+    data_type: DataType,
+    fill_value: ArrayBuilderFillValue,
+    attributes: Value,
+) -> Result<zarrs::array::Array<FilesystemStore>> {
     ensure!(
         shape.len() == dimension_names.len(),
         "Zarr array {name} shape rank {} did not match {} dimension names",
@@ -180,6 +214,78 @@ where
         .store_metadata()
         .with_context(|| format!("write Zarr metadata for array {name}"))?;
     Ok(array)
+}
+
+/// Return a Zarr metadata fill value for boolean arrays.
+pub(crate) fn bool_fill_value(value: bool) -> ArrayBuilderFillValue {
+    FillValueMetadata::from(value).into()
+}
+
+/// Read root-level Zarr group attributes from `zarr.json`.
+pub(crate) fn read_zarr_root_attributes(path: &Path) -> Result<Value> {
+    let metadata: Value = serde_json::from_str(&std::fs::read_to_string(path.join("zarr.json"))?)?;
+    Ok(metadata
+        .get("attributes")
+        .cloned()
+        .context("Zarr root metadata is missing attributes")?)
+}
+
+/// Ensure a Zarr store advertises the expected cfDNAlab schema and version.
+pub(crate) fn ensure_zarr_schema(
+    root_attributes: &Value,
+    expected_schema: &str,
+    expected_version: u32,
+    package_name: &str,
+) -> Result<()> {
+    let schema = root_attributes
+        .get("cfdnalab_schema")
+        .and_then(Value::as_str);
+    ensure!(
+        schema == Some(expected_schema),
+        "{package_name} schema mismatch: file={:?}, expected={expected_schema}",
+        schema
+    );
+    let version = root_attributes
+        .get("cfdnalab_schema_version")
+        .and_then(Value::as_u64)
+        .with_context(|| format!("{package_name} is missing cfdnalab_schema_version"))?;
+    ensure!(
+        version == u64::from(expected_version),
+        "{package_name} schema version mismatch: file={}, expected={}; Incompatible with this version of cfDNAlab.",
+        version,
+        expected_version
+    );
+    Ok(())
+}
+
+/// Read a complete rank-1 Zarr array into memory.
+pub(crate) fn read_zarr_array1<T>(store: Arc<FilesystemStore>, array_path: &str) -> Result<Vec<T>>
+where
+    T: ElementOwned,
+{
+    let array = Array::open(store, array_path)?;
+    Ok(array.retrieve_array_subset(&array.subset_all())?)
+}
+
+/// Read a complete rank-2 Zarr array into memory.
+pub(crate) fn read_zarr_array2<T>(
+    store: Arc<FilesystemStore>,
+    array_path: &str,
+) -> Result<Array2<T>>
+where
+    T: ElementOwned,
+{
+    let array = Array::open(store, array_path)?;
+    let shape = array.shape();
+    ensure!(
+        shape.len() == 2,
+        "{array_path} must be a rank-2 array, found rank {}",
+        shape.len()
+    );
+    let values: Vec<T> = array.retrieve_array_subset(&array.subset_all())?;
+    let rows = usize::try_from(shape[0]).context("array row count exceeds usize")?;
+    let cols = usize::try_from(shape[1]).context("array column count exceeds usize")?;
+    Ok(Array2::from_shape_vec((rows, cols), values)?)
 }
 
 /// Reject labels that cannot remain one stable public value.

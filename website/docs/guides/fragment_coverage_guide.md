@@ -33,7 +33,7 @@ cfdna fcoverage \
   --blacklist <path>/<another_blacklist>.bed \
   --by-size 1000000 \
   --per-window 'average' \
-  --gc-file <sample_directory>/gc_bias/gc_bias_correction.npz \
+  --gc-file <sample_directory>/gc_bias/gc_bias_correction.zarr \
   --ref-2bit <path>/hg38.2bit
 ```
 
@@ -74,7 +74,7 @@ cfdna fcoverage \
   --blacklist <path>/<another_blacklist>.bed \
   --by-size 1000000 \
   --per-window 'average' \
-  --gc-file <sample_directory>/gc_bias/gc_bias_correction.npz \
+  --gc-file <sample_directory>/gc_bias/gc_bias_correction.zarr \
   --ref-2bit <path>/hg38.2bit \
   --scaling-factors <sample_directory>/gc_corrected_coverage_weights/<sample_id>.scaling_factors.tsv
 ```

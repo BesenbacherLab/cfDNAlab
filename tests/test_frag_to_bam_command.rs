@@ -2893,7 +2893,7 @@ fn given_bam_to_frag_gc_weights_then_frag_to_bam_then_midpoints_gc_tag_matches_o
     let frag_to_bam_out = TempDir::new()?;
     let original_midpoints_out = TempDir::new()?;
     let restored_midpoints_out = TempDir::new()?;
-    let gc_path = work.path().join("constant_gc_pkg.npz");
+    let gc_path = work.path().join("constant_gc_pkg.zarr");
     let intervals = work.path().join("sites.bed");
     let chrom_sizes_path = frag_to_bam_out.path().join("chrom.sizes");
     fs::write(&intervals, "chr1\t45\t56\tgroupA\n")?;
@@ -2908,7 +2908,7 @@ fn given_bam_to_frag_gc_weights_then_frag_to_bam_then_midpoints_gc_tag_matches_o
         reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![[3.0_f64]],
     };
-    package.write_npz(&gc_path)?;
+    package.write_zarr(&gc_path)?;
 
     let mut bam_to_frag_cfg = BamToFragConfig::new(
         IOCArgs {
@@ -3256,7 +3256,7 @@ fn given_bam_to_frag_with_real_gc_and_scaling_outputs_when_frag_to_bam_runs_then
     let bam_to_frag_out = TempDir::new()?;
     let frag_to_bam_out = TempDir::new()?;
     let work = TempDir::new()?;
-    let gc_path = work.path().join("constant_gc_pkg.npz");
+    let gc_path = work.path().join("constant_gc_pkg.zarr");
     let scaling_path = work.path().join("uniform_scaling.tsv");
     let chrom_sizes_path = frag_to_bam_out.path().join("chrom.sizes");
     write_chrom_sizes(&chrom_sizes_path, &[("chr1", 200)])?;
@@ -3271,7 +3271,7 @@ fn given_bam_to_frag_with_real_gc_and_scaling_outputs_when_frag_to_bam_runs_then
         reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![[3.0_f64]],
     };
-    package.write_npz(&gc_path)?;
+    package.write_zarr(&gc_path)?;
 
     let mut bam_to_frag_cfg = BamToFragConfig::new(
         IOCArgs {

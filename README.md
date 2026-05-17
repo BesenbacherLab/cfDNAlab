@@ -303,7 +303,7 @@ cfdna gc-bias \
   --output-dir <sample_directory>/gc_bias \
   --n-threads 12 \
   --ref-2bit <path>/hg38.2bit \
-  --ref-gc-file <ref_gc_directory>/hg38.ref_gc_package.npz \
+  --ref-gc-file <ref_gc_directory>/hg38.ref_gc_package.zarr \
   --blacklist <path>/hg38-blacklist.v2.bed  # Should match those specified in ref-gc-bias!
 
 ```
@@ -315,7 +315,7 @@ cfdna gc-bias \
 cfdna fcoverage \
   --bam <sample>.bam \
   ... \  # See fcoverage example
-  --gc-file <sample_directory>/gc_bias/gc_bias_correction.npz \
+  --gc-file <sample_directory>/gc_bias/gc_bias_correction.zarr \
   --ref-2bit <path>/hg38.2bit
 
 ```
@@ -635,7 +635,7 @@ cfdna fragment-count-weights \
   --blacklist $BLACKLIST \
   --min-fragment-length $MINLENGTH \
   --max-fragment-length $MAXLENGTH \
-  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz \
+  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.zarr \
   --ref-2bit $ASSEMBLY  \
   --n-threads $THREADS 
 
@@ -647,7 +647,7 @@ cfdna coverage-weights \
   --blacklist $BLACKLIST \
   --min-fragment-length $MINLENGTH \
   --max-fragment-length $MAXLENGTH \
-  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz \
+  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.zarr \
   --ref-2bit $ASSEMBLY \
   --n-threads $THREADS 
 
@@ -659,7 +659,7 @@ cfdna fcoverage \
   --blacklist $BLACKLIST \
   --min-fragment-length $MINLENGTH \
   --max-fragment-length $MAXLENGTH \
-  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz \
+  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.zarr \
   --ref-2bit $ASSEMBLY \
   --n-threads $THREADS 
 
@@ -675,7 +675,7 @@ cfdna fcoverage \
   --blacklist $BLACKLIST \
   --min-fragment-length $MINLENGTH \
   --max-fragment-length $MAXLENGTH \
-  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz \
+  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.zarr \
   --ref-2bit $ASSEMBLY \
   --n-threads $THREADS
 
@@ -686,7 +686,7 @@ cfdna lengths \
   --output-prefix $SAMPLE_NAME \
   --blacklist $BLACKLIST  \
   --length-bins $MINLENGTH:$(($MAXLENGTH+1)):1 \
-  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz \
+  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.zarr \
   --ref-2bit $ASSEMBLY \
   --scaling-factors $OUT/scaling_factors/$SAMPLE_NAME.fragment_counts.scaling_factors.tsv \
   --n-threads $THREADS 
@@ -699,7 +699,7 @@ cfdna lengths \
   --output-prefix $SAMPLE_NAME --by-size 5000000 \
   --blacklist $BLACKLIST \
   --length-bins 100 151 221 \
-  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz \
+  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.zarr \
   --ref-2bit $ASSEMBLY \
   --scaling-factors $OUT/scaling_factors/$SAMPLE_NAME.fragment_counts.scaling_factors.tsv \
   --n-threads $THREADS
@@ -714,7 +714,7 @@ cfdna ends \
   --blacklist $BLACKLIST \
   --min-fragment-length $MINLENGTH \
   --max-fragment-length $MAXLENGTH \
-  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz \
+  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.zarr \
   --ref-2bit $ASSEMBLY \
   --scaling-factors $OUT/scaling_factors/$SAMPLE_NAME.fragment_counts.scaling_factors.tsv \
   --n-threads $THREADS 
@@ -727,7 +727,7 @@ cfdna midpoints \
   --intervals $MIDPOINT_INTERVALS \
   --blacklist $BLACKLIST \
   --length-bins $MINLENGTH $(($MAXLENGTH+1)) \
-  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz \
+  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.zarr \
   --ref-2bit $ASSEMBLY \
   --scaling-factors $OUT/scaling_factors/$SAMPLE_NAME.fragment_counts.scaling_factors.tsv \
   --n-threads $THREADS
@@ -786,6 +786,15 @@ zstd -d path_to/file.tsv.zst
 zstdcat path_to/file.tsv.zst
 
 ```
+
+In R, you can do:
+
+```r
+library(data.table)
+x = fread(cmd = "zstd -dc path_to/file.tsv.zst")
+```
+
+In python, Pandas automatically detects and decompresses the file.
 
 <br>
 

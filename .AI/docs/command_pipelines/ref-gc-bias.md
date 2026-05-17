@@ -18,7 +18,7 @@ flowchart TD
     percent["Convert to GC percentage<br/>with bin-width correction"];
     support["Build support masks<br/>impossible bins and sparse bins"];
     fill_sparse_bins["Interpolate sparse bins<br/>optional per-length filling"];
-    package["Reference GC package<br/>ref_gc_package.npz"];
+    package["Reference GC package<br/>ref_gc_package.zarr"];
     consumer["Used by gc-bias<br/>to fit sample-specific correction"];
 
     region_inputs["Optional region inputs<br/>BED include regions and blacklists"];
@@ -54,4 +54,4 @@ The package also stores support masks. One mask marks GC-percentage bins that ar
 
 ## Output
 
-The output is `<prefix>.ref_gc_package.npz`, or `ref_gc_package.npz` when no prefix is set. This package is the reference-side input to `cfdna gc-bias` and can be reused for samples aligned to the same reference setup.
+The output is `<prefix>.ref_gc_package.zarr`. This package is the reference-side input to `cfdna gc-bias` and can be reused for samples aligned to the same reference setup.

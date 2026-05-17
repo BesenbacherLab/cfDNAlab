@@ -32,7 +32,7 @@ cfdna ends \
   --by-size 1000000 \
   --k-inside 2 \
   --k-outside 2 \
-  --gc-file <sample_directory>/gc_bias/gc_bias_correction.npz \
+  --gc-file <sample_directory>/gc_bias/gc_bias_correction.zarr \
   --ref-2bit <path>/hg38.2bit
 ```
 
@@ -65,7 +65,7 @@ cfdna ends \
   --by-size 1000000 \
   --k-inside 2 \
   --k-outside 2 \
-  --gc-file <sample_directory>/gc_bias/gc_bias_correction.npz \
+  --gc-file <sample_directory>/gc_bias/gc_bias_correction.zarr \
   --ref-2bit <path>/hg38.2bit \
   --scaling-factors <sample_directory>/coverage_weights/<sample_id>.scaling_factors.tsv
 ```

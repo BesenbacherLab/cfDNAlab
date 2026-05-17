@@ -31,7 +31,7 @@ cfdna gc-bias \
   --output-dir <sample_directory>/gc_bias \
   --n-threads 12 \
   --ref-2bit <path>/hg38.2bit \
-  --ref-gc-file <ref_gc_directory>/hg38.ref_gc_package.npz \
+  --ref-gc-file <ref_gc_directory>/hg38.ref_gc_package.zarr \
   --blacklist <path>/hg38-blacklist.v2.bed \
   --blacklist <path>/<another_blacklist>.bed
 ```
@@ -44,7 +44,7 @@ Use the same blacklist inputs as in step 1.
 cfdna fcoverage \
   --bam <sample>.bam \
   ... \
-  --gc-file <sample_directory>/gc_bias/gc_bias_correction.npz \
+  --gc-file <sample_directory>/gc_bias/gc_bias_correction.zarr \
   --ref-2bit <path>/hg38.2bit
 ```
 

@@ -43,7 +43,7 @@ cfdna lengths \
   --n-threads 12 \
   --blacklist <path>/hg38-blacklist.v2.bed \
   --by-size 1000000 \
-  --gc-file <sample_directory>/gc_bias/gc_bias_correction.npz \
+  --gc-file <sample_directory>/gc_bias/gc_bias_correction.zarr \
   --ref-2bit <path>/hg38.2bit
 ```
 
@@ -70,7 +70,7 @@ cfdna lengths \
   --n-threads 12 \
   --blacklist <path>/hg38-blacklist.v2.bed \
   --by-size 1000000 \
-  --gc-file <sample_directory>/gc_bias/gc_bias_correction.npz \
+  --gc-file <sample_directory>/gc_bias/gc_bias_correction.zarr \
   --ref-2bit <path>/hg38.2bit \
   --scaling-factors <sample_directory>/coverage_weights/<sample_id>.scaling_factors.tsv
 ```
