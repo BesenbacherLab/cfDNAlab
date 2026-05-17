@@ -111,7 +111,9 @@ class EndMotifCounts:
         try:
             store = zarr.open_group(str(path), mode="r", zarr_format=3)
         except Exception as error:
-            raise ValueError(f"Could not open end-motif Zarr store at {path}") from error
+            raise ValueError(
+                f"Could not open end-motif Zarr store at {path}"
+            ) from error
 
         storage_mode, row_mode = _validate_root_metadata(store)
         _validate_required_arrays(store, storage_mode, row_mode)
@@ -178,7 +180,9 @@ class EndMotifCounts:
                 blacklisted_fraction, row, "blacklisted_fraction", "row"
             )
             if np.any(row_chromosome < 0) or np.any(row_chromosome >= len(chromosome)):
-                raise ValueError("row_chromosome contains an index outside the chromosome axis")
+                raise ValueError(
+                    "row_chromosome contains an index outside the chromosome axis"
+                )
         elif row_mode == "grouped_bed":
             group_idx = _read_array(store, "group")
             group_names = _read_labels(
@@ -318,7 +322,9 @@ class EndMotifCounts:
         row_index = _required(self.end_motifs.sparse_row, "sparse/row")
         motif_index = _required(self.end_motifs.sparse_motif, "sparse/motif")
         count = _required(self.end_motifs.sparse_count, "sparse/count")
-        shape = tuple(_required(self.end_motifs.sparse_shape, "sparse/shape").astype(int))
+        shape = tuple(
+            _required(self.end_motifs.sparse_shape, "sparse/shape").astype(int)
+        )
         return sparse.coo_matrix(
             (
                 count,
@@ -393,9 +399,7 @@ class EndMotifCounts:
         motif_idx = self._validate_motif_idx(motif_idx)
         if self.end_motifs.storage_mode == "sparse_coo":
             sparse_row_index = _required(self.end_motifs.sparse_row, "sparse/row")
-            sparse_motif_index = _required(
-                self.end_motifs.sparse_motif, "sparse/motif"
-            )
+            sparse_motif_index = _required(self.end_motifs.sparse_motif, "sparse/motif")
             sparse_count = _required(self.end_motifs.sparse_count, "sparse/count")
             matches = sparse_motif_index == motif_idx
             row_index = sparse_row_index[matches].astype(np.int64, copy=False)
@@ -562,7 +566,9 @@ class EndMotifCounts:
         elif self.end_motifs.row_mode in {"size", "bed"}:
             frame = pd.DataFrame()
             row_chromosome = _required(self.end_motifs.row_chromosome, "row_chromosome")
-            chromosome_names = _required(self.end_motifs.chromosome_names, "chromosome_names")
+            chromosome_names = _required(
+                self.end_motifs.chromosome_names, "chromosome_names"
+            )
             frame["window_idx"] = self.end_motifs.row
             frame["chromosome"] = row_chromosome
             frame["chromosome_name"] = chromosome_names[row_chromosome.astype(int)]
@@ -675,9 +681,7 @@ class WindowedEndMotifCounts(EndMotifCounts):
         window_idx = self._validate_row(window_idx)
         if self.end_motifs.storage_mode == "sparse_coo":
             sparse_row_index = _required(self.end_motifs.sparse_row, "sparse/row")
-            sparse_motif_index = _required(
-                self.end_motifs.sparse_motif, "sparse/motif"
-            )
+            sparse_motif_index = _required(self.end_motifs.sparse_motif, "sparse/motif")
             sparse_count = _required(self.end_motifs.sparse_count, "sparse/count")
             matches = sparse_row_index == window_idx
             row_index = np.zeros(int(matches.sum()), dtype=np.int64)
@@ -799,9 +803,7 @@ class GroupedEndMotifCounts(EndMotifCounts):
         group_idx = self._resolve_group(group)
         if self.end_motifs.storage_mode == "sparse_coo":
             sparse_row_index = _required(self.end_motifs.sparse_row, "sparse/row")
-            sparse_motif_index = _required(
-                self.end_motifs.sparse_motif, "sparse/motif"
-            )
+            sparse_motif_index = _required(self.end_motifs.sparse_motif, "sparse/motif")
             sparse_count = _required(self.end_motifs.sparse_count, "sparse/count")
             matches = sparse_row_index == group_idx
             row_index = np.zeros(int(matches.sum()), dtype=np.int64)
@@ -1067,9 +1069,7 @@ def _read_motif_ascii_labels(store: Any, expected_len: int) -> np.ndarray:
 
     motif_ascii = _read_array(store, "motif_ascii")
     if motif_ascii.ndim != 2:
-        raise ValueError(
-            f"motif_ascii must have rank 2, found rank {motif_ascii.ndim}"
-        )
+        raise ValueError(f"motif_ascii must have rank 2, found rank {motif_ascii.ndim}")
     expected_shape = (expected_len, len(motif_byte))
     if tuple(motif_ascii.shape) != expected_shape:
         raise ValueError(
@@ -1077,7 +1077,9 @@ def _read_motif_ascii_labels(store: Any, expected_len: int) -> np.ndarray:
             f"motif_ascii={motif_ascii.shape}, expected={expected_shape}"
         )
     if motif_ascii.dtype != np.uint8:
-        raise ValueError(f"motif_ascii must have dtype uint8, found {motif_ascii.dtype}")
+        raise ValueError(
+            f"motif_ascii must have dtype uint8, found {motif_ascii.dtype}"
+        )
 
     try:
         labels = [bytes(row).decode("ascii") for row in motif_ascii]

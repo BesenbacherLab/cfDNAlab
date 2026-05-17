@@ -31,6 +31,11 @@ src/commands/prepare_windows/test_to_make.md
 website/docs/generated/
 
 __pycache__/
+.pytest_cache/
+.venv/
+build/
+dist/
+*.egg-info/
 
 test_scores.md
 

@@ -10,16 +10,18 @@ The first supported output types are midpoint and end-motif Zarr outputs: `<pref
 
 ## Install
 
+These instructions only installs the Python loader package. To install the `cfdna` command-line tool, see the [main repository](https://github.com/BesenbacherLab/cfDNAlab).
+
+Install with pip:
+
+```bash
+pip install cfdnalab
+```
+
 Install the current development version from GitHub:
 
 ```bash
 pip install "cfdnalab @ git+https://github.com/BesenbacherLab/cfDNAlab.git#subdirectory=py-cfdnalab"
-```
-
-With `uv`:
-
-```bash
-uv pip install "cfdnalab @ git+https://github.com/BesenbacherLab/cfDNAlab.git#subdirectory=py-cfdnalab"
 ```
 
 <br>
@@ -153,7 +155,7 @@ For dense grouped output:
 
 ```python
 groups = ends.groups()
-group_counts = ends.dense_data_frame_for_group("CTCF")
+group_counts = ends.dense_data_frame_for_group("t-cells")
 ```
 
 For sparse stores, prefer `sparse_coo()`, `sparse_coo_data_frame()`, and the sparse slice helpers when working with large end-motif outputs. Use `allow_densify=True` only when the dense result is small enough to fit comfortably in memory.

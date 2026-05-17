@@ -1,4 +1,10 @@
+from importlib.metadata import version
+
 import cfdnalab
+
+
+def test_package_version_is_exported() -> None:
+    assert cfdnalab.__version__ == version("cfdnalab")
 
 
 def test_public_midpoint_loader_is_exported() -> None:
