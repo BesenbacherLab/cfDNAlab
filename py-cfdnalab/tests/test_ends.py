@@ -49,8 +49,8 @@ def test_dense_windowed_end_motifs_load_metadata_and_arrays(tmp_path: Path) -> N
                 "window_idx": np.array([0, 1], dtype=np.int32),
                 "chromosome": np.array([0, 1], dtype=np.int32),
                 "chromosome_name": np.array(["chr2", "chr10"], dtype=object),
-                "window_start_bp": np.array([10, 40], dtype=np.uint64),
-                "window_end_bp": np.array([20, 60], dtype=np.uint64),
+                "window_start_bp": np.array([10, 40], dtype=np.int64),
+                "window_end_bp": np.array([20, 60], dtype=np.int64),
                 "blacklisted_fraction": np.array([0.25, 0.0], dtype=np.float64),
             }
         ),
@@ -95,8 +95,8 @@ def test_dense_windowed_end_motif_slice_helpers_return_expected_frames(
                 "window_idx": np.array([0, 1], dtype=np.int32),
                 "chromosome": np.array([0, 1], dtype=np.int32),
                 "chromosome_name": np.array(["chr2", "chr10"], dtype=object),
-                "window_start_bp": np.array([10, 40], dtype=np.uint64),
-                "window_end_bp": np.array([20, 60], dtype=np.uint64),
+                "window_start_bp": np.array([10, 40], dtype=np.int64),
+                "window_end_bp": np.array([20, 60], dtype=np.int64),
                 "blacklisted_fraction": np.array([0.25, 0.0], dtype=np.float64),
                 "motif_index": np.array([1, 1], dtype=np.int64),
                 "motif": ["_CC", "_CC"],
@@ -460,8 +460,8 @@ def _write_dense_window_store(
         np.array([0, 1], dtype=np.int32),
         chunks=(2,),
     )
-    _create_array(root, "row_start_bp", np.array([10, 40], dtype=np.uint64), chunks=(2,))
-    _create_array(root, "row_end_bp", np.array([20, 60], dtype=np.uint64), chunks=(2,))
+    _create_array(root, "row_start_bp", np.array([10, 40], dtype=np.int64), chunks=(2,))
+    _create_array(root, "row_end_bp", np.array([20, 60], dtype=np.int64), chunks=(2,))
     _create_array(
         root,
         "blacklisted_fraction",
@@ -530,8 +530,8 @@ def _write_sparse_window_store(path: Path, *, row_mode: str = "bed") -> Path:
         np.array([0, 1], dtype=np.int32),
         chunks=(2,),
     )
-    _create_array(root, "row_start_bp", np.array([10, 40], dtype=np.uint64), chunks=(2,))
-    _create_array(root, "row_end_bp", np.array([20, 60], dtype=np.uint64), chunks=(2,))
+    _create_array(root, "row_start_bp", np.array([10, 40], dtype=np.int64), chunks=(2,))
+    _create_array(root, "row_end_bp", np.array([20, 60], dtype=np.int64), chunks=(2,))
     _create_array(
         root,
         "blacklisted_fraction",

@@ -19,7 +19,7 @@ use crate::shared::{
     windowing::WindowBinInfo,
     zarr::{
         ZARR_ASCII_FILL_VALUE, ZARR_FLOAT64_FILL_VALUE, ZARR_INT32_FILL_VALUE,
-        ZARR_UINT64_FILL_VALUE, checked_i32, checked_index_axis, create_zarr_array,
+        ZARR_INT64_FILL_VALUE, checked_i32, checked_i64, checked_index_axis, create_zarr_array,
         create_zarr_store, validate_zarr_label, write_single_chunk_zarr_array,
         write_zarr_group_metadata, write_zarr_root_metadata,
     },
@@ -431,8 +431,14 @@ fn write_window_row_metadata(
             checked_i32(index, "row_chromosome")
         })
         .collect::<Result<Vec<_>>>()?;
-    let row_start_bp: Vec<u64> = bin_info.iter().map(|entry| entry.start).collect();
-    let row_end_bp: Vec<u64> = bin_info.iter().map(|entry| entry.end).collect();
+    let row_start_bp: Vec<i64> = bin_info
+        .iter()
+        .map(|entry| checked_i64(entry.start, "row_start_bp"))
+        .collect::<Result<_>>()?;
+    let row_end_bp: Vec<i64> = bin_info
+        .iter()
+        .map(|entry| checked_i64(entry.end, "row_end_bp"))
+        .collect::<Result<_>>()?;
     let blacklisted_fraction: Vec<f64> = bin_info
         .iter()
         .map(|entry| entry.blacklisted_fraction)
@@ -467,8 +473,8 @@ fn write_window_row_metadata(
         &[n_rows],
         &["row"],
         &row_start_bp,
-        data_type::uint64(),
-        ZARR_UINT64_FILL_VALUE,
+        data_type::int64(),
+        ZARR_INT64_FILL_VALUE,
         json!({ "long_name": "inclusive row start coordinate", "units": "bp" }),
     )?;
     write_single_chunk_zarr_array(
@@ -477,8 +483,8 @@ fn write_window_row_metadata(
         &[n_rows],
         &["row"],
         &row_end_bp,
-        data_type::uint64(),
-        ZARR_UINT64_FILL_VALUE,
+        data_type::int64(),
+        ZARR_INT64_FILL_VALUE,
         json!({ "long_name": "exclusive row end coordinate", "units": "bp" }),
     )?;
     write_single_chunk_zarr_array(

@@ -435,9 +435,10 @@ Start with a deliberately small Zarr V3 subset:
 - no structured arrays
 - no datetime or timedelta arrays
 - no complex arrays
-- numeric arrays limited to `float32`, `float64`, `int32`, `uint32`, and
-  `uint64`
-- avoid public `uint64` unless values can exceed `int32`
+- numeric arrays limited to `float32`, `float64`, `int32`, `int64`, and
+  `uint32`
+- avoid public `uint64`; signed `int64` is easier for R and Python readers when
+  values can exceed `int32`
 - V3 `dimension_names` metadata on every array
 - coordinate arrays stored as arrays, not only as attrs
 
@@ -488,14 +489,14 @@ The R tests must check integer conversion deliberately instead of accepting the
 reader package default. Public Zarr schemas use unsigned integer dtypes where
 that is the correct on-disk domain type:
 
-- genomic coordinates such as `row_start_bp` and `row_end_bp` may be `uint64`
+- genomic coordinates such as `row_start_bp` and `row_end_bp` may be `int64`
 - sparse coordinates such as `sparse/row`, `sparse/motif`, and `sparse/shape`
   are `int32`
 - counts of windows or intervals should be `int32` when they are intended to
   become ordinary R integers
 
-The R helper should read exact `uint64` values as `bit64::integer64` when they
-are retained as metadata. When constructing `Matrix::sparseMatrix`, sparse
+The R helper should preserve `int64` coordinate values as `bit64::integer64` or
+as exact numeric values. When constructing `Matrix::sparseMatrix`, sparse
 coordinates should be range-checked and shifted from zero-based Zarr coordinates
 to one-based R indices.
 

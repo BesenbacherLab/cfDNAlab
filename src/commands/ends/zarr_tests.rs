@@ -83,8 +83,8 @@ fn dense_end_motif_zarr_writes_counts_motifs_and_window_metadata() {
     assert!(!store_path.join("chromosome_name_nbytes").exists());
     assert!(!store_path.join("chromosome_name_byte").exists());
     assert_eq!(read_i32_array(&store_path, "/row_chromosome"), vec![0, 1]);
-    assert_eq!(read_u64_array(&store_path, "/row_start_bp"), vec![10, 40]);
-    assert_eq!(read_u64_array(&store_path, "/row_end_bp"), vec![20, 60]);
+    assert_eq!(read_i64_array(&store_path, "/row_start_bp"), vec![10, 40]);
+    assert_eq!(read_i64_array(&store_path, "/row_end_bp"), vec![20, 60]);
     assert_eq!(
         read_f64_array(&store_path, "/blacklisted_fraction"),
         vec![0.25, 0.0]
@@ -246,8 +246,14 @@ fn sparse_end_motif_zarr_round_trips_to_dense_matrix_and_metadata() {
     assert!(!store_path.join("chromosome_name").exists());
     assert!(!store_path.join("chromosome_name_utf8").exists());
     assert_eq!(read_i32_array(&store_path, "/row_chromosome"), vec![0, 1, 0]);
-    assert_eq!(read_u64_array(&store_path, "/row_start_bp"), vec![10, 40, 90]);
-    assert_eq!(read_u64_array(&store_path, "/row_end_bp"), vec![20, 60, 130]);
+    assert_eq!(
+        read_i64_array(&store_path, "/row_start_bp"),
+        vec![10, 40, 90]
+    );
+    assert_eq!(
+        read_i64_array(&store_path, "/row_end_bp"),
+        vec![20, 60, 130]
+    );
     assert_eq!(
         read_f64_array(&store_path, "/blacklisted_fraction"),
         vec![0.25, 0.0, 0.5]
@@ -587,7 +593,7 @@ fn read_i32_array(store_path: &std::path::Path, array_path: &str) -> Vec<i32> {
     read_array(store_path, array_path)
 }
 
-fn read_u64_array(store_path: &std::path::Path, array_path: &str) -> Vec<u64> {
+fn read_i64_array(store_path: &std::path::Path, array_path: &str) -> Vec<i64> {
     read_array(store_path, array_path)
 }
 

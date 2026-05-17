@@ -14,15 +14,15 @@ attributes and array attributes define the biological schema.
   `gc_correction_package`.
 - `int32` arrays are used for coordinate axes, small label indices, and small
   non-negative metadata that should load as native R integers.
-- `uint64` arrays are used for genomic coordinates.
-- R readers should preserve `uint64` as `bit64::integer64` or check that values
-  are below `2^53` before conversion to double. Sparse indices are `int32` and
-  must be range checked before conversion to R's one-based matrix indices.
+- `int64` arrays are used for genomic coordinates. They keep the coordinate
+  domain large while avoiding `uint64` handling problems in R Zarr readers.
+  Sparse indices are `int32` and must be range checked before conversion to R's
+  one-based matrix indices.
 - Public arrays use fill values outside their valid data domain where possible.
   This prevents readers that map Zarr fill values to missing values from
   turning valid zero counts or zero-based coordinates into missing values. The
   midpoint and end-motif schemas use `-1` for non-negative `int32` metadata,
-  `-1.0` for non-negative floating counts/fractions, `u64::MAX` for genomic
+  `-1.0` for non-negative floating counts/fractions, `-1` for genomic
   coordinates, and `255` for fixed-width ASCII label bytes. The `255` fill
   value must not be reused for arbitrary numeric `uint8` arrays where `255`
   could be real data. GC package arrays are currently single-chunk package
@@ -87,8 +87,8 @@ Windowed row metadata for `row_mode = "size"` or `"bed"`:
 - `chromosome[chromosome]`: `int32`, chromosome index. Attributes:
   `label_field = "chromosome_name"` and `labels = [...]`.
 - `row_chromosome[row]`: `int32`, index into `chromosome`.
-- `row_start_bp[row]`: `uint64`, inclusive row start coordinate.
-- `row_end_bp[row]`: `uint64`, exclusive row end coordinate.
+- `row_start_bp[row]`: `int64`, inclusive row start coordinate.
+- `row_end_bp[row]`: `int64`, exclusive row end coordinate.
 - `blacklisted_fraction[row]`: `float64`, row blacklist fraction.
 
 Grouped row metadata for `row_mode = "grouped_bed"`:

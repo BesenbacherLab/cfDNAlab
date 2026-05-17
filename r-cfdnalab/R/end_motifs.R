@@ -214,11 +214,8 @@ cf_read_end_motif_row_metadata <- function(path, store, row, row_mode) {
     chromosome <- cf_read_vector(store, "chromosome", "End-motif")
     chromosome_name <- cf_read_labels(path, "chromosome", "chromosome_name", length(chromosome))
     row_chromosome <- cf_read_vector(store, "row_chromosome", "End-motif")
-    # CRAN zarr currently warns while decoding uint64 arrays even when values
-    # are small enough for the checks below. Suppress only these known genomic
-    # coordinate reads so ordinary validation warnings still surface elsewhere.
-    row_start_bp <- suppressWarnings(cf_read_vector(store, "row_start_bp", "End-motif"))
-    row_end_bp <- suppressWarnings(cf_read_vector(store, "row_end_bp", "End-motif"))
+    row_start_bp <- cf_read_vector(store, "row_start_bp", "End-motif")
+    row_end_bp <- cf_read_vector(store, "row_end_bp", "End-motif")
     blacklisted_fraction <- cf_read_vector(store, "blacklisted_fraction", "End-motif")
     cf_validate_axis(chromosome, "chromosome")
     cf_validate_same_length(row_chromosome, row, "row_chromosome", "row")

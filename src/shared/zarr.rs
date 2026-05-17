@@ -41,14 +41,14 @@ pub(crate) const DEFAULT_ZARR_ZSTD_LEVEL: i32 = 3;
 /// seen as chunk padding or metadata for empty arrays, not as real cfDNAlab data.
 pub(crate) const ZARR_INT32_FILL_VALUE: i32 = -1;
 
+/// Fill value for public `int64` genomic coordinate arrays.
+pub(crate) const ZARR_INT64_FILL_VALUE: i64 = -1;
+
 /// Fill value for non-negative `float32` count arrays.
 pub(crate) const ZARR_FLOAT32_FILL_VALUE: f32 = -1.0;
 
 /// Fill value for non-negative `float64` count and fraction arrays.
 pub(crate) const ZARR_FLOAT64_FILL_VALUE: f64 = -1.0;
-
-/// Fill value for public `uint64` genomic coordinate arrays.
-pub(crate) const ZARR_UINT64_FILL_VALUE: u64 = u64::MAX;
 
 /// Fill value for fixed-width ASCII label arrays.
 ///
@@ -357,6 +357,17 @@ where
     value
         .try_into()
         .map_err(|_| anyhow::anyhow!("{field_name} value {value} exceeds i32"))
+}
+
+/// Convert a metadata value to the public `i64` Zarr dtype.
+pub(crate) fn checked_i64<T>(value: T, field_name: &str) -> Result<i64>
+where
+    T: TryInto<i64> + Copy + std::fmt::Display,
+    T::Error: std::fmt::Debug,
+{
+    value
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("{field_name} value {value} exceeds i64"))
 }
 
 /// Return the number of elements in a shape, or `None` on overflow.

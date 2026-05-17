@@ -474,8 +474,8 @@ Fixed-size and BED modes:
 ```text
 chromosome             int32[chromosome]
 row_chromosome         int32[row]
-row_start_bp           uint64[row]
-row_end_bp             uint64[row]
+row_start_bp           int64[row]
+row_end_bp             int64[row]
 blacklisted_fraction   float64[row]
 ```
 
@@ -610,7 +610,7 @@ Zarr helpers once the current schema has settled. Useful shared helpers:
 - root metadata writing
 - generic Zarr V3 array creation with zstd and dimension names
 - single-chunk coordinate/metadata array writing
-- checked `usize`/`u64` to public `i32`, `u32`, and `uint64` conversions
+- checked `usize`/`u64` to public `i32`, `int64`, and `uint32` conversions
 - public label validation for labels stored in JSON attrs
 - fixed-width ASCII label-array writing for high-cardinality motif labels
 - 2D dense chunk-shape selection
@@ -658,13 +658,14 @@ The spec must list, for each public Zarr store:
 - root attributes, their types, and allowed values
 - array names, shapes, dtypes, dimension names, and array attributes
 - which arrays are coordinates and which arrays are payloads
-- the R conversion strategy for unsigned integer arrays
+- the R conversion strategy for integer arrays outside native R `integer`
 
-R needs explicit dtype guidance because it has no native `uint64`. The R helper
-should convert on purpose instead of inheriting whatever a reader package does:
+R needs explicit dtype guidance because it has no native 64-bit integer vector.
+The R helper should convert on purpose instead of inheriting whatever a reader
+package does:
 
-- `uint64` genomic coordinates should become `bit64::integer64` when exact
-  integer values matter.
+- `int64` genomic coordinates should remain exact, either as `bit64::integer64`
+  or as checked numeric values.
 - Sparse coordinates are `int32` because they must become ordinary signed
   integer vectors when constructing `Matrix::sparseMatrix`, which uses one-based
   signed indices.
@@ -777,7 +778,7 @@ Python helper cleanup before release:
   current `group_index.tsv`.
 - Whether sparse coordinate `int32` limits are acceptable for all practical
   public sparse stores. Current decision: use `int32` to avoid noisy and fragile
-  `uint64` handling in R sparse workflows.
+  64-bit handling in R sparse workflows.
 - Exact dense and sparse chunk shapes.
 - Whether to preserve `end_motifs` in the store name or rename to `end_counts`.
   Prefer `end_motifs.zarr` because it matches existing user-facing terminology.
