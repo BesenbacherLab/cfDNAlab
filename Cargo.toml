@@ -14,6 +14,7 @@ include = [
     "/LICENSE",
     "/README.md",
     "/cfdnalab_logo_750x500_150dpi.png",
+    "/cfdnalab_command_overview.png",
     "/src/**/*.rs",
     "/tests/**/*.rs",
 ]
