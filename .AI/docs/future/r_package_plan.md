@@ -81,7 +81,8 @@ This avoids making tidyverse or data.table users pay for dependencies they do no
 Current candidate Zarr readers:
 
 - CRAN `zarr`: native R implementation with Zarr v3 support.
-- Bioconductor `Rarr`: reads individual Zarr arrays and can use `DelayedArray`.
+- Bioconductor `Rarr`: promising for `DelayedArray`, but `Rarr` 1.6.0 expects
+  Zarr v2 `.zarray` metadata and cannot read the current Zarr v3 stores.
 - CRAN/R-universe `pizzarr`: useful to test, but do not assume full compatibility until downstream tests cover our stores.
 
 First implementation decision:
@@ -97,7 +98,7 @@ Decision rule:
 Sources checked while drafting:
 
 - [`zarr`](https://cran.r-universe.dev/zarr): native R Zarr implementation with required Zarr v3 support.
-- [`Rarr`](https://bioconductor.org/packages/release/bioc/vignettes/Rarr/inst/doc/Rarr.html): Bioconductor reader with `DelayedArray` integration.
+- [`Rarr`](https://bioconductor.org/packages/release/bioc/vignettes/Rarr/inst/doc/Rarr.html): Bioconductor reader with `DelayedArray` integration, but not currently compatible with the V3 stores written here.
 - [`pizzarr`](https://cran.r-universe.dev/articles/pizzarr/v3-read.html): Zarr v3 reader support through the Zarr developers R-universe.
 
 ## Public Loaders

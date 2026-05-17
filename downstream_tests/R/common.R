@@ -71,3 +71,16 @@ decode_motif_ascii <- function(bytes) {
     rawToChar(as.raw(as.integer(row)))
   })
 }
+
+read_cran_zarr_array <- function(root, array_name) {
+  node_path <- paste0("/", array_name)
+  if (!is.null(root$get_node) && is.function(root$get_node)) {
+    node <- root$get_node(node_path)
+  } else {
+    node <- root[[node_path]]
+  }
+  if (is.function(node$read)) {
+    return(node$read())
+  }
+  node[]
+}

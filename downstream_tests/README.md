@@ -7,8 +7,8 @@ part of the local development loop.
 
 The current fixtures are small midpoint and end-motif Zarr V3 stores generated
 by cfDNAlab itself. Python checks use the local `cfdnalab` helper package plus
-direct `zarr`, `xarray`, and `dask.array` readers. R checks use CRAN `zarr` and
-Bioconductor `Rarr`.
+direct `zarr`, `xarray`, and `dask.array` readers. R checks use the local
+`cfdnalab` helper package plus direct CRAN `zarr` reads.
 
 ```text
 midpoint counts[group, length_bin, position]
@@ -38,9 +38,9 @@ CFDNALAB_ENDS_SPARSE_GROUPED_ZARR=downstream_tests/tmp/tiny_sparse_grouped.end_m
 pytest downstream_tests/python
 ```
 
-R tests require the CRAN `jsonlite` and `zarr` packages and the Bioconductor
-`Rarr` package. The local `cfdnalab` R package must be installed before running
-`test_cfdnalab_r_package.R`.
+R tests require the CRAN `jsonlite`, `zarr`, `qs2`, `bit64`, `Matrix`, and
+`testthat` packages. The local `cfdnalab` R package must be installed before
+running `test_cfdnalab_r_package.R`.
 
 ```bash
 R CMD INSTALL r-cfdnalab
@@ -55,19 +55,7 @@ CFDNALAB_MIDPOINT_ZARR=downstream_tests/tmp/tiny.midpoint_profiles.zarr \
 CFDNALAB_ENDS_DENSE_GLOBAL_ZARR=downstream_tests/tmp/tiny_dense_global.end_motifs.zarr \
 CFDNALAB_ENDS_SPARSE_WINDOWED_ZARR=downstream_tests/tmp/tiny_sparse_windowed.end_motifs.zarr \
 CFDNALAB_ENDS_SPARSE_GROUPED_ZARR=downstream_tests/tmp/tiny_sparse_grouped.end_motifs.zarr \
-Rscript downstream_tests/R/test_midpoint_zarr_rarr.R
-
-CFDNALAB_MIDPOINT_ZARR=downstream_tests/tmp/tiny.midpoint_profiles.zarr \
-CFDNALAB_ENDS_DENSE_GLOBAL_ZARR=downstream_tests/tmp/tiny_dense_global.end_motifs.zarr \
-CFDNALAB_ENDS_SPARSE_WINDOWED_ZARR=downstream_tests/tmp/tiny_sparse_windowed.end_motifs.zarr \
-CFDNALAB_ENDS_SPARSE_GROUPED_ZARR=downstream_tests/tmp/tiny_sparse_grouped.end_motifs.zarr \
 Rscript downstream_tests/R/test_midpoint_zarr_cran_zarr.R
-
-CFDNALAB_MIDPOINT_ZARR=downstream_tests/tmp/tiny.midpoint_profiles.zarr \
-CFDNALAB_ENDS_DENSE_GLOBAL_ZARR=downstream_tests/tmp/tiny_dense_global.end_motifs.zarr \
-CFDNALAB_ENDS_SPARSE_WINDOWED_ZARR=downstream_tests/tmp/tiny_sparse_windowed.end_motifs.zarr \
-CFDNALAB_ENDS_SPARSE_GROUPED_ZARR=downstream_tests/tmp/tiny_sparse_grouped.end_motifs.zarr \
-Rscript downstream_tests/R/test_end_motif_zarr_rarr.R
 
 CFDNALAB_MIDPOINT_ZARR=downstream_tests/tmp/tiny.midpoint_profiles.zarr \
 CFDNALAB_ENDS_DENSE_GLOBAL_ZARR=downstream_tests/tmp/tiny_dense_global.end_motifs.zarr \

@@ -123,14 +123,6 @@ jobs:
           extra-packages: |
             any::testthat
 
-      - name: Install R downstream-only packages
-        shell: Rscript {0}
-        run: |
-          if (!requireNamespace("BiocManager", quietly = TRUE)) {
-            install.packages("BiocManager", repos = c("https://cloud.r-project.org"))
-          }
-          BiocManager::install("Rarr", ask = FALSE, update = FALSE)
-
       - name: Run R helper package tests
         env:
           CFDNALAB_MIDPOINT_ZARR: downstream_tests/tmp/tiny.midpoint_profiles.zarr
@@ -150,14 +142,6 @@ jobs:
           CFDNALAB_ENDS_SPARSE_GROUPED_ZARR: downstream_tests/tmp/tiny_sparse_grouped.end_motifs.zarr
         run: Rscript downstream_tests/R/test_cfdnalab_r_package.R
 
-      - name: Run Rarr downstream test
-        env:
-          CFDNALAB_MIDPOINT_ZARR: downstream_tests/tmp/tiny.midpoint_profiles.zarr
-          CFDNALAB_ENDS_DENSE_GLOBAL_ZARR: downstream_tests/tmp/tiny_dense_global.end_motifs.zarr
-          CFDNALAB_ENDS_SPARSE_WINDOWED_ZARR: downstream_tests/tmp/tiny_sparse_windowed.end_motifs.zarr
-          CFDNALAB_ENDS_SPARSE_GROUPED_ZARR: downstream_tests/tmp/tiny_sparse_grouped.end_motifs.zarr
-        run: Rscript downstream_tests/R/test_midpoint_zarr_rarr.R
-
       - name: Run CRAN zarr downstream test
         env:
           CFDNALAB_MIDPOINT_ZARR: downstream_tests/tmp/tiny.midpoint_profiles.zarr
@@ -165,14 +149,6 @@ jobs:
           CFDNALAB_ENDS_SPARSE_WINDOWED_ZARR: downstream_tests/tmp/tiny_sparse_windowed.end_motifs.zarr
           CFDNALAB_ENDS_SPARSE_GROUPED_ZARR: downstream_tests/tmp/tiny_sparse_grouped.end_motifs.zarr
         run: Rscript downstream_tests/R/test_midpoint_zarr_cran_zarr.R
-
-      - name: Run Rarr end-motif downstream test
-        env:
-          CFDNALAB_MIDPOINT_ZARR: downstream_tests/tmp/tiny.midpoint_profiles.zarr
-          CFDNALAB_ENDS_DENSE_GLOBAL_ZARR: downstream_tests/tmp/tiny_dense_global.end_motifs.zarr
-          CFDNALAB_ENDS_SPARSE_WINDOWED_ZARR: downstream_tests/tmp/tiny_sparse_windowed.end_motifs.zarr
-          CFDNALAB_ENDS_SPARSE_GROUPED_ZARR: downstream_tests/tmp/tiny_sparse_grouped.end_motifs.zarr
-        run: Rscript downstream_tests/R/test_end_motif_zarr_rarr.R
 
       - name: Run CRAN zarr end-motif downstream test
         env:

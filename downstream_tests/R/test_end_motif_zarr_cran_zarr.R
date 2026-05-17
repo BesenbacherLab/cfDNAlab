@@ -3,16 +3,8 @@ source(file.path("downstream_tests", "R", "common.R"))
 dense_path <- dense_global_end_zarr_path()
 root <- zarr::open_zarr(dense_path, read_only = TRUE)
 
-read_node <- function(name) {
-  node <- root[[name]]
-  if (is.function(node$read)) {
-    return(node$read())
-  }
-  node[]
-}
-
-motifs <- decode_motif_ascii(read_node("motif_ascii"))
-counts <- read_node("counts")
+motifs <- decode_motif_ascii(read_cran_zarr_array(root, "motif_ascii"))
+counts <- read_cran_zarr_array(root, "counts")
 
 stopifnot(identical(motifs, c("_A", "_C", "_G", "_T")))
 stopifnot(identical(dim(counts), c(1L, 4L)))

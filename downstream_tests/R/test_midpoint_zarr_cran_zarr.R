@@ -3,15 +3,7 @@ store_path <- midpoint_zarr_path()
 
 root <- zarr::open_zarr(store_path, read_only = TRUE)
 
-read_node <- function(name) {
-  node <- root[[name]]
-  if (is.function(node$read)) {
-    return(node$read())
-  }
-  node[]
-}
-
-counts <- read_node("counts")
+counts <- read_cran_zarr_array(root, "counts")
 stopifnot(identical(dim(counts), c(3L, 3L, 5L)))
 stopifnot(isTRUE(all.equal(counts[1, 1, 1], 1)))
 stopifnot(isTRUE(all.equal(counts[1, 2, 3], 1.5)))
@@ -24,9 +16,9 @@ stopifnot(isTRUE(all.equal(counts[2, 3, 3], 0)))
 stopifnot(isTRUE(all.equal(counts[3, 1, 3], 2.5)))
 stopifnot(isTRUE(all.equal(counts[3, 1, 4], 0)))
 
-group <- read_node("group")
-length_bin <- read_node("length_bin")
-position <- read_node("position")
+group <- read_cran_zarr_array(root, "group")
+length_bin <- read_cran_zarr_array(root, "length_bin")
+position <- read_cran_zarr_array(root, "position")
 stopifnot(identical(as.integer(group), c(0L, 1L, 2L)))
 stopifnot(identical(as.integer(length_bin), c(0L, 1L, 2L)))
 stopifnot(identical(as.integer(position), c(0L, 1L, 2L, 3L, 4L)))
@@ -34,11 +26,11 @@ stopifnot(identical(as.integer(position), c(0L, 1L, 2L, 3L, 4L)))
 group_names <- labels_from_array_attributes(store_path, "group", "group_name")
 stopifnot(identical(as.character(group_names), c("LYL1", "beta-site", "gamma_long")))
 
-length_start_bp <- read_node("length_start_bp")
-length_end_bp <- read_node("length_end_bp")
-position_bin_start_bp <- read_node("position_bin_start_bp")
-position_bin_end_bp <- read_node("position_bin_end_bp")
-eligible_intervals <- read_node("eligible_intervals")
+length_start_bp <- read_cran_zarr_array(root, "length_start_bp")
+length_end_bp <- read_cran_zarr_array(root, "length_end_bp")
+position_bin_start_bp <- read_cran_zarr_array(root, "position_bin_start_bp")
+position_bin_end_bp <- read_cran_zarr_array(root, "position_bin_end_bp")
+eligible_intervals <- read_cran_zarr_array(root, "eligible_intervals")
 
 stopifnot(identical(as.integer(length_start_bp), c(30L, 50L, 70L)))
 stopifnot(identical(as.integer(length_end_bp), c(50L, 70L, 100L)))
