@@ -78,7 +78,7 @@ The following commands are currently available:
 `cfdna fcoverage`, `cfdna midpoints`, `cfdna ends`, `cfdna lengths`, `cfdna gc-bias`, `cfdna ref-gc-bias`, `cfdna fragment-count-weights`, `cfdna coverage-weights`, `cfdna bam-to-bam`, `cfdna bam-to-frag`, `cfdna frag-to-bam`.
 
 <p align="center">
-  <img src="cfdnalab_command_overview.png" height="400" alt="Overview of main commands" />
+  <img src="cfdnalab_command_overview.png" height="425" alt="Overview of main commands" />
 </p>  
 <p align="center">
   <b>Figure 1</b>: Overview of the main commands and input files. Non-exhaustive.
