@@ -777,16 +777,18 @@ fn read_dense_output(out_dir: &Path) -> Result<(Vec<String>, Array2<f64>)> {
 fn read_sparse_output(out_dir: &Path) -> Result<(Vec<String>, Array2<f64>)> {
     let store_path = end_motifs_zarr_path(out_dir);
     let motifs = read_motif_labels(&store_path)?;
-    let row: Vec<u64> = read_zarr_array(&store_path, "/sparse/row")?;
-    let col: Vec<u64> = read_zarr_array(&store_path, "/sparse/motif")?;
+    let row: Vec<i32> = read_zarr_array(&store_path, "/sparse/row")?;
+    let col: Vec<i32> = read_zarr_array(&store_path, "/sparse/motif")?;
     let data: Vec<f64> = read_zarr_array(&store_path, "/sparse/count")?;
-    let shape: Vec<u64> = read_zarr_array(&store_path, "/sparse/shape")?;
+    let shape: Vec<i32> = read_zarr_array(&store_path, "/sparse/shape")?;
 
-    let n_rows = shape[0] as usize;
-    let n_cols = shape[1] as usize;
+    let n_rows = usize::try_from(shape[0]).context("sparse row count must be non-negative")?;
+    let n_cols = usize::try_from(shape[1]).context("sparse motif count must be non-negative")?;
     let mut dense = Array2::<f64>::zeros((n_rows, n_cols));
     for ((row, col), value) in row.into_iter().zip(col).zip(data) {
-        dense[(row as usize, col as usize)] = value;
+        let row = usize::try_from(row).context("sparse row index must be non-negative")?;
+        let col = usize::try_from(col).context("sparse motif index must be non-negative")?;
+        dense[(row, col)] = value;
     }
 
     Ok((motifs, dense))

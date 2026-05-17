@@ -384,13 +384,18 @@ fn read_dense_end_counts(store_path: &Path) -> Result<(Vec<String>, Array2<f64>)
 
 fn read_sparse_end_counts(store_path: &Path) -> Result<(Vec<String>, Array2<f64>)> {
     let motifs = read_motif_labels(store_path)?;
-    let row: Vec<u64> = read_zarr_array(store_path, "/sparse/row")?;
-    let motif: Vec<u64> = read_zarr_array(store_path, "/sparse/motif")?;
+    let row: Vec<i32> = read_zarr_array(store_path, "/sparse/row")?;
+    let motif: Vec<i32> = read_zarr_array(store_path, "/sparse/motif")?;
     let count: Vec<f64> = read_zarr_array(store_path, "/sparse/count")?;
-    let shape: Vec<u64> = read_zarr_array(store_path, "/sparse/shape")?;
-    let mut matrix = Array2::<f64>::zeros((shape[0] as usize, shape[1] as usize));
+    let shape: Vec<i32> = read_zarr_array(store_path, "/sparse/shape")?;
+    let row_count = usize::try_from(shape[0]).context("sparse row count must be non-negative")?;
+    let motif_count =
+        usize::try_from(shape[1]).context("sparse motif count must be non-negative")?;
+    let mut matrix = Array2::<f64>::zeros((row_count, motif_count));
     for ((row, motif), count) in row.into_iter().zip(motif).zip(count) {
-        matrix[(row as usize, motif as usize)] = count;
+        let row = usize::try_from(row).context("sparse row index must be non-negative")?;
+        let motif = usize::try_from(motif).context("sparse motif index must be non-negative")?;
+        matrix[(row, motif)] = count;
     }
     Ok((motifs, matrix))
 }
