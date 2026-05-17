@@ -21,7 +21,7 @@ on:
       - "r-cfdnalab/**"
       - ".github/workflows/downstream-zarr.yml"
       - "website/docs/guides/fragment_midpoints_guide.md"
-      - "website/docs/guides/end_motifs_guide.md"
+      - "website/docs/guides/fragment_ends_guide.md"
 
 concurrency:
   group: downstream-zarr-${{ github.event_name }}-${{ github.ref }}

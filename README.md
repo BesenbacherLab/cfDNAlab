@@ -758,21 +758,48 @@ cfdna fcoverage \
 
 Most commands write one of these output types:
 
-| Format          | Use                            | Read with                    |
-| --------------- | ------------------------------ | ---------------------------- |
-| `.npy`, `.npz`  | dense array(s)                 | Python / NumPy               |
-| `.tsv.zst`      | tabular outputs                | `zstdcat`, Python, R         |
-| `.bedgraph.zst` | positional tracks              | `zstdcat`, convert to bigWig |
-| `.json`, `.txt` | settings and auxiliary outputs | any text reader              |
+| Format          | Use                            | Read with                                                             |
+| --------------- | ------------------------------ | --------------------------------------------------------------------- |
+| `.zarr`         | array(s) with meta data        | Our packages for [Python](/py-cfdnalab) and [R](/r-cfdnalab) packages |
+| `.tsv.zst`      | tabular outputs                | `zstdcat`, Pandas in Python, fread in R                               |
+| `.bedgraph.zst` | positional tracks              | `zstdcat`, Convert to bigWig                                          |
+| `.json`, `.txt` | settings and auxiliary outputs | any text reader                                                       |
 
-Numpy files can be read with python:
+The Zarr directories can be read with our [Python](/py-cfdnalab) and [R](/r-cfdnalab) packages (*installed separately*):
+
+Python:
 
 ```python
+import cfdnalab as cfl
 
-import numpy as np
+midpoints = cfl.read_midpoints("path_to/<sample>.midpoint_profiles.zarr")
 
-x = np.load("path_to/file.npy")
-y = np.load("path_to/file.npz")
+group_idx = midpoints.group_idx("LYL1")
+length_bin_idx = midpoints.length_bin_idx(167)
+
+# Get data frame for a single group and length bin
+profile = midpoints.data_frame_for_profile(
+    group_idx=group_idx,
+    length_bin_idx=length_bin_idx,
+)
+
+```
+
+R:
+
+```r
+library(cfdnalab)
+
+midpoints <- read_midpoints("path_to/<sample>.midpoint_profiles.zarr")
+
+length_bin <- length_bin_idx(midpoints, 167)
+
+# Get data frame for a single group and length bin
+profile <- profile_data_frame(
+  midpoints,
+  group = "LYL1",
+  length_bin_idx = length_bin
+)
 
 ```
 

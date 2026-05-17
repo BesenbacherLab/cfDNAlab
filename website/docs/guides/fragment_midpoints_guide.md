@@ -76,30 +76,20 @@ The main output is a Zarr store:
 <sample_id>.midpoint_profiles.zarr/
 ```
 
+The Python helper package gives the shortest route to a plotting table:
+
 ```python
-import numpy as np
-import pandas as pd
-import zarr
+import cfdnalab as cfl
 
-profiles = zarr.open_group(
-    "<sample_id>.midpoint_profiles.zarr",
-    mode="r",
-    zarr_format=3,
+profiles = cfl.read_midpoints("<sample_id>.midpoint_profiles.zarr")
+
+group_idx = profiles.group_idx("LYL1")
+length_bin_idx = profiles.length_bin_idx(167)
+
+df = profiles.data_frame_for_profile(
+    group_idx=group_idx,
+    length_bin_idx=length_bin_idx,
 )
-
-group_index = 0
-counts = profiles["counts"][group_index, :, :]
-length_index, position_index = np.indices(counts.shape)
-
-df = pd.DataFrame({
-    "group_name": profiles["group_name"][group_index],
-    "eligible_intervals": int(profiles["eligible_intervals"][group_index]),
-    "length_start_bp": profiles["length_start_bp"][:][length_index.ravel()],
-    "length_end_bp": profiles["length_end_bp"][:][length_index.ravel()],
-    "position_bin_start_bp": profiles["position_bin_start_bp"][:][position_index.ravel()],
-    "position_bin_end_bp": profiles["position_bin_end_bp"][:][position_index.ravel()],
-    "count": counts.ravel(),
-})
 ```
 
 Subset before converting to a dataframe. Expanding all groups, length bins, and
@@ -107,38 +97,18 @@ positions can create a much larger object than the Zarr store.
 
 ## Load midpoint profiles in R
 
-Use `Rarr` to read the arrays directly:
+The R helper package follows the same idea but uses ordinary R functions:
 
 ```r
-library(Rarr)
+library(cfdnalab)
 
-store <- "<sample_id>.midpoint_profiles.zarr"
+profiles <- read_midpoints("<sample_id>.midpoint_profiles.zarr")
 
-counts <- read_zarr_array(
-  file.path(store, "counts"),
-  index = list(NULL, NULL, NULL)
+length_bin <- length_bin_idx(profiles, 167)
+
+df <- profile_data_frame(
+  profiles,
+  group = "LYL1",
+  length_bin_idx = length_bin
 )
-group_name <- read_zarr_array(file.path(store, "group_name"), index = list(NULL))
-eligible_intervals <- read_zarr_array(file.path(store, "eligible_intervals"), index = list(NULL))
-length_start_bp <- read_zarr_array(file.path(store, "length_start_bp"), index = list(NULL))
-length_end_bp <- read_zarr_array(file.path(store, "length_end_bp"), index = list(NULL))
-position_bin_start_bp <- read_zarr_array(file.path(store, "position_bin_start_bp"), index = list(NULL))
-position_bin_end_bp <- read_zarr_array(file.path(store, "position_bin_end_bp"), index = list(NULL))
-
-group_index <- 1L
-profile <- counts[group_index, , ]
-
-df <- do.call(rbind, lapply(seq_along(length_start_bp), function(length_index) {
-  do.call(rbind, lapply(seq_along(position_bin_start_bp), function(position_index) {
-    data.frame(
-      group_name = group_name[group_index],
-      eligible_intervals = eligible_intervals[group_index],
-      length_start_bp = length_start_bp[length_index],
-      length_end_bp = length_end_bp[length_index],
-      position_bin_start_bp = position_bin_start_bp[position_index],
-      position_bin_end_bp = position_bin_end_bp[position_index],
-      count = profile[length_index, position_index]
-    )
-  }))
-}))
 ```

@@ -27,8 +27,10 @@ package-version matching.
 
 | Schema | Schema version | Written by CLI versions | Python helper | R helper | Recommendation |
 | --- | ---: | --- | --- | --- | --- |
-| `midpoint_profiles` | 1 | dev, before first Zarr release | `cfdnalab` dev | pending | Read with current Python helper during development. Revisit before release. |
-| `end_motif_counts` | 1 | planned | pending | pending | No released output yet. |
+| `midpoint_profiles` | 1 | `cfdnalab` 0.2.x | Python `cfdnalab` >= 0.1.0 | R `cfdnalab` >= 0.1.0 | Read normally. |
+| `end_motif_counts` | 1 | `cfdnalab` 0.2.x | Python `cfdnalab` >= 0.1.0 | R `cfdnalab` >= 0.1.0 | Read normally. |
+| `reference_gc_package` | 3 | `cfdnalab` 0.2.x | not applicable | not applicable | Use through `cfdna gc-bias --ref-gc-file`. |
+| `gc_correction_package` | 3 | `cfdnalab` 0.2.x | not applicable | not applicable | Use through feature extraction `--gc-file`. |
 
 ## Recommendation Terms
 

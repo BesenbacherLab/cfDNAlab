@@ -9,7 +9,9 @@ attributes and array attributes define the biological schema.
 - Store paths must end in `.zarr` and contain a root `zarr.json`.
 - Root attributes must include `cfdnalab_schema` and
   `cfdnalab_schema_version`.
-- Current schema version is `1` for all Zarr stores in this spec.
+- Current schema versions are `1` for `midpoint_profiles` and
+  `end_motif_counts`, and `3` for `reference_gc_package` and
+  `gc_correction_package`.
 - `int32` arrays are used for coordinate axes, small label indices, and small
   non-negative metadata that should load as native R integers.
 - `uint64` arrays are used for genomic coordinates.
@@ -18,11 +20,13 @@ attributes and array attributes define the biological schema.
   must be range checked before conversion to R's one-based matrix indices.
 - Public arrays use fill values outside their valid data domain where possible.
   This prevents readers that map Zarr fill values to missing values from
-  turning valid zero counts or zero-based coordinates into missing values.
-  Current fill values are `-1` for non-negative `int32` metadata, `-1.0` for
-  non-negative floating counts/fractions, `u64::MAX` for genomic coordinates,
-  and `255` for fixed-width ASCII label bytes. The `255` fill value must not be
-  reused for arbitrary numeric `uint8` arrays where `255` could be real data.
+  turning valid zero counts or zero-based coordinates into missing values. The
+  midpoint and end-motif schemas use `-1` for non-negative `int32` metadata,
+  `-1.0` for non-negative floating counts/fractions, `u64::MAX` for genomic
+  coordinates, and `255` for fixed-width ASCII label bytes. The `255` fill
+  value must not be reused for arbitrary numeric `uint8` arrays where `255`
+  could be real data. GC package arrays are currently single-chunk package
+  arrays and use domain-specific zero or false fill values.
 
 ## Midpoint Profiles
 
@@ -110,3 +114,57 @@ Sparse counts:
 
 Sparse COO entries are sorted by `(row, motif)` and must not contain duplicate
 coordinate pairs.
+
+## Reference GC Package
+
+Root attributes:
+
+- `cfdnalab_schema = "reference_gc_package"`
+- `cfdnalab_schema_version = 3`
+- `package_role = "reference_gc"`
+- `value_units = "reference_fragment_mass"`
+- `gc_percent_rounding = "integer_half_up"`
+- `minimum_acgt_bases_for_gc_fraction`: minimum ACGT bases required before GC
+  fraction is defined.
+- `end_offset`, `skip_interpolation`, `smoothing_radius`, `smoothing_sigma`,
+  and `skip_smoothing`: settings needed to validate and reuse the package.
+
+Arrays:
+
+- `counts[length, gc_percent]`: `float64`, expected reference fragment mass.
+- `support_mask_unobservables[length, gc_percent]`: `bool`, theoretical
+  reference support mask.
+- `support_mask_outliers[length, gc_percent]`: `bool`, empirical reference
+  support mask.
+- `gc_percent_widths[length, gc_percent]`: `uint16`, number of integer GC
+  counts represented by each GC-percent bin.
+- `length[length]`: `int32`, fragment length in bp.
+- `gc_percent[gc_percent]`: `int32`, integer GC-percent axis.
+- `chromosome[chromosome]`: `int32`, selected chromosome index. Attributes:
+  `label_field = "chromosome_name"` and `labels = [...]`.
+- `reference_contig_footprint_json[json_byte]`: `uint8`, JSON-encoded
+  reference contig footprint used for compatibility checks.
+
+## GC Correction Package
+
+Root attributes:
+
+- `cfdnalab_schema = "gc_correction_package"`
+- `cfdnalab_schema_version = 3`
+- `package_role = "sample_gc_correction"`
+- `correction_units = "multiplicative_fragment_weight"`
+- `gc_percent_rounding = "integer_half_up"`
+- `minimum_acgt_bases_for_gc_fraction`: minimum ACGT bases required before GC
+  fraction is defined.
+- `end_offset`: fragment-end trimming offset used when computing GC.
+
+Arrays:
+
+- `correction_matrix[length_bin, gc_bin]`: `float64`, multiplicative GC
+  correction weights.
+- `length_edges[length_edge]`: `uint32`, half-open fragment length-bin edges.
+- `gc_edges[gc_edge]`: `uint32`, half-open GC-percent bin edges.
+- `length_bin_frequencies[length_bin]`: `float64`, normalized sample
+  length-bin frequency weights.
+- `reference_contig_footprint_json[json_byte]`: `uint8`, JSON-encoded
+  reference contig footprint inherited from the reference GC package.
