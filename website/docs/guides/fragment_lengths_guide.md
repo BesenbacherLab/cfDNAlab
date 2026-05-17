@@ -57,7 +57,7 @@ cfdna lengths \
   --n-threads 12 \
   --blacklist <path>/hg38-blacklist.v2.bed \
   --by-size 1000000 \
-  --scaling-factors <sample_directory>/coverage_weights/<sample_id>.scaling_factors.tsv
+  --scaling-factors <sample_directory>/count_weights/<sample_id>.fragment_counts.scaling_factors.tsv
 ```
 
 ## GC-bias correction + genomic smoothing
@@ -72,7 +72,7 @@ cfdna lengths \
   --by-size 1000000 \
   --gc-file <sample_directory>/gc_bias/gc_bias_correction.zarr \
   --ref-2bit <path>/hg38.2bit \
-  --scaling-factors <sample_directory>/coverage_weights/<sample_id>.scaling_factors.tsv
+  --scaling-factors <sample_directory>/gc_corrected_count_weights/<sample_id>.fragment_counts.scaling_factors.tsv
 ```
 
 ## Adjusting for indels

@@ -46,7 +46,7 @@ cfdna midpoints \
   --blacklist <path>/hg38-blacklist.v2.bed \
   --blacklist <path>/<another_blacklist>.bed \
   --length-bins {30..1000..10} \
-  --scaling-factors <sample_directory>/coverage_weights/<sample_id>.scaling_factors.tsv
+  --scaling-factors <sample_directory>/count_weights/<sample_id>.fragment_counts.scaling_factors.tsv
 ```
 
 ## GC-bias correction + genomic smoothing
@@ -63,7 +63,7 @@ cfdna midpoints \
   --length-bins {30..1000..10} \
   --gc-file <sample_directory>/gc_bias/gc_bias_correction.zarr \
   --ref-2bit <path>/hg38.2bit \
-  --scaling-factors <sample_directory>/coverage_weights/<sample_id>.scaling_factors.tsv
+  --scaling-factors <sample_directory>/gc_corrected_count_weights/<sample_id>.fragment_counts.scaling_factors.tsv
 ```
 
 The intervals must have the same fixed size. The expected columns are: `chromosome, start, end, group_name` (where `group_name` is the group to collapse profiles by, e.g., the transcription factor ID). The intervals should be sorted by chromosome and start coordinates.

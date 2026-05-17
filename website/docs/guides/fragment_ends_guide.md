@@ -124,4 +124,4 @@ cfdna ends \
   --clip-strategy aligned
 ```
 
-The `raw-aligned-boundary` and `raw-shifted-boundary` modes are stronger analysis choices. Use them only when you specifically want raw read bases, including soft-clipped sequence, to contribute to the motif.
+The `include-at-aligned-boundary` and `include-at-shifted-boundary` modes are stronger analysis choices. Use them only when you specifically want soft-clipped read sequence to contribute to the motif.

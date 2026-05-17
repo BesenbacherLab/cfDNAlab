@@ -27,7 +27,7 @@ While the new `.zarr` format has many benefits, such as being self-contained and
  
 **Other changes**:
 
-- Adds `zarr=0.23.11` dependency.
+- Adds `zarrs=0.23.11` dependency.
 - Adds downstream Zarr compatibility checks for Python and R reader packages.
 - We no longer expose the former `gen_cli_docs` binary that is for internal use only.
 

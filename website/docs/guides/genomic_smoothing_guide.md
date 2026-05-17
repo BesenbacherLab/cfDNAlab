@@ -46,7 +46,7 @@ For midpoints, where the signal is specifically fragment counts, not a length-we
 cfdna midpoints \
   --bam <sample>.bam \
   ... \
-  --scaling-factors <sample_directory>/count_weights/<sample_id>.scaling_factors.tsv
+  --scaling-factors <sample_directory>/count_weights/<sample_id>.fragment_counts.scaling_factors.tsv
 ```
 
 The same `--scaling-factors` input pattern works for `fcoverage` and `lengths`.
@@ -74,5 +74,5 @@ cfdna midpoints \
   ... \
   --gc-file <sample_directory>/gc_bias/gc_bias_correction.zarr \
   --ref-2bit <path>/hg38.2bit \
-  --scaling-factors <sample_directory>/gc_corrected_count_weights/<sample_id>.scaling_factors.tsv
+  --scaling-factors <sample_directory>/gc_corrected_count_weights/<sample_id>.fragment_counts.scaling_factors.tsv
 ```

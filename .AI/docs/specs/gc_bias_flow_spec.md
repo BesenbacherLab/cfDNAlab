@@ -25,7 +25,7 @@ This spec describes the current `ref-gc-bias` -> `gc-bias` -> downstream `--gc-f
 - `cfdna ref-gc-bias` builds an assembly-level expected GC table. Its output is reusable across samples aligned to the same selected reference contigs, chromosome set, fragment length range, end offset, and blacklist/windowing decisions.
 - `cfdna gc-bias` builds a sample-specific correction package by comparing a BAM-derived observed GC table to the reference table.
 - Downstream commands load the sample-specific correction package with `--gc-file` and multiply fragment contributions by the looked-up correction weight.
-- The shared schema version for both reference and sample GC packages is `GC_CORRECTION_SCHEMA_VERSION = 2`.
+- The shared schema version for both reference and sample GC packages is `GC_CORRECTION_SCHEMA_VERSION = 3`.
 - The shared minimum ACGT support for GC-fraction calculation is 10 bases.
 
 ## Fragment Geometry

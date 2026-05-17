@@ -491,7 +491,7 @@ Choose any relevant options below. See `--help` for more options.
 
   # Include soft clipped bases (clipped fragment are skipped by default)
   # NOTE: Only recommended for `--k-inside` extraction with `--k-outside 0`
-  --clip-strategy 'raw-aligned-boundary' \
+  --clip-strategy 'include-at-aligned-boundary' \
 
   # Use windowing
   # Choose max. one windowing type 
