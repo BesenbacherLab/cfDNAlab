@@ -10,6 +10,7 @@ readme = "README.md"
 include = [
     "/Cargo.toml",
     "/Cargo.lock",
+    "/CHANGELOG",
     "/LICENSE",
     "/README.md",
     "/cfdnalab_logo_750x500_150dpi.png",

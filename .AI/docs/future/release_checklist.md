@@ -59,6 +59,10 @@ until one of these is true:
 Helper packages must validate and document supported `cfdnalab_schema` and
 `cfdnalab_schema_version` values.
 
+### Citation file
+
+Remember to update the citation file version.
+
 ## Schema Compatibility Table
 
 Maintain an internal schema compatibility table whenever a public output schema

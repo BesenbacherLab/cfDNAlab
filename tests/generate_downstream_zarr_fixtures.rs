@@ -16,7 +16,7 @@ use cfdnalab::commands::{
 };
 use fixtures::{
     bam_from_specs_strict_identity, paired_fragment, read_midpoint_zarr_counts,
-    read_midpoint_zarr_i32_1d, read_midpoint_zarr_u32_1d, simple_reference_twobit, write_bed,
+    read_midpoint_zarr_i32_1d, simple_reference_twobit, write_bed,
 };
 use ndarray::{Array2, arr3};
 use serde_json::Value;
@@ -180,15 +180,15 @@ fn generate_midpoint_zarr_fixture_with_cfdnalab() -> Result<()> {
         vec![2, 4, 6, 8, 10]
     );
     assert_eq!(
-        read_midpoint_zarr_u32_1d(&zarr_path, "/eligible_intervals")?,
+        read_midpoint_zarr_i32_1d(&zarr_path, "/eligible_intervals")?,
         vec![2, 2, 2]
     );
     assert_eq!(
-        read_midpoint_zarr_u32_1d(&zarr_path, "/length_start_bp")?,
+        read_midpoint_zarr_i32_1d(&zarr_path, "/length_start_bp")?,
         vec![30, 50, 70]
     );
     assert_eq!(
-        read_midpoint_zarr_u32_1d(&zarr_path, "/length_end_bp")?,
+        read_midpoint_zarr_i32_1d(&zarr_path, "/length_end_bp")?,
         vec![50, 70, 100]
     );
     let group_metadata: Value =
