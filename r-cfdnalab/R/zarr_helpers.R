@@ -178,6 +178,11 @@ cf_validate_schema <- function(attrs, expected_schema, label) {
 #'
 #' @return A `zarr` store object.
 #' @noRd
+#'
+#' The CRAN `zarr` reader loads `qs2` lazily while opening the V3 stores written
+#' by cfDNAlab. Import one `qs2` symbol so the runtime dependency is installed
+#' with this package and visible to R package checks.
+#' @importFrom qs2 qs_deserialize
 cf_open_zarr <- function(path, label) {
   tryCatch(
     zarr::open_zarr(path, read_only = TRUE),
