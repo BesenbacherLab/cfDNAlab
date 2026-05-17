@@ -12,10 +12,10 @@ import cfdnalab
 
 GROUP_NAMES = np.array(["LYL1", "beta long", "gamma-unicode-aa"], dtype=object)
 GROUP_AXIS = np.array([0, 1, 2], dtype=np.int32)
-ELIGIBLE_INTERVALS = np.array([4, 7, 11], dtype=np.uint32)
+ELIGIBLE_INTERVALS = np.array([4, 7, 11], dtype=np.int32)
 LENGTH_BIN = np.array([0, 1], dtype=np.int32)
-LENGTH_START_BP = np.array([30, 60], dtype=np.uint32)
-LENGTH_END_BP = np.array([60, 90], dtype=np.uint32)
+LENGTH_START_BP = np.array([30, 60], dtype=np.int32)
+LENGTH_END_BP = np.array([60, 90], dtype=np.int32)
 POSITION = np.array([0, 1, 2, 3], dtype=np.int32)
 POSITION_BIN_START_BP = np.array([-4, -2, 0, 2], dtype=np.int32)
 POSITION_BIN_END_BP = np.array([-2, 0, 2, 4], dtype=np.int32)

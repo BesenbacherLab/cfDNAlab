@@ -46,16 +46,18 @@ def test_cfdnalab_package_reads_sparse_windowed_end_motifs(
     assert end_motifs.storage_mode() == "sparse_coo"
     assert end_motifs.row_mode() == "bed"
     assert end_motifs.motifs() == ["_A", "_G"]
+    with pytest.raises(ValueError, match="would densify a sparse end-motif store"):
+        end_motifs.dense_counts_matrix()
     np.testing.assert_allclose(
-        end_motifs.dense_counts_matrix(),
+        end_motifs.dense_counts_matrix(allow_densify=True),
         np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.float64),
     )
     np.testing.assert_allclose(
-        end_motifs.dense_counts_for_window(1),
+        end_motifs.dense_counts_for_window(1, allow_densify=True),
         np.array([1.0, 0.0], dtype=np.float64),
     )
     np.testing.assert_allclose(
-        end_motifs.dense_counts_for_motif("_G"),
+        end_motifs.dense_counts_for_motif("_G", allow_densify=True),
         np.array([1.0, 0.0], dtype=np.float64),
     )
 
@@ -64,6 +66,12 @@ def test_cfdnalab_package_reads_sparse_windowed_end_motifs(
     np.testing.assert_array_equal(window_coo.row, np.array([0], dtype=np.int32))
     np.testing.assert_array_equal(window_coo.col, np.array([0], dtype=np.int32))
     np.testing.assert_allclose(window_coo.data, np.array([1.0], dtype=np.float64))
+
+    motif_coo = end_motifs.sparse_coo_for_motif("_G")
+    assert motif_coo.shape == (2, 1)
+    np.testing.assert_array_equal(motif_coo.row, np.array([0], dtype=np.int32))
+    np.testing.assert_array_equal(motif_coo.col, np.array([0], dtype=np.int32))
+    np.testing.assert_allclose(motif_coo.data, np.array([1.0], dtype=np.float64))
 
     windows = end_motifs.windows()
     assert windows["window_idx"].tolist() == [0, 1]
@@ -83,16 +91,18 @@ def test_cfdnalab_package_reads_sparse_grouped_end_motifs(
     assert end_motifs.row_mode() == "grouped_bed"
     assert end_motifs.motifs() == ["_A", "_G"]
     assert end_motifs.group_idx("alpha") == 1
+    with pytest.raises(ValueError, match="would densify a sparse end-motif store"):
+        end_motifs.dense_counts_matrix()
     np.testing.assert_allclose(
-        end_motifs.dense_counts_matrix(),
+        end_motifs.dense_counts_matrix(allow_densify=True),
         np.array([[1.0, 2.0], [1.0, 0.0], [0.0, 0.0]], dtype=np.float64),
     )
     np.testing.assert_allclose(
-        end_motifs.dense_counts_for_group("beta"),
+        end_motifs.dense_counts_for_group("beta", allow_densify=True),
         np.array([1.0, 2.0], dtype=np.float64),
     )
     np.testing.assert_allclose(
-        end_motifs.dense_counts_for_motif("_A"),
+        end_motifs.dense_counts_for_motif("_A", allow_densify=True),
         np.array([1.0, 1.0, 0.0], dtype=np.float64),
     )
 
@@ -102,8 +112,8 @@ def test_cfdnalab_package_reads_sparse_grouped_end_motifs(
             {
                 "group_idx": np.array([0, 1, 2], dtype=np.int32),
                 "group_name": np.array(["beta", "alpha", "gamma"], dtype=str),
-                "eligible_windows": np.array([2, 1, 1], dtype=np.uint32),
-                "blacklisted_fraction": np.array([0.0, 0.0, 0.0], dtype=np.float32),
+                "eligible_windows": np.array([2, 1, 1], dtype=np.int32),
+                "blacklisted_fraction": np.array([0.0, 0.0, 0.0], dtype=np.float64),
             }
         ),
     )
@@ -111,8 +121,8 @@ def test_cfdnalab_package_reads_sparse_grouped_end_motifs(
         end_motifs.sparse_coo_data_frame(),
         pd.DataFrame(
             {
-                "row": np.array([0, 0, 1], dtype=np.uint64),
-                "motif_index": np.array([0, 1, 0], dtype=np.uint64),
+                "row": np.array([0, 0, 1], dtype=np.int32),
+                "motif_index": np.array([0, 1, 0], dtype=np.int32),
                 "motif": np.array(["_A", "_G", "_A"], dtype=str),
                 "count": np.array([1.0, 2.0, 1.0], dtype=np.float64),
             }
@@ -125,7 +135,7 @@ def test_cfdnalab_package_reads_sparse_grouped_end_motifs(
     np.testing.assert_array_equal(beta_coo.col, np.array([0, 1], dtype=np.int32))
     np.testing.assert_allclose(beta_coo.data, np.array([1.0, 2.0], dtype=np.float64))
 
-    alpha_frame = end_motifs.dense_data_frame_for_group("alpha")
+    alpha_frame = end_motifs.dense_data_frame_for_group("alpha", allow_densify=True)
     assert alpha_frame["group_name"].unique().tolist() == ["alpha"]
     assert alpha_frame["motif"].tolist() == ["_A", "_G"]
     assert alpha_frame["count"].tolist() == [1.0, 0.0]

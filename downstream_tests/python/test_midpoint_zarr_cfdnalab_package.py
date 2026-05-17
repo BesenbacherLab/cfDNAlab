@@ -23,7 +23,7 @@ def test_cfdnalab_package_reads_midpoint_fixture_metadata(
             {
                 "group_idx": np.array([0, 1, 2], dtype=np.int32),
                 "group_name": np.array(["LYL1", "beta-site", "gamma_long"], dtype=str),
-                "eligible_intervals": np.array([2, 2, 2], dtype=np.uint32),
+                "eligible_intervals": np.array([2, 2, 2], dtype=np.int32),
             }
         ),
     )
@@ -32,8 +32,8 @@ def test_cfdnalab_package_reads_midpoint_fixture_metadata(
         pd.DataFrame(
             {
                 "length_bin": np.array([0, 1, 2], dtype=np.int32),
-                "length_start_bp": np.array([30, 50, 70], dtype=np.uint32),
-                "length_end_bp": np.array([50, 70, 100], dtype=np.uint32),
+                "length_start_bp": np.array([30, 50, 70], dtype=np.int32),
+                "length_end_bp": np.array([50, 70, 100], dtype=np.int32),
             }
         ),
     )

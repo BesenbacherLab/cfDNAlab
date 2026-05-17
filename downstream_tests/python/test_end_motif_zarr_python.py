@@ -43,19 +43,21 @@ def test_python_zarr_reads_sparse_grouped_end_motif_schema(
     assert store["group"].attrs["labels"] == ["beta", "alpha", "gamma"]
     assert decode_motifs(store) == ["_A", "_G"]
 
-    sparse_group = store["sparse"]
-    assert tuple(sparse_group["row"].metadata.dimension_names) == ("nnz",)
-    assert tuple(sparse_group["motif"].metadata.dimension_names) == ("nnz",)
-    assert tuple(sparse_group["count"].metadata.dimension_names) == ("nnz",)
-    np.testing.assert_array_equal(sparse_group["shape"][:], np.array([3, 2]))
-    np.testing.assert_array_equal(sparse_group["row"][:], np.array([0, 0, 1]))
-    np.testing.assert_array_equal(sparse_group["motif"][:], np.array([0, 1, 0]))
-    np.testing.assert_allclose(sparse_group["count"][:], np.array([1.0, 2.0, 1.0]))
+    sparse_row = store["sparse/row"]
+    sparse_motif = store["sparse/motif"]
+    sparse_count = store["sparse/count"]
+    sparse_shape = store["sparse/shape"]
+    assert tuple(sparse_row.metadata.dimension_names) == ("nnz",)
+    assert tuple(sparse_motif.metadata.dimension_names) == ("nnz",)
+    assert tuple(sparse_count.metadata.dimension_names) == ("nnz",)
+    assert tuple(sparse_shape.metadata.dimension_names) == ("sparse_dimension",)
+    np.testing.assert_array_equal(sparse_shape[:], np.array([3, 2], dtype=np.int32))
+    np.testing.assert_array_equal(sparse_row[:], np.array([0, 0, 1], dtype=np.int32))
+    np.testing.assert_array_equal(sparse_motif[:], np.array([0, 1, 0], dtype=np.int32))
+    np.testing.assert_allclose(sparse_count[:], np.array([1.0, 2.0, 1.0]))
 
-    dense = np.zeros(tuple(sparse_group["shape"][:].astype(int)), dtype=np.float64)
-    dense[sparse_group["row"][:].astype(int), sparse_group["motif"][:].astype(int)] = (
-        sparse_group["count"][:]
-    )
+    dense = np.zeros(tuple(sparse_shape[:].astype(int)), dtype=np.float64)
+    dense[sparse_row[:].astype(int), sparse_motif[:].astype(int)] = sparse_count[:]
     np.testing.assert_allclose(
         dense,
         np.array([[1.0, 2.0], [1.0, 0.0], [0.0, 0.0]], dtype=np.float64),

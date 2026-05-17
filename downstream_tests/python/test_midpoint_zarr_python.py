@@ -67,15 +67,15 @@ def test_python_zarr_reads_midpoint_profile_schema(midpoint_zarr_path: Path) -> 
     )
     np.testing.assert_array_equal(
         store["eligible_intervals"][:],
-        np.array([2, 2, 2], dtype=np.uint32),
+        np.array([2, 2, 2], dtype=np.int32),
     )
     np.testing.assert_array_equal(
         store["length_start_bp"][:],
-        np.array([30, 50, 70], dtype=np.uint32),
+        np.array([30, 50, 70], dtype=np.int32),
     )
     np.testing.assert_array_equal(
         store["length_end_bp"][:],
-        np.array([50, 70, 100], dtype=np.uint32),
+        np.array([50, 70, 100], dtype=np.int32),
     )
     np.testing.assert_array_equal(
         store["position_bin_start_bp"][:],

@@ -20,6 +20,7 @@ LazyData: true
 Imports:
     jsonlite,
     Matrix,
+    qs2,
     zarr
 Suggests:
     roxygen2,
