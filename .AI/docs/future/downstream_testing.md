@@ -84,7 +84,7 @@ on:
       - "tests/generate_downstream_zarr_fixtures.rs"
       - "tests/fixtures/**"
       - "downstream_tests/**"
-      - "py_cfdnalab/**"
+      - "py-cfdnalab/**"
       - ".github/workflows/downstream-zarr.yml"
 ```
 
@@ -118,12 +118,12 @@ Zarr makes the output self-contained, but raw Zarr readers still leave too much
 repetitive work for ordinary users. The midpoint guide should not require every
 user to remember the tensor axis order, manually join group names, and rebuild
 length/position metadata for each plot. The Python helper lives in
-`py_cfdnalab`. The R helper lives in `r-cfdnalab`.
+`py-cfdnalab`. The R helper lives in `r-cfdnalab`.
 
 Proposed layout:
 
 ```text
-py_cfdnalab/
+py-cfdnalab/
   src/cfdnalab/
     midpoints.py
     ends.py

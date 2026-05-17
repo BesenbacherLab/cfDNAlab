@@ -29,8 +29,8 @@ Run locally only when you want to check downstream package compatibility:
 ```bash
 cargo test --no-default-features --features cmd_midpoints,cmd_ends --test generate_downstream_zarr_fixtures -- --ignored
 python -m pip install -r downstream_tests/requirements-python.txt
-python -m pip install -e py_cfdnalab
-(cd py_cfdnalab && uv run pytest)
+python -m pip install -e py-cfdnalab
+(cd py-cfdnalab && uv run pytest)
 CFDNALAB_MIDPOINT_ZARR=downstream_tests/tmp/tiny.midpoint_profiles.zarr \
 CFDNALAB_ENDS_DENSE_GLOBAL_ZARR=downstream_tests/tmp/tiny_dense_global.end_motifs.zarr \
 CFDNALAB_ENDS_SPARSE_WINDOWED_ZARR=downstream_tests/tmp/tiny_sparse_windowed.end_motifs.zarr \

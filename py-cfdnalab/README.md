@@ -13,13 +13,13 @@ The first supported output types are midpoint and end-motif Zarr outputs: `<pref
 Install the current development version from GitHub:
 
 ```bash
-pip install "cfdnalab @ git+https://github.com/BesenbacherLab/cfDNAlab.git#subdirectory=py_cfdnalab"
+pip install "cfdnalab @ git+https://github.com/BesenbacherLab/cfDNAlab.git#subdirectory=py-cfdnalab"
 ```
 
 With `uv`:
 
 ```bash
-uv pip install "cfdnalab @ git+https://github.com/BesenbacherLab/cfDNAlab.git#subdirectory=py_cfdnalab"
+uv pip install "cfdnalab @ git+https://github.com/BesenbacherLab/cfDNAlab.git#subdirectory=py-cfdnalab"
 ```
 
 <br>

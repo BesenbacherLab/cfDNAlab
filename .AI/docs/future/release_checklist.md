@@ -147,7 +147,7 @@ Also verify:
 Before publishing the Python helper:
 
 ```bash
-cd py_cfdnalab
+cd py-cfdnalab
 uv lock --check
 uv run python -m py_compile src/cfdnalab/__init__.py src/cfdnalab/midpoints.py
 uv run pytest

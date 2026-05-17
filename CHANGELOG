@@ -18,10 +18,13 @@ The output formats are changed to simplify downstream work in R and python. Whil
 
 Any GC-correction packages previously computed are no longer compatible. Please recompute.
 
-**Major changes**:
+**Python and R packages for downstream loading**:
 
- - Adds the python `cfDNAlab` package for loading the `.zarr` outputs of the CLI tool. The `.zarr` format is self-contained and works in both R and python. For friendlier loading and conversion to data frames or arrays for downstream analysis, we provide these loaders. An R package will follow soon as well.
+While the new `.zarr` format has many benefits, such as being self-contained and working in both R and Python, it's not the easiest to work with in its raw form. We added both an R package and a Python package with friendly loaders and data frame + array getters.
 
+ - Adds the **Python** `cfDNAlab` package for loading the `.zarr` outputs of the CLI tool and extracting data frames, meta data, etc. See the `cfDNAlab/py-cfdnalab/` directory.
+ - Adds the **R** `cfDNAlab` package for loading the `.zarr` outputs of the CLI tool and extracting data frames, meta data, etc. See the `cfDNAlab/r-cfdnalab/` directory.
+ 
 **Other changes**:
 
 - Adds `zarr=0.23.11` dependency.

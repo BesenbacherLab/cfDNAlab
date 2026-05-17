@@ -348,7 +348,7 @@ Update:
 - `website/docs/get-started/common-files.md`
 - `.AI/docs/specs/gc_bias_flow_spec.md`
 - command pipeline docs for `ref-gc-bias` and `gc-bias`
-- py_cfdnalab README after helper support exists
+- py-cfdnalab README after helper support exists
 
 ## Implementation Order
 

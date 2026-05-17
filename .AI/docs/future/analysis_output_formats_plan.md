@@ -358,7 +358,7 @@ The first package helpers should not include plotting. Dataframe builders are
 the useful boundary. Plot helpers can be added later if repeated workflows
 converge on the same plot shapes.
 
-The Python helper is being promoted into `py_cfdnalab`. Keep downstream tests
+The Python helper is being promoted into `py-cfdnalab`. Keep downstream tests
 against cfDNAlab-generated Zarr output so the package cannot drift away from the
 Rust schema.
 

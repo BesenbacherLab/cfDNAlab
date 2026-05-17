@@ -17,7 +17,7 @@ on:
       - "tests/generate_downstream_zarr_fixtures.rs"
       - "tests/fixtures/**"
       - "downstream_tests/**"
-      - "py_cfdnalab/**"
+      - "py-cfdnalab/**"
       - "r-cfdnalab/**"
       - ".github/workflows/downstream-zarr.yml"
       - "website/docs/guides/fragment_midpoints_guide.md"
@@ -78,11 +78,11 @@ jobs:
           path: downstream_tests/tmp
 
       - name: Run Python package tests
-        working-directory: py_cfdnalab
+        working-directory: py-cfdnalab
         run: uv run pytest
 
       - name: Install Python helper package
-        run: python -m pip install -e py_cfdnalab
+        run: python -m pip install -e py-cfdnalab
 
       - name: Run Python downstream tests
         env:

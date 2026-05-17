@@ -81,7 +81,7 @@ Do not make this the default package unless there is clear user demand.
 Keep the Python package as an isolated subproject:
 
 ```text
-py_cfdnalab/
+py-cfdnalab/
   pyproject.toml
   README.md
   src/
@@ -179,7 +179,7 @@ Use two test layers.
 
 Python package unit tests:
 
-- live under `py_cfdnalab/tests`
+- live under `py-cfdnalab/tests`
 - create a tiny valid Zarr store directly, or use a small checked-in fixture if
   direct fixture creation is less brittle
 - test schema validation errors, metadata helpers, array slicing, dataframe
@@ -187,7 +187,7 @@ Python package unit tests:
 - run with:
 
 ```bash
-cd py_cfdnalab
+cd py-cfdnalab
 python -m pip install -e ".[test]"
 pytest
 ```
