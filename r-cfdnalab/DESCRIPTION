@@ -18,6 +18,7 @@ BugReports: https://github.com/BesenbacherLab/cfDNAlab/issues
 Encoding: UTF-8
 LazyData: true
 Imports:
+    bit64,
     jsonlite,
     Matrix,
     qs2,
