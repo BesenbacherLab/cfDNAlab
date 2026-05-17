@@ -102,8 +102,3 @@ libc = "0.2"
 name = "cfdna"
 path = "src/bin/cfdna.rs"
 required-features = ["cli"]
-
-[[bin]]
-name = "gen_cli_docs"
-path = "src/bin/gen_cli_docs.rs"
-required-features = ["cli", "docs_gen"]

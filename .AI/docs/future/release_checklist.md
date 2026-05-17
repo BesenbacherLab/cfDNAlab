@@ -143,6 +143,8 @@ Also verify:
 - `CHANGELOG` includes user-facing changes.
 - generated CLI docs are current if command help changed.
 - website build passes if docs changed.
+- `cargo package --list` does not include `examples/gen_cli_docs.rs`, and the
+  crate exposes only the public `cfdna` binary.
 - package whitelist does not include internal planning docs, website sources, or
   generated local artifacts.
 
