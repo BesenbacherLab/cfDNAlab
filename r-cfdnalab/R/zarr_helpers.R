@@ -284,7 +284,15 @@ cf_read_array <- function(store, array_name, label) {
 #' @return A vector.
 #' @noRd
 cf_read_vector <- function(store, array_name, label) {
-  as.vector(cf_read_array(store, array_name, label))
+  values <- cf_read_array(store, array_name, label)
+  dimensions <- dim(values)
+  if (!is.null(dimensions) && length(dimensions) > 1L) {
+    stop(array_name, " must be a vector array", call. = FALSE)
+  }
+  if (!is.null(dimensions)) {
+    dim(values) <- NULL
+  }
+  values
 }
 
 #' Read a selected Zarr array slice.

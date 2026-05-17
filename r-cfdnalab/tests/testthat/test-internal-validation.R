@@ -59,6 +59,12 @@ test_that("index vector validation rejects non-integers and out-of-range indices
 
 test_that("interval and fraction validation reject invalid metadata", {
   expect_true(cf_validate_half_open_intervals(c(0L, 10L), c(5L, 12L), "start", "end"))
+  expect_true(cf_validate_half_open_intervals(
+    bit64::as.integer64(c(0, 10)),
+    bit64::as.integer64(c(5, 12)),
+    "start",
+    "end"
+  ))
   expect_error(
     cf_validate_half_open_intervals(c(0L, 10L), c(5L, 10L), "start", "end"),
     "start must be smaller than end",
@@ -70,6 +76,33 @@ test_that("interval and fraction validation reject invalid metadata", {
     "blacklisted_fraction must contain finite fractions in 0..1",
     fixed = TRUE
   )
+})
+
+test_that("rank-1 vector reads preserve integer64 coordinates", {
+  store <- list(
+    get_node = function(path) {
+      expect_equal(path, "/row_start_bp")
+      list(
+        read = function() {
+          values <- bit64::as.integer64(c(10, 19))
+          dim(values) <- 2L
+          values
+        }
+      )
+    }
+  )
+
+  values <- cf_read_vector(store, "row_start_bp", "test")
+
+  expect_null(dim(values))
+  expect_s3_class(values, "integer64")
+  expect_equal(as.character(values), c("10", "19"))
+  expect_true(cf_validate_half_open_intervals(
+    values,
+    bit64::as.integer64(c(11, 20)),
+    "row_start_bp",
+    "row_end_bp"
+  ))
 })
 
 test_that("non-negative numeric validation rejects invalid counts", {
