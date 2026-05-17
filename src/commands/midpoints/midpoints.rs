@@ -17,9 +17,10 @@ use crate::{
             counting_by_group::{ProfileGroupsCounts, SparseProfileGroupsCounts},
             group_index::{eligible_interval_counts_by_group, write_midpoint_group_index_tsv},
             postprocess::{ProfileLayout, postprocess_profile},
-            settings::write_midpoint_profile_settings_json,
+            settings::write_midpoint_settings_json,
             strand::stranded_window_position,
             windows::{ensure_uniform_window_len, prepare_count_windows},
+            zarr::write_midpoint_profiles_zarr,
         },
         run_statistics::{
             DEFAULT_FRAGMENT_STATISTICS_LABELS, FragmentRunStatisticsOptions, GCStatisticsSummary,
@@ -52,7 +53,6 @@ use crate::{
 };
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::FxHashMap;
-use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::{path::PathBuf, sync::Arc, time::Instant};
@@ -66,7 +66,7 @@ const DENSE_PROFILE_SIZE_WARNING_BYTES: usize = 50 * 1_000_000_000;
 /// The command produces dense midpoint profiles for grouped BED intervals. Internally, tile
 /// workers count into sparse accumulators and write sparse `.npz` temporary files. After all tiles
 /// finish, those sparse partial files are merged into one dense `ProfileGroupsCounts` and written
-/// as the public `.midpoint_profiles.npy` output with axes `(group, length_bin, position)`.
+/// as the public `.midpoint_profiles.zarr` output with axes `(group, length_bin, position)`.
 ///
 /// Implementation details:
 ///
@@ -85,7 +85,7 @@ const DENSE_PROFILE_SIZE_WARNING_BYTES: usize = 50 * 1_000_000_000;
 /// Returns
 /// -------
 /// - `Ok(())`:
-///     The output `npy` and group-index files were written successfully.
+///     The Zarr profile, settings JSON, and group-index files were written successfully.
 ///
 /// Errors
 /// ------
@@ -307,7 +307,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     let final_counts_path = opt
         .ioc
         .output_dir
-        .join(dot_join(&[prefix, "midpoint_profiles.npy"]));
+        .join(dot_join(&[prefix, "midpoint_profiles.zarr"]));
     let map_path = opt
         .ioc
         .output_dir
@@ -315,7 +315,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     let settings_path = opt
         .ioc
         .output_dir
-        .join(dot_join(&[prefix, "midpoint_profile_settings.json"]));
+        .join(dot_join(&[prefix, "midpoint_settings.json"]));
 
     let progress = ProgressFactory::new();
     let pb = Arc::new(progress.default_bar(total_tiles as u64));
@@ -416,11 +416,18 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     let temp_counts_path = final_outputs.temp_path_for(&final_counts_path)?;
     info!(
         target: COMMAND_TARGET,
-        "Writing final counts to temp file {}",
+        "Writing final counts to temp Zarr store {}",
         temp_counts_path.display()
     );
-    write_npy(&temp_counts_path, &final_counts_view)
-        .with_context(|| format!("writing final counts to {}", temp_counts_path.display()))?;
+    write_midpoint_profiles_zarr(
+        &temp_counts_path,
+        final_counts_view,
+        &group_idx_to_name,
+        &group_eligible_interval_counts,
+        &length_axis,
+        profile_layout,
+    )
+    .with_context(|| format!("writing final counts to {}", temp_counts_path.display()))?;
     final_outputs.record(temp_counts_path, final_counts_path)?;
 
     let temp_map_path = final_outputs.temp_path_for(&map_path)?;
@@ -442,7 +449,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         "Writing midpoint profile settings to temp file {}",
         temp_settings_path.display()
     );
-    write_midpoint_profile_settings_json(
+    write_midpoint_settings_json(
         &temp_settings_path,
         opt,
         &length_axis,

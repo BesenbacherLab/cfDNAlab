@@ -1,6 +1,6 @@
 # `cfdna lengths`
 
-Count fragment length distributions from a BAM file. The command turns alignments into fragments, assigns each kept fragment to output rows, and writes a length-count matrix that can be loaded directly in NumPy.
+Count fragment length distributions from a BAM file. The command turns alignments into fragments, assigns each kept fragment to output rows, and writes a wide compressed TSV that can be loaded directly in R or Python.
 
 ## Pipeline
 
@@ -16,19 +16,17 @@ flowchart TD
     weights["Apply requested weights<br/>GC correction and scaling TSVs"]
     count["Count length bins<br/>one vector per output row"]
     merge["Merge tile counts<br/>including windows crossing tile edges"]
-    matrix["Length count matrix<br/>length_counts.npy"]
-    settings["Length settings<br/>fragment_length_settings.json"]
-    metadata["Window metadata<br/>bins.tsv or group_index.tsv"]
+    table["Length count table<br/>length_counts.tsv.zst"]
+    settings["Length settings<br/>length_settings.json"]
     plot["QC plot<br/>overall length distribution"]
     stats["Run statistics<br/>fragments counted, skipped, and filtered"]
 
     region_inputs["Optional region inputs<br/>BED windows, grouped BED, fixed bins, blacklist"]
     correction_inputs["Optional correction inputs<br/>2bit reference, GC package, scaling TSVs"]
 
-    input --> setup --> tiles --> fragments --> length_model --> filters --> rows --> weights --> count --> merge --> matrix --> stats
+    input --> setup --> tiles --> fragments --> length_model --> filters --> rows --> weights --> count --> merge --> table --> stats
     setup --> settings
-    rows --> metadata
-    matrix --> plot
+    table --> plot
 
     region_inputs -.-> setup
     region_inputs -.-> filters
@@ -41,7 +39,7 @@ flowchart TD
 
     class input,setup,tiles,fragments,length_model,filters,rows,weights,count,merge core;
     class region_inputs,correction_inputs,plot optional;
-    class matrix,settings,metadata,stats outputClass;
+    class table,settings,stats outputClass;
 ```
 
 ## Length Model
@@ -58,4 +56,4 @@ The default assignment counts a fragment in every overlapping row. Other assignm
 
 ## Outputs
 
-The main output is `<prefix>.length_counts.npy`, with one row per output bin or group and one column per length bin. The settings JSON records the length-bin and counting configuration. Windowed runs also write `bins.tsv` or `group_index.tsv` so matrix rows can be mapped back to genomic intervals or group names. When plotting is enabled, the command also writes an overall length-distribution PNG.
+The main output is `<prefix>.length_counts.tsv.zst`, with one row per output window or group and one count column per half-open length bin. Single-bp bins use `count_<length>`, while wider bins use `count_<start>_<end>`. Fixed-window and BED rows include genomic coordinates directly. Grouped-BED rows include `group_name` and `eligible_windows`. Count values are rounded only when written, using `--decimals`. Blacklist fractions are rounded only when written, always to three decimals. The settings JSON records the length-bin and counting configuration, including count output decimals and whether blacklist, GC correction, or scaling factors were used. When plotting is enabled, the command also writes an overall length-distribution PNG.

@@ -32,68 +32,121 @@ mod tests_lengths_command {
     use fixtures::{
         BamFixture, FragmentSpec, ReadSpec, bam_from_specs, build_real_neutral_gc_package,
         build_real_neutral_gc_package_for_range, build_real_non_neutral_gc_package,
-        late_origin_gc_reference_sequence, simple_inward_bam, simple_reference_twobit,
-        twobit_from_sequences, write_bed, write_scaling_factors, write_two_bin_gc_package,
+        late_origin_gc_reference_sequence, read_length_counts_text, read_length_counts_tsv,
+        simple_inward_bam, simple_reference_twobit, twobit_from_sequences, write_bed,
+        write_scaling_factors, write_two_bin_gc_package,
     };
     use ndarray::Array2;
     use ndarray::array;
-    use ndarray_npy::read_npy;
     use serde_json::Value;
     use tempfile::TempDir;
 
+    const HIGH_PRECISION_COUNT_DECIMALS: u8 = 12;
+
     fn parse_group_index_rows(text: &str) -> Vec<(u64, String, f64)> {
         let mut lines = text.lines();
-        let header = lines.next().expect("group index TSV must have a header");
-        assert_eq!(header, "group_idx\tgroup_name\tblacklisted_fraction");
+        let header = lines.next().expect("length counts TSV must have a header");
+        let headers: Vec<&str> = header.split('\t').collect();
+        let group_name_idx = headers
+            .iter()
+            .position(|column| *column == "group_name")
+            .expect("length counts TSV must contain group_name");
+        headers
+            .iter()
+            .position(|column| *column == "eligible_windows")
+            .expect("length counts TSV must contain eligible_windows");
+        let blacklisted_fraction_idx = headers
+            .iter()
+            .position(|column| *column == "blacklisted_fraction")
+            .expect("length counts TSV must contain blacklisted_fraction");
+        assert!(
+            !headers.iter().any(|column| *column == "group_idx"),
+            "length counts TSV must not contain a group_idx column"
+        );
 
         lines
-            .map(|line| {
-                let mut fields = line.split('\t');
-                let group_idx = fields
-                    .next()
-                    .expect("group index row must contain group_idx")
-                    .parse::<u64>()
-                    .expect("group_idx must parse as u64");
-                let group_name = fields
-                    .next()
-                    .expect("group index row must contain group_name")
-                    .to_string();
-                let blacklisted_fraction = fields
-                    .next()
-                    .expect("group index row must contain blacklisted_fraction")
-                    .parse::<f64>()
-                    .expect("blacklisted_fraction must parse as f64");
-                assert!(
-                    fields.next().is_none(),
-                    "group index row must contain exactly three columns"
-                );
-                (group_idx, group_name, blacklisted_fraction)
+            .enumerate()
+            .map(|(row_index, line)| {
+                let fields: Vec<&str> = line.split('\t').collect();
+                (
+                    row_index as u64,
+                    fields[group_name_idx].to_string(),
+                    fields[blacklisted_fraction_idx]
+                        .parse::<f64>()
+                        .expect("blacklisted_fraction must parse as f64"),
+                )
             })
             .collect()
     }
 
     fn parse_group_index_tsv(text: &str) -> Vec<(u64, String)> {
         let mut lines = text.lines();
-        let header = lines.next().expect("group index TSV must have a header");
-        let expected_column_count = match header {
-            "group_idx\tgroup_name" => 2,
-            "group_idx\tgroup_name\tblacklisted_fraction" => 3,
-            _ => panic!("unexpected group index TSV header: {header}"),
-        };
+        let header = lines.next().expect("length counts TSV must have a header");
+        let headers: Vec<&str> = header.split('\t').collect();
+        let group_name_idx = headers
+            .iter()
+            .position(|column| *column == "group_name")
+            .expect("length counts TSV must contain group_name");
+        headers
+            .iter()
+            .position(|column| *column == "eligible_windows")
+            .expect("length counts TSV must contain eligible_windows");
+        assert!(
+            !headers.iter().any(|column| *column == "group_idx"),
+            "length counts TSV must not contain a group_idx column"
+        );
+
+        lines
+            .enumerate()
+            .map(|line| {
+                let (row_index, line) = line;
+                let fields: Vec<&str> = line.split('\t').collect();
+                (row_index as u64, fields[group_name_idx].to_string())
+            })
+            .collect()
+    }
+
+    fn parse_window_metadata_rows(text: &str) -> Vec<(String, u64, u64, Option<f64>)> {
+        let mut lines = text.lines();
+        let header = lines.next().expect("length counts TSV must have a header");
+        let headers: Vec<&str> = header.split('\t').collect();
+        let chrom_idx = headers
+            .iter()
+            .position(|column| *column == "chrom")
+            .expect("length counts TSV must contain chrom");
+        let start_idx = headers
+            .iter()
+            .position(|column| *column == "start")
+            .expect("length counts TSV must contain start");
+        let end_idx = headers
+            .iter()
+            .position(|column| *column == "end")
+            .expect("length counts TSV must contain end");
+        let blacklisted_fraction_idx = headers
+            .iter()
+            .position(|column| *column == "blacklisted_fraction");
+        assert!(
+            !headers.iter().any(|column| *column == "row_index"),
+            "length counts TSV must not contain a row_index column"
+        );
 
         lines
             .map(|line| {
                 let fields: Vec<&str> = line.split('\t').collect();
-                assert_eq!(
-                    fields.len(),
-                    expected_column_count,
-                    "group index row must match the header column count"
-                );
-                let group_idx = fields[0]
-                    .parse::<u64>()
-                    .expect("group_idx must parse as u64");
-                let group_name = fields[1].to_string();
-                (group_idx, group_name)
+                (
+                    fields[chrom_idx].to_string(),
+                    fields[start_idx]
+                        .parse::<u64>()
+                        .expect("start must parse as u64"),
+                    fields[end_idx]
+                        .parse::<u64>()
+                        .expect("end must parse as u64"),
+                    blacklisted_fraction_idx.map(|idx| {
+                        fields[idx]
+                            .parse::<f64>()
+                            .expect("blacklisted_fraction must parse as f64")
+                    }),
+                )
             })
             .collect()
     }
@@ -231,14 +284,13 @@ mod tests_lengths_command {
         run(&cfg)?;
 
         // Assert
-        let counts_path = out_dir.path().join("length_counts.npy");
-        let arr: Array2<f64> = read_npy(&counts_path)?;
+        let counts_path = out_dir.path().join("length_counts.tsv.zst");
+        let arr: Array2<f64> = read_length_counts_tsv(&counts_path)?;
         assert_eq!(arr.shape(), &[1, 971]);
         assert_eq!(arr[(0, 60 - 30)], 1.0);
         assert_eq!(arr.sum(), 1.0);
 
-        let settings_text =
-            std::fs::read_to_string(out_dir.path().join("fragment_length_settings.json"))?;
+        let settings_text = std::fs::read_to_string(out_dir.path().join("length_settings.json"))?;
         let settings: Value = serde_json::from_str(&settings_text)?;
         assert_eq!(settings["length_axis"]["column_intervals"], "half_open");
         assert_eq!(settings["length_axis"]["min_fragment_length"], 30);
@@ -302,7 +354,8 @@ mod tests_lengths_command {
         run(&cfg)?;
 
         // Assert
-        let arr: Array2<f64> = read_npy(out_dir.path().join("length_counts.npy"))?;
+        let arr: Array2<f64> =
+            read_length_counts_tsv(out_dir.path().join("length_counts.tsv.zst"))?;
         assert_eq!(arr.shape(), &[1, 2]);
         assert_eq!(arr[(0, 0)], 2.0);
         assert_eq!(arr[(0, 1)], 0.0);
@@ -341,7 +394,8 @@ mod tests_lengths_command {
         run(&cfg)?;
 
         // Assert
-        let arr: Array2<f64> = read_npy(out_dir.path().join("length_counts.npy"))?;
+        let arr: Array2<f64> =
+            read_length_counts_tsv(out_dir.path().join("length_counts.tsv.zst"))?;
         assert_eq!(arr.shape(), &[1, 1]);
         assert_eq!(arr[(0, 0)], 1.0);
         assert_eq!(arr.sum(), 1.0);
@@ -373,9 +427,9 @@ mod tests_lengths_command {
         let prefix = cfg.output_prefix.trim();
         let npy_path = out_dir
             .path()
-            .join(dot_join(&[prefix, "length_counts.npy"]));
+            .join(dot_join(&[prefix, "length_counts.tsv.zst"]));
         assert!(npy_path.exists());
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
         assert_eq!(arr.shape(), &[1, 191]);
         let len60_idx = 60 - 10; // min_fragment_length
         let row = arr.row(0);
@@ -421,9 +475,9 @@ mod tests_lengths_command {
         let prefix = cfg.output_prefix.trim();
         let npy_path = out_dir
             .path()
-            .join(dot_join(&[prefix, "length_counts.npy"]));
+            .join(dot_join(&[prefix, "length_counts.tsv.zst"]));
         assert!(npy_path.exists());
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
         // Chromosome length 200, window size 500 -> one window
         assert_eq!(arr.shape(), &[1, 191]);
         let len60_idx = 60 - 10;
@@ -474,8 +528,8 @@ mod tests_lengths_command {
         let prefix = cfg.output_prefix.trim();
         let npy_path = out_dir
             .path()
-            .join(dot_join(&[prefix, "length_counts.npy"]));
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+            .join(dot_join(&[prefix, "length_counts.tsv.zst"]));
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
 
         // The fragment spans [95, 135), so in count-overlap mode it contributes:
         //  5/40 to 90-100
@@ -530,9 +584,9 @@ mod tests_lengths_command {
         let prefix = cfg.output_prefix.trim();
         let npy_path = out_dir
             .path()
-            .join(dot_join(&[prefix, "length_counts.npy"]));
+            .join(dot_join(&[prefix, "length_counts.tsv.zst"]));
         assert!(npy_path.exists());
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
         assert_eq!(arr.shape(), &[1, 191]);
         let len60_idx = 60 - 10;
         let row = arr.row(0);
@@ -591,8 +645,8 @@ mod tests_lengths_command {
         let prefix = cfg.output_prefix.trim();
         let npy_path = out_dir
             .path()
-            .join(dot_join(&[prefix, "length_counts.npy"]));
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+            .join(dot_join(&[prefix, "length_counts.tsv.zst"]));
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
         assert_eq!(arr.shape(), &[1, 1]);
         assert!((arr[(0, 0)] - 1.0).abs() < 1e-6);
         assert!((arr.sum() - 1.0).abs() < 1e-6);
@@ -643,8 +697,8 @@ mod tests_lengths_command {
         let prefix = cfg.output_prefix.trim();
         let npy_path = out_dir
             .path()
-            .join(dot_join(&[prefix, "length_counts.npy"]));
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+            .join(dot_join(&[prefix, "length_counts.tsv.zst"]));
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
         assert_eq!(arr.shape(), &[1, 1]);
         assert_eq!(arr[(0, 0)], 0.0);
         assert_eq!(arr.sum(), 0.0);
@@ -702,8 +756,8 @@ mod tests_lengths_command {
         let prefix = cfg.output_prefix.trim();
         let npy_path = out_dir
             .path()
-            .join(dot_join(&[prefix, "length_counts.npy"]));
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+            .join(dot_join(&[prefix, "length_counts.tsv.zst"]));
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
         assert_eq!(arr.shape(), &[2, 1]);
         assert_eq!(arr[(0, 0)], 0.0);
         assert!((arr[(1, 0)] - 1.0).abs() < 1e-6);
@@ -758,8 +812,8 @@ mod tests_lengths_command {
             let prefix = cfg.output_prefix.trim();
             let npy_path = out_dir
                 .path()
-                .join(dot_join(&[prefix, "length_counts.npy"]));
-            outputs.push(read_npy::<_, Array2<f64>>(&npy_path)?);
+                .join(dot_join(&[prefix, "length_counts.tsv.zst"]));
+            outputs.push(read_length_counts_tsv(&npy_path)?);
         }
 
         assert_eq!(outputs[0], outputs[1]);
@@ -820,8 +874,8 @@ mod tests_lengths_command {
             let prefix = cfg.output_prefix.trim();
             let npy_path = out_dir
                 .path()
-                .join(dot_join(&[prefix, "length_counts.npy"]));
-            outputs.push(read_npy::<_, Array2<f64>>(&npy_path)?);
+                .join(dot_join(&[prefix, "length_counts.tsv.zst"]));
+            outputs.push(read_length_counts_tsv(&npy_path)?);
         }
 
         assert_eq!(outputs[0], outputs[1]);
@@ -876,8 +930,8 @@ mod tests_lengths_command {
             let prefix = cfg.output_prefix.trim();
             let npy_path = out_dir
                 .path()
-                .join(dot_join(&[prefix, "length_counts.npy"]));
-            outputs.push(read_npy::<_, Array2<f64>>(&npy_path)?);
+                .join(dot_join(&[prefix, "length_counts.tsv.zst"]));
+            outputs.push(read_length_counts_tsv(&npy_path)?);
         }
 
         assert_eq!(outputs[0], outputs[1]);
@@ -955,8 +1009,8 @@ mod tests_lengths_command {
 
         // Assert
         let read_counts = |dir: &TempDir| -> Result<Array2<f64>> {
-            let npy_path = dir.path().join(dot_join(&["", "length_counts.npy"]));
-            read_npy(&npy_path).map_err(Into::into)
+            let npy_path = dir.path().join(dot_join(&["", "length_counts.tsv.zst"]));
+            read_length_counts_tsv(&npy_path).map_err(Into::into)
         };
 
         let global_arr = read_counts(&global_out)?;
@@ -1039,8 +1093,10 @@ mod tests_lengths_command {
 
         // Assert
         let read_counts = |dir: &TempDir, prefix: &str| -> Result<Array2<f64>> {
-            let npy_path = dir.path().join(dot_join(&[prefix, "length_counts.npy"]));
-            read_npy(&npy_path).map_err(Into::into)
+            let npy_path = dir
+                .path()
+                .join(dot_join(&[prefix, "length_counts.tsv.zst"]));
+            read_length_counts_tsv(&npy_path).map_err(Into::into)
         };
 
         let default_arr = read_counts(&out_default, "default")?;
@@ -1091,8 +1147,8 @@ mod tests_lengths_command {
         let prefix = cfg.output_prefix.trim();
         let npy_path = out_dir
             .path()
-            .join(dot_join(&[prefix, "length_counts.npy"]));
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+            .join(dot_join(&[prefix, "length_counts.tsv.zst"]));
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
 
         // Global mode collapses the selected chromosomes into one combined length distribution.
         // This fixture contributes one fragment of lengths 60, 80, and 100 across the three
@@ -1163,12 +1219,15 @@ mod tests_lengths_command {
         run(&unpaired_cfg)?;
 
         // Assert
-        let paired_arr: Array2<f64> =
-            read_npy(paired_out.path().join(dot_join(&["", "length_counts.npy"])))?;
-        let unpaired_arr: Array2<f64> = read_npy(
+        let paired_arr: Array2<f64> = read_length_counts_tsv(
+            paired_out
+                .path()
+                .join(dot_join(&["", "length_counts.tsv.zst"])),
+        )?;
+        let unpaired_arr: Array2<f64> = read_length_counts_tsv(
             unpaired_out
                 .path()
-                .join(dot_join(&["", "length_counts.npy"])),
+                .join(dot_join(&["", "length_counts.tsv.zst"])),
         )?;
 
         let len60_idx = 60 - 10;
@@ -1210,8 +1269,8 @@ mod tests_lengths_command {
         let prefix = cfg.output_prefix.trim();
         let npy_path = out_dir
             .path()
-            .join(dot_join(&[prefix, "length_counts.npy"]));
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+            .join(dot_join(&[prefix, "length_counts.tsv.zst"]));
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
 
         assert_eq!(arr.shape(), &[3, 111]);
         let expected_rows = [60 - 10, 80 - 10, 100 - 10];
@@ -1272,8 +1331,8 @@ mod tests_lengths_command {
         let prefix = cfg.output_prefix.trim();
         let npy_path = out_dir
             .path()
-            .join(dot_join(&[prefix, "length_counts.npy"]));
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+            .join(dot_join(&[prefix, "length_counts.tsv.zst"]));
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
 
         assert_eq!(arr.shape(), &[3, 111]);
         let expected_rows = [60 - 10, 80 - 10, 100 - 10];
@@ -1360,7 +1419,9 @@ mod tests_lengths_command {
 
         // Assert
         let read_counts = |dir: &std::path::Path| -> Result<Array2<f64>> {
-            Ok(read_npy(dir.join(dot_join(&["", "length_counts.npy"])))?)
+            Ok(read_length_counts_tsv(
+                dir.join(dot_join(&["", "length_counts.tsv.zst"])),
+            )?)
         };
         let by_size_arr = read_counts(by_size_out.path())?;
         let bed_arr = read_counts(bed_out.path())?;
@@ -1401,9 +1462,9 @@ mod tests_lengths_command {
         let prefix = cfg.output_prefix.trim();
         let npy_path = out_dir
             .path()
-            .join(dot_join(&[prefix, "length_counts.npy"]));
+            .join(dot_join(&[prefix, "length_counts.tsv.zst"]));
         assert!(npy_path.exists());
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
         assert_eq!(arr.shape(), &[1, 191]);
         let len60_idx = 60 - 10;
         assert!((arr[(0, len60_idx)] - 2.0).abs() < 1e-6);
@@ -1440,9 +1501,9 @@ mod tests_lengths_command {
         let prefix = cfg.output_prefix.trim();
         let npy_path = out_dir
             .path()
-            .join(dot_join(&[prefix, "length_counts.npy"]));
+            .join(dot_join(&[prefix, "length_counts.tsv.zst"]));
         assert!(npy_path.exists());
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
         assert_eq!(arr.shape(), &[1, 191]);
         assert!((arr.sum()).abs() < 1e-6);
         Ok(())
@@ -1464,7 +1525,7 @@ mod tests_lengths_command {
             reference_contig_footprint,
             correction_matrix,
         };
-        package.write_npz(path)?;
+        package.write_zarr(path)?;
         Ok(())
     }
 
@@ -1473,7 +1534,7 @@ mod tests_lengths_command {
         let bam = simple_inward_bam()?;
         let ref_twobit = simple_reference_twobit()?;
         let gc_dir = TempDir::new()?;
-        let gc_path = gc_dir.path().join("gc_pkg.npz");
+        let gc_path = gc_dir.path().join("gc_pkg.zarr");
         build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
 
         let expected = |scheme: MarginalizeLengthsWeightingScheme| -> f64 {
@@ -1512,8 +1573,8 @@ mod tests_lengths_command {
             let prefix = cfg.output_prefix.trim();
             let npy_path = out_dir
                 .path()
-                .join(dot_join(&[prefix, "length_counts.npy"]));
-            let arr: Array2<f64> = read_npy(&npy_path)?;
+                .join(dot_join(&[prefix, "length_counts.tsv.zst"]));
+            let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
             let len60_idx = 60 - 10;
             Ok(arr[(0, len60_idx)])
         };
@@ -1553,7 +1614,7 @@ mod tests_lengths_command {
         let bam = simple_inward_bam()?;
         let ref_twobit = simple_reference_twobit()?;
         let gc_dir = TempDir::new()?;
-        let gc_path = gc_dir.path().join("gc_pkg_trim_rare.npz");
+        let gc_path = gc_dir.path().join("gc_pkg_trim_rare.zarr");
         build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
         let out_dir = TempDir::new()?;
         let mut cfg = LengthsConfig::new(
@@ -1583,8 +1644,8 @@ mod tests_lengths_command {
         let prefix = cfg.output_prefix.trim();
         let npy_path = out_dir
             .path()
-            .join(dot_join(&[prefix, "length_counts.npy"]));
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+            .join(dot_join(&[prefix, "length_counts.tsv.zst"]));
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
         let len60_idx = 60 - 10;
         assert!(
             (arr[(0, len60_idx)] - 10.0).abs() < 1e-6,
@@ -1607,7 +1668,7 @@ mod tests_lengths_command {
         let bam = simple_inward_bam()?;
         let ref_twobit = simple_reference_twobit()?;
         let gc_dir = TempDir::new()?;
-        let gc_path = gc_dir.path().join("gc_pkg_range.npz");
+        let gc_path = gc_dir.path().join("gc_pkg_range.zarr");
         build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
 
         let run_with_range = |gc_length_range: GCLengthRange| -> Result<f64> {
@@ -1639,8 +1700,8 @@ mod tests_lengths_command {
             let prefix = cfg.output_prefix.trim();
             let npy_path = out_dir
                 .path()
-                .join(dot_join(&[prefix, "length_counts.npy"]));
-            let arr: Array2<f64> = read_npy(&npy_path)?;
+                .join(dot_join(&[prefix, "length_counts.tsv.zst"]));
+            let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
             Ok(arr[(0, 0)])
         };
 
@@ -1700,10 +1761,11 @@ mod tests_lengths_command {
         //   one row and one column, with the single cell equal to 1.0.
         run(&cfg)?;
 
-        let npy_path = out_dir
-            .path()
-            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+        let npy_path = out_dir.path().join(dot_join(&[
+            cfg.output_prefix.trim(),
+            "length_counts.tsv.zst",
+        ]));
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
         assert_eq!(arr.dim(), (1, 1));
         assert!((arr[(0, 0)] - 1.0).abs() < 1e-12);
         assert!((arr.sum() - 1.0).abs() < 1e-12);
@@ -1781,10 +1843,11 @@ mod tests_lengths_command {
         run(&cfg)?;
 
         // Assert
-        let npy_path = out_dir
-            .path()
-            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+        let npy_path = out_dir.path().join(dot_join(&[
+            cfg.output_prefix.trim(),
+            "length_counts.tsv.zst",
+        ]));
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
         assert_eq!(arr.dim(), (1, 1));
         assert!(
             (arr[(0, 0)] - 10.0).abs() < 1e-12,
@@ -1856,7 +1919,7 @@ mod tests_lengths_command {
             10,
             200,
         )?;
-        let gc_path = out_dir.path().join("constant_gc_pkg.npz");
+        let gc_path = out_dir.path().join("constant_gc_pkg.zarr");
         let package = GCCorrectionPackage {
             version: GC_CORRECTION_SCHEMA_VERSION,
             end_offset: 0,
@@ -1866,7 +1929,7 @@ mod tests_lengths_command {
             reference_contig_footprint: twobit_contig_footprint(&ref_twobit.path)?,
             correction_matrix: array![[3.0_f64]],
         };
-        package.write_npz(&gc_path)?;
+        package.write_zarr(&gc_path)?;
         scaling_cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgs {
             gc_file: Some(weights_gc_path),
             gc_tag: None,
@@ -1898,14 +1961,16 @@ mod tests_lengths_command {
         });
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
         cfg.set_per_bp_length_bins(61, 61);
+        cfg.set_decimals(HIGH_PRECISION_COUNT_DECIMALS);
 
         run(&cfg)?;
 
         // Assert
-        let npy_path = out_dir
-            .path()
-            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+        let npy_path = out_dir.path().join(dot_join(&[
+            cfg.output_prefix.trim(),
+            "length_counts.tsv.zst",
+        ]));
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
         assert_eq!(arr.shape(), &[1, 1]);
 
         let expected = 180.0_f64 / 61.0_f64;
@@ -1935,7 +2000,7 @@ mod tests_lengths_command {
         let bam = simple_inward_bam()?;
         let ref_twobit = simple_reference_twobit()?;
         let out_dir = TempDir::new()?;
-        let gc_path = out_dir.path().join("gc_pkg_short.npz");
+        let gc_path = out_dir.path().join("gc_pkg_short.zarr");
         let package = GCCorrectionPackage {
             version: GC_CORRECTION_SCHEMA_VERSION,
             end_offset: 0,
@@ -1945,7 +2010,7 @@ mod tests_lengths_command {
             reference_contig_footprint: twobit_contig_footprint(&ref_twobit.path)?,
             correction_matrix: array![[1.0_f64]],
         };
-        package.write_npz(&gc_path)?;
+        package.write_zarr(&gc_path)?;
 
         let mut cfg = LengthsConfig::new(
             IOCArgs {
@@ -1989,7 +2054,7 @@ mod tests_lengths_command {
         let bam = simple_inward_bam()?;
         let ref_twobit = simple_reference_twobit()?;
         let out_dir = TempDir::new()?;
-        let gc_path = out_dir.path().join("gc_pkg_bad_version.npz");
+        let gc_path = out_dir.path().join("gc_pkg_bad_version.zarr");
         let package = GCCorrectionPackage {
             version: GC_CORRECTION_SCHEMA_VERSION + 1,
             end_offset: 0,
@@ -1999,7 +2064,7 @@ mod tests_lengths_command {
             reference_contig_footprint: twobit_contig_footprint(&ref_twobit.path)?,
             correction_matrix: array![[1.0_f64]],
         };
-        package.write_npz(&gc_path)?;
+        package.write_zarr(&gc_path)?;
 
         let mut cfg = LengthsConfig::new(
             IOCArgs {
@@ -2037,7 +2102,7 @@ mod tests_lengths_command {
     fn gc_requires_ref_2bit_errors() -> Result<()> {
         let bam = simple_inward_bam()?;
         let gc_dir = TempDir::new()?;
-        let gc_path = gc_dir.path().join("gc_pkg.npz");
+        let gc_path = gc_dir.path().join("gc_pkg.zarr");
         let ref_twobit = simple_reference_twobit()?;
         build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
 
@@ -2075,7 +2140,7 @@ mod tests_lengths_command {
         let bam = simple_inward_bam()?;
         let ref_twobit = simple_reference_twobit()?;
         let gc_dir = TempDir::new()?;
-        let gc_path = gc_dir.path().join("gc_pkg.npz");
+        let gc_path = gc_dir.path().join("gc_pkg.zarr");
         // Choose large end_offset so offset_start >= offset_end, causing GC weight failure
         build_gc_package(&gc_path, 40, twobit_contig_footprint(&ref_twobit.path)?)?;
 
@@ -2138,9 +2203,9 @@ mod tests_lengths_command {
         run(&adjust_cfg)?;
         let npy_path = out_dir.path().join(dot_join(&[
             adjust_cfg.output_prefix.trim(),
-            "length_counts.npy",
+            "length_counts.tsv.zst",
         ]));
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
         // Expected adjusted lengths from fixture:
         //   frag0 (no indel): len 24
         //   frag1 (insertion): len 17
@@ -2159,9 +2224,9 @@ mod tests_lengths_command {
         run(&skip_cfg)?;
         let skip_path = out_dir.path().join(dot_join(&[
             skip_cfg.output_prefix.trim(),
-            "length_counts.npy",
+            "length_counts.tsv.zst",
         ]));
-        let skip_arr: Array2<f64> = read_npy(&skip_path)?;
+        let skip_arr: Array2<f64> = read_length_counts_tsv(&skip_path)?;
         // Only the indel-free fragment remains
         let l24 = 24 - 10;
         assert!((skip_arr[(0, l24)] - 1.0).abs() < 1e-6);
@@ -2201,10 +2266,11 @@ mod tests_lengths_command {
 
         run(&cfg)?;
 
-        let npy_path = out_dir
-            .path()
-            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+        let npy_path = out_dir.path().join(dot_join(&[
+            cfg.output_prefix.trim(),
+            "length_counts.tsv.zst",
+        ]));
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
         let clean_length_bin = 24 - 10;
         let insertion_length_bin = 17 - 10;
         let deletion_length_bin = 10 - 10;
@@ -2267,20 +2333,20 @@ mod tests_lengths_command {
 
         let aligned_path = aligned_out.path().join(dot_join(&[
             aligned_cfg.output_prefix.trim(),
-            "length_counts.npy",
+            "length_counts.tsv.zst",
         ]));
         let adjust_path = adjust_out.path().join(dot_join(&[
             adjust_cfg.output_prefix.trim(),
-            "length_counts.npy",
+            "length_counts.tsv.zst",
         ]));
         let skip_path = skip_out.path().join(dot_join(&[
             skip_cfg.output_prefix.trim(),
-            "length_counts.npy",
+            "length_counts.tsv.zst",
         ]));
 
-        let aligned_arr: Array2<f64> = read_npy(&aligned_path)?;
-        let adjust_arr: Array2<f64> = read_npy(&adjust_path)?;
-        let skip_arr: Array2<f64> = read_npy(&skip_path)?;
+        let aligned_arr: Array2<f64> = read_length_counts_tsv(&aligned_path)?;
+        let adjust_arr: Array2<f64> = read_length_counts_tsv(&adjust_path)?;
+        let skip_arr: Array2<f64> = read_length_counts_tsv(&skip_path)?;
 
         assert_eq!(aligned_arr.shape(), &[1, 5]);
         assert_eq!(adjust_arr.shape(), &[1, 5]);
@@ -2341,6 +2407,7 @@ mod tests_lengths_command {
             cfg.set_require_proper_pair(false);
             cfg.set_tile_size(10);
             cfg.set_per_bp_length_bins(10, 14);
+            cfg.set_decimals(HIGH_PRECISION_COUNT_DECIMALS);
             cfg
         };
 
@@ -2355,15 +2422,15 @@ mod tests_lengths_command {
 
         let aligned_path = aligned_out.path().join(dot_join(&[
             aligned_cfg.output_prefix.trim(),
-            "length_counts.npy",
+            "length_counts.tsv.zst",
         ]));
         let adjust_path = adjust_out.path().join(dot_join(&[
             adjust_cfg.output_prefix.trim(),
-            "length_counts.npy",
+            "length_counts.tsv.zst",
         ]));
 
-        let aligned_arr: Array2<f64> = read_npy(&aligned_path)?;
-        let adjust_arr: Array2<f64> = read_npy(&adjust_path)?;
+        let aligned_arr: Array2<f64> = read_length_counts_tsv(&aligned_path)?;
+        let adjust_arr: Array2<f64> = read_length_counts_tsv(&adjust_path)?;
 
         assert!((aligned_arr[(1, 0)] - 1.0).abs() < 1e-6);
         assert!((aligned_arr.row(0).sum()).abs() < 1e-6);
@@ -2423,13 +2490,15 @@ mod tests_lengths_command {
         cfg.set_require_proper_pair(false);
         cfg.set_scaling_factors(Some(scaling_path));
         cfg.set_per_bp_length_bins(14, 14);
+        cfg.set_decimals(HIGH_PRECISION_COUNT_DECIMALS);
 
         run(&cfg)?;
 
-        let npy_path = out_dir
-            .path()
-            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+        let npy_path = out_dir.path().join(dot_join(&[
+            cfg.output_prefix.trim(),
+            "length_counts.tsv.zst",
+        ]));
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
         assert_eq!(arr.shape(), &[1, 1]);
         assert!((arr[(0, 0)] - 3.0).abs() < 1e-6);
         assert!((arr.sum() - 3.0).abs() < 1e-6);
@@ -2496,13 +2565,15 @@ mod tests_lengths_command {
         cfg.set_require_proper_pair(false);
         cfg.set_tile_size(10);
         cfg.set_per_bp_length_bins(30, 30);
+        cfg.set_decimals(HIGH_PRECISION_COUNT_DECIMALS);
 
         run(&cfg)?;
 
-        let npy_path = out_dir
-            .path()
-            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+        let npy_path = out_dir.path().join(dot_join(&[
+            cfg.output_prefix.trim(),
+            "length_counts.tsv.zst",
+        ]));
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
         assert_eq!(arr.shape(), &[1, 1]);
         let expected_count = 11.0 / 10.0;
         assert!((arr[(0, 0)] - expected_count).abs() < 1e-12);
@@ -2575,13 +2646,15 @@ mod tests_lengths_command {
         cfg.set_require_proper_pair(false);
         cfg.set_scaling_factors(Some(scaling_path));
         cfg.set_per_bp_length_bins(14, 14);
+        cfg.set_decimals(HIGH_PRECISION_COUNT_DECIMALS);
 
         run(&cfg)?;
 
-        let npy_path = out_dir
-            .path()
-            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+        let npy_path = out_dir.path().join(dot_join(&[
+            cfg.output_prefix.trim(),
+            "length_counts.tsv.zst",
+        ]));
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
         assert_eq!(arr.shape(), &[3, 1]);
         assert!((arr[(0, 0)] - (2.0 / 14.0) * 3.0).abs() < 1e-6);
         assert!((arr[(1, 0)] - (10.0 / 14.0) * 3.0).abs() < 1e-6);
@@ -2641,15 +2714,15 @@ mod tests_lengths_command {
 
         let keep_path = keep_out.path().join(dot_join(&[
             keep_cfg.output_prefix.trim(),
-            "length_counts.npy",
+            "length_counts.tsv.zst",
         ]));
         let drop_path = drop_out.path().join(dot_join(&[
             drop_cfg.output_prefix.trim(),
-            "length_counts.npy",
+            "length_counts.tsv.zst",
         ]));
 
-        let keep_arr: Array2<f64> = read_npy(&keep_path)?;
-        let drop_arr: Array2<f64> = read_npy(&drop_path)?;
+        let keep_arr: Array2<f64> = read_length_counts_tsv(&keep_path)?;
+        let drop_arr: Array2<f64> = read_length_counts_tsv(&drop_path)?;
 
         assert_eq!(keep_arr.shape(), &[1, 1]);
         assert_eq!(drop_arr.shape(), &[1, 1]);
@@ -2696,10 +2769,11 @@ mod tests_lengths_command {
         //   average scaling = (5*1 + 11*3) / 16 = 38 / 16 = 2.375
         run(&cfg)?;
 
-        let npy_path = out_dir
-            .path()
-            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+        let npy_path = out_dir.path().join(dot_join(&[
+            cfg.output_prefix.trim(),
+            "length_counts.tsv.zst",
+        ]));
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
         assert_eq!(arr.shape(), &[1, 1]);
         assert!((arr[(0, 0)] - 2.375).abs() < 1e-6);
         assert!((arr.sum() - 2.375).abs() < 1e-6);
@@ -2738,10 +2812,11 @@ mod tests_lengths_command {
         // - Blacklisting [19, 20) therefore still overlaps the fragment and must exclude it.
         run(&cfg)?;
 
-        let npy_path = out_dir
-            .path()
-            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+        let npy_path = out_dir.path().join(dot_join(&[
+            cfg.output_prefix.trim(),
+            "length_counts.tsv.zst",
+        ]));
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
         assert_eq!(arr.shape(), &[1, 1]);
         assert!((arr.sum()).abs() < 1e-6);
 
@@ -2793,10 +2868,11 @@ mod tests_lengths_command {
             cfg.set_per_bp_length_bins(10, 11);
 
             run(&cfg)?;
-            let npy_path = out_dir
-                .path()
-                .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
-            let arr: Array2<f64> = read_npy(&npy_path)?;
+            let npy_path = out_dir.path().join(dot_join(&[
+                cfg.output_prefix.trim(),
+                "length_counts.tsv.zst",
+            ]));
+            let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
             Ok(arr.sum())
         };
 
@@ -2871,11 +2947,12 @@ mod tests_lengths_command {
 
         run(&cfg)?;
 
-        let npy_path = out_dir
-            .path()
-            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
+        let npy_path = out_dir.path().join(dot_join(&[
+            cfg.output_prefix.trim(),
+            "length_counts.tsv.zst",
+        ]));
         assert!(npy_path.exists(), "expected {}", npy_path.display());
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
         assert_eq!(arr.shape(), &[1, 191]);
         Ok(())
     }
@@ -2977,10 +3054,11 @@ mod tests_lengths_command {
 
         run(&cfg)?;
 
-        let npy_path = out_dir
-            .path()
-            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+        let npy_path = out_dir.path().join(dot_join(&[
+            cfg.output_prefix.trim(),
+            "length_counts.tsv.zst",
+        ]));
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
         // Two chromosomes -> two windows (one per chr because by_size is large)
         assert_eq!(arr.shape(), &[2, 91]);
         let len60_idx = 60 - 10; // chr1 fragment length
@@ -3023,8 +3101,8 @@ mod tests_lengths_command {
             let prefix = cfg.output_prefix.trim();
             let npy_path = out_dir
                 .path()
-                .join(dot_join(&[prefix, "length_counts.npy"]));
-            let arr: Array2<f64> = read_npy(&npy_path)?;
+                .join(dot_join(&[prefix, "length_counts.tsv.zst"]));
+            let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
             Ok(arr)
         };
 
@@ -3104,10 +3182,11 @@ mod tests_lengths_command {
         run(&cfg)?;
 
         // Assert
-        let npy_path = out_dir
-            .path()
-            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+        let npy_path = out_dir.path().join(dot_join(&[
+            cfg.output_prefix.trim(),
+            "length_counts.tsv.zst",
+        ]));
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
         assert_eq!(arr.shape(), &[2, 1]);
         assert!((arr.sum() - 1.0).abs() < 1e-6);
         let first_window = arr[(0, 0)];
@@ -3242,14 +3321,16 @@ mod tests_lengths_command {
         cfg.set_require_proper_pair(false);
         cfg.set_scaling_factors(Some(scaling_path));
         cfg.set_per_bp_length_bins(61, 61);
+        cfg.set_decimals(HIGH_PRECISION_COUNT_DECIMALS);
 
         run(&cfg)?;
 
         // Assert
-        let npy_path = out_dir
-            .path()
-            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
-        let arr: Array2<f64> = read_npy(&npy_path)?;
+        let npy_path = out_dir.path().join(dot_join(&[
+            cfg.output_prefix.trim(),
+            "length_counts.tsv.zst",
+        ]));
+        let arr: Array2<f64> = read_length_counts_tsv(&npy_path)?;
         assert_eq!(arr.shape(), &[1, 1]);
 
         // `count-overlap` keeps overlap fractions as `f64`, so the stable contract here is the
@@ -3308,18 +3389,21 @@ mod tests_lengths_command {
 
         // Act
         run(&cfg)?;
-        let bins_tsv =
-            std::fs::read_to_string(out_dir.path().join(dot_join(&["sampleA", "bins.tsv"])))?;
+        let counts_text = read_length_counts_text(
+            out_dir
+                .path()
+                .join(dot_join(&["sampleA", "length_counts.tsv.zst"])),
+        )?;
 
         // Assert
         assert_eq!(
-            bins_tsv,
-            concat!(
-                "chrom\tstart\tend\tblacklisted_fraction\n",
-                "chr1\t10\t20\t0.5\n",
-                "chr1\t20\t30\t0\n"
-            )
+            parse_window_metadata_rows(&counts_text),
+            vec![
+                ("chr1".to_string(), 10, 20, Some(0.5)),
+                ("chr1".to_string(), 20, 30, Some(0.0)),
+            ]
         );
+        assert!(!out_dir.path().join("sampleA.bins.tsv").exists());
         Ok(())
     }
 
@@ -3392,17 +3476,13 @@ mod tests_lengths_command {
         run(&cfg)?;
         let counts_path = out_dir
             .path()
-            .join(dot_join(&["sampleA", "length_counts.npy"]));
-        let arr: Array2<f64> = read_npy(&counts_path)?;
-        let group_index = std::fs::read_to_string(
-            out_dir
-                .path()
-                .join(dot_join(&["sampleA", "group_index.tsv"])),
-        )?;
+            .join(dot_join(&["sampleA", "length_counts.tsv.zst"]));
+        let arr: Array2<f64> = read_length_counts_tsv(&counts_path)?;
+        let group_index = read_length_counts_text(&counts_path)?;
         let settings_text = std::fs::read_to_string(
             out_dir
                 .path()
-                .join(dot_join(&["sampleA", "fragment_length_settings.json"])),
+                .join(dot_join(&["sampleA", "length_settings.json"])),
         )?;
         let settings: Value = serde_json::from_str(&settings_text)?;
 
@@ -3413,16 +3493,16 @@ mod tests_lengths_command {
         assert_eq!(arr[(2, 0)], 0.0);
         assert!((arr.sum() - 1.0).abs() < 1e-12);
 
-        assert_eq!(
-            parse_group_index_rows(&group_index),
-            vec![
-                (0, "beta".to_string(), 1.0 / 3.0),
-                (1, "alpha".to_string(), 0.0),
-                (2, "gamma".to_string(), 1.0),
-            ]
-        );
+        let group_rows = parse_group_index_rows(&group_index);
+        assert_eq!(group_rows.len(), 3);
+        assert_eq!(group_rows[0].0, 0);
+        assert_eq!(group_rows[0].1, "beta");
+        assert_eq!(group_rows[0].2, 0.333);
+        assert_eq!(group_rows[1], (1, "alpha".to_string(), 0.0));
+        assert_eq!(group_rows[2], (2, "gamma".to_string(), 1.0));
         assert_eq!(settings["aggregation_level"], "groups");
         assert_eq!(settings["window_mode"], "by-grouped-bed");
+        assert_eq!(settings["decimals"], 6);
         assert!(!out_dir.path().join("sampleA.bins.tsv").exists());
         assert!(!out_dir.path().join("sampleA.grouped_windows.tsv").exists());
         Ok(())
@@ -3481,9 +3561,9 @@ mod tests_lengths_command {
 
         // Act
         run(&cfg)?;
-        let counts_path = out_dir.path().join("length_counts.npy");
-        let arr: Array2<f64> = read_npy(&counts_path)?;
-        let group_index = std::fs::read_to_string(out_dir.path().join("group_index.tsv"))?;
+        let counts_path = out_dir.path().join("length_counts.tsv.zst");
+        let arr: Array2<f64> = read_length_counts_tsv(&counts_path)?;
+        let group_index = read_length_counts_text(out_dir.path().join("length_counts.tsv.zst"))?;
 
         // Assert
         assert_eq!(
@@ -3505,9 +3585,10 @@ mod tests_lengths_command {
     #[test]
     fn grouped_bed_group_index_omits_blacklisted_fraction_without_blacklist() -> Result<()> {
         // Arrange:
-        // - grouped output without any blacklist input should describe only the group index mapping
-        // - the metadata file should therefore have exactly two columns:
-        //     group_idx, group_name
+        // - grouped output without any blacklist input should include group metadata in the count
+        //   table itself
+        // - the metadata columns should therefore be:
+        //     group_name, eligible_windows
         // - it should not include a synthetic zero-filled blacklist column
         let bam = single_read_fragment_bam("lengths_grouped_group_index_no_blacklist", 10, 10)?;
         let out_dir = TempDir::new()?;
@@ -3539,13 +3620,13 @@ mod tests_lengths_command {
 
         // Act
         run(&cfg)?;
-        let group_index = std::fs::read_to_string(out_dir.path().join("group_index.tsv"))?;
+        let group_index = read_length_counts_text(out_dir.path().join("length_counts.tsv.zst"))?;
 
         // Assert
         let rows: Vec<&str> = group_index.lines().collect();
-        assert_eq!(rows[0], "group_idx\tgroup_name");
-        assert_eq!(rows[1], "0\tbeta");
-        assert_eq!(rows[2], "1\tgamma");
+        assert_eq!(rows[0], "group_name\teligible_windows\tcount_10");
+        assert_eq!(rows[1], "beta\t1\t1");
+        assert_eq!(rows[2], "gamma\t1\t0");
         assert_eq!(rows.len(), 3);
         assert_eq!(
             parse_group_index_tsv(&group_index),
@@ -3608,9 +3689,9 @@ mod tests_lengths_command {
 
         // Act
         run(&cfg)?;
-        let counts_path = out_dir.path().join("length_counts.npy");
-        let arr: Array2<f64> = read_npy(&counts_path)?;
-        let group_index = std::fs::read_to_string(out_dir.path().join("group_index.tsv"))?;
+        let counts_path = out_dir.path().join("length_counts.tsv.zst");
+        let arr: Array2<f64> = read_length_counts_tsv(&counts_path)?;
+        let group_index = read_length_counts_text(out_dir.path().join("length_counts.tsv.zst"))?;
 
         // Assert
         assert_eq!(
@@ -3682,13 +3763,9 @@ mod tests_lengths_command {
         run(&cfg)?;
         let counts_path = out_dir
             .path()
-            .join(dot_join(&["sampleA", "length_counts.npy"]));
-        let arr: Array2<f64> = read_npy(&counts_path)?;
-        let group_index = std::fs::read_to_string(
-            out_dir
-                .path()
-                .join(dot_join(&["sampleA", "group_index.tsv"])),
-        )?;
+            .join(dot_join(&["sampleA", "length_counts.tsv.zst"]));
+        let arr: Array2<f64> = read_length_counts_tsv(&counts_path)?;
+        let group_index = read_length_counts_text(&counts_path)?;
         // Assert
         assert_eq!(
             parse_group_index_tsv(&group_index),
@@ -3707,7 +3784,7 @@ mod tests_lengths_command {
         assert_eq!(arr.row(2).sum(), 0.0);
         assert_eq!(arr.sum(), 3.0);
 
-        assert!(out_dir.path().join("sampleA.group_index.tsv").exists());
+        assert!(!out_dir.path().join("sampleA.group_index.tsv").exists());
         assert!(!out_dir.path().join("sampleA.grouped_windows.tsv").exists());
         assert!(!out_dir.path().join("group_index.tsv").exists());
         assert!(!out_dir.path().join("grouped_windows.tsv").exists());
@@ -3783,13 +3860,9 @@ mod tests_lengths_command {
         run(&cfg)?;
         let counts_path = out_dir
             .path()
-            .join(dot_join(&["sampleA", "length_counts.npy"]));
-        let arr: Array2<f64> = read_npy(&counts_path)?;
-        let group_index = std::fs::read_to_string(
-            out_dir
-                .path()
-                .join(dot_join(&["sampleA", "group_index.tsv"])),
-        )?;
+            .join(dot_join(&["sampleA", "length_counts.tsv.zst"]));
+        let arr: Array2<f64> = read_length_counts_tsv(&counts_path)?;
+        let group_index = read_length_counts_text(&counts_path)?;
 
         // Assert
         assert_eq!(
@@ -3896,9 +3969,9 @@ mod tests_lengths_command {
 
         // Act
         run(&cfg)?;
-        let counts_path = out_dir.path().join("length_counts.npy");
-        let arr: Array2<f64> = read_npy(&counts_path)?;
-        let group_index = std::fs::read_to_string(out_dir.path().join("group_index.tsv"))?;
+        let counts_path = out_dir.path().join("length_counts.tsv.zst");
+        let arr: Array2<f64> = read_length_counts_tsv(&counts_path)?;
+        let group_index = read_length_counts_text(out_dir.path().join("length_counts.tsv.zst"))?;
 
         // Assert
         assert_eq!(
@@ -3954,9 +4027,9 @@ mod tests_lengths_command {
 
         // Act
         run(&cfg)?;
-        let counts_path = out_dir.path().join("length_counts.npy");
-        let arr: Array2<f64> = read_npy(&counts_path)?;
-        let group_index = std::fs::read_to_string(out_dir.path().join("group_index.tsv"))?;
+        let counts_path = out_dir.path().join("length_counts.tsv.zst");
+        let arr: Array2<f64> = read_length_counts_tsv(&counts_path)?;
+        let group_index = read_length_counts_text(out_dir.path().join("length_counts.tsv.zst"))?;
 
         // Assert
         assert_eq!(
@@ -4017,9 +4090,9 @@ mod tests_lengths_command {
 
         // Act
         run(&cfg)?;
-        let counts_path = out_dir.path().join("length_counts.npy");
-        let arr: Array2<f64> = read_npy(&counts_path)?;
-        let group_index = std::fs::read_to_string(out_dir.path().join("group_index.tsv"))?;
+        let counts_path = out_dir.path().join("length_counts.tsv.zst");
+        let arr: Array2<f64> = read_length_counts_tsv(&counts_path)?;
+        let group_index = read_length_counts_text(out_dir.path().join("length_counts.tsv.zst"))?;
 
         // Assert
         assert_eq!(
@@ -4047,7 +4120,7 @@ mod tests_lengths_command {
         let reference = simple_reference_twobit()?;
         let out_dir = TempDir::new()?;
         let grouped_bed = out_dir.path().join("grouped_gc.bed");
-        let gc_path = out_dir.path().join("grouped_gc_package.npz");
+        let gc_path = out_dir.path().join("grouped_gc_package.zarr");
         let package = GCCorrectionPackage {
             version: GC_CORRECTION_SCHEMA_VERSION,
             end_offset: 0,
@@ -4057,7 +4130,7 @@ mod tests_lengths_command {
             reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
             correction_matrix: array![[3.0_f64, 1.0_f64], [1.0_f64, 1.0_f64]],
         };
-        package.write_npz(&gc_path)?;
+        package.write_zarr(&gc_path)?;
         write_bed(
             &grouped_bed,
             &[("chr1", 10, 20, "beta"), ("chr1", 30, 40, "gamma")],
@@ -4094,9 +4167,9 @@ mod tests_lengths_command {
 
         // Act
         run(&cfg)?;
-        let counts_path = out_dir.path().join("length_counts.npy");
-        let arr: Array2<f64> = read_npy(&counts_path)?;
-        let group_index = std::fs::read_to_string(out_dir.path().join("group_index.tsv"))?;
+        let counts_path = out_dir.path().join("length_counts.tsv.zst");
+        let arr: Array2<f64> = read_length_counts_tsv(&counts_path)?;
+        let group_index = read_length_counts_text(out_dir.path().join("length_counts.tsv.zst"))?;
 
         // Assert
         assert_eq!(
@@ -4143,7 +4216,7 @@ mod tests_lengths_command {
         )?;
         let out_dir = TempDir::new()?;
         let bed_path = out_dir.path().join("late_window.bed");
-        let gc_path = out_dir.path().join("two_bin_gc_package.npz");
+        let gc_path = out_dir.path().join("two_bin_gc_package.zarr");
         write_bed(&bed_path, &[("chr1", 930, 941, "late")])?;
         write_two_bin_gc_package(
             &gc_path,
@@ -4183,8 +4256,8 @@ mod tests_lengths_command {
 
         // Act
         run(&cfg)?;
-        let counts_path = out_dir.path().join("length_counts.npy");
-        let arr: Array2<f64> = read_npy(&counts_path)?;
+        let counts_path = out_dir.path().join("length_counts.tsv.zst");
+        let arr: Array2<f64> = read_length_counts_tsv(&counts_path)?;
 
         // Assert
         assert_eq!(arr.shape(), &[1, 1]);
@@ -4227,7 +4300,7 @@ mod tests_lengths_command {
         )?;
         let out_dir = TempDir::new()?;
         let bed_path = out_dir.path().join("right_end_window.bed");
-        let gc_path = out_dir.path().join("two_bin_gc_package.npz");
+        let gc_path = out_dir.path().join("two_bin_gc_package.zarr");
         write_bed(&bed_path, &[("chr1", 1010, 1022, "right_end")])?;
         write_two_bin_gc_package(
             &gc_path,
@@ -4266,7 +4339,8 @@ mod tests_lengths_command {
         cfg.set_per_bp_length_bins(61, 61);
 
         run(&cfg)?;
-        let arr: Array2<f64> = read_npy(out_dir.path().join("length_counts.npy"))?;
+        let arr: Array2<f64> =
+            read_length_counts_tsv(out_dir.path().join("length_counts.tsv.zst"))?;
 
         assert_eq!(arr.shape(), &[1, 1]);
         assert_eq!(arr[(0, 0)], 2.0);
@@ -4326,9 +4400,9 @@ mod tests_lengths_command {
 
         // Act
         run(&cfg)?;
-        let counts_path = out_dir.path().join("length_counts.npy");
-        let arr: Array2<f64> = read_npy(&counts_path)?;
-        let group_index = std::fs::read_to_string(out_dir.path().join("group_index.tsv"))?;
+        let counts_path = out_dir.path().join("length_counts.tsv.zst");
+        let arr: Array2<f64> = read_length_counts_tsv(&counts_path)?;
+        let group_index = read_length_counts_text(out_dir.path().join("length_counts.tsv.zst"))?;
 
         // Assert
         assert_eq!(
@@ -4388,9 +4462,9 @@ mod tests_lengths_command {
 
         // Act
         run(&cfg)?;
-        let counts_path = out_dir.path().join("length_counts.npy");
-        let arr: Array2<f64> = read_npy(&counts_path)?;
-        let group_index = std::fs::read_to_string(out_dir.path().join("group_index.tsv"))?;
+        let counts_path = out_dir.path().join("length_counts.tsv.zst");
+        let arr: Array2<f64> = read_length_counts_tsv(&counts_path)?;
+        let group_index = read_length_counts_text(out_dir.path().join("length_counts.tsv.zst"))?;
 
         // Assert
         assert_eq!(
@@ -4457,8 +4531,8 @@ mod tests_lengths_command {
 
         // Act
         run(&cfg)?;
-        let counts_path = out_dir.path().join("length_counts.npy");
-        let arr: Array2<f64> = read_npy(&counts_path)?;
+        let counts_path = out_dir.path().join("length_counts.tsv.zst");
+        let arr: Array2<f64> = read_length_counts_tsv(&counts_path)?;
 
         // Assert
         assert_eq!(arr.shape(), &[4, 1]);
@@ -4521,9 +4595,9 @@ mod tests_lengths_command {
 
         // Act
         run(&cfg)?;
-        let counts_path = out_dir.path().join("length_counts.npy");
-        let arr: Array2<f64> = read_npy(&counts_path)?;
-        let group_index = std::fs::read_to_string(out_dir.path().join("group_index.tsv"))?;
+        let counts_path = out_dir.path().join("length_counts.tsv.zst");
+        let arr: Array2<f64> = read_length_counts_tsv(&counts_path)?;
+        let group_index = read_length_counts_text(out_dir.path().join("length_counts.tsv.zst"))?;
 
         // Assert
         assert_eq!(
@@ -4596,9 +4670,9 @@ mod tests_lengths_command {
 
         // Act
         run(&cfg)?;
-        let counts_path = out_dir.path().join("length_counts.npy");
-        let arr: Array2<f64> = read_npy(&counts_path)?;
-        let group_index = std::fs::read_to_string(out_dir.path().join("group_index.tsv"))?;
+        let counts_path = out_dir.path().join("length_counts.tsv.zst");
+        let arr: Array2<f64> = read_length_counts_tsv(&counts_path)?;
+        let group_index = read_length_counts_text(out_dir.path().join("length_counts.tsv.zst"))?;
 
         // Assert
         assert_eq!(

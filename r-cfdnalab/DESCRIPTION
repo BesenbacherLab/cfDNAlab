@@ -1,0 +1,31 @@
+Package: cfdnalab
+Type: Package
+Title: Load cfDNAlab Analysis Outputs in R
+Version: 0.1.0
+Authors@R: c(
+    person(given = "Ludvig Renbo",
+           family = "Olsen",
+           role = c("aut", "cre"),
+           email = "r-pkgs@ludvigolsen.dk",
+           comment = c(ORCID = "0009-0006-6798-7454"))
+  )
+Description: Helpers for loading cfDNAlab Zarr outputs into R data frames,
+    arrays, and sparse matrices. This package does not install or wrap the
+    cfDNAlab command-line tool.
+License: MIT + file LICENSE
+URL: https://github.com/BesenbacherLab/cfDNAlab/tree/main/r-cfdnalab
+BugReports: https://github.com/BesenbacherLab/cfDNAlab/issues
+Encoding: UTF-8
+LazyData: true
+Imports:
+    bit64,
+    jsonlite,
+    Matrix,
+    qs2,
+    zarr
+Suggests:
+    roxygen2,
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3

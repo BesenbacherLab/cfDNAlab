@@ -42,10 +42,6 @@ use flate2::read::MultiGzDecoder;
 use ndarray::Array3;
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
 use ndarray::array;
-#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_lengths"))]
-use ndarray_npy::read_npy;
-#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
-use ndarray_npy::read_npy as read_npy_midpoints;
 use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::record::Aux;
 use rust_htslib::bam::{self, Read};
@@ -55,6 +51,10 @@ use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_lengths"))]
+use fixtures::read_length_counts_tsv;
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
+use fixtures::read_midpoint_zarr_counts;
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_fcoverage"))]
 use fixtures::read_zst_to_string;
 #[cfg(feature = "cmd_bam_to_frag")]
@@ -1987,7 +1987,6 @@ fn read_gzip_text(path: &Path) -> Result<String> {
     decoder.read_to_string(&mut text)?;
     Ok(text)
 }
-
 #[cfg(feature = "cmd_bam_to_frag")]
 fn roundtrip_simple_inward_to_unpaired_bam() -> Result<(fixtures::BamFixture, TempDir, PathBuf)> {
     let source_bam = fixtures::simple_inward_bam()?;
@@ -2305,13 +2304,13 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_then_roundtrip_match
     run_lengths(&original_cfg)?;
     run_lengths(&restored_cfg)?;
 
-    let original_counts: ndarray::Array2<f64> = read_npy(original_out.path().join(dot_join(&[
+    let original_counts = read_length_counts_tsv(&original_out.path().join(dot_join(&[
         original_cfg.output_prefix.trim(),
-        "length_counts.npy",
+        "length_counts.tsv.zst",
     ])))?;
-    let restored_counts: ndarray::Array2<f64> = read_npy(restored_out.path().join(dot_join(&[
+    let restored_counts = read_length_counts_tsv(&restored_out.path().join(dot_join(&[
         restored_cfg.output_prefix.trim(),
-        "length_counts.npy",
+        "length_counts.tsv.zst",
     ])))?;
 
     // Assert:
@@ -2394,13 +2393,13 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_with_blacklist_then_
     run_lengths(&restored_cfg)?;
 
     // Assert
-    let original_counts: ndarray::Array2<f64> = read_npy(original_out.path().join(dot_join(&[
+    let original_counts = read_length_counts_tsv(&original_out.path().join(dot_join(&[
         original_cfg.output_prefix.trim(),
-        "length_counts.npy",
+        "length_counts.tsv.zst",
     ])))?;
-    let restored_counts: ndarray::Array2<f64> = read_npy(restored_out.path().join(dot_join(&[
+    let restored_counts = read_length_counts_tsv(&restored_out.path().join(dot_join(&[
         restored_cfg.output_prefix.trim(),
-        "length_counts.npy",
+        "length_counts.tsv.zst",
     ])))?;
 
     assert_eq!(original_counts.dim(), (1, 91));
@@ -2831,11 +2830,11 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_midpoints_then_roundtrip_mat
 
     // Assert
     let original_arr: Array3<f32> =
-        read_npy_midpoints(original_out.path().join("origmid.midpoint_profiles.npy"))?;
-    let restored_arr: Array3<f32> = read_npy_midpoints(
+        read_midpoint_zarr_counts(original_out.path().join("origmid.midpoint_profiles.zarr"))?;
+    let restored_arr: Array3<f32> = read_midpoint_zarr_counts(
         restored_out
             .path()
-            .join("restoredmid.midpoint_profiles.npy"),
+            .join("restoredmid.midpoint_profiles.zarr"),
     )?;
     let original_groups = fs::read_to_string(original_out.path().join("origmid.group_index.tsv"))?;
     let restored_groups =
@@ -2894,7 +2893,7 @@ fn given_bam_to_frag_gc_weights_then_frag_to_bam_then_midpoints_gc_tag_matches_o
     let frag_to_bam_out = TempDir::new()?;
     let original_midpoints_out = TempDir::new()?;
     let restored_midpoints_out = TempDir::new()?;
-    let gc_path = work.path().join("constant_gc_pkg.npz");
+    let gc_path = work.path().join("constant_gc_pkg.zarr");
     let intervals = work.path().join("sites.bed");
     let chrom_sizes_path = frag_to_bam_out.path().join("chrom.sizes");
     fs::write(&intervals, "chr1\t45\t56\tgroupA\n")?;
@@ -2909,7 +2908,7 @@ fn given_bam_to_frag_gc_weights_then_frag_to_bam_then_midpoints_gc_tag_matches_o
         reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![[3.0_f64]],
     };
-    package.write_npz(&gc_path)?;
+    package.write_zarr(&gc_path)?;
 
     let mut bam_to_frag_cfg = BamToFragConfig::new(
         IOCArgs {
@@ -3000,15 +2999,15 @@ fn given_bam_to_frag_gc_weights_then_frag_to_bam_then_midpoints_gc_tag_matches_o
     run_midpoints(&restored_midpoints_cfg)?;
 
     // Assert
-    let original_arr: Array3<f32> = read_npy_midpoints(
+    let original_arr: Array3<f32> = read_midpoint_zarr_counts(
         original_midpoints_out
             .path()
-            .join("origsites.midpoint_profiles.npy"),
+            .join("origsites.midpoint_profiles.zarr"),
     )?;
-    let restored_arr: Array3<f32> = read_npy_midpoints(
+    let restored_arr: Array3<f32> = read_midpoint_zarr_counts(
         restored_midpoints_out
             .path()
-            .join("restoredsites.midpoint_profiles.npy"),
+            .join("restoredsites.midpoint_profiles.zarr"),
     )?;
     let restored_tags = read_aux_tags(&output_bam_path(frag_to_bam_out.path(), "restored"))?;
 
@@ -3197,15 +3196,15 @@ fn given_bam_to_frag_real_non_neutral_gc_then_frag_to_bam_then_midpoints_gc_tag_
     run_midpoints(&restored_midpoints_cfg)?;
 
     // Assert
-    let original_arr: Array3<f32> = read_npy_midpoints(
+    let original_arr: Array3<f32> = read_midpoint_zarr_counts(
         original_midpoints_out
             .path()
-            .join("origsites.midpoint_profiles.npy"),
+            .join("origsites.midpoint_profiles.zarr"),
     )?;
-    let restored_arr: Array3<f32> = read_npy_midpoints(
+    let restored_arr: Array3<f32> = read_midpoint_zarr_counts(
         restored_midpoints_out
             .path()
-            .join("restoredsites.midpoint_profiles.npy"),
+            .join("restoredsites.midpoint_profiles.zarr"),
     )?;
     let restored_tags = read_aux_tags(&output_bam_path(frag_to_bam_out.path(), "restored"))?;
 
@@ -3257,7 +3256,7 @@ fn given_bam_to_frag_with_real_gc_and_scaling_outputs_when_frag_to_bam_runs_then
     let bam_to_frag_out = TempDir::new()?;
     let frag_to_bam_out = TempDir::new()?;
     let work = TempDir::new()?;
-    let gc_path = work.path().join("constant_gc_pkg.npz");
+    let gc_path = work.path().join("constant_gc_pkg.zarr");
     let scaling_path = work.path().join("uniform_scaling.tsv");
     let chrom_sizes_path = frag_to_bam_out.path().join("chrom.sizes");
     write_chrom_sizes(&chrom_sizes_path, &[("chr1", 200)])?;
@@ -3272,7 +3271,7 @@ fn given_bam_to_frag_with_real_gc_and_scaling_outputs_when_frag_to_bam_runs_then
         reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![[3.0_f64]],
     };
-    package.write_npz(&gc_path)?;
+    package.write_zarr(&gc_path)?;
 
     let mut bam_to_frag_cfg = BamToFragConfig::new(
         IOCArgs {

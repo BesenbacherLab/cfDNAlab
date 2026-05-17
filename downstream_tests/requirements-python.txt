@@ -1,0 +1,6 @@
+dask[array]
+numpy
+pandas
+pytest
+xarray
+zarr>=3

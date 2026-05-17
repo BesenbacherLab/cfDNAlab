@@ -42,7 +42,7 @@ struct IntervalBlacklistPrefilterSettings {
 }
 
 #[derive(Serialize)]
-struct MidpointProfileSettings<'a> {
+struct MidpointSettings<'a> {
     array_axes: [&'static str; 3],
     length_axis: LengthAxisSettings<'a>,
     position_axis: PositionAxisSettings,
@@ -53,10 +53,10 @@ struct MidpointProfileSettings<'a> {
     interval_blacklist_prefilter: IntervalBlacklistPrefilterSettings,
 }
 
-/// Write the midpoint profile settings sidecar.
+/// Write the midpoint command settings sidecar.
 ///
-/// The dense `.npy` file stores only array values and shape. This JSON file records the axis
-/// contract that makes those values interpretable after optional smoothing and final binning.
+/// The Zarr store carries the axis metadata needed for downstream loading. This JSON file records
+/// command settings in a plain human-readable sidecar.
 ///
 /// Parameters
 /// ----------
@@ -72,7 +72,7 @@ struct MidpointProfileSettings<'a> {
 ///     Margin used when interval-level blacklist prefiltering is enabled.
 /// - `use_blacklist_prefilter`:
 ///     Whether interval-level blacklist prefiltering was active for this run.
-pub(super) fn write_midpoint_profile_settings_json(
+pub(super) fn write_midpoint_settings_json(
     settings_path: &Path,
     opt: &MidpointsConfig,
     length_axis: &LengthAxis,
@@ -80,7 +80,7 @@ pub(super) fn write_midpoint_profile_settings_json(
     interval_blacklist_margin: u64,
     use_blacklist_prefilter: bool,
 ) -> Result<()> {
-    let settings = MidpointProfileSettings {
+    let settings = MidpointSettings {
         array_axes: ["group", "length_bin", "position"],
         length_axis: length_axis.settings(),
         position_axis: PositionAxisSettings {

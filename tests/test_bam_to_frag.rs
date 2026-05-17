@@ -817,7 +817,7 @@ mod tests_bam_to_frag {
         let out_dir = work.path().join("out_gc_fallback");
         std::fs::create_dir_all(&out_dir)?;
 
-        let gc_path = out_dir.join("gc_pkg.npz");
+        let gc_path = out_dir.join("gc_pkg.zarr");
         build_gc_package(&gc_path, 26, twobit_contig_footprint(&ref_twobit.path)?)?;
 
         let ioc = IOCArgs {
@@ -878,7 +878,7 @@ mod tests_bam_to_frag {
         let out_dir = work.path().join("out_gc_default_skip");
         std::fs::create_dir_all(&out_dir)?;
 
-        let gc_path = out_dir.join("gc_pkg.npz");
+        let gc_path = out_dir.join("gc_pkg.zarr");
         build_gc_package(&gc_path, 26, twobit_contig_footprint(&ref_twobit.path)?)?;
 
         let ioc = IOCArgs {
@@ -946,7 +946,7 @@ mod tests_bam_to_frag {
         let out_dir = work.path().join("out_gc_range_error");
         std::fs::create_dir_all(&out_dir)?;
 
-        let gc_path = out_dir.join("gc_pkg_short.npz");
+        let gc_path = out_dir.join("gc_pkg_short.zarr");
         let package = GCCorrectionPackage {
             version: GC_CORRECTION_SCHEMA_VERSION,
             end_offset: 0,
@@ -956,7 +956,7 @@ mod tests_bam_to_frag {
             reference_contig_footprint: twobit_contig_footprint(&ref_twobit.path)?,
             correction_matrix: array![[1.0_f64]],
         };
-        package.write_npz(&gc_path)?;
+        package.write_zarr(&gc_path)?;
 
         let ioc = IOCArgs {
             bam: bam.bam.clone(),
@@ -1007,7 +1007,7 @@ mod tests_bam_to_frag {
         let out_dir = work.path().join("out_gc_bad_version");
         std::fs::create_dir_all(&out_dir)?;
 
-        let gc_path = out_dir.join("gc_pkg_bad_version.npz");
+        let gc_path = out_dir.join("gc_pkg_bad_version.zarr");
         let package = GCCorrectionPackage {
             version: GC_CORRECTION_SCHEMA_VERSION + 1,
             end_offset: 0,
@@ -1017,7 +1017,7 @@ mod tests_bam_to_frag {
             reference_contig_footprint: twobit_contig_footprint(&ref_twobit.path)?,
             correction_matrix: array![[1.0_f64]],
         };
-        package.write_npz(&gc_path)?;
+        package.write_zarr(&gc_path)?;
 
         let ioc = IOCArgs {
             bam: bam.bam.clone(),
@@ -1054,7 +1054,7 @@ mod tests_bam_to_frag {
     #[test]
     fn gc_file_rejects_directory_with_clear_error() -> Result<()> {
         // Arrange:
-        // Point `--gc-file` at a directory instead of the expected `.npz` package file.
+        // Point `--gc-file` at a directory without the expected `.zarr` package suffix.
         // The command should reject that immediately during GC package loading.
         let bam = simple_inward_bam()?;
         let ref_twobit = simple_reference_twobit()?;
@@ -1090,7 +1090,7 @@ mod tests_bam_to_frag {
         // Assert
         let msg = err.to_string();
         assert!(
-            msg.contains("GC correction package path must point to an existing .npz file"),
+            msg.contains("GC correction package path must point to a .zarr directory"),
             "unexpected error message: {msg}"
         );
         assert!(
@@ -1346,7 +1346,7 @@ mod tests_bam_to_frag {
             "chromosome\tstart\tend\tscaling_factor\nchr1\t0\t200\t2\n",
         )?;
 
-        let gc_path = work.path().join("combined_gc_pkg.npz");
+        let gc_path = work.path().join("combined_gc_pkg.zarr");
         let package = GCCorrectionPackage {
             version: GC_CORRECTION_SCHEMA_VERSION,
             end_offset: 0,
@@ -1356,7 +1356,7 @@ mod tests_bam_to_frag {
             reference_contig_footprint: twobit_contig_footprint(&ref_twobit.path)?,
             correction_matrix: array![[3.0_f64, 1.0_f64], [1.0_f64, 1.0_f64]],
         };
-        package.write_npz(&gc_path)?;
+        package.write_zarr(&gc_path)?;
 
         // Manual expectations:
         // - The fixture contains one paired fragment spanning [20, 80), so fragment length = 60.
@@ -2221,7 +2221,7 @@ mod tests_bam_to_frag {
         let out_dir = work.path().join("out_count_gc_mismatch");
         fs::create_dir_all(&out_dir)?;
         let scaling_path = out_dir.join("uncorrected_count_scaling.tsv");
-        let gc_path = out_dir.join("gc_pkg.npz");
+        let gc_path = out_dir.join("gc_pkg.zarr");
         build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
         fs::write(
             &scaling_path,
@@ -2281,7 +2281,7 @@ mod tests_bam_to_frag {
             reference_contig_footprint,
             correction_matrix: array![[1.0_f64, 1.0_f64], [2.0_f64, 10.0_f64]],
         };
-        package.write_npz(path)?;
+        package.write_zarr(path)?;
         Ok(())
     }
 

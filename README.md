@@ -23,6 +23,8 @@ Works on cfDNA **fragments** from either *paired-end* sequencing data or unpaire
 
 The commands are **highly flexible** with many options and good default settings. Start with the simple [examples](#examples) in this README and then check the full guides in the [docs](https://cfdnalab.tools/).
 
+Load the `Zarr` outputs with the **accompanying [R](https://github.com/BesenbacherLab/cfDNAlab/tree/main/r-cfdnalab) and [Python](https://github.com/BesenbacherLab/cfDNAlab/tree/main/py-cfdnalab) packages** for easier downstream usage (*installed separately*).
+
 **Workflow-safe outputs**: The output files are only moved to their final location once all files have been fully written, so workflow managers don't confuse partially written files as successful completion.
 
 The package is under active development and may [change](https://github.com/BesenbacherLab/cfDNAlab/blob/main/CHANGELOG). Multiple additional commands are currently being built.
@@ -74,6 +76,13 @@ Then, you can add blacklist filtering, GC correction and more. See the [examples
 The following commands are currently available:
 
 `cfdna fcoverage`, `cfdna midpoints`, `cfdna ends`, `cfdna lengths`, `cfdna gc-bias`, `cfdna ref-gc-bias`, `cfdna fragment-count-weights`, `cfdna coverage-weights`, `cfdna bam-to-bam`, `cfdna bam-to-frag`, `cfdna frag-to-bam`.
+
+<p align="center">
+  <img src="cfdnalab_command_overview.png" height="450" alt="Overview of main commands" />
+</p>  
+<p align="center">
+  <b>Figure 1</b>: Overview of the main commands and input files. Non-exhaustive.
+</p>
 
 ### Feature extraction
 
@@ -303,7 +312,7 @@ cfdna gc-bias \
   --output-dir <sample_directory>/gc_bias \
   --n-threads 12 \
   --ref-2bit <path>/hg38.2bit \
-  --ref-gc-file <ref_gc_directory>/hg38.ref_gc_package.npz \
+  --ref-gc-file <ref_gc_directory>/hg38.ref_gc_package.zarr \
   --blacklist <path>/hg38-blacklist.v2.bed  # Should match those specified in ref-gc-bias!
 
 ```
@@ -315,7 +324,7 @@ cfdna gc-bias \
 cfdna fcoverage \
   --bam <sample>.bam \
   ... \  # See fcoverage example
-  --gc-file <sample_directory>/gc_bias/gc_bias_correction.npz \
+  --gc-file <sample_directory>/gc_bias/gc_bias_correction.zarr \
   --ref-2bit <path>/hg38.2bit
 
 ```
@@ -489,7 +498,7 @@ Choose any relevant options below. See `--help` for more options.
 
   # Include soft clipped bases (clipped fragment are skipped by default)
   # NOTE: Only recommended for `--k-inside` extraction with `--k-outside 0`
-  --clip-strategy 'raw-aligned-boundary' \
+  --clip-strategy 'include-at-aligned-boundary' \
 
   # Use windowing
   # Choose max. one windowing type 
@@ -635,7 +644,7 @@ cfdna fragment-count-weights \
   --blacklist $BLACKLIST \
   --min-fragment-length $MINLENGTH \
   --max-fragment-length $MAXLENGTH \
-  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz \
+  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.zarr \
   --ref-2bit $ASSEMBLY  \
   --n-threads $THREADS 
 
@@ -647,7 +656,7 @@ cfdna coverage-weights \
   --blacklist $BLACKLIST \
   --min-fragment-length $MINLENGTH \
   --max-fragment-length $MAXLENGTH \
-  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz \
+  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.zarr \
   --ref-2bit $ASSEMBLY \
   --n-threads $THREADS 
 
@@ -659,7 +668,7 @@ cfdna fcoverage \
   --blacklist $BLACKLIST \
   --min-fragment-length $MINLENGTH \
   --max-fragment-length $MAXLENGTH \
-  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz \
+  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.zarr \
   --ref-2bit $ASSEMBLY \
   --n-threads $THREADS 
 
@@ -675,7 +684,7 @@ cfdna fcoverage \
   --blacklist $BLACKLIST \
   --min-fragment-length $MINLENGTH \
   --max-fragment-length $MAXLENGTH \
-  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz \
+  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.zarr \
   --ref-2bit $ASSEMBLY \
   --n-threads $THREADS
 
@@ -686,7 +695,7 @@ cfdna lengths \
   --output-prefix $SAMPLE_NAME \
   --blacklist $BLACKLIST  \
   --length-bins $MINLENGTH:$(($MAXLENGTH+1)):1 \
-  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz \
+  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.zarr \
   --ref-2bit $ASSEMBLY \
   --scaling-factors $OUT/scaling_factors/$SAMPLE_NAME.fragment_counts.scaling_factors.tsv \
   --n-threads $THREADS 
@@ -699,7 +708,7 @@ cfdna lengths \
   --output-prefix $SAMPLE_NAME --by-size 5000000 \
   --blacklist $BLACKLIST \
   --length-bins 100 151 221 \
-  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz \
+  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.zarr \
   --ref-2bit $ASSEMBLY \
   --scaling-factors $OUT/scaling_factors/$SAMPLE_NAME.fragment_counts.scaling_factors.tsv \
   --n-threads $THREADS
@@ -714,7 +723,7 @@ cfdna ends \
   --blacklist $BLACKLIST \
   --min-fragment-length $MINLENGTH \
   --max-fragment-length $MAXLENGTH \
-  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz \
+  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.zarr \
   --ref-2bit $ASSEMBLY \
   --scaling-factors $OUT/scaling_factors/$SAMPLE_NAME.fragment_counts.scaling_factors.tsv \
   --n-threads $THREADS 
@@ -727,7 +736,7 @@ cfdna midpoints \
   --intervals $MIDPOINT_INTERVALS \
   --blacklist $BLACKLIST \
   --length-bins $MINLENGTH $(($MAXLENGTH+1)) \
-  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz \
+  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.zarr \
   --ref-2bit $ASSEMBLY \
   --scaling-factors $OUT/scaling_factors/$SAMPLE_NAME.fragment_counts.scaling_factors.tsv \
   --n-threads $THREADS
@@ -758,21 +767,48 @@ cfdna fcoverage \
 
 Most commands write one of these output types:
 
-| Format          | Use                            | Read with                    |
-| --------------- | ------------------------------ | ---------------------------- |
-| `.npy`, `.npz`  | dense array(s)                 | Python / NumPy               |
-| `.tsv.zst`      | tabular outputs                | `zstdcat`, Python, R         |
-| `.bedgraph.zst` | positional tracks              | `zstdcat`, convert to bigWig |
-| `.json`, `.txt` | settings and auxiliary outputs | any text reader              |
+| Format          | Use                            | Read with                                                                                                                                                        |
+| --------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.zarr`         | array(s) with meta data        | Our [R](https://github.com/BesenbacherLab/cfDNAlab/tree/main/r-cfdnalab) and [Python](https://github.com/BesenbacherLab/cfDNAlab/tree/main/py-cfdnalab) packages |
+| `.tsv.zst`      | tabular outputs                | `zstdcat`, Pandas in Python, fread in R                                                                                                                          |
+| `.bedgraph.zst` | positional tracks              | `zstdcat`, Convert to bigWig                                                                                                                                     |
+| `.json`, `.txt` | settings and auxiliary outputs | any text reader                                                                                                                                                  |
 
-Numpy files can be read with python:
+The Zarr directories can be read with our [R](https://github.com/BesenbacherLab/cfDNAlab/tree/main/r-cfdnalab) and [Python](https://github.com/BesenbacherLab/cfDNAlab/tree/main/py-cfdnalab) packages (*installed separately*):
+
+Python:
 
 ```python
+import cfdnalab as cfl
 
-import numpy as np
+midpoints = cfl.read_midpoints("path_to/<sample>.midpoint_profiles.zarr")
 
-x = np.load("path_to/file.npy")
-y = np.load("path_to/file.npz")
+group_idx = midpoints.group_idx("LYL1")
+length_bin_idx = midpoints.length_bin_idx(167)
+
+# Get data frame for a single group and length bin
+profile = midpoints.data_frame_for_profile(
+    group_idx=group_idx,
+    length_bin_idx=length_bin_idx,
+)
+
+```
+
+R:
+
+```r
+library(cfdnalab)
+
+midpoints <- read_midpoints("path_to/<sample>.midpoint_profiles.zarr")
+
+length_bin <- length_bin_idx(midpoints, 167)
+
+# Get data frame for a single group and length bin
+profile <- profile_data_frame(
+  midpoints,
+  group = "LYL1",
+  length_bin_idx = length_bin
+)
 
 ```
 
@@ -786,6 +822,15 @@ zstd -d path_to/file.tsv.zst
 zstdcat path_to/file.tsv.zst
 
 ```
+
+In R, you can do:
+
+```r
+library(data.table)
+x = fread(cmd = "zstd -dc path_to/file.tsv.zst")
+```
+
+In python, Pandas automatically detects and decompresses the file.
 
 <br>
 

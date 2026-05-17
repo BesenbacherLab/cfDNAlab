@@ -1,0 +1,39 @@
+[project]
+name = "cfdnalab"
+version = "0.1.0"
+description = "Python helpers for loading cfDNAlab output files"
+authors = [{name = "Ludvig", email = "mail@ludvigolsen.dk"}]
+readme = "README.md"
+license = "MIT"
+keywords = [
+    "fragmentomics",
+    "cell-free-dna",
+    "cfdna",
+    "whole-genome-sequencing"
+]
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "zarr>=3",
+]
+
+[project.urls]
+Repository = "https://github.com/BesenbacherLab/cfDNAlab/tree/main/py-cfdnalab"
+Issues = "https://github.com/BesenbacherLab/cfDNAlab/issues"
+Changelog = "https://github.com/BesenbacherLab/cfDNAlab/blob/main/py-cfdnalab/CHANGELOG"
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

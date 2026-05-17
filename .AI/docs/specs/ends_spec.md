@@ -75,11 +75,16 @@
 
 ## Output Contract
 
-- Sparse output writes `<prefix>.end_motifs.sparse.npz` plus `<prefix>.end_motifs.txt`.
-- Dense output with `--all-motifs` writes `<prefix>.end_motifs.npy` plus `<prefix>.end_motifs.txt`.
-- Dense output enumerates every possible motif label and is guarded by `CFDNALAB_ENDS_MAX_DENSE_OUTPUT_BYTES`, default 5 GiB.
-- Motif labels are sorted deterministically.
-- Settings sidecar is `<prefix>.end_motif_settings.json` and records motif lengths, inside source, clip strategy, window assignment, indel filter, effective indel filter, base-quality filters, and experimental complement collapse when enabled.
+- Count output writes `<prefix>.end_motifs.zarr`.
+- Default output is sparse COO inside the Zarr store under `sparse/{row,motif,count,shape,sparse_dimension}` and keeps only observed motifs.
+- Dense output with `--all-motifs` writes `counts[row, motif]` inside the same Zarr store and enumerates every possible motif label.
+- Dense output is guarded by `CFDNALAB_ENDS_MAX_DENSE_OUTPUT_BYTES`, default 5 GiB.
+- Motif labels are sorted deterministically. `motif_index[motif]` stores the numeric count-column coordinate, `motif_byte[motif_byte]` stores byte offsets, and `motif_ascii[motif, motif_byte]` stores fixed-width ASCII motif labels in count-column order.
+- The numeric `row` coordinate stores row indices. Global output stores `row_label` as JSON labels on `row`.
+- Fixed-size and BED row metadata includes `chromosome`, `row_chromosome`, `row_start_bp`, `row_end_bp`, and `blacklisted_fraction`. Chromosome names are stored as JSON labels on `chromosome`, and `row_chromosome` indexes that chromosome axis.
+- Grouped-BED row metadata includes `group`, `eligible_windows`, and `blacklisted_fraction`. Group names are stored as JSON labels on `group`, and grouped rows require contiguous zero-based group indices matching count rows.
+- Sparse COO shape dimensions are described by `sparse/sparse_dimension`, whose JSON labels are `["row", "motif"]`.
+- Settings sidecar is `<prefix>.end_settings.json` and records motif lengths, inside source, clip strategy, window assignment, indel filter, effective indel filter, base-quality filters, and experimental complement collapse when enabled.
 
 ## Open Notes
 

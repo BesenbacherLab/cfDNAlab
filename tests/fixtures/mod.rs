@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, ensure};
 use cfdnalab::commands::cli_common::{BaseSelectionArgs, FragmentPositionSelectionArgs};
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
 use cfdnalab::commands::cli_common::{
@@ -15,14 +15,17 @@ use cfdnalab::commands::ref_gc_bias::{
 use cfdnalab::shared::positioning::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
 use cfdnalab::shared::reference::twobit_contig_lengths;
+use ndarray::{Array2, Array3};
 use rust_htslib::bam::{self, header::HeaderRecord, record::Cigar, record::CigarString};
 use std::{
     fs::{File, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 use tempfile::TempDir;
 use twobit::convert::{fasta::FastaReader, to_2bit};
+use zarrs::{array::Array, filesystem::FilesystemStore};
 use zstd::stream::read::Decoder as ZstdDecoder;
 
 const FLAG_FIRST_MATE: u16 = 0x40;
@@ -34,6 +37,69 @@ pub const LONG_FRAGMENT_LENGTH: i64 = 600;
 pub const LONG_FRAGMENT_READ_LENGTH: i64 = 100;
 pub const LONG_FRAGMENT_STARTS: [i64; 10] =
     [0, 400, 800, 1_200, 1_600, 2_000, 2_400, 2_800, 3_200, 3_600];
+
+/// Read the `counts` array from a midpoint Zarr output.
+pub fn read_midpoint_zarr_counts<P: AsRef<Path>>(store_path: P) -> Result<Array3<f32>> {
+    let array = open_zarr_array(store_path.as_ref(), "/counts")?;
+    let shape = array.shape();
+    ensure!(
+        shape.len() == 3,
+        "expected midpoint Zarr counts to be rank 3 but found rank {}",
+        shape.len()
+    );
+    let values: Vec<f32> = array
+        .retrieve_array_subset(&array.subset_all())
+        .context("reading midpoint Zarr counts")?;
+    let shape = (
+        usize::try_from(shape[0]).context("group dimension exceeds usize")?,
+        usize::try_from(shape[1]).context("length_bin dimension exceeds usize")?,
+        usize::try_from(shape[2]).context("position dimension exceeds usize")?,
+    );
+    Array3::from_shape_vec(shape, values).context("building midpoint count array from Zarr values")
+}
+
+/// Read a one-dimensional signed-integer array from a midpoint Zarr output.
+pub fn read_midpoint_zarr_i32_1d<P: AsRef<Path>>(
+    store_path: P,
+    array_path: &str,
+) -> Result<Vec<i32>> {
+    let array = open_zarr_array(store_path.as_ref(), array_path)?;
+    ensure!(
+        array.shape().len() == 1,
+        "expected midpoint Zarr array {array_path} to be rank 1"
+    );
+    array
+        .retrieve_array_subset(&array.subset_all())
+        .with_context(|| format!("reading midpoint Zarr array {array_path}"))
+}
+
+/// Read a one-dimensional unsigned-integer array from a midpoint Zarr output.
+pub fn read_midpoint_zarr_u32_1d<P: AsRef<Path>>(
+    store_path: P,
+    array_path: &str,
+) -> Result<Vec<u32>> {
+    let array = open_zarr_array(store_path.as_ref(), array_path)?;
+    ensure!(
+        array.shape().len() == 1,
+        "expected midpoint Zarr array {array_path} to be rank 1"
+    );
+    array
+        .retrieve_array_subset(&array.subset_all())
+        .with_context(|| format!("reading midpoint Zarr array {array_path}"))
+}
+
+fn open_zarr_array(store_path: &Path, array_path: &str) -> Result<Array<FilesystemStore>> {
+    let store = Arc::new(
+        FilesystemStore::new(store_path)
+            .with_context(|| format!("opening Zarr store {}", store_path.display()))?,
+    );
+    Array::open(store, array_path).with_context(|| {
+        format!(
+            "opening Zarr array {array_path} in {}",
+            store_path.display()
+        )
+    })
+}
 
 #[derive(Debug)]
 pub struct BamFixture {
@@ -294,7 +360,7 @@ pub fn build_real_neutral_gc_package_for_range(
             n_threads: 1,
         },
         reference_path.to_path_buf(),
-        ref_gc_dir.path().join("ref_gc_package.npz"),
+        ref_gc_dir.path().join("ref_gc_package.zarr"),
         base_chromosomes(&["chr1"]),
     );
     configure_gc_bias_common(&mut gc_cfg);
@@ -305,7 +371,7 @@ pub fn build_real_neutral_gc_package_for_range(
     gc_cfg.set_min_length_bin_width(1);
     run_gc_bias(&gc_cfg)?;
 
-    Ok(gc_out_dir.join("gc_bias_correction.npz"))
+    Ok(gc_out_dir.join("gc_bias_correction.zarr"))
 }
 
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
@@ -335,7 +401,7 @@ pub fn write_constant_gc_package(path: &Path, fragment_length: u32, weight: f64)
         reference_contig_footprint: Vec::new(),
         correction_matrix: ndarray::array![[weight]],
     };
-    package.write_npz(path)?;
+    package.write_zarr(path)?;
     Ok(())
 }
 
@@ -356,7 +422,7 @@ pub fn write_two_bin_gc_package(
         reference_contig_footprint,
         correction_matrix: ndarray::array![[low_gc_weight, high_gc_weight]],
     };
-    package.write_npz(path)?;
+    package.write_zarr(path)?;
     Ok(())
 }
 
@@ -434,7 +500,7 @@ pub fn build_real_non_neutral_gc_package(
             n_threads: 1,
         },
         reference_path.to_path_buf(),
-        ref_gc_dir.path().join("ref_gc_package.npz"),
+        ref_gc_dir.path().join("ref_gc_package.zarr"),
         base_chromosomes(&["chr1"]),
     );
     configure_gc_bias_common(&mut gc_cfg);
@@ -443,7 +509,7 @@ pub fn build_real_non_neutral_gc_package(
     gc_cfg.set_min_length_bin_width(1);
     run_gc_bias(&gc_cfg)?;
 
-    Ok(gc_out_dir.join("gc_bias_correction.npz"))
+    Ok(gc_out_dir.join("gc_bias_correction.zarr"))
 }
 
 pub fn single_position_selection(
@@ -679,7 +745,7 @@ fn write_bam(
     let mut records: Vec<bam::Record> = Vec::new();
 
     for fragment in fragments {
-        let qname = format!("frag{}_{}", fragment.forward.tid, fragment.forward.pos);
+        let qname = default_fragment_qname(fragment);
         records.push(fragment.forward.to_record(qname.as_bytes()));
         records.push(fragment.reverse.to_record(qname.as_bytes()));
     }
@@ -693,6 +759,26 @@ fn write_bam(
 
     for rec in records {
         writer.write(&rec)?;
+    }
+    Ok(())
+}
+
+fn default_fragment_qname(fragment: &FragmentSpec) -> String {
+    format!("frag{}_{}", fragment.forward.tid, fragment.forward.pos)
+}
+
+fn ensure_default_fragment_qnames_are_unique(fragments: &[FragmentSpec]) -> Result<()> {
+    let mut seen = fxhash::FxHashSet::default();
+    seen.reserve(fragments.len());
+    for fragment in fragments {
+        let qname = default_fragment_qname(fragment);
+        ensure!(
+            seen.insert(qname.clone()),
+            "bam_from_specs would assign duplicate paired-read qname '{qname}'. \
+             Duplicate qnames can make synthetic paired fragments overwrite each other in the \
+             pairing stash. Use bam_from_specs_strict_identity when stacked fragments at the \
+             same start are intentional."
+        );
     }
     Ok(())
 }
@@ -768,6 +854,8 @@ pub fn bam_from_specs(
     singles: Vec<ReadSpec>,
     name: &str,
 ) -> Result<BamFixture> {
+    ensure_default_fragment_qnames_are_unique(&fragments)?;
+
     let tempdir = TempDir::new()?;
     let bam_path = tempdir.path().join(format!("{name}.bam"));
 
@@ -1055,6 +1143,56 @@ pub fn read_zst_to_string(path: &Path) -> Result<String> {
     let mut buf = String::new();
     decoder.read_to_string(&mut buf)?;
     Ok(buf)
+}
+
+/// Read a zstd-compressed length-count TSV as text.
+///
+/// `cfdna lengths` writes zstd-compressed TSV output. Tests use this helper
+/// when they need to inspect metadata columns directly.
+pub fn read_length_counts_text<P: AsRef<Path>>(path: P) -> Result<String> {
+    read_zst_to_string(path.as_ref())
+}
+
+/// Read a length-count TSV and return only the numeric `count_*` columns.
+///
+/// This keeps integration tests that previously read the old dense NPY matrix
+/// focused on the same numeric contract while allowing metadata columns to
+/// vary by output mode.
+pub fn read_length_counts_tsv<P: AsRef<Path>>(path: P) -> Result<Array2<f64>> {
+    let text = read_length_counts_text(path)?;
+    let mut lines = text.lines();
+    let header = lines
+        .next()
+        .context("length counts TSV must have a header")?;
+    let headers: Vec<&str> = header.split('\t').collect();
+    let first_count_column = headers
+        .iter()
+        .position(|column| column.starts_with("count_"))
+        .context("length counts TSV must contain count columns")?;
+    let count_column_count = headers.len() - first_count_column;
+    ensure!(
+        count_column_count > 0,
+        "length counts TSV must contain at least one count column"
+    );
+
+    let mut values = Vec::new();
+    let mut row_count = 0;
+    for line in lines {
+        let fields: Vec<&str> = line.split('\t').collect();
+        ensure!(
+            fields.len() == headers.len(),
+            "length counts row must match the header column count"
+        );
+        for value in &fields[first_count_column..] {
+            values.push(value.parse::<f64>()?);
+        }
+        row_count += 1;
+    }
+
+    Ok(Array2::from_shape_vec(
+        (row_count, count_column_count),
+        values,
+    )?)
 }
 
 pub fn read_binary_zst(path: &Path) -> Result<Vec<u8>> {

@@ -25,7 +25,7 @@ This spec describes the current `ref-gc-bias` -> `gc-bias` -> downstream `--gc-f
 - `cfdna ref-gc-bias` builds an assembly-level expected GC table. Its output is reusable across samples aligned to the same selected reference contigs, chromosome set, fragment length range, end offset, and blacklist/windowing decisions.
 - `cfdna gc-bias` builds a sample-specific correction package by comparing a BAM-derived observed GC table to the reference table.
 - Downstream commands load the sample-specific correction package with `--gc-file` and multiply fragment contributions by the looked-up correction weight.
-- The shared schema version for both reference and sample GC packages is `GC_CORRECTION_SCHEMA_VERSION = 2`.
+- The shared schema version for both reference and sample GC packages is `GC_CORRECTION_SCHEMA_VERSION = 3`.
 - The shared minimum ACGT support for GC-fraction calculation is 10 bases.
 
 ## Fragment Geometry
@@ -110,23 +110,21 @@ threshold = total_covered_acgt_positions / 1,000,000 * threshold_per_mb
 
 ### Reference Package Output
 
-The output path is `<output_prefix>.ref_gc_package.npz`, or `ref_gc_package.npz` with an empty prefix.
+The output path is `<prefix>.ref_gc_package.zarr`.
 
-The archive contains:
+The Zarr store contains:
 
-- `counts`: length by GC-percent matrix after smoothing, GC-percent width correction, and optional interpolation.
-- `support_mask_unobservables`: theoretical observable-cell mask.
-- `support_mask_outliers`: low-reference-support mask from before interpolation.
-- `gc_percent_widths`: width table for GC percent bins.
-- `version`: schema version.
-- `length_range`: `[min_fragment_length, max_fragment_length]`.
-- `end_offset`: end trim used for GC counting.
-- `skip_interpolation`: whether interpolation was skipped.
-- `smoothing_radius`: configured smoothing radius.
-- `smoothing_sigma`: configured smoothing sigma.
-- `skip_smoothing`: whether smoothing was skipped.
-- `chromosomes_json`: selected chromosome names.
-- `reference_contig_footprint_json`: 2bit contig footprint.
+- Root attributes include `cfdnalab_schema = "reference_gc_package"`,
+  `cfdnalab_schema_version`, `end_offset`, `skip_interpolation`, `smoothing_radius`,
+  `smoothing_sigma`, `skip_smoothing`, and the GC-percent rounding/minimum-ACGT settings.
+- `counts`: `float64[length, gc_percent]` matrix after smoothing, GC-percent width correction, and optional interpolation.
+- `support_mask_unobservables`: `bool[length, gc_percent]` theoretical observable-cell mask.
+- `support_mask_outliers`: `bool[length, gc_percent]` low-reference-support mask from before interpolation.
+- `gc_percent_widths`: `uint16[length, gc_percent]` width table for GC percent bins.
+- `length`: `int32[length]` concrete fragment lengths.
+- `gc_percent`: `int32[gc_percent]` concrete integer GC-percent values.
+- `chromosome`: `int32[chromosome]` selected chromosome indices with JSON chromosome labels in array attributes.
+- `reference_contig_footprint_json`: `uint8[json_byte]` 2bit contig footprint encoded as JSON bytes.
 
 ## Sample GC Command
 
@@ -226,17 +224,17 @@ normalized_binned_sample_counts / normalized_binned_reference_counts
 
 ### Sample Package Output
 
-The output path is `<output_prefix>.gc_bias_correction.npz`, or `gc_bias_correction.npz` with an empty prefix.
+The output path is `<prefix>.gc_bias_correction.zarr`.
 
-The archive contains:
+The Zarr store contains:
 
-- `correction_matrix`: multiplicative weights shaped `(length_bin, gc_bin)`.
-- `length_edges`: inclusive/exclusive bin edges with the final edge treated as inclusive on readback.
-- `gc_edges`: inclusive/exclusive GC-percent bin edges with the final edge treated as inclusive on readback.
-- `version`: schema version.
-- `end_offset`: end trim inherited from the reference package.
-- `length_bin_frequencies`: normalized sample length-bin frequencies.
-- `reference_contig_footprint_json`: 2bit contig footprint inherited from the reference package.
+- Root attributes include `cfdnalab_schema = "gc_correction_package"`,
+  `cfdnalab_schema_version`, `end_offset`, and the GC-percent rounding/minimum-ACGT settings.
+- `correction_matrix`: `float64[length_bin, gc_bin]` multiplicative weights.
+- `length_edges`: `uint32[length_edge]` inclusive/exclusive bin edges with the final edge treated as inclusive on readback.
+- `gc_edges`: `uint32[gc_edge]` inclusive/exclusive GC-percent bin edges with the final edge treated as inclusive on readback.
+- `length_bin_frequencies`: `float64[length_bin]` normalized sample length-bin frequencies.
+- `reference_contig_footprint_json`: `uint8[json_byte]` 2bit contig footprint inherited from the reference package, encoded as JSON bytes.
 
 With the `plotters` feature, `gc-bias` also writes:
 
@@ -250,8 +248,8 @@ With `--save-intermediates`, staged `.npy` files use names of the form `<prefix>
 
 ## Downstream `--gc-file` Application
 
-- Downstream commands load `gc_bias_correction.npz` through `GCCorrectionPackage::from_file`.
-- The package path must exist and have a `.npz` extension.
+- Downstream commands load `gc_bias_correction.zarr` through `GCCorrectionPackage::from_file`.
+- The public package path must exist and have a `.zarr` extension.
 - The package schema version must match `GC_CORRECTION_SCHEMA_VERSION`.
 - `--gc-file` requires `--ref-2bit` at CLI/config validation time.
 - When a downstream command supplies `--ref-2bit`, the current reference contig footprint must exactly match the footprint stored in the correction package.

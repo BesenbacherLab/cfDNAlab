@@ -388,7 +388,7 @@ fn resolve_chromosomes_all_without_contig_source_fails() {
 #[test]
 fn apply_gc_args_rejects_gc_file_without_ref_2bit() {
     let args = ApplyGCArgs {
-        gc_file: Some(PathBuf::from("gc_bias_correction.npz")),
+        gc_file: Some(PathBuf::from("gc_bias_correction.zarr")),
         gc_tag: None,
         neutralize_invalid_gc: false,
     };
@@ -467,7 +467,7 @@ fn parse_sam_aux_tag_name_rejects_invalid_shapes() {
 #[test]
 fn apply_gc_file_only_args_rejects_gc_file_without_ref_2bit() {
     let args = ApplyGCArgFileOnly {
-        gc_file: Some(PathBuf::from("gc_bias_correction.npz")),
+        gc_file: Some(PathBuf::from("gc_bias_correction.zarr")),
         neutralize_invalid_gc: false,
     };
 
@@ -485,7 +485,7 @@ fn apply_gc_file_only_args_rejects_gc_file_without_ref_2bit() {
 #[test]
 fn apply_gc_file_only_args_allows_gc_file_with_ref_2bit() {
     let args = ApplyGCArgFileOnly {
-        gc_file: Some(PathBuf::from("gc_bias_correction.npz")),
+        gc_file: Some(PathBuf::from("gc_bias_correction.zarr")),
         neutralize_invalid_gc: false,
     };
 

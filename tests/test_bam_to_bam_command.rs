@@ -898,7 +898,7 @@ fn gc_file_neutralize_invalid_writes_gc_tag_one_on_both_mates() -> Result<()> {
     let ref_twobit = simple_reference_twobit()?;
     let work = tempdir()?;
     let out_bam = work.path().join("gc_fallback.bam");
-    let gc_path = work.path().join("gc_pkg.npz");
+    let gc_path = work.path().join("gc_pkg.zarr");
     build_gc_package(&gc_path, 26, twobit_contig_footprint(&ref_twobit.path)?)?;
 
     let mut cfg = base_config(&bam.bam, &out_bam);
@@ -949,7 +949,7 @@ fn gc_file_default_behavior_skips_fragment_entirely() -> Result<()> {
     let ref_twobit = simple_reference_twobit()?;
     let work = tempdir()?;
     let out_bam = work.path().join("gc_drop_invalid.bam");
-    let gc_path = work.path().join("gc_pkg.npz");
+    let gc_path = work.path().join("gc_pkg.zarr");
     build_gc_package(&gc_path, 26, twobit_contig_footprint(&ref_twobit.path)?)?;
 
     let mut cfg = base_config(&bam.bam, &out_bam);
@@ -999,7 +999,7 @@ fn gc_file_and_scaling_factors_write_identical_gc_cov_and_flen_tags_on_both_mate
     let ref_twobit = simple_reference_twobit()?;
     let work = tempdir()?;
     let out_bam = work.path().join("gc_and_cov.bam");
-    let gc_path = work.path().join("gc_pkg.npz");
+    let gc_path = work.path().join("gc_pkg.zarr");
     let scaling_path = work.path().join("scaling.tsv");
     build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
     write_scaling_file(&scaling_path, "chr1", 200, 4.0_f32 / 3.0_f32)?;
@@ -1049,7 +1049,7 @@ fn gc_file_and_count_scaling_factors_write_identical_gc_cnt_and_flen_tags_on_bot
     let ref_twobit = simple_reference_twobit()?;
     let work = tempdir()?;
     let out_bam = work.path().join("gc_and_cnt.bam");
-    let gc_path = work.path().join("gc_pkg.npz");
+    let gc_path = work.path().join("gc_pkg.zarr");
     let scaling_path = work.path().join("count_scaling.tsv");
     build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
     write_scaling_file(&scaling_path, "chr1", 200, 4.0_f32 / 3.0_f32)?;
@@ -1195,7 +1195,7 @@ fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range
     let ref_twobit = simple_reference_twobit()?;
     let work = tempdir()?;
     let out_bam = work.path().join("gc_range_error.bam");
-    let gc_path = work.path().join("gc_pkg_short.npz");
+    let gc_path = work.path().join("gc_pkg_short.zarr");
     let package = GCCorrectionPackage {
         version: GC_CORRECTION_SCHEMA_VERSION,
         end_offset: 0,
@@ -1205,7 +1205,7 @@ fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range
         reference_contig_footprint: twobit_contig_footprint(&ref_twobit.path)?,
         correction_matrix: array![[1.0_f64]],
     };
-    package.write_npz(&gc_path)?;
+    package.write_zarr(&gc_path)?;
 
     let mut cfg = base_config(&bam.bam, &out_bam);
     cfg.set_gc(ApplyGCArgFileOnly {
@@ -1331,7 +1331,7 @@ fn bed_blacklist_scaling_and_gc_together_keep_only_the_expected_tagged_fragment(
     )?;
     let work = tempdir()?;
     let out_bam = work.path().join("combined_filters.bam");
-    let gc_path = work.path().join("gc_pkg.npz");
+    let gc_path = work.path().join("gc_pkg.zarr");
     let scaling_path = work.path().join("scaling.tsv");
     let bed_path = work.path().join("windows.bed");
     let blacklist_path = work.path().join("blacklist.bed");
@@ -1530,7 +1530,7 @@ fn gc_file_rejects_package_with_schema_version_mismatch() -> Result<()> {
     let ref_twobit = simple_reference_twobit()?;
     let work = tempdir()?;
     let out_bam = work.path().join("gc_bad_version.bam");
-    let gc_path = work.path().join("gc_pkg_bad_version.npz");
+    let gc_path = work.path().join("gc_pkg_bad_version.zarr");
     let package = GCCorrectionPackage {
         version: GC_CORRECTION_SCHEMA_VERSION + 1,
         end_offset: 0,
@@ -1540,7 +1540,7 @@ fn gc_file_rejects_package_with_schema_version_mismatch() -> Result<()> {
         reference_contig_footprint: twobit_contig_footprint(&ref_twobit.path)?,
         correction_matrix: array![[1.0_f64]],
     };
-    package.write_npz(&gc_path)?;
+    package.write_zarr(&gc_path)?;
 
     let mut cfg = base_config(&bam.bam, &out_bam);
     cfg.set_gc(ApplyGCArgFileOnly {
@@ -1634,7 +1634,7 @@ fn count_scaling_tsv_with_uncorrected_metadata_rejects_gc_corrected_bam_to_bam_r
     let work = tempdir()?;
     let out_bam = work.path().join("count_scaling_gc_mismatch.bam");
     let scaling_path = work.path().join("uncorrected_count_scaling.tsv");
-    let gc_path = work.path().join("gc_pkg.npz");
+    let gc_path = work.path().join("gc_pkg.zarr");
     build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
     fs::write(
         &scaling_path,
@@ -1853,6 +1853,6 @@ fn build_gc_package(
         reference_contig_footprint,
         correction_matrix: array![[1.0_f64, 1.0_f64], [2.0_f64, 10.0_f64]],
     };
-    package.write_npz(path)?;
+    package.write_zarr(path)?;
     Ok(())
 }

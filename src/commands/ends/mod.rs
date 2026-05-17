@@ -6,3 +6,4 @@ pub mod motifs;
 pub mod output;
 pub mod tiling;
 pub mod write;
+pub(crate) mod zarr;

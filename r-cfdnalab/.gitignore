@@ -1,0 +1,12 @@
+.Rproj.user
+.Rhistory
+.RData
+inst/doc
+revdep/checks
+revdep/checks\.noindex
+revdep/library
+revdep/library\.noindex
+
+*.DS_Store
+
+revdep/

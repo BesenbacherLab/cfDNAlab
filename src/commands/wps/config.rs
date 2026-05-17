@@ -158,7 +158,7 @@ pub struct WPSSharedConfig {
     /// Decimals to round values to when writing `[integer]`
     ///
     /// **NOTE**: When floating point precision is not needed,
-    /// all values are integers, why we remove all decimal points!
+    /// all values are integers and no decimal points are written.
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value = "2", value_parser = clap::value_parser!(u8).range(0..), help_heading="Core"))]

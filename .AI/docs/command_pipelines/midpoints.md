@@ -17,7 +17,7 @@ flowchart TD
     count["Count into sparse tile profiles<br/>group x length bin x position"]
     merge["Merge sparse tile profiles"]
     postprocess["Post-process final profiles<br/>configured smoothing, trim flanks, final binning"]
-    profile["Dense midpoint profile<br/>midpoint_profiles.npy"]
+    profile["Dense midpoint profile<br/>midpoint_profiles.zarr"]
     group_index["Group index<br/>group_idx to group name"]
     settings["Settings<br/>axis, smoothing, and binning metadata"]
     plots["QC plots<br/>selected groups when plotting is enabled"]
@@ -58,7 +58,7 @@ For odd-length fragments, the midpoint is the center base. For even-length fragm
 
 ## Outputs
 
-The main output is `<prefix>.midpoint_profiles.npy`. The companion `<prefix>.group_index.tsv` maps numeric group indices back to group names. The settings sidecar `<prefix>.midpoint_profile_settings.json` records the length axis, position binning, and smoothing settings needed to interpret the array. When plotting is enabled, selected groups also produce quick-look PNG profiles and length-bin heatmaps.
+The main output is `<prefix>.midpoint_profiles.zarr/`. Its `counts` array stores `(group, length_bin, position)` values, and the `group` coordinate is the same zero-based `group_idx` used in `<prefix>.group_index.tsv`. The store also includes group names, length-bin intervals, position-bin intervals, and eligible interval counts. The companion `<prefix>.group_index.tsv` remains a plain-text group summary. The settings sidecar `<prefix>.midpoint_settings.json` records command settings so the run can be inspected without opening the Zarr store. When plotting is enabled, selected groups also produce quick-look PNG profiles and length-bin heatmaps.
 
 ## Corrections And Filters
 

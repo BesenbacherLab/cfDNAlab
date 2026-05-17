@@ -1,14 +1,21 @@
 # lengths Spec
 
-`cfdna lengths` counts fragment lengths into a two-dimensional matrix. Rows are the selected output units, and columns are fragment length bins.
+`cfdna lengths` counts fragment lengths into a wide compressed TSV table. Rows are the selected output units, and count columns are fragment length bins.
 
 ## Output Contract
 
-- Main output is a `.npy` matrix with shape `(row, length_bin)`.
-- Rows represent one of: global output, fixed/BED windows, or grouped BED groups.
-- The length axis is shared by all rows and is described in the settings sidecar.
-- Window metadata sidecars must preserve row interpretation for fixed/BED/grouped outputs.
-- Settings JSON records length-axis intervals, aggregation level, window mode, indel mode, clip mode, assignment mode, GC settings, and whether scaling factors were used.
+- Main output is `<prefix>.length_counts.tsv.zst`, or `length_counts.tsv.zst` with an empty prefix.
+- Single-bp count columns are named `count_<length>` and represent half-open length bins `[length, length + 1)`.
+- Wider count columns are named `count_<start>_<end>` and represent half-open length bins `[start, end)`.
+- Global mode writes one row with only count columns.
+- Fixed-size and BED modes write one row per genomic window, keyed by `chrom`, `start`, and `end`.
+- When a blacklist is used, fixed-size and BED rows also include `blacklisted_fraction`.
+- Grouped BED mode writes one row per group, keyed by `group_name`.
+- Grouped BED rows include `eligible_windows`, the number of retained grouped BED windows assigned to that group.
+- When a blacklist is used, grouped BED rows also include interval-width weighted `blacklisted_fraction`.
+- Count values are rounded only when written, using the configured `--decimals` value.
+- Blacklist fractions are rounded only when written, always to three decimals.
+- Settings JSON records length-axis intervals, aggregation level, window mode, indel mode, clip mode, assignment mode, count output decimals, GC settings, and whether blacklist, GC correction, or scaling factors were used.
 
 ## Length Axis
 
@@ -65,4 +72,4 @@
 
 - Counting code should keep the matrix dense in final output and use sparse or tiled internals only as implementation detail.
 - All per-window and per-group merges must preserve length-axis identity.
-- Settings sidecars are part of the output contract. Add fields when they are necessary for reproducibility, but avoid duplicating values already obvious from filenames or matrix shape.
+- Settings sidecars are part of the output contract. Add fields when they are necessary for reproducibility, but avoid duplicating values already obvious from filenames or TSV column names.

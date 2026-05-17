@@ -1,4 +1,7 @@
-use super::{eligible_interval_counts_by_group, write_midpoint_group_index_tsv};
+use super::{
+    eligible_interval_counts_by_group, ordered_midpoint_group_summaries,
+    write_midpoint_group_index_tsv,
+};
 use crate::shared::{bed::GroupedWindows, interval::IndexedInterval};
 use fxhash::FxHashMap;
 use tempfile::TempDir;
@@ -40,13 +43,13 @@ fn eligible_interval_counts_include_zero_count_groups() {
 }
 
 #[test]
-fn write_midpoint_group_index_sorts_sanitizes_and_defaults_missing_counts() {
+fn write_midpoint_group_index_sorts_and_defaults_missing_counts() {
     // The sidecar is parsed by name downstream, so the writer must keep the public column name,
-    // sort rows by group index, and keep malformed group names from breaking TSV structure.
+    // sort rows by group index, and keep groups with no retained intervals visible.
     let temp = TempDir::new().expect("temp dir should be created");
     let output_path = temp.path().join("sites.group_index.tsv");
     let mut group_idx_to_name = FxHashMap::default();
-    group_idx_to_name.insert(2, "group\tB\nname".to_string());
+    group_idx_to_name.insert(2, "groupB".to_string());
     group_idx_to_name.insert(0, "groupA".to_string());
     group_idx_to_name.insert(1, "groupWithoutIntervals".to_string());
 
@@ -62,6 +65,50 @@ fn write_midpoint_group_index_sorts_sanitizes_and_defaults_missing_counts() {
     assert_eq!(lines[0], "group_idx\tgroup_name\teligible_intervals");
     assert_eq!(lines[1], "0\tgroupA\t4");
     assert_eq!(lines[2], "1\tgroupWithoutIntervals\t0");
-    assert_eq!(lines[3], "2\tgroup    B name\t1");
+    assert_eq!(lines[3], "2\tgroupB\t1");
     assert_eq!(lines.len(), 4);
+}
+
+#[test]
+fn write_midpoint_group_index_errors_when_group_name_cannot_be_written_as_one_tsv_cell() {
+    // Rewriting tabs or newlines would make distinct group names indistinguishable.
+    let temp = TempDir::new().expect("temp dir should be created");
+    let output_path = temp.path().join("sites.group_index.tsv");
+    let mut group_idx_to_name = FxHashMap::default();
+    group_idx_to_name.insert(0, "group\tA".to_string());
+
+    let eligible_interval_counts = FxHashMap::default();
+
+    let err = write_midpoint_group_index_tsv(
+        &output_path,
+        &group_idx_to_name,
+        &eligible_interval_counts,
+    )
+    .expect_err("invalid TSV group names should fail");
+
+    assert!(
+        err.to_string()
+            .contains("group_name contains a control character"),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn ordered_midpoint_group_summaries_rejects_sparse_group_indices() {
+    // The profile tensor indexes groups by row, so gaps would make both the TSV and Zarr metadata
+    // describe the wrong count row
+    let mut group_idx_to_name = FxHashMap::default();
+    group_idx_to_name.insert(0, "groupA".to_string());
+    group_idx_to_name.insert(2, "groupB".to_string());
+
+    let eligible_interval_counts = FxHashMap::default();
+
+    let err = ordered_midpoint_group_summaries(&group_idx_to_name, &eligible_interval_counts)
+        .expect_err("sparse group indices should be rejected");
+
+    assert!(
+        err.to_string()
+            .contains("midpoint group indices must match count rows 0..1 but observed [0, 2]"),
+        "{err:?}"
+    );
 }

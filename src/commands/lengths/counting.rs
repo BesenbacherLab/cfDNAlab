@@ -8,7 +8,7 @@ pub use crate::shared::length_axis::LengthAxis;
 ///
 /// A `LengthCounts` value stores one count vector over the length axis: either
 /// the global result, one genomic window, or one grouped-BED group. Stacking
-/// these vectors creates the first dimension of `length_counts.npy`. The axis
+/// these vectors creates the row dimension of `length_counts.tsv.zst`. The axis
 /// is shared so counters can be merged safely without copying the lookup table.
 #[derive(Debug, Clone)]
 pub struct LengthCounts {

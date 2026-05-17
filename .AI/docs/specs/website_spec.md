@@ -12,7 +12,8 @@ The website is a Docusaurus documentation site whose command reference is genera
 
 ## Generated CLI Reference
 
-- Generator binary is `gen_cli_docs` and requires features `cli,docs_gen`.
+- Generator tool is `examples/gen_cli_docs.rs` and requires features `cli,docs_gen`.
+- It is deliberately an example, not a package `[[bin]]`, so crates.io installs expose only the public `cfdna` command.
 - Generated CLI pages live under `website/docs/generated/cli/`.
 - Generated files include marker comments:
 
@@ -65,4 +66,4 @@ The website is a Docusaurus documentation site whose command reference is genera
 - Do not hand-edit files under `website/docs/generated/cli/` or generated release notes.
 - Update Rust Clap config and long help when command behavior changes, then regenerate docs.
 - Update authored guide pages under `website/docs/guides/` when behavior needs narrative explanation beyond CLI reference.
-- Keep generated-doc feature lists in scripts and `GENERATED_NOTICE.txt` in sync with release command features.
+- Keep generated-doc feature lists in scripts, `examples/gen_cli_docs.rs`, and `GENERATED_NOTICE.txt` in sync with release command features.

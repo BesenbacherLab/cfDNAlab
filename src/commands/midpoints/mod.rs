@@ -9,3 +9,4 @@ pub(crate) mod settings;
 pub mod smoothing;
 pub(crate) mod strand;
 pub mod windows;
+pub(crate) mod zarr;

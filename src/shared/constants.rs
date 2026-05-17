@@ -11,7 +11,7 @@ pub const DEFAULT_MAX_SOFT_CLIPS: u16 = 256;
 pub const MAX_MAX_SOFT_CLIPS: u16 = 256;
 
 /// Version of the GC correction package schema.
-pub const GC_CORRECTION_SCHEMA_VERSION: u32 = 2;
+pub const GC_CORRECTION_SCHEMA_VERSION: u32 = 3;
 
 /// BAM AUX tag used for cfDNAlab-written GC correction weights.
 pub const GC_WEIGHT_AUX_TAG: &[u8; 2] = b"GC";

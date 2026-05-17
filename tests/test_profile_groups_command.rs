@@ -26,12 +26,12 @@ use cfdnalab::shared::{
 use fixtures::{
     FragmentSpec, ReadSpec, bam_from_specs, bam_from_specs_strict_identity,
     build_real_neutral_gc_package, build_real_neutral_gc_package_for_range,
-    build_real_non_neutral_gc_package, late_origin_gc_reference_sequence, simple_reference_twobit,
+    build_real_non_neutral_gc_package, late_origin_gc_reference_sequence,
+    read_midpoint_zarr_counts, read_midpoint_zarr_i32_1d, simple_reference_twobit,
     twobit_from_sequences, write_bed, write_two_bin_gc_package,
 };
 use ndarray::Array3;
 use ndarray::array;
-use ndarray_npy::read_npy;
 use rust_htslib::bam::record::Aux;
 use rust_htslib::bam::{self, Read, Reader};
 use serde_json::Value;
@@ -453,7 +453,7 @@ fn write_minimal_gc_package_excluding_length_61(
         length_bin_frequencies: array![1.0_f64],
         reference_contig_footprint,
     };
-    package.write_npz(path)?;
+    package.write_zarr(path)?;
     Ok(())
 }
 
@@ -582,8 +582,8 @@ fn midpoints_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_
 
     // Assert
     let read_profiles = |dir: &TempDir, prefix: &str| -> Result<Array3<f32>> {
-        let counts_path = dir.path().join(format!("{prefix}.midpoint_profiles.npy"));
-        read_npy(&counts_path).map_err(Into::into)
+        let counts_path = dir.path().join(format!("{prefix}.midpoint_profiles.zarr"));
+        read_midpoint_zarr_counts(&counts_path).map_err(Into::into)
     };
 
     let default_arr = read_profiles(&out_default, "default")?;
@@ -656,9 +656,10 @@ fn unpaired_single_read_matches_paired_midpoint_profile_for_same_span() -> Resul
     run(&unpaired_cfg)?;
 
     // Assert
-    let paired_arr: Array3<f32> = read_npy(paired_out.path().join("sites.midpoint_profiles.npy"))?;
+    let paired_arr: Array3<f32> =
+        read_midpoint_zarr_counts(paired_out.path().join("sites.midpoint_profiles.zarr"))?;
     let unpaired_arr: Array3<f32> =
-        read_npy(unpaired_out.path().join("sites.midpoint_profiles.npy"))?;
+        read_midpoint_zarr_counts(unpaired_out.path().join("sites.midpoint_profiles.zarr"))?;
 
     assert_eq!(paired_arr, unpaired_arr);
     assert_eq!(paired_arr.shape(), &[1, 1, 11]);
@@ -711,8 +712,8 @@ fn bed_sites_mixed_core_and_halo_rows_keep_only_the_core_midpoint_count_across_t
 
         run(&cfg)?;
 
-        let counts_path = temp.path().join("sites.midpoint_profiles.npy");
-        let arr: Array3<f32> = read_npy(&counts_path)?;
+        let counts_path = temp.path().join("sites.midpoint_profiles.zarr");
+        let arr: Array3<f32> = read_midpoint_zarr_counts(&counts_path)?;
         let map_path = temp.path().join("sites.group_index.tsv");
         let group_to_idx = read_group_index_map(&map_path)?;
 
@@ -776,8 +777,8 @@ fn later_tile_site_keeps_midpoint_count_when_window_span_starts_after_zero() -> 
 
         run(&cfg)?;
 
-        let counts_path = temp.path().join("sites.midpoint_profiles.npy");
-        let arr: Array3<f32> = read_npy(&counts_path)?;
+        let counts_path = temp.path().join("sites.midpoint_profiles.zarr");
+        let arr: Array3<f32> = read_midpoint_zarr_counts(&counts_path)?;
         let map_path = temp.path().join("sites.group_index.tsv");
         let group_to_idx = read_group_index_map(&map_path)?;
 
@@ -829,7 +830,8 @@ fn core_overlap_bed_site_is_kept_for_midpoints() -> Result<()> {
 
     run(&cfg)?;
 
-    let arr: Array3<f32> = read_npy(temp.path().join("sites.midpoint_profiles.npy"))?;
+    let arr: Array3<f32> =
+        read_midpoint_zarr_counts(temp.path().join("sites.midpoint_profiles.zarr"))?;
     let group_to_idx = read_group_index_map(&temp.path().join("sites.group_index.tsv"))?;
     assert_eq!(arr.shape(), &[1, 1, 1]);
     assert_eq!(arr[[group_to_idx["group_core"], 0, 0]], 1.0);
@@ -875,7 +877,8 @@ fn stranded_bed_intervals_mirror_midpoint_positions_in_command_output() -> Resul
     run(&cfg)?;
 
     // Assert
-    let arr: Array3<f32> = read_npy(temp.path().join("sites.midpoint_profiles.npy"))?;
+    let arr: Array3<f32> =
+        read_midpoint_zarr_counts(temp.path().join("sites.midpoint_profiles.zarr"))?;
     let group_to_idx = read_group_index_map(&temp.path().join("sites.group_index.tsv"))?;
     let group_plus = group_to_idx["group_plus"];
     let group_minus = group_to_idx["group_minus"];
@@ -939,7 +942,8 @@ fn even_length_midpoint_tie_counts_exactly_one_of_two_adjacent_edge_windows() ->
     run(&cfg)?;
 
     // Assert
-    let arr: Array3<f32> = read_npy(temp.path().join("sites.midpoint_profiles.npy"))?;
+    let arr: Array3<f32> =
+        read_midpoint_zarr_counts(temp.path().join("sites.midpoint_profiles.zarr"))?;
     let group_to_idx = read_group_index_map(&temp.path().join("sites.group_index.tsv"))?;
     assert_eq!(arr.shape(), &[2, 1, 1]);
     assert_eq!(arr.sum(), 1.0);
@@ -1025,7 +1029,8 @@ fn blacklist_midpoint_filtering_checks_both_centers_for_even_fragments() -> Resu
     ))?;
 
     // Assert
-    let baseline_arr: Array3<f32> = read_npy(baseline_out.join("sites.midpoint_profiles.npy"))?;
+    let baseline_arr: Array3<f32> =
+        read_midpoint_zarr_counts(baseline_out.join("sites.midpoint_profiles.zarr"))?;
     assert_eq!(baseline_arr.shape(), &[1, 1, 2]);
     let baseline_row = baseline_arr.slice(ndarray::s![0, 0, ..]).to_vec();
     let baseline_is_valid_one_hot =
@@ -1041,7 +1046,7 @@ fn blacklist_midpoint_filtering_checks_both_centers_for_even_fragments() -> Resu
         ("right central base", right_blacklisted_out),
     ] {
         let blacklisted_arr: Array3<f32> =
-            read_npy(output_dir.join("sites.midpoint_profiles.npy"))?;
+            read_midpoint_zarr_counts(output_dir.join("sites.midpoint_profiles.zarr"))?;
         assert_eq!(blacklisted_arr.shape(), &[1, 1, 2]);
         assert_eq!(
             blacklisted_arr.sum(),
@@ -1097,7 +1102,8 @@ fn keep_blacklisted_intervals_keeps_sites_but_still_filters_fragments() -> Resul
     run(&cfg)?;
 
     // Assert
-    let arr: Array3<f32> = read_npy(temp.path().join("sites.midpoint_profiles.npy"))?;
+    let arr: Array3<f32> =
+        read_midpoint_zarr_counts(temp.path().join("sites.midpoint_profiles.zarr"))?;
     assert_eq!(arr.shape(), &[1, 1, 7]);
     assert_eq!(
         arr.sum(),
@@ -1207,13 +1213,14 @@ fn midpoint_command_smooths_full_resolution_profile_before_final_binning() -> Re
     run(&cfg)?;
 
     // Assert
-    let arr: Array3<f32> = read_npy(temp.path().join("sites.midpoint_profiles.npy"))?;
+    let arr: Array3<f32> =
+        read_midpoint_zarr_counts(temp.path().join("sites.midpoint_profiles.zarr"))?;
     assert_eq!(arr.shape(), &[1, 1, 3]);
     assert!((arr[[0, 0, 0]] - 5.0).abs() <= MIDPOINT_F32_TOL);
     assert!((arr[[0, 0, 1]] - 8.0).abs() <= MIDPOINT_F32_TOL);
     assert!((arr[[0, 0, 2]] - 10.0).abs() <= MIDPOINT_F32_TOL);
 
-    let settings_path = temp.path().join("sites.midpoint_profile_settings.json");
+    let settings_path = temp.path().join("sites.midpoint_settings.json");
     let settings_text = std::fs::read_to_string(&settings_path)?;
     let settings: Value = serde_json::from_str(&settings_text)?;
     assert_eq!(
@@ -1271,9 +1278,9 @@ fn midpoint_profiles_written_with_group_index() -> Result<()> {
     run(&cfg)?;
 
     // Assert
-    let counts_path = temp.path().join("sites.midpoint_profiles.npy");
+    let counts_path = temp.path().join("sites.midpoint_profiles.zarr");
     assert!(counts_path.exists());
-    let arr: Array3<f32> = read_npy(&counts_path)?;
+    let arr: Array3<f32> = read_midpoint_zarr_counts(&counts_path)?;
     let expected = expected_midpoint_axis_contract_counts();
     assert_eq!(arr.shape(), &[3, 2, 40]);
     assert_eq!(
@@ -1283,6 +1290,12 @@ fn midpoint_profiles_written_with_group_index() -> Result<()> {
     assert_eq!(arr.sum(), 6.0);
 
     let map_path = temp.path().join("sites.group_index.tsv");
+    let zarr_group_idx = read_midpoint_zarr_i32_1d(&counts_path, "/group")?;
+    assert_eq!(
+        zarr_group_idx,
+        vec![0, 1, 2],
+        "Zarr group coordinate must match group_idx order in group_index.tsv"
+    );
     let group_to_idx = read_group_index_map(&map_path)?;
     let group_to_eligible_intervals = read_group_index_eligible_intervals(&map_path)?;
     assert_eq!(
@@ -1303,8 +1316,36 @@ fn midpoint_profiles_written_with_group_index() -> Result<()> {
         "eligible_intervals should count profile intervals, independent of fragment count"
     );
 
-    let settings_path = temp.path().join("sites.midpoint_profile_settings.json");
+    let settings_path = temp.path().join("sites.midpoint_settings.json");
     assert!(settings_path.exists());
+
+    Ok(())
+}
+
+#[test]
+fn midpoint_profiles_zarr_directory_is_replaced_on_rerun_with_same_prefix() -> Result<()> {
+    // Arrange:
+    // Zarr outputs are directories. This test covers the final-output move path that removes the
+    // previous complete Zarr directory before moving the new one into place.
+    let fixture = midpoint_axis_contract_fixture()?;
+    let temp = TempDir::new()?;
+    let cfg = midpoint_axis_contract_config(&fixture, temp.path(), 2, "sites");
+    let counts_path = temp.path().join("sites.midpoint_profiles.zarr");
+
+    // Act
+    run(&cfg)?;
+    let stale_marker = counts_path.join("stale_file_from_previous_run.txt");
+    std::fs::write(&stale_marker, "old run")?;
+    assert!(stale_marker.exists());
+    run(&cfg)?;
+
+    // Assert
+    assert!(
+        !stale_marker.exists(),
+        "rerunning midpoints with the same prefix should replace the old Zarr directory"
+    );
+    let arr: Array3<f32> = read_midpoint_zarr_counts(&counts_path)?;
+    assert_eq!(arr, expected_midpoint_axis_contract_counts());
 
     Ok(())
 }
@@ -1365,7 +1406,8 @@ fn group_index_counts_eligible_intervals_after_prefilter() -> Result<()> {
     run(&cfg)?;
 
     // Assert
-    let arr: Array3<f32> = read_npy(temp.path().join("sites.midpoint_profiles.npy"))?;
+    let arr: Array3<f32> =
+        read_midpoint_zarr_counts(temp.path().join("sites.midpoint_profiles.zarr"))?;
     assert_eq!(arr.shape(), &[2, 1, 7]);
     assert_eq!(
         arr.sum(),
@@ -1449,10 +1491,10 @@ fn midpoint_profiles_are_identical_across_thread_counts() -> Result<()> {
             &format!("cfdna midpoints with {n_threads} thread(s)"),
         );
 
-        let arr: Array3<f32> = read_npy(
+        let arr: Array3<f32> = read_midpoint_zarr_counts(
             output_dir
                 .path()
-                .join(format!("{output_prefix}.midpoint_profiles.npy")),
+                .join(format!("{output_prefix}.midpoint_profiles.zarr")),
         )?;
         let group_index_text = std::fs::read_to_string(
             output_dir
@@ -1543,8 +1585,8 @@ fn group_index_axis_matches_first_group_encounter_order_and_collapsed_counts() -
     run(&cfg)?;
 
     // Assert
-    let counts_path = temp.path().join("sites.midpoint_profiles.npy");
-    let arr: Array3<f32> = read_npy(&counts_path)?;
+    let counts_path = temp.path().join("sites.midpoint_profiles.zarr");
+    let arr: Array3<f32> = read_midpoint_zarr_counts(&counts_path)?;
     assert_eq!(arr.shape(), &[3, 1, 11]);
 
     let map_path = temp.path().join("sites.group_index.tsv");
@@ -1646,8 +1688,8 @@ fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_midpo
     run(&cfg)?;
 
     // Assert
-    let counts_path = temp.path().join("sites.midpoint_profiles.npy");
-    let arr: Array3<f32> = read_npy(&counts_path)?;
+    let counts_path = temp.path().join("sites.midpoint_profiles.zarr");
+    let arr: Array3<f32> = read_midpoint_zarr_counts(&counts_path)?;
     assert_eq!(arr.shape(), &[1, 1, 11]);
     assert_eq!(arr.sum(), 1.0);
     assert_eq!(
@@ -1686,7 +1728,7 @@ fn gc_file_late_tile_site_uses_reference_coordinates_after_fetch_narrowing() -> 
     )?;
     let temp = TempDir::new()?;
     let bed_path = temp.path().join("late_site.bed");
-    let gc_path = temp.path().join("two_bin_gc_package.npz");
+    let gc_path = temp.path().join("two_bin_gc_package.zarr");
     write_bed(&bed_path, &[("chr1", 925, 936, "late")])?;
     write_two_bin_gc_package(
         &gc_path,
@@ -1720,7 +1762,8 @@ fn gc_file_late_tile_site_uses_reference_coordinates_after_fetch_narrowing() -> 
 
     // Act
     run(&cfg)?;
-    let arr: Array3<f32> = read_npy(temp.path().join("sites.midpoint_profiles.npy"))?;
+    let arr: Array3<f32> =
+        read_midpoint_zarr_counts(temp.path().join("sites.midpoint_profiles.zarr"))?;
 
     // Assert
     assert_eq!(arr.shape(), &[1, 1, 11]);
@@ -1852,8 +1895,8 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_midpoints_in_expected_direction
     run(&cfg)?;
 
     // Assert
-    let counts_path = temp.path().join("sites.midpoint_profiles.npy");
-    let arr: Array3<f32> = read_npy(&counts_path)?;
+    let counts_path = temp.path().join("sites.midpoint_profiles.zarr");
+    let arr: Array3<f32> = read_midpoint_zarr_counts(&counts_path)?;
     assert_eq!(arr.shape(), &[2, 1, 11]);
 
     let map_path = temp.path().join("sites.group_index.tsv");
@@ -1892,7 +1935,7 @@ fn midpoints_rejects_gc_package_when_length_bins_are_outside_supported_range() -
     let temp = TempDir::new()?;
     let bed_path = temp.path().join("windows.bed");
     write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
-    let gc_path = temp.path().join("too_short_gc_package.npz");
+    let gc_path = temp.path().join("too_short_gc_package.zarr");
     write_minimal_gc_package_excluding_length_61(
         &gc_path,
         twobit_contig_footprint(&reference.path)?,
@@ -1945,7 +1988,7 @@ fn midpoints_rejects_gc_package_with_schema_version_mismatch() -> Result<()> {
     let temp = TempDir::new()?;
     let bed_path = temp.path().join("windows.bed");
     write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
-    let gc_path = temp.path().join("gc_pkg_bad_version.npz");
+    let gc_path = temp.path().join("gc_pkg_bad_version.zarr");
     let package = GCCorrectionPackage {
         version: GC_CORRECTION_SCHEMA_VERSION + 1,
         end_offset: 0,
@@ -1955,7 +1998,7 @@ fn midpoints_rejects_gc_package_with_schema_version_mismatch() -> Result<()> {
         length_bin_frequencies: array![1.0_f64],
         reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
     };
-    package.write_npz(&gc_path)?;
+    package.write_zarr(&gc_path)?;
 
     let mut cfg = MidpointsConfig::new(
         IOCArgs {
@@ -2068,8 +2111,8 @@ fn coverage_weights_tsv_changes_midpoints_by_full_fragment_average_not_window_ov
     run(&midpoints_cfg)?;
 
     // Assert
-    let counts_path = temp.path().join("sites.midpoint_profiles.npy");
-    let arr: Array3<f32> = read_npy(&counts_path)?;
+    let counts_path = temp.path().join("sites.midpoint_profiles.zarr");
+    let arr: Array3<f32> = read_midpoint_zarr_counts(&counts_path)?;
     assert_eq!(arr.shape(), &[1, 1, 11]);
     assert_eq!(arr.slice(ndarray::s![0, 0, ..]).len(), 11);
 
@@ -2223,8 +2266,8 @@ fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_midpo
     run(&midpoints_cfg)?;
 
     // Assert
-    let counts_path = temp.path().join("sites.midpoint_profiles.npy");
-    let arr: Array3<f32> = read_npy(&counts_path)?;
+    let counts_path = temp.path().join("sites.midpoint_profiles.zarr");
+    let arr: Array3<f32> = read_midpoint_zarr_counts(&counts_path)?;
     assert_eq!(arr.shape(), &[2, 1, 11]);
 
     let map_path = temp.path().join("sites.group_index.tsv");
@@ -2297,8 +2340,8 @@ fn gc_tag_pair_average_sets_midpoint_profile_weight() -> Result<()> {
     run(&cfg)?;
 
     // Assert
-    let counts_path = temp.path().join("sites.midpoint_profiles.npy");
-    let arr: Array3<f32> = read_npy(&counts_path)?;
+    let counts_path = temp.path().join("sites.midpoint_profiles.zarr");
+    let arr: Array3<f32> = read_midpoint_zarr_counts(&counts_path)?;
     assert_eq!(arr.shape(), &[1, 1, 11]);
 
     let row = arr.slice(ndarray::s![0, 0, ..]).to_vec();
@@ -2376,7 +2419,7 @@ fn gc_file_and_scaling_tsv_weights_multiply_in_midpoints() -> Result<()> {
         200,
     )?;
     let scaling_path = weights_out_dir.join("coverage.coverage.scaling_factors.tsv");
-    let gc_path = temp.path().join("constant_gc_pkg.npz");
+    let gc_path = temp.path().join("constant_gc_pkg.zarr");
     let bed_path = temp.path().join("windows.bed");
     write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
 
@@ -2389,7 +2432,7 @@ fn gc_file_and_scaling_tsv_weights_multiply_in_midpoints() -> Result<()> {
         reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![[3.0_f64]],
     };
-    package.write_npz(&gc_path)?;
+    package.write_zarr(&gc_path)?;
     scaling_cfg.set_gc(ApplyGCArgs {
         gc_file: Some(weights_gc_path),
         gc_tag: None,
@@ -2428,8 +2471,8 @@ fn gc_file_and_scaling_tsv_weights_multiply_in_midpoints() -> Result<()> {
     run(&cfg)?;
 
     // Assert
-    let counts_path = temp.path().join("sites.midpoint_profiles.npy");
-    let arr: Array3<f32> = read_npy(&counts_path)?;
+    let counts_path = temp.path().join("sites.midpoint_profiles.zarr");
+    let arr: Array3<f32> = read_midpoint_zarr_counts(&counts_path)?;
     assert_eq!(arr.shape(), &[1, 1, 11]);
 
     let expected_weight = 180.0_f32 / 61.0_f32;
@@ -2477,7 +2520,7 @@ fn bam_to_bam_gc_file_output_drives_midpoints_gc_tag_same_as_original_gc_file() 
     let reference = simple_reference_twobit()?;
     let temp = TempDir::new()?;
     let tagged_out_bam = temp.path().join("tagged_gc.bam");
-    let gc_path = temp.path().join("constant_gc_pkg.npz");
+    let gc_path = temp.path().join("constant_gc_pkg.zarr");
     let bed_path = temp.path().join("windows.bed");
     write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
 
@@ -2490,7 +2533,7 @@ fn bam_to_bam_gc_file_output_drives_midpoints_gc_tag_same_as_original_gc_file() 
         reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![[3.0_f64]],
     };
-    package.write_npz(&gc_path)?;
+    package.write_zarr(&gc_path)?;
 
     let mut bam_to_bam_cfg = BamToBamConfig::new(
         source_bam.bam.clone(),
@@ -2561,12 +2604,15 @@ fn bam_to_bam_gc_file_output_drives_midpoints_gc_tag_same_as_original_gc_file() 
     run(&tagged_cfg)?;
 
     // Assert
-    let original_arr: Array3<f32> =
-        read_npy(&temp.path().join("orig_out/origsites.midpoint_profiles.npy"))?;
-    let tagged_arr: Array3<f32> = read_npy(
+    let original_arr: Array3<f32> = read_midpoint_zarr_counts(
         &temp
             .path()
-            .join("tagged_out/taggedsites.midpoint_profiles.npy"),
+            .join("orig_out/origsites.midpoint_profiles.zarr"),
+    )?;
+    let tagged_arr: Array3<f32> = read_midpoint_zarr_counts(
+        &temp
+            .path()
+            .join("tagged_out/taggedsites.midpoint_profiles.zarr"),
     )?;
 
     assert_eq!(original_arr, tagged_arr);
@@ -2688,8 +2734,8 @@ fn midpoint_fetch_narrowing_preserves_tile_halo_near_chromosome_end_on_three_chr
     //   tile fetch band was already built with the same maximum-fragment-length halo.
     run(&cfg)?;
 
-    let counts_path = temp.path().join("sites.midpoint_profiles.npy");
-    let arr: Array3<f32> = read_npy(&counts_path)?;
+    let counts_path = temp.path().join("sites.midpoint_profiles.zarr");
+    let arr: Array3<f32> = read_midpoint_zarr_counts(&counts_path)?;
     assert_eq!(arr.shape(), &[3, 1, 6]);
 
     let map_path = temp.path().join("sites.group_index.tsv");
@@ -2780,8 +2826,8 @@ fn midpoint_fetch_narrowing_reads_all_eligible_fragments_near_chromosome_end_on_
 
     let counts_path = temp
         .path()
-        .join("sites_fetch_reads_all.midpoint_profiles.npy");
-    let arr: Array3<f32> = read_npy(&counts_path)?;
+        .join("sites_fetch_reads_all.midpoint_profiles.zarr");
+    let arr: Array3<f32> = read_midpoint_zarr_counts(&counts_path)?;
     assert_eq!(arr.shape(), &[3, 1, 10]);
 
     let map_path = temp.path().join("sites_fetch_reads_all.group_index.tsv");

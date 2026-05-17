@@ -2,7 +2,7 @@
 
 mod fixtures;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 #[cfg(feature = "cmd_gc_bias")]
 use cfdnalab::commands::gc_bias::package::GCCorrectionPackage;
 use cfdnalab::commands::{
@@ -26,19 +26,20 @@ use fixtures::{
     paired_fragment, simple_reference_twobit, single_read_bam_with_qualities,
     twobit_from_sequences, write_bed, write_scaling_factors, write_two_bin_gc_package,
 };
+use ndarray::Array2;
 #[cfg(feature = "cmd_gc_bias")]
 use ndarray::array;
-use ndarray::{Array1, Array2};
-use ndarray_npy::{NpzReader, read_npy};
 use serde_json::{Map, Value, json};
 #[cfg(feature = "cli")]
 use std::process::Command;
 use std::{
     fs::File,
-    io::{BufRead, BufReader, Read},
+    io::Read,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 use tempfile::TempDir;
+use zarrs::{array::Array, filesystem::FilesystemStore};
 
 fn base_chromosomes(chrs: &[&str]) -> ChromosomeArgs {
     ChromosomeArgs {
@@ -756,57 +757,109 @@ fn three_chrom_reference_end_fixture(name: &str) -> Result<(BamFixture, fixtures
     Ok((bam, reference))
 }
 
-fn dense_output_paths(out_dir: &Path) -> (PathBuf, PathBuf) {
-    (
-        out_dir.join("ends.end_motifs.npy"),
-        out_dir.join("ends.end_motifs.txt"),
-    )
-}
-
-fn sparse_output_paths(out_dir: &Path) -> (PathBuf, PathBuf) {
-    (
-        out_dir.join("ends.end_motifs.sparse.npz"),
-        out_dir.join("ends.end_motifs.txt"),
-    )
+fn end_motifs_zarr_path(out_dir: &Path) -> PathBuf {
+    out_dir.join("ends.end_motifs.zarr")
 }
 
 fn settings_path(out_dir: &Path) -> PathBuf {
-    out_dir.join("ends.end_motif_settings.json")
-}
-
-fn read_motif_labels(path: &Path) -> Result<Vec<String>> {
-    let reader = BufReader::new(File::open(path)?);
-    reader
-        .lines()
-        .collect::<std::io::Result<Vec<_>>>()
-        .context("read motif labels")
+    out_dir.join("ends.end_settings.json")
 }
 
 fn read_dense_output(out_dir: &Path) -> Result<(Vec<String>, Array2<f64>)> {
-    let (matrix_path, motifs_path) = dense_output_paths(out_dir);
-    let motifs = read_motif_labels(&motifs_path)?;
-    let matrix: Array2<f64> = read_npy(&matrix_path)?;
+    let store_path = end_motifs_zarr_path(out_dir);
+    let motifs = read_motif_labels(&store_path)?;
+    let counts: Vec<f64> = read_zarr_array(&store_path, "/counts")?;
+    let shape = read_zarr_shape(&store_path, "counts")?;
+    let matrix = Array2::from_shape_vec((shape[0], shape[1]), counts)?;
     Ok((motifs, matrix))
 }
 
 fn read_sparse_output(out_dir: &Path) -> Result<(Vec<String>, Array2<f64>)> {
-    let (npz_path, motifs_path) = sparse_output_paths(out_dir);
-    let motifs = read_motif_labels(&motifs_path)?;
-    let file = File::open(&npz_path)?;
-    let mut npz = NpzReader::new(file)?;
-    let row: Array1<u64> = npz.by_name("row.npy")?;
-    let col: Array1<u64> = npz.by_name("col.npy")?;
-    let data: Array1<f64> = npz.by_name("data.npy")?;
-    let shape: Array1<i64> = npz.by_name("shape.npy")?;
+    let store_path = end_motifs_zarr_path(out_dir);
+    let motifs = read_motif_labels(&store_path)?;
+    let row: Vec<i32> = read_zarr_array(&store_path, "/sparse/row")?;
+    let col: Vec<i32> = read_zarr_array(&store_path, "/sparse/motif")?;
+    let data: Vec<f64> = read_zarr_array(&store_path, "/sparse/count")?;
+    let shape: Vec<i32> = read_zarr_array(&store_path, "/sparse/shape")?;
 
-    let n_rows = shape[0] as usize;
-    let n_cols = shape[1] as usize;
+    let n_rows = usize::try_from(shape[0]).context("sparse row count must be non-negative")?;
+    let n_cols = usize::try_from(shape[1]).context("sparse motif count must be non-negative")?;
     let mut dense = Array2::<f64>::zeros((n_rows, n_cols));
-    for ((&r, &c), &value) in row.iter().zip(col.iter()).zip(data.iter()) {
-        dense[(r as usize, c as usize)] = value;
+    for ((row, col), value) in row.into_iter().zip(col).zip(data) {
+        let row = usize::try_from(row).context("sparse row index must be non-negative")?;
+        let col = usize::try_from(col).context("sparse motif index must be non-negative")?;
+        dense[(row, col)] = value;
     }
 
     Ok((motifs, dense))
+}
+
+fn read_motif_labels(store_path: &Path) -> Result<Vec<String>> {
+    let motif_index: Vec<i32> = read_zarr_array(store_path, "/motif_index")?;
+    let motif_byte: Vec<i32> = read_zarr_array(store_path, "/motif_byte")?;
+    let motif_ascii: Vec<u8> = read_zarr_array(store_path, "/motif_ascii")?;
+    let metadata = parse_json(&read_text_file(
+        &store_path.join("motif_index").join("zarr.json"),
+    )?);
+    let attributes = metadata
+        .get("attributes")
+        .and_then(Value::as_object)
+        .context("motif_index metadata must contain attributes")?;
+    ensure!(
+        attributes.get("label_array") == Some(&Value::String("motif_ascii".to_string())),
+        "motif_index metadata must declare label_array = motif_ascii"
+    );
+
+    let motif_width = motif_byte.len();
+    ensure!(
+        motif_ascii.len() == motif_index.len() * motif_width,
+        "motif_ascii length ({}) did not match motif_index length ({}) times motif width ({})",
+        motif_ascii.len(),
+        motif_index.len(),
+        motif_width
+    );
+    if motif_width == 0 {
+        ensure!(
+            motif_index.is_empty(),
+            "motif_byte width was zero but motif_index contained {} entries",
+            motif_index.len()
+        );
+        return Ok(Vec::new());
+    }
+    motif_ascii
+        .chunks_exact(motif_width)
+        .map(|bytes| {
+            String::from_utf8(bytes.to_vec()).context("motif_ascii row must be valid UTF-8")
+        })
+        .collect::<Result<Vec<_>>>()
+}
+
+fn read_zarr_array<T>(store_path: &Path, array_path: &str) -> Result<Vec<T>>
+where
+    T: zarrs::array::ElementOwned,
+{
+    let store = Arc::new(FilesystemStore::new(store_path)?);
+    let array = Array::open(store, array_path)?;
+    Ok(array.retrieve_array_subset(&array.subset_all())?)
+}
+
+fn read_zarr_shape(store_path: &Path, array_name: &str) -> Result<Vec<usize>> {
+    let metadata = parse_json(&read_text_file(
+        &store_path.join(array_name).join("zarr.json"),
+    )?);
+    let shape = metadata
+        .get("shape")
+        .and_then(Value::as_array)
+        .context("Zarr array metadata must contain shape")?;
+    shape
+        .iter()
+        .map(|value| {
+            value
+                .as_u64()
+                .context("Zarr shape entry must be an unsigned integer")
+                .map(|value| value as usize)
+        })
+        .collect()
 }
 
 fn motif_count(matrix: &Array2<f64>, motifs: &[String], row: usize, motif: &str) -> f64 {
@@ -881,6 +934,16 @@ fn read_text_file(path: &Path) -> Result<String> {
 
 fn parse_json(text: &str) -> Value {
     serde_json::from_str(text).expect("settings sidecar should be valid JSON")
+}
+
+fn end_motif_storage_mode(out_dir: &Path) -> Result<String> {
+    let root_metadata = parse_json(&read_text_file(
+        &out_dir.join("ends.end_motifs.zarr").join("zarr.json"),
+    )?);
+    root_metadata["attributes"]["storage_mode"]
+        .as_str()
+        .map(str::to_string)
+        .context("end-motif Zarr root metadata must contain storage_mode")
 }
 
 fn parse_group_index_rows(text: &str) -> Vec<(u64, String, f64)> {
@@ -1446,7 +1509,7 @@ fn gc_file_weights_each_counted_end_motif_by_the_fragment_gc_correction() -> Res
     let bam = simple_paired_fragment_bam("ends_gc_weight", 10, 10, 4)?;
     let reference = simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
-    let gc_path = out_dir.path().join("gc_package.npz");
+    let gc_path = out_dir.path().join("gc_package.zarr");
     let package = GCCorrectionPackage {
         version: GC_CORRECTION_SCHEMA_VERSION,
         end_offset: 0,
@@ -1456,7 +1519,7 @@ fn gc_file_weights_each_counted_end_motif_by_the_fragment_gc_correction() -> Res
         reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![[3.0_f64, 1.0_f64], [1.0_f64, 1.0_f64]],
     };
-    package.write_npz(&gc_path)?;
+    package.write_zarr(&gc_path)?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -1508,7 +1571,7 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
     )?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("late_window.bed");
-    let gc_path = out_dir.path().join("two_bin_gc_package.npz");
+    let gc_path = out_dir.path().join("two_bin_gc_package.zarr");
     write_bed(&bed_path, &[("chr1", 900, 961, "late")])?;
     write_two_bin_gc_package(
         &gc_path,
@@ -1617,7 +1680,7 @@ fn include_at_shifted_boundary_gc_file_warns_once_and_counts_aligned_length_fail
         ],
     )?;
 
-    let gc_path = out_dir.path().join("gc_package.npz");
+    let gc_path = out_dir.path().join("gc_package.zarr");
     let package = GCCorrectionPackage {
         version: GC_CORRECTION_SCHEMA_VERSION,
         end_offset: 0,
@@ -1627,7 +1690,7 @@ fn include_at_shifted_boundary_gc_file_warns_once_and_counts_aligned_length_fail
         reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![[1.0_f64]],
     };
-    package.write_npz(&gc_path)?;
+    package.write_zarr(&gc_path)?;
 
     let binary = cfdna_binary_path()?;
 
@@ -1851,7 +1914,7 @@ fn blacklist_gc_and_scaling_weights_combine_to_the_exact_expected_endpoint_count
         ),
     )?;
 
-    let gc_path = out_dir.path().join("gc_package.npz");
+    let gc_path = out_dir.path().join("gc_package.zarr");
     let package = GCCorrectionPackage {
         version: GC_CORRECTION_SCHEMA_VERSION,
         end_offset: 0,
@@ -1864,7 +1927,7 @@ fn blacklist_gc_and_scaling_weights_combine_to_the_exact_expected_endpoint_count
             [1.0_f64, 1.0_f64, 1.0_f64, 1.0_f64]
         ],
     };
-    package.write_npz(&gc_path)?;
+    package.write_zarr(&gc_path)?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -1977,7 +2040,7 @@ fn default_gc_behavior_skips_fragments_when_gc_correction_cannot_be_computed() -
         )],
     )?;
     let out_dir = TempDir::new()?;
-    let gc_path = out_dir.path().join("invalid_gc_package.npz");
+    let gc_path = out_dir.path().join("invalid_gc_package.zarr");
     let package = GCCorrectionPackage {
         version: GC_CORRECTION_SCHEMA_VERSION,
         end_offset: 0,
@@ -1987,7 +2050,7 @@ fn default_gc_behavior_skips_fragments_when_gc_correction_cannot_be_computed() -
         reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![[2.0_f64, 1.0_f64], [1.0_f64, 1.0_f64]],
     };
-    package.write_npz(&gc_path)?;
+    package.write_zarr(&gc_path)?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -3276,8 +3339,8 @@ fn sparse_output_is_the_default_when_all_motifs_is_disabled() -> Result<()> {
     let settings = read_text_file(&settings_path(out_dir.path()))?;
 
     // Assert
-    assert!(!dense_output_paths(out_dir.path()).0.exists());
-    assert!(sparse_output_paths(out_dir.path()).0.exists());
+    assert!(end_motifs_zarr_path(out_dir.path()).exists());
+    assert_eq!(end_motif_storage_mode(out_dir.path())?, "sparse_coo");
     assert_eq!(motifs, vec!["_A", "_G"]);
     assert_eq!(matrix.shape(), &[1, 2]);
     assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 1.0);
@@ -3319,8 +3382,8 @@ fn dense_all_motifs_output_still_uses_the_same_settings_sidecar() -> Result<()> 
     let settings = read_text_file(&settings_path(out_dir.path()))?;
 
     // Assert
-    assert!(dense_output_paths(out_dir.path()).0.exists());
-    assert!(!sparse_output_paths(out_dir.path()).0.exists());
+    assert!(end_motifs_zarr_path(out_dir.path()).exists());
+    assert_eq!(end_motif_storage_mode(out_dir.path())?, "dense");
     assert_eq!(
         parse_json(&settings),
         expected_settings_json(
@@ -6746,7 +6809,7 @@ fn grouped_bed_gc_correction_weights_each_grouped_end_motif() -> Result<()> {
     let reference = simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_gc.bed");
-    let gc_path = out_dir.path().join("grouped_gc_package.npz");
+    let gc_path = out_dir.path().join("grouped_gc_package.zarr");
     let package = GCCorrectionPackage {
         version: GC_CORRECTION_SCHEMA_VERSION,
         end_offset: 0,
@@ -6756,7 +6819,7 @@ fn grouped_bed_gc_correction_weights_each_grouped_end_motif() -> Result<()> {
         reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![[3.0_f64, 1.0_f64], [1.0_f64, 1.0_f64]],
     };
-    package.write_npz(&gc_path)?;
+    package.write_zarr(&gc_path)?;
     write_bed(
         &grouped_bed,
         &[("chr1", 10, 20, "beta"), ("chr1", 30, 40, "gamma")],
@@ -7172,8 +7235,8 @@ fn grouped_bed_sparse_output_keeps_zero_group_rows_and_only_observed_motifs() ->
     let group_index = read_text_file(&out_dir.path().join("ends.group_index.tsv"))?;
 
     // Assert
-    assert!(!dense_output_paths(out_dir.path()).0.exists());
-    assert!(sparse_output_paths(out_dir.path()).0.exists());
+    assert!(end_motifs_zarr_path(out_dir.path()).exists());
+    assert_eq!(end_motif_storage_mode(out_dir.path())?, "sparse_coo");
     assert_eq!(
         parse_group_index_tsv(&group_index),
         vec![
@@ -7287,12 +7350,10 @@ fn grouped_bed_writes_prefixed_group_sidecars_and_suppresses_unprefixed_paths() 
     run(&cfg)?;
 
     // Assert
-    assert!(out_dir.path().join("sampleA.end_motifs.npy").exists());
-    assert!(out_dir.path().join("sampleA.end_motifs.txt").exists());
+    assert!(out_dir.path().join("sampleA.end_motifs.zarr").exists());
     assert!(out_dir.path().join("sampleA.group_index.tsv").exists());
     assert!(!out_dir.path().join("sampleA.grouped_windows.tsv").exists());
-    assert!(!out_dir.path().join("end_motifs.npy").exists());
-    assert!(!out_dir.path().join("end_motifs.txt").exists());
+    assert!(!out_dir.path().join("end_motifs.zarr").exists());
     assert!(!out_dir.path().join("group_index.tsv").exists());
     assert!(!out_dir.path().join("grouped_windows.tsv").exists());
     assert!(!out_dir.path().join("sampleA.bins.tsv").exists());
@@ -7648,7 +7709,7 @@ fn sparse_output_motif_labels_only_include_observed_motifs() -> Result<()> {
 
     // Act
     run(&cfg)?;
-    let motifs = read_motif_labels(&sparse_output_paths(out_dir.path()).1)?;
+    let (motifs, _matrix) = read_sparse_output(out_dir.path())?;
 
     // Assert
     assert_eq!(motifs, vec!["_A", "_G"]);
@@ -7704,7 +7765,7 @@ fn read_backed_inside_only_runs_without_ref_2bit() -> Result<()> {
     run(&cfg)?;
 
     // Assert
-    assert!(sparse_output_paths(out_dir.path()).0.exists());
+    assert!(end_motifs_zarr_path(out_dir.path()).exists());
     assert!(settings_path(out_dir.path()).exists());
     Ok(())
 }
@@ -7731,22 +7792,10 @@ fn output_prefix_is_applied_to_all_primary_end_outputs() -> Result<()> {
     run(&cfg)?;
 
     // Assert
-    assert!(
-        out_dir
-            .path()
-            .join("sampleA.end_motifs.sparse.npz")
-            .exists()
-    );
-    assert!(out_dir.path().join("sampleA.end_motifs.txt").exists());
-    assert!(
-        out_dir
-            .path()
-            .join("sampleA.end_motif_settings.json")
-            .exists()
-    );
-    assert!(!out_dir.path().join("end_motifs.sparse.npz").exists());
-    assert!(!out_dir.path().join("end_motifs.txt").exists());
-    assert!(!out_dir.path().join("end_motif_settings.json").exists());
+    assert!(out_dir.path().join("sampleA.end_motifs.zarr").exists());
+    assert!(out_dir.path().join("sampleA.end_settings.json").exists());
+    assert!(!out_dir.path().join("end_motifs.zarr").exists());
+    assert!(!out_dir.path().join("end_settings.json").exists());
     Ok(())
 }
 
@@ -7877,17 +7926,10 @@ fn output_prefix_is_applied_to_dense_all_motifs_outputs() -> Result<()> {
     run(&cfg)?;
 
     // Assert
-    assert!(out_dir.path().join("sampleA.end_motifs.npy").exists());
-    assert!(out_dir.path().join("sampleA.end_motifs.txt").exists());
-    assert!(
-        out_dir
-            .path()
-            .join("sampleA.end_motif_settings.json")
-            .exists()
-    );
-    assert!(!out_dir.path().join("end_motifs.npy").exists());
-    assert!(!out_dir.path().join("end_motifs.txt").exists());
-    assert!(!out_dir.path().join("end_motif_settings.json").exists());
+    assert!(out_dir.path().join("sampleA.end_motifs.zarr").exists());
+    assert!(out_dir.path().join("sampleA.end_settings.json").exists());
+    assert!(!out_dir.path().join("end_motifs.zarr").exists());
+    assert!(!out_dir.path().join("end_settings.json").exists());
     Ok(())
 }
 
@@ -7913,9 +7955,8 @@ fn empty_output_prefix_writes_unprefixed_primary_outputs() -> Result<()> {
     run(&cfg)?;
 
     // Assert
-    assert!(out_dir.path().join("end_motifs.sparse.npz").exists());
-    assert!(out_dir.path().join("end_motifs.txt").exists());
-    assert!(out_dir.path().join("end_motif_settings.json").exists());
+    assert!(out_dir.path().join("end_motifs.zarr").exists());
+    assert!(out_dir.path().join("end_settings.json").exists());
     Ok(())
 }
 
@@ -7970,7 +8011,7 @@ fn read_backed_paired_inside_only_runs_without_ref_2bit() -> Result<()> {
     run(&cfg)?;
 
     // Assert
-    assert!(sparse_output_paths(out_dir.path()).0.exists());
+    assert!(end_motifs_zarr_path(out_dir.path()).exists());
     assert!(settings_path(out_dir.path()).exists());
     Ok(())
 }

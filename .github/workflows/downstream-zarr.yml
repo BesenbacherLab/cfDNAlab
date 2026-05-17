@@ -1,0 +1,159 @@
+name: downstream-zarr
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/commands/midpoints/**"
+      - "src/commands/ends/**"
+      - "src/shared/io.rs"
+      - "src/shared/io_tests.rs"
+      - "src/shared/zarr.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "tests/generate_downstream_zarr_fixtures.rs"
+      - "tests/fixtures/**"
+      - "downstream_tests/**"
+      - "py-cfdnalab/**"
+      - "r-cfdnalab/**"
+      - ".github/workflows/downstream-zarr.yml"
+      - "website/docs/guides/fragment_midpoints_guide.md"
+      - "website/docs/guides/fragment_ends_guide.md"
+
+concurrency:
+  group: downstream-zarr-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  generate-zarr-fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust fixture system dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config
+
+      - name: Generate Zarr fixtures with cfDNAlab
+        env:
+          CFDNALAB_DOWNSTREAM_FIXTURE_DIR: downstream_tests/tmp
+        run: cargo test --no-default-features --features cmd_midpoints,cmd_ends --test generate_downstream_zarr_fixtures -- --ignored
+
+      - name: Upload Zarr fixtures
+        uses: actions/upload-artifact@v4
+        with:
+          name: cfdnalab-zarr-fixtures
+          path: downstream_tests/tmp
+
+  python:
+    needs: generate-zarr-fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: downstream_tests/requirements-python.txt
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.14"
+
+      - name: Install Python downstream packages
+        run: python -m pip install -r downstream_tests/requirements-python.txt
+
+      - name: Download cfDNAlab-generated Zarr fixtures
+        uses: actions/download-artifact@v4
+        with:
+          name: cfdnalab-zarr-fixtures
+          path: downstream_tests/tmp
+
+      - name: Run Python package tests
+        working-directory: py-cfdnalab
+        run: uv run pytest
+
+      - name: Install Python helper package
+        run: python -m pip install -e py-cfdnalab
+
+      - name: Run Python downstream tests
+        env:
+          CFDNALAB_MIDPOINT_ZARR: downstream_tests/tmp/tiny.midpoint_profiles.zarr
+          CFDNALAB_ENDS_DENSE_GLOBAL_ZARR: downstream_tests/tmp/tiny_dense_global.end_motifs.zarr
+          CFDNALAB_ENDS_SPARSE_WINDOWED_ZARR: downstream_tests/tmp/tiny_sparse_windowed.end_motifs.zarr
+          CFDNALAB_ENDS_SPARSE_GROUPED_ZARR: downstream_tests/tmp/tiny_sparse_grouped.end_motifs.zarr
+        run: pytest downstream_tests/python
+
+  r:
+    needs: generate-zarr-fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download cfDNAlab-generated Zarr fixtures
+        uses: actions/download-artifact@v4
+        with:
+          name: cfdnalab-zarr-fixtures
+          path: downstream_tests/tmp
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: release
+          use-public-rspm: true
+
+      - name: Install R package system libraries
+        run: sudo apt-get update && sudo apt-get install -y libblosc-dev libzstd-dev
+
+      - name: Install R helper package dependencies
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          working-directory: r-cfdnalab
+          extra-packages: |
+            any::testthat
+
+      - name: Run R helper package tests
+        env:
+          CFDNALAB_MIDPOINT_ZARR: downstream_tests/tmp/tiny.midpoint_profiles.zarr
+          CFDNALAB_ENDS_DENSE_GLOBAL_ZARR: downstream_tests/tmp/tiny_dense_global.end_motifs.zarr
+          CFDNALAB_ENDS_SPARSE_WINDOWED_ZARR: downstream_tests/tmp/tiny_sparse_windowed.end_motifs.zarr
+          CFDNALAB_ENDS_SPARSE_GROUPED_ZARR: downstream_tests/tmp/tiny_sparse_grouped.end_motifs.zarr
+        run: Rscript -e 'testthat::test_local("r-cfdnalab")'
+
+      - name: Install R helper package
+        run: R CMD INSTALL r-cfdnalab
+
+      - name: Run R helper package downstream test
+        env:
+          CFDNALAB_MIDPOINT_ZARR: downstream_tests/tmp/tiny.midpoint_profiles.zarr
+          CFDNALAB_ENDS_DENSE_GLOBAL_ZARR: downstream_tests/tmp/tiny_dense_global.end_motifs.zarr
+          CFDNALAB_ENDS_SPARSE_WINDOWED_ZARR: downstream_tests/tmp/tiny_sparse_windowed.end_motifs.zarr
+          CFDNALAB_ENDS_SPARSE_GROUPED_ZARR: downstream_tests/tmp/tiny_sparse_grouped.end_motifs.zarr
+        run: Rscript downstream_tests/R/test_cfdnalab_r_package.R
+
+      - name: Run CRAN zarr downstream test
+        env:
+          CFDNALAB_MIDPOINT_ZARR: downstream_tests/tmp/tiny.midpoint_profiles.zarr
+          CFDNALAB_ENDS_DENSE_GLOBAL_ZARR: downstream_tests/tmp/tiny_dense_global.end_motifs.zarr
+          CFDNALAB_ENDS_SPARSE_WINDOWED_ZARR: downstream_tests/tmp/tiny_sparse_windowed.end_motifs.zarr
+          CFDNALAB_ENDS_SPARSE_GROUPED_ZARR: downstream_tests/tmp/tiny_sparse_grouped.end_motifs.zarr
+        run: Rscript downstream_tests/R/test_midpoint_zarr_cran_zarr.R
+
+      - name: Run CRAN zarr end-motif downstream test
+        env:
+          CFDNALAB_MIDPOINT_ZARR: downstream_tests/tmp/tiny.midpoint_profiles.zarr
+          CFDNALAB_ENDS_DENSE_GLOBAL_ZARR: downstream_tests/tmp/tiny_dense_global.end_motifs.zarr
+          CFDNALAB_ENDS_SPARSE_WINDOWED_ZARR: downstream_tests/tmp/tiny_sparse_windowed.end_motifs.zarr
+          CFDNALAB_ENDS_SPARSE_GROUPED_ZARR: downstream_tests/tmp/tiny_sparse_grouped.end_motifs.zarr
+        run: Rscript downstream_tests/R/test_end_motif_zarr_cran_zarr.R

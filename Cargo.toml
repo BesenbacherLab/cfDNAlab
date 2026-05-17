@@ -1,6 +1,6 @@
 [package]
 name = "cfdnalab"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.94"
 authors = ["Ludvig Renbo Olsen", "Søren Besenbacher"]
@@ -10,6 +10,7 @@ readme = "README.md"
 include = [
     "/Cargo.toml",
     "/Cargo.lock",
+    "/CHANGELOG",
     "/LICENSE",
     "/README.md",
     "/cfdnalab_logo_750x500_150dpi.png",
@@ -90,6 +91,7 @@ tempfile = "3.20.0"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["fmt"] }
 twobit = "0.2.2"
+zarrs = "0.23.11"
 zip = { version = "4.6.1", default-features = false, features = ["deflate"] }
 zstd = { version = "0.13.3", features = ["zstdmt"] }
 
@@ -100,8 +102,3 @@ libc = "0.2"
 name = "cfdna"
 path = "src/bin/cfdna.rs"
 required-features = ["cli"]
-
-[[bin]]
-name = "gen_cli_docs"
-path = "src/bin/gen_cli_docs.rs"
-required-features = ["cli", "docs_gen"]
