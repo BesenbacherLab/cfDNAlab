@@ -10,18 +10,18 @@ stopifnot(identical(
 ))
 stopifnot(identical(
   length_bins(midpoints)$length_start_bp,
-  c(30, 50, 70)
+  c(30L, 50L, 70L)
 ))
 stopifnot(identical(
   positions(midpoints)$position_bin_start_bp,
   c(0L, 2L, 4L, 6L, 8L)
 ))
 
-beta_profile <- profile_data_frame(midpoints, group = "beta-site", length_bin_idx = 1L)
-stopifnot(identical(beta_profile$position_idx, c(0L, 1L, 2L, 3L, 4L)))
+beta_profile <- profile_data_frame(midpoints, group = "beta-site", length_bin_idx = 2L)
+stopifnot(identical(beta_profile$position_idx, c(1L, 2L, 3L, 4L, 5L)))
 stopifnot(isTRUE(all.equal(beta_profile$count, c(0, 0, 1.5, 0, 0.5))))
 stopifnot(isTRUE(all.equal(
-  profile_array(midpoints, group_idx = 2L, length_bin_idx = 0L),
+  profile_array(midpoints, group_idx = 3L, length_bin_idx = 1L),
   c(0, 0, 2.5, 0, 0)
 )))
 
@@ -44,7 +44,7 @@ stopifnot(isTRUE(all.equal(
 sparse_windowed <- read_end_motifs(sparse_windowed_end_zarr_path())
 stopifnot(identical(storage_mode(sparse_windowed), "sparse_coo"))
 stopifnot(identical(row_mode(sparse_windowed), "bed"))
-stopifnot(identical(windows(sparse_windowed)$window_idx, c(0L, 1L)))
+stopifnot(identical(windows(sparse_windowed)$window_idx, c(1L, 2L)))
 stopifnot(isTRUE(all.equal(
   as.matrix(sparse_counts_matrix(sparse_windowed)),
   matrix(c(0, 1, 1, 0), nrow = 2, byrow = TRUE)
@@ -61,7 +61,7 @@ stopifnot(isTRUE(all.equal(
 sparse_grouped <- read_end_motifs(sparse_grouped_end_zarr_path())
 stopifnot(identical(storage_mode(sparse_grouped), "sparse_coo"))
 stopifnot(identical(row_mode(sparse_grouped), "grouped_bed"))
-stopifnot(identical(group_idx(sparse_grouped, "alpha"), 1L))
+stopifnot(identical(group_idx(sparse_grouped, "alpha"), 2L))
 stopifnot(identical(
   groups(sparse_grouped)$group_name,
   c("beta", "alpha", "gamma")
