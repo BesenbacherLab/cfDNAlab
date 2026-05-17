@@ -79,11 +79,10 @@ The following commands are currently available:
 
 <p align="center">
   <img src="cfdnalab_command_overview_1.0.png" height="400" alt="Overview of main commands" />
-  
+</p>  
+<p align="center">
   <b>Figure 1</b>: Overview of the main commands and input files. Non-exhaustive.
 </p>
-
-
 
 ### Feature extraction
 
