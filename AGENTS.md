@@ -34,3 +34,8 @@ Always read [.AI/collaboration.md](/Users/au547627/Documents/Development/rust/cf
 - For test placement, visibility, and public API boundary rules, read [.AI/api_boundaries.md](/Users/au547627/Documents/Development/rust/cfDNAlab/.AI/api_boundaries.md)
 - For reducers, aggregation, masking, tiling, normalization, and related scientific/counting code, read [.AI/scientific_code.md](/Users/au547627/Documents/Development/rust/cfDNAlab/.AI/scientific_code.md)
 - For communication style, scope, backwards-compatibility assumptions, engineering choices, and non-code interaction style, read [.AI/collaboration.md](/Users/au547627/Documents/Development/rust/cfDNAlab/.AI/collaboration.md)
+
+
+## R package
+
+See r-cfdnalab/DEVELOPMENT.md - especially for 1-based external indexing and 0-based internal indexing rules.

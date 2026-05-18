@@ -66,17 +66,33 @@ Keep the first dependency set small:
 - `Matrix`: sparse end-motif matrices
 - `methods`: only if needed for `Matrix`
 - `jsonlite`: JSON root and array attributes if the Zarr backend does not expose them cleanly
+- `data.table`: fast TSV reader for length-count outputs
 
-Avoid hard dependency on `tibble`, `dplyr`, or `data.table` in the first version.
+Avoid hard dependency on `tibble` or `dplyr` in the first version.
 
-Return base `data.frame` objects by default. They work naturally with:
+Return base `data.frame` objects from public data-frame helpers by default. The
+loader may keep efficient internal representations, such as the numeric count
+matrix and parsed metadata, but public data-frame helpers should not require
+users to know `data.table` syntax. Base data frames work naturally with:
 
 ```r
 tibble::as_tibble(x)
 data.table::as.data.table(x)
 ```
 
-This avoids making tidyverse or data.table users pay for dependencies they do not use.
+If `read_lengths()` is added, keep compressed TSV reading behind an internal
+helper. Use `data.table::fread()` for TSV parsing. For `.tsv.zst` files, use
+`data.table::fread(cmd = "zstd -dc <path>")` with proper shell quoting and
+validate that `Sys.which("zstd")` finds a system `zstd` binary before reading.
+If `zstd` is unavailable, error clearly instead of falling back to a slower or
+partial path. The public API should be `read_lengths(path)`, not a generic
+decompression utility.
+
+If R plotting helpers are added, keep plotting packages out of `Imports`:
+
+- `ggplot2` can be a `Suggests` dependency because plotting is optional.
+- `ggridges` should not be a hard dependency. Either use it only when installed
+  for ridge-style plots or draw a simple internal polygon-based ridge view.
 
 Current candidate Zarr readers:
 
@@ -106,9 +122,10 @@ Sources checked while drafting:
 ```r
 read_midpoints(path)
 read_end_motifs(path)
+read_lengths(path)
 ```
 
-Both loaders should:
+Zarr loaders should:
 
 - require `path` to exist
 - require `path` to be a directory
@@ -117,6 +134,48 @@ Both loaders should:
 - validate `cfdnalab_schema`
 - validate `cfdnalab_schema_version`
 - give package-specific errors for wrong schema, missing arrays, or unsupported storage modes
+
+`read_lengths()` should load `<prefix>.length_counts.tsv.zst` outputs from the
+`cfdna lengths` command. It should infer its public metadata from the TSV
+itself, not from `<prefix>.length_settings.json`:
+
+- Count columns named `count_<length>` represent half-open bins
+  `[length, length + 1)`.
+- Count columns named `count_<start>_<end>` represent half-open bins
+  `[start, end)`.
+- Global output has only count columns.
+- Windowed output has `chrom`, `start`, and `end`, plus optional
+  `blacklisted_fraction`.
+- Grouped output has `group_name` and `eligible_windows`, plus optional
+  `blacklisted_fraction`.
+
+The settings JSON is not part of the public `read_lengths()` contract. Users
+who need command provenance can read the JSON directly with `jsonlite`. The
+loader should only parse and validate the TSV shape needed for downstream R
+workflows.
+
+`read_lengths()` should return mode-specific S3 classes:
+
+```r
+class(x) <- c(
+  "cfdnalab_global_length_counts",
+  "cfdnalab_length_counts"
+)
+
+class(x) <- c(
+  "cfdnalab_windowed_length_counts",
+  "cfdnalab_length_counts"
+)
+
+class(x) <- c(
+  "cfdnalab_grouped_length_counts",
+  "cfdnalab_length_counts"
+)
+```
+
+Do not expose a generic row-metadata concept for lengths. Use `windows()` for
+windowed outputs and `group_metadata()` for grouped outputs, matching the rest
+of the R API.
 
 ## Shared Generics
 
@@ -129,13 +188,17 @@ group_metadata(x)
 length_bins(x)
 positions(x)
 motifs(x)
+windows(x)
 ```
 
 Only implement methods where the concept exists. For example:
 
 - `group_metadata()` exists for midpoint profiles and grouped end motifs.
+- `group_metadata()` also exists for grouped length counts.
 - `positions()` exists for midpoint profiles.
-- `windows()` exists only for windowed end motifs.
+- `windows()` exists for windowed end motifs and windowed length counts.
+- `position_bins()` may be added later for range-based window lookup, but is
+  not part of the first length-count implementation.
 - `motifs()` exists only for end motifs.
 
 Do not invent generalized `rows()` methods for users. The schema has rows internally, but users think in groups, windows, motifs, and profiles.
@@ -234,6 +297,298 @@ midpoint_array(midpoints)
 
 Document that this loads the full 3D count tensor into memory.
 
+## Length Counts API
+
+Loader:
+
+```r
+lengths <- read_lengths("sample.length_counts.tsv.zst")
+```
+
+The loader should parse the wide TSV written by `cfdna lengths` and expose a
+length-bin-aware object for reshaping and plotting. It should not require or
+implicitly read the settings JSON.
+
+Shared metadata and extraction:
+
+```r
+length_bins(lengths)
+length_bin_idx(lengths, length)
+length_counts_matrix(lengths)
+length_data_frame(
+  lengths,
+  value = c("count", "fraction", "density"),
+  keep_wide = FALSE,
+  max_blacklisted_fraction = NULL
+)
+```
+
+`length_bins()` should return:
+
+```r
+length_bin_idx
+length_start_bp
+length_end_bp
+length_midpoint_bp
+length_width_bp
+count_column
+```
+
+`length_counts_matrix()` should return the numeric count matrix only. Its rows
+are the output units from the TSV in file order, and its columns are the parsed
+length bins. This helper is allowed to use row order internally, but user-facing
+metadata should stay expressed as windows, groups, or global output.
+
+`length_data_frame()` should return one record per output unit and length bin
+by default:
+
+```r
+length_bin_idx
+length_start_bp
+length_end_bp
+length_midpoint_bp
+length_width_bp
+count
+```
+
+For windowed length counts, include the window columns:
+
+```r
+window_idx
+chrom
+start
+end
+blacklisted_fraction
+```
+
+For grouped length counts, include the group columns:
+
+```r
+group_idx
+group_name
+eligible_windows
+blacklisted_fraction
+```
+
+The `blacklisted_fraction` column is present only when the TSV includes it.
+
+If `keep_wide = TRUE`, `length_data_frame()` should return one row per output
+unit and keep one value column per length bin. `value = "count"` should keep
+the original `count_*` column names. `value = "fraction"` should return
+`fraction_*` columns, and `value = "density"` should return `density_*`
+columns, using the same length-bin suffixes as the source count columns.
+
+`max_blacklisted_fraction` should filter output units before reshaping. When it
+is `NULL`, no blacklist filtering is applied. When it is numeric, keep only
+windows or groups with `blacklisted_fraction <= max_blacklisted_fraction`.
+If the loaded output does not contain `blacklisted_fraction`, requesting this
+filter should error with a clear message. This avoids silently treating outputs
+that were not written with blacklist metadata as if they had no blacklisted
+content.
+
+`value = "fraction"` should compute the within-output-unit fraction:
+
+```r
+count / sum(count)
+```
+
+`value = "density"` should compute that fraction divided by
+`length_width_bp`. This makes unequal length-bin widths comparable.
+
+Do not use `eligible_windows` for normalization. It is useful for filtering and
+quality control. The TSV does not contain eligible bases, so the R package
+should not expose per-base or per-eligible-window normalization helpers for
+length outputs.
+
+### Global Length Counts
+
+For `cfdnalab_global_length_counts`:
+
+```r
+length_counts_vector(lengths)
+length_data_frame(
+  lengths,
+  value = c("count", "fraction", "density"),
+  keep_wide = FALSE
+)
+```
+
+`length_counts_vector()` should return a named numeric vector with one value per
+length bin.
+
+### Windowed Length Counts
+
+For `cfdnalab_windowed_length_counts`:
+
+```r
+windows(lengths)
+length_data_frame(
+  lengths,
+  window_idx = NULL,
+  value = c("count", "fraction", "density"),
+  keep_wide = FALSE,
+  max_blacklisted_fraction = NULL
+)
+```
+
+`windows()` should return:
+
+```r
+window_idx
+chrom
+start
+end
+blacklisted_fraction
+```
+
+`window_idx` is one-based and follows the output order in the TSV. Genomic
+range lookup is a later development stage. In the first implementation,
+windowed length-count selection should use `window_idx`, and ad hoc filtering
+should happen through ordinary R subsetting on `windows(lengths)`.
+`length_data_frame()` should accept optional `window_idx` selection for the
+common case where users want one or a few windows.
+
+In a later stage, `position_bins()` may return rows from `windows(lengths)`
+that overlap a requested genomic range:
+
+```r
+position_bins(lengths, chrom = "chr1", start = 50000000, end = 75000000)
+```
+
+The returned data frame should include:
+
+```r
+position_bin_idx
+window_idx
+chrom
+start
+end
+```
+
+Include `blacklisted_fraction` when the loaded TSV has that column.
+
+`position_bin_idx` is a one-based public index for selecting bins on the
+windowed genomic track. It should follow the plotted bin order. For fixed-size
+windows this is the same order as `windows(lengths)`. The helper should use the
+same `chrom`, `start`, and `end` coordinate system as `windows(lengths)` only
+for range lookup. It should not expose or convert internal zero-based schema
+indices. Validate that `chrom`, `start`, and `end` are supplied together when
+`ranges = NULL`, that `start < end`, and that at least one output window
+overlaps the requested range. For multiple requested ranges, `ranges` should be
+a data frame with `chrom`, `start`, and `end` columns. Use either `ranges` or
+the scalar `chrom`/`start`/`end` arguments, not both. Return the union of
+overlapping position bins in plotted order.
+
+### Grouped Length Counts
+
+For `cfdnalab_grouped_length_counts`:
+
+```r
+group_metadata(lengths)
+group_idx(lengths, group_name)
+length_data_frame(
+  lengths,
+  group = NULL,
+  group_idx = NULL,
+  value = c("count", "fraction", "density"),
+  keep_wide = FALSE,
+  max_blacklisted_fraction = NULL
+)
+```
+
+`group_metadata()` should return:
+
+```r
+group_idx
+group_name
+eligible_windows
+blacklisted_fraction
+```
+
+`group` selectors may be a group name or a one-based group index, matching the
+grouped end-motif API.
+
+`length_data_frame()` should accept optional `group` or `group_idx` selection.
+Use either `group` or `group_idx`, not both.
+
+### Length-Bin Ratio Helpers
+
+Ratios between user-selected length bins are common downstream summaries.
+Short/long ratios are one example, but the API should be general enough for
+any ratio of two length bins.
+
+Shared helper:
+
+```r
+length_ratio_data_frame(
+  x,
+  num_length_bin_idx,
+  denom_length_bin_idx,
+  denom_zero = c("NA", "error"),
+  max_blacklisted_fraction = NULL
+)
+```
+
+`num_length_bin_idx` and `denom_length_bin_idx` should be one-based indices
+from `length_bins(x)`. For example, a short/long-style ratio can be created by
+running `cfdna lengths --length-bins 100 151 221` and often `--by-size 5000000` 
+and then using length bin 1 over length bin 2. The R helper should not reconstruct broad ranges by summing many bins. Users should choose the ratio bins during the command call when they want this derived feature.
+
+Validation rules:
+
+- `num_length_bin_idx` and `denom_length_bin_idx` must each be a scalar
+  one-based length-bin index.
+- Both indices must exist in `length_bins(x)`.
+- The numerator and denominator bin indices must be different.
+- Denominator zero handling must be explicit. The default can return `NA` for
+  undefined ratios, but the returned data frame should include
+  `num_count` and `denom_count` so users can filter low-support windows or
+  groups.
+- `max_blacklisted_fraction` should filter windowed or grouped outputs before
+  computing ratios, using the same rules as `length_data_frame()`.
+
+Returned columns should include the output-unit metadata plus:
+
+```r
+num_length_bin_idx
+num_length_start_bp
+num_length_end_bp
+denom_length_bin_idx
+denom_length_start_bp
+denom_length_end_bp
+num_count
+denom_count
+ratio
+```
+
+For windowed length counts, include:
+
+```r
+position_bin_idx
+window_idx
+chrom
+start
+end
+blacklisted_fraction
+```
+
+`position_bin_idx` is one-based and follows the plotted genomic-track bin
+order. For fixed-size windows, it should match the row order used by
+`windows(lengths)`.
+
+For grouped length counts, include:
+
+```r
+group_idx
+group_name
+eligible_windows
+blacklisted_fraction
+```
+
+Do not hide low-support behavior. Documentation should tell users to inspect
+`num_count`, `denom_count`, their sum, and blacklist fraction before treating a
+ratio as reliable.
+
 ## End-Motif Counts API
 
 Loader:
@@ -300,12 +655,15 @@ sparse_data_frame_for_motif(ends, motif)
 
 ```r
 window_idx
-chromosome
-chromosome_name
-window_start_bp
-window_end_bp
+chrom
+start
+end
 blacklisted_fraction
 ```
+
+Use the same public genomic-window column names for windowed end motifs and
+windowed length counts. `chrom`, `start`, and `end` match the standard
+BED-like table shape. They are genomic coordinates, not R indices.
 
 Sparse helpers should avoid constructing the full dense matrix.
 
@@ -352,6 +710,209 @@ dense_counts_matrix(x, allow_densify = FALSE)
 
 If `x` is sparse and `allow_densify = FALSE`, error with a message telling the user to use `sparse_counts_matrix()` or set `allow_densify = TRUE`.
 
+## Length Plotting API
+
+Plotting should be domain-aware and built on `cfdnalab_length_counts` objects.
+Do not add generic plotting wrappers for arbitrary user data frames.
+
+Use one S3 generic:
+
+```r
+plot_lengths <- function(x, ...) {
+  UseMethod("plot_lengths")
+}
+```
+
+Methods can have different arguments by class. Keep separate public plotting
+functions out of the first version unless the display families become too
+different to document under one generic.
+
+Shared value choices:
+
+```r
+value = c("fraction", "count", "density")
+```
+
+Definitions must match `length_data_frame()`:
+
+- `count`: loaded count or weighted mass.
+- `fraction`: within-output-unit fraction over the length axis.
+- `density`: fraction divided by `length_width_bp`.
+
+The plotting API should not expose per-base or per-window normalization for
+length outputs because eligible bases are not available in the TSV.
+
+For `cfdnalab_global_length_counts`:
+
+```r
+plot_lengths(
+  x,
+  value = c("fraction", "count", "density"),
+  display = c("line", "bar"),
+  ...
+)
+```
+
+For `cfdnalab_grouped_length_counts`:
+
+```r
+plot_lengths(
+  x,
+  groups = NULL,
+  value = c("fraction", "count", "density"),
+  max_blacklisted_fraction = NULL,
+  display = c("line", "facet", "ridges", "tiles"),
+  max_groups = 12,
+  ...
+)
+```
+
+For `cfdnalab_windowed_length_counts`:
+
+```r
+plot_lengths(
+  x,
+  window_idx = NULL,
+  value = c("fraction", "count", "density"),
+  max_blacklisted_fraction = NULL,
+  display = c("line", "facet", "ridges", "tiles"),
+  max_windows = 12,
+  ...
+)
+```
+
+Display modes:
+
+- `line`: length on the x-axis and value on the y-axis, with groups or selected
+  windows mapped to color.
+- `facet`: one length-distribution panel per group or selected window.
+- `ridges`: stacked vertical distributions built from the binned length values.
+  This is not a kernel-density estimate over raw fragments.
+- `tiles`: group or selected window on the y-axis, length on the x-axis, and
+  value mapped to fill.
+
+Default behavior:
+
+- Global output plots the single distribution.
+- Grouped output may plot all groups when the number of groups is at most
+  `max_groups`. Otherwise require `groups`.
+- Windowed output should require selected `window_idx` unless the number of
+  windows is at most `max_windows`.
+- All plotting helpers return `ggplot` objects so users can adjust themes,
+  labels, colors, and export settings.
+- Built-in defaults should be polished enough for reports, including meaningful
+  axis labels, legend labels, and sensible scales. This is part of the value of
+  package plotting, not a replacement for user customization.
+
+### Length-Bin Ratio Plotting
+
+Use a separate plotting generic for ratios because these plots show derived
+summaries across output units, not length distributions themselves:
+
+```r
+plot_length_ratio <- function(x, ...) {
+  UseMethod("plot_length_ratio")
+}
+```
+
+The first useful plotting method should be for windowed length counts:
+
+```r
+plot_length_ratio(
+  x,
+  num_length_bin_idx,
+  denom_length_bin_idx,
+  position_bin_idx = NULL,
+  denom_zero = c("NA", "error"),
+  min_num_count = 0,
+  min_denom_count = 0,
+  min_total_count = 0,
+  max_blacklisted_fraction = NULL,
+  support_color = c("none", "total_count", "num_count", "denom_count", "blacklisted_fraction"),
+  require_regular_windows = TRUE,
+  display = c("genome", "chromosome_facets"),
+  ...
+)
+```
+
+`num_length_bin_idx` and `denom_length_bin_idx` use the same one-based
+length-bin selectors as `length_ratio_data_frame()`.
+
+`plot_length_ratio()` should be a convenience wrapper. It should call
+`length_ratio_data_frame()` and then pass the result to the explicit data-frame
+plotter:
+
+```r
+plot_length_ratio_track(
+  ratios,
+  position_bin_idx = NULL,
+  min_num_count = 0,
+  min_denom_count = 0,
+  min_total_count = 0,
+  max_blacklisted_fraction = NULL,
+  support_color = c("none", "total_count", "num_count", "denom_count", "blacklisted_fraction"),
+  require_regular_windows = TRUE,
+  display = c("genome", "chromosome_facets"),
+  ...
+)
+```
+
+`plot_length_ratio_track()` should accept the output of
+`length_ratio_data_frame()` for windowed length counts. This gives users a
+direct path for computing ratios, filtering or annotating the data frame, and
+then plotting the same genomic ratio track without re-reading or recomputing
+the length-count object.
+
+Ratio track plotting should not expose `window_idx` selection. Window indices
+are arbitrary output-order identifiers and are not meaningful for selecting a
+range on a genome-scale track. Use `position_bin_idx` for selecting plotted
+position bins.
+
+`position_bin_idx` should be `NULL` or a one-based integer vector of plotted
+position-bin indices. Users can get these indices from
+`position_bins(lengths, chrom, start, end)` for windowed length counts, then
+pass `bins$position_bin_idx` to `plot_length_ratio()` or
+`plot_length_ratio_track()`. The plotting helper should validate that requested
+indices exist in the ratio data frame and should error clearly if no ratio rows
+remain after subsetting. Users who need more specialized subsetting can filter
+the ratio data frame before calling `plot_length_ratio_track()`.
+
+Windowed ratio plotting should target fixed-size genomic windows, for example
+5Mb bins. Because the TSV itself does not record `window_mode`, the plotting
+method should infer whether the window table is regular enough to plot as a
+genomic track:
+
+- Windows must have `chrom`, `start`, and `end`.
+- Within each chromosome, windows must be sorted, non-overlapping, and
+  contiguous.
+- Window widths should be consistent, allowing only the final window on a
+  chromosome to be shorter.
+
+If those checks fail and `require_regular_windows = TRUE`, error with a message
+telling the user to use `length_ratio_data_frame()` and custom plotting for
+irregular BED windows.
+
+`display = "genome"` should plot windows in chromosome order as one concatenated
+genome-like track. `display = "chromosome_facets"` should facet by chromosome
+and use each window's genomic midpoint on the x-axis.
+
+The returned plot should keep low-support behavior visible. The ratio data
+should include `num_count`, `denom_count`, and `ratio`, and the plotting method
+should document how `min_num_count`, `min_denom_count`, `min_total_count`, and
+`max_blacklisted_fraction` filter unstable or heavily blacklisted windows before
+plotting.
+
+`support_color` should optionally color plotted windows by a support or QC
+column using a continuous gradient scale and a clear legend. It should default
+to `"none"` so the basic ratio track stays visually simple. Useful choices are:
+
+- `"total_count"`: colors by `num_count + denom_count`, which is usually the
+  best first support metric.
+- `"num_count"` and `"denom_count"`: color by support in either selected
+  length bin.
+- `"blacklisted_fraction"`: colors by blacklist overlap when available, and
+  errors clearly if the loaded output has no blacklist metadata.
+
 ## Internal Layout
 
 Suggested files:
@@ -362,12 +923,16 @@ R/
   schema.R
   midpoints.R
   end_motifs.R
+  lengths.R
+  plotting.R
   print.R
   utils.R
 tests/
   testthat/
     test-midpoints.R
     test-end-motifs.R
+    test-lengths.R
+    test-length-plots.R
     test-schema-validation.R
 ```
 
@@ -387,6 +952,12 @@ tests/
 
 Output-specific files should own biological semantics and public helper functions.
 
+`lengths.R` should own TSV parsing, length-bin extraction, length-count
+objects, and length data-frame helpers.
+
+`plotting.R` should own optional plotting helpers and must not make plotting
+packages required for non-plotting use.
+
 Documentation convention:
 
 - Roxygen comments in `R/*.R` are the source of truth for user-facing docs,
@@ -400,7 +971,9 @@ Documentation convention:
 
 ## Testing Plan
 
-Use actual cfDNAlab-generated fixtures, not hand-written Zarr stores, for integration tests.
+Use actual cfDNAlab-generated fixtures, not hand-written Zarr stores, for
+Zarr integration tests. Length TSV parser unit tests may use small hand-written
+TSV fixtures, with downstream tests covering real `cfdna lengths` outputs.
 
 Minimum tests:
 
@@ -416,6 +989,35 @@ Minimum tests:
 - sparse motif slice does not densify
 - invalid schema gives a useful error
 - sparse densification requires explicit opt-in
+- length TSV loader detects global, windowed, and grouped outputs
+- length TSV loader parses `count_<length>` and `count_<start>_<end>` columns
+  as half-open bins
+- length `length_bins()`, `length_bin_idx()`, `windows()`, and
+  `group_metadata()` use one-based public indices
+- length `length_data_frame()` computes `count`, `fraction`, and `density`
+  without using `eligible_windows` as a normalization denominator
+- length `length_data_frame(..., keep_wide = TRUE)` returns selected rows in
+  wide shape for `count`, `fraction`, and `density`, with `fraction_*` and
+  `density_*` columns when transformed values are requested
+- length `length_data_frame()` and ratio helpers filter by
+  `blacklisted_fraction` when `max_blacklisted_fraction` is supplied, and error
+  if the output has no blacklist metadata
+- length ratio helpers use one-based numerator and denominator length-bin
+  indices from `length_bins()`
+- length ratio helpers expose `num_count` and `denom_count`, and handle
+  denom-zero behavior explicitly
+- length plotting methods return `ggplot` objects for global, grouped, and
+  selected windowed outputs when `ggplot2` is installed
+- grouped and windowed length plots require explicit selections when output
+  size exceeds `max_groups` or `max_windows`
+- windowed length-ratio plotting validates fixed-size-like genomic windows
+  before drawing genome-track plots
+- `plot_length_ratio_track()` plots already-computed windowed ratio data frames
+  from `length_ratio_data_frame()`
+- ratio track plotting supports one-based `position_bin_idx` selection and does
+  not expose arbitrary `window_idx` selection
+- windowed length-ratio plotting can add support/QC gradient coloring for
+  total count, numerator count, denominator count, and blacklist fraction
 
 Local package install from the repository root:
 
@@ -466,18 +1068,43 @@ motifs(ends)
 motif_counts <- sparse_data_frame_for_motif(ends, motif = "_AA")
 ```
 
+Length example:
+
+```r
+library(cfdnalab)
+
+lengths <- read_lengths("sample.length_counts.tsv.zst")
+length_bins(lengths)
+
+length_distribution <- length_data_frame(
+  lengths,
+  value = "fraction",
+  max_blacklisted_fraction = 0.1
+)
+plot_lengths(lengths)
+
+ratios <- length_ratio_data_frame(
+  lengths,
+  num_length_bin_idx = 1L,
+  denom_length_bin_idx = 2L,
+  max_blacklisted_fraction = 0.1
+)
+```
+
 Do not make the README an exhaustive API reference. The package help pages should carry details about dense vs sparse behavior.
 
 ## Open Decisions
 
 - Should GC Zarr package loaders be included in the first R package release or deferred?
-- Should the R package include plotting helpers now, or only return analysis-ready objects?
 
 Resolved for the first implementation:
 
 - Use CRAN `zarr` as the default backend.
 - Return base `data.frame` objects.
 - Dense helpers on sparse stores error by default and require `allow_densify = TRUE`.
+- Defer generic plotting helpers, but add a focused `plot_lengths()` generic
+  when `read_lengths()` is added. Length plotting should return `ggplot`
+  objects and stay optional through `Suggests`.
 
 ## First Milestone
 
@@ -491,6 +1118,29 @@ Implement a minimal package that can:
 6. Pass downstream tests on actual cfDNAlab-generated fixtures.
 
 Plot helpers and GC package loaders can wait until the core readers are stable.
+
+## Next R Extension Milestone
+
+After the midpoint and end-motif readers are stable, add length-count TSV
+support:
+
+1. Implement `read_lengths()`.
+2. Return mode-specific length-count classes for global, windowed, and grouped
+   outputs.
+3. Parse count columns into half-open length bins.
+4. Read `.tsv.zst` files through `data.table::fread(cmd = "zstd -dc <path>")`
+   after validating that a system `zstd` binary is available.
+5. Add `length_counts_matrix()`, `length_data_frame()`, and mode-specific
+   selection helpers. Use `windows()` and `window_idx` for first-stage
+   windowed output selection; defer genomic range lookup helpers.
+6. Add length-bin ratio helpers for user-selected numerator and denominator
+   length-bin indices.
+7. Add `plot_lengths()` with line, facet, ridge-style, and tile displays for
+   the output modes where those displays make sense.
+8. Add `plot_length_ratio_track()` for already-computed windowed ratio data
+   frames and `plot_length_ratio()` as the length-count object convenience
+   wrapper.
+9. Keep settings JSON out of the public length loader API.
 
 Current implementation status:
 

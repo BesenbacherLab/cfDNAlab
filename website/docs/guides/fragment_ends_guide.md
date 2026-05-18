@@ -1,6 +1,6 @@
 # Extract Fragment End Motifs
 
-Multiple studies have used fragment end- and breakpoint-motifs to study cfDNA fragmentation biology [REFS]. These motif frequencies can capture sequence preferences around where fragments start and end.
+Multiple studies have used fragment end- and breakpoint-motifs to study cfDNA fragmentation biology. These motif frequencies can capture sequence preferences around where fragments start and end.
 
 ## Base command
 
@@ -70,11 +70,9 @@ cfdna ends \
   --scaling-factors <sample_directory>/scaling_factors/<sample_id>.fragment_counts.scaling_factors.tsv
 ```
 
-## Downstream usage
+## Load motif counts in Python
 
-`cfdna ends` writes `<sample_id>.end_motifs.zarr`. The helper packages give a smaller user-facing API than working with the Zarr arrays directly.
-
-In Python:
+Our `cfdnalab` **Python** package can help you load the `<sample_id>.end_motifs.zarr` output and extract data frames, arrays and meta data:
 
 ```python
 import cfdnalab as cfl
@@ -92,6 +90,10 @@ if ends.storage_mode() == "sparse_coo":
 else:
     motif_counts = ends.dense_data_frame_for_motif(motif)
 ```
+
+## Load motif counts in R
+
+Our `cfdnalab` **R** package can help you load the `<sample_id>.end_motifs.zarr` output and extract data frames, arrays and meta data:
 
 In R:
 
