@@ -125,7 +125,7 @@ Use generic functions where names make sense across outputs:
 ```r
 schema_version(x)
 storage_mode(x)
-groups(x)
+group_metadata(x)
 length_bins(x)
 positions(x)
 motifs(x)
@@ -133,7 +133,7 @@ motifs(x)
 
 Only implement methods where the concept exists. For example:
 
-- `groups()` exists for midpoint profiles and grouped end motifs.
+- `group_metadata()` exists for midpoint profiles and grouped end motifs.
 - `positions()` exists for midpoint profiles.
 - `windows()` exists only for windowed end motifs.
 - `motifs()` exists only for end motifs.
@@ -184,7 +184,7 @@ midpoints <- read_midpoints("sample.midpoint_profiles.zarr")
 Metadata:
 
 ```r
-groups(midpoints)
+group_metadata(midpoints)
 length_bins(midpoints)
 positions(midpoints)
 group_idx(midpoints, group_name)
@@ -194,7 +194,7 @@ length_bin_idx(midpoints, length)
 Expected metadata data frames:
 
 ```r
-groups(midpoints)
+group_metadata(midpoints)
 # group_idx, group_name, eligible_intervals
 
 length_bins(midpoints)
@@ -314,7 +314,7 @@ Sparse helpers should avoid constructing the full dense matrix.
 For `cfdnalab_grouped_end_motif_counts`:
 
 ```r
-groups(ends)
+group_metadata(ends)
 group_idx(ends, group_name)
 dense_counts_matrix(ends)
 dense_data_frame_for_group(ends, group)
@@ -325,7 +325,7 @@ sparse_data_frame_for_group(ends, group)
 sparse_data_frame_for_motif(ends, motif)
 ```
 
-`groups()` should return:
+`group_metadata()` should return:
 
 ```r
 group_idx
@@ -405,7 +405,7 @@ Use actual cfDNAlab-generated fixtures, not hand-written Zarr stores, for integr
 Minimum tests:
 
 - midpoint loader validates schema and version
-- midpoint `groups()`, `length_bins()`, `positions()`
+- midpoint `group_metadata()`, `length_bins()`, `positions()`
 - midpoint `profile_data_frame()` for one group and length bin
 - midpoint `profile_array()` matches the corresponding data frame counts
 - end-motif loader returns correct subclass by `row_mode`
@@ -446,7 +446,7 @@ Midpoint example:
 library(cfdnalab)
 
 midpoints <- read_midpoints("sample.midpoint_profiles.zarr")
-groups(midpoints)
+group_metadata(midpoints)
 
 profile <- profile_data_frame(
   midpoints,

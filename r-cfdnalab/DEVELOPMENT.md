@@ -27,7 +27,7 @@ Public R selectors and public metadata data frames are one-based:
   `window_idx`, `chromosome_idx`, `motif_idx`, and `row_idx`.
 - `group_idx(x, "alpha")`, `length_bin_idx(x, 167)`, and `motif_idx(x, "_A")`
   return one-based R indices.
-- Public data frames from helpers such as `groups()`, `length_bins()`,
+- Public data frames from helpers such as `group_metadata()`, `length_bins()`,
   `positions()`, `windows()`, `motifs()`, and sparse/dense data-frame helpers
   must contain one-based `*_idx` columns.
 - Public data frames must not contain internal `*_idx0` or `*_index0` columns.

@@ -239,7 +239,7 @@ test_that("sparse grouped end motifs read from locally generated schema fixture"
   expect_equal(row_mode(ends), "grouped_bed")
   expect_equal(group_idx(ends, "beta"), 2L)
   expect_equal(
-    groups(ends),
+    group_metadata(ends),
     data.frame(
       group_idx = c(1L, 2L),
       group_name = c("alpha", "beta"),
@@ -387,7 +387,7 @@ test_that("sparse grouped end motifs expose group metadata and sparse payload", 
   expect_equal(row_mode(ends), "grouped_bed")
   expect_equal(group_idx(ends, "alpha"), 2L)
   expect_equal(
-    groups(ends),
+    group_metadata(ends),
     data.frame(
       group_idx = c(1L, 2L, 3L),
       group_name = c("beta", "alpha", "gamma"),

@@ -177,14 +177,13 @@ cf_validate_schema <- function(attrs, expected_schema, label) {
 #' @param label Human-readable store label used in error messages.
 #'
 #' @return A `zarr` store object.
-#' @noRd
-#'
 #' The CRAN `zarr` reader loads `qs2` lazily while opening the V3 stores written
 #' by cfDNAlab and uses `bit64` for `int64` coordinate arrays. Import one symbol
 #' from each package so the runtime dependencies are installed with this package
 #' and visible to R package checks.
 #' @importFrom bit64 as.integer64
 #' @importFrom qs2 qs_deserialize
+#' @noRd
 cf_open_zarr <- function(path, label) {
   tryCatch(
     zarr::open_zarr(path, read_only = TRUE),

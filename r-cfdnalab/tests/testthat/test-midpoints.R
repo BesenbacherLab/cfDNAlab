@@ -7,7 +7,7 @@ test_that("midpoint loader reads locally generated schema fixture", {
   expect_equal(length_bin_idx(midpoints, 60), 2L)
   expect_output(print(midpoints), "<cfDNAlab midpoint profiles>", fixed = TRUE)
   expect_equal(
-    groups(midpoints),
+    group_metadata(midpoints),
     data.frame(
       group_idx = c(1L, 2L),
       group_name = c("A", "long_group"),
@@ -73,7 +73,7 @@ test_that("midpoint loader reads metadata and one profile", {
   expect_equal(schema_version(midpoints), 1L)
 
   expect_equal(
-    groups(midpoints),
+    group_metadata(midpoints),
     data.frame(
       group_idx = c(1L, 2L, 3L),
       group_name = c("alpha", "beta-site", "gamma_long"),

@@ -317,8 +317,8 @@ windows.cfdnalab_windowed_end_motif_counts <- function(x, ...) {
 }
 
 #' @export
-#' @rdname groups
-groups.cfdnalab_grouped_end_motif_counts <- function(x, ...) {
+#' @rdname group_metadata
+group_metadata.cfdnalab_grouped_end_motif_counts <- function(x, ...) {
   cf_reject_unused_arguments(...)
   x$row_metadata
 }

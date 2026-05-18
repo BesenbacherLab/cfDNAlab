@@ -36,7 +36,7 @@ library(cfdnalab)
 
 midpoints <- read_midpoints("sample.midpoint_profiles.zarr")
 
-groups(midpoints)
+group_metadata(midpoints)
 length_bins(midpoints)
 positions(midpoints)
 
@@ -73,7 +73,7 @@ has_motif(ends, "_AA")
 - `"global"`: one row for the whole input file. Use the global count helpers.
 - `"size"`: rows are fixed-size genomic windows from `--window-size`. Use `windows(ends)` and the window count helpers.
 - `"bed"`: rows are BED intervals. Use `windows(ends)` and the window count helpers.
-- `"grouped_bed"`: rows are BED groups. Use `groups(ends)`, `group_idx()`, and the group count helpers.
+- `"grouped_bed"`: rows are BED groups. Use `group_metadata(ends)`, `group_idx()`, and the group count helpers.
 
 Sparse output keeps only non-zero counts in memory:
 

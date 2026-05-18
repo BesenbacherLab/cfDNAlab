@@ -10,22 +10,32 @@
 //! Run through `website/scripts/generate_cli_docs.sh`, which passes the release
 //! command features and writes into `website/docs/generated/cli/`.
 
+#[cfg(all(feature = "cli", feature = "docs_gen"))]
 use anyhow::{Context, Result, bail};
+#[cfg(all(feature = "cli", feature = "docs_gen"))]
 use cfdnalab::cli_app::build_docs_command;
+#[cfg(all(feature = "cli", feature = "docs_gen"))]
 use clap::Parser;
+#[cfg(all(feature = "cli", feature = "docs_gen"))]
 use std::fs;
+#[cfg(all(feature = "cli", feature = "docs_gen"))]
 use std::path::{Path, PathBuf};
+#[cfg(all(feature = "cli", feature = "docs_gen"))]
 use std::process::Command;
 
+#[cfg(all(feature = "cli", feature = "docs_gen"))]
 const GENERATED_MARKER: &str = "<!-- AUTO-GENERATED FILE - DO NOT EDIT -->";
+#[cfg(all(feature = "cli", feature = "docs_gen"))]
 const GENERATED_SOURCE: &str = "<!-- Source: cfdna Clap config and command tree -->";
 
+#[cfg(all(feature = "cli", feature = "docs_gen"))]
 #[derive(Debug, Clone, clap::ValueEnum)]
 enum Scope {
     Release,
     All,
 }
 
+#[cfg(all(feature = "cli", feature = "docs_gen"))]
 #[derive(Debug, Parser)]
 #[command(name = "gen_cli_docs")]
 #[command(about = "Generate CLI markdown docs for the docs website")]
@@ -43,6 +53,7 @@ struct Cli {
     fail_on_drift: bool,
 }
 
+#[cfg(all(feature = "cli", feature = "docs_gen"))]
 #[derive(Debug, Clone)]
 struct CommandDoc {
     name: String,
@@ -50,6 +61,7 @@ struct CommandDoc {
     help_text: String,
 }
 
+#[cfg(all(feature = "cli", feature = "docs_gen"))]
 #[derive(Debug, Clone)]
 struct ParsedHelp {
     intro_markdown: String,
@@ -57,6 +69,7 @@ struct ParsedHelp {
     sections: Vec<ParsedSection>,
 }
 
+#[cfg(all(feature = "cli", feature = "docs_gen"))]
 #[derive(Debug, Clone)]
 struct ParsedSection {
     title: String,
@@ -64,6 +77,7 @@ struct ParsedSection {
     notes: Vec<String>,
 }
 
+#[cfg(all(feature = "cli", feature = "docs_gen"))]
 #[derive(Debug, Clone)]
 struct ParsedOption {
     signature: String,

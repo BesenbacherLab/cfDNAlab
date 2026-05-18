@@ -160,7 +160,8 @@ pub struct LengthsConfig {
     )]
     pub indel_mode: IndelMode,
 
-    /// Skip fragments with more deleted reference bases than this **when using** `--indel-mode adjust` `[integer]`
+    /// Skip fragments with more deleted reference bases than this
+    /// **when using** `--indel-mode adjust` `[integer]`
     ///
     /// Both `D` and `N` CIGAR operations count as deletion bases.
     ///
@@ -213,9 +214,12 @@ pub struct LengthsConfig {
     )]
     pub clip_mode: ClipMode,
 
-    /// Skip fragments where one or both ends have more soft-clipped bases than this `[integer]`
+    /// Skip fragments where one or both ends have more soft-clipped bases than
+    /// this **when using** `--clip-mode adjust` `[integer]`
     ///
     /// Use `--clip-mode skip` to discard all soft-clipped fragments.
+    ///
+    /// **NOTE**: This cap is only used with `--clip-mode adjust`.
     #[cfg_attr(
         feature = "cli",
         clap(

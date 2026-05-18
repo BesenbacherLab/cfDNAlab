@@ -38,8 +38,8 @@ row_mode <- function(x, ...) {
 #'
 #' @return A data frame with one row per group.
 #' @export
-groups <- function(x, ...) {
-  UseMethod("groups")
+group_metadata <- function(x, ...) {
+  UseMethod("group_metadata")
 }
 
 #' Return midpoint length-bin metadata.

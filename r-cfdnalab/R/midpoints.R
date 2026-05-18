@@ -30,7 +30,7 @@ MIDPOINT_REQUIRED_ARRAYS <- c(
 #' @examples
 #' \dontrun{
 #' midpoints <- read_midpoints("sample.midpoint_profiles.zarr")
-#' groups(midpoints)
+#' group_metadata(midpoints)
 #' profile_data_frame(midpoints, group = "LYL1", length_bin_idx = 1)
 #' }
 read_midpoints <- function(path) {
@@ -115,8 +115,8 @@ read_midpoints <- function(path) {
 }
 
 #' @export
-#' @rdname groups
-groups.cfdnalab_midpoint_profiles <- function(x, ...) {
+#' @rdname group_metadata
+group_metadata.cfdnalab_midpoint_profiles <- function(x, ...) {
   cf_reject_unused_arguments(...)
   data.frame(
     group_idx = cf_index0_to_r_index(x$group_idx0),

@@ -872,7 +872,9 @@ fn process_tile(
         let max_soft_clips = opt.max_soft_clips as u32;
         let max_deletion_bases = opt.max_deletion_bases as u32;
         move |fragment: &FragmentWithIndelCounts| {
-            if !fragment.soft_clips_within_limit(max_soft_clips) {
+            if matches!(clip_mode, ClipMode::Adjust)
+                && !fragment.soft_clips_within_limit(max_soft_clips)
+            {
                 return false;
             }
             if matches!(indel_mode, IndelMode::Adjust)
@@ -903,6 +905,7 @@ fn process_tile(
         reader.records().map(|r| r.map_err(anyhow::Error::from)),
         move |rec| include_read_fn(rec),
         opt.indel_mode,
+        lengths_needs_cigar_inspection(opt),
         fragment_filter,
         unpaired,
     )
@@ -1249,6 +1252,11 @@ fn process_tile(
         partial_path,
         cross_path,
     })
+}
+
+#[inline]
+fn lengths_needs_cigar_inspection(opt: &LengthsConfig) -> bool {
+    !matches!(opt.indel_mode, IndelMode::Ignore) || !matches!(opt.clip_mode, ClipMode::Aligned)
 }
 
 #[cfg(test)]
