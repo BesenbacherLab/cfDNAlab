@@ -173,7 +173,7 @@ class(x) <- c(
 )
 ```
 
-Do not expose a generic row-metadata concept for lengths. Use `windows()` for
+Do not expose a generic row-metadata concept for lengths. Use `window_metadata()` for
 windowed outputs and `group_metadata()` for grouped outputs, matching the rest
 of the R API.
 
@@ -188,7 +188,7 @@ group_metadata(x)
 length_bins(x)
 positions(x)
 motifs(x)
-windows(x)
+window_metadata(x)
 ```
 
 Only implement methods where the concept exists. For example:
@@ -196,7 +196,7 @@ Only implement methods where the concept exists. For example:
 - `group_metadata()` exists for midpoint profiles and grouped end motifs.
 - `group_metadata()` also exists for grouped length counts.
 - `positions()` exists for midpoint profiles.
-- `windows()` exists for windowed end motifs and windowed length counts.
+- `window_metadata()` exists for windowed end motifs and windowed length counts.
 - `position_bins()` may be added later for range-based window lookup, but is
   not part of the first length-count implementation.
 - `motifs()` exists only for end motifs.
@@ -421,7 +421,7 @@ length bin.
 For `cfdnalab_windowed_length_counts`:
 
 ```r
-windows(lengths)
+window_metadata(lengths)
 length_data_frame(
   lengths,
   window_idx = NULL,
@@ -431,7 +431,7 @@ length_data_frame(
 )
 ```
 
-`windows()` should return:
+`window_metadata()` should return:
 
 ```r
 window_idx
@@ -444,11 +444,11 @@ blacklisted_fraction
 `window_idx` is one-based and follows the output order in the TSV. Genomic
 range lookup is a later development stage. In the first implementation,
 windowed length-count selection should use `window_idx`, and ad hoc filtering
-should happen through ordinary R subsetting on `windows(lengths)`.
+should happen through ordinary R subsetting on `window_metadata(lengths)`.
 `length_data_frame()` should accept optional `window_idx` selection for the
 common case where users want one or a few windows.
 
-In a later stage, `position_bins()` may return rows from `windows(lengths)`
+In a later stage, `position_bins()` may return rows from `window_metadata(lengths)`
 that overlap a requested genomic range:
 
 ```r
@@ -469,8 +469,8 @@ Include `blacklisted_fraction` when the loaded TSV has that column.
 
 `position_bin_idx` is a one-based public index for selecting bins on the
 windowed genomic track. It should follow the plotted bin order. For fixed-size
-windows this is the same order as `windows(lengths)`. The helper should use the
-same `chrom`, `start`, and `end` coordinate system as `windows(lengths)` only
+windows this is the same order as `window_metadata(lengths)`. The helper should use the
+same `chrom`, `start`, and `end` coordinate system as `window_metadata(lengths)` only
 for range lookup. It should not expose or convert internal zero-based schema
 indices. Validate that `chrom`, `start`, and `end` are supplied together when
 `ranges = NULL`, that `start < end`, and that at least one output window
@@ -574,7 +574,7 @@ blacklisted_fraction
 
 `position_bin_idx` is one-based and follows the plotted genomic-track bin
 order. For fixed-size windows, it should match the row order used by
-`windows(lengths)`.
+`window_metadata(lengths)`.
 
 For grouped length counts, include:
 
@@ -641,7 +641,7 @@ count
 For `cfdnalab_windowed_end_motif_counts`:
 
 ```r
-windows(ends)
+window_metadata(ends)
 dense_counts_matrix(ends)
 dense_data_frame_for_window(ends, window_idx)
 dense_data_frame_for_motif(ends, motif)
@@ -651,7 +651,7 @@ sparse_data_frame_for_window(ends, window_idx)
 sparse_data_frame_for_motif(ends, motif)
 ```
 
-`windows()` should return:
+`window_metadata()` should return:
 
 ```r
 window_idx
@@ -992,7 +992,7 @@ Minimum tests:
 - length TSV loader detects global, windowed, and grouped outputs
 - length TSV loader parses `count_<length>` and `count_<start>_<end>` columns
   as half-open bins
-- length `length_bins()`, `length_bin_idx()`, `windows()`, and
+- length `length_bins()`, `length_bin_idx()`, `window_metadata()`, and
   `group_metadata()` use one-based public indices
 - length `length_data_frame()` computes `count`, `fraction`, and `density`
   without using `eligible_windows` as a normalization denominator
@@ -1131,7 +1131,7 @@ support:
 4. Read `.tsv.zst` files through `data.table::fread(cmd = "zstd -dc <path>")`
    after validating that a system `zstd` binary is available.
 5. Add `length_counts_matrix()`, `length_data_frame()`, and mode-specific
-   selection helpers. Use `windows()` and `window_idx` for first-stage
+   selection helpers. Use `window_metadata()` and `window_idx` for first-stage
    windowed output selection; defer genomic range lookup helpers.
 6. Add length-bin ratio helpers for user-selected numerator and denominator
    length-bin indices.

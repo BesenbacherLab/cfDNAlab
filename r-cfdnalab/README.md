@@ -71,9 +71,11 @@ has_motif(ends, "_AA")
 `row_mode(ends)` tells you what each row in the count table represents:
 
 - `"global"`: one row for the whole input file. Use the global count helpers.
-- `"size"`: rows are fixed-size genomic windows from `--window-size`. Use `windows(ends)` and the window count helpers.
-- `"bed"`: rows are BED intervals. Use `windows(ends)` and the window count helpers.
+- `"size"`: rows are fixed-size genomic windows from `--window-size`. Use `window_metadata(ends)` and the window count helpers.
+- `"bed"`: rows are BED intervals. Use `window_metadata(ends)` and the window count helpers.
 - `"grouped_bed"`: rows are BED groups. Use `group_metadata(ends)`, `group_idx()`, and the group count helpers.
+
+`window_metadata(ends)` returns `window_idx`, `chrom`, `start`, `end`, and `blacklisted_fraction`.
 
 Sparse output keeps only non-zero counts in memory:
 

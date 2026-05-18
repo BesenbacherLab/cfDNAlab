@@ -47,10 +47,9 @@ def test_dense_windowed_end_motifs_load_metadata_and_arrays(tmp_path: Path) -> N
         pd.DataFrame(
             {
                 "window_idx": np.array([0, 1], dtype=np.int32),
-                "chromosome": np.array([0, 1], dtype=np.int32),
-                "chromosome_name": np.array(["chr2", "chr10"], dtype=object),
-                "window_start_bp": np.array([10, 40], dtype=np.int64),
-                "window_end_bp": np.array([20, 60], dtype=np.int64),
+                "chrom": np.array(["chr2", "chr10"], dtype=object),
+                "start": np.array([10, 40], dtype=np.int64),
+                "end": np.array([20, 60], dtype=np.int64),
                 "blacklisted_fraction": np.array([0.25, 0.0], dtype=np.float64),
             }
         ),
@@ -80,10 +79,9 @@ def test_dense_windowed_end_motif_slice_helpers_return_expected_frames(
                 "motif": MOTIF_NAMES,
                 "count": np.array([1.0, 0.0, 2.5], dtype=np.float64),
                 "window_idx": np.array([0, 0, 0], dtype=np.int64),
-                "chromosome": np.array([0, 0, 0], dtype=np.int64),
-                "chromosome_name": np.array(["chr2", "chr2", "chr2"], dtype=object),
-                "window_start_bp": np.array([10, 10, 10], dtype=np.int64),
-                "window_end_bp": np.array([20, 20, 20], dtype=np.int64),
+                "chrom": np.array(["chr2", "chr2", "chr2"], dtype=object),
+                "start": np.array([10, 10, 10], dtype=np.int64),
+                "end": np.array([20, 20, 20], dtype=np.int64),
                 "blacklisted_fraction": np.array([0.25, 0.25, 0.25]),
             }
         ),
@@ -93,10 +91,9 @@ def test_dense_windowed_end_motif_slice_helpers_return_expected_frames(
         pd.DataFrame(
             {
                 "window_idx": np.array([0, 1], dtype=np.int32),
-                "chromosome": np.array([0, 1], dtype=np.int32),
-                "chromosome_name": np.array(["chr2", "chr10"], dtype=object),
-                "window_start_bp": np.array([10, 40], dtype=np.int64),
-                "window_end_bp": np.array([20, 60], dtype=np.int64),
+                "chrom": np.array(["chr2", "chr10"], dtype=object),
+                "start": np.array([10, 40], dtype=np.int64),
+                "end": np.array([20, 60], dtype=np.int64),
                 "blacklisted_fraction": np.array([0.25, 0.0], dtype=np.float64),
                 "motif_index": np.array([1, 1], dtype=np.int64),
                 "motif": ["_CC", "_CC"],
@@ -224,10 +221,9 @@ def test_sparse_windowed_end_motifs_slice_window_without_dense_roundtrip(
                 "motif": MOTIF_NAMES,
                 "count": np.array([1.0, 0.0, 2.5], dtype=np.float64),
                 "window_idx": np.array([0, 0, 0], dtype=np.int64),
-                "chromosome": np.array([0, 0, 0], dtype=np.int64),
-                "chromosome_name": np.array(["chr2", "chr2", "chr2"], dtype=object),
-                "window_start_bp": np.array([10, 10, 10], dtype=np.int64),
-                "window_end_bp": np.array([20, 20, 20], dtype=np.int64),
+                "chrom": np.array(["chr2", "chr2", "chr2"], dtype=object),
+                "start": np.array([10, 10, 10], dtype=np.int64),
+                "end": np.array([20, 20, 20], dtype=np.int64),
                 "blacklisted_fraction": np.array([0.25, 0.25, 0.25]),
             }
         ),
@@ -243,7 +239,7 @@ def test_size_mode_end_motifs_use_windowed_helpers(tmp_path: Path) -> None:
 
     assert isinstance(ends, cfdnalab.WindowedEndMotifCounts)
     assert ends.row_mode() == "size"
-    assert ends.windows().shape == (2, 6)
+    assert ends.windows().shape == (2, 5)
     np.testing.assert_array_equal(
         ends.dense_counts_for_window(0, allow_densify=True),
         np.array([1.0, 0.0, 2.5], dtype=np.float64),

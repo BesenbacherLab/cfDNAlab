@@ -570,12 +570,9 @@ class EndMotifCounts:
                 self.end_motifs.chromosome_names, "chromosome_names"
             )
             frame["window_idx"] = self.end_motifs.row
-            frame["chromosome"] = row_chromosome
-            frame["chromosome_name"] = chromosome_names[row_chromosome.astype(int)]
-            frame["window_start_bp"] = _required(
-                self.end_motifs.row_start_bp, "row_start_bp"
-            )
-            frame["window_end_bp"] = _required(self.end_motifs.row_end_bp, "row_end_bp")
+            frame["chrom"] = chromosome_names[row_chromosome.astype(int)]
+            frame["start"] = _required(self.end_motifs.row_start_bp, "row_start_bp")
+            frame["end"] = _required(self.end_motifs.row_end_bp, "row_end_bp")
             frame["blacklisted_fraction"] = _required(
                 self.end_motifs.blacklisted_fraction, "blacklisted_fraction"
             )
@@ -656,6 +653,9 @@ class WindowedEndMotifCounts(EndMotifCounts):
     def windows(self) -> pd.DataFrame:
         """
         Return window metadata.
+
+        Public genomic window metadata uses `window_idx`, `chrom`, `start`,
+        and `end` columns.
 
         Returns
         -------
@@ -744,8 +744,8 @@ class WindowedEndMotifCounts(EndMotifCounts):
         frame["count"] = self.dense_counts_for_window(
             window_idx, allow_densify=allow_densify
         )
-        window_metadata = self.windows().iloc[window_idx].to_dict()
-        for name, value in window_metadata.items():
+        metadata = self.windows().iloc[window_idx].to_dict()
+        for name, value in metadata.items():
             frame[name] = value
         return frame
 

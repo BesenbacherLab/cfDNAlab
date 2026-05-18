@@ -227,10 +227,9 @@ cf_read_end_motif_row_metadata <- function(path, store, row, row_mode) {
     cf_validate_fraction_vector(blacklisted_fraction, "blacklisted_fraction")
     return(data.frame(
       window_idx = cf_index0_to_r_index(row),
-      chromosome_idx = cf_index0_to_r_index(row_chromosome),
-      chromosome_name = chromosome_name[as.integer(row_chromosome) + 1L],
-      window_start_bp = row_start_bp,
-      window_end_bp = row_end_bp,
+      chrom = chromosome_name[as.integer(row_chromosome) + 1L],
+      start = row_start_bp,
+      end = row_end_bp,
       blacklisted_fraction = blacklisted_fraction,
       stringsAsFactors = FALSE
     ))
@@ -310,8 +309,8 @@ has_motif.cfdnalab_end_motif_counts <- function(x, motif, ...) {
 }
 
 #' @export
-#' @rdname windows
-windows.cfdnalab_windowed_end_motif_counts <- function(x, ...) {
+#' @rdname window_metadata
+window_metadata.cfdnalab_windowed_end_motif_counts <- function(x, ...) {
   cf_reject_unused_arguments(...)
   x$row_metadata
 }

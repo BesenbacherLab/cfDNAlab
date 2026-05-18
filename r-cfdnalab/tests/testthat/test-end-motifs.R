@@ -127,15 +127,17 @@ test_that("sparse windowed end motifs read from locally generated schema fixture
   expect_s3_class(ends, "cfdnalab_windowed_end_motif_counts")
   expect_equal(storage_mode(ends), "sparse_coo")
   expect_equal(row_mode(ends), "bed")
-  expect_error(windows(read_end_motifs(make_dense_global_end_motif_zarr_fixture())), "no applicable method")
+  expect_error(
+    window_metadata(read_end_motifs(make_dense_global_end_motif_zarr_fixture())),
+    "no applicable method"
+  )
   expect_equal(
-    windows(ends),
+    window_metadata(ends),
     data.frame(
       window_idx = c(1L, 2L, 3L),
-      chromosome_idx = c(1L, 1L, 2L),
-      chromosome_name = c("chr1", "chr1", "chr2"),
-      window_start_bp = c(10L, 20L, 30L),
-      window_end_bp = c(12L, 25L, 36L),
+      chrom = c("chr1", "chr1", "chr2"),
+      start = c(10L, 20L, 30L),
+      end = c(12L, 25L, 36L),
       blacklisted_fraction = c(0, 0.25, 0),
       stringsAsFactors = FALSE
     ),
@@ -189,7 +191,7 @@ test_that("size-mode end motifs use the windowed interface", {
 
   expect_s3_class(ends, "cfdnalab_windowed_end_motif_counts")
   expect_equal(row_mode(ends), "size")
-  expect_equal(nrow(windows(ends)), 3L)
+  expect_equal(nrow(window_metadata(ends)), 3L)
   expect_equal(
     sparse_data_frame_for_window(ends, 1L)$motif,
     "_G"
@@ -342,13 +344,12 @@ test_that("sparse windowed end motifs stay sparse unless densification is reques
   expect_equal(motifs(ends)$motif, c("_A", "_G"))
 
   expect_equal(
-    windows(ends),
+    window_metadata(ends),
     data.frame(
       window_idx = c(1L, 2L),
-      chromosome_idx = c(1L, 1L),
-      chromosome_name = c("chr1", "chr1"),
-      window_start_bp = c(10, 19),
-      window_end_bp = c(11, 20),
+      chrom = c("chr1", "chr1"),
+      start = c(10, 19),
+      end = c(11, 20),
       blacklisted_fraction = c(0, 0),
       stringsAsFactors = FALSE
     ),

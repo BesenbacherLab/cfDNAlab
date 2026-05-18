@@ -124,7 +124,8 @@ ends.has_motif("_AA")
 
 `read_end_motifs()` returns a mode-specific object.
 
-- Windowed output has `windows()`.
+- Windowed output has `windows()`, which returns `window_idx`, `chrom`, `start`,
+  `end`, and `blacklisted_fraction`.
 - Grouped output has `groups()` and `group_idx()`.
 - Global output has `dense_counts_vec()` and `dense_data_frame()`.
 

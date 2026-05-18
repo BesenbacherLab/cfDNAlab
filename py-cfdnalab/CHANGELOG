@@ -2,6 +2,13 @@
 
 **NOTE**: This is the changelog for the **Python** package that provides output loaders for the main output files from the main `cfDNAlab` command line tool. The changelog for the CLI tool is found [here](https://github.com/BesenbacherLab/cfDNAlab/blob/main/CHANGELOG).
 
+"x.x.x.9000" is the current development version.
+
+## py-cfDNAlab 0.1.0.9000
+
+ - Changes windowed end-motif `windows()` metadata columns to `window_idx`,
+   `chrom`, `start`, `end`, and `blacklisted_fraction`.
+
 ## py-cfDNAlab 0.1.0
 
  - Adds zarr loaders for the outputs of `cfdna midpoints` and `cfdna ends`.

@@ -7,6 +7,10 @@
 ## r-cfDNAlab 0.1.0.9000
 
  - Renames `groups()` to `group_metadata()` to remove the masking with tidyverse. 
+ - Adds `window_metadata()` as the R window metadata helper and removes the
+   `windows()` helper.
+ - Standardizes public genomic window metadata columns to `window_idx`,
+   `chrom`, `start`, `end`, and `blacklisted_fraction`.
 
 ## r-cfDNAlab 0.1.0
 

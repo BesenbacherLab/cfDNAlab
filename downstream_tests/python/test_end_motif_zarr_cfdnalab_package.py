@@ -75,9 +75,9 @@ def test_cfdnalab_package_reads_sparse_windowed_end_motifs(
 
     windows = end_motifs.windows()
     assert windows["window_idx"].tolist() == [0, 1]
-    assert windows["chromosome_name"].tolist() == ["chr1", "chr1"]
-    assert windows["window_start_bp"].tolist() == [10, 19]
-    assert windows["window_end_bp"].tolist() == [11, 20]
+    assert windows["chrom"].tolist() == ["chr1", "chr1"]
+    assert windows["start"].tolist() == [10, 19]
+    assert windows["end"].tolist() == [11, 20]
     assert windows["blacklisted_fraction"].tolist() == [0.0, 0.0]
 
 

@@ -69,10 +69,11 @@ positions <- function(x, ...) {
 #' @param x A cfDNAlab object with window rows.
 #' @param ... Reserved for future methods.
 #'
-#' @return A data frame with one row per window.
+#' @return A data frame with one row per window. Public genomic window
+#'   metadata uses `window_idx`, `chrom`, `start`, and `end` columns.
 #' @export
-windows <- function(x, ...) {
-  UseMethod("windows")
+window_metadata <- function(x, ...) {
+  UseMethod("window_metadata")
 }
 
 #' Look up a group index.
