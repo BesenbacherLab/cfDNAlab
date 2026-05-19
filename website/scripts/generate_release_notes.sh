@@ -21,7 +21,18 @@ mkdir -p "$(dirname "${release_notes_file}")"
   echo
   awk '
     NR == 1 && $0 ~ /^# / { next }
-    { print }
+    $0 ~ /^<br ?\/?>$/ { next }
+    $0 == "" {
+      if (!blank_line) {
+        print
+      }
+      blank_line = 1
+      next
+    }
+    {
+      blank_line = 0
+      print
+    }
   ' "${changelog_file}"
 } > "${release_notes_file}"
 
