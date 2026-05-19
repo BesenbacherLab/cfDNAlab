@@ -30,7 +30,7 @@ dependencies = [
 [project.urls]
 Repository = "https://github.com/BesenbacherLab/cfDNAlab/tree/main/py-cfdnalab"
 Issues = "https://github.com/BesenbacherLab/cfDNAlab/issues"
-Changelog = "https://github.com/BesenbacherLab/cfDNAlab/blob/main/py-cfdnalab/CHANGELOG"
+Changelog = "https://github.com/BesenbacherLab/cfDNAlab/blob/main/py-cfdnalab/CHANGELOG.md"
 
 [project.optional-dependencies]
 test = [
@@ -51,7 +51,7 @@ packages = ["src/cfdnalab"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "/CHANGELOG",
+    "/CHANGELOG.md",
     "/LICENSE",
     "/README.md",
     "/pyproject.toml",

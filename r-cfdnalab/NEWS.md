@@ -1,8 +1,8 @@
 # Changelog
 
-**NOTE**: This is the changelog for the **R** package that provide output loaders for the main output files from the main `cfDNAlab` command line tool. The changelog for the CLI tool is found [here](https://github.com/BesenbacherLab/cfDNAlab/blob/main/CHANGELOG).
+**NOTE**: This is the changelog for the **R** package that provide output loaders for the main output files from the main `cfDNAlab` command line tool. The changelog for the CLI tool is found [here](https://github.com/BesenbacherLab/cfDNAlab/blob/main/CHANGELOG.md).
 
-<br>
+<br />
 
 ## Unreleased
 

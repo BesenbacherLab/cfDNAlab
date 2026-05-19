@@ -2,10 +2,10 @@
 
 This is the changelog for the main CLI tool. You can find the changelog for the downstream loader packages here:
 
- - [Python](https://github.com/BesenbacherLab/cfDNAlab/blob/main/py-cfdnalab/CHANGELOG)
+ - [Python](https://github.com/BesenbacherLab/cfDNAlab/blob/main/py-cfdnalab/CHANGELOG.md)
  - [R](https://github.com/BesenbacherLab/cfDNAlab/blob/main/r-cfdnalab/NEWS.md)
 
-<br>
+<br />
 
 ## Unreleased
 
