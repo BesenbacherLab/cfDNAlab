@@ -22,6 +22,7 @@ def test_python_zarr_reads_dense_global_end_motif_schema(
     assert store.attrs["row_mode"] == "global"
     assert store.attrs["primary_array"] == "counts"
     assert store.attrs["primary_group"] is None
+    assert store.attrs["count_units"] == "weighted_end_motif_count"
     assert tuple(store["counts"].metadata.dimension_names) == ("row", "motif")
     assert decode_motifs(store) == ["_A", "_C", "_G", "_T"]
     np.testing.assert_allclose(
@@ -42,42 +43,45 @@ def test_python_zarr_reads_sparse_windowed_end_motif_schema(
     assert store.attrs["row_mode"] == "bed"
     assert store.attrs["primary_array"] is None
     assert store.attrs["primary_group"] == "sparse"
+    assert store.attrs["count_units"] == "weighted_end_motif_count"
+    assert store.attrs["sparse_format"] == "coo"
+    assert store.attrs["sparse_indices_base"] == 0
     assert decode_motifs(store) == ["_A", "_G"]
 
     assert store["chromosome"].attrs["label_field"] == "chromosome_name"
-    assert store["chromosome"].attrs["labels"] == ["chr1"]
-    np.testing.assert_array_equal(store["row"][:], np.array([0, 1], dtype=np.int32))
+    assert store["chromosome"].attrs["labels"] == ["chr1", "chr2"]
+    np.testing.assert_array_equal(store["row"][:], np.array([0, 1, 2], dtype=np.int32))
     np.testing.assert_array_equal(
         store["row_chromosome"][:],
-        np.array([0, 0], dtype=np.int32),
+        np.array([0, 0, 1], dtype=np.int32),
     )
     np.testing.assert_array_equal(
         store["row_start_bp"][:],
-        np.array([10, 19], dtype=np.int64),
+        np.array([10, 19, 10], dtype=np.int64),
     )
     np.testing.assert_array_equal(
         store["row_end_bp"][:],
-        np.array([11, 20], dtype=np.int64),
+        np.array([11, 20, 11], dtype=np.int64),
     )
     np.testing.assert_allclose(
         store["blacklisted_fraction"][:],
-        np.array([0.0, 0.0], dtype=np.float64),
+        np.array([0.0, 0.0, 0.0], dtype=np.float64),
     )
     np.testing.assert_array_equal(
         store["sparse/shape"][:],
-        np.array([2, 2], dtype=np.int32),
+        np.array([3, 2], dtype=np.int32),
     )
     np.testing.assert_array_equal(
         store["sparse/row"][:],
-        np.array([0, 1], dtype=np.int32),
+        np.array([0, 1, 2], dtype=np.int32),
     )
     np.testing.assert_array_equal(
         store["sparse/motif"][:],
-        np.array([1, 0], dtype=np.int32),
+        np.array([1, 0, 1], dtype=np.int32),
     )
     np.testing.assert_allclose(
         store["sparse/count"][:],
-        np.array([1.0, 1.0], dtype=np.float64),
+        np.array([1.0, 1.0, 1.0], dtype=np.float64),
     )
 
 
@@ -92,6 +96,9 @@ def test_python_zarr_reads_sparse_grouped_end_motif_schema(
     assert store.attrs["row_mode"] == "grouped_bed"
     assert store.attrs["primary_array"] is None
     assert store.attrs["primary_group"] == "sparse"
+    assert store.attrs["count_units"] == "weighted_end_motif_count"
+    assert store.attrs["sparse_format"] == "coo"
+    assert store.attrs["sparse_indices_base"] == 0
     np.testing.assert_array_equal(store["group"][:], np.array([0, 1, 2], dtype=np.int32))
     assert store["group"].attrs["labels"] == ["beta", "alpha", "gamma"]
     assert store["group"].attrs["label_field"] == "group_name"

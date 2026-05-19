@@ -21,7 +21,7 @@ use cfdnalab::commands::{
 };
 use fixtures::{
     bam_from_specs_strict_identity, paired_fragment, read_length_counts_text,
-    read_midpoint_zarr_counts, read_midpoint_zarr_i32_1d, simple_reference_twobit, write_bed,
+    read_midpoint_zarr_counts, read_midpoint_zarr_i32_1d, twobit_from_sequences, write_bed,
 };
 use ndarray::{Array2, arr3};
 use serde_json::Value;
@@ -238,19 +238,32 @@ fn generate_end_motif_zarr_fixtures_with_cfdnalab() -> Result<()> {
         .unwrap_or_else(|| PathBuf::from("downstream_tests/tmp"));
     std::fs::create_dir_all(&output_dir)?;
 
+    let mut chr2_fragment = paired_fragment(10, 10, 4);
+    chr2_fragment.forward.tid = 1;
+    chr2_fragment.forward.mate_tid = Some(1);
+    chr2_fragment.reverse.tid = 1;
+    chr2_fragment.reverse.mate_tid = Some(1);
+
     let bam = bam_from_specs_strict_identity(
-        vec![("chr1".to_string(), 256)],
-        vec![paired_fragment(10, 10, 4)],
+        vec![("chr1".to_string(), 256), ("chr2".to_string(), 256)],
+        vec![paired_fragment(10, 10, 4), chr2_fragment],
         Vec::new(),
         "downstream_end_motif_fixture",
     )?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_from_sequences(
+        "downstream_end_reference",
+        vec![
+            ("chr1".to_string(), "ACGT".repeat(64)),
+            ("chr2".to_string(), "ACGT".repeat(64)),
+        ],
+    )?;
 
     let dense_global_path = run_end_fixture(
         &bam.bam,
         &reference.path,
         &output_dir,
         "tiny_dense_global",
+        &["chr1"],
         true,
         None,
     )?;
@@ -265,13 +278,18 @@ fn generate_end_motif_zarr_fixtures_with_cfdnalab() -> Result<()> {
     let sparse_window_bed = output_dir.join("tiny_ends_windows.bed");
     write_bed(
         &sparse_window_bed,
-        &[("chr1", 10, 11, "left"), ("chr1", 19, 20, "right")],
+        &[
+            ("chr1", 10, 11, "left"),
+            ("chr1", 19, 20, "right"),
+            ("chr2", 10, 11, "chr2_left"),
+        ],
     )?;
     let sparse_window_path = run_end_fixture(
         &bam.bam,
         &reference.path,
         &output_dir,
         "tiny_sparse_windowed",
+        &["chr1", "chr2"],
         false,
         Some(DistributionWindowsArgs {
             by_size: None,
@@ -281,10 +299,11 @@ fn generate_end_motif_zarr_fixtures_with_cfdnalab() -> Result<()> {
     )?;
     let (window_motifs, window_counts) = read_sparse_end_counts(&sparse_window_path)?;
     assert_eq!(window_motifs, vec!["_A", "_G"]);
-    assert_eq!(window_counts.shape(), &[2, 2]);
+    assert_eq!(window_counts.shape(), &[3, 2]);
     assert_eq!(window_counts[(0, 1)], 1.0);
     assert_eq!(window_counts[(1, 0)], 1.0);
-    assert_eq!(window_counts.sum(), 2.0);
+    assert_eq!(window_counts[(2, 1)], 1.0);
+    assert_eq!(window_counts.sum(), 3.0);
 
     let sparse_grouped_bed = output_dir.join("tiny_ends_grouped.bed");
     write_bed(
@@ -301,6 +320,7 @@ fn generate_end_motif_zarr_fixtures_with_cfdnalab() -> Result<()> {
         &reference.path,
         &output_dir,
         "tiny_sparse_grouped",
+        &["chr1"],
         false,
         Some(DistributionWindowsArgs {
             by_size: None,
@@ -528,6 +548,7 @@ fn run_end_fixture(
     reference_path: &Path,
     output_dir: &Path,
     prefix: &str,
+    chromosomes: &[&str],
     all_motifs: bool,
     windows: Option<DistributionWindowsArgs>,
 ) -> Result<PathBuf> {
@@ -538,7 +559,12 @@ fn run_end_fixture(
             n_threads: 1,
         },
         ChromosomeArgs {
-            chromosomes: Some(vec!["chr1".to_string()]),
+            chromosomes: Some(
+                chromosomes
+                    .iter()
+                    .map(|chromosome| (*chromosome).to_string())
+                    .collect(),
+            ),
             chromosomes_file: None,
         },
         1,

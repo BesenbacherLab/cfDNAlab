@@ -5,6 +5,26 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+ZSTD_MAGIC = bytes([0x28, 0xB5, 0x2F, 0xFD])
+
+
+def test_length_count_tsv_fixtures_are_zstd_frames(
+    global_length_counts_path: Path,
+    windowed_length_counts_path: Path,
+    grouped_length_counts_path: Path,
+    windowed_length_counts_no_blacklist_path: Path,
+    grouped_length_counts_no_blacklist_path: Path,
+) -> None:
+    for path in (
+        global_length_counts_path,
+        windowed_length_counts_path,
+        grouped_length_counts_path,
+        windowed_length_counts_no_blacklist_path,
+        grouped_length_counts_no_blacklist_path,
+    ):
+        with path.open("rb") as file_handle:
+            assert file_handle.read(4) == ZSTD_MAGIC
+
 
 def test_pandas_reads_global_length_count_tsv(
     global_length_counts_path: Path,

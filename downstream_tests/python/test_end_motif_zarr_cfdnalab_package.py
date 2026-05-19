@@ -64,7 +64,7 @@ def test_cfdnalab_package_reads_sparse_windowed_end_motifs(
         end_motifs.dense_counts_array()
     np.testing.assert_allclose(
         end_motifs.dense_counts_array(allow_densify=True),
-        np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.float64),
+        np.array([[0.0, 1.0], [1.0, 0.0], [0.0, 1.0]], dtype=np.float64),
     )
     np.testing.assert_allclose(
         end_motifs.dense_counts_array(window_idxs=1, allow_densify=True),
@@ -72,7 +72,7 @@ def test_cfdnalab_package_reads_sparse_windowed_end_motifs(
     )
     np.testing.assert_allclose(
         end_motifs.dense_counts_array(motifs="_G", allow_densify=True),
-        np.array([[1.0], [0.0]], dtype=np.float64),
+        np.array([[1.0], [0.0], [1.0]], dtype=np.float64),
     )
     pd.testing.assert_frame_equal(
         end_motifs.data_frame(
@@ -82,14 +82,14 @@ def test_cfdnalab_package_reads_sparse_windowed_end_motifs(
         ),
         pd.DataFrame(
             {
-                "window_idx": np.array([0, 1], dtype=np.int32),
-                "chrom": np.array(["chr1", "chr1"], dtype=object),
-                "start": np.array([10, 19], dtype=np.int64),
-                "end": np.array([11, 20], dtype=np.int64),
-                "blacklisted_fraction": np.array([0.0, 0.0], dtype=np.float64),
-                "motif_index": np.array([0, 0], dtype=np.int32),
-                "motif": ["_A", "_A"],
-                "count": np.array([0.0, 1.0], dtype=np.float64),
+                "window_idx": np.array([0, 1, 2], dtype=np.int32),
+                "chrom": np.array(["chr1", "chr1", "chr2"], dtype=object),
+                "start": np.array([10, 19, 10], dtype=np.int64),
+                "end": np.array([11, 20, 11], dtype=np.int64),
+                "blacklisted_fraction": np.array([0.0, 0.0, 0.0], dtype=np.float64),
+                "motif_index": np.array([0, 0, 0], dtype=np.int32),
+                "motif": ["_A", "_A", "_A"],
+                "count": np.array([0.0, 1.0, 0.0], dtype=np.float64),
             }
         ),
     )
@@ -101,10 +101,10 @@ def test_cfdnalab_package_reads_sparse_windowed_end_motifs(
     np.testing.assert_allclose(window_coo.data, np.array([1.0], dtype=np.float64))
 
     motif_coo = end_motifs.sparse_counts_matrix(motifs="_G")
-    assert motif_coo.shape == (2, 1)
-    np.testing.assert_array_equal(motif_coo.row, np.array([0], dtype=np.int32))
-    np.testing.assert_array_equal(motif_coo.col, np.array([0], dtype=np.int32))
-    np.testing.assert_allclose(motif_coo.data, np.array([1.0], dtype=np.float64))
+    assert motif_coo.shape == (3, 1)
+    np.testing.assert_array_equal(motif_coo.row, np.array([0, 2], dtype=np.int32))
+    np.testing.assert_array_equal(motif_coo.col, np.array([0, 0], dtype=np.int32))
+    np.testing.assert_allclose(motif_coo.data, np.array([1.0, 1.0], dtype=np.float64))
     np.testing.assert_allclose(
         end_motifs.sparse_counts_matrix(
             window_idxs=[1, 0],
@@ -122,11 +122,11 @@ def test_cfdnalab_package_reads_sparse_windowed_end_motifs(
     assert ordered_dense["count"].tolist() == [0.0, 1.0, 1.0, 0.0]
 
     windows = end_motifs.window_metadata()
-    assert windows["window_idx"].tolist() == [0, 1]
-    assert windows["chrom"].tolist() == ["chr1", "chr1"]
-    assert windows["start"].tolist() == [10, 19]
-    assert windows["end"].tolist() == [11, 20]
-    assert windows["blacklisted_fraction"].tolist() == [0.0, 0.0]
+    assert windows["window_idx"].tolist() == [0, 1, 2]
+    assert windows["chrom"].tolist() == ["chr1", "chr1", "chr2"]
+    assert windows["start"].tolist() == [10, 19, 10]
+    assert windows["end"].tolist() == [11, 20, 11]
+    assert windows["blacklisted_fraction"].tolist() == [0.0, 0.0, 0.0]
 
 
 def test_cfdnalab_package_reads_sparse_grouped_end_motifs(

@@ -21,17 +21,17 @@ windowed_motifs <- decode_motif_ascii(read_cran_zarr_array(windowed_root, "motif
 stopifnot(identical(windowed_motifs, c("_A", "_G")))
 stopifnot(identical(
   labels_from_array_attributes(windowed_path, "chromosome", "chromosome_name"),
-  "chr1"
+  c("chr1", "chr2")
 ))
-stopifnot(identical(as.integer(read_cran_zarr_array(windowed_root, "row")), c(0L, 1L)))
-stopifnot(identical(as.integer(read_cran_zarr_array(windowed_root, "row_chromosome")), c(0L, 0L)))
-stopifnot(identical(as.integer(read_cran_zarr_array(windowed_root, "row_start_bp")), c(10L, 19L)))
-stopifnot(identical(as.integer(read_cran_zarr_array(windowed_root, "row_end_bp")), c(11L, 20L)))
-stopifnot(isTRUE(all.equal(read_cran_zarr_array(windowed_root, "blacklisted_fraction"), c(0, 0))))
-stopifnot(identical(as.integer(read_cran_zarr_array(windowed_root, "sparse/shape")), c(2L, 2L)))
-stopifnot(identical(as.integer(read_cran_zarr_array(windowed_root, "sparse/row")), c(0L, 1L)))
-stopifnot(identical(as.integer(read_cran_zarr_array(windowed_root, "sparse/motif")), c(1L, 0L)))
-stopifnot(isTRUE(all.equal(read_cran_zarr_array(windowed_root, "sparse/count"), c(1, 1))))
+stopifnot(identical(as.integer(read_cran_zarr_array(windowed_root, "row")), c(0L, 1L, 2L)))
+stopifnot(identical(as.integer(read_cran_zarr_array(windowed_root, "row_chromosome")), c(0L, 0L, 1L)))
+stopifnot(identical(as.integer(read_cran_zarr_array(windowed_root, "row_start_bp")), c(10L, 19L, 10L)))
+stopifnot(identical(as.integer(read_cran_zarr_array(windowed_root, "row_end_bp")), c(11L, 20L, 11L)))
+stopifnot(isTRUE(all.equal(read_cran_zarr_array(windowed_root, "blacklisted_fraction"), c(0, 0, 0))))
+stopifnot(identical(as.integer(read_cran_zarr_array(windowed_root, "sparse/shape")), c(3L, 2L)))
+stopifnot(identical(as.integer(read_cran_zarr_array(windowed_root, "sparse/row")), c(0L, 1L, 2L)))
+stopifnot(identical(as.integer(read_cran_zarr_array(windowed_root, "sparse/motif")), c(1L, 0L, 1L)))
+stopifnot(isTRUE(all.equal(read_cran_zarr_array(windowed_root, "sparse/count"), c(1, 1, 1))))
 
 grouped_path <- sparse_grouped_end_zarr_path()
 grouped_root <- zarr::open_zarr(grouped_path, read_only = TRUE)

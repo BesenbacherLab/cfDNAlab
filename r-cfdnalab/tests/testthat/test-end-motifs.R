@@ -356,32 +356,32 @@ test_that("sparse windowed end motifs stay sparse unless densification is reques
   expect_equal(
     window_metadata(ends),
     data.frame(
-      window_idx = c(1L, 2L),
-      chrom = c("chr1", "chr1"),
-      start = c(10L, 19L),
-      end = c(11L, 20L),
-      blacklisted_fraction = c(0, 0),
+      window_idx = c(1L, 2L, 3L),
+      chrom = c("chr1", "chr1", "chr2"),
+      start = c(10L, 19L, 10L),
+      end = c(11L, 20L, 11L),
+      blacklisted_fraction = c(0, 0, 0),
       stringsAsFactors = FALSE
     ),
     ignore_attr = TRUE
   )
-  expect_identical(window_metadata(ends)$start, c(10L, 19L))
-  expect_identical(window_metadata(ends)$end, c(11L, 20L))
+  expect_identical(window_metadata(ends)$start, c(10L, 19L, 10L))
+  expect_identical(window_metadata(ends)$end, c(11L, 20L, 11L))
 
   sparse_counts <- sparse_counts_matrix(ends)
   expect_s4_class(sparse_counts, "sparseMatrix")
-  expect_equal(as.matrix(sparse_counts), matrix(c(0, 1, 1, 0), nrow = 2, byrow = TRUE))
+  expect_equal(as.matrix(sparse_counts), matrix(c(0, 1, 1, 0, 0, 1), nrow = 3, byrow = TRUE))
   expect_error(dense_counts_matrix(ends), "Use sparse_counts_matrix")
   expect_equal(
     dense_counts_matrix(ends, allow_densify = TRUE),
-    matrix(c(0, 1, 1, 0), nrow = 2, byrow = TRUE),
+    matrix(c(0, 1, 1, 0, 0, 1), nrow = 3, byrow = TRUE),
     tolerance = 1e-8
   )
 
   motif_frame <- end_motif_data_frame(ends, motifs = "_G")
-  expect_equal(motif_frame$window_idx, 1L)
-  expect_equal(motif_frame$motif, "_G")
-  expect_equal(motif_frame$count, 1)
+  expect_equal(motif_frame$window_idx, c(1L, 3L))
+  expect_equal(motif_frame$motif, c("_G", "_G"))
+  expect_equal(motif_frame$count, c(1, 1))
 
   window_frame <- end_motif_data_frame(ends, window_idxs = 1L)
   expect_equal(window_frame$window_idx, 1L)

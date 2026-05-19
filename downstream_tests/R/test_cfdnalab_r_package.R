@@ -56,13 +56,13 @@ test_that("R helper package reads sparse windowed end motifs", {
 
   expect_identical(storage_mode(sparse_windowed), "sparse_coo")
   expect_identical(row_mode(sparse_windowed), "bed")
-  expect_identical(window_metadata(sparse_windowed)$window_idx, c(1L, 2L))
-  expect_identical(window_metadata(sparse_windowed)$chrom, c("chr1", "chr1"))
-  expect_identical(window_metadata(sparse_windowed)$start, c(10L, 19L))
-  expect_identical(window_metadata(sparse_windowed)$end, c(11L, 20L))
+  expect_identical(window_metadata(sparse_windowed)$window_idx, c(1L, 2L, 3L))
+  expect_identical(window_metadata(sparse_windowed)$chrom, c("chr1", "chr1", "chr2"))
+  expect_identical(window_metadata(sparse_windowed)$start, c(10L, 19L, 10L))
+  expect_identical(window_metadata(sparse_windowed)$end, c(11L, 20L, 11L))
   expect_equal(
     as.matrix(sparse_counts_matrix(sparse_windowed)),
-    matrix(c(0, 1, 1, 0), nrow = 2, byrow = TRUE)
+    matrix(c(0, 1, 1, 0, 0, 1), nrow = 3, byrow = TRUE)
   )
   expect_equal(
     end_motif_data_frame(
@@ -71,10 +71,10 @@ test_that("R helper package reads sparse windowed end motifs", {
       densify = TRUE,
       max_blacklisted_fraction = 0
     )$count,
-    c(0, 1)
+    c(0, 1, 0)
   )
   expect_equal(end_motif_data_frame(sparse_windowed, window_idxs = 1L)$count, 1)
-  expect_equal(end_motif_data_frame(sparse_windowed, motifs = "_G")$count, 1)
+  expect_equal(end_motif_data_frame(sparse_windowed, motifs = "_G")$count, c(1, 1))
 
   ordered_dense <- end_motif_data_frame(
     sparse_windowed,
