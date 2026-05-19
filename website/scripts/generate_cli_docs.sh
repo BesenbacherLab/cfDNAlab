@@ -9,4 +9,7 @@ cargo run --example gen_cli_docs \
   --out-dir "${repo_root}/website/docs/generated/cli" \
   --scope release
 
+python3 "${repo_root}/website/scripts/generate_loader_docs.py" \
+  --out-dir "${repo_root}/website/docs/generated/loaders"
+
 "${repo_root}/website/scripts/generate_release_notes.sh"
