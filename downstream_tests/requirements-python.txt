@@ -4,3 +4,4 @@ pandas
 pytest
 xarray
 zarr>=3
+zstandard

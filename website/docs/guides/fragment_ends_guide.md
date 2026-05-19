@@ -81,14 +81,12 @@ ends = cfl.read_end_motifs("<sample_id>.end_motifs.zarr")
 
 print(ends.storage_mode())
 print(ends.row_mode())
-print(ends.motif_metadata().head())
+motifs = ends.motifs_metadata()
+print(motifs.head())
 
-motif = ends.motifs()[0]
-if ends.storage_mode() == "sparse_coo":
-    nonzero_counts = ends.sparse_coo_data_frame()
-    motif_counts = nonzero_counts[nonzero_counts["motif"] == motif]
-else:
-    motif_counts = ends.dense_data_frame_for_motif(motif)
+motif = motifs.loc[0, "motif"]
+motif_counts = ends.data_frame(motifs=motif)
+motif_count_matrix = ends.sparse_counts_matrix(motifs=motif)
 ```
 
 ## Load motif counts in R

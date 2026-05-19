@@ -45,10 +45,8 @@ def test_read_midpoints_reads_metadata_and_arrays(tmp_path: Path) -> None:
         "shape=(3, 2, 4)"
         ")"
     )
-    assert profiles.group_names() == GROUP_NAMES.tolist()
-    assert profiles.eligible_intervals() == [4, 7, 11]
     pd.testing.assert_frame_equal(
-        profiles.groups(),
+        profiles.group_metadata(),
         pd.DataFrame(
             {
                 "group_idx": GROUP_AXIS,
@@ -77,7 +75,7 @@ def test_read_midpoints_reads_metadata_and_arrays(tmp_path: Path) -> None:
             }
         ),
     )
-    np.testing.assert_array_equal(profiles.array(), COUNTS)
+    np.testing.assert_array_equal(profiles.counts_array(), COUNTS)
 
 
 def test_profile_dataframe_uses_selected_group_length_and_positions(
@@ -216,15 +214,78 @@ def test_length_dataframe_preserves_group_position_grid(tmp_path: Path) -> None:
     ]
 
 
-def test_array_helpers_return_expected_slices(tmp_path: Path) -> None:
+def test_counts_array_preserves_axes_for_selected_slices(tmp_path: Path) -> None:
     store_path = _write_midpoint_store(tmp_path / "sample.midpoint_profiles.zarr")
     profiles = cfdnalab.read_midpoints(store_path)
 
-    np.testing.assert_array_equal(profiles.array_for_profile(2, 1), COUNTS[2, 1, :])
-    np.testing.assert_array_equal(profiles.array_from_group("beta long"), COUNTS[1, :, :])
-    np.testing.assert_array_equal(profiles.array_from_group_idx(0), COUNTS[0, :, :])
-    np.testing.assert_array_equal(profiles.array_from_length(59), COUNTS[:, 0, :])
-    np.testing.assert_array_equal(profiles.array_from_length_bin(1), COUNTS[:, 1, :])
+    np.testing.assert_array_equal(
+        profiles.counts_array(group_idxs=2, length_bin_idxs=1), COUNTS[2:3, 1:2, :]
+    )
+    np.testing.assert_array_equal(
+        profiles.counts_array(groups="beta long"), COUNTS[1:2, :, :]
+    )
+    np.testing.assert_array_equal(
+        profiles.counts_array(group_idxs=0), COUNTS[0:1, :, :]
+    )
+    np.testing.assert_array_equal(
+        profiles.counts_array(with_lengths=59), COUNTS[:, 0:1, :]
+    )
+    np.testing.assert_array_equal(
+        profiles.counts_array(with_length_range=(55, 65)), COUNTS[:, :, :]
+    )
+    np.testing.assert_array_equal(
+        profiles.counts_array(length_bin_idxs=1), COUNTS[:, 1:2, :]
+    )
+
+
+def test_midpoint_selectors_preserve_order_and_range_boundaries(
+    tmp_path: Path,
+) -> None:
+    store_path = _write_midpoint_store(tmp_path / "sample.midpoint_profiles.zarr")
+    profiles = cfdnalab.read_midpoints(store_path)
+
+    np.testing.assert_array_equal(
+        profiles.counts_array(
+            groups=["gamma-unicode-aa", "LYL1"],
+            with_lengths=[60, 30],
+        ),
+        COUNTS[np.ix_([2, 0], [1, 0], np.arange(4))],
+    )
+    exact_range = profiles.data_frame(groups="LYL1", with_length_range=(60, 90))
+    assert exact_range["length_bin"].tolist() == [1] * 4
+    assert exact_range["count"].tolist() == [10.0, 11.0, 12.0, 13.0]
+
+    left_edge_range = profiles.data_frame(groups="LYL1", with_length_range=(59, 60))
+    assert left_edge_range["length_bin"].tolist() == [0] * 4
+    assert left_edge_range["count"].tolist() == [0.0, 1.0, 2.0, 3.0]
+
+    ordered = profiles.data_frame(
+        groups=["gamma-unicode-aa", "LYL1"],
+        with_lengths=[60, 30],
+    )
+    assert ordered["group_idx"].tolist() == [2] * 8 + [0] * 8
+    assert ordered["length_bin"].tolist() == [1] * 4 + [0] * 4 + [1] * 4 + [0] * 4
+    assert ordered["count"].tolist() == [
+        210.0,
+        211.0,
+        212.0,
+        213.0,
+        200.0,
+        201.0,
+        202.0,
+        203.0,
+        10.0,
+        11.0,
+        12.0,
+        13.0,
+        0.0,
+        1.0,
+        2.0,
+        3.0,
+    ]
+    assert profiles.data_frame(groups=[]).empty
+    assert profiles.data_frame(length_bin_idxs=[]).empty
+    assert profiles.counts_array(group_idxs=[], length_bin_idxs=[]).shape == (0, 0, 4)
 
 
 def test_lookup_helpers_use_names_and_half_open_length_bins(tmp_path: Path) -> None:
@@ -252,22 +313,48 @@ def test_invalid_indices_raise_helpful_errors(tmp_path: Path) -> None:
     store_path = _write_midpoint_store(tmp_path / "sample.midpoint_profiles.zarr")
     profiles = cfdnalab.read_midpoints(store_path)
 
-    with pytest.raises(TypeError, match="group_idx must be an integer"):
-        profiles.array_for_profile("0", 0)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="group_idxs must be an integer"):
+        profiles.counts_array(group_idxs="0")  # type: ignore[arg-type]
     with pytest.raises(IndexError, match="group_idx 3 is outside 0..2"):
-        profiles.array_for_profile(3, 0)
+        profiles.counts_array(group_idxs=3)
     with pytest.raises(IndexError, match="length_bin_idx 2 is outside 0..1"):
-        profiles.array_for_profile(0, 2)
+        profiles.counts_array(group_idxs=0, length_bin_idxs=2)
     with pytest.raises(ValueError, match="Use either groups or group_idxs"):
         profiles.data_frame(groups="LYL1", group_idxs=0)
-    with pytest.raises(ValueError, match="Use either with_lengths or length_bin_idxs"):
+    with pytest.raises(ValueError, match="Use only one of with_lengths"):
         profiles.data_frame(with_lengths=30, length_bin_idxs=0)
+    with pytest.raises(ValueError, match="Use only one of with_lengths"):
+        profiles.data_frame(with_lengths=30, with_length_range=(30, 60))
     with pytest.raises(ValueError, match="groups contains duplicate values"):
         profiles.data_frame(groups=["LYL1", "LYL1"])
     with pytest.raises(ValueError, match="group_idxs contains duplicate values"):
         profiles.data_frame(group_idxs=[0, 0])
-    with pytest.raises(ValueError, match="with_lengths contains duplicate values"):
+    with pytest.raises(TypeError, match="length_bin_idxs must be an integer"):
+        profiles.data_frame(length_bin_idxs=True)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="length_bin_idxs contains duplicate values"):
+        profiles.data_frame(length_bin_idxs=[0, 0])
+    with pytest.raises(
+        ValueError,
+        match=(
+            "with_lengths values must resolve to distinct length bins; "
+            "30 and 59 both resolve to length_bin_idx 0"
+        ),
+    ):
         profiles.data_frame(with_lengths=[30, 59])
+    with pytest.raises(ValueError, match="with_lengths contains duplicate values"):
+        profiles.data_frame(with_lengths=[30, 30])
+    with pytest.raises(TypeError, match="pair of non-negative integer bp bounds"):
+        profiles.data_frame(with_length_range="30-60")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="exactly two bounds"):
+        profiles.data_frame(with_length_range=(30,))
+    with pytest.raises(TypeError, match="Fragment length must be an integer"):
+        profiles.data_frame(with_length_range=(30.5, 60))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="Fragment length must be non-negative"):
+        profiles.data_frame(with_length_range=(-1, 60))
+    with pytest.raises(ValueError, match="with_length_range start must be smaller"):
+        profiles.data_frame(with_length_range=(60, 60))
+    with pytest.raises(ValueError, match="does not overlap any length bins"):
+        profiles.data_frame(with_length_range=(90, 100))
 
 
 def test_loader_rejects_invalid_paths(tmp_path: Path) -> None:

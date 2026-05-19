@@ -120,7 +120,7 @@ jobs:
           use-public-rspm: true
 
       - name: Install R package system libraries
-        run: sudo apt-get update && sudo apt-get install -y libblosc-dev libzstd-dev
+        run: sudo apt-get update && sudo apt-get install -y libblosc-dev libzstd-dev zstd
 
       - name: Install R helper package dependencies
         uses: r-lib/actions/setup-r-dependencies@v2
@@ -173,3 +173,12 @@ jobs:
           CFDNALAB_ENDS_SPARSE_WINDOWED_ZARR: downstream_tests/tmp/tiny_sparse_windowed.end_motifs.zarr
           CFDNALAB_ENDS_SPARSE_GROUPED_ZARR: downstream_tests/tmp/tiny_sparse_grouped.end_motifs.zarr
         run: Rscript downstream_tests/R/test_end_motif_zarr_cran_zarr.R
+
+      - name: Run data.table length-count downstream test
+        env:
+          CFDNALAB_LENGTHS_GLOBAL_TSV: downstream_tests/tmp/tiny_lengths_global.length_counts.tsv.zst
+          CFDNALAB_LENGTHS_WINDOWED_TSV: downstream_tests/tmp/tiny_lengths_windowed.length_counts.tsv.zst
+          CFDNALAB_LENGTHS_GROUPED_TSV: downstream_tests/tmp/tiny_lengths_grouped.length_counts.tsv.zst
+          CFDNALAB_LENGTHS_WINDOWED_NO_BLACKLIST_TSV: downstream_tests/tmp/tiny_lengths_windowed_no_blacklist.length_counts.tsv.zst
+          CFDNALAB_LENGTHS_GROUPED_NO_BLACKLIST_TSV: downstream_tests/tmp/tiny_lengths_grouped_no_blacklist.length_counts.tsv.zst
+        run: Rscript downstream_tests/R/test_length_counts_data_table.R

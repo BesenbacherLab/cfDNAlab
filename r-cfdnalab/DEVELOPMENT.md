@@ -30,7 +30,7 @@ Public R selectors and public metadata data frames are one-based:
   return one-based R indices.
 - Public data frames from helpers such as `group_metadata()`,
   `window_metadata()`, `length_bins()`, `positions()`, `motifs()`, and
-  sparse/dense data-frame helpers must contain one-based `*_idx` columns.
+  sparse/dense data frame helpers must contain one-based `*_idx` columns.
 - Public data frames must not contain internal `*_idx0` or `*_index0` columns.
 
 Internal zero-based values must be explicit in the name:

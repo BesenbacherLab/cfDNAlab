@@ -19,16 +19,17 @@ import zstandard
 
 from ._helpers import (
     filter_blacklisted_fraction,
+    normalize_length_bin_selector,
     normalize_strings,
     normalize_zero_based_indices,
     resolve_unique_match,
     validate_fragment_length,
     validate_scalar_bool,
-    validate_zero_based_index,
 )
 
 COUNT_COLUMN_PATTERN = re.compile(r"^count_([0-9]+)(?:_([0-9]+))?$")
-VALID_LENGTH_VALUES = {"count", "fraction", "density"}
+VALID_LENGTH_VALUES = ("count", "fraction", "density")
+VALID_DENOMINATORS = {"all_bins", "selected_bins"}
 
 
 @dataclass
@@ -56,7 +57,7 @@ class LengthCounts:
         Use `read_lengths()` for normal construction so the returned object
         matches the output mode.
         """
-        self.path = pathlib.Path(path)
+        self.path = _normalize_length_counts_path(path)
         self.lengths = loaded_lengths or self._load_tsv(self.path)
 
     def __repr__(self) -> str:
@@ -72,7 +73,7 @@ class LengthCounts:
         )
 
     @staticmethod
-    def _load_tsv(path: pathlib.Path | str) -> LoadedLengths:
+    def _load_tsv(path: pathlib.Path) -> LoadedLengths:
         """
         Read a length-count TSV and validate its public schema.
 
@@ -80,8 +81,6 @@ class LengthCounts:
         columns define the length bins, and leading metadata columns define
         whether the file is global, windowed, or grouped.
         """
-        if not isinstance(path, pathlib.Path):
-            path = _normalize_length_counts_path(path)
         _validate_length_counts_path(path)
         header_columns = _read_length_count_header(path)
         table = _read_length_counts_table(path)
@@ -164,29 +163,54 @@ class LengthCounts:
             duplicate_message=f"Multiple length-count bins contain length {length}",
         )
 
-    def counts_matrix(self) -> np.ndarray:
+    def counts_array(
+        self,
+        *,
+        with_lengths: int | Sequence[int] | None = None,
+        with_length_range: Sequence[int] | None = None,
+        length_bin_idxs: int | Sequence[int] | None = None,
+    ) -> np.ndarray:
         """
-        Return raw length counts for every output row and length bin.
+        Return raw length counts as a dense NumPy array.
 
-        Use row-specific helpers when the output is large and you only need one
-        window or group.
+        Use `with_lengths`, `with_length_range`, or `length_bin_idxs` to select
+        length bins. Range selection uses whole bins overlapping the half-open
+        `[start, end)` bp range.
+
+        Parameters
+        ----------
+        with_lengths
+            Fragment length or lengths in bp. Counts are returned for the
+            length bins containing these lengths. Multiple lengths must select
+            distinct length bins.
+        with_length_range
+            Two bp bounds defining a half-open range `[start, end)`.
+        length_bin_idxs
+            `None` for all length bins, one length-bin index, or a sequence of
+            length-bin indices. Use only one of `with_lengths`,
+            `with_length_range`, or `length_bin_idxs`.
 
         Returns
         -------
         numpy.ndarray
-            Count matrix with shape `(output row, length_bin)`. Output rows are
+            Count array with shape `(output row, length_bin)`. Output rows are
             windows for windowed output, groups for grouped output, and the
             single global summary row for global output.
         """
-        return self.lengths.counts.copy()
+        length_bin_indices = self._resolve_length_bin_selector(
+            with_lengths, with_length_range, length_bin_idxs
+        )
+        return self.lengths.counts[:, length_bin_indices].copy()
 
     def _data_frame_for_rows(
         self,
         row_indices: np.ndarray,
         *,
         value: str,
+        denominator: str,
         keep_wide: bool,
         max_blacklisted_fraction: float,
+        length_bin_indices: np.ndarray,
     ) -> pd.DataFrame:
         """
         Assemble selected output rows as a long or wide data frame.
@@ -201,38 +225,62 @@ class LengthCounts:
             row_indices=row_indices,
         )
         value = _validate_value(value)
+        denominator = _validate_denominator(denominator)
         keep_wide = validate_scalar_bool(keep_wide, "keep_wide")
-        values = self._value_matrix(row_indices, value)
+        values = self._value_matrix(
+            row_indices,
+            length_bin_indices,
+            value,
+            denominator,
+        )
         if keep_wide:
-            return self._wide_data_frame(row_indices, values, value)
-        return self._long_data_frame(row_indices, values, value)
+            return self._wide_data_frame(row_indices, length_bin_indices, values, value)
+        return self._long_data_frame(row_indices, length_bin_indices, values, value)
 
-    def _value_matrix(self, row_indices: np.ndarray, value: str) -> np.ndarray:
+    def _value_matrix(
+        self,
+        row_indices: np.ndarray,
+        length_bin_indices: np.ndarray,
+        value: str,
+        denominator: str,
+    ) -> np.ndarray:
         """
         Convert raw counts to counts, within-row fractions, or densities.
 
-        Density is the within-row fraction divided by the length-bin width. Rows
-        with zero total counts get `NaN` fractions and densities rather than
-        silently reporting zero.
+        Density is the selected fraction divided by the length-bin width. Rows
+        with zero denominator counts get `NaN` fractions and densities rather
+        than silently reporting zero.
         """
-        counts = self.lengths.counts[row_indices, :].astype(float, copy=True)
+        counts = self.lengths.counts[row_indices, :].astype(float, copy=False)
+        selected_counts = counts[:, length_bin_indices].copy()
         if value == "count":
-            return counts
+            return selected_counts
 
-        row_totals = counts.sum(axis=1)
-        fractions = np.full(counts.shape, np.nan, dtype=float)
+        row_totals = (
+            selected_counts.sum(axis=1)
+            if denominator == "selected_bins"
+            else counts.sum(axis=1)
+        )
+        fractions = np.full(selected_counts.shape, np.nan, dtype=float)
         positive_rows = row_totals > 0
         fractions[positive_rows, :] = (
-            counts[positive_rows, :] / row_totals[positive_rows, None]
+            selected_counts[positive_rows, :] / row_totals[positive_rows, None]
         )
         if value == "fraction":
             return fractions
 
-        widths = self.lengths.length_end_bp - self.lengths.length_start_bp
+        widths = (
+            self.lengths.length_end_bp[length_bin_indices]
+            - self.lengths.length_start_bp[length_bin_indices]
+        )
         return fractions / widths
 
     def _wide_data_frame(
-        self, row_indices: np.ndarray, values: np.ndarray, value: str
+        self,
+        row_indices: np.ndarray,
+        length_bin_indices: np.ndarray,
+        values: np.ndarray,
+        value: str,
     ) -> pd.DataFrame:
         """
         Join selected row metadata to one value column per length bin.
@@ -240,49 +288,68 @@ class LengthCounts:
         metadata = self.lengths.row_metadata.iloc[row_indices].reset_index(drop=True)
         value_data_frame = pd.DataFrame(
             values,
-            columns=_value_column_names(self.lengths.count_columns, value),
+            columns=_value_column_names(
+                [self.lengths.count_columns[index] for index in length_bin_indices],
+                value,
+            ),
         )
         return pd.concat([metadata, value_data_frame], axis=1)
 
     def _long_data_frame(
-        self, row_indices: np.ndarray, values: np.ndarray, value: str
+        self,
+        row_indices: np.ndarray,
+        length_bin_indices: np.ndarray,
+        values: np.ndarray,
+        value: str,
     ) -> pd.DataFrame:
         """
         Repeat selected row metadata across bins and attach one value column.
         """
         num_rows = len(row_indices)
-        num_bins = len(self.lengths.length_bin)
+        num_bins = len(length_bin_indices)
         metadata = self.lengths.row_metadata.iloc[row_indices].reset_index(drop=True)
         metadata = metadata.loc[metadata.index.repeat(num_bins)].reset_index(drop=True)
         # Preserve column order and dtypes after blacklist filtering removes all rows
-        bins = (
-            self.length_bins().iloc[[]].copy()
-            if num_rows == 0
-            else pd.concat([self.length_bins()] * num_rows, ignore_index=True)
+        selected_bins = self.length_bins().iloc[length_bin_indices].reset_index(
+            drop=True
+        )
+        bins = selected_bins.iloc[[]].copy() if num_rows == 0 else pd.concat(
+            [selected_bins] * num_rows, ignore_index=True
         )
         data_frame = pd.concat([metadata, bins], axis=1)
         data_frame[value] = values.ravel()
         return data_frame
 
+    def _resolve_length_bin_selector(
+        self,
+        with_lengths: int | Sequence[int] | None,
+        with_length_range: Sequence[int] | None,
+        length_bin_idxs: int | Sequence[int] | None,
+    ) -> np.ndarray:
+        """
+        Normalize optional fragment length or length-bin selectors.
+        """
+        return normalize_length_bin_selector(
+            with_lengths=with_lengths,
+            with_length_range=with_length_range,
+            length_bin_idxs=length_bin_idxs,
+            length_start_bp=self.lengths.length_start_bp,
+            length_end_bp=self.lengths.length_end_bp,
+            selector_context="length-count",
+        )
+
 
 class GlobalLengthCounts(LengthCounts):
     """Length counts for global output."""
 
-    def counts_vec(self) -> np.ndarray:
-        """
-        Return raw global counts across fragment length bins.
-
-        Returns
-        -------
-        numpy.ndarray
-            Count vector with one value per length bin.
-        """
-        return self.lengths.counts[0, :].copy()
-
     def data_frame(
         self,
         *,
+        with_lengths: int | Sequence[int] | None = None,
+        with_length_range: Sequence[int] | None = None,
+        length_bin_idxs: int | Sequence[int] | None = None,
         value: str = "count",
+        denominator: str = "all_bins",
         keep_wide: bool = False,
     ) -> pd.DataFrame:
         """
@@ -293,10 +360,25 @@ class GlobalLengthCounts(LengthCounts):
 
         Parameters
         ----------
+        with_lengths
+            Fragment length or lengths in bp. Returned values use the length
+            bins containing these lengths. Multiple lengths must select
+            distinct length bins.
+        with_length_range
+            Two bp bounds defining a half-open range `[start, end)`. Returned
+            values use whole length bins that overlap this range.
+        length_bin_idxs
+            `None` for all length bins, one length-bin index, or a sequence of
+            length-bin indices. Use only one of `with_lengths`,
+            `with_length_range`, or `length_bin_idxs`.
         value
             One of `"count"`, `"fraction"`, or `"density"`. Fractions are
             within the global row. Densities are fractions divided by the
             length-bin width.
+        denominator
+            For `"fraction"` and `"density"`, `"all_bins"` divides by the row
+            total over all length bins, while `"selected_bins"` divides by the
+            total over the returned length bins. Ignored for `"count"`.
         keep_wide
             If `False`, return one row per length bin. If `True`, return one
             row with one value column per length bin.
@@ -307,20 +389,25 @@ class GlobalLengthCounts(LengthCounts):
             Global length-count values with length-bin metadata for long output
             or value-prefixed columns for wide output.
         """
+        length_bin_indices = self._resolve_length_bin_selector(
+            with_lengths, with_length_range, length_bin_idxs
+        )
         return self._data_frame_for_rows(
             np.arange(self.lengths.counts.shape[0]),
             value=value,
+            denominator=denominator,
             keep_wide=keep_wide,
             max_blacklisted_fraction=1.0,
+            length_bin_indices=length_bin_indices,
         )
 
 
 class WindowedLengthCounts(LengthCounts):
     """Length counts for fixed-size or BED-window output."""
 
-    def windows(self) -> pd.DataFrame:
+    def window_metadata(self) -> pd.DataFrame:
         """
-        Get the genomic windows available in this length-count output.
+        Return genomic window metadata for this length-count output.
 
         Returns
         -------
@@ -330,30 +417,61 @@ class WindowedLengthCounts(LengthCounts):
         """
         return self.lengths.row_metadata.copy()
 
-    def counts_for_window(self, window_idx: int) -> np.ndarray:
+    def counts_array(
+        self,
+        *,
+        window_idxs: int | Sequence[int] | None = None,
+        with_lengths: int | Sequence[int] | None = None,
+        with_length_range: Sequence[int] | None = None,
+        length_bin_idxs: int | Sequence[int] | None = None,
+    ) -> np.ndarray:
         """
-        Return raw length counts for one genomic window.
+        Return raw length counts as a dense NumPy array.
+
+        Scalar selectors keep their axis as length one, so the shape is always
+        `(selected windows, length_bin)`.
 
         Parameters
         ----------
-        window_idx
-            Window index.
+        window_idxs
+            `None` for all windows, one window index, or a sequence of window
+            indices.
+        with_lengths
+            Fragment length or lengths in bp. Counts are returned for the
+            length bins containing these lengths. Multiple lengths must select
+            distinct length bins.
+        with_length_range
+            Two bp bounds defining a half-open range `[start, end)`.
+        length_bin_idxs
+            `None` for all length bins, one length-bin index, or a sequence of
+            length-bin indices. Use only one of `with_lengths`,
+            `with_length_range`, or `length_bin_idxs`.
 
         Returns
         -------
         numpy.ndarray
-            Count vector with one value per length bin.
+            Count array with shape `(window, length_bin)`.
         """
-        window_idx = validate_zero_based_index(
-            window_idx, self.lengths.counts.shape[0], "window_idx"
+        row_indices = normalize_zero_based_indices(
+            window_idxs,
+            size=self.lengths.counts.shape[0],
+            name="window_idxs",
+            index_name="window_idx",
         )
-        return self.lengths.counts[window_idx, :].copy()
+        length_bin_indices = self._resolve_length_bin_selector(
+            with_lengths, with_length_range, length_bin_idxs
+        )
+        return self.lengths.counts[np.ix_(row_indices, length_bin_indices)].copy()
 
     def data_frame(
         self,
         *,
         window_idxs: int | Sequence[int] | None = None,
+        with_lengths: int | Sequence[int] | None = None,
+        with_length_range: Sequence[int] | None = None,
+        length_bin_idxs: int | Sequence[int] | None = None,
         value: str = "count",
+        denominator: str = "all_bins",
         keep_wide: bool = False,
         max_blacklisted_fraction: float = 1.0,
     ) -> pd.DataFrame:
@@ -368,10 +486,25 @@ class WindowedLengthCounts(LengthCounts):
         ----------
         window_idxs
             `None` for all windows, a window index, or a sequence of window indices.
+        with_lengths
+            Fragment length or lengths in bp. Returned values use the length
+            bins containing these lengths. Multiple lengths must select
+            distinct length bins.
+        with_length_range
+            Two bp bounds defining a half-open range `[start, end)`. Returned
+            values use whole length bins that overlap this range.
+        length_bin_idxs
+            `None` for all length bins, one length-bin index, or a sequence of
+            length-bin indices. Use only one of `with_lengths`,
+            `with_length_range`, or `length_bin_idxs`.
         value
             One of `"count"`, `"fraction"`, or `"density"`. Fractions are
             within each selected window. Densities are fractions divided by the
             length-bin width.
+        denominator
+            For `"fraction"` and `"density"`, `"all_bins"` divides by each
+            row's total over all length bins, while `"selected_bins"` divides
+            by the total over the returned length bins. Ignored for `"count"`.
         keep_wide
             If `False`, return one row per selected window and length bin. If
             `True`, return one row per selected window with one value column per
@@ -391,20 +524,25 @@ class WindowedLengthCounts(LengthCounts):
             name="window_idxs",
             index_name="window_idx",
         )
+        length_bin_indices = self._resolve_length_bin_selector(
+            with_lengths, with_length_range, length_bin_idxs
+        )
         return self._data_frame_for_rows(
             row_indices,
             value=value,
+            denominator=denominator,
             keep_wide=keep_wide,
             max_blacklisted_fraction=max_blacklisted_fraction,
+            length_bin_indices=length_bin_indices,
         )
 
 
 class GroupedLengthCounts(LengthCounts):
     """Length counts for grouped BED output."""
 
-    def groups(self) -> pd.DataFrame:
+    def group_metadata(self) -> pd.DataFrame:
         """
-        Get the BED groups available in this length-count output.
+        Return grouped BED metadata for this length-count output.
 
         Returns
         -------
@@ -437,29 +575,61 @@ class GroupedLengthCounts(LengthCounts):
             ),
         )
 
-    def counts_for_group(self, group: int | str) -> np.ndarray:
+    def counts_array(
+        self,
+        *,
+        groups: str | Sequence[str] | None = None,
+        group_idxs: int | Sequence[int] | None = None,
+        with_lengths: int | Sequence[int] | None = None,
+        with_length_range: Sequence[int] | None = None,
+        length_bin_idxs: int | Sequence[int] | None = None,
+    ) -> np.ndarray:
         """
-        Return raw length counts for one grouped BED row.
+        Return raw length counts as a dense NumPy array.
+
+        Scalar selectors keep their axis as length one, so the shape is always
+        `(selected groups, length_bin)`.
 
         Parameters
         ----------
-        group
-            Group index or group name.
+        groups
+            `None` for all groups, one group name, or a sequence of group names.
+            Use either `groups` or `group_idxs`, not both.
+        group_idxs
+            `None` for all groups, one group index, or a sequence of group
+            indices. Use either `groups` or `group_idxs`, not both.
+        with_lengths
+            Fragment length or lengths in bp. Counts are returned for the
+            length bins containing these lengths. Multiple lengths must select
+            distinct length bins.
+        with_length_range
+            Two bp bounds defining a half-open range `[start, end)`.
+        length_bin_idxs
+            `None` for all length bins, one length-bin index, or a sequence of
+            length-bin indices. Use only one of `with_lengths`,
+            `with_length_range`, or `length_bin_idxs`.
 
         Returns
         -------
         numpy.ndarray
-            Count vector with one value per length bin.
+            Count array with shape `(group, length_bin)`.
         """
-        group_idx = self._resolve_group(group)
-        return self.lengths.counts[group_idx, :].copy()
+        row_indices = self._resolve_group_selector(groups, group_idxs)
+        length_bin_indices = self._resolve_length_bin_selector(
+            with_lengths, with_length_range, length_bin_idxs
+        )
+        return self.lengths.counts[np.ix_(row_indices, length_bin_indices)].copy()
 
     def data_frame(
         self,
         *,
         groups: str | Sequence[str] | None = None,
         group_idxs: int | Sequence[int] | None = None,
+        with_lengths: int | Sequence[int] | None = None,
+        with_length_range: Sequence[int] | None = None,
+        length_bin_idxs: int | Sequence[int] | None = None,
         value: str = "count",
+        denominator: str = "all_bins",
         keep_wide: bool = False,
         max_blacklisted_fraction: float = 1.0,
     ) -> pd.DataFrame:
@@ -478,10 +648,25 @@ class GroupedLengthCounts(LengthCounts):
         group_idxs
             `None` for all groups, one group index, or a sequence of group
             indices. Use either `groups` or `group_idxs`, not both.
+        with_lengths
+            Fragment length or lengths in bp. Returned values use the length
+            bins containing these lengths. Multiple lengths must select
+            distinct length bins.
+        with_length_range
+            Two bp bounds defining a half-open range `[start, end)`. Returned
+            values use whole length bins that overlap this range.
+        length_bin_idxs
+            `None` for all length bins, one length-bin index, or a sequence of
+            length-bin indices. Use only one of `with_lengths`,
+            `with_length_range`, or `length_bin_idxs`.
         value
             One of `"count"`, `"fraction"`, or `"density"`. Fractions are
             within each selected group. Densities are fractions divided by the
             length-bin width.
+        denominator
+            For `"fraction"` and `"density"`, `"all_bins"` divides by each
+            row's total over all length bins, while `"selected_bins"` divides
+            by the total over the returned length bins. Ignored for `"count"`.
         keep_wide
             If `False`, return one row per selected group and length bin. If
             `True`, return one row per selected group with one value column per
@@ -496,20 +681,17 @@ class GroupedLengthCounts(LengthCounts):
             Group metadata and length-count values.
         """
         row_indices = self._resolve_group_selector(groups, group_idxs)
+        length_bin_indices = self._resolve_length_bin_selector(
+            with_lengths, with_length_range, length_bin_idxs
+        )
         return self._data_frame_for_rows(
             row_indices,
             value=value,
+            denominator=denominator,
             keep_wide=keep_wide,
             max_blacklisted_fraction=max_blacklisted_fraction,
+            length_bin_indices=length_bin_indices,
         )
-
-    def _resolve_group(self, group: int | str) -> int:
-        """
-        Resolve a group name or group index to a row index.
-        """
-        if isinstance(group, str):
-            return self.group_idx(group)
-        return validate_zero_based_index(group, self.lengths.counts.shape[0], "group_idx")
 
     def _resolve_group_selector(
         self,
@@ -537,7 +719,9 @@ class GroupedLengthCounts(LengthCounts):
         )
 
 
-def read_lengths(path: pathlib.Path | str) -> LengthCounts:
+def read_lengths(
+    path: pathlib.Path | str,
+) -> GlobalLengthCounts | WindowedLengthCounts | GroupedLengthCounts:
     """
     Read a cfDNAlab length-count TSV and return the matching loader class.
 
@@ -871,11 +1055,19 @@ def _validate_value(value: str) -> str:
     if value not in VALID_LENGTH_VALUES:
         raise ValueError(
             "value must be one of "
-            + ", ".join(
-                repr(valid_value) for valid_value in sorted(VALID_LENGTH_VALUES)
-            )
+            + ", ".join(repr(valid_value) for valid_value in VALID_LENGTH_VALUES)
         )
     return value
+
+
+def _validate_denominator(denominator: str) -> str:
+    """
+    Validate the row-total basis used for fractions and densities.
+    """
+    if denominator not in VALID_DENOMINATORS:
+        valid = ", ".join(repr(value) for value in sorted(VALID_DENOMINATORS))
+        raise ValueError(f"denominator must be one of {valid}")
+    return denominator
 
 
 def _value_column_names(count_columns: list[str], value: str) -> list[str]:

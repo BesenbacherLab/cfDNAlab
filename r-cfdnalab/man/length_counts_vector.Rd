@@ -7,12 +7,29 @@
 \usage{
 length_counts_vector(x, ...)
 
-\method{length_counts_vector}{cfdnalab_global_length_counts}(x, ...)
+\method{length_counts_vector}{cfdnalab_global_length_counts}(
+  x,
+  with_lengths = NULL,
+  with_length_range = NULL,
+  length_bin_idxs = NULL,
+  ...
+)
 }
 \arguments{
 \item{x}{A cfDNAlab global length-count object.}
 
 \item{...}{Reserved for future methods.}
+
+\item{with_lengths}{Optional fragment length vector in base pairs. Returned
+values use the length bins containing these lengths. Multiple lengths must
+select distinct length bins.}
+
+\item{with_length_range}{Optional two-value fragment length range in base
+pairs. Returned values use whole length bins that overlap the half-open
+range \verb{[start, end)}.}
+
+\item{length_bin_idxs}{Optional one-based length-bin index vector. Use only
+one of \code{with_lengths}, \code{with_length_range}, or \code{length_bin_idxs}.}
 }
 \value{
 A named numeric vector with one value per length bin.

@@ -39,8 +39,9 @@ pytest downstream_tests/python
 ```
 
 R tests require the CRAN `jsonlite`, `zarr`, `qs2`, `bit64`, `Matrix`, and
-`testthat` packages. The local `cfdnalab` R package must be installed before
-running `test_cfdnalab_r_package.R`.
+`testthat` packages. The data.table length-count check also uses `data.table`
+and the `zstd` command-line tool. The local `cfdnalab` R package must be
+installed before running `test_cfdnalab_r_package.R`.
 
 ```bash
 Rscript -e 'testthat::test_local("r-cfdnalab")'
@@ -68,4 +69,11 @@ CFDNALAB_ENDS_DENSE_GLOBAL_ZARR=downstream_tests/tmp/tiny_dense_global.end_motif
 CFDNALAB_ENDS_SPARSE_WINDOWED_ZARR=downstream_tests/tmp/tiny_sparse_windowed.end_motifs.zarr \
 CFDNALAB_ENDS_SPARSE_GROUPED_ZARR=downstream_tests/tmp/tiny_sparse_grouped.end_motifs.zarr \
 Rscript downstream_tests/R/test_end_motif_zarr_cran_zarr.R
+
+CFDNALAB_LENGTHS_GLOBAL_TSV=downstream_tests/tmp/tiny_lengths_global.length_counts.tsv.zst \
+CFDNALAB_LENGTHS_WINDOWED_TSV=downstream_tests/tmp/tiny_lengths_windowed.length_counts.tsv.zst \
+CFDNALAB_LENGTHS_GROUPED_TSV=downstream_tests/tmp/tiny_lengths_grouped.length_counts.tsv.zst \
+CFDNALAB_LENGTHS_WINDOWED_NO_BLACKLIST_TSV=downstream_tests/tmp/tiny_lengths_windowed_no_blacklist.length_counts.tsv.zst \
+CFDNALAB_LENGTHS_GROUPED_NO_BLACKLIST_TSV=downstream_tests/tmp/tiny_lengths_grouped_no_blacklist.length_counts.tsv.zst \
+Rscript downstream_tests/R/test_length_counts_data_table.R
 ```

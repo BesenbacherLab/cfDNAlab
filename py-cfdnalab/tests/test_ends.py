@@ -31,19 +31,18 @@ def test_dense_windowed_end_motifs_load_metadata_and_arrays(tmp_path: Path) -> N
         "shape=(2, 3)"
         ")"
     )
-    assert not hasattr(ends, "groups")
+    assert not hasattr(ends, "group_metadata")
     assert ends.storage_mode() == "dense"
     assert ends.row_mode() == "bed"
-    assert ends.motifs() == ["_AA", "_CC", "_GG"]
     assert ends.has_motif("_AA")
     assert not ends.has_motif("_TT")
     assert ends.motif_idx("_GG") == 2
     pd.testing.assert_frame_equal(
-        ends.motif_metadata(),
+        ends.motifs_metadata(),
         pd.DataFrame({"motif_index": MOTIF_INDEX, "motif": MOTIF_NAMES}),
     )
     pd.testing.assert_frame_equal(
-        ends.windows(),
+        ends.window_metadata(),
         pd.DataFrame(
             {
                 "window_idx": np.array([0, 1], dtype=np.int32),
@@ -55,11 +54,11 @@ def test_dense_windowed_end_motifs_load_metadata_and_arrays(tmp_path: Path) -> N
         ),
     )
     np.testing.assert_array_equal(
-        ends.dense_counts_matrix(),
+        ends.dense_counts_array(),
         np.array([[1.0, 0.0, 2.5], [0.5, 4.0, 0.0]], dtype=np.float64),
     )
     assert ends.dense_counts_zarr_array().shape == (2, 3)
-    assert sparse.isspmatrix_coo(ends.sparse_coo())
+    assert sparse.isspmatrix_coo(ends.sparse_counts_matrix())
 
 
 def test_dense_windowed_end_motif_slice_helpers_return_expected_frames(
@@ -102,14 +101,16 @@ def test_dense_windowed_end_motif_slice_helpers_return_expected_frames(
         ),
     )
     np.testing.assert_array_equal(
-        ends.dense_counts_for_window(1),
-        np.array([0.5, 4.0, 0.0], dtype=np.float64),
+        ends.dense_counts_array(window_idxs=1),
+        np.array([[0.5, 4.0, 0.0]], dtype=np.float64),
     )
     np.testing.assert_array_equal(
-        ends.dense_counts_for_motif_idx(2), np.array([2.5, 0.0], dtype=np.float64)
+        ends.dense_counts_array(motif_idxs=2),
+        np.array([[2.5], [0.0]], dtype=np.float64),
     )
     np.testing.assert_array_equal(
-        ends.dense_counts_for_motif("_CC"), np.array([0.0, 4.0], dtype=np.float64)
+        ends.dense_counts_array(motifs="_CC"),
+        np.array([[0.0], [4.0]], dtype=np.float64),
     )
     filtered_motif_frame = ends.data_frame(motifs="_CC", max_blacklisted_fraction=0.1)
     pd.testing.assert_frame_equal(
@@ -125,7 +126,7 @@ def test_dense_windowed_end_motif_slice_helpers_return_expected_frames(
         ValueError, match="max_blacklisted_fraction must be a single finite fraction"
     ):
         ends.data_frame(window_idxs=0, max_blacklisted_fraction=1.1)
-    assert ends.sparse_coo_for_window(1).shape == (1, 3)
+    assert ends.sparse_counts_matrix(window_idxs=1).shape == (1, 3)
 
 
 def test_sparse_grouped_end_motifs_reconstruct_dense_matrix_and_metadata(
@@ -136,11 +137,11 @@ def test_sparse_grouped_end_motifs_reconstruct_dense_matrix_and_metadata(
     ends = cfdnalab.read_end_motifs(store_path)
 
     assert isinstance(ends, cfdnalab.GroupedEndMotifCounts)
-    assert not hasattr(ends, "windows")
+    assert not hasattr(ends, "window_metadata")
     assert ends.storage_mode() == "sparse_coo"
     assert ends.row_mode() == "grouped_bed"
     pd.testing.assert_frame_equal(
-        ends.groups(),
+        ends.group_metadata(),
         pd.DataFrame(
             {
                 "group_idx": np.array([0, 1, 2], dtype=np.int32),
@@ -151,33 +152,33 @@ def test_sparse_grouped_end_motifs_reconstruct_dense_matrix_and_metadata(
         ),
     )
     np.testing.assert_array_equal(
-        ends.dense_counts_matrix(allow_densify=True),
+        ends.dense_counts_array(allow_densify=True),
         np.array(
             [[1.0, 0.0, 2.5], [0.0, 4.25, 0.0], [0.75, 0.0, 0.0]],
             dtype=np.float64,
         ),
     )
     with pytest.raises(ValueError, match="would densify a sparse end-motif store"):
-        ends.dense_counts_matrix()
+        ends.dense_counts_array()
     np.testing.assert_array_equal(
-        ends.dense_counts_for_group("A", allow_densify=True),
-        np.array([1.0, 0.0, 2.5], dtype=np.float64),
+        ends.dense_counts_array(groups="A", allow_densify=True),
+        np.array([[1.0, 0.0, 2.5]], dtype=np.float64),
     )
     np.testing.assert_array_equal(
-        ends.dense_counts_for_motif("_AA", allow_densify=True),
-        np.array([1.0, 0.0, 0.75], dtype=np.float64),
+        ends.dense_counts_array(motifs="_AA", allow_densify=True),
+        np.array([[1.0], [0.0], [0.75]], dtype=np.float64),
     )
-    motif_coo = ends.sparse_coo_for_motif("_AA")
+    motif_coo = ends.sparse_counts_matrix(motifs="_AA")
     assert motif_coo.shape == (3, 1)
     np.testing.assert_array_equal(motif_coo.row, np.array([0, 2], dtype=np.int32))
     np.testing.assert_array_equal(motif_coo.col, np.array([0, 0], dtype=np.int32))
     np.testing.assert_array_equal(motif_coo.data, np.array([1.0, 0.75]))
-    motif_idx_coo = ends.sparse_coo_for_motif_idx(1)
+    motif_idx_coo = ends.sparse_counts_matrix(motif_idxs=1)
     assert motif_idx_coo.shape == (3, 1)
     np.testing.assert_array_equal(motif_idx_coo.row, np.array([1], dtype=np.int32))
     np.testing.assert_array_equal(motif_idx_coo.data, np.array([4.25]))
     assert ends.group_idx("long_group") == 1
-    group_coo = ends.sparse_coo_for_group("long_group")
+    group_coo = ends.sparse_counts_matrix(groups="long_group")
     assert group_coo.shape == (1, 3)
     np.testing.assert_array_equal(group_coo.row, np.array([0], dtype=np.int32))
     np.testing.assert_array_equal(group_coo.col, np.array([1], dtype=np.int32))
@@ -215,8 +216,8 @@ def test_sparse_windowed_end_motifs_slice_window_without_dense_roundtrip(
     assert ends.has_motif("_CC")
     assert not ends.has_motif("_TT")
     with pytest.raises(KeyError, match="Unknown end-motif label"):
-        ends.dense_counts_for_motif("_TT")
-    window_coo = ends.sparse_coo_for_window(1)
+        ends.dense_counts_array(motifs="_TT")
+    window_coo = ends.sparse_counts_matrix(window_idxs=1)
 
     assert window_coo.shape == (1, 3)
     np.testing.assert_array_equal(window_coo.row, np.array([0], dtype=np.int32))
@@ -265,10 +266,10 @@ def test_size_mode_end_motifs_use_windowed_helpers(tmp_path: Path) -> None:
 
     assert isinstance(ends, cfdnalab.WindowedEndMotifCounts)
     assert ends.row_mode() == "size"
-    assert ends.windows().shape == (2, 5)
+    assert ends.window_metadata().shape == (2, 5)
     np.testing.assert_array_equal(
-        ends.dense_counts_for_window(0, allow_densify=True),
-        np.array([1.0, 0.0, 2.5], dtype=np.float64),
+        ends.dense_counts_array(window_idxs=0, allow_densify=True),
+        np.array([[1.0, 0.0, 2.5]], dtype=np.float64),
     )
 
 
@@ -294,8 +295,8 @@ def test_global_end_motifs_read_row_label_from_json_attrs(tmp_path: Path) -> Non
     ends = cfdnalab.read_end_motifs(store_path)
 
     assert isinstance(ends, cfdnalab.GlobalEndMotifCounts)
-    assert not hasattr(ends, "windows")
-    assert not hasattr(ends, "groups")
+    assert not hasattr(ends, "window_metadata")
+    assert not hasattr(ends, "group_metadata")
     assert ends.row_mode() == "global"
     pd.testing.assert_frame_equal(
         ends.data_frame(motifs="_AA", densify=True),
@@ -309,8 +310,8 @@ def test_global_end_motifs_read_row_label_from_json_attrs(tmp_path: Path) -> Non
         ),
     )
     np.testing.assert_array_equal(
-        ends.dense_counts_vec(allow_densify=True),
-        np.array([1.25, 0.0, 3.5], dtype=np.float64),
+        ends.dense_counts_array(allow_densify=True),
+        np.array([[1.25, 0.0, 3.5]], dtype=np.float64),
     )
     pd.testing.assert_frame_equal(
         ends.data_frame(),
@@ -324,10 +325,10 @@ def test_global_end_motifs_read_row_label_from_json_attrs(tmp_path: Path) -> Non
         ),
     )
     np.testing.assert_array_equal(
-        ends.dense_counts_for_motif_idx(1, allow_densify=True),
-        np.array([0.0], dtype=np.float64),
+        ends.dense_counts_array(motif_idxs=1, allow_densify=True),
+        np.array([[0.0]], dtype=np.float64),
     )
-    assert ends.sparse_coo_for_motif_idx(1).nnz == 0
+    assert ends.sparse_counts_matrix(motif_idxs=1).nnz == 0
 
 
 def test_dense_global_end_motifs_load_without_sparse_arrays(tmp_path: Path) -> None:
@@ -340,8 +341,8 @@ def test_dense_global_end_motifs_load_without_sparse_arrays(tmp_path: Path) -> N
     assert ends.row_mode() == "global"
     assert ends.dense_counts_zarr_array().shape == (1, 3)
     np.testing.assert_array_equal(
-        ends.dense_counts_vec(),
-        np.array([1.0, 0.0, 2.5], dtype=np.float64),
+        ends.dense_counts_array(),
+        np.array([[1.0, 0.0, 2.5]], dtype=np.float64),
     )
     pd.testing.assert_frame_equal(
         ends.data_frame(),
@@ -366,14 +367,14 @@ def test_dense_grouped_end_motifs_use_group_helpers(tmp_path: Path) -> None:
     assert ends.row_mode() == "grouped_bed"
     assert ends.group_idx("long_group") == 1
     np.testing.assert_array_equal(
-        ends.dense_counts_for_group(0),
-        np.array([1.0, 0.0, 2.5], dtype=np.float64),
+        ends.dense_counts_array(group_idxs=0),
+        np.array([[1.0, 0.0, 2.5]], dtype=np.float64),
     )
     np.testing.assert_array_equal(
-        ends.dense_counts_for_group("long_group"),
-        np.array([0.0, 4.25, 0.0], dtype=np.float64),
+        ends.dense_counts_array(groups="long_group"),
+        np.array([[0.0, 4.25, 0.0]], dtype=np.float64),
     )
-    group_coo = ends.sparse_coo_for_group("long_group")
+    group_coo = ends.sparse_counts_matrix(groups="long_group")
     assert group_coo.shape == (1, 3)
     np.testing.assert_array_equal(group_coo.col, np.array([1], dtype=np.int32))
     pd.testing.assert_frame_equal(

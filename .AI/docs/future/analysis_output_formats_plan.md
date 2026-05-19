@@ -737,17 +737,14 @@ Current cross-language loader decisions:
   values, especially `length_bin_idx(length=...)` with non-integer numeric
   input.
 
-Public API decisions to make deliberately:
+Public API decisions already folded into the package loader spec:
 
-- Decide whether `motifs()` returns just labels in both languages or metadata
-  tables in both languages. Current state: Python returns `list[str]` and has
-  `motif_metadata()`, while R returns a metadata `data.frame`.
-- Decide whether sparse matrix naming should be harmonized. Current state:
-  Python exposes SciPy COO-specific helpers, while R exposes `Matrix` sparse
-  matrices and sparse data frames without promising a COO class.
-- Decide whether R should add selected dense/sparse slice convenience helpers
-  that match R idioms. Python can keep its broader method surface because method
-  discovery is more natural there.
+- Python `motifs_metadata()` and R `motifs()` return motif metadata.
+- Python uses `sparse_counts_matrix()` for SciPy sparse output and
+  `dense_counts_array()` for NumPy dense output. R keeps its generic
+  `sparse_counts_matrix()` and `dense_counts_matrix()` functions.
+- Python array helpers preserve dimensions. R keeps command-prefixed functions
+  to avoid overloading `data_frame()` across packages.
 
 ## Implementation Order
 

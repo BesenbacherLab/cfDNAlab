@@ -30,7 +30,8 @@ downstream_tests/
     conftest.py
     test_end_motif_zarr_cfdnalab_package.py
     test_end_motif_zarr_python.py
-    test_length_counts_cfdnalab_package.py
+    test_lengths_cfdnalab_package.py
+    test_lengths_tsv_python.py
     test_midpoint_zarr_python.py
     test_midpoint_zarr_cfdnalab_package.py
     test_midpoint_zarr_xarray.py
@@ -39,7 +40,7 @@ downstream_tests/
     common.R
     test_cfdnalab_r_package.R
     test_end_motif_zarr_cran_zarr.R
-    test_length_counts_cfdnalab_package.R
+    test_length_counts_data_table.R
     test_midpoint_zarr_cran_zarr.R
 tests/
   generate_downstream_zarr_fixtures.rs
@@ -107,12 +108,13 @@ The workflow jobs are:
 - Fixture generation: Rust ignored integration test that runs
   `cfdna midpoints`, `cfdna ends`, and `cfdna lengths`
 - Python: `zarr`, `xarray`, `dask.array`, and the `cfdnalab` Python helper
-  package
-- R: CRAN `zarr` and the `cfdnalab` R helper package
+  package, plus direct pandas reads of compressed length-count TSVs
+- R: CRAN `zarr`, direct `data.table::fread()` reads of compressed
+  length-count TSVs, and the `cfdnalab` R helper package
 
-The R job installs `libblosc-dev` and `libzstd-dev` before installing R
-packages. Those libraries make compression support explicit instead of relying
-on the GitHub runner image.
+The R job installs `libblosc-dev`, `libzstd-dev`, and the `zstd` CLI before
+installing R packages. Those dependencies make compression support explicit
+instead of relying on the GitHub runner image.
 
 Do not let package-sprawl leak into the user docs. CI can test several readers,
 but the guide should show one recommended Python path and one recommended R
@@ -172,7 +174,7 @@ object responsibilities:
 - reject ambiguous selector types, duplicate requested selectors, and invalid
   blacklist filters
 
-The midpoint data-frame columns should be stable and boring:
+The midpoint data frame columns should be stable and boring:
 
 ```text
 group_idx
@@ -235,7 +237,7 @@ the package.
 
 ### Plotting Boundary
 
-Do not put plotting into the first helper packages. Add the data-frame builders
+Do not put plotting into the first helper packages. Add the data frame builders
 first and let users plot with their normal stack. If the helper API proves
 stable and users repeatedly ask for standard plots, add optional plotting
 functions later:
@@ -286,7 +288,7 @@ The current fixture uses:
 - the same zstd-compressed Zarr V3 writer path used by `cfdna midpoints`
 
 The fixture should be small enough that every test can also materialize a
-data-frame slice.
+data frame slice.
 
 ## Required Python Checks
 

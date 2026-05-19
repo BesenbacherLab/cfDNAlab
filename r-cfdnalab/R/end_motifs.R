@@ -469,7 +469,7 @@ end_motif_data_frame.cfdnalab_grouped_end_motif_counts <- function(
   )
 }
 
-#' Shared implementation for mode-specific end-motif data-frame methods.
+#' Shared implementation for mode-specific end-motif data frame methods.
 #'
 #' @param x End-motif object.
 #' @param row_indices One-based row indices.

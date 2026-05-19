@@ -10,6 +10,8 @@ The helpers return base `data.frame` objects, R arrays, and `Matrix` sparse matr
 
 Numeric indices returned by this R package are one-based, matching ordinary R indexing.
 
+NOTE: While the main CLI tool is highly tested and validated, this R package is currently being built and may have bugs or use too AI'ish language in the documentation. The core functions should work and we are actively improving it over the coming weeks. We decided to share it early to help you use the outputs of the main tool.
+
 <br>
 
 ## Install
@@ -42,16 +44,16 @@ group_metadata(midpoints)
 length_bins(midpoints)
 positions(midpoints)
 
-length_bin <- length_bin_idx(midpoints, 167)
-
 profile <- midpoint_data_frame(
   midpoints,
   groups = "LYL1",
-  length_bin_idxs = length_bin
+  with_lengths = 167
 )
 
 head(profile)
 ```
+
+Use `with_length_range = c(start, end)` to select all whole length bins that overlap a half-open bp range.
 
 Use `profile_array()` when you only need the count vector for one profile. Use `midpoint_array()` only when you want the full 3D count array in memory.
 
@@ -113,10 +115,19 @@ lengths <- read_lengths("sample.length_counts.tsv.zst")
 length_bins(lengths)
 length_counts_matrix(lengths)
 length_data_frame(lengths, value = "fraction")
+length_data_frame(lengths, with_length_range = c(100L, 220L))
+length_data_frame(
+  lengths,
+  with_length_range = c(100L, 220L),
+  value = "fraction",
+  denominator = "selected_bins"
+)
 ```
 
 - Global outputs also support `length_counts_vector(lengths)`.
 - Windowed outputs support `window_metadata(lengths)` and optional `window_idxs` selection in `length_data_frame()`.
 - Grouped outputs support `group_metadata(lengths)`, `group_idx()`, and optional `groups` or `group_idxs` selection.
+- Length-bin selection supports `with_lengths`, `with_length_range`, and `length_bin_idxs`.
+- For `fraction` and `density`, `denominator = "all_bins"` uses all length bins and `denominator = "selected_bins"` uses only the returned bins.
 
 For windowed or grouped outputs, `max_blacklisted_fraction` filters rows by `blacklisted_fraction`. Outputs without that column only accept the default keep-all cutoff.

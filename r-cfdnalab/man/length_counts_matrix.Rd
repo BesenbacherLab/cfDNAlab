@@ -2,17 +2,62 @@
 % Please edit documentation in R/generics.R, R/lengths.R
 \name{length_counts_matrix}
 \alias{length_counts_matrix}
-\alias{length_counts_matrix.cfdnalab_length_counts}
+\alias{length_counts_matrix.cfdnalab_global_length_counts}
+\alias{length_counts_matrix.cfdnalab_windowed_length_counts}
+\alias{length_counts_matrix.cfdnalab_grouped_length_counts}
 \title{Return length-count values as a matrix.}
 \usage{
 length_counts_matrix(x, ...)
 
-\method{length_counts_matrix}{cfdnalab_length_counts}(x, ...)
+\method{length_counts_matrix}{cfdnalab_global_length_counts}(
+  x,
+  with_lengths = NULL,
+  with_length_range = NULL,
+  length_bin_idxs = NULL,
+  ...
+)
+
+\method{length_counts_matrix}{cfdnalab_windowed_length_counts}(
+  x,
+  window_idxs = NULL,
+  with_lengths = NULL,
+  with_length_range = NULL,
+  length_bin_idxs = NULL,
+  ...
+)
+
+\method{length_counts_matrix}{cfdnalab_grouped_length_counts}(
+  x,
+  groups = NULL,
+  group_idxs = NULL,
+  with_lengths = NULL,
+  with_length_range = NULL,
+  length_bin_idxs = NULL,
+  ...
+)
 }
 \arguments{
 \item{x}{A cfDNAlab length-count object.}
 
 \item{...}{Reserved for future methods.}
+
+\item{with_lengths}{Optional fragment length vector in base pairs. Returned
+columns use the length bins containing these lengths. Multiple lengths
+must select distinct length bins.}
+
+\item{with_length_range}{Optional two-value fragment length range in base
+pairs. Returned columns use whole length bins that overlap the half-open
+range \verb{[start, end)}.}
+
+\item{length_bin_idxs}{Optional one-based length-bin index vector. Use only
+one of \code{with_lengths}, \code{with_length_range}, or \code{length_bin_idxs}.}
+
+\item{window_idxs}{Optional one-based window index vector.}
+
+\item{groups}{Optional group name vector. Use either \code{groups} or
+\code{group_idxs}, not both.}
+
+\item{group_idxs}{Optional one-based group index vector.}
 }
 \value{
 A numeric matrix with one row per output unit and one column per

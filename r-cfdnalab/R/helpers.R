@@ -245,6 +245,199 @@ cf_validate_unique_values <- function(values, name) {
   invisible(TRUE)
 }
 
+#' Validate a fragment length.
+#'
+#' @param length Fragment length value.
+#'
+#' @return The validated integer length.
+#' @noRd
+cf_validate_fragment_length <- function(length) {
+  if (
+    length(length) != 1L ||
+      !is.numeric(length) ||
+      is.na(length) ||
+      !is.finite(length) ||
+      length > .Machine$integer.max ||
+      length != as.integer(length) ||
+      length < 0L
+  ) {
+    stop("Fragment length must be a single non-negative integer", call. = FALSE)
+  }
+  as.integer(length)
+}
+
+#' Resolve length-bin selectors to one-based indices.
+#'
+#' @param length_start_bp Length-bin starts.
+#' @param length_end_bp Length-bin ends.
+#' @param with_lengths Optional exact lengths.
+#' @param with_length_range Optional half-open length range.
+#' @param length_bin_idxs Optional one-based bin indices.
+#' @param selector_context Human-readable output context.
+#'
+#' @return One-based length-bin indices.
+#' @noRd
+cf_resolve_length_bin_axis_indices <- function(
+  length_start_bp,
+  length_end_bp,
+  with_lengths,
+  with_length_range,
+  length_bin_idxs,
+  selector_context
+) {
+  active_selectors <- sum(!vapply(
+    list(with_lengths, with_length_range, length_bin_idxs),
+    is.null,
+    logical(1L)
+  ))
+  if (active_selectors > 1L) {
+    stop("Use only one of with_lengths, with_length_range, or length_bin_idxs", call. = FALSE)
+  }
+  if (active_selectors == 0L) {
+    return(seq_along(length_start_bp))
+  }
+  if (!is.null(with_lengths)) {
+    return(cf_resolve_lengths_to_bins(
+      length_start_bp,
+      length_end_bp,
+      with_lengths,
+      selector_context
+    ))
+  }
+  if (!is.null(with_length_range)) {
+    return(cf_resolve_length_range_to_bins(
+      length_start_bp,
+      length_end_bp,
+      with_length_range
+    ))
+  }
+
+  length_bin_indices <- cf_validate_r_indices(
+    length_bin_idxs,
+    length(length_start_bp),
+    "length_bin_idxs"
+  )
+  cf_validate_unique_values(length_bin_indices, "length_bin_idxs")
+  length_bin_indices
+}
+
+#' Resolve exact fragment lengths to distinct containing bins.
+#'
+#' @param length_start_bp Length-bin starts.
+#' @param length_end_bp Length-bin ends.
+#' @param with_lengths Exact lengths.
+#' @param selector_context Human-readable output context.
+#'
+#' @return One-based length-bin indices.
+#' @noRd
+cf_resolve_lengths_to_bins <- function(
+  length_start_bp,
+  length_end_bp,
+  with_lengths,
+  selector_context
+) {
+  length_values <- vapply(
+    with_lengths,
+    cf_validate_fragment_length,
+    integer(1L),
+    USE.NAMES = FALSE
+  )
+  cf_validate_unique_values(length_values, "with_lengths")
+
+  length_bin_indices <- vapply(
+    length_values,
+    function(length) {
+      matches <- which(length_start_bp <= length & length < length_end_bp)
+      if (length(matches) == 0L) {
+        stop("No ", selector_context, " length bin contains length ", length, call. = FALSE)
+      }
+      if (length(matches) > 1L) {
+        stop("Multiple ", selector_context, " length bins contain length ", length, call. = FALSE)
+      }
+      matches[[1L]]
+    },
+    integer(1L),
+    USE.NAMES = FALSE
+  )
+
+  # Different query lengths can fall in the same wider bin. Treat that as a
+  # selector error instead of returning duplicated output rows.
+  duplicate_index <- match(TRUE, duplicated(length_bin_indices), nomatch = 0L)
+  if (duplicate_index > 0L) {
+    length_bin_index <- length_bin_indices[[duplicate_index]]
+    first_index <- match(
+      length_bin_index,
+      length_bin_indices[seq_len(duplicate_index - 1L)]
+    )
+    stop(
+      "with_lengths values must resolve to distinct length bins; ",
+      length_values[[first_index]],
+      " and ",
+      length_values[[duplicate_index]],
+      " both resolve to length_bin_idx ",
+      length_bin_index,
+      " [",
+      length_start_bp[[length_bin_index]],
+      ", ",
+      length_end_bp[[length_bin_index]],
+      ") bp. Use one representative length or select the bin with length_bin_idxs.",
+      call. = FALSE
+    )
+  }
+  length_bin_indices
+}
+
+#' Resolve a half-open length range to overlapping bins.
+#'
+#' @param length_start_bp Length-bin starts.
+#' @param length_end_bp Length-bin ends.
+#' @param with_length_range Range bounds.
+#'
+#' @return One-based length-bin indices.
+#' @noRd
+cf_resolve_length_range_to_bins <- function(length_start_bp, length_end_bp, with_length_range) {
+  length_range <- cf_validate_length_range(with_length_range)
+  range_start <- length_range[[1L]]
+  range_end <- length_range[[2L]]
+  matches <- which(length_start_bp < range_end & range_start < length_end_bp)
+  if (length(matches) == 0L) {
+    stop(
+      "with_length_range does not overlap any length bins: [",
+      range_start,
+      ", ",
+      range_end,
+      ") bp",
+      call. = FALSE
+    )
+  }
+  matches
+}
+
+#' Validate a half-open length range.
+#'
+#' @param with_length_range Range bounds.
+#'
+#' @return Integer vector with start and end.
+#' @noRd
+cf_validate_length_range <- function(with_length_range) {
+  if (
+    length(with_length_range) != 2L ||
+      !is.numeric(with_length_range) ||
+      any(is.na(with_length_range)) ||
+      any(!is.finite(with_length_range)) ||
+      any(with_length_range > .Machine$integer.max) ||
+      any(with_length_range != as.integer(with_length_range)) ||
+      any(with_length_range < 0L)
+  ) {
+    stop("with_length_range must be a numeric vector of two non-negative integer bp bounds", call. = FALSE)
+  }
+  with_length_range <- as.integer(with_length_range)
+  if (with_length_range[[1L]] >= with_length_range[[2L]]) {
+    stop("with_length_range start must be smaller than end", call. = FALSE)
+  }
+  with_length_range
+}
+
 #' Get a Zarr array node.
 #'
 #' @param store Open Zarr store.
@@ -383,6 +576,26 @@ cf_reject_unused_arguments <- function(...) {
     )
   }
   invisible(TRUE)
+}
+
+#' Match a scalar character argument against exact choices.
+#'
+#' @param value User-supplied argument value.
+#' @param choices Allowed values.
+#' @param name Argument name used in error messages.
+#'
+#' @return The matched value.
+#' @noRd
+cf_match_exact_argument <- function(value, choices, name) {
+  if (
+    length(value) != 1L ||
+      !is.character(value) ||
+      is.na(value) ||
+      !(value %in% choices)
+  ) {
+    stop(name, " must be one of ", paste(sQuote(choices), collapse = ", "), call. = FALSE)
+  }
+  value
 }
 
 #' Return a Zarr array shape as integers.

@@ -118,6 +118,174 @@ def validate_unique_values(values: Sequence[object], name: str) -> None:
         seen.add(value)
 
 
+def normalize_length_bin_selector(
+    *,
+    with_lengths: int | Sequence[int] | None,
+    with_length_range: Sequence[int] | None,
+    length_bin_idxs: int | Sequence[int] | None,
+    length_start_bp: np.ndarray,
+    length_end_bp: np.ndarray,
+    selector_context: str,
+) -> np.ndarray:
+    """
+    Normalize public length-bin selectors to zero-based bin indices.
+
+    `with_lengths` selects bins containing specific fragment lengths.
+    `with_length_range` selects whole bins overlapping a half-open bp range.
+    `length_bin_idxs` selects bins directly.
+    """
+    active_selectors = sum(
+        selector is not None
+        for selector in (with_lengths, with_length_range, length_bin_idxs)
+    )
+    if active_selectors > 1:
+        raise ValueError(
+            "Use only one of with_lengths, with_length_range, or length_bin_idxs"
+        )
+    if active_selectors == 0:
+        return np.arange(len(length_start_bp), dtype=np.int64)
+    if with_lengths is not None:
+        return _normalize_lengths_to_bins(
+            with_lengths,
+            length_start_bp=length_start_bp,
+            length_end_bp=length_end_bp,
+            selector_context=selector_context,
+        )
+    if with_length_range is not None:
+        return _normalize_length_range_to_bins(
+            with_length_range,
+            length_start_bp=length_start_bp,
+            length_end_bp=length_end_bp,
+        )
+    return normalize_zero_based_indices(
+        length_bin_idxs,
+        size=len(length_start_bp),
+        name="length_bin_idxs",
+        index_name="length_bin_idx",
+    )
+
+
+def _normalize_lengths_to_bins(
+    lengths: int | Sequence[int],
+    *,
+    length_start_bp: np.ndarray,
+    length_end_bp: np.ndarray,
+    selector_context: str,
+) -> np.ndarray:
+    """
+    Resolve one or more exact lengths to distinct containing bins.
+    """
+    if isinstance(lengths, numbers.Integral):
+        length_values = [lengths]
+    else:
+        try:
+            length_values = list(lengths)
+        except TypeError as error:
+            raise TypeError(
+                "with_lengths must be an integer or sequence of integers"
+            ) from error
+    length_values = [validate_fragment_length(length) for length in length_values]
+    validate_unique_values(length_values, "with_lengths")
+
+    length_bin_indices = [
+        _resolve_length_bin_for_length(
+            length,
+            length_start_bp=length_start_bp,
+            length_end_bp=length_end_bp,
+            selector_context=selector_context,
+        )
+        for length in length_values
+    ]
+
+    # Wider bins can make different query lengths select the same bin. Returning
+    # duplicated rows would make the query length look like an output dimension,
+    # so treat that as an explicit selector error.
+    first_length_by_bin: dict[int, int] = {}
+    for length, length_bin_idx in zip(length_values, length_bin_indices):
+        length_bin_idx = int(length_bin_idx)
+        length = int(length)
+        if length_bin_idx in first_length_by_bin:
+            first_length = first_length_by_bin[length_bin_idx]
+            length_start = int(length_start_bp[length_bin_idx])
+            length_end = int(length_end_bp[length_bin_idx])
+            raise ValueError(
+                "with_lengths values must resolve to distinct length bins; "
+                f"{first_length} and {length} both resolve to "
+                f"length_bin_idx {length_bin_idx} [{length_start}, {length_end}) bp. "
+                "Use one representative length or select the bin with "
+                "length_bin_idxs."
+            )
+        first_length_by_bin[length_bin_idx] = length
+
+    return np.asarray(length_bin_indices, dtype=np.int64)
+
+
+def _resolve_length_bin_for_length(
+    length: int,
+    *,
+    length_start_bp: np.ndarray,
+    length_end_bp: np.ndarray,
+    selector_context: str,
+) -> int:
+    """
+    Resolve one exact fragment length to a containing length bin.
+    """
+    length = validate_fragment_length(length)
+    return resolve_unique_match(
+        (length_start_bp <= length) & (length < length_end_bp),
+        missing_message=f"No {selector_context} length bin contains length {length}",
+        duplicate_message=(
+            f"Multiple {selector_context} length bins contain length {length}"
+        ),
+    )
+
+
+def _normalize_length_range_to_bins(
+    length_range: Sequence[int],
+    *,
+    length_start_bp: np.ndarray,
+    length_end_bp: np.ndarray,
+) -> np.ndarray:
+    """
+    Resolve a half-open bp range to all overlapping length bins.
+    """
+    range_start, range_end = _validate_length_range(length_range)
+    matches = np.flatnonzero(
+        (length_start_bp < range_end) & (range_start < length_end_bp)
+    )
+    if len(matches) == 0:
+        raise ValueError(
+            "with_length_range does not overlap any length bins: "
+            f"[{range_start}, {range_end}) bp"
+        )
+    return matches.astype(np.int64, copy=False)
+
+
+def _validate_length_range(length_range: Sequence[int]) -> tuple[int, int]:
+    """
+    Validate a half-open fragment length range selector.
+    """
+    if isinstance(length_range, (str, bytes)):
+        raise TypeError(
+            "with_length_range must be a pair of non-negative integer bp bounds"
+        )
+    try:
+        bounds = list(length_range)
+    except TypeError as error:
+        raise TypeError(
+            "with_length_range must be a pair of non-negative integer bp bounds"
+        ) from error
+    if len(bounds) != 2:
+        raise ValueError(
+            "with_length_range must contain exactly two bounds: start and end"
+        )
+    range_start = validate_fragment_length(bounds[0])
+    range_end = validate_fragment_length(bounds[1])
+    if range_start >= range_end:
+        raise ValueError("with_length_range start must be smaller than end")
+    return range_start, range_end
+
+
 def normalize_zero_based_indices(
     indices: int | Sequence[int] | None,
     *,
@@ -130,6 +298,8 @@ def normalize_zero_based_indices(
     """
     if indices is None:
         return np.arange(size, dtype=np.int64)
+    if isinstance(indices, bool):
+        raise TypeError(f"{name} must be an integer or sequence of integers")
     if isinstance(indices, numbers.Integral):
         values = [validate_zero_based_index(indices, size, index_name)]
     else:

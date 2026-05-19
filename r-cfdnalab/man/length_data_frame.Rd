@@ -11,7 +11,11 @@ length_data_frame(x, ...)
 
 \method{length_data_frame}{cfdnalab_global_length_counts}(
   x,
-  value = c("count", "fraction", "density"),
+  with_lengths = NULL,
+  with_length_range = NULL,
+  length_bin_idxs = NULL,
+  value = "count",
+  denominator = "all_bins",
   keep_wide = FALSE,
   ...
 )
@@ -19,7 +23,11 @@ length_data_frame(x, ...)
 \method{length_data_frame}{cfdnalab_windowed_length_counts}(
   x,
   window_idxs = NULL,
-  value = c("count", "fraction", "density"),
+  with_lengths = NULL,
+  with_length_range = NULL,
+  length_bin_idxs = NULL,
+  value = "count",
+  denominator = "all_bins",
   keep_wide = FALSE,
   max_blacklisted_fraction = 1,
   ...
@@ -29,7 +37,11 @@ length_data_frame(x, ...)
   x,
   groups = NULL,
   group_idxs = NULL,
-  value = c("count", "fraction", "density"),
+  with_lengths = NULL,
+  with_length_range = NULL,
+  length_bin_idxs = NULL,
+  value = "count",
+  denominator = "all_bins",
   keep_wide = FALSE,
   max_blacklisted_fraction = 1,
   ...
@@ -40,6 +52,17 @@ length_data_frame(x, ...)
 
 \item{...}{Method-specific selection arguments.}
 
+\item{with_lengths}{Optional fragment length vector in base pairs. Returned
+values use the length bins containing these lengths. Multiple lengths must
+select distinct length bins.}
+
+\item{with_length_range}{Optional two-value fragment length range in base
+pairs. Returned values use whole length bins that overlap the half-open
+range \verb{[start, end)}.}
+
+\item{length_bin_idxs}{Optional one-based length-bin index vector. Use only
+one of \code{with_lengths}, \code{with_length_range}, or \code{length_bin_idxs}.}
+
 \item{value}{Which value to return:
 \itemize{
 \item \code{"count"} returns raw counts.
@@ -47,6 +70,11 @@ length_data_frame(x, ...)
 \item \code{"density"} returns fractions divided by \code{length_width_bp}, giving
 fraction per base pair so bins with different widths are comparable.
 }}
+
+\item{denominator}{For \code{value = "fraction"} or \code{value = "density"},
+\code{"all_bins"} divides by the row total over all length bins, while
+\code{"selected_bins"} divides by the total over the returned length bins. Ignored
+for \code{value = "count"}.}
 
 \item{keep_wide}{If \code{TRUE}, return one row per output unit with one value
 column per length bin. If \code{FALSE}, return one row per output unit and

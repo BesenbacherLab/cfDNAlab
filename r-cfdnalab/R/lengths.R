@@ -94,16 +94,127 @@ length_bin_idx.cfdnalab_length_counts <- function(x, length, ...) {
 
 #' @export
 #' @rdname length_counts_matrix
-length_counts_matrix.cfdnalab_length_counts <- function(x, ...) {
+#' @param with_lengths Optional fragment length vector in base pairs. Returned
+#'   columns use the length bins containing these lengths. Multiple lengths
+#'   must select distinct length bins.
+#' @param with_length_range Optional two-value fragment length range in base
+#'   pairs. Returned columns use whole length bins that overlap the half-open
+#'   range `[start, end)`.
+#' @param length_bin_idxs Optional one-based length-bin index vector. Use only
+#'   one of `with_lengths`, `with_length_range`, or `length_bin_idxs`.
+length_counts_matrix.cfdnalab_global_length_counts <- function(
+  x,
+  with_lengths = NULL,
+  with_length_range = NULL,
+  length_bin_idxs = NULL,
+  ...
+) {
   cf_reject_unused_arguments(...)
-  x$counts
+  length_bin_indices <- cf_resolve_length_bin_axis_indices(
+    x$length_start_bp,
+    x$length_end_bp,
+    with_lengths,
+    with_length_range,
+    length_bin_idxs,
+    "length-count"
+  )
+  cf_length_counts_matrix_for_rows(x, seq_len(nrow(x$counts)), length_bin_indices)
+}
+
+#' @export
+#' @rdname length_counts_matrix
+#' @param window_idxs Optional one-based window index vector.
+length_counts_matrix.cfdnalab_windowed_length_counts <- function(
+  x,
+  window_idxs = NULL,
+  with_lengths = NULL,
+  with_length_range = NULL,
+  length_bin_idxs = NULL,
+  ...
+) {
+  cf_reject_unused_arguments(...)
+  row_indices <- if (is.null(window_idxs)) {
+    seq_len(nrow(x$counts))
+  } else {
+    cf_validate_r_indices(window_idxs, nrow(x$counts), "window_idxs")
+  }
+  cf_validate_unique_values(row_indices, "window_idxs")
+  length_bin_indices <- cf_resolve_length_bin_axis_indices(
+    x$length_start_bp,
+    x$length_end_bp,
+    with_lengths,
+    with_length_range,
+    length_bin_idxs,
+    "length-count"
+  )
+  cf_length_counts_matrix_for_rows(x, row_indices, length_bin_indices)
+}
+
+#' @export
+#' @rdname length_counts_matrix
+#' @param groups Optional group name vector. Use either `groups` or
+#'   `group_idxs`, not both.
+#' @param group_idxs Optional one-based group index vector.
+length_counts_matrix.cfdnalab_grouped_length_counts <- function(
+  x,
+  groups = NULL,
+  group_idxs = NULL,
+  with_lengths = NULL,
+  with_length_range = NULL,
+  length_bin_idxs = NULL,
+  ...
+) {
+  cf_reject_unused_arguments(...)
+  if (!is.null(groups) && !is.null(group_idxs)) {
+    stop("Use either groups or group_idxs, not both", call. = FALSE)
+  }
+  row_indices <- if (!is.null(groups)) {
+    cf_resolve_length_group_indices(x, groups)
+  } else if (!is.null(group_idxs)) {
+    group_indices <- cf_validate_r_indices(group_idxs, nrow(x$counts), "group_idxs")
+    cf_validate_unique_values(group_indices, "group_idxs")
+    group_indices
+  } else {
+    seq_len(nrow(x$counts))
+  }
+  length_bin_indices <- cf_resolve_length_bin_axis_indices(
+    x$length_start_bp,
+    x$length_end_bp,
+    with_lengths,
+    with_length_range,
+    length_bin_idxs,
+    "length-count"
+  )
+  cf_length_counts_matrix_for_rows(x, row_indices, length_bin_indices)
 }
 
 #' @export
 #' @rdname length_counts_vector
-length_counts_vector.cfdnalab_global_length_counts <- function(x, ...) {
+#' @param with_lengths Optional fragment length vector in base pairs. Returned
+#'   values use the length bins containing these lengths. Multiple lengths must
+#'   select distinct length bins.
+#' @param with_length_range Optional two-value fragment length range in base
+#'   pairs. Returned values use whole length bins that overlap the half-open
+#'   range `[start, end)`.
+#' @param length_bin_idxs Optional one-based length-bin index vector. Use only
+#'   one of `with_lengths`, `with_length_range`, or `length_bin_idxs`.
+length_counts_vector.cfdnalab_global_length_counts <- function(
+  x,
+  with_lengths = NULL,
+  with_length_range = NULL,
+  length_bin_idxs = NULL,
+  ...
+) {
   cf_reject_unused_arguments(...)
-  stats::setNames(as.numeric(x$counts[1L, ]), x$count_column)
+  length_bin_indices <- cf_resolve_length_bin_axis_indices(
+    x$length_start_bp,
+    x$length_end_bp,
+    with_lengths,
+    with_length_range,
+    length_bin_idxs,
+    "length-count"
+  )
+  stats::setNames(as.numeric(x$counts[1L, length_bin_indices]), x$count_column[length_bin_indices])
 }
 
 #' @export
@@ -142,17 +253,50 @@ group_idx.cfdnalab_grouped_length_counts <- function(x, group_name, ...) {
 #'   - `"fraction"` returns counts divided by the row total.
 #'   - `"density"` returns fractions divided by `length_width_bp`, giving
 #'     fraction per base pair so bins with different widths are comparable.
+#' @param denominator For `value = "fraction"` or `value = "density"`,
+#'   `"all_bins"` divides by the row total over all length bins, while
+#'   `"selected_bins"` divides by the total over the returned length bins. Ignored
+#'   for `value = "count"`.
 #' @param keep_wide If `TRUE`, return one row per output unit with one value
 #'   column per length bin. If `FALSE`, return one row per output unit and
 #'   length bin.
+#' @param with_lengths Optional fragment length vector in base pairs. Returned
+#'   values use the length bins containing these lengths. Multiple lengths must
+#'   select distinct length bins.
+#' @param with_length_range Optional two-value fragment length range in base
+#'   pairs. Returned values use whole length bins that overlap the half-open
+#'   range `[start, end)`.
+#' @param length_bin_idxs Optional one-based length-bin index vector. Use only
+#'   one of `with_lengths`, `with_length_range`, or `length_bin_idxs`.
 length_data_frame.cfdnalab_global_length_counts <- function(
   x,
-  value = c("count", "fraction", "density"),
+  with_lengths = NULL,
+  with_length_range = NULL,
+  length_bin_idxs = NULL,
+  value = "count",
+  denominator = "all_bins",
   keep_wide = FALSE,
   ...
 ) {
   cf_reject_unused_arguments(...)
-  cf_length_data_frame_for_rows(x, seq_len(nrow(x$counts)), match.arg(value), keep_wide)
+  value <- cf_match_exact_argument(value, c("count", "fraction", "density"), "value")
+  denominator <- cf_match_exact_argument(denominator, c("all_bins", "selected_bins"), "denominator")
+  length_bin_indices <- cf_resolve_length_bin_axis_indices(
+    x$length_start_bp,
+    x$length_end_bp,
+    with_lengths,
+    with_length_range,
+    length_bin_idxs,
+    "length-count"
+  )
+  cf_length_data_frame_for_rows(
+    x,
+    seq_len(nrow(x$counts)),
+    length_bin_indices,
+    value,
+    denominator,
+    keep_wide
+  )
 }
 
 #' @export
@@ -163,12 +307,18 @@ length_data_frame.cfdnalab_global_length_counts <- function(
 length_data_frame.cfdnalab_windowed_length_counts <- function(
   x,
   window_idxs = NULL,
-  value = c("count", "fraction", "density"),
+  with_lengths = NULL,
+  with_length_range = NULL,
+  length_bin_idxs = NULL,
+  value = "count",
+  denominator = "all_bins",
   keep_wide = FALSE,
   max_blacklisted_fraction = 1.0,
   ...
 ) {
   cf_reject_unused_arguments(...)
+  value <- cf_match_exact_argument(value, c("count", "fraction", "density"), "value")
+  denominator <- cf_match_exact_argument(denominator, c("all_bins", "selected_bins"), "denominator")
   row_indices <- if (is.null(window_idxs)) {
     seq_len(nrow(x$counts))
   } else {
@@ -176,7 +326,22 @@ length_data_frame.cfdnalab_windowed_length_counts <- function(
   }
   cf_validate_unique_values(row_indices, "window_idxs")
   row_indices <- cf_apply_row_blacklist_filter(x$row_metadata, row_indices, max_blacklisted_fraction)
-  cf_length_data_frame_for_rows(x, row_indices, match.arg(value), keep_wide)
+  length_bin_indices <- cf_resolve_length_bin_axis_indices(
+    x$length_start_bp,
+    x$length_end_bp,
+    with_lengths,
+    with_length_range,
+    length_bin_idxs,
+    "length-count"
+  )
+  cf_length_data_frame_for_rows(
+    x,
+    row_indices,
+    length_bin_indices,
+    value,
+    denominator,
+    keep_wide
+  )
 }
 
 #' @export
@@ -188,12 +353,18 @@ length_data_frame.cfdnalab_grouped_length_counts <- function(
   x,
   groups = NULL,
   group_idxs = NULL,
-  value = c("count", "fraction", "density"),
+  with_lengths = NULL,
+  with_length_range = NULL,
+  length_bin_idxs = NULL,
+  value = "count",
+  denominator = "all_bins",
   keep_wide = FALSE,
   max_blacklisted_fraction = 1.0,
   ...
 ) {
   cf_reject_unused_arguments(...)
+  value <- cf_match_exact_argument(value, c("count", "fraction", "density"), "value")
+  denominator <- cf_match_exact_argument(denominator, c("all_bins", "selected_bins"), "denominator")
   if (!is.null(groups) && !is.null(group_idxs)) {
     stop("Use either groups or group_idxs, not both", call. = FALSE)
   }
@@ -207,7 +378,22 @@ length_data_frame.cfdnalab_grouped_length_counts <- function(
     seq_len(nrow(x$counts))
   }
   row_indices <- cf_apply_row_blacklist_filter(x$row_metadata, row_indices, max_blacklisted_fraction)
-  cf_length_data_frame_for_rows(x, row_indices, match.arg(value), keep_wide)
+  length_bin_indices <- cf_resolve_length_bin_axis_indices(
+    x$length_start_bp,
+    x$length_end_bp,
+    with_lengths,
+    with_length_range,
+    length_bin_idxs,
+    "length-count"
+  )
+  cf_length_data_frame_for_rows(
+    x,
+    row_indices,
+    length_bin_indices,
+    value,
+    denominator,
+    keep_wide
+  )
 }
 
 #' Print a length-count object.
@@ -440,6 +626,21 @@ cf_length_counts_matrix_from_table <- function(table, count_columns) {
   counts
 }
 
+#' Select rows and length bins from a length-count matrix.
+#'
+#' @param x Length-count object.
+#' @param row_indices One-based row indices.
+#' @param length_bin_indices One-based length-bin indices.
+#'
+#' @return A numeric matrix.
+#' @noRd
+cf_length_counts_matrix_for_rows <- function(x, row_indices, length_bin_indices) {
+  counts <- x$counts[row_indices, length_bin_indices, drop = FALSE]
+  colnames(counts) <- x$count_column[length_bin_indices]
+  rownames(counts) <- NULL
+  counts
+}
+
 #' Validate a character vector.
 #'
 #' @param values Values to validate.
@@ -452,27 +653,6 @@ cf_validate_character_vector <- function(values, value_name) {
     stop(value_name, " must contain non-empty character strings", call. = FALSE)
   }
   invisible(TRUE)
-}
-
-#' Validate a fragment length.
-#'
-#' @param length Fragment length value.
-#'
-#' @return The validated integer length.
-#' @noRd
-cf_validate_fragment_length <- function(length) {
-  if (
-    length(length) != 1L ||
-      !is.numeric(length) ||
-      is.na(length) ||
-      !is.finite(length) ||
-      length > .Machine$integer.max ||
-      length != as.integer(length) ||
-      length < 0L
-  ) {
-    stop("Fragment length must be a single non-negative integer", call. = FALSE)
-  }
-  as.integer(length)
 }
 
 #' Validate public R indices.
@@ -531,45 +711,64 @@ cf_resolve_length_group_indices <- function(x, groups) {
 #'
 #' @param x Length-count object.
 #' @param row_indices One-based row indices.
+#' @param length_bin_indices One-based length-bin indices.
 #' @param value Value type.
+#' @param denominator Denominator basis for fraction and density values.
 #' @param keep_wide Whether to keep wide shape.
 #'
 #' @return A data frame.
 #' @noRd
-cf_length_data_frame_for_rows <- function(x, row_indices, value, keep_wide) {
+cf_length_data_frame_for_rows <- function(
+  x,
+  row_indices,
+  length_bin_indices,
+  value,
+  denominator,
+  keep_wide
+) {
   cf_validate_scalar_logical(keep_wide, "keep_wide")
-  values <- cf_length_value_matrix(x, row_indices, value)
+  values <- cf_length_value_matrix(x, row_indices, length_bin_indices, value, denominator)
   if (isTRUE(keep_wide)) {
-    return(cf_length_wide_data_frame(x, row_indices, values, value))
+    return(cf_length_wide_data_frame(x, row_indices, length_bin_indices, values, value))
   }
-  cf_length_long_data_frame(x, row_indices, values, value)
+  cf_length_long_data_frame(x, row_indices, length_bin_indices, values, value)
 }
 
 #' Compute count-derived values for selected rows.
 #'
 #' @param x Length-count object.
 #' @param row_indices One-based row indices.
+#' @param length_bin_indices One-based length-bin indices.
 #' @param value Value type.
+#' @param denominator Denominator basis for fraction and density values.
 #'
 #' @return Numeric matrix.
 #' @noRd
-cf_length_value_matrix <- function(x, row_indices, value) {
+cf_length_value_matrix <- function(x, row_indices, length_bin_indices, value, denominator) {
   counts <- x$counts[row_indices, , drop = FALSE]
+  selected_counts <- counts[, length_bin_indices, drop = FALSE]
   if (identical(value, "count")) {
-    return(counts)
+    return(selected_counts)
   }
 
-  row_totals <- rowSums(counts)
-  fractions <- counts
+  row_totals <- if (identical(denominator, "selected_bins")) {
+    rowSums(selected_counts)
+  } else {
+    rowSums(counts)
+  }
+  fractions <- selected_counts
   positive_rows <- row_totals > 0
-  fractions[positive_rows, ] <- counts[positive_rows, , drop = FALSE] / row_totals[positive_rows]
+  fractions[positive_rows, ] <- selected_counts[positive_rows, , drop = FALSE] / row_totals[positive_rows]
   fractions[!positive_rows, ] <- NA_real_
 
   if (identical(value, "fraction")) {
     return(fractions)
   }
+  if (ncol(fractions) == 0L) {
+    return(fractions)
+  }
 
-  widths <- x$length_end_bp - x$length_start_bp
+  widths <- x$length_end_bp[length_bin_indices] - x$length_start_bp[length_bin_indices]
   sweep(fractions, 2L, widths, "/")
 }
 
@@ -577,13 +776,14 @@ cf_length_value_matrix <- function(x, row_indices, value) {
 #'
 #' @param x Length-count object.
 #' @param row_indices One-based row indices.
+#' @param length_bin_indices One-based length-bin indices.
 #' @param values Value matrix.
 #' @param value Value type.
 #'
 #' @return A data frame.
 #' @noRd
-cf_length_wide_data_frame <- function(x, row_indices, values, value) {
-  value_columns <- cf_length_value_column_names(x$count_column, value)
+cf_length_wide_data_frame <- function(x, row_indices, length_bin_indices, values, value) {
+  value_columns <- cf_length_value_column_names(x$count_column[length_bin_indices], value)
   colnames(values) <- value_columns
   value_frame <- as.data.frame(values, check.names = FALSE)
   metadata <- x$row_metadata[row_indices, , drop = FALSE]
@@ -594,17 +794,19 @@ cf_length_wide_data_frame <- function(x, row_indices, values, value) {
 #'
 #' @param x Length-count object.
 #' @param row_indices One-based row indices.
+#' @param length_bin_indices One-based length-bin indices.
 #' @param values Value matrix.
 #' @param value Value type.
 #'
 #' @return A data frame.
 #' @noRd
-cf_length_long_data_frame <- function(x, row_indices, values, value) {
+cf_length_long_data_frame <- function(x, row_indices, length_bin_indices, values, value) {
   num_rows <- length(row_indices)
-  num_bins <- length(x$length_bin_idx0)
+  num_bins <- length(length_bin_indices)
   metadata <- x$row_metadata[row_indices, , drop = FALSE]
   metadata <- metadata[rep(seq_len(num_rows), each = num_bins), , drop = FALSE]
   bins <- length_bins(x)
+  bins <- bins[length_bin_indices, , drop = FALSE]
   bins <- bins[rep(seq_len(num_bins), times = num_rows), , drop = FALSE]
   out <- data.frame(metadata, bins, stringsAsFactors = FALSE, row.names = NULL)
   out[[value]] <- as.vector(t(values))

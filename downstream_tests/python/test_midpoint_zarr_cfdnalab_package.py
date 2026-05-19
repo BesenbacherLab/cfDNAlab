@@ -15,10 +15,8 @@ def test_cfdnalab_package_reads_midpoint_fixture_metadata(
 ) -> None:
     profiles = cfdnalab.read_midpoints(midpoint_zarr_path)
 
-    assert profiles.group_names() == ["LYL1", "beta-site", "gamma_long"]
-    assert profiles.eligible_intervals() == [2, 2, 2]
     pd.testing.assert_frame_equal(
-        profiles.groups(),
+        profiles.group_metadata(),
         pd.DataFrame(
             {
                 "group_idx": np.array([0, 1, 2], dtype=np.int32),
@@ -47,7 +45,7 @@ def test_cfdnalab_package_reads_midpoint_fixture_metadata(
             }
         ),
     )
-    np.testing.assert_allclose(profiles.array(), EXPECTED_COUNTS)
+    np.testing.assert_allclose(profiles.counts_array(), EXPECTED_COUNTS)
 
 
 def test_cfdnalab_package_resolves_fixture_indices_and_slices(
@@ -61,11 +59,36 @@ def test_cfdnalab_package_resolves_fixture_indices_and_slices(
     assert profiles.length_bin_idx(70) == 2
 
     np.testing.assert_allclose(
-        profiles.array_for_profile(group_idx=1, length_bin_idx=1),
-        np.array([0.0, 0.0, 1.5, 0.0, 0.5], dtype=np.float32),
+        profiles.counts_array(group_idxs=1, length_bin_idxs=1),
+        np.array([[[0.0, 0.0, 1.5, 0.0, 0.5]]], dtype=np.float32),
     )
-    np.testing.assert_allclose(profiles.array_from_group("LYL1"), EXPECTED_COUNTS[0])
-    np.testing.assert_allclose(profiles.array_from_length(70), EXPECTED_COUNTS[:, 2, :])
+    np.testing.assert_allclose(
+        profiles.counts_array(groups="LYL1"),
+        EXPECTED_COUNTS[0:1],
+    )
+    np.testing.assert_allclose(
+        profiles.counts_array(with_lengths=70),
+        EXPECTED_COUNTS[:, 2:3, :],
+    )
+    np.testing.assert_allclose(
+        profiles.counts_array(
+            groups=["gamma_long", "LYL1"],
+            with_length_range=(50, 100),
+        ),
+        np.array(
+            [
+                [
+                    [0.5, 0.0, 0.0, 1.5, 0.0],
+                    [0.0, 0.0, 0.5, 0.0, 1.0],
+                ],
+                [
+                    [0.0, 0.0, 1.5, 0.5, 0.0],
+                    [0.0, 0.0, 0.0, 0.0, 2.0],
+                ],
+            ],
+            dtype=np.float32,
+        ),
+    )
 
 
 def test_cfdnalab_package_builds_profile_dataframe_from_fixture(
@@ -74,6 +97,7 @@ def test_cfdnalab_package_builds_profile_dataframe_from_fixture(
     profiles = cfdnalab.read_midpoints(midpoint_zarr_path)
 
     frame = profiles.data_frame(group_idxs=0, length_bin_idxs=1)
+    range_frame = profiles.data_frame(groups="LYL1", with_length_range=(50, 100))
 
     pd.testing.assert_frame_equal(
         frame,
@@ -92,6 +116,20 @@ def test_cfdnalab_package_builds_profile_dataframe_from_fixture(
             }
         ),
     )
+    assert range_frame["group_name"].unique().tolist() == ["LYL1"]
+    assert range_frame["length_bin"].tolist() == [1] * 5 + [2] * 5
+    assert range_frame["count"].tolist() == [
+        0.0,
+        0.0,
+        1.5,
+        0.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        2.0,
+    ]
 
 
 def test_cfdnalab_package_builds_group_and_length_dataframes_from_fixture(

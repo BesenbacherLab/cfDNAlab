@@ -170,16 +170,7 @@ group_idx.cfdnalab_midpoint_profiles <- function(x, group_name, ...) {
 #' @param length Fragment length in base pairs.
 length_bin_idx.cfdnalab_midpoint_profiles <- function(x, length, ...) {
   cf_reject_unused_arguments(...)
-  if (
-    length(length) != 1L ||
-      !is.numeric(length) ||
-      is.na(length) ||
-      !is.finite(length) ||
-      length != as.integer(length) ||
-      length < 0L
-  ) {
-    stop("Fragment length must be a single non-negative integer", call. = FALSE)
-  }
+  length <- cf_validate_fragment_length(length)
   matches <- which(x$length_start_bp <= length & length < x$length_end_bp)
   if (length(matches) == 0L) {
     stop("No midpoint length bin contains length ", length, call. = FALSE)
@@ -224,14 +215,19 @@ profile_array.cfdnalab_midpoint_profiles <- function(
 #'   `group_idxs`, not both.
 #' @param group_idxs Optional one-based group index vector.
 #' @param with_lengths Optional fragment length vector in base pairs. Returned
-#'   rows use the length bins containing these lengths. Use either
-#'   `with_lengths` or `length_bin_idxs`, not both.
-#' @param length_bin_idxs Optional one-based length-bin index vector.
+#'   rows use the length bins containing these lengths. Multiple lengths must
+#'   select distinct length bins.
+#' @param with_length_range Optional two-value fragment length range in base
+#'   pairs. Returned rows use whole length bins that overlap the half-open range
+#'   `[start, end)`.
+#' @param length_bin_idxs Optional one-based length-bin index vector. Use only
+#'   one of `with_lengths`, `with_length_range`, or `length_bin_idxs`.
 midpoint_data_frame.cfdnalab_midpoint_profiles <- function(
   x,
   groups = NULL,
   group_idxs = NULL,
   with_lengths = NULL,
+  with_length_range = NULL,
   length_bin_idxs = NULL,
   ...
 ) {
@@ -240,6 +236,7 @@ midpoint_data_frame.cfdnalab_midpoint_profiles <- function(
   length_bin_indices <- cf_resolve_midpoint_length_bin_indices(
     x,
     with_lengths,
+    with_length_range,
     length_bin_idxs
   )
   cf_midpoint_data_frame_for_indices(x, group_indices, length_bin_indices)
@@ -372,38 +369,25 @@ cf_resolve_midpoint_group_indices <- function(x, groups, group_idxs) {
 #'
 #' @param x A `cfdnalab_midpoint_profiles` object.
 #' @param with_lengths Optional fragment lengths.
+#' @param with_length_range Optional half-open length range.
 #' @param length_bin_idxs Optional one-based length-bin indices.
 #'
 #' @return One-based length-bin indices.
 #' @noRd
-cf_resolve_midpoint_length_bin_indices <- function(x, with_lengths, length_bin_idxs) {
-  if (!is.null(with_lengths) && !is.null(length_bin_idxs)) {
-    stop("Use either with_lengths or length_bin_idxs, not both", call. = FALSE)
-  }
-  if (!is.null(with_lengths)) {
-    length_bin_indices <- vapply(
-      with_lengths,
-      function(length) {
-        length_bin_idx(x, cf_validate_fragment_length(length))
-      },
-      integer(1L),
-      USE.NAMES = FALSE
-    )
-    # Different query lengths can fall in the same wider bin. Treat that as a
-    # selector error instead of returning duplicated output rows.
-    cf_validate_unique_values(length_bin_indices, "with_lengths")
-    return(length_bin_indices)
-  }
-  if (!is.null(length_bin_idxs)) {
-    length_bin_indices <- cf_validate_r_indices(
-      length_bin_idxs,
-      length(x$length_bin_idx0),
-      "length_bin_idxs"
-    )
-    cf_validate_unique_values(length_bin_indices, "length_bin_idxs")
-    return(length_bin_indices)
-  }
-  seq_along(x$length_bin_idx0)
+cf_resolve_midpoint_length_bin_indices <- function(
+  x,
+  with_lengths,
+  with_length_range,
+  length_bin_idxs
+) {
+  cf_resolve_length_bin_axis_indices(
+    x$length_start_bp,
+    x$length_end_bp,
+    with_lengths,
+    with_length_range,
+    length_bin_idxs,
+    "midpoint"
+  )
 }
 
 #' @export

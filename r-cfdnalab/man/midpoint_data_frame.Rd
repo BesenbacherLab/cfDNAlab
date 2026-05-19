@@ -12,6 +12,7 @@ midpoint_data_frame(x, ...)
   groups = NULL,
   group_idxs = NULL,
   with_lengths = NULL,
+  with_length_range = NULL,
   length_bin_idxs = NULL,
   ...
 )
@@ -27,10 +28,15 @@ midpoint_data_frame(x, ...)
 \item{group_idxs}{Optional one-based group index vector.}
 
 \item{with_lengths}{Optional fragment length vector in base pairs. Returned
-rows use the length bins containing these lengths. Use either
-\code{with_lengths} or \code{length_bin_idxs}, not both.}
+rows use the length bins containing these lengths. Multiple lengths must
+select distinct length bins.}
 
-\item{length_bin_idxs}{Optional one-based length-bin index vector.}
+\item{with_length_range}{Optional two-value fragment length range in base
+pairs. Returned rows use whole length bins that overlap the half-open range
+\verb{[start, end)}.}
+
+\item{length_bin_idxs}{Optional one-based length-bin index vector. Use only
+one of \code{with_lengths}, \code{with_length_range}, or \code{length_bin_idxs}.}
 }
 \value{
 A data frame with one row per selected group, length bin, and

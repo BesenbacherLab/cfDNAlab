@@ -25,7 +25,11 @@ This file is the authoritative entry point for repo-specific agent instructions.
 - Do not rewrite comments or docs for generic style preference; preserve existing wording unless the change is a clear correctness, clarity, or consistency improvement tied to the current task.
 - Do not write unnecessary wrapper functions.
 - Don't make unnecessary newlines in READMEs. Especially not in existing sections.
-- "fragment length" not "fragment-length" unless combined with an extra word like "max-fragment-length" where it makes sense
+
+Spellings:
+
+ - "fragment length", not "fragment-length" - unless specifically relevant in the situation (e.g., "fragment-length-wise").
+ - "data frame", not "data-frame".
 
 Always read [.AI/collaboration.md](/Users/au547627/Documents/Development/rust/cfDNAlab/.AI/collaboration.md) to avoid annoying sycophanting. I want truth not praise.
 

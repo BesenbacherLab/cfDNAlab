@@ -11,6 +11,8 @@ CLI. They do not install, wrap, or reimplement the CLI.
 - Vector-capable selectors use plural names: `groups`, `group_idxs`,
   `window_idxs`, `motifs`, `motif_idxs`, `with_lengths`, and
   `length_bin_idxs`.
+- Length-range selectors use `with_length_range` and take one half-open
+  `[start, end)` bp range.
 - Scalar inputs are accepted for plural selectors.
 - Name selectors and index selectors for the same axis are mutually exclusive.
 - Duplicate requested names or indices are errors.
@@ -31,20 +33,40 @@ lengths = cfl.read_lengths("sample.length_counts.tsv.zst")
 
 lengths.length_bins()
 lengths.length_bin_idx(167)
-lengths.counts_vector()      # global only
-lengths.counts_matrix()      # windowed or grouped
+lengths.counts_array(
+    with_lengths=None,
+    with_length_range=None,
+    length_bin_idxs=None,
+) # shape is always (output_row, length_bin)
+lengths.window_metadata()    # windowed only
+lengths.group_metadata()     # grouped only
 
-lengths.data_frame(value="count", keep_wide=False)  # global
+lengths.data_frame(
+    with_lengths=None,
+    with_length_range=None,
+    length_bin_idxs=None,
+    value="count",
+    denominator="all_bins",
+    keep_wide=False,
+)  # global
 lengths.data_frame(
     window_idxs=None,
+    with_lengths=None,
+    with_length_range=None,
+    length_bin_idxs=None,
     value="count",
+    denominator="all_bins",
     keep_wide=False,
     max_blacklisted_fraction=1.0,
 )  # windowed
 lengths.data_frame(
     groups=None,
     group_idxs=None,
+    with_lengths=None,
+    with_length_range=None,
+    length_bin_idxs=None,
     value="count",
+    denominator="all_bins",
     keep_wide=False,
     max_blacklisted_fraction=1.0,
 )  # grouped
@@ -58,13 +80,25 @@ lengths <- read_lengths("sample.length_counts.tsv.zst")
 length_bins(lengths)
 length_bin_idx(lengths, 167)
 length_counts_vector(lengths) # global only
-length_counts_matrix(lengths) # windowed or grouped
+length_counts_matrix(lengths) # all modes
 
-length_data_frame(lengths, value = "count", keep_wide = FALSE) # global
+length_data_frame(
+  lengths,
+  with_lengths = NULL,
+  with_length_range = NULL,
+  length_bin_idxs = NULL,
+  value = "count",
+  denominator = "all_bins",
+  keep_wide = FALSE
+) # global
 length_data_frame(
   lengths,
   window_idxs = NULL,
+  with_lengths = NULL,
+  with_length_range = NULL,
+  length_bin_idxs = NULL,
   value = "count",
+  denominator = "all_bins",
   keep_wide = FALSE,
   max_blacklisted_fraction = 1.0
 ) # windowed
@@ -72,15 +106,29 @@ length_data_frame(
   lengths,
   groups = NULL,
   group_idxs = NULL,
+  with_lengths = NULL,
+  with_length_range = NULL,
+  length_bin_idxs = NULL,
   value = "count",
+  denominator = "all_bins",
   keep_wide = FALSE,
   max_blacklisted_fraction = 1.0
 ) # grouped
 ```
 
-Length data frames use the selected output rows and length bins. Long output has
-one row per selected output unit and length bin. Wide output has one row per
-selected output unit and one value column per length bin.
+Length data frames and arrays use the selected output rows and length bins.
+Long output has one row per selected output unit and length bin. Wide output
+has one row per selected output unit and one value column per length bin.
+
+Length-bin selectors mean:
+
+- `with_lengths`: bins containing exact fragment lengths. Multiple requested
+  lengths must resolve to distinct bins.
+- `with_length_range`: whole bins overlapping one half-open `[start, end)` bp
+  range. Edge bins are not split or prorated.
+- `length_bin_idxs`: direct bin indices.
+
+Use only one length-bin selector at a time.
 
 `value` means:
 
@@ -88,6 +136,13 @@ selected output unit and one value column per length bin.
 - `fraction`: count divided by the selected row's total count over length bins.
 - `density`: `fraction` divided by `length_width_bp`, so unequal length-bin
   widths remain comparable.
+
+`denominator` controls the row total used for `fraction` and `density`:
+
+- `all_bins`: divide by the row total over all length bins.
+- `selected_bins`: divide by the row total over the returned length bins.
+
+`denominator` has no effect for `count`.
 
 `max_blacklisted_fraction` is valid only for row modes that can carry
 `blacklisted_fraction`. It must be a finite value in `[0, 1]`. The default
@@ -107,17 +162,19 @@ midpoints.positions()
 midpoints.group_idx("LYL1")
 midpoints.length_bin_idx(167)
 
-midpoints.array()
-midpoints.array_for_profile(group_idx=0, length_bin_idx=0)
-midpoints.array_from_group("LYL1")
-midpoints.array_from_group_idx(0)
-midpoints.array_from_length(167)
-midpoints.array_from_length_bin(0)
+midpoints.counts_array(
+    groups=None,
+    group_idxs=None,
+    with_lengths=None,
+    with_length_range=None,
+    length_bin_idxs=None,
+) # shape is always (group, length_bin, position)
 
 midpoints.data_frame(
     groups=None,
     group_idxs=None,
     with_lengths=None,
+    with_length_range=None,
     length_bin_idxs=None,
 )
 ```
@@ -141,13 +198,17 @@ midpoint_data_frame(
   groups = NULL,
   group_idxs = NULL,
   with_lengths = NULL,
+  with_length_range = NULL,
   length_bin_idxs = NULL
 )
 ```
 
 `with_lengths` selects the length bins containing the requested fragment
-lengths. The same containing-bin rule applies to Python `array_from_length()`.
-`length_bin_idxs` selects bins directly. Use one of those selectors, not both.
+lengths. Multiple `with_lengths` values must resolve to distinct length bins;
+if two lengths fall in the same bin, pass one representative length or use direct
+bin indices. `with_length_range` selects whole bins overlapping a half-open
+`[start, end)` bp range. `length_bin_idxs` selects bins directly. Use only one
+length-bin selector at a time.
 
 ## End-Motif Counts
 
@@ -157,13 +218,47 @@ Python:
 ends = cfl.read_end_motifs("sample.end_motifs.zarr")
 
 ends.storage_mode()
-ends.motifs()
+ends.motifs_metadata()
 ends.motif_idx("_AA")
 ends.has_motif("_AA")
 
-ends.dense_counts_vector() # global dense-compatible output
-ends.dense_counts_matrix() # windowed or grouped dense-compatible output
-ends.sparse_counts_matrix()
+ends.dense_counts_array(
+    motifs=None,
+    motif_idxs=None,
+    allow_densify=False,
+) # global, shape is always (1, motif)
+ends.sparse_counts_matrix(
+    motifs=None,
+    motif_idxs=None,
+) # global, shape is always (1, motif)
+ends.window_metadata() # windowed only
+ends.group_metadata()  # grouped only
+
+ends.dense_counts_array(
+    window_idxs=None,
+    motifs=None,
+    motif_idxs=None,
+    allow_densify=False,
+) # windowed, shape is always (window, motif)
+ends.sparse_counts_matrix(
+    window_idxs=None,
+    motifs=None,
+    motif_idxs=None,
+) # windowed, shape is always (window, motif)
+
+ends.dense_counts_array(
+    groups=None,
+    group_idxs=None,
+    motifs=None,
+    motif_idxs=None,
+    allow_densify=False,
+) # grouped, shape is always (group, motif)
+ends.sparse_counts_matrix(
+    groups=None,
+    group_idxs=None,
+    motifs=None,
+    motif_idxs=None,
+) # grouped, shape is always (group, motif)
 
 ends.data_frame(
     densify=False,

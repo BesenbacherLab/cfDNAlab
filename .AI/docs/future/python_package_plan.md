@@ -166,17 +166,20 @@ ends = cfl.read_end_motifs("sample.end_motifs.zarr")
 lengths = cfl.read_lengths("sample.length_counts.tsv.zst")
 ```
 
-The mode-specific data-frame methods and selector names are specified in
+The mode-specific data frame methods and selector names are specified in
 [`../specs/package_loader_api.md`](../specs/package_loader_api.md). Keep Python
 as object-method-oriented: `.data_frame(...)` is appropriate because it is not a
 global function that risks masking another package.
 
 Array and matrix helpers should make large or dense materialization visible:
 
-- midpoint `.array()` loads the full 3D tensor into RAM
-- end-motif `dense_*` helpers may load or reconstruct dense count matrices
-- end-motif `sparse_*` helpers preserve sparse storage as SciPy sparse matrices
-- length count helpers return vectors or matrices shaped by the loaded mode
+- midpoint `.counts_array()` returns a 3D NumPy array with group, length-bin,
+  and position axes
+- end-motif `dense_counts_array()` may load or reconstruct dense count arrays
+- end-motif `sparse_counts_matrix()` preserves sparse output as a SciPy sparse
+  matrix
+- length `.counts_array()` returns a 2D NumPy array with output-row and
+  length-bin axes
 
 ## Tests
 
@@ -188,7 +191,7 @@ Python package unit tests:
 - create small valid package fixtures directly, or use small checked-in package
   fixtures if direct construction is less brittle
 - test schema validation errors, metadata helpers, array/matrix extraction,
-  data-frame builders, selector validation, compressed length TSV reading, and
+  data frame builders, selector validation, compressed length TSV reading, and
   duplicate-name handling
 - run with:
 
@@ -241,7 +244,7 @@ profile = midpoints.data_frame(group_idxs=0, length_bin_idxs=0)
 ```
 
 Keep examples representative, not exhaustive. The README should show the main
-metadata, array, sparse-matrix, and data-frame paths without becoming a full API
+metadata, array, sparse-matrix, and data frame paths without becoming a full API
 reference.
 
 ## Release Notes

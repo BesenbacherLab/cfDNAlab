@@ -75,9 +75,9 @@ Keep the first dependency set small:
 
 Avoid hard dependency on `tibble` or `dplyr` in the first version.
 
-Return base `data.frame` objects from public data-frame helpers by default. The
+Return base `data.frame` objects from public data frame helpers by default. The
 loader may keep efficient internal representations, such as the numeric count
-matrix and parsed metadata, but public data-frame helpers should not require
+matrix and parsed metadata, but public data frame helpers should not require
 users to know `data.table` syntax. Base data frames work naturally with:
 
 ```r
@@ -237,7 +237,7 @@ cf_index0_to_r_index(index0)
 ```
 
 The output-specific code should validate public one-based input, convert once
-to `index0`, then use `index0 + 1L` only at the final R array/data-frame
+to `index0`, then use `index0 + 1L` only at the final R array/data frame
 subsetting boundary through shared helpers. Tests must use asymmetric fixtures
 where choosing index `1` versus zero-based index `1` returns different values.
 
@@ -716,7 +716,7 @@ windowed length counts. `chrom`, `start`, and `end` match the standard
 BED-like table shape. They are genomic coordinates, not R indices.
 
 Sparse helpers should avoid constructing the full dense matrix.
-Windowed end-motif data-frame helpers should accept
+Windowed end-motif data frame helpers should accept
 `max_blacklisted_fraction = 1.0` with the same 0..1 validation and keep-all
 default as `length_data_frame()`.
 
@@ -894,7 +894,7 @@ plot_length_ratio(
 length-bin selectors as `length_ratio_data_frame()`.
 
 `plot_length_ratio()` should be a convenience wrapper. It should call
-`length_ratio_data_frame()` and then pass the result to the explicit data-frame
+`length_ratio_data_frame()` and then pass the result to the explicit data frame
 plotter:
 
 ```r
@@ -1008,7 +1008,7 @@ tests/
 Output-specific files should own biological semantics and public helper functions.
 
 `lengths.R` should own TSV parsing, length-bin extraction, length-count
-objects, and length data-frame helpers.
+objects, and length data frame helpers.
 
 `plotting.R` should own optional plotting helpers and must not make plotting
 packages required for non-plotting use.
@@ -1190,7 +1190,7 @@ optional plotting:
    frames and `plot_length_ratio()` as the length-count object convenience
    wrapper.
 4. Add genomic range lookup helpers for windowed outputs if repeated workflows
-   show that `window_metadata()` plus ordinary data-frame filtering is not
+   show that `window_metadata()` plus ordinary data frame filtering is not
    enough.
 
 Current implementation status:

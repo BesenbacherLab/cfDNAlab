@@ -27,10 +27,34 @@ def test_cfdnalab_package_reads_global_length_counts(
             }
         ),
     )
-    np.testing.assert_allclose(lengths.counts_vec(), np.array([3.0, 2.0, 1.0]))
+    np.testing.assert_allclose(lengths.counts_array(), np.array([[3.0, 2.0, 1.0]]))
     np.testing.assert_allclose(
         lengths.data_frame(value="density")["density"].to_numpy(),
         np.array([0.025, 1 / 60, 1 / 180], dtype=np.float64),
+    )
+    np.testing.assert_allclose(
+        lengths.counts_array(with_length_range=(50, 100)),
+        np.array([[2.0, 1.0]]),
+    )
+    selected_fraction = lengths.data_frame(
+        with_length_range=(50, 100),
+        value="fraction",
+        denominator="selected_bins",
+    )
+    assert selected_fraction["length_bin"].tolist() == [1, 2]
+    np.testing.assert_allclose(
+        selected_fraction["fraction"].to_numpy(),
+        np.array([2 / 3, 1 / 3], dtype=np.float64),
+    )
+    selected_density = lengths.data_frame(
+        with_length_range=(50, 100),
+        value="density",
+        denominator="selected_bins",
+        keep_wide=True,
+    )
+    np.testing.assert_allclose(
+        selected_density[["density_50_70", "density_70_100"]].to_numpy(),
+        np.array([[1 / 30, 1 / 90]], dtype=np.float64),
     )
 
 
@@ -41,7 +65,7 @@ def test_cfdnalab_package_reads_windowed_length_counts(
 
     assert isinstance(lengths, cfdnalab.WindowedLengthCounts)
     pd.testing.assert_frame_equal(
-        lengths.windows(),
+        lengths.window_metadata(),
         pd.DataFrame(
             {
                 "window_idx": np.array([0, 1, 2, 3], dtype=np.int32),
@@ -53,12 +77,14 @@ def test_cfdnalab_package_reads_windowed_length_counts(
         ),
     )
     np.testing.assert_allclose(
-        lengths.counts_matrix(),
+        lengths.counts_array(),
         np.array(
             [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]]
         ),
     )
-    np.testing.assert_allclose(lengths.counts_for_window(3), np.array([1.0, 0.0, 0.0]))
+    np.testing.assert_allclose(
+        lengths.counts_array(window_idxs=3), np.array([[1.0, 0.0, 0.0]])
+    )
 
     selected = lengths.data_frame(window_idxs=[1, 3], value="fraction", keep_wide=True)
     assert selected["window_idx"].tolist() == [1, 3]
@@ -69,6 +95,23 @@ def test_cfdnalab_package_reads_windowed_length_counts(
     filtered = lengths.data_frame(max_blacklisted_fraction=0.05)
     assert filtered["window_idx"].unique().tolist() == [0, 1]
 
+    range_fraction = lengths.data_frame(
+        window_idxs=[1, 3],
+        with_length_range=(50, 100),
+        value="fraction",
+        denominator="selected_bins",
+        keep_wide=True,
+    )
+    assert range_fraction["window_idx"].tolist() == [1, 3]
+    np.testing.assert_allclose(
+        range_fraction["fraction_50_70"].to_numpy(),
+        np.array([1.0, np.nan]),
+    )
+    np.testing.assert_allclose(
+        range_fraction["fraction_70_100"].to_numpy(),
+        np.array([0.0, np.nan]),
+    )
+
 
 def test_cfdnalab_package_reads_grouped_length_counts(
     grouped_length_counts_path: Path,
@@ -78,7 +121,7 @@ def test_cfdnalab_package_reads_grouped_length_counts(
     assert isinstance(lengths, cfdnalab.GroupedLengthCounts)
     assert lengths.group_idx("gamma") == 2
     pd.testing.assert_frame_equal(
-        lengths.groups(),
+        lengths.group_metadata(),
         pd.DataFrame(
             {
                 "group_idx": np.array([0, 1, 2, 3], dtype=np.int32),
@@ -91,7 +134,7 @@ def test_cfdnalab_package_reads_grouped_length_counts(
     beta = lengths.data_frame(groups="beta")
     assert beta["count"].tolist() == [2.0, 0.0, 1.0]
     np.testing.assert_allclose(
-        lengths.counts_for_group("beta"), np.array([2.0, 0.0, 1.0])
+        lengths.counts_array(groups="beta"), np.array([[2.0, 0.0, 1.0]])
     )
 
     wide_density = lengths.data_frame(
@@ -103,6 +146,19 @@ def test_cfdnalab_package_reads_grouped_length_counts(
     np.testing.assert_allclose(wide_density["density_50_70"], np.array([1 / 20, np.nan]))
     np.testing.assert_allclose(wide_density["density_70_100"], np.array([0.0, np.nan]))
 
+    selected_range = lengths.data_frame(
+        groups=["beta", "zero"],
+        with_length_range=(50, 100),
+        value="fraction",
+        denominator="selected_bins",
+    )
+    assert selected_range["group_name"].tolist() == ["beta", "beta", "zero", "zero"]
+    assert selected_range["length_bin"].tolist() == [1, 2, 1, 2]
+    np.testing.assert_allclose(
+        selected_range["fraction"].to_numpy(),
+        np.array([0.0, 1.0, np.nan, np.nan]),
+    )
+
 
 def test_cfdnalab_package_reads_no_blacklist_length_counts(
     windowed_length_counts_no_blacklist_path: Path,
@@ -111,8 +167,8 @@ def test_cfdnalab_package_reads_no_blacklist_length_counts(
     windowed = cfdnalab.read_lengths(windowed_length_counts_no_blacklist_path)
     grouped = cfdnalab.read_lengths(grouped_length_counts_no_blacklist_path)
 
-    assert "blacklisted_fraction" not in windowed.windows().columns
-    assert "blacklisted_fraction" not in grouped.groups().columns
+    assert "blacklisted_fraction" not in windowed.window_metadata().columns
+    assert "blacklisted_fraction" not in grouped.group_metadata().columns
     assert windowed.data_frame(max_blacklisted_fraction=1.0)["count"].tolist() == [
         2.0,
         0.0,
