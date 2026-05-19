@@ -7,7 +7,7 @@ This is the changelog for the main CLI tool. You can find the changelog for the 
 
 <br>
 
-## cfDNAlab 0.2.*
+## Unreleased
 
  - In `cfdna lengths`, the `max_soft_clips` cap is only applied when `--clip-mode adjust`.
 

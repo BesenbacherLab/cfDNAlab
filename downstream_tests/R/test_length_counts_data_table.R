@@ -61,7 +61,7 @@ test_that("data.table reads windowed length-count fixtures", {
   expect_identical(windowed$end, c(100L, 200L, 300L, 360L))
   expect_equal(windowed$blacklisted_fraction, c(0.04, 0.05, 0.1, 0.25))
   expect_identical(
-    as.matrix(windowed[c("count_30_50", "count_50_70", "count_70_100")]),
+    unname(as.matrix(windowed[c("count_30_50", "count_50_70", "count_70_100")])),
     matrix(
       c(2L, 0L, 0L, 0L, 2L, 0L, 0L, 0L, 1L, 1L, 0L, 0L),
       nrow = 4L,
@@ -93,7 +93,7 @@ test_that("data.table reads grouped length-count fixtures", {
   expect_identical(grouped$eligible_windows, c(2L, 1L, 1L, 1L))
   expect_equal(grouped$blacklisted_fraction, c(0.07, 0.05, 0.25, 0.333))
   expect_identical(
-    as.matrix(grouped[c("count_30_50", "count_50_70", "count_70_100")]),
+    unname(as.matrix(grouped[c("count_30_50", "count_50_70", "count_70_100")])),
     matrix(
       c(2L, 0L, 1L, 0L, 2L, 0L, 1L, 0L, 0L, 0L, 0L, 0L),
       nrow = 4L,

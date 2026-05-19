@@ -16,7 +16,15 @@ from .lengths import (
 )
 from .midpoints import MidpointProfiles, read_midpoints
 
-__version__ = "0.1.0"
+
+def get_version():
+    import importlib.metadata
+
+    return importlib.metadata.version("cfdnalab")
+
+
+__version__ = get_version()
+
 
 __all__ = [
     "EndMotifCounts",
