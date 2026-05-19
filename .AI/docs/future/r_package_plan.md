@@ -17,6 +17,11 @@ The package should not wrap or install the Rust CLI. It should be clearly descri
 - Keep tidyverse-friendly behavior without requiring the tidyverse as the core dependency.
 - Validate schema metadata before exposing objects so malformed stores fail early with package-specific messages.
 
+The current public loader API is specified in
+[`../specs/package_loader_api.md`](../specs/package_loader_api.md). Keep this
+plan focused on R package structure, backend choices, plotting ideas, and future
+extensions rather than duplicating every selector mapping.
+
 ## Object Model
 
 Use S3 classes, not S4, for the first version.
@@ -80,8 +85,8 @@ tibble::as_tibble(x)
 data.table::as.data.table(x)
 ```
 
-If `read_lengths()` is added, keep compressed TSV reading behind an internal
-helper. Use `data.table::fread()` for TSV parsing. For `.tsv.zst` files, use
+For `read_lengths()`, keep compressed TSV reading behind an internal helper.
+Use `data.table::fread()` for TSV parsing. For `.tsv.zst` files, use
 `data.table::fread(cmd = "zstd -dc <path>")` with proper shell quoting and
 validate that `Sys.which("zstd")` finds a system `zstd` binary before reading.
 If `zstd` is unavailable, error clearly instead of falling back to a slower or
@@ -267,15 +272,21 @@ positions(midpoints)
 # position_idx, position_bin_start_bp, position_bin_end_bp
 ```
 
-Profile extraction:
+Tabular extraction:
 
 ```r
-profile_data_frame(midpoints, group, length_bin_idx)
-profile_data_frame(midpoints, group_idx, length_bin_idx)
+midpoint_data_frame(
+  midpoints,
+  groups = NULL,
+  group_idxs = NULL,
+  with_lengths = NULL,
+  length_bin_idxs = NULL
+)
 profile_array(midpoints, group_idx, length_bin_idx)
 ```
 
-`profile_data_frame()` should return one row per position bin:
+`midpoint_data_frame()` should return one row per selected group, length bin,
+and position bin:
 
 ```r
 position_idx
@@ -288,6 +299,9 @@ length_bin_idx
 length_start_bp
 length_end_bp
 ```
+
+Use `with_lengths` for user fragment lengths that should be resolved to
+containing bins. Use `length_bin_idxs` when selecting bins directly.
 
 Full-array extraction should be explicit:
 
@@ -315,12 +329,6 @@ Shared metadata and extraction:
 length_bins(lengths)
 length_bin_idx(lengths, length)
 length_counts_matrix(lengths)
-length_data_frame(
-  lengths,
-  value = c("count", "fraction", "density"),
-  keep_wide = FALSE,
-  max_blacklisted_fraction = 1.0
-)
 ```
 
 `length_bins()` should return:
@@ -331,7 +339,6 @@ length_start_bp
 length_end_bp
 length_midpoint_bp
 length_width_bp
-count_column
 ```
 
 `length_counts_matrix()` should return the numeric count matrix only. Its rows
@@ -339,8 +346,11 @@ are the output units from the TSV in file order, and its columns are the parsed
 length bins. This helper is allowed to use row order internally, but user-facing
 metadata should stay expressed as windows, groups, or global output.
 
-`length_data_frame()` should return one record per output unit and length bin
-by default:
+`length_data_frame()` adapts to the loaded output mode. Global outputs have no
+row selector. Windowed outputs accept `window_idxs`. Grouped outputs accept
+`groups` or `group_idxs`.
+
+By default it should return one record per selected output unit and length bin:
 
 ```r
 length_bin_idx
@@ -425,7 +435,7 @@ For `cfdnalab_windowed_length_counts`:
 window_metadata(lengths)
 length_data_frame(
   lengths,
-  window_idx = NULL,
+  window_idxs = NULL,
   value = c("count", "fraction", "density"),
   keep_wide = FALSE,
   max_blacklisted_fraction = 1.0
@@ -444,9 +454,9 @@ blacklisted_fraction
 
 `window_idx` is one-based and follows the output order in the TSV. Genomic
 range lookup is a later development stage. In the first implementation,
-windowed length-count selection should use `window_idx`, and ad hoc filtering
+windowed length-count selection should use `window_idxs`, and ad hoc filtering
 should happen through ordinary R subsetting on `window_metadata(lengths)`.
-`length_data_frame()` should accept optional `window_idx` selection for the
+`length_data_frame()` should accept optional `window_idxs` selection for the
 common case where users want one or a few windows.
 
 In a later stage, `position_bins()` may return rows from `window_metadata(lengths)`
@@ -489,8 +499,8 @@ group_metadata(lengths)
 group_idx(lengths, group_name)
 length_data_frame(
   lengths,
-  group = NULL,
-  group_idx = NULL,
+  groups = NULL,
+  group_idxs = NULL,
   value = c("count", "fraction", "density"),
   keep_wide = FALSE,
   max_blacklisted_fraction = 1.0
@@ -506,11 +516,8 @@ eligible_windows
 blacklisted_fraction
 ```
 
-`group` selectors may be a group name or a one-based group index, matching the
-grouped end-motif API.
-
-`length_data_frame()` should accept optional `group` or `group_idx` selection.
-Use either `group` or `group_idx`, not both.
+`length_data_frame()` should accept optional `groups` or `group_idxs`
+selection. Use either `groups` or `group_idxs`, not both.
 
 ### Length-Bin Ratio Helpers
 
@@ -616,20 +623,59 @@ motif
 
 `has_motif()` should return a scalar logical without scanning count arrays.
 
+Tabular extraction uses one public function:
+
+```r
+end_motif_data_frame(
+  ends,
+  densify = FALSE,
+  motifs = NULL,
+  motif_idxs = NULL
+)
+```
+
+Mode-specific methods add only the selectors that make sense for the loaded
+mode:
+
+```r
+end_motif_data_frame(
+  ends,
+  window_idxs = NULL,
+  densify = FALSE,
+  motifs = NULL,
+  motif_idxs = NULL,
+  max_blacklisted_fraction = 1.0
+) # windowed
+
+end_motif_data_frame(
+  ends,
+  groups = NULL,
+  group_idxs = NULL,
+  densify = FALSE,
+  motifs = NULL,
+  motif_idxs = NULL,
+  max_blacklisted_fraction = 1.0
+) # grouped
+```
+
+For sparse stores, `densify = FALSE` returns stored non-zero motif-count rows.
+`densify = TRUE` adds explicit zero-count rows for the selected rows and the
+selected observed motifs. Dense stores ignore `densify`.
+
 ### Global End Motifs
 
 For `cfdnalab_global_end_motif_counts`:
 
 ```r
 dense_counts_vector(ends)
-dense_data_frame(ends)
 sparse_counts_matrix(ends)
-sparse_data_frame(ends)
+end_motif_data_frame(ends, densify = FALSE)
+end_motif_data_frame(ends, densify = TRUE)
 ```
 
 `dense_counts_vector()` should return a named numeric vector when dense output is available or explicitly requested.
 
-`dense_data_frame()` should return:
+`end_motif_data_frame()` should return:
 
 ```r
 motif_idx
@@ -644,12 +690,15 @@ For `cfdnalab_windowed_end_motif_counts`:
 ```r
 window_metadata(ends)
 dense_counts_matrix(ends)
-dense_data_frame_for_window(ends, window_idx, max_blacklisted_fraction = 1.0)
-dense_data_frame_for_motif(ends, motif, max_blacklisted_fraction = 1.0)
 sparse_counts_matrix(ends)
-sparse_data_frame(ends)
-sparse_data_frame_for_window(ends, window_idx, max_blacklisted_fraction = 1.0)
-sparse_data_frame_for_motif(ends, motif, max_blacklisted_fraction = 1.0)
+end_motif_data_frame(
+  ends,
+  window_idxs = NULL,
+  motifs = NULL,
+  motif_idxs = NULL,
+  densify = FALSE,
+  max_blacklisted_fraction = 1.0
+)
 ```
 
 `window_metadata()` should return:
@@ -667,7 +716,7 @@ windowed length counts. `chrom`, `start`, and `end` match the standard
 BED-like table shape. They are genomic coordinates, not R indices.
 
 Sparse helpers should avoid constructing the full dense matrix.
-Row-based end-motif data-frame helpers should accept
+Windowed end-motif data-frame helpers should accept
 `max_blacklisted_fraction = 1.0` with the same 0..1 validation and keep-all
 default as `length_data_frame()`.
 
@@ -679,12 +728,16 @@ For `cfdnalab_grouped_end_motif_counts`:
 group_metadata(ends)
 group_idx(ends, group_name)
 dense_counts_matrix(ends)
-dense_data_frame_for_group(ends, group, max_blacklisted_fraction = 1.0)
-dense_data_frame_for_motif(ends, motif, max_blacklisted_fraction = 1.0)
 sparse_counts_matrix(ends)
-sparse_data_frame(ends)
-sparse_data_frame_for_group(ends, group, max_blacklisted_fraction = 1.0)
-sparse_data_frame_for_motif(ends, motif, max_blacklisted_fraction = 1.0)
+end_motif_data_frame(
+  ends,
+  groups = NULL,
+  group_idxs = NULL,
+  motifs = NULL,
+  motif_idxs = NULL,
+  densify = FALSE,
+  max_blacklisted_fraction = 1.0
+)
 ```
 
 `group_metadata()` should return:
@@ -702,17 +755,15 @@ Rules:
 
 - If the store is dense, dense helpers read dense arrays.
 - If the store is sparse, sparse helpers read sparse COO arrays and build `Matrix::sparseMatrix`.
-- Dense helpers on sparse stores should either error by default or require `allow_densify = TRUE`.
+- Dense helpers on sparse stores should make densification explicit in the
+  helper name.
 - Sparse helpers on dense stores may be supported, but the documentation must say that the dense matrix is read first.
-- Long data frames from large sparse stores should contain only non-zero rows unless the function name clearly says dense.
-
-Recommended first behavior:
-
-```r
-dense_counts_matrix(x, allow_densify = FALSE)
-```
-
-If `x` is sparse and `allow_densify = FALSE`, error with a message telling the user to use `sparse_counts_matrix()` or set `allow_densify = TRUE`.
+- End-motif data frames from sparse stores contain only non-zero rows by
+  default.
+- `end_motif_data_frame(..., densify = TRUE)` adds explicit zero-count rows for
+  selected rows and selected observed motifs.
+- Dense and sparse end-motif data frames use the same columns for a given row
+  mode; only the returned rows differ.
 
 ## Length Plotting API
 
@@ -776,7 +827,7 @@ For `cfdnalab_windowed_length_counts`:
 ```r
 plot_lengths(
   x,
-  window_idx = NULL,
+  window_idxs = NULL,
   value = c("fraction", "count", "density"),
   max_blacklisted_fraction = 1.0,
   display = c("line", "facet", "ridges", "tiles"),
@@ -800,7 +851,7 @@ Default behavior:
 - Global output plots the single distribution.
 - Grouped output may plot all groups when the number of groups is at most
   `max_groups`. Otherwise require `groups`.
-- Windowed output should require selected `window_idx` unless the number of
+- Windowed output should require selected `window_idxs` unless the number of
   windows is at most `max_windows`.
 - All plotting helpers return `ggplot` objects so users can adjust themes,
   labels, colors, and export settings.
@@ -983,12 +1034,12 @@ Minimum tests:
 
 - midpoint loader validates schema and version
 - midpoint `group_metadata()`, `length_bins()`, `positions()`
-- midpoint `profile_data_frame()` for one group and length bin
+- midpoint `midpoint_data_frame()` for selected groups and length bins
 - midpoint `profile_array()` matches the corresponding data frame counts
 - end-motif loader returns correct subclass by `row_mode`
 - end-motif `motifs()`, `motif_idx()`, `has_motif()`
-- dense global end-motif data frame
-- dense windowed end-motif window slice
+- global end-motif data frame
+- windowed end-motif data frame with `window_idxs`
 - sparse end-motif `Matrix::sparseMatrix` round-trip
 - sparse motif slice does not densify
 - invalid schema gives a useful error
@@ -1037,9 +1088,9 @@ Downstream GitHub Action should install the R dependencies directly and run:
 Rscript -e 'testthat::test_local("r-cfdnalab")'
 ```
 
-The current downstream Zarr workflow runs `testthat::test_local("r-cfdnalab")`
-after generating the shared midpoint and end-motif fixtures with cfDNAlab. It
-also installs `r-cfdnalab` and runs
+The current downstream workflow runs `testthat::test_local("r-cfdnalab")`
+after generating the shared midpoint, end-motif, and length fixtures with
+cfDNAlab. It also installs `r-cfdnalab` and runs
 `downstream_tests/R/test_cfdnalab_r_package.R`, which exercises the package as
 an external downstream user would.
 
@@ -1055,10 +1106,10 @@ library(cfdnalab)
 midpoints <- read_midpoints("sample.midpoint_profiles.zarr")
 group_metadata(midpoints)
 
-profile <- profile_data_frame(
+profile <- midpoint_data_frame(
   midpoints,
-  group = "LYL1",
-  length_bin_idx = 1
+  groups = "LYL1",
+  length_bin_idxs = 1
 )
 ```
 
@@ -1070,7 +1121,7 @@ library(cfdnalab)
 ends <- read_end_motifs("sample.end_motifs.zarr")
 motifs(ends)
 
-motif_counts <- sparse_data_frame_for_motif(ends, motif = "_AA")
+motif_counts <- end_motif_data_frame(ends, motifs = "_AA")
 ```
 
 Length example:
@@ -1106,9 +1157,10 @@ Resolved for the first implementation:
 
 - Use CRAN `zarr` as the default backend.
 - Return base `data.frame` objects.
-- Dense helpers on sparse stores error by default and require `allow_densify = TRUE`.
+- End-motif sparse data frames return stored non-zero rows by default and
+  require `densify = TRUE` for explicit zero-count rows.
 - Defer generic plotting helpers, but add a focused `plot_lengths()` generic
-  when `read_lengths()` is added. Length plotting should return `ggplot`
+  for length-count outputs. Length plotting should return `ggplot`
   objects and stay optional through `Suggests`.
 
 ## First Milestone
@@ -1117,35 +1169,29 @@ Implement a minimal package that can:
 
 1. Load midpoint profile Zarr stores.
 2. Load end-motif Zarr stores.
-3. Return metadata data frames.
-4. Extract one midpoint profile as a data frame.
-5. Extract end-motif sparse counts as `Matrix::sparseMatrix`.
-6. Pass downstream tests on actual cfDNAlab-generated fixtures.
+3. Load length-count TSV outputs.
+4. Return metadata data frames.
+5. Extract midpoint, end-motif, and length-count data frames.
+6. Extract midpoint arrays, end-motif matrices, and length-count matrices or vectors.
+7. Pass downstream tests on actual cfDNAlab-generated fixtures.
 
 Plot helpers and GC package loaders can wait until the core readers are stable.
 
 ## Next R Extension Milestone
 
-After the midpoint and end-motif readers are stable, add length-count TSV
-support:
+After the core readers are stable, add length-specific derived summaries and
+optional plotting:
 
-1. Implement `read_lengths()`.
-2. Return mode-specific length-count classes for global, windowed, and grouped
-   outputs.
-3. Parse count columns into half-open length bins.
-4. Read `.tsv.zst` files through `data.table::fread(cmd = "zstd -dc <path>")`
-   after validating that a system `zstd` binary is available.
-5. Add `length_counts_matrix()`, `length_data_frame()`, and mode-specific
-   selection helpers. Use `window_metadata()` and `window_idx` for first-stage
-   windowed output selection; defer genomic range lookup helpers.
-6. Add length-bin ratio helpers for user-selected numerator and denominator
+1. Add length-bin ratio helpers for user-selected numerator and denominator
    length-bin indices.
-7. Add `plot_lengths()` with line, facet, ridge-style, and tile displays for
+2. Add `plot_lengths()` with line, facet, ridge-style, and tile displays for
    the output modes where those displays make sense.
-8. Add `plot_length_ratio_track()` for already-computed windowed ratio data
+3. Add `plot_length_ratio_track()` for already-computed windowed ratio data
    frames and `plot_length_ratio()` as the length-count object convenience
    wrapper.
-9. Keep settings JSON out of the public length loader API.
+4. Add genomic range lookup helpers for windowed outputs if repeated workflows
+   show that `window_metadata()` plus ordinary data-frame filtering is not
+   enough.
 
 Current implementation status:
 
@@ -1159,7 +1205,3 @@ Pre-release cleanup:
 
 - Replace placeholder `Authors@R` and `LICENSE` holder values with final package maintainer details.
 - Re-run roxygen after any public API or documentation changes and keep generated `NAMESPACE` / `man/*.Rd` in sync.
-- Convert the R public API from zero-based `*_idx` selectors and columns to
-  one-based `*_idx` selectors and columns. Keep zero-based schema values only
-  in clearly named internal `*_idx0` or `*_index0` fields and helper-local
-  variables.

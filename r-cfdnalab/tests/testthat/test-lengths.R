@@ -22,7 +22,6 @@ test_that("global length counts expose bins, matrix, vector, and long values", {
       length_end_bp = c(31L, 40L),
       length_midpoint_bp = c(30.5, 35.5),
       length_width_bp = c(1L, 9L),
-      count_column = c("count_30", "count_31_40"),
       stringsAsFactors = FALSE
     ),
     ignore_attr = TRUE
@@ -46,6 +45,10 @@ test_that("global length counts expose bins, matrix, vector, and long values", {
   densities <- length_data_frame(lengths, value = "density")
   expect_equal(densities$density, c(0.8, 0.2 / 9), tolerance = 1e-8)
   expect_false(any(grepl("idx0|index0", names(fractions))))
+  expect_error(
+    length_data_frame(lengths, max_blacklisted_fraction = 1),
+    "Unused argument\\(s\\): max_blacklisted_fraction"
+  )
 })
 
 test_that("global length counts support wide count, fraction, and density frames", {
@@ -91,6 +94,25 @@ test_that("global length counts support wide count, fraction, and density frames
   expect_error(length_data_frame(lengths, keep_wide = NA), "keep_wide must be TRUE or FALSE")
 })
 
+test_that("wide length frames preserve TSV count column labels internally", {
+  path <- write_length_tsv_fixture(c(
+    "count_030\tcount_031_040",
+    "12\t3"
+  ))
+
+  lengths <- read_lengths(path)
+
+  expect_false("count_column" %in% names(length_bins(lengths)))
+  expect_equal(
+    names(length_data_frame(lengths, keep_wide = TRUE)),
+    c("count_030", "count_031_040")
+  )
+  expect_equal(
+    names(length_data_frame(lengths, value = "fraction", keep_wide = TRUE)),
+    c("fraction_030", "fraction_031_040")
+  )
+})
+
 test_that("windowed length counts expose window metadata and selected frames", {
   path <- write_length_tsv_fixture(c(
     "chrom\tstart\tend\tblacklisted_fraction\tcount_30\tcount_31_40",
@@ -101,6 +123,7 @@ test_that("windowed length counts expose window metadata and selected frames", {
   lengths <- read_lengths(path)
 
   expect_s3_class(lengths, "cfdnalab_windowed_length_counts")
+  expect_output(print(lengths), "Mode: windowed", fixed = TRUE)
   expect_equal(
     window_metadata(lengths),
     data.frame(
@@ -114,7 +137,7 @@ test_that("windowed length counts expose window metadata and selected frames", {
     ignore_attr = TRUE
   )
 
-  selected <- length_data_frame(lengths, window_idx = 2L)
+  selected <- length_data_frame(lengths, window_idxs = 2L)
   expect_equal(selected$window_idx, c(2L, 2L))
   expect_equal(selected$count, c(0, 5), tolerance = 1e-8)
 
@@ -139,6 +162,17 @@ test_that("windowed length counts expose window metadata and selected frames", {
   expect_equal(wide_fraction$fraction_31_40, c(0.2, 1), tolerance = 1e-8)
 })
 
+test_that("windowed length counts keep numeric chromosome labels as character", {
+  path <- write_length_tsv_fixture(c(
+    "chrom\tstart\tend\tcount_30",
+    "1\t10\t20\t5"
+  ))
+
+  lengths <- read_lengths(path)
+
+  expect_identical(window_metadata(lengths)$chrom, "1")
+})
+
 test_that("windowed length selectors validate one-based indices", {
   path <- write_length_tsv_fixture(c(
     "chrom\tstart\tend\tcount_30\tcount_31_40",
@@ -148,10 +182,11 @@ test_that("windowed length selectors validate one-based indices", {
 
   lengths <- read_lengths(path)
 
-  expect_error(length_data_frame(lengths, window_idx = 0L), "window_idx contains values outside 1..2")
-  expect_error(length_data_frame(lengths, window_idx = 3L), "window_idx contains values outside 1..2")
-  expect_error(length_data_frame(lengths, window_idx = 1.5), "window_idx must contain integer values")
-  expect_equal(length_data_frame(lengths, window_idx = integer(0))$count, numeric(0))
+  expect_error(length_data_frame(lengths, window_idxs = 0L), "window_idxs contains values outside 1..2")
+  expect_error(length_data_frame(lengths, window_idxs = 3L), "window_idxs contains values outside 1..2")
+  expect_error(length_data_frame(lengths, window_idxs = 1.5), "window_idxs must contain integer values")
+  expect_error(length_data_frame(lengths, window_idxs = c(1L, 1L)), "window_idxs contains duplicate values")
+  expect_equal(length_data_frame(lengths, window_idxs = integer(0))$count, numeric(0))
 })
 
 test_that("grouped length counts expose group metadata and group selectors", {
@@ -164,6 +199,7 @@ test_that("grouped length counts expose group metadata and group selectors", {
   lengths <- read_lengths(path)
 
   expect_s3_class(lengths, "cfdnalab_grouped_length_counts")
+  expect_output(print(lengths), "Mode: grouped", fixed = TRUE)
   expect_equal(
     group_metadata(lengths),
     data.frame(
@@ -177,13 +213,28 @@ test_that("grouped length counts expose group metadata and group selectors", {
   expect_equal(group_idx(lengths, "beta"), 2L)
   expect_error(group_idx(lengths, "gamma"), "Unknown length-count group name")
 
-  alpha <- length_data_frame(lengths, group = "alpha")
+  alpha <- length_data_frame(lengths, groups = "alpha")
   expect_equal(alpha$group_idx, c(1L, 1L))
   expect_equal(alpha$count, c(12, 3), tolerance = 1e-8)
 
-  beta_wide <- length_data_frame(lengths, group_idx = 2L, value = "density", keep_wide = TRUE)
+  beta_wide <- length_data_frame(lengths, group_idxs = 2L, value = "density", keep_wide = TRUE)
   expect_equal(names(beta_wide), c("group_idx", "group_name", "eligible_windows", "density_30", "density_31_40"))
   expect_true(all(is.na(beta_wide[c("density_30", "density_31_40")])))
+})
+
+test_that("grouped length duplicate names only affect requested names", {
+  path <- write_length_tsv_fixture(c(
+    "group_name\teligible_windows\tcount_30",
+    "alpha\t2\t12",
+    "beta\t1\t5",
+    "alpha\t3\t7"
+  ))
+
+  lengths <- read_lengths(path)
+
+  expect_equal(group_idx(lengths, "beta"), 2L)
+  expect_equal(length_data_frame(lengths, groups = "beta")$count, 5)
+  expect_error(length_data_frame(lengths, groups = "alpha"), "Length-count group name is not unique")
 })
 
 test_that("grouped length selectors validate names and one-based indices", {
@@ -196,14 +247,41 @@ test_that("grouped length selectors validate names and one-based indices", {
 
   lengths <- read_lengths(path)
 
-  expect_error(length_data_frame(lengths, group = "alpha", group_idx = 1L), "Use either group or group_idx")
-  expect_error(length_data_frame(lengths, group = "missing"), "Unknown length-count group name")
-  expect_error(length_data_frame(lengths, group_idx = 4L), "group_idx contains values outside 1..3")
+  expect_error(length_data_frame(lengths, groups = "alpha", group_idxs = 1L), "Use either groups or group_idxs")
+  expect_error(length_data_frame(lengths, groups = "missing"), "Unknown length-count group name")
+  expect_error(length_data_frame(lengths, group_idxs = 4L), "group_idxs contains values outside 1..3")
+  expect_error(length_data_frame(lengths, groups = list("alpha", 1L)), "groups must contain character strings")
+  expect_error(length_data_frame(lengths, groups = c("alpha", "alpha")), "groups contains duplicate values")
+  expect_error(length_data_frame(lengths, group_idxs = c(1L, 1L)), "group_idxs contains duplicate values")
+  expect_error(length_data_frame(lengths, value = "invalid"), "'arg' should be one of")
+  expect_equal(length_data_frame(lengths, groups = character(0))$count, numeric(0))
+  expect_equal(length_data_frame(lengths, group_idxs = integer(0))$count, numeric(0))
   expect_equal(unique(length_data_frame(lengths, max_blacklisted_fraction = 0.25)$group_name), c("alpha", "beta"))
-  expect_equal(length_data_frame(lengths, group = c("beta", "alpha"))$group_idx, c(2L, 2L, 1L, 1L))
+  expect_equal(length_data_frame(lengths, groups = c("beta", "alpha"))$group_idx, c(2L, 2L, 1L, 1L))
 })
 
 test_that("length TSV validation rejects ambiguous or unsupported shapes", {
+  missing_path <- tempfile(fileext = ".tsv")
+  expect_error(read_lengths(missing_path), "Length-count TSV does not exist")
+
+  directory_path <- tempfile(fileext = ".tsv")
+  dir.create(directory_path)
+  expect_error(read_lengths(directory_path), "exists but is a directory")
+
+  wrong_extension <- write_length_tsv_fixture(c(
+    "count_30",
+    "1"
+  ))
+  wrong_extension <- sub("\\.tsv$", ".csv", wrong_extension)
+  file.create(wrong_extension)
+  expect_error(read_lengths(wrong_extension), "must end in '.tsv' or '.tsv.zst'")
+
+  wrong_gzip_extension <- sub("\\.csv$", ".tsv.gz", wrong_extension)
+  file.create(wrong_gzip_extension)
+  expect_error(read_lengths(wrong_gzip_extension), "must end in '.tsv' or '.tsv.zst'")
+
+  expect_error(read_lengths(123), "must be a single path string")
+
   missing_zstd <- write_length_tsv_fixture(c(
     "chrom\tstart\tend\tcount_30",
     "chr1\t10\t20\t1"
@@ -212,6 +290,16 @@ test_that("length TSV validation rejects ambiguous or unsupported shapes", {
   file.copy(missing_zstd, zst_path)
   if (!nzchar(Sys.which("zstd"))) {
     expect_error(read_lengths(zst_path), "requires the zstd command-line tool")
+  }
+
+  if (nzchar(Sys.which("zstd"))) {
+    source_tsv <- write_length_tsv_fixture(c(
+      "count_30",
+      "5"
+    ))
+    compressed_tsv <- sub("\\.tsv$", ".tsv.zst", source_tsv)
+    system2(Sys.which("zstd"), c("-q", "-f", "-o", compressed_tsv, source_tsv))
+    expect_equal(length_counts_vector(read_lengths(compressed_tsv)), c(count_30 = 5))
   }
 
   bad_count <- write_length_tsv_fixture(c(
@@ -245,11 +333,35 @@ test_that("length TSV validation rejects ambiguous or unsupported shapes", {
   ))
   expect_error(read_lengths(duplicate_bins), "duplicate length bins")
 
+  duplicate_columns <- write_length_tsv_fixture(c(
+    "count_30\tcount_30",
+    "1\t2"
+  ))
+  expect_error(read_lengths(duplicate_columns), "column names must be unique")
+
   unsupported_metadata <- write_length_tsv_fixture(c(
     "window_idx\tchrom\tstart\tend\tcount_30",
     "1\tchr1\t10\t20\t1"
   ))
   expect_error(read_lengths(unsupported_metadata), "Could not infer length-count output mode")
+
+  negative_count <- write_length_tsv_fixture(c(
+    "count_30",
+    "-1"
+  ))
+  expect_error(read_lengths(negative_count), "count_30 must contain finite non-negative values")
+
+  nonfinite_count <- write_length_tsv_fixture(c(
+    "count_30",
+    "Inf"
+  ))
+  expect_error(read_lengths(nonfinite_count), "count_30 must contain finite non-negative values")
+
+  negative_window_start <- write_length_tsv_fixture(c(
+    "chrom\tstart\tend\tcount_30",
+    "chr1\t-1\t20\t1"
+  ))
+  expect_error(read_lengths(negative_window_start), "start must contain non-negative integer values")
 })
 
 test_that("length-bin lookup rejects gaps and overlapping bins", {
@@ -258,6 +370,9 @@ test_that("length-bin lookup rejects gaps and overlapping bins", {
     "1\t2"
   )))
   expect_error(length_bin_idx(gapped, 45L), "No length-count bin contains length 45")
+  expect_error(length_bin_idx(gapped, -1L), "Fragment length must be a single non-negative integer")
+  expect_error(length_bin_idx(gapped, 45.5), "Fragment length must be a single non-negative integer")
+  expect_error(length_bin_idx(gapped, "45"), "Fragment length must be a single non-negative integer")
 
   overlapping <- read_lengths(write_length_tsv_fixture(c(
     "count_30_50\tcount_40_60",

@@ -1,5 +1,5 @@
 """
-Classes for loading and interacting with the midpoints .zarr output.
+Load cfDNAlab midpoint profile Zarr outputs.
 """
 
 from __future__ import annotations
@@ -7,11 +7,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 import numbers
 import pathlib
-from typing import Any, List
+from typing import Any, List, Sequence
 
 import numpy as np
 import pandas as pd
 import zarr
+
+from ._helpers import (
+    normalize_strings,
+    normalize_zero_based_indices,
+    resolve_unique_match,
+    validate_fragment_length,
+    validate_unique_values,
+    validate_zero_based_index,
+)
 
 MIDPOINT_MIN_SUPPORTED_SCHEMA_VERSION = 1
 MIDPOINT_MAX_SUPPORTED_SCHEMA_VERSION = 1
@@ -30,6 +39,8 @@ REQUIRED_ARRAYS = {
 
 @dataclass
 class LoadedProfile:
+    """Validated midpoint Zarr handles and axis metadata."""
+
     store: Any
     counts: zarr.Array
     group_idx: np.ndarray
@@ -44,6 +55,13 @@ class LoadedProfile:
 
 
 class MidpointProfiles:
+    """
+    Helper for loading and slicing midpoint profile Zarr output.
+
+    Midpoint profiles store counts as `(group, length_bin, position)`. The class
+    exposes metadata as pandas data frames and count slices as NumPy arrays.
+    """
+
     def __init__(self, path: pathlib.Path | str) -> None:
         """
         Load a midpoint profile Zarr store.
@@ -52,15 +70,14 @@ class MidpointProfiles:
         ----------
         path
             Path to a `<prefix>.midpoint_profiles.zarr` directory.
-
-        Returns
-        -------
-        None
         """
         self.path = pathlib.Path(path)
         self.profiles = MidpointProfiles._load_zarr(self.path)
 
     def __repr__(self) -> str:
+        """
+        Return a compact summary with path, schema version, and count shape.
+        """
         shape = tuple(self.profiles.counts.shape)
         schema_version = self.profiles.store.attrs.get("cfdnalab_schema_version")
         return (
@@ -99,6 +116,7 @@ class MidpointProfiles:
         counts = store["counts"]
         _validate_counts_dimensions(counts)
 
+        # Load small coordinate arrays eagerly so later helpers only slice counts
         group_idx = _read_array(store, "group")
         length_bin = _read_array(store, "length_bin")
         position = _read_array(store, "position")
@@ -109,6 +127,7 @@ class MidpointProfiles:
         position_bin_end_bp = _read_array(store, "position_bin_end_bp")
         group_names = _read_group_names(store)
 
+        # The count tensor must align with every public coordinate axis
         expected_shape = (len(group_idx), len(length_bin), len(position))
         if tuple(counts.shape) != expected_shape:
             raise ValueError(
@@ -150,7 +169,7 @@ class MidpointProfiles:
 
     def group_names(self) -> List[str]:
         """
-        Return the group names.
+        Return midpoint group labels in count-axis order.
 
         Returns
         -------
@@ -161,7 +180,7 @@ class MidpointProfiles:
 
     def eligible_intervals(self) -> List[int]:
         """
-        Return the number of eligible intervals for each group.
+        Return eligible interval counts for midpoint groups.
 
         Returns
         -------
@@ -172,7 +191,7 @@ class MidpointProfiles:
 
     def group_idx(self, group_name: str) -> int:
         """
-        Return the index for a group name.
+        Find the midpoint group index for a group name.
 
         Parameters
         ----------
@@ -182,13 +201,13 @@ class MidpointProfiles:
         Returns
         -------
         int
-            Zero-based group index.
+            Group index.
         """
         return self._resolve_group_name(group_name)
 
     def length_bin_idx(self, length: int) -> int:
         """
-        Return the length-bin index for a fragment length.
+        Find the length-bin index whose interval contains a fragment length.
 
         Parameters
         ----------
@@ -198,18 +217,18 @@ class MidpointProfiles:
         Returns
         -------
         int
-            Zero-based length-bin index.
+            Length-bin index.
         """
         return self._resolve_length(length)
 
     def groups(self) -> pd.DataFrame:
         """
-        Return group metadata.
+        Get the groups available in this midpoint-profile output.
 
         Returns
         -------
         pandas.DataFrame
-            One row per group.
+            Columns are `group_idx`, `group_name`, and `eligible_intervals`.
         """
         return pd.DataFrame(
             {
@@ -221,12 +240,15 @@ class MidpointProfiles:
 
     def length_bins(self) -> pd.DataFrame:
         """
-        Return fragment length-bin metadata.
+        Get the fragment length bins available in this midpoint-profile output.
+
+        Length bins are half-open intervals. A bin with `length_start_bp=30`
+        and `length_end_bp=50` contains fragment lengths `30 <= length < 50`.
 
         Returns
         -------
         pandas.DataFrame
-            One row per length bin.
+            Columns are `length_bin`, `length_start_bp`, and `length_end_bp`.
         """
         return pd.DataFrame(
             {
@@ -238,12 +260,13 @@ class MidpointProfiles:
 
     def positions(self) -> pd.DataFrame:
         """
-        Return midpoint position-bin metadata.
+        Get the midpoint position bins available in this output.
 
         Returns
         -------
         pandas.DataFrame
-            One row per midpoint position bin.
+            Columns are `position`, `position_bin_start_bp`, and
+            `position_bin_end_bp`.
         """
         return pd.DataFrame(
             {
@@ -253,159 +276,171 @@ class MidpointProfiles:
             }
         )
 
-    def data_frame_for_profile(
-        self, group_idx: int, length_bin_idx: int
+    def data_frame(
+        self,
+        *,
+        groups: str | Sequence[str] | None = None,
+        group_idxs: int | Sequence[int] | None = None,
+        with_lengths: int | Sequence[int] | None = None,
+        length_bin_idxs: int | Sequence[int] | None = None,
     ) -> pd.DataFrame:
         """
-        Build a long data frame for one group and one length bin.
+        Create a pandas DataFrame of midpoint profile counts.
 
-        Use `.group_idx(group_name=)` and `.length_bin_idx(length=)` to get the
-        indices for a group name and fragment length.
+        Use this for tabular analysis of the midpoint count array. The result
+        expands the selected group and length-bin axes across all midpoint
+        position bins, with group, length-bin, and position metadata on each
+        row.
 
         Parameters
         ----------
-        group_idx
-            Zero-based group index to extract.
-        length_bin_idx
-            Zero-based length-bin index to extract.
+        groups
+            `None` for all groups, one group name, or a sequence of group names.
+            Use either `groups` or `group_idxs`, not both.
+        group_idxs
+            `None` for all groups, one group index, or a sequence of group
+            indices. Use either `groups` or `group_idxs`, not both.
+        with_lengths
+            Fragment length or lengths in bp. The returned rows use the length
+            bins containing these lengths. Use either `with_lengths` or
+            `length_bin_idxs`, not both.
+        length_bin_idxs
+            `None` for all length bins, one length-bin index, or a sequence of
+            length-bin indices. Use either `with_lengths` or `length_bin_idxs`,
+            not both.
 
         Returns
         -------
         pandas.DataFrame
-            Counts and position metadata for one profile.
+            One row per selected group, length bin, and midpoint position bin.
         """
-        group_idx = self._validate_group_idx(group_idx)
-        length_bin_idx = self._validate_length_bin_idx(length_bin_idx)
-        profile = self.array_for_profile(group_idx, length_bin_idx)
+        group_indices = self._resolve_group_selector(groups, group_idxs)
+        length_bin_indices = self._resolve_length_bin_selector(
+            with_lengths, length_bin_idxs
+        )
+        return self._data_frame_for_indices(group_indices, length_bin_indices)
 
+    def _data_frame_for_indices(
+        self, group_indices: np.ndarray, length_bin_indices: np.ndarray
+    ) -> pd.DataFrame:
+        """
+        Build a long data frame for selected group and length-bin indices.
+        """
+        if len(group_indices) == 0 or len(length_bin_indices) == 0:
+            return self._empty_data_frame()
+
+        frames: list[pd.DataFrame] = []
+        for group_idx in group_indices:
+            for length_bin_idx in length_bin_indices:
+                profile = self.array_for_profile(int(group_idx), int(length_bin_idx))
+                frames.append(
+                    pd.DataFrame(
+                        {
+                            "group_idx": int(self.profiles.group_idx[group_idx]),
+                            "group_name": self.profiles.group_names[group_idx],
+                            "eligible_intervals": int(
+                                self.profiles.eligible_intervals[group_idx]
+                            ),
+                            "length_bin": int(
+                                self.profiles.length_bin[length_bin_idx]
+                            ),
+                            "length_start_bp": int(
+                                self.profiles.length_start_bp[length_bin_idx]
+                            ),
+                            "length_end_bp": int(
+                                self.profiles.length_end_bp[length_bin_idx]
+                            ),
+                            "position": self.profiles.position,
+                            "position_bin_start_bp": self.profiles.position_bin_start_bp,
+                            "position_bin_end_bp": self.profiles.position_bin_end_bp,
+                            "count": profile,
+                        }
+                    )
+                )
+        return pd.concat(frames, ignore_index=True)
+
+    def _empty_data_frame(self) -> pd.DataFrame:
+        """
+        Return an empty midpoint data frame with public columns.
+        """
         return pd.DataFrame(
             {
-                "group_idx": int(self.profiles.group_idx[group_idx]),
-                "group_name": self.profiles.group_names[group_idx],
-                "eligible_intervals": int(self.profiles.eligible_intervals[group_idx]),
-                "length_bin": int(self.profiles.length_bin[length_bin_idx]),
-                "length_start_bp": int(self.profiles.length_start_bp[length_bin_idx]),
-                "length_end_bp": int(self.profiles.length_end_bp[length_bin_idx]),
-                "position": self.profiles.position,
-                "position_bin_start_bp": self.profiles.position_bin_start_bp,
-                "position_bin_end_bp": self.profiles.position_bin_end_bp,
-                "count": profile,
+                "group_idx": self.profiles.group_idx[:0],
+                "group_name": self.profiles.group_names[:0],
+                "eligible_intervals": self.profiles.eligible_intervals[:0],
+                "length_bin": self.profiles.length_bin[:0],
+                "length_start_bp": self.profiles.length_start_bp[:0],
+                "length_end_bp": self.profiles.length_end_bp[:0],
+                "position": self.profiles.position[:0],
+                "position_bin_start_bp": self.profiles.position_bin_start_bp[:0],
+                "position_bin_end_bp": self.profiles.position_bin_end_bp[:0],
+                "count": np.asarray([], dtype=float),
             }
         )
 
-    def data_frame_from_group(self, group_name: str) -> pd.DataFrame:
+    def _resolve_group_selector(
+        self,
+        groups: str | Sequence[str] | None,
+        group_idxs: int | Sequence[int] | None,
+    ) -> np.ndarray:
         """
-        Build a long data frame for one group.
-
-        Parameters
-        ----------
-        group_name
-            Group name to extract.
-
-        Returns
-        -------
-        pandas.DataFrame
-            Counts and length/position metadata for the group.
+        Normalize optional group selectors to group-axis indices.
         """
-        group_idx = self._resolve_group_name(group_name)
-        return self.data_frame_from_group_idx(group_idx)
-
-    def data_frame_from_group_idx(self, group_idx: int) -> pd.DataFrame:
-        """
-        Build a long data frame for one group index.
-
-        Parameters
-        ----------
-        group_idx
-            Zero-based group index to extract.
-
-        Returns
-        -------
-        pandas.DataFrame
-            Counts and length/position metadata for the group.
-        """
-        group_idx = self._validate_group_idx(group_idx)
-        profile = self.array_from_group_idx(group_idx)
-        length_index, position_index = np.indices(profile.shape)
-
-        return pd.DataFrame(
-            {
-                "group_idx": int(self.profiles.group_idx[group_idx]),
-                "group_name": self.profiles.group_names[group_idx],
-                "eligible_intervals": int(self.profiles.eligible_intervals[group_idx]),
-                "length_bin": self.profiles.length_bin[length_index.ravel()],
-                "length_start_bp": self.profiles.length_start_bp[length_index.ravel()],
-                "length_end_bp": self.profiles.length_end_bp[length_index.ravel()],
-                "position": self.profiles.position[position_index.ravel()],
-                "position_bin_start_bp": self.profiles.position_bin_start_bp[
-                    position_index.ravel()
-                ],
-                "position_bin_end_bp": self.profiles.position_bin_end_bp[
-                    position_index.ravel()
-                ],
-                "count": profile.ravel(),
-            }
+        if groups is not None and group_idxs is not None:
+            raise ValueError("Use either groups or group_idxs, not both")
+        if groups is None and group_idxs is None:
+            return np.arange(len(self.profiles.group_idx), dtype=np.int64)
+        if groups is not None:
+            group_names = normalize_strings(groups, name="groups")
+            return np.asarray(
+                [self._resolve_group_name(group_name) for group_name in group_names],
+                dtype=np.int64,
+            )
+        return normalize_zero_based_indices(
+            group_idxs,
+            size=len(self.profiles.group_idx),
+            name="group_idxs",
+            index_name="group_idx",
         )
 
-    def data_frame_from_length(self, length: int) -> pd.DataFrame:
+    def _resolve_length_bin_selector(
+        self,
+        with_lengths: int | Sequence[int] | None,
+        length_bin_idxs: int | Sequence[int] | None,
+    ) -> np.ndarray:
         """
-        Build a long data frame for the bin containing a fragment length.
-
-        Parameters
-        ----------
-        length
-            Fragment length in bp.
-
-        Returns
-        -------
-        pandas.DataFrame
-            Counts and group/position metadata for the matching length bin.
+        Normalize optional fragment-length or length-bin selectors.
         """
-        length_bin_idx = self._resolve_length(length)
-        return self.data_frame_from_length_bin(length_bin_idx)
-
-    def data_frame_from_length_bin(self, length_bin_idx: int) -> pd.DataFrame:
-        """
-        Build a long data frame for one length-bin index.
-
-        Parameters
-        ----------
-        length_bin_idx
-            Zero-based length-bin index to extract.
-
-        Returns
-        -------
-        pandas.DataFrame
-            Counts and group/position metadata for the length bin.
-        """
-        length_bin_idx = self._validate_length_bin_idx(length_bin_idx)
-        profile = self.array_from_length_bin(length_bin_idx)
-        group_index, position_index = np.indices(profile.shape)
-
-        return pd.DataFrame(
-            {
-                "group_idx": self.profiles.group_idx[group_index.ravel()],
-                "group_name": self.profiles.group_names[group_index.ravel()],
-                "eligible_intervals": self.profiles.eligible_intervals[
-                    group_index.ravel()
-                ],
-                "length_bin": int(self.profiles.length_bin[length_bin_idx]),
-                "length_start_bp": int(self.profiles.length_start_bp[length_bin_idx]),
-                "length_end_bp": int(self.profiles.length_end_bp[length_bin_idx]),
-                "position": self.profiles.position[position_index.ravel()],
-                "position_bin_start_bp": self.profiles.position_bin_start_bp[
-                    position_index.ravel()
-                ],
-                "position_bin_end_bp": self.profiles.position_bin_end_bp[
-                    position_index.ravel()
-                ],
-                "count": profile.ravel(),
-            }
+        if with_lengths is not None and length_bin_idxs is not None:
+            raise ValueError("Use either with_lengths or length_bin_idxs, not both")
+        if with_lengths is None and length_bin_idxs is None:
+            return np.arange(len(self.profiles.length_bin), dtype=np.int64)
+        if with_lengths is not None:
+            if isinstance(with_lengths, numbers.Integral):
+                lengths = [with_lengths]
+            else:
+                try:
+                    lengths = list(with_lengths)
+                except TypeError as error:
+                    raise TypeError(
+                        "with_lengths must be an integer or sequence of integers"
+                    ) from error
+            length_bin_indices = [self._resolve_length(length) for length in lengths]
+            # Wider bins can make different query lengths select the same bin.
+            # Returning duplicated rows would make the query length look like an
+            # output dimension, so treat that as an explicit selector error.
+            validate_unique_values(length_bin_indices, "with_lengths")
+            return np.asarray(length_bin_indices, dtype=np.int64)
+        return normalize_zero_based_indices(
+            length_bin_idxs,
+            size=len(self.profiles.length_bin),
+            name="length_bin_idxs",
+            index_name="length_bin_idx",
         )
 
     def array_for_profile(self, group_idx: int, length_bin_idx: int) -> np.ndarray:
         """
-        Load counts for one group and one length bin.
+        Return midpoint position counts for one group and length bin.
 
         Use `.group_idx(group_name=)` and `.length_bin_idx(length=)` to get the
         indices for a group name and fragment length.
@@ -413,9 +448,9 @@ class MidpointProfiles:
         Parameters
         ----------
         group_idx
-            Zero-based group index to extract.
+            Group index to extract.
         length_bin_idx
-            Zero-based length-bin index to extract.
+            Length-bin index to extract.
 
         Returns
         -------
@@ -428,7 +463,7 @@ class MidpointProfiles:
 
     def array(self) -> np.ndarray:
         """
-        Load the full midpoint count tensor.
+        Return the full midpoint count tensor indexed by group, length, position.
 
         Returns
         -------
@@ -439,7 +474,7 @@ class MidpointProfiles:
 
     def array_from_group(self, group_name: str) -> np.ndarray:
         """
-        Load counts for one group.
+        Return length-bin by position counts for one group name.
 
         Parameters
         ----------
@@ -456,12 +491,12 @@ class MidpointProfiles:
 
     def array_from_group_idx(self, group_idx: int) -> np.ndarray:
         """
-        Load counts for one group index.
+        Return length-bin by position counts for one group index.
 
         Parameters
         ----------
         group_idx
-            Zero-based group index to extract.
+            Group index to extract.
 
         Returns
         -------
@@ -473,7 +508,7 @@ class MidpointProfiles:
 
     def array_from_length(self, length: int) -> np.ndarray:
         """
-        Load counts for the bin containing a fragment length.
+        Return group by position counts for the bin containing a fragment length.
 
         Parameters
         ----------
@@ -490,12 +525,12 @@ class MidpointProfiles:
 
     def array_from_length_bin(self, length_bin_idx: int) -> np.ndarray:
         """
-        Load counts for one length-bin index.
+        Return group by position counts for one length-bin index.
 
         Parameters
         ----------
         length_bin_idx
-            Zero-based length-bin index to extract.
+            Length-bin index to extract.
 
         Returns
         -------
@@ -507,7 +542,7 @@ class MidpointProfiles:
 
     def _resolve_group_name(self, group_name: str) -> int:
         """
-        Resolve a group name to its zero-based group index.
+        Resolve a group name to its group index.
 
         Parameters
         ----------
@@ -517,18 +552,17 @@ class MidpointProfiles:
         Returns
         -------
         int
-            Zero-based group index.
+            Group index.
         """
-        matches = np.flatnonzero(self.profiles.group_names == group_name)
-        if len(matches) == 0:
-            raise KeyError(f"Unknown midpoint group name: {group_name!r}")
-        if len(matches) > 1:
-            raise ValueError(f"Midpoint group name is not unique: {group_name!r}")
-        return int(matches[0])
+        return resolve_unique_match(
+            self.profiles.group_names == group_name,
+            missing_message=f"Unknown midpoint group name: {group_name!r}",
+            duplicate_message=f"Midpoint group name is not unique: {group_name!r}",
+        )
 
     def _resolve_length(self, length: int) -> int:
         """
-        Resolve a fragment length to its zero-based length-bin index.
+        Resolve a fragment length to its length-bin index.
 
         Parameters
         ----------
@@ -538,24 +572,15 @@ class MidpointProfiles:
         Returns
         -------
         int
-            Zero-based length-bin index.
+            Length-bin index.
         """
-        if not isinstance(length, numbers.Integral):
-            raise TypeError(
-                f"Fragment length must be an integer, got {type(length).__name__}"
-            )
-        length = int(length)
-        if length < 0:
-            raise ValueError(f"Fragment length must be non-negative, got {length}")
-        matches = np.flatnonzero(
+        length = validate_fragment_length(length)
+        return resolve_unique_match(
             (self.profiles.length_start_bp <= length)
-            & (length < self.profiles.length_end_bp)
+            & (length < self.profiles.length_end_bp),
+            missing_message=f"No midpoint length bin contains length {length}",
+            duplicate_message=f"Multiple midpoint length bins contain length {length}",
         )
-        if len(matches) == 0:
-            raise KeyError(f"No midpoint length bin contains length {length}")
-        if len(matches) > 1:
-            raise ValueError(f"Multiple midpoint length bins contain length {length}")
-        return int(matches[0])
 
     def _validate_group_idx(self, group_idx: int) -> int:
         """
@@ -564,14 +589,16 @@ class MidpointProfiles:
         Parameters
         ----------
         group_idx
-            Zero-based group index.
+            Group index.
 
         Returns
         -------
         int
             Validated group index.
         """
-        return _validate_index(group_idx, len(self.profiles.group_idx), "group_idx")
+        return validate_zero_based_index(
+            group_idx, len(self.profiles.group_idx), "group_idx"
+        )
 
     def _validate_length_bin_idx(self, length_bin_idx: int) -> int:
         """
@@ -580,21 +607,21 @@ class MidpointProfiles:
         Parameters
         ----------
         length_bin_idx
-            Zero-based length-bin index.
+            Length-bin index.
 
         Returns
         -------
         int
             Validated length-bin index.
         """
-        return _validate_index(
+        return validate_zero_based_index(
             length_bin_idx, len(self.profiles.length_bin), "length_bin_idx"
         )
 
 
 def read_midpoints(path: pathlib.Path | str) -> MidpointProfiles:
     """
-    Load a midpoint profile Zarr store.
+    Open a cfDNAlab midpoint profile Zarr store.
 
     Parameters
     ----------
@@ -610,6 +637,9 @@ def read_midpoints(path: pathlib.Path | str) -> MidpointProfiles:
 
 
 def _validate_zarr_store_path(path: pathlib.Path) -> None:
+    """
+    Validate that a path points to a Zarr V3 midpoint store directory.
+    """
     if not path.exists():
         raise FileNotFoundError(f"Midpoint Zarr store does not exist: {path}")
     if not path.is_dir():
@@ -627,6 +657,9 @@ def _validate_zarr_store_path(path: pathlib.Path) -> None:
 
 
 def _validate_root_metadata(store: Any) -> None:
+    """
+    Validate root attributes that identify the midpoint schema version.
+    """
     schema = store.attrs.get("cfdnalab_schema")
     if schema != "midpoint_profiles":
         raise ValueError(
@@ -647,12 +680,18 @@ def _validate_root_metadata(store: Any) -> None:
 
 
 def _validate_required_arrays(store: Any) -> None:
+    """
+    Require every array needed by the public midpoint API.
+    """
     missing = sorted(name for name in REQUIRED_ARRAYS if not _has_array(store, name))
     if missing:
         raise ValueError(f"Midpoint Zarr store is missing arrays: {missing}")
 
 
 def _has_array(store: Any, name: str) -> bool:
+    """
+    Return whether a Zarr group contains an array path.
+    """
     try:
         store[name]
     except Exception:
@@ -661,6 +700,9 @@ def _has_array(store: Any, name: str) -> bool:
 
 
 def _validate_counts_dimensions(counts: Any) -> None:
+    """
+    Require midpoint counts to use the expected named axes.
+    """
     dimension_names = tuple(getattr(counts.metadata, "dimension_names", ()) or ())
     expected = ("group", "length_bin", "position")
     if dimension_names != expected:
@@ -670,10 +712,16 @@ def _validate_counts_dimensions(counts: Any) -> None:
 
 
 def _read_array(store: Any, name: str) -> np.ndarray:
+    """
+    Load a Zarr array fully into a NumPy array.
+    """
     return np.asarray(store[name][:])
 
 
 def _read_group_names(store: Any) -> np.ndarray:
+    """
+    Read group-name labels from the group axis metadata.
+    """
     label_field = store["group"].attrs.get("label_field")
     if label_field != "group_name":
         raise ValueError(
@@ -686,6 +734,9 @@ def _read_group_names(store: Any) -> np.ndarray:
 
 
 def _validate_axis(values: np.ndarray, name: str) -> None:
+    """
+    Require an axis coordinate array to be contiguous zero-based indices.
+    """
     expected = np.arange(len(values), dtype=values.dtype)
     if not np.array_equal(values, expected):
         raise ValueError(f"{name} axis must be contiguous 0-based indices")
@@ -694,17 +745,11 @@ def _validate_axis(values: np.ndarray, name: str) -> None:
 def _validate_same_length(
     values: np.ndarray, axis_values: np.ndarray, values_name: str, axis_name: str
 ) -> None:
+    """
+    Require a metadata vector to have the same length as its axis.
+    """
     if len(values) != len(axis_values):
         raise ValueError(
             f"{values_name} length ({len(values)}) does not match "
             f"{axis_name} length ({len(axis_values)})"
         )
-
-
-def _validate_index(index: int, size: int, name: str) -> int:
-    if not isinstance(index, numbers.Integral):
-        raise TypeError(f"{name} must be an integer, got {type(index).__name__}")
-    index = int(index)
-    if index < 0 or index >= size:
-        raise IndexError(f"{name} {index} is outside 0..{size - 1}")
-    return index

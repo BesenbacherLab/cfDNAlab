@@ -24,17 +24,16 @@ def test_cfdnalab_package_reads_dense_global_end_motifs(
         np.array([1.0, 0.0, 1.0, 0.0], dtype=np.float64),
     )
     pd.testing.assert_frame_equal(
-        end_motifs.dense_data_frame(),
+        end_motifs.data_frame(),
         pd.DataFrame(
             {
+                "row_label": np.array(["global", "global", "global", "global"], dtype=object),
                 "motif_index": np.array([0, 1, 2, 3], dtype=np.int32),
                 "motif": np.array(["_A", "_C", "_G", "_T"], dtype=str),
                 "count": np.array([1.0, 0.0, 1.0, 0.0], dtype=np.float64),
             }
         ),
     )
-    with pytest.raises(ValueError, match="only available for sparse_coo output"):
-        end_motifs.sparse_coo_data_frame()
 
 
 def test_cfdnalab_package_reads_sparse_windowed_end_motifs(
@@ -61,9 +60,9 @@ def test_cfdnalab_package_reads_sparse_windowed_end_motifs(
         np.array([1.0, 0.0], dtype=np.float64),
     )
     pd.testing.assert_frame_equal(
-        end_motifs.dense_data_frame_for_motif(
-            "_A",
-            allow_densify=True,
+        end_motifs.data_frame(
+            motifs="_A",
+            densify=True,
             max_blacklisted_fraction=0.0,
         ),
         pd.DataFrame(
@@ -73,7 +72,7 @@ def test_cfdnalab_package_reads_sparse_windowed_end_motifs(
                 "start": np.array([10, 19], dtype=np.int64),
                 "end": np.array([11, 20], dtype=np.int64),
                 "blacklisted_fraction": np.array([0.0, 0.0], dtype=np.float64),
-                "motif_index": np.array([0, 0], dtype=np.int64),
+                "motif_index": np.array([0, 0], dtype=np.int32),
                 "motif": ["_A", "_A"],
                 "count": np.array([0.0, 1.0], dtype=np.float64),
             }
@@ -120,9 +119,9 @@ def test_cfdnalab_package_reads_sparse_grouped_end_motifs(
         end_motifs.dense_counts_for_group("beta", allow_densify=True),
         np.array([1.0, 2.0], dtype=np.float64),
     )
-    assert end_motifs.dense_data_frame_for_group(
-        "beta",
-        allow_densify=True,
+    assert end_motifs.data_frame(
+        groups="beta",
+        densify=True,
         max_blacklisted_fraction=0.0,
     )["count"].tolist() == [1.0, 2.0]
     np.testing.assert_allclose(
@@ -142,10 +141,13 @@ def test_cfdnalab_package_reads_sparse_grouped_end_motifs(
         ),
     )
     pd.testing.assert_frame_equal(
-        end_motifs.sparse_coo_data_frame(),
+        end_motifs.data_frame(),
         pd.DataFrame(
             {
-                "row": np.array([0, 0, 1], dtype=np.int32),
+                "group_idx": np.array([0, 0, 1], dtype=np.int32),
+                "group_name": np.array(["beta", "beta", "alpha"], dtype=str),
+                "eligible_windows": np.array([2, 2, 1], dtype=np.int32),
+                "blacklisted_fraction": np.array([0.0, 0.0, 0.0], dtype=np.float64),
                 "motif_index": np.array([0, 1, 0], dtype=np.int32),
                 "motif": np.array(["_A", "_G", "_A"], dtype=str),
                 "count": np.array([1.0, 2.0, 1.0], dtype=np.float64),
@@ -159,7 +161,7 @@ def test_cfdnalab_package_reads_sparse_grouped_end_motifs(
     np.testing.assert_array_equal(beta_coo.col, np.array([0, 1], dtype=np.int32))
     np.testing.assert_allclose(beta_coo.data, np.array([1.0, 2.0], dtype=np.float64))
 
-    alpha_frame = end_motifs.dense_data_frame_for_group("alpha", allow_densify=True)
+    alpha_frame = end_motifs.data_frame(groups="alpha", densify=True)
     assert alpha_frame["group_name"].unique().tolist() == ["alpha"]
     assert alpha_frame["motif"].tolist() == ["_A", "_G"]
     assert alpha_frame["count"].tolist() == [1.0, 0.0]

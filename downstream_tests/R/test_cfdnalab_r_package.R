@@ -20,7 +20,7 @@ test_that("R helper package reads midpoint profiles", {
     c(0L, 2L, 4L, 6L, 8L)
   )
 
-  beta_profile <- profile_data_frame(midpoints, group = "beta-site", length_bin_idx = 2L)
+  beta_profile <- midpoint_data_frame(midpoints, groups = "beta-site", length_bin_idxs = 2L)
   expect_identical(beta_profile$position_idx, c(1L, 2L, 3L, 4L, 5L))
   expect_equal(beta_profile$count, c(0, 0, 1.5, 0, 0.5))
   expect_equal(
@@ -43,7 +43,7 @@ test_that("R helper package reads dense global end motifs", {
     c(1, 0, 1, 0)
   )
   expect_equal(
-    dense_data_frame(dense_global)$count,
+    end_motif_data_frame(dense_global)$count,
     c(1, 0, 1, 0)
   )
 })
@@ -62,16 +62,16 @@ test_that("R helper package reads sparse windowed end motifs", {
     matrix(c(0, 1, 1, 0), nrow = 2, byrow = TRUE)
   )
   expect_equal(
-    dense_data_frame_for_motif(
+    end_motif_data_frame(
       sparse_windowed,
-      "_A",
-      allow_densify = TRUE,
+      motifs = "_A",
+      densify = TRUE,
       max_blacklisted_fraction = 0
     )$count,
     c(0, 1)
   )
-  expect_equal(sparse_data_frame_for_window(sparse_windowed, 1L)$count, 1)
-  expect_equal(sparse_data_frame_for_motif(sparse_windowed, "_G")$count, 1)
+  expect_equal(end_motif_data_frame(sparse_windowed, window_idxs = 1L)$count, 1)
+  expect_equal(end_motif_data_frame(sparse_windowed, motifs = "_G")$count, 1)
 })
 
 test_that("R helper package reads sparse grouped end motifs", {
@@ -88,12 +88,12 @@ test_that("R helper package reads sparse grouped end motifs", {
     as.matrix(sparse_counts_matrix(sparse_grouped)),
     matrix(c(1, 2, 1, 0, 0, 0), nrow = 3, byrow = TRUE)
   )
-  expect_equal(sparse_data_frame_for_group(sparse_grouped, "beta")$count, c(1, 2))
+  expect_equal(end_motif_data_frame(sparse_grouped, groups = "beta")$count, c(1, 2))
   expect_equal(
-    dense_data_frame_for_group(
+    end_motif_data_frame(
       sparse_grouped,
-      "beta",
-      allow_densify = TRUE,
+      groups = "beta",
+      densify = TRUE,
       max_blacklisted_fraction = 0
     )$count,
     c(1, 2)
@@ -112,7 +112,6 @@ test_that("R helper package reads global length counts", {
       length_end_bp = c(50L, 70L, 100L),
       length_midpoint_bp = c(40, 60, 85),
       length_width_bp = c(20L, 20L, 30L),
-      count_column = c("count_30_50", "count_50_70", "count_70_100"),
       stringsAsFactors = FALSE
     ),
     ignore_attr = TRUE
@@ -152,8 +151,17 @@ test_that("R helper package reads windowed length counts", {
     tolerance = 1e-8
   )
 
-  selected <- length_data_frame(lengths, window_idx = c(2L, 4L), value = "fraction", keep_wide = TRUE)
-  expect_equal(names(selected), c("window_idx", "chrom", "start", "end", "blacklisted_fraction", "fraction_30_50", "fraction_50_70", "fraction_70_100"))
+  selected <- length_data_frame(lengths, window_idxs = c(2L, 4L), value = "fraction", keep_wide = TRUE)
+  expect_equal(names(selected), c(
+    "window_idx",
+    "chrom",
+    "start",
+    "end",
+    "blacklisted_fraction",
+    "fraction_30_50",
+    "fraction_50_70",
+    "fraction_70_100"
+  ))
   expect_equal(selected$fraction_30_50, c(0, 1), tolerance = 1e-8)
   expect_equal(selected$fraction_50_70, c(1, 0), tolerance = 1e-8)
   expect_equal(selected$fraction_70_100, c(0, 0), tolerance = 1e-8)
@@ -179,11 +187,19 @@ test_that("R helper package reads grouped length counts", {
   )
   expect_identical(group_idx(lengths, "gamma"), 3L)
 
-  beta <- length_data_frame(lengths, group = "beta")
+  beta <- length_data_frame(lengths, groups = "beta")
   expect_equal(beta$count, c(2, 0, 1), tolerance = 1e-8)
 
-  wide_density <- length_data_frame(lengths, group = c("alpha", "zero"), value = "density", keep_wide = TRUE)
-  expect_equal(names(wide_density), c("group_idx", "group_name", "eligible_windows", "blacklisted_fraction", "density_30_50", "density_50_70", "density_70_100"))
+  wide_density <- length_data_frame(lengths, groups = c("alpha", "zero"), value = "density", keep_wide = TRUE)
+  expect_equal(names(wide_density), c(
+    "group_idx",
+    "group_name",
+    "eligible_windows",
+    "blacklisted_fraction",
+    "density_30_50",
+    "density_50_70",
+    "density_70_100"
+  ))
   expect_equal(wide_density$density_30_50, c(0, NA), tolerance = 1e-8)
   expect_equal(wide_density$density_50_70, c(1 / 20, NA), tolerance = 1e-8)
   expect_equal(wide_density$density_70_100, c(0, NA), tolerance = 1e-8)
@@ -239,8 +255,8 @@ test_that("R helper package reads no-blacklist grouped length counts", {
     ),
     ignore_attr = TRUE
   )
-  expect_equal(length_data_frame(lengths, group = "beta")$count, c(2, 0, 1), tolerance = 1e-8)
-  expect_equal(length_data_frame(lengths, group_idx = 4L, value = "fraction")$fraction, c(NA, NA, NA))
+  expect_equal(length_data_frame(lengths, groups = "beta")$count, c(2, 0, 1), tolerance = 1e-8)
+  expect_equal(length_data_frame(lengths, group_idxs = 4L, value = "fraction")$fraction, c(NA, NA, NA))
   expect_error(
     length_data_frame(lengths, max_blacklisted_fraction = 0.5),
     "has no blacklisted_fraction column"

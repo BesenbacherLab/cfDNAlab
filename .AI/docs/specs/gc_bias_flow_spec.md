@@ -75,7 +75,7 @@ This spec describes the current `ref-gc-bias` -> `gc-bias` -> downstream `--gc-f
 
 - Optional blacklist BED files are loaded into a chromosome map.
 - For each tile, blacklisted positions are masked to `N` in the loaded reference sequence before GC prefixes are built.
-- A simulated reference fragment is counted only when its end-trimmed GC interval has full ACGT support. Because the reference counter is called with `min_acgt_fraction = 1.0`, any `N` or blacklisted base in the trimmed interval excludes that fragment-length/start combination.
+- A simulated reference fragment is counted only when its end-trimmed GC interval has full ACGT support. Because the reference counter is called with `min_acgt_fraction = 1.0`, any `N` or blacklisted base in the trimmed interval excludes that fragment length/start combination.
 - Reference ACGT support used for support-mask scaling is counted only in the tile core, clipped to the active reference windows, to avoid double-counting tile halos.
 
 ### Counting Shape

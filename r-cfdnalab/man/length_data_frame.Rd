@@ -13,13 +13,12 @@ length_data_frame(x, ...)
   x,
   value = c("count", "fraction", "density"),
   keep_wide = FALSE,
-  max_blacklisted_fraction = 1,
   ...
 )
 
 \method{length_data_frame}{cfdnalab_windowed_length_counts}(
   x,
-  window_idx = NULL,
+  window_idxs = NULL,
   value = c("count", "fraction", "density"),
   keep_wide = FALSE,
   max_blacklisted_fraction = 1,
@@ -28,8 +27,8 @@ length_data_frame(x, ...)
 
 \method{length_data_frame}{cfdnalab_grouped_length_counts}(
   x,
-  group = NULL,
-  group_idx = NULL,
+  groups = NULL,
+  group_idxs = NULL,
   value = c("count", "fraction", "density"),
   keep_wide = FALSE,
   max_blacklisted_fraction = 1,
@@ -53,15 +52,15 @@ fraction per base pair so bins with different widths are comparable.
 column per length bin. If \code{FALSE}, return one row per output unit and
 length bin.}
 
+\item{window_idxs}{Optional one-based window index vector.}
+
 \item{max_blacklisted_fraction}{Optional maximum \code{blacklisted_fraction} in
 0..1 to retain before reshaping. The default \code{1.0} keeps all rows.}
 
-\item{window_idx}{Optional one-based window index vector.}
+\item{groups}{Optional group name vector. Use either \code{groups} or
+\code{group_idxs}, not both.}
 
-\item{group}{Optional group name or one-based group index vector. Use either
-\code{group} or \code{group_idx}, not both.}
-
-\item{group_idx}{Optional one-based group index vector.}
+\item{group_idxs}{Optional one-based group index vector.}
 }
 \value{
 A data frame with length-bin metadata and count-derived values.

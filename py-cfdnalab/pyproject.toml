@@ -24,6 +24,7 @@ dependencies = [
     "pandas",
     "scipy",
     "zarr>=3,<4",
+    "zstandard",
 ]
 
 [project.urls]

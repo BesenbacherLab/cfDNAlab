@@ -21,7 +21,7 @@ enum LengthBinDefinition<'a> {
 
 /// Resolved fragment length output axis.
 ///
-/// Commands store fragment-length output columns as half-open length bins. The axis owns those
+/// Commands store fragment length output columns as half-open length bins. The axis owns those
 /// edges and a lookup table from absolute fragment length to output column. Exact per-bp bins and
 /// wider bins therefore use the same column resolution path.
 #[derive(Debug, Clone, PartialEq, Eq)]

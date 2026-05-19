@@ -31,9 +31,9 @@ test_that("midpoint loader reads locally generated schema fixture", {
     c(0L, 5L, 10L, 15L)
   )
 
-  profile <- profile_data_frame(midpoints, group = "long_group", length = 60)
+  profile <- midpoint_data_frame(midpoints, groups = "long_group", with_lengths = 60)
   expect_equal(profile$count, c(5, 0, 0, 6.5), tolerance = 1e-8)
-  profile_by_index <- profile_data_frame(midpoints, group_idx = 1L, length_bin_idx = 1L)
+  profile_by_index <- midpoint_data_frame(midpoints, group_idxs = 1L, length_bin_idxs = 1L)
   expect_equal(profile_by_index$count, c(0, 1.5, 0, 2.25), tolerance = 1e-8)
   expect_false(any(grepl("idx0|index0", names(profile_by_index))))
   expect_equal(
@@ -43,8 +43,8 @@ test_that("midpoint loader reads locally generated schema fixture", {
   )
   expect_equal(dim(midpoint_array(midpoints)), c(2L, 2L, 4L))
   expect_error(
-    profile_data_frame(midpoints, group_idx = 0L, length_bin_idx = 1L),
-    "group_idx 0 is outside 1..2",
+    midpoint_data_frame(midpoints, group_idxs = 0L, length_bin_idxs = 1L),
+    "group_idxs contains values outside 1..2",
     fixed = TRUE
   )
   expect_error(
@@ -111,7 +111,7 @@ test_that("midpoint loader reads metadata and one profile", {
     fixed = TRUE
   )
 
-  profile <- profile_data_frame(midpoints, group = "beta-site", length_bin_idx = 2L)
+  profile <- midpoint_data_frame(midpoints, groups = "beta-site", length_bin_idxs = 2L)
   expect_equal(profile$group_idx, rep(2L, 5L))
   expect_equal(profile$group_name, rep("beta-site", 5L))
   expect_equal(profile$length_bin_idx, rep(2L, 5L))

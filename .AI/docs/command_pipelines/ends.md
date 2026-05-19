@@ -8,7 +8,7 @@ Count fragment end motifs from a BAM file. The command extracts bases just outsi
 flowchart TD
     input["Input BAM<br/>coordinate-sorted and indexed"]
     setup["Define motif outputs<br/>inside/outside bases and windows"]
-    tiles["Scan genome in tiles<br/>with fragment-length halos"]
+    tiles["Scan genome in tiles<br/>with fragment length halos"]
     fragments["Create fragments<br/>pair mates or use each read as a fragment"]
     ends["Resolve fragment ends<br/>aligned, clipped, or raw-boundary mode"]
     filters["Keep usable end events<br/>MAPQ, length, indels, base quality, and blacklist rules"]

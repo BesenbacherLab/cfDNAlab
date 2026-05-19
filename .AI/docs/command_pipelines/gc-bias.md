@@ -10,7 +10,7 @@ flowchart TD
     reference["Reference inputs<br/>2bit genome and ref GC package"]
     setup["Load correction frame<br/>length range, GC bins, smoothing settings"]
     windows["Choose contribution windows<br/>global, fixed bins, or BED windows"]
-    tiles["Scan BAM in tiles<br/>with fragment-length halos"]
+    tiles["Scan BAM in tiles<br/>with fragment length halos"]
     fragments["Create fragments<br/>pair mates or use each read as a fragment"]
     gc["Measure fragment GC<br/>from the reference sequence"]
     assign["Assign fragments to windows<br/>overlap, containment, midpoint, or proportion"]

@@ -384,194 +384,114 @@ dense_counts_vector.cfdnalab_global_end_motif_counts <- function(
 }
 
 #' @export
-#' @rdname dense_data_frame
-#' @param allow_densify If `TRUE`, allow sparse stores to be converted to dense
-#'   in memory before returning the data frame.
-dense_data_frame.cfdnalab_global_end_motif_counts <- function(
+#' @rdname end_motif_data_frame
+#' @param densify If `TRUE`, sparse outputs add explicit zero-count rows for
+#'   selected observed motifs. Dense outputs ignore this option.
+#' @param motifs Optional motif label vector. Use either `motifs` or
+#'   `motif_idxs`, not both.
+#' @param motif_idxs Optional one-based motif index vector.
+end_motif_data_frame.cfdnalab_global_end_motif_counts <- function(
   x,
-  allow_densify = FALSE,
+  densify = FALSE,
+  motifs = NULL,
+  motif_idxs = NULL,
   ...
 ) {
   cf_reject_unused_arguments(...)
-  data.frame(
-    motifs(x),
-    count = unname(dense_counts_vector(x, allow_densify = allow_densify)),
-    stringsAsFactors = FALSE
-  )
-}
-
-#' @export
-#' @rdname dense_data_frame_for_window
-#' @param window_idx One-based window index.
-#' @param allow_densify If `TRUE`, allow sparse stores to be converted to dense
-#'   in memory before returning the data frame.
-#' @param max_blacklisted_fraction Maximum row `blacklisted_fraction` in 0..1
-#'   to retain before returning counts. The default `1.0` keeps all selected
-#'   rows.
-dense_data_frame_for_window.cfdnalab_windowed_end_motif_counts <- function(
-  x,
-  window_idx,
-  allow_densify = FALSE,
-  max_blacklisted_fraction = 1.0,
-  ...
-) {
-  cf_reject_unused_arguments(...)
-  window_idx <- cf_validate_r_index(window_idx, length(x$row_idx0), "window_idx")
-  row_indices <- cf_apply_end_motif_blacklist_filter(x, window_idx, max_blacklisted_fraction)
-  cf_dense_end_motif_data_frame_for_rows(x, row_indices, allow_densify)
-}
-
-#' @export
-#' @rdname dense_data_frame_for_group
-#' @param group Group name or one-based group index.
-#' @param allow_densify If `TRUE`, allow sparse stores to be converted to dense
-#'   in memory before returning the data frame.
-#' @param max_blacklisted_fraction Maximum row `blacklisted_fraction` in 0..1
-#'   to retain before returning counts. The default `1.0` keeps all selected
-#'   rows.
-dense_data_frame_for_group.cfdnalab_grouped_end_motif_counts <- function(
-  x,
-  group,
-  allow_densify = FALSE,
-  max_blacklisted_fraction = 1.0,
-  ...
-) {
-  cf_reject_unused_arguments(...)
-  group_idx0 <- cf_resolve_end_motif_group_idx0(x, group)
-  group_r_index <- cf_index0_to_r_index(group_idx0)
-  row_indices <- cf_apply_end_motif_blacklist_filter(x, group_r_index, max_blacklisted_fraction)
-  cf_dense_end_motif_data_frame_for_rows(x, row_indices, allow_densify)
-}
-
-#' @export
-#' @rdname dense_data_frame_for_motif
-#' @param motif Motif label.
-#' @param allow_densify If `TRUE`, allow sparse stores to be converted to dense
-#'   in memory before returning the data frame.
-#' @param max_blacklisted_fraction Maximum row `blacklisted_fraction` in 0..1
-#'   to retain before returning counts. The default `1.0` keeps all selected
-#'   rows.
-dense_data_frame_for_motif.cfdnalab_end_motif_counts <- function(
-  x,
-  motif,
-  allow_densify = FALSE,
-  max_blacklisted_fraction = 1.0,
-  ...
-) {
-  cf_reject_unused_arguments(...)
-  motif_idx0 <- cf_resolve_end_motif_idx0(x, motif)
-  row_indices <- cf_apply_end_motif_blacklist_filter(
+  cf_end_motif_data_frame(
     x,
-    seq_len(length(x$row_idx0)),
-    max_blacklisted_fraction
-  )
-  counts <- dense_counts_matrix(x, allow_densify = allow_densify)[
-    row_indices,
-    cf_index0_to_r_index(motif_idx0),
-    drop = TRUE
-  ]
-  data.frame(
-    x$row_metadata[row_indices, , drop = FALSE],
-    # Use length-matched vectors so stricter blacklist filters can return a
-    # valid zero-row data frame when every selected row is filtered out.
-    motif_idx = rep(cf_index0_to_r_index(motif_idx0), length(row_indices)),
-    motif = rep(motif, length(row_indices)),
-    count = as.vector(counts),
-    stringsAsFactors = FALSE
+    row_indices = seq_len(length(x$row_idx0)),
+    motif_indices = cf_resolve_end_motif_indices(x, motifs, motif_idxs),
+    densify = densify,
+    max_blacklisted_fraction = 1.0
   )
 }
 
 #' @export
-#' @rdname sparse_data_frame
-sparse_data_frame.cfdnalab_end_motif_counts <- function(x, ...) {
+#' @rdname end_motif_data_frame
+#' @param window_idxs Optional one-based window index vector for windowed output.
+#' @param max_blacklisted_fraction Maximum row `blacklisted_fraction` in 0..1
+#'   to retain before returning counts. The default `1.0` keeps all selected
+#'   rows.
+end_motif_data_frame.cfdnalab_windowed_end_motif_counts <- function(
+  x,
+  window_idxs = NULL,
+  densify = FALSE,
+  motifs = NULL,
+  motif_idxs = NULL,
+  max_blacklisted_fraction = 1.0,
+  ...
+) {
   cf_reject_unused_arguments(...)
-  if (!identical(x$storage_mode, "sparse_coo")) {
-    stop("sparse_data_frame() is only available for sparse_coo output", call. = FALSE)
+  row_indices <- if (is.null(window_idxs)) {
+    seq_len(length(x$row_idx0))
+  } else {
+    window_indices <- cf_validate_r_indices(
+      window_idxs,
+      length(x$row_idx0),
+      "window_idxs"
+    )
+    cf_validate_unique_values(window_indices, "window_idxs")
+    window_indices
   }
-  row_idx0 <- as.integer(x$sparse$row_idx0)
-  motif_idx0 <- as.integer(x$sparse$motif_idx0)
-  data.frame(
-    row_idx = cf_index0_to_r_index(row_idx0),
-    motif_idx = cf_index0_to_r_index(motif_idx0),
-    motif = x$motif[cf_index0_to_r_index(motif_idx0)],
-    count = as.numeric(x$sparse$count),
-    stringsAsFactors = FALSE
-  )
-}
-
-#' @export
-#' @rdname sparse_data_frame_for_window
-#' @param window_idx One-based window index.
-#' @param max_blacklisted_fraction Maximum row `blacklisted_fraction` in 0..1
-#'   to retain before returning counts. The default `1.0` keeps all selected
-#'   rows.
-sparse_data_frame_for_window.cfdnalab_windowed_end_motif_counts <- function(
-  x,
-  window_idx,
-  max_blacklisted_fraction = 1.0,
-  ...
-) {
-  cf_reject_unused_arguments(...)
-  window_idx <- cf_validate_r_index(window_idx, length(x$row_idx0), "window_idx")
-  row_indices <- cf_apply_end_motif_blacklist_filter(x, window_idx, max_blacklisted_fraction)
-  cf_sparse_data_frame_for_row_indices(x, row_indices)
-}
-
-#' @export
-#' @rdname sparse_data_frame_for_group
-#' @param group Group name or one-based group index.
-#' @param max_blacklisted_fraction Maximum row `blacklisted_fraction` in 0..1
-#'   to retain before returning counts. The default `1.0` keeps all selected
-#'   rows.
-sparse_data_frame_for_group.cfdnalab_grouped_end_motif_counts <- function(
-  x,
-  group,
-  max_blacklisted_fraction = 1.0,
-  ...
-) {
-  cf_reject_unused_arguments(...)
-  group_idx0 <- cf_resolve_end_motif_group_idx0(x, group)
-  row_indices <- cf_apply_end_motif_blacklist_filter(
+  cf_end_motif_data_frame(
     x,
-    cf_index0_to_r_index(group_idx0),
-    max_blacklisted_fraction
+    row_indices = row_indices,
+    motif_indices = cf_resolve_end_motif_indices(x, motifs, motif_idxs),
+    densify = densify,
+    max_blacklisted_fraction = max_blacklisted_fraction
   )
-  cf_sparse_data_frame_for_row_indices(x, row_indices)
 }
 
 #' @export
-#' @rdname sparse_data_frame_for_motif
-#' @param motif Motif label.
-#' @param max_blacklisted_fraction Maximum row `blacklisted_fraction` in 0..1
-#'   to retain before returning counts. The default `1.0` keeps all selected
-#'   rows.
-sparse_data_frame_for_motif.cfdnalab_end_motif_counts <- function(
+#' @rdname end_motif_data_frame
+#' @param groups Optional group name vector for grouped output. Use either
+#'   `groups` or `group_idxs`, not both.
+#' @param group_idxs Optional one-based group index vector for grouped output.
+end_motif_data_frame.cfdnalab_grouped_end_motif_counts <- function(
   x,
-  motif,
+  groups = NULL,
+  group_idxs = NULL,
+  densify = FALSE,
+  motifs = NULL,
+  motif_idxs = NULL,
   max_blacklisted_fraction = 1.0,
   ...
 ) {
   cf_reject_unused_arguments(...)
-  motif_idx0 <- cf_resolve_end_motif_idx0(x, motif)
-  if (!identical(x$storage_mode, "sparse_coo")) {
-    stop("sparse_data_frame_for_motif() is only available for sparse_coo output", call. = FALSE)
+  row_indices <- cf_resolve_end_motif_group_indices(x, groups, group_idxs)
+  cf_end_motif_data_frame(
+    x,
+    row_indices = row_indices,
+    motif_indices = cf_resolve_end_motif_indices(x, motifs, motif_idxs),
+    densify = densify,
+    max_blacklisted_fraction = max_blacklisted_fraction
+  )
+}
+
+#' Shared implementation for mode-specific end-motif data-frame methods.
+#'
+#' @param x End-motif object.
+#' @param row_indices One-based row indices.
+#' @param motif_indices One-based motif indices.
+#' @param densify Whether to densify sparse stores.
+#' @param max_blacklisted_fraction Maximum blacklist fraction.
+#'
+#' @return A data frame.
+#' @noRd
+cf_end_motif_data_frame <- function(
+  x,
+  row_indices,
+  motif_indices,
+  densify,
+  max_blacklisted_fraction
+) {
+  cf_validate_scalar_logical(densify, "densify")
+  row_indices <- cf_apply_end_motif_blacklist_filter(x, row_indices, max_blacklisted_fraction)
+  if (identical(x$storage_mode, "sparse_coo") && !isTRUE(densify)) {
+    return(cf_stored_end_motif_data_frame_for_indices(x, row_indices, motif_indices))
   }
-  row_indices <- cf_apply_end_motif_blacklist_filter(
-    x,
-    seq_len(length(x$row_idx0)),
-    max_blacklisted_fraction
-  )
-  matches <- as.integer(x$sparse$motif_idx0) == motif_idx0
-  matches <- matches & cf_index0_to_r_index(as.integer(x$sparse$row_idx0)) %in% row_indices
-  row_idx0 <- as.integer(x$sparse$row_idx0[matches])
-  data.frame(
-    x$row_metadata[cf_index0_to_r_index(row_idx0), , drop = FALSE],
-    motif_idx = rep(cf_index0_to_r_index(motif_idx0), length(row_idx0)),
-    motif = rep(motif, length(row_idx0)),
-    count = as.numeric(x$sparse$count[matches]),
-    row.names = NULL,
-    stringsAsFactors = FALSE
-  )
+  cf_complete_end_motif_data_frame_for_indices(x, row_indices, motif_indices, densify)
 }
 
 #' Apply a blacklist fraction filter to end-motif row indices.
@@ -586,90 +506,171 @@ cf_apply_end_motif_blacklist_filter <- function(x, row_indices, max_blacklisted_
   cf_apply_row_blacklist_filter(x$row_metadata, row_indices, max_blacklisted_fraction)
 }
 
-#' Build a dense end-motif data frame for selected rows.
+#' Resolve grouped end-motif selectors to one-based row indices.
+#'
+#' @param x Grouped end-motif object.
+#' @param groups Optional group names.
+#' @param group_idxs Optional one-based group indices.
+#'
+#' @return One-based row indices.
+#' @noRd
+cf_resolve_end_motif_group_indices <- function(x, groups, group_idxs) {
+  if (!is.null(groups) && !is.null(group_idxs)) {
+    stop("Use either groups or group_idxs, not both", call. = FALSE)
+  }
+  if (!is.null(groups)) {
+    cf_validate_character_vector(groups, "groups")
+    cf_validate_unique_values(groups, "groups")
+    return(vapply(
+      groups,
+      function(group_name) {
+        cf_find_unique_value_index(
+          x$row_metadata$group_name,
+          group_name,
+          "Unknown end-motif group name: ",
+          "End-motif group name is not unique: "
+        )
+      },
+      integer(1L),
+      USE.NAMES = FALSE
+    ))
+  }
+  if (!is.null(group_idxs)) {
+    group_indices <- cf_validate_r_indices(
+      group_idxs,
+      length(x$row_idx0),
+      "group_idxs"
+    )
+    cf_validate_unique_values(group_indices, "group_idxs")
+    return(group_indices)
+  }
+  seq_len(length(x$row_idx0))
+}
+
+#' Resolve end-motif selectors to one-based motif indices.
+#'
+#' @param x End-motif object.
+#' @param motifs Optional motif labels.
+#' @param motif_idxs Optional one-based motif indices.
+#'
+#' @return One-based motif indices.
+#' @noRd
+cf_resolve_end_motif_indices <- function(x, motifs, motif_idxs) {
+  if (!is.null(motifs) && !is.null(motif_idxs)) {
+    stop("Use either motifs or motif_idxs, not both", call. = FALSE)
+  }
+  if (!is.null(motifs)) {
+    cf_validate_character_vector(motifs, "motifs")
+    cf_validate_unique_values(motifs, "motifs")
+    return(vapply(
+      motifs,
+      function(motif) {
+        motif_idx(x, motif)
+      },
+      integer(1L),
+      USE.NAMES = FALSE
+    ))
+  }
+  if (!is.null(motif_idxs)) {
+    motif_indices <- cf_validate_r_indices(
+      motif_idxs,
+      length(x$motif_idx0),
+      "motif_idxs"
+    )
+    cf_validate_unique_values(motif_indices, "motif_idxs")
+    return(motif_indices)
+  }
+  seq_along(x$motif_idx0)
+}
+
+#' Build a complete end-motif data frame for selected rows and motifs.
 #'
 #' @param x End-motif object.
 #' @param row_indices One-based row indices.
-#' @param allow_densify Whether to allow sparse-store densification.
+#' @param motif_indices One-based motif indices.
+#' @param densify Whether to allow sparse-store densification.
 #'
 #' @return A data frame with one row per selected row and motif.
 #' @noRd
-cf_dense_end_motif_data_frame_for_rows <- function(x, row_indices, allow_densify) {
-  counts <- dense_counts_matrix(x, allow_densify = allow_densify)[row_indices, , drop = FALSE]
+cf_complete_end_motif_data_frame_for_indices <- function(x, row_indices, motif_indices, densify) {
+  if (length(row_indices) == 0L || length(motif_indices) == 0L) {
+    return(cf_empty_end_motif_data_frame(x))
+  }
+  counts <- dense_counts_matrix(x, allow_densify = densify)[
+    row_indices,
+    motif_indices,
+    drop = FALSE
+  ]
   num_rows <- length(row_indices)
-  num_motifs <- length(x$motif)
-  motif_metadata <- motifs(x)[rep(seq_len(num_motifs), times = num_rows), , drop = FALSE]
+  num_motifs <- length(motif_indices)
   metadata <- x$row_metadata[row_indices, , drop = FALSE]
   metadata <- metadata[rep(seq_len(num_rows), each = num_motifs), , drop = FALSE]
+  motif_metadata <- motifs(x)[motif_indices, , drop = FALSE]
+  motif_metadata <- motif_metadata[rep(seq_len(num_motifs), times = num_rows), , drop = FALSE]
   data.frame(
+    metadata,
     motif_metadata,
     count = as.vector(t(counts)),
-    metadata,
     row.names = NULL,
     stringsAsFactors = FALSE
   )
 }
 
-#' Return sparse non-zero count rows for one count row.
+#' Build an end-motif data frame from stored COO rows.
 #'
-#' @param x A cfDNAlab end-motif object.
-#' @param row_idx0 Internal zero-based row index.
-#'
-#' @return A data frame with one row per stored non-zero count.
-#' @noRd
-cf_sparse_data_frame_for_row_idx0 <- function(x, row_idx0) {
-  row_idx0 <- cf_validate_index0(row_idx0, length(x$row_idx0), "row_idx0")
-  cf_sparse_data_frame_for_row_indices(x, cf_index0_to_r_index(row_idx0))
-}
-
-#' Return sparse non-zero count rows for selected count rows.
-#'
-#' @param x A cfDNAlab end-motif object.
+#' @param x End-motif object.
 #' @param row_indices One-based row indices.
+#' @param motif_indices One-based motif indices.
 #'
 #' @return A data frame with one row per stored non-zero count.
 #' @noRd
-cf_sparse_data_frame_for_row_indices <- function(x, row_indices) {
-  if (!identical(x$storage_mode, "sparse_coo")) {
-    stop("Sparse row data frames are only available for sparse_coo output", call. = FALSE)
+cf_stored_end_motif_data_frame_for_indices <- function(x, row_indices, motif_indices) {
+  if (length(row_indices) == 0L || length(motif_indices) == 0L) {
+    return(cf_empty_end_motif_data_frame(x))
   }
-  row_idx0 <- cf_r_index_to_index0(row_indices)
-  matches <- as.integer(x$sparse$row_idx0) %in% row_idx0
-  motif_idx0 <- as.integer(x$sparse$motif_idx0[matches])
-  matched_row_indices <- cf_index0_to_r_index(as.integer(x$sparse$row_idx0[matches]))
+  selected_row_idx0 <- cf_r_index_to_index0(row_indices)
+  selected_motif_idx0 <- cf_r_index_to_index0(motif_indices)
+  sparse_row_idx0 <- as.integer(x$sparse$row_idx0)
+  sparse_motif_idx0 <- as.integer(x$sparse$motif_idx0)
+  matches <- sparse_row_idx0 %in% selected_row_idx0 &
+    sparse_motif_idx0 %in% selected_motif_idx0
+  if (!any(matches)) {
+    return(cf_empty_end_motif_data_frame(x))
+  }
+  matched_row_idx0 <- sparse_row_idx0[matches]
+  matched_motif_idx0 <- sparse_motif_idx0[matches]
+  sort_order <- order(
+    match(matched_row_idx0, selected_row_idx0),
+    match(matched_motif_idx0, selected_motif_idx0)
+  )
+  matched_row_idx0 <- matched_row_idx0[sort_order]
+  matched_motif_idx0 <- matched_motif_idx0[sort_order]
+  matched_counts <- as.numeric(x$sparse$count[matches])[sort_order]
+  matched_row_indices <- cf_index0_to_r_index(matched_row_idx0)
+  matched_motif_indices <- cf_index0_to_r_index(matched_motif_idx0)
   data.frame(
     x$row_metadata[matched_row_indices, , drop = FALSE],
-    motif_idx = cf_index0_to_r_index(motif_idx0),
-    motif = x$motif[cf_index0_to_r_index(motif_idx0)],
-    count = as.numeric(x$sparse$count[matches]),
+    motifs(x)[matched_motif_indices, , drop = FALSE],
+    count = matched_counts,
     row.names = NULL,
     stringsAsFactors = FALSE
   )
 }
 
-#' Resolve a grouped end-motif group selector.
+#' Build an empty end-motif data frame with public columns.
 #'
-#' @param x A `cfdnalab_grouped_end_motif_counts` object.
-#' @param group Group name or one-based group index.
+#' @param x End-motif object.
 #'
-#' @return A zero-based group index.
+#' @return A zero-row data frame.
 #' @noRd
-cf_resolve_end_motif_group_idx0 <- function(x, group) {
-  if (is.character(group)) {
-    return(cf_r_index_to_index0(group_idx(x, group)))
-  }
-  cf_r_index_to_index0(cf_validate_r_index(group, length(x$row_idx0), "group"))
-}
-
-#' Resolve an end-motif selector.
-#'
-#' @param x A `cfdnalab_end_motif_counts` object.
-#' @param motif Motif label.
-#'
-#' @return A zero-based motif index.
-#' @noRd
-cf_resolve_end_motif_idx0 <- function(x, motif) {
-  cf_r_index_to_index0(motif_idx(x, motif))
+cf_empty_end_motif_data_frame <- function(x) {
+  data.frame(
+    x$row_metadata[integer(0), , drop = FALSE],
+    motifs(x)[integer(0), , drop = FALSE],
+    count = numeric(),
+    row.names = NULL,
+    stringsAsFactors = FALSE
+  )
 }
 
 #' Print an end-motif object.

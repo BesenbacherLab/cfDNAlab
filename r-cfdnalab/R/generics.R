@@ -93,6 +93,9 @@ group_idx <- function(x, ...) {
 #' @param ... Method-specific lookup arguments.
 #'
 #' @return A scalar one-based integer length-bin index.
+#'
+#' @details
+#' Errors if no length bin contains the requested fragment length.
 #' @export
 length_bin_idx <- function(x, ...) {
   UseMethod("length_bin_idx")
@@ -142,15 +145,16 @@ profile_array <- function(x, ...) {
   UseMethod("profile_array")
 }
 
-#' Return one midpoint profile as a data frame.
+#' Return midpoint profiles as a data frame.
 #'
 #' @param x A cfDNAlab midpoint-profile object.
 #' @param ... Method-specific profile selection arguments.
 #'
-#' @return A data frame with one row per position bin.
+#' @return A data frame with one row per selected group, length bin, and
+#'   position bin.
 #' @export
-profile_data_frame <- function(x, ...) {
-  UseMethod("profile_data_frame")
+midpoint_data_frame <- function(x, ...) {
+  UseMethod("midpoint_data_frame")
 }
 
 #' Return the full midpoint count array.
@@ -226,60 +230,19 @@ dense_counts_vector <- function(x, ...) {
   UseMethod("dense_counts_vector")
 }
 
-#' Return dense end-motif counts as a data frame.
+#' Return end-motif counts as a data frame.
 #'
-#' Sparse stores are not densified unless the method explicitly receives
-#' `allow_densify = TRUE`.
-#'
-#' @param x A cfDNAlab end-motif object.
-#' @param ... Method-specific arguments.
-#'
-#' @return A data frame containing motif metadata and counts.
-#' @export
-dense_data_frame <- function(x, ...) {
-  UseMethod("dense_data_frame")
-}
-
-#' Return dense end-motif counts for one window.
-#'
-#' Sparse stores are not densified unless the method explicitly receives
-#' `allow_densify = TRUE`.
-#'
-#' @param x A cfDNAlab windowed end-motif object.
-#' @param ... Method-specific window selection arguments.
-#'
-#' @return A data frame with one row per motif.
-#' @export
-dense_data_frame_for_window <- function(x, ...) {
-  UseMethod("dense_data_frame_for_window")
-}
-
-#' Return dense end-motif counts for one group.
-#'
-#' Sparse stores are not densified unless the method explicitly receives
-#' `allow_densify = TRUE`.
-#'
-#' @param x A cfDNAlab grouped end-motif object.
-#' @param ... Method-specific group selection arguments.
-#'
-#' @return A data frame with one row per motif.
-#' @export
-dense_data_frame_for_group <- function(x, ...) {
-  UseMethod("dense_data_frame_for_group")
-}
-
-#' Return dense end-motif counts for one motif.
-#'
-#' Sparse stores are not densified unless the method explicitly receives
-#' `allow_densify = TRUE`.
+#' Sparse outputs return stored non-zero rows unless the method explicitly
+#' receives `densify = TRUE`. Densifying adds explicit zero-count rows for
+#' selected observed motifs. Dense outputs always include zero counts.
 #'
 #' @param x A cfDNAlab end-motif object.
-#' @param ... Method-specific motif selection arguments.
+#' @param ... Method-specific selection arguments.
 #'
-#' @return A data frame with one row per count row.
+#' @return A data frame containing row metadata, motif metadata, and counts.
 #' @export
-dense_data_frame_for_motif <- function(x, ...) {
-  UseMethod("dense_data_frame_for_motif")
+end_motif_data_frame <- function(x, ...) {
+  UseMethod("end_motif_data_frame")
 }
 
 #' Return end-motif counts as a sparse matrix.
@@ -294,48 +257,4 @@ dense_data_frame_for_motif <- function(x, ...) {
 #' @export
 sparse_counts_matrix <- function(x, ...) {
   UseMethod("sparse_counts_matrix")
-}
-
-#' Return stored sparse end-motif counts as a data frame.
-#'
-#' @param x A cfDNAlab sparse end-motif object.
-#' @param ... Reserved for future methods.
-#'
-#' @return A data frame with one row per stored non-zero count.
-#' @export
-sparse_data_frame <- function(x, ...) {
-  UseMethod("sparse_data_frame")
-}
-
-#' Return stored sparse end-motif counts for one window.
-#'
-#' @param x A cfDNAlab windowed sparse end-motif object.
-#' @param ... Method-specific window selection arguments.
-#'
-#' @return A data frame with one row per stored non-zero count.
-#' @export
-sparse_data_frame_for_window <- function(x, ...) {
-  UseMethod("sparse_data_frame_for_window")
-}
-
-#' Return stored sparse end-motif counts for one group.
-#'
-#' @param x A cfDNAlab grouped sparse end-motif object.
-#' @param ... Method-specific group selection arguments.
-#'
-#' @return A data frame with one row per stored non-zero count.
-#' @export
-sparse_data_frame_for_group <- function(x, ...) {
-  UseMethod("sparse_data_frame_for_group")
-}
-
-#' Return stored sparse end-motif counts for one motif.
-#'
-#' @param x A cfDNAlab sparse end-motif object.
-#' @param ... Method-specific motif selection arguments.
-#'
-#' @return A data frame with one row per stored non-zero count.
-#' @export
-sparse_data_frame_for_motif <- function(x, ...) {
-  UseMethod("sparse_data_frame_for_motif")
 }

@@ -86,7 +86,7 @@ def test_profile_dataframe_uses_selected_group_length_and_positions(
     store_path = _write_midpoint_store(tmp_path / "sample.midpoint_profiles.zarr")
     profiles = cfdnalab.read_midpoints(store_path)
 
-    data_frame = profiles.data_frame_for_profile(group_idx=1, length_bin_idx=0)
+    data_frame = profiles.data_frame(group_idxs=1, length_bin_idxs=0)
 
     pd.testing.assert_frame_equal(
         data_frame,
@@ -111,7 +111,7 @@ def test_group_dataframe_preserves_length_position_grid(tmp_path: Path) -> None:
     store_path = _write_midpoint_store(tmp_path / "sample.midpoint_profiles.zarr")
     profiles = cfdnalab.read_midpoints(store_path)
 
-    data_frame = profiles.data_frame_from_group("gamma-unicode-aa")
+    data_frame = profiles.data_frame(groups="gamma-unicode-aa")
 
     assert data_frame.shape == (8, 10)
     assert data_frame["group_idx"].tolist() == [2] * 8
@@ -130,7 +130,7 @@ def test_group_dataframe_preserves_length_position_grid(tmp_path: Path) -> None:
         213.0,
     ]
 
-    data_frame_by_index = profiles.data_frame_from_group_idx(1)
+    data_frame_by_index = profiles.data_frame(group_idxs=1)
     assert data_frame_by_index["group_name"].tolist() == ["beta long"] * 8
     assert data_frame_by_index["count"].tolist() == [
         100.0,
@@ -148,7 +148,7 @@ def test_length_dataframe_preserves_group_position_grid(tmp_path: Path) -> None:
     store_path = _write_midpoint_store(tmp_path / "sample.midpoint_profiles.zarr")
     profiles = cfdnalab.read_midpoints(store_path)
 
-    data_frame = profiles.data_frame_from_length(60)
+    data_frame = profiles.data_frame(with_lengths=60)
 
     assert data_frame.shape == (12, 10)
     assert data_frame["group_idx"].tolist() == [
@@ -198,7 +198,7 @@ def test_length_dataframe_preserves_group_position_grid(tmp_path: Path) -> None:
         213.0,
     ]
 
-    data_frame_by_index = profiles.data_frame_from_length_bin(0)
+    data_frame_by_index = profiles.data_frame(length_bin_idxs=0)
     assert data_frame_by_index["length_bin"].tolist() == [0] * 12
     assert data_frame_by_index["count"].tolist() == [
         0.0,
@@ -258,6 +258,16 @@ def test_invalid_indices_raise_helpful_errors(tmp_path: Path) -> None:
         profiles.array_for_profile(3, 0)
     with pytest.raises(IndexError, match="length_bin_idx 2 is outside 0..1"):
         profiles.array_for_profile(0, 2)
+    with pytest.raises(ValueError, match="Use either groups or group_idxs"):
+        profiles.data_frame(groups="LYL1", group_idxs=0)
+    with pytest.raises(ValueError, match="Use either with_lengths or length_bin_idxs"):
+        profiles.data_frame(with_lengths=30, length_bin_idxs=0)
+    with pytest.raises(ValueError, match="groups contains duplicate values"):
+        profiles.data_frame(groups=["LYL1", "LYL1"])
+    with pytest.raises(ValueError, match="group_idxs contains duplicate values"):
+        profiles.data_frame(group_idxs=[0, 0])
+    with pytest.raises(ValueError, match="with_lengths contains duplicate values"):
+        profiles.data_frame(with_lengths=[30, 59])
 
 
 def test_loader_rejects_invalid_paths(tmp_path: Path) -> None:

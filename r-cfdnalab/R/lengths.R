@@ -1,11 +1,13 @@
-#' Read cfDNAlab fragment-length counts.
+#' Read cfDNAlab fragment length counts.
 #'
 #' Loads a `<prefix>.length_counts.tsv.zst` file created with the `cfdna
 #' lengths` CLI command.
 #'
-#' @param path Path to a cfDNAlab length-count `.tsv.zst` file.
+#' @param path Path to a cfDNAlab length-count TSV file, typically `.tsv.zst`.
 #'
-#' @return A mode-specific `cfdnalab_length_counts` object.
+#' @return A mode-specific `cfdnalab_length_counts` object:
+#'   `cfdnalab_global_length_counts`, `cfdnalab_windowed_length_counts`, or
+#'   `cfdnalab_grouped_length_counts`.
 #' @export
 #'
 #' @examples
@@ -43,7 +45,7 @@ read_lengths <- function(path) {
     length_bin_idx0 = bin_metadata$length_bin_idx0,
     length_start_bp = bin_metadata$length_start_bp,
     length_end_bp = bin_metadata$length_end_bp,
-    count_column = bin_metadata$count_column,
+    count_column = count_columns,
     counts = counts,
     row_metadata = row_metadata
   )
@@ -70,7 +72,6 @@ length_bins.cfdnalab_length_counts <- function(x, ...) {
     length_end_bp = x$length_end_bp,
     length_midpoint_bp = (x$length_start_bp + x$length_end_bp) / 2,
     length_width_bp = x$length_end_bp - x$length_start_bp,
-    count_column = x$count_column,
     stringsAsFactors = FALSE
   )
 }
@@ -144,67 +145,68 @@ group_idx.cfdnalab_grouped_length_counts <- function(x, group_name, ...) {
 #' @param keep_wide If `TRUE`, return one row per output unit with one value
 #'   column per length bin. If `FALSE`, return one row per output unit and
 #'   length bin.
-#' @param max_blacklisted_fraction Optional maximum `blacklisted_fraction` in
-#'   0..1 to retain before reshaping. The default `1.0` keeps all rows.
 length_data_frame.cfdnalab_global_length_counts <- function(
   x,
   value = c("count", "fraction", "density"),
   keep_wide = FALSE,
-  max_blacklisted_fraction = 1.0,
   ...
 ) {
   cf_reject_unused_arguments(...)
-  row_indices <- cf_length_row_indices_after_blacklist_filter(x, max_blacklisted_fraction)
-  cf_length_data_frame_for_rows(x, row_indices, match.arg(value), keep_wide)
+  cf_length_data_frame_for_rows(x, seq_len(nrow(x$counts)), match.arg(value), keep_wide)
 }
 
 #' @export
 #' @rdname length_data_frame
-#' @param window_idx Optional one-based window index vector.
+#' @param window_idxs Optional one-based window index vector.
+#' @param max_blacklisted_fraction Optional maximum `blacklisted_fraction` in
+#'   0..1 to retain before reshaping. The default `1.0` keeps all rows.
 length_data_frame.cfdnalab_windowed_length_counts <- function(
   x,
-  window_idx = NULL,
+  window_idxs = NULL,
   value = c("count", "fraction", "density"),
   keep_wide = FALSE,
   max_blacklisted_fraction = 1.0,
   ...
 ) {
   cf_reject_unused_arguments(...)
-  row_indices <- if (is.null(window_idx)) {
+  row_indices <- if (is.null(window_idxs)) {
     seq_len(nrow(x$counts))
   } else {
-    cf_validate_r_indices(window_idx, nrow(x$counts), "window_idx")
+    cf_validate_r_indices(window_idxs, nrow(x$counts), "window_idxs")
   }
-  row_indices <- cf_apply_length_blacklist_filter(x, row_indices, max_blacklisted_fraction)
+  cf_validate_unique_values(row_indices, "window_idxs")
+  row_indices <- cf_apply_row_blacklist_filter(x$row_metadata, row_indices, max_blacklisted_fraction)
   cf_length_data_frame_for_rows(x, row_indices, match.arg(value), keep_wide)
 }
 
 #' @export
 #' @rdname length_data_frame
-#' @param group Optional group name or one-based group index vector. Use either
-#'   `group` or `group_idx`, not both.
-#' @param group_idx Optional one-based group index vector.
+#' @param groups Optional group name vector. Use either `groups` or
+#'   `group_idxs`, not both.
+#' @param group_idxs Optional one-based group index vector.
 length_data_frame.cfdnalab_grouped_length_counts <- function(
   x,
-  group = NULL,
-  group_idx = NULL,
+  groups = NULL,
+  group_idxs = NULL,
   value = c("count", "fraction", "density"),
   keep_wide = FALSE,
   max_blacklisted_fraction = 1.0,
   ...
 ) {
   cf_reject_unused_arguments(...)
-  if (!is.null(group) && !is.null(group_idx)) {
-    stop("Use either group or group_idx, not both", call. = FALSE)
+  if (!is.null(groups) && !is.null(group_idxs)) {
+    stop("Use either groups or group_idxs, not both", call. = FALSE)
   }
-  row_indices <- if (!is.null(group)) {
-    cf_resolve_length_group_indices(x, group)
-  } else if (!is.null(group_idx)) {
-    cf_validate_r_indices(group_idx, nrow(x$counts), "group_idx")
+  row_indices <- if (!is.null(groups)) {
+    cf_resolve_length_group_indices(x, groups)
+  } else if (!is.null(group_idxs)) {
+    group_indices <- cf_validate_r_indices(group_idxs, nrow(x$counts), "group_idxs")
+    cf_validate_unique_values(group_indices, "group_idxs")
+    group_indices
   } else {
     seq_len(nrow(x$counts))
   }
-  row_indices <- cf_apply_length_blacklist_filter(x, row_indices, max_blacklisted_fraction)
+  row_indices <- cf_apply_row_blacklist_filter(x$row_metadata, row_indices, max_blacklisted_fraction)
   cf_length_data_frame_for_rows(x, row_indices, match.arg(value), keep_wide)
 }
 
@@ -263,10 +265,15 @@ cf_read_length_counts_table <- function(path) {
     # data.table::fread() is the fast TSV parser here; zstd streams compressed
     # outputs to it without materializing an intermediate decompressed file.
     command <- paste(shQuote(zstd), "-dc", shQuote(path))
-    return(data.table::fread(cmd = command, data.table = FALSE, check.names = FALSE))
+    table <- data.table::fread(cmd = command, data.table = FALSE, check.names = FALSE)
+  } else {
+    # Plain TSV support is mainly for small fixtures and local debugging.
+    table <- data.table::fread(path, data.table = FALSE, check.names = FALSE)
   }
-  # Plain TSV support is mainly for small fixtures and local debugging.
-  data.table::fread(path, data.table = FALSE, check.names = FALSE)
+  if ("chrom" %in% names(table)) {
+    table$chrom <- as.character(table$chrom)
+  }
+  table
 }
 
 #' Return and validate length-count columns.
@@ -352,7 +359,6 @@ cf_parse_length_count_columns <- function(count_columns) {
     length_bin_idx0 = seq_along(count_columns) - 1L,
     length_start_bp = starts,
     length_end_bp = ends,
-    count_column = count_columns,
     stringsAsFactors = FALSE
   )
 }
@@ -497,45 +503,28 @@ cf_validate_r_indices <- function(indices, size, name) {
 #' Resolve grouped length-count selectors to row indices.
 #'
 #' @param x Grouped length-count object.
-#' @param group Group names or one-based indices.
+#' @param groups Group names.
 #'
 #' @return One-based row indices.
 #' @noRd
-cf_resolve_length_group_indices <- function(x, group) {
-  if (is.character(group)) {
-    matches <- match(group, x$row_metadata$group_name)
-    if (any(is.na(matches))) {
-      stop("Unknown length-count group name: ", sQuote(group[is.na(matches)][[1L]]), call. = FALSE)
-    }
-    if (anyDuplicated(x$row_metadata$group_name)) {
-      stop("Length-count group names are not unique", call. = FALSE)
-    }
-    return(as.integer(matches))
+cf_resolve_length_group_indices <- function(x, groups) {
+  if (!is.character(groups)) {
+    stop("groups must contain character strings", call. = FALSE)
   }
-  cf_validate_r_indices(group, nrow(x$counts), "group")
-}
-
-#' Apply a blacklist fraction filter to row indices.
-#'
-#' @param x Length-count object.
-#' @param row_indices One-based row indices.
-#' @param max_blacklisted_fraction Optional maximum blacklist fraction.
-#'
-#' @return Filtered one-based row indices.
-#' @noRd
-cf_apply_length_blacklist_filter <- function(x, row_indices, max_blacklisted_fraction) {
-  cf_apply_row_blacklist_filter(x$row_metadata, row_indices, max_blacklisted_fraction)
-}
-
-#' Return row indices after a blacklist filter.
-#'
-#' @param x Length-count object.
-#' @param max_blacklisted_fraction Optional maximum blacklist fraction.
-#'
-#' @return One-based row indices.
-#' @noRd
-cf_length_row_indices_after_blacklist_filter <- function(x, max_blacklisted_fraction) {
-  cf_apply_length_blacklist_filter(x, seq_len(nrow(x$counts)), max_blacklisted_fraction)
+  cf_validate_unique_values(groups, "groups")
+  vapply(
+    groups,
+    function(group_name) {
+      cf_find_unique_value_index(
+        x$row_metadata$group_name,
+        group_name,
+        "Unknown length-count group name: ",
+        "Length-count group name is not unique: "
+      )
+    },
+    integer(1L),
+    USE.NAMES = FALSE
+  )
 }
 
 #' Build a long or wide length data frame for selected rows.
@@ -554,20 +543,6 @@ cf_length_data_frame_for_rows <- function(x, row_indices, value, keep_wide) {
     return(cf_length_wide_data_frame(x, row_indices, values, value))
   }
   cf_length_long_data_frame(x, row_indices, values, value)
-}
-
-#' Validate a scalar logical.
-#'
-#' @param value Logical value.
-#' @param name Human-readable value name.
-#'
-#' @return Invisibly returns `TRUE`.
-#' @noRd
-cf_validate_scalar_logical <- function(value, name) {
-  if (length(value) != 1L || !is.logical(value) || is.na(value)) {
-    stop(name, " must be TRUE or FALSE", call. = FALSE)
-  }
-  invisible(TRUE)
 }
 
 #' Compute count-derived values for selected rows.

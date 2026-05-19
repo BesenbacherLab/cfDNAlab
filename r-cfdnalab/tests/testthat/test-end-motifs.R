@@ -26,15 +26,13 @@ test_that("dense global end motifs read from locally generated schema fixture", 
     matrix(c(1, 0, 2.5, 0), nrow = 1L),
     tolerance = 1e-8
   )
-  expect_equal(dense_data_frame(ends)$count, c(1, 0, 2.5, 0), tolerance = 1e-8)
+  expect_equal(end_motif_data_frame(ends)$count, c(1, 0, 2.5, 0), tolerance = 1e-8)
   expect_equal(
-    dense_data_frame_for_motif(ends, "_G")$count,
+    end_motif_data_frame(ends, motifs = "_G")$count,
     2.5,
     tolerance = 1e-8
   )
-  expect_error(sparse_data_frame(ends), "only available for sparse_coo")
-  expect_error(sparse_data_frame_for_motif(ends, "_G"), "only available for sparse_coo")
-  expect_false(any(grepl("idx0|index0", names(dense_data_frame(ends)))))
+  expect_false(any(grepl("idx0|index0", names(end_motif_data_frame(ends)))))
 })
 
 test_that("sparse global end motifs can be densified explicitly", {
@@ -55,24 +53,24 @@ test_that("sparse global end motifs can be densified explicitly", {
     tolerance = 1e-8
   )
   expect_equal(
-    sparse_data_frame(ends)$count,
+    end_motif_data_frame(ends)$count,
     c(1.25, 3.5),
     tolerance = 1e-8
   )
-  expect_equal(sparse_data_frame(ends)$row_idx, c(1L, 1L))
-  expect_equal(sparse_data_frame(ends)$motif_idx, c(1L, 3L))
+  expect_equal(end_motif_data_frame(ends)$row_label, c("global", "global"))
+  expect_equal(end_motif_data_frame(ends)$motif_idx, c(1L, 3L))
   expect_equal(
-    sparse_data_frame_for_motif(ends, "_C")$count,
+    end_motif_data_frame(ends, motifs = "_C")$count,
     numeric(0),
     tolerance = 1e-8
   )
   expect_equal(
-    dense_data_frame(ends, allow_densify = TRUE)$count,
+    end_motif_data_frame(ends, densify = TRUE)$count,
     c(1.25, 0, 3.5, 0),
     tolerance = 1e-8
   )
   expect_equal(
-    dense_data_frame_for_motif(ends, "_G", allow_densify = TRUE)$count,
+    end_motif_data_frame(ends, motifs = "_G", densify = TRUE)$count,
     3.5,
     tolerance = 1e-8
   )
@@ -95,35 +93,35 @@ test_that("dense windowed end motifs expose dense and sparse views", {
     tolerance = 1e-8
   )
   expect_equal(
-    dense_data_frame_for_window(ends, 1L)$count,
+    end_motif_data_frame(ends, window_idxs = 1L)$count,
     c(0, 2, 0),
     tolerance = 1e-8
   )
   expect_equal(
-    dense_data_frame_for_window(ends, 2L)$count,
+    end_motif_data_frame(ends, window_idxs = 2L)$count,
     c(1.5, 0, 4),
     tolerance = 1e-8
   )
-  expect_equal(nrow(dense_data_frame_for_window(ends, 2L, max_blacklisted_fraction = 0.1)), 0L)
-  filtered_motif <- dense_data_frame_for_motif(ends, "_A", max_blacklisted_fraction = 0.1)
+  expect_equal(nrow(end_motif_data_frame(ends, window_idxs = 2L, max_blacklisted_fraction = 0.1)), 0L)
+  filtered_motif <- end_motif_data_frame(ends, motifs = "_A", max_blacklisted_fraction = 0.1)
   expect_equal(filtered_motif$window_idx, 1L)
   expect_equal(filtered_motif$count, 0, tolerance = 1e-8)
   expect_error(
-    dense_data_frame_for_window(ends, 1L, max_blacklisted_fraction = 1.1),
+    end_motif_data_frame(ends, window_idxs = 1L, max_blacklisted_fraction = 1.1),
     "max_blacklisted_fraction must be a single finite fraction in 0..1"
   )
   expect_error(
-    dense_data_frame_for_window(ends, 0L),
-    "window_idx 0 is outside 1..2",
+    end_motif_data_frame(ends, window_idxs = 0L),
+    "window_idxs contains values outside 1..2",
     fixed = TRUE
   )
   expect_error(
-    dense_data_frame_for_window(ends, 1L, window_index = 0L),
+    end_motif_data_frame(ends, window_idxs = 1L, window_index = 0L),
     "Unused argument(s): window_index",
     fixed = TRUE
   )
   expect_equal(
-    dense_data_frame_for_motif(ends, "_G")$count,
+    end_motif_data_frame(ends, motifs = "_G")$count,
     c(2, 0),
     tolerance = 1e-8
   )
@@ -163,37 +161,37 @@ test_that("sparse windowed end motifs read from locally generated schema fixture
     tolerance = 1e-8
   )
 
-  motif_frame <- sparse_data_frame_for_motif(ends, "_T")
+  motif_frame <- end_motif_data_frame(ends, motifs = "_T")
   expect_equal(motif_frame$window_idx, c(2L, 3L))
   expect_equal(motif_frame$count, c(4, 3), tolerance = 1e-8)
   expect_equal(
-    sparse_data_frame(ends)$count,
+    end_motif_data_frame(ends)$count,
     c(2, 1.5, 4, 3),
     tolerance = 1e-8
   )
-  expect_equal(sparse_data_frame(ends)$row_idx, c(1L, 2L, 2L, 3L))
-  expect_equal(sparse_data_frame(ends)$motif_idx, c(2L, 1L, 3L, 3L))
+  expect_equal(end_motif_data_frame(ends)$window_idx, c(1L, 2L, 2L, 3L))
+  expect_equal(end_motif_data_frame(ends)$motif_idx, c(2L, 1L, 3L, 3L))
   expect_equal(
-    dense_data_frame_for_window(ends, 2L, allow_densify = TRUE)$count,
+    end_motif_data_frame(ends, window_idxs = 2L, densify = TRUE)$count,
     c(1.5, 0, 4),
     tolerance = 1e-8
   )
-  expect_equal(nrow(sparse_data_frame_for_window(ends, 2L, max_blacklisted_fraction = 0.1)), 0L)
-  filtered_sparse_motif <- sparse_data_frame_for_motif(ends, "_T", max_blacklisted_fraction = 0.1)
+  expect_equal(nrow(end_motif_data_frame(ends, window_idxs = 2L, max_blacklisted_fraction = 0.1)), 0L)
+  filtered_sparse_motif <- end_motif_data_frame(ends, motifs = "_T", max_blacklisted_fraction = 0.1)
   expect_equal(filtered_sparse_motif$window_idx, 3L)
   expect_equal(filtered_sparse_motif$count, 3, tolerance = 1e-8)
 
-  window_frame <- sparse_data_frame_for_window(ends, 1L)
+  window_frame <- end_motif_data_frame(ends, window_idxs = 1L)
   expect_equal(window_frame$motif, "_G")
   expect_equal(window_frame$count, 2, tolerance = 1e-8)
   expect_equal(
-    sparse_data_frame_for_window(ends, 2L)$count,
+    end_motif_data_frame(ends, window_idxs = 2L)$count,
     c(1.5, 4),
     tolerance = 1e-8
   )
   expect_error(
-    sparse_data_frame_for_window(ends, 0L),
-    "window_idx 0 is outside 1..3",
+    end_motif_data_frame(ends, window_idxs = 0L),
+    "window_idxs contains values outside 1..3",
     fixed = TRUE
   )
 })
@@ -205,7 +203,7 @@ test_that("size-mode end motifs use the windowed interface", {
   expect_equal(row_mode(ends), "size")
   expect_equal(nrow(window_metadata(ends)), 3L)
   expect_equal(
-    sparse_data_frame_for_window(ends, 1L)$motif,
+    end_motif_data_frame(ends, window_idxs = 1L)$motif,
     "_G"
   )
 })
@@ -218,32 +216,31 @@ test_that("dense grouped end motifs expose group helpers without densification f
   expect_equal(row_mode(ends), "grouped_bed")
   expect_equal(group_idx(ends, "alpha"), 1L)
   expect_equal(
-    dense_data_frame_for_group(ends, 1L)$count,
+    end_motif_data_frame(ends, group_idxs = 1L)$count,
     c(1, 0, 5),
     tolerance = 1e-8
   )
   expect_error(
-    dense_data_frame_for_group(ends, 0L),
-    "group 0 is outside 1..2",
+    end_motif_data_frame(ends, group_idxs = 0L),
+    "group_idxs contains values outside 1..2",
     fixed = TRUE
   )
   expect_error(
-    dense_data_frame_for_group(ends, 1L, group_index = 0L),
+    end_motif_data_frame(ends, group_idxs = 1L, group_index = 0L),
     "Unused argument(s): group_index",
     fixed = TRUE
   )
   expect_equal(
-    dense_data_frame_for_group(ends, "beta")$count,
+    end_motif_data_frame(ends, groups = "beta")$count,
     c(0, 0, 0),
     tolerance = 1e-8
   )
-  expect_equal(nrow(dense_data_frame_for_group(ends, "alpha", max_blacklisted_fraction = 0.1)), 0L)
+  expect_equal(nrow(end_motif_data_frame(ends, groups = "alpha", max_blacklisted_fraction = 0.1)), 0L)
   expect_equal(
-    dense_data_frame_for_motif(ends, "_G")$count,
+    end_motif_data_frame(ends, motifs = "_G")$count,
     c(5, 0),
     tolerance = 1e-8
   )
-  expect_error(sparse_data_frame_for_group(ends, "alpha"), "only available for sparse_coo")
 })
 
 test_that("sparse grouped end motifs read from locally generated schema fixture", {
@@ -270,37 +267,36 @@ test_that("sparse grouped end motifs read from locally generated schema fixture"
     tolerance = 1e-8
   )
 
-  alpha <- sparse_data_frame_for_group(ends, "alpha")
+  alpha <- end_motif_data_frame(ends, groups = "alpha")
   expect_equal(alpha$motif, c("_A", "_G"))
   expect_equal(alpha$count, c(1, 5), tolerance = 1e-8)
 
-  beta <- sparse_data_frame_for_group(ends, "beta")
+  beta <- end_motif_data_frame(ends, groups = "beta")
   expect_equal(nrow(beta), 0L)
   expect_equal(
-    sparse_data_frame_for_group(ends, 1L)$count,
+    end_motif_data_frame(ends, group_idxs = 1L)$count,
     c(1, 5),
     tolerance = 1e-8
   )
-  expect_equal(nrow(sparse_data_frame_for_group(ends, "alpha", max_blacklisted_fraction = 0.1)), 0L)
+  expect_equal(nrow(end_motif_data_frame(ends, groups = "alpha", max_blacklisted_fraction = 0.1)), 0L)
   expect_equal(
-    sparse_data_frame_for_motif(ends, "_G")$count,
+    end_motif_data_frame(ends, motifs = "_G")$count,
     5,
     tolerance = 1e-8
   )
-  expect_equal(nrow(sparse_data_frame_for_motif(ends, "_G", max_blacklisted_fraction = 0.1)), 0L)
+  expect_equal(nrow(end_motif_data_frame(ends, motifs = "_G", max_blacklisted_fraction = 0.1)), 0L)
   expect_equal(
-    sparse_data_frame(ends)$count,
+    end_motif_data_frame(ends)$count,
     c(1, 5),
     tolerance = 1e-8
   )
-  expect_false(any(grepl("idx0|index0", names(sparse_data_frame(ends)))))
-  expect_error(dense_data_frame_for_group(ends, "alpha"), "Use sparse_counts_matrix")
+  expect_false(any(grepl("idx0|index0", names(end_motif_data_frame(ends)))))
   expect_equal(
-    dense_data_frame_for_group(ends, 1L, allow_densify = TRUE)$count,
+    end_motif_data_frame(ends, group_idxs = 1L, densify = TRUE)$count,
     c(1, 0, 5),
     tolerance = 1e-8
   )
-  expect_equal(dense_data_frame_for_group(ends, "beta", allow_densify = TRUE)$count, c(0, 0, 0))
+  expect_equal(end_motif_data_frame(ends, groups = "beta", densify = TRUE)$count, c(0, 0, 0))
 })
 
 test_that("dense global end motifs load as data frames and vectors", {
@@ -330,7 +326,7 @@ test_that("dense global end motifs load as data frames and vectors", {
     tolerance = 1e-8
   )
   expect_equal(
-    dense_data_frame(ends)$count,
+    end_motif_data_frame(ends)$count,
     c(1, 0, 1, 0),
     tolerance = 1e-8
   )
@@ -340,11 +336,10 @@ test_that("dense global end motifs load as data frames and vectors", {
     tolerance = 1e-8
   )
   expect_equal(
-    dense_data_frame_for_motif(ends, "_A")$count,
+    end_motif_data_frame(ends, motifs = "_A")$count,
     1,
     tolerance = 1e-8
   )
-  expect_error(sparse_data_frame(ends), "only available for sparse_coo")
 })
 
 test_that("sparse windowed end motifs stay sparse unless densification is requested", {
@@ -381,18 +376,18 @@ test_that("sparse windowed end motifs stay sparse unless densification is reques
     tolerance = 1e-8
   )
 
-  motif_frame <- sparse_data_frame_for_motif(ends, "_G")
+  motif_frame <- end_motif_data_frame(ends, motifs = "_G")
   expect_equal(motif_frame$window_idx, 1L)
   expect_equal(motif_frame$motif, "_G")
   expect_equal(motif_frame$count, 1)
 
-  window_frame <- sparse_data_frame_for_window(ends, 1L)
+  window_frame <- end_motif_data_frame(ends, window_idxs = 1L)
   expect_equal(window_frame$window_idx, 1L)
   expect_equal(window_frame$motif, "_G")
   expect_equal(window_frame$count, 1)
 })
 
-test_that("sparse grouped end motifs expose group metadata and sparse payload", {
+test_that("sparse grouped end motifs expose group metadata and stored rows", {
   testthat::skip_if_not_installed("zarr")
 
   ends <- read_end_motifs(sparse_grouped_end_fixture_path())
@@ -421,18 +416,17 @@ test_that("sparse grouped end motifs expose group metadata and sparse payload", 
     tolerance = 1e-8
   )
 
-  payload <- sparse_data_frame(ends)
-  expect_equal(payload$row_idx, c(1L, 1L, 2L))
-  expect_equal(payload$motif_idx, c(1L, 2L, 1L))
-  expect_equal(payload$motif, c("_A", "_G", "_A"))
-  expect_equal(payload$count, c(1, 2, 1), tolerance = 1e-8)
+  rows <- end_motif_data_frame(ends)
+  expect_equal(rows$group_idx, c(1L, 1L, 2L))
+  expect_equal(rows$motif_idx, c(1L, 2L, 1L))
+  expect_equal(rows$motif, c("_A", "_G", "_A"))
+  expect_equal(rows$count, c(1, 2, 1), tolerance = 1e-8)
 
-  beta <- sparse_data_frame_for_group(ends, "beta")
+  beta <- end_motif_data_frame(ends, groups = "beta")
   expect_equal(beta$group_name, c("beta", "beta"))
   expect_equal(beta$motif, c("_A", "_G"))
   expect_equal(beta$count, c(1, 2), tolerance = 1e-8)
 
-  expect_error(dense_data_frame_for_group(ends, "beta"), "Use sparse_counts_matrix")
-  dense_beta <- dense_data_frame_for_group(ends, "beta", allow_densify = TRUE)
+  dense_beta <- end_motif_data_frame(ends, groups = "beta", densify = TRUE)
   expect_equal(dense_beta$count, c(1, 2), tolerance = 1e-8)
 })

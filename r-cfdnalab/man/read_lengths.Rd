@@ -2,15 +2,17 @@
 % Please edit documentation in R/lengths.R
 \name{read_lengths}
 \alias{read_lengths}
-\title{Read cfDNAlab fragment-length counts.}
+\title{Read cfDNAlab fragment length counts.}
 \usage{
 read_lengths(path)
 }
 \arguments{
-\item{path}{Path to a cfDNAlab length-count \code{.tsv.zst} file.}
+\item{path}{Path to a cfDNAlab length-count TSV file, typically \code{.tsv.zst}.}
 }
 \value{
-A mode-specific \code{cfdnalab_length_counts} object.
+A mode-specific \code{cfdnalab_length_counts} object:
+\code{cfdnalab_global_length_counts}, \code{cfdnalab_windowed_length_counts}, or
+\code{cfdnalab_grouped_length_counts}.
 }
 \description{
 Loads a \verb{<prefix>.length_counts.tsv.zst} file created with the \verb{cfdna lengths} CLI command.

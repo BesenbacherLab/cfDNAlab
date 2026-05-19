@@ -231,6 +231,20 @@ cf_find_unique_value_index <- function(values, value, unknown_message, duplicate
   matches[[1L]]
 }
 
+#' Reject duplicate user-requested selector values.
+#'
+#' @param values Selector values.
+#' @param name Selector name used in error messages.
+#'
+#' @return Invisibly returns `TRUE`.
+#' @noRd
+cf_validate_unique_values <- function(values, name) {
+  if (anyDuplicated(values)) {
+    stop(name, " contains duplicate values", call. = FALSE)
+  }
+  invisible(TRUE)
+}
+
 #' Get a Zarr array node.
 #'
 #' @param store Open Zarr store.
@@ -531,6 +545,20 @@ cf_validate_scalar_fraction <- function(value, name) {
       value > 1
   ) {
     stop(name, " must be a single finite fraction in 0..1", call. = FALSE)
+  }
+  invisible(TRUE)
+}
+
+#' Validate a scalar logical.
+#'
+#' @param value Logical value.
+#' @param name Human-readable value name.
+#'
+#' @return Invisibly returns `TRUE`.
+#' @noRd
+cf_validate_scalar_logical <- function(value, name) {
+  if (length(value) != 1L || !is.logical(value) || is.na(value)) {
+    stop(name, " must be TRUE or FALSE", call. = FALSE)
   }
   invisible(TRUE)
 }

@@ -6,6 +6,8 @@
 
 ## r-cfDNAlab 0.1.0.9000
 
+**BREAKING CHANGES**:
+
  - Renames `groups()` to `group_metadata()` to remove the masking with tidyverse. 
  - Adds `window_metadata()` as the R window metadata helper and removes the
    `windows()` helper.
@@ -13,8 +15,13 @@
    `chrom`, `start`, `end`, and `blacklisted_fraction`.
  - Adds `read_lengths()` for `cfdna lengths` TSV outputs, including length-bin
    metadata, matrix/vector getters, and long or wide data-frame reshaping.
+ - Removes the internal `count_column` field from `length_bins()` output. Wide
+   length data frames still preserve the source count column labels.
  - Adds `max_blacklisted_fraction` filtering to row-based end-motif data-frame
    helpers.
+ - Replaces the R midpoint and end-motif data frame families with
+   `midpoint_data_frame()` and `end_motif_data_frame()`, using plural selectors
+   such as `groups`, `group_idxs`, `window_idxs`, `motifs`, and `motif_idxs`.
 
 ## r-cfDNAlab 0.1.0
 

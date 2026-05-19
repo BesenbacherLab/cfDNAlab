@@ -57,7 +57,7 @@ The lasting contract belongs in `.AI/docs/specs/lengths_spec.md`. In short:
 - Output rows are global, genomic windows, BED rows, or grouped BED groups.
 - Non-grouped rows are keyed by `chrom`, `start`, and `end`.
 - Grouped rows are keyed by `group_name` and include `eligible_windows`.
-- Fragment-length bins are count columns.
+- Fragment length bins are count columns.
 - Single-bp bins use `count_<length>`.
 - Wider half-open bins use `count_<start>_<end>`.
 - `--decimals` controls count-column formatting only.
@@ -225,7 +225,7 @@ table = (
 )
 ```
 
-Expected analysis columns after dataframe conversion:
+Expected analysis columns after data frame conversion:
 
 ```text
 group
@@ -240,127 +240,63 @@ position_bin_start_bp
 position_bin_end_bp
 ```
 
-Docs must tell users to subset before converting a full 3D array to a dataframe.
-A full dataframe can be much larger than the Zarr store.
+Docs must tell users to subset before converting a full 3D array to a data frame.
+A full data frame can be much larger than the Zarr store.
 
 ### Helper Packages
 
 Raw Zarr access is a compatibility layer, not a good user-facing analysis API.
-The Python package should load midpoint and ends Zarr paths and expose the
-operations users are most likely to need. The R helper can start sourceable and
-graduate to a package when the API settles.
+The Python and R packages now provide the user-facing analysis API for
+midpoints, end motifs, and lengths. The current loader API belongs in
+[`../specs/package_loader_api.md`](../specs/package_loader_api.md); this
+roadmap should not duplicate every method signature.
 
-Initial Python midpoint helper:
+Representative Python usage:
 
 ```python
 import cfdnalab as cfl
 
 profiles = cfl.read_midpoints("sample.midpoint_profiles.zarr")
-group_frame = profiles.data_frame_from_group("LYL1")
-length_frame = profiles.data_frame_from_length_bin(0)
-profile = profiles.data_frame_for_profile(group_idx=0, length_bin_idx=0)
-all_counts = profiles.array()
-```
-
-Initial Python ends helper:
-
-```python
-import cfdnalab as cfl
+profile = profiles.data_frame(group_idxs=0, length_bin_idxs=0)
 
 ends = cfl.read_end_motifs("sample.end_motifs.zarr")
-motifs = ends.motif_metadata()
-motif_frame = ends.dense_data_frame_for_motif("_AA")
+motif_counts = ends.data_frame(motifs="_AA")
+
+lengths = cfl.read_lengths("sample.length_counts.tsv.zst")
+length_distribution = lengths.data_frame(value="fraction")
 ```
 
-The ends loader should inspect `row_mode` and return a mode-specific helper
-class rather than forcing every mode through generic `row` terminology:
-
-```text
-GlobalEndMotifCounts
-WindowedEndMotifCounts
-GroupedEndMotifCounts
-```
-
-Shared methods belong on a small base class:
-
-```text
-storage_mode()
-row_mode()
-motifs()
-motif_idx()
-motif_metadata()
-sparse_coo()
-sparse_coo_data_frame()
-sparse_coo_for_motif()
-sparse_coo_for_motif_idx()
-dense_counts_zarr_array()
-dense_counts_matrix()
-dense_counts_for_motif()
-dense_counts_for_motif_idx()
-dense_data_frame_for_motif()
-dense_data_frame_for_motif_idx()
-```
-
-Mode-specific methods should use domain vocabulary:
-
-```text
-GlobalEndMotifCounts:
-  dense_counts_vec()
-  dense_data_frame()
-
-WindowedEndMotifCounts:
-  windows()
-  sparse_coo_for_window(window_idx)
-  dense_counts_for_window(window_idx)
-  dense_data_frame_for_window(window_idx)
-
-GroupedEndMotifCounts:
-  groups()
-  group_idx(group_name)
-  sparse_coo_for_group(group)
-  dense_counts_for_group(group)
-  dense_data_frame_for_group(group)
-```
-
-Avoid making group-specific methods available for non-grouped outputs, and avoid
-using `row` in public method names when the row has a clearer meaning such as
-window or group. Internally the matrix still has a row axis; the public helper
-API should speak the selected output mode. Ends helpers should also avoid
-innocent names like `array()` because they can hide sparse-to-dense conversion;
-use explicit `sparse_*` and `dense_*` names instead.
-
-Initial R helper:
+Representative R usage:
 
 ```r
-source("cfdnalab_midpoints.R")
+library(cfdnalab)
 
 profiles <- read_midpoints("sample.midpoint_profiles.zarr")
-group_frame <- data_frame_for_group(profiles, "LYL1")
-length_frame <- data_frame_for_length_bin(profiles, c(120, 180))
-group_matrix <- profile_for_group(profiles, "LYL1")
-all_counts <- counts_array(profiles)
+profile <- midpoint_data_frame(profiles, group_idxs = 1L, length_bin_idxs = 1L)
+
+ends <- read_end_motifs("sample.end_motifs.zarr")
+motif_counts <- end_motif_data_frame(ends, motifs = "_AA")
+
+lengths <- read_lengths("sample.length_counts.tsv.zst")
+length_distribution <- length_data_frame(lengths, value = "fraction")
 ```
 
 Required helper operations:
 
-- validate midpoint schema name and version
-- expose group metadata, length-bin metadata, and position-bin metadata
-- return raw arrays or matrices for group-indexed and length-bin-indexed slices
-- build long dataframes for one group across all length/position bins
-- build long dataframes for one length bin across all groups/positions
-- build narrow dataframes for one group and one length bin
-- resolve groups by `group_idx` or `group_name`
-- resolve length bins by index or by `(length_start_bp, length_end_bp)`
-- for ends, expose motifs, dense motif slices, sparse COO entries, and
-  mode-specific window/group/global helpers
+- validate schema names and supported schema versions
+- expose domain metadata for groups, windows, motifs, length bins, and positions
+- return arrays, vectors, and sparse or dense matrices with explicit
+  materialization semantics
+- build data frames with mode-specific selectors and no generic public `row`
+  vocabulary
+- handle sparse end-motif stores without silently densifying by default
 
-The first package helpers should not include plotting. Dataframe builders are
+The first package helpers should not include plotting. data frame builders are
 the useful boundary. Plot helpers can be added later if repeated workflows
 converge on the same plot shapes.
 
-The Python helper is being promoted into `py-cfdnalab`. Keep downstream tests
-against cfDNAlab-generated Zarr output so the package cannot drift away from the
-Rust schema.
+Keep downstream tests against cfDNAlab-generated output so the packages cannot
+drift away from the Rust schema.
 
 ### R Loading
 
@@ -496,10 +432,9 @@ blacklisted_fraction   float64[row]
 `group[row]` must be the same zero-based `group_idx` used by the count rows.
 Group names are stored as JSON attrs on `group` with `label_field =
 "group_name"` and the label array. Reject non-contiguous group indices instead
-of reordering counts blindly. Add `eligible_windows` during the transition;
-current ends group metadata does not include it, but it is needed to interpret
-grouped counts and keeps the command consistent with the new `lengths` grouped
-output.
+of reordering counts blindly. `eligible_windows` is part of grouped row
+metadata because grouped counts need the same basic support context as grouped
+length outputs.
 
 ### Dense Output
 
@@ -523,7 +458,7 @@ Chunking should favor common reads:
   chunks, adjusted for `float64`
 
 This keeps "read a subset of rows with all motifs" efficient, which is the
-likely dataframe/plotting workflow.
+likely data frame and plotting workflow.
 
 ### Sparse Output
 
@@ -725,12 +660,11 @@ Python helper cleanup before release:
   reach into private fields. Done.
 - Add docstring warnings to `dense_*` ends methods that they may load or
   reconstruct dense data. Done.
-- Optimize `sparse_coo_for_motif_idx` for sparse stores by filtering stored COO
-  arrays directly instead of converting the full matrix through CSR. Done.
-- Optimize sparse row-slice helpers (`sparse_coo_for_window` and
-  `sparse_coo_for_group`) the same way. Done.
-- Keep `sparse_coo_data_frame` sparse-only so dense stores do not silently load
-  the full dense matrix to build a COO payload. Done.
+- Optimize sparse end-motif slices by filtering stored COO arrays directly
+  instead of converting the full matrix through CSR. Done.
+- Route end-motif tabular output through mode-specific `.data_frame(...)`
+  methods, with sparse stores returning non-zero rows by default and
+  `densify=True` adding explicit zero-count rows when requested. Done.
 - Add one Python fixture for `storage_mode == "dense"` and `row_mode ==
   "global"` so the helper tests cover the storage-mode by row-mode cross product
   used by the public schema. Done.
@@ -768,14 +702,12 @@ Python helper cleanup before release:
   requested. Prefer one representation per run unless a user need appears.
 - Whether chromosome row metadata should keep the current dictionary
   (`row_chromosome` plus labels on `chromosome`) or repeat `chrom` per row in a
-  helper dataframe. Prefer the dictionary on disk unless downstream examples
+  helper data frame. Prefer the dictionary on disk unless downstream examples
   become too clumsy.
-- Whether `blacklisted_fraction` should be present for every row mode with
-  all-zero values when no blacklist was used, or only when blacklists were
-  supplied. Prefer always present for ordinary window and grouped modes.
-- Whether grouped ends should add `eligible_windows` now. The answer should
-  probably be yes, but this is a small behavior addition compared with the
-  current `group_index.tsv`.
+- `blacklisted_fraction` may be absent when no blacklist was used. Helper
+  packages should keep all rows at the default cutoff and error clearly for
+  stricter cutoffs when the column is unavailable.
+- Grouped ends include `eligible_windows` in row metadata.
 - Whether sparse coordinate `int32` limits are acceptable for all practical
   public sparse stores. Current decision: use `int32` to avoid noisy and fragile
   64-bit handling in R sparse workflows.
@@ -785,14 +717,19 @@ Python helper cleanup before release:
 
 ## Python/R Loader API Harmonization
 
-Concrete fixes before first release:
+Current cross-language loader decisions:
 
-- Use per-schema supported-version ranges in both helper packages. A future
-  midpoint schema bump must not accidentally make the end-motif loader accept a
-  schema it has not been updated to read.
-- Do not silently densify sparse end-motif stores in Python dense helpers.
-  Python should match the R package policy: dense helpers on sparse stores error
-  by default and require an explicit `allow_densify = True`.
+- Use per-schema supported-version ranges in both helper packages. A schema bump
+  in one output type must not make another loader accept a schema it has not
+  been updated to read.
+- Use mode-specific data frame methods. Python uses object methods named
+  `.data_frame(...)`; R uses command-prefixed functions such as
+  `midpoint_data_frame()`, `end_motif_data_frame()`, and
+  `length_data_frame()`.
+- Use plural selector names for vector-capable selectors.
+- Use `densify` only for sparse end-motif data frames. Sparse data frames return
+  stored non-zero rows by default; densified data frames add explicit
+  zero-count rows for selected observed motifs.
 - Add Python `repr()` summaries matching the intent of R `print()` methods so
   interactive users can see schema version, shape, storage mode, and row mode
   without inspecting internals.
@@ -802,10 +739,6 @@ Concrete fixes before first release:
 
 Public API decisions to make deliberately:
 
-- Decide the R public indexing policy before release. The Zarr schema is
-  zero-based, but R user-facing selectors may need to accept one-based indices
-  by default to avoid intuitive off-by-one mistakes. If R exposes zero-based
-  schema indices, docs and argument names must make that explicit.
 - Decide whether `motifs()` returns just labels in both languages or metadata
   tables in both languages. Current state: Python returns `list[str]` and has
   `motif_metadata()`, while R returns a metadata `data.frame`.
@@ -865,7 +798,7 @@ The midpoint transition is successful when:
 - The output is one self-contained package.
 - Counts open with named axes in Python.
 - Counts and coordinate arrays open in R without Python.
-- Users can construct a dataframe with group names, eligible intervals, length
+- Users can construct a data frame with group names, eligible intervals, length
   bins, position bins, and counts.
 - Users do not have to manually reconcile `.npy`, `group_index.tsv`, and settings
   JSON files to trust the result.
@@ -878,5 +811,5 @@ The ends transition is successful when:
   dtype support or huge JSON metadata.
 - Chromosome, sparse-dimension, row-label, and group labels are readable from
   JSON attributes without Zarr string-array support.
-- Users can build window-indexed, group-indexed, and motif-indexed dataframes
+- Users can build window-indexed, group-indexed, and motif-indexed data frames
   from the Python helper without manually joining sidecar files.

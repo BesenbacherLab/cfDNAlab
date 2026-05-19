@@ -25,3 +25,6 @@ A scalar one-based integer length-bin index.
 \description{
 Look up the length-bin index containing a fragment length.
 }
+\details{
+Errors if no length bin contains the requested fragment length.
+}

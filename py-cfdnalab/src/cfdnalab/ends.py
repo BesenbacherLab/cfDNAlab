@@ -1,5 +1,5 @@
 """
-Classes for loading and interacting with the ends .zarr output.
+Load cfDNAlab end-motif Zarr outputs.
 """
 
 from __future__ import annotations
@@ -7,12 +7,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 import numbers
 import pathlib
-from typing import Any, List
+from typing import Any, List, Sequence
 
 import numpy as np
 import pandas as pd
 import scipy.sparse as sparse
 import zarr
+
+from ._helpers import (
+    filter_blacklisted_fraction,
+    normalize_strings,
+    normalize_zero_based_indices,
+    resolve_unique_match,
+    validate_scalar_bool,
+    validate_zero_based_index,
+)
 
 END_MOTIF_MIN_SUPPORTED_SCHEMA_VERSION = 1
 END_MOTIF_MAX_SUPPORTED_SCHEMA_VERSION = 1
@@ -22,6 +31,8 @@ VALID_ROW_MODES = {"global", "size", "bed", "grouped_bed"}
 
 @dataclass
 class LoadedEndMotifs:
+    """Validated end-motif Zarr handles and row or motif metadata."""
+
     store: Any
     storage_mode: str
     row_mode: str
@@ -46,7 +57,7 @@ class LoadedEndMotifs:
 
 
 class EndMotifCounts:
-    """Base class for end-motif count helpers."""
+    """Common API for global, windowed, and grouped end-motif outputs."""
 
     def __init__(
         self,
@@ -62,10 +73,6 @@ class EndMotifCounts:
             Path to a `<prefix>.end_motifs.zarr` directory.
         loaded_end_motifs
             Preloaded store data used by `read_end_motifs`.
-
-        Returns
-        -------
-        None
         """
         self.path = pathlib.Path(path)
         if loaded_end_motifs is None:
@@ -73,6 +80,9 @@ class EndMotifCounts:
         self.end_motifs = loaded_end_motifs
 
     def __repr__(self) -> str:
+        """
+        Return a compact summary with path, schema version, modes, and shape.
+        """
         schema_version = self.end_motifs.store.attrs.get("cfdnalab_schema_version")
         if self.end_motifs.storage_mode == "dense":
             shape = tuple(_required(self.end_motifs.counts, "counts").shape)
@@ -118,6 +128,7 @@ class EndMotifCounts:
         storage_mode, row_mode = _validate_root_metadata(store)
         _validate_required_arrays(store, storage_mode, row_mode)
 
+        # Motif and row axes are small coordinate arrays, so keep them in memory
         motif_index = _read_array(store, "motif_index")
         motif_names = _read_motif_ascii_labels(store, len(motif_index))
         row = _read_array(store, "row")
@@ -130,9 +141,11 @@ class EndMotifCounts:
         sparse_count = None
         sparse_shape = None
         if storage_mode == "dense":
+            # Dense counts stay as a Zarr array handle until a method asks for data
             counts = store["counts"]
             _validate_dense_counts(counts, len(row), len(motif_index))
         else:
+            # Sparse coordinates are the count data, so validate them eagerly
             sparse_row = _read_array(store, "sparse/row")
             sparse_motif = _read_array(store, "sparse/motif")
             sparse_count = _read_array(store, "sparse/count")
@@ -158,6 +171,7 @@ class EndMotifCounts:
         group_names = None
         eligible_windows = None
 
+        # Row-mode metadata determines which subclass read_end_motifs returns
         if row_mode == "global":
             row_labels = _read_labels(store["row"], "row_label", len(row), "row")
         elif row_mode in {"size", "bed"}:
@@ -224,7 +238,7 @@ class EndMotifCounts:
 
     def storage_mode(self) -> str:
         """
-        Return the count storage mode.
+        Return how end-motif counts are stored on disk.
 
         Returns
         -------
@@ -235,7 +249,7 @@ class EndMotifCounts:
 
     def row_mode(self) -> str:
         """
-        Return the row metadata mode.
+        Return what each end-motif count row represents.
 
         Returns
         -------
@@ -246,18 +260,18 @@ class EndMotifCounts:
 
     def motifs(self) -> List[str]:
         """
-        Return motif labels.
+        Return end-motif labels in motif-axis order.
 
         Returns
         -------
         list[str]
-            Motif labels in count-column order.
+            Motif labels in motif-axis order.
         """
         return self.end_motifs.motif_names.tolist()
 
     def motif_idx(self, motif: str) -> int:
         """
-        Return the index for a motif label.
+        Find the motif-axis index for a motif label.
 
         Parameters
         ----------
@@ -267,7 +281,7 @@ class EndMotifCounts:
         Returns
         -------
         int
-            Zero-based motif index.
+            Motif index.
         """
         return self._resolve_motif(motif)
 
@@ -292,12 +306,12 @@ class EndMotifCounts:
 
     def motif_metadata(self) -> pd.DataFrame:
         """
-        Return motif metadata.
+        Get the motif labels and motif indices available in this output.
 
         Returns
         -------
         pandas.DataFrame
-            One row per motif.
+            Columns are `motif_index` and `motif`.
         """
         return pd.DataFrame(
             {
@@ -308,12 +322,14 @@ class EndMotifCounts:
 
     def sparse_coo(self) -> sparse.coo_matrix:
         """
-        Return counts as a SciPy COO sparse matrix.
+        Return end-motif counts as a SciPy COO matrix.
 
         Returns
         -------
         scipy.sparse.coo_matrix
-            Sparse matrix with shape `(row, motif)`.
+            Sparse matrix with shape `(output row, motif)`. Output rows are
+            windows for windowed output, groups for grouped output, and the
+            single global summary row for global output.
         """
         if self.end_motifs.storage_mode == "dense":
             counts = _required(self.end_motifs.counts, "counts")
@@ -336,39 +352,35 @@ class EndMotifCounts:
             shape=shape,
         )
 
-    def sparse_coo_data_frame(self) -> pd.DataFrame:
+    def _data_frame(
+        self,
+        *,
+        densify: bool = False,
+        window_idxs: int | Sequence[int] | None = None,
+        groups: str | Sequence[str] | None = None,
+        group_idxs: int | Sequence[int] | None = None,
+        motifs: str | Sequence[str] | None = None,
+        motif_idxs: int | Sequence[int] | None = None,
+        max_blacklisted_fraction: float = 1.0,
+    ) -> pd.DataFrame:
         """
-        Return non-zero COO entries as a data frame.
-
-        This method is only available for sparse stores. Dense stores would
-        need to load the full dense matrix first.
-
-        Returns
-        -------
-        pandas.DataFrame
-            One row per stored non-zero count.
+        Shared implementation behind mode-specific public data_frame() methods.
         """
-        if self.end_motifs.storage_mode != "sparse_coo":
-            raise ValueError(
-                "sparse_coo_data_frame() is only available for sparse_coo output"
-            )
-
-        row_index = _required(self.end_motifs.sparse_row, "sparse/row")
-        motif_index = _required(self.end_motifs.sparse_motif, "sparse/motif")
-        count = _required(self.end_motifs.sparse_count, "sparse/count")
-        motif_lookup_index = motif_index.astype(int)
-        return pd.DataFrame(
-            {
-                "row": row_index,
-                "motif_index": motif_index,
-                "motif": self.end_motifs.motif_names[motif_lookup_index],
-                "count": count,
-            }
+        densify = validate_scalar_bool(densify, "densify")
+        row_indices = self._resolve_row_selector(window_idxs, groups, group_idxs)
+        motif_indices = self._resolve_motif_selector(motifs, motif_idxs)
+        row_indices = filter_blacklisted_fraction(
+            self._row_metadata_data_frame(),
+            max_blacklisted_fraction,
+            row_indices=row_indices,
         )
+        if self.end_motifs.storage_mode == "sparse_coo" and not densify:
+            return self._stored_data_frame_for_indices(row_indices, motif_indices)
+        return self._complete_data_frame_for_indices(row_indices, motif_indices, densify)
 
     def sparse_coo_for_motif(self, motif: str) -> sparse.coo_matrix:
         """
-        Return a sparse column matrix for one motif.
+        Return sparse counts for one motif across output rows.
 
         Parameters
         ----------
@@ -378,23 +390,23 @@ class EndMotifCounts:
         Returns
         -------
         scipy.sparse.coo_matrix
-            Sparse matrix with shape `(row, 1)`.
+            Sparse matrix with shape `(output row, 1)`.
         """
         return self.sparse_coo_for_motif_idx(self._resolve_motif(motif))
 
     def sparse_coo_for_motif_idx(self, motif_idx: int) -> sparse.coo_matrix:
         """
-        Return a sparse column matrix for one motif index.
+        Return sparse counts for one motif index across output rows.
 
         Parameters
         ----------
         motif_idx
-            Zero-based motif index to extract.
+            Motif index to extract.
 
         Returns
         -------
         scipy.sparse.coo_matrix
-            Sparse matrix with shape `(row, 1)`.
+            Sparse matrix with shape `(output row, 1)`.
         """
         motif_idx = self._validate_motif_idx(motif_idx)
         if self.end_motifs.storage_mode == "sparse_coo":
@@ -421,7 +433,7 @@ class EndMotifCounts:
         Returns
         -------
         zarr.Array
-            Dense count array with shape `(row, motif)`.
+            Dense count array with shape `(output row, motif)`.
         """
         if self.end_motifs.storage_mode != "dense":
             raise ValueError(
@@ -431,7 +443,7 @@ class EndMotifCounts:
 
     def dense_counts_matrix(self, allow_densify: bool = False) -> np.ndarray:
         """
-        Load or reconstruct the full dense count matrix.
+        Return end-motif counts as a dense NumPy matrix.
 
         Sparse stores are only densified when `allow_densify=True`.
 
@@ -444,7 +456,7 @@ class EndMotifCounts:
         Returns
         -------
         numpy.ndarray
-            Count array with shape `(row, motif)`.
+            Count array with shape `(output row, motif)`.
         """
         if self.end_motifs.storage_mode == "dense":
             counts = _required(self.end_motifs.counts, "counts")
@@ -456,7 +468,7 @@ class EndMotifCounts:
         self, motif: str, allow_densify: bool = False
     ) -> np.ndarray:
         """
-        Return dense counts for one motif.
+        Return dense counts for one motif across output rows.
 
         Parameters
         ----------
@@ -468,7 +480,7 @@ class EndMotifCounts:
         Returns
         -------
         numpy.ndarray
-            Dense count vector with shape `(row,)`.
+            Dense count vector with shape `(output row,)`.
         """
         return self.dense_counts_for_motif_idx(
             self._resolve_motif(motif), allow_densify=allow_densify
@@ -478,21 +490,21 @@ class EndMotifCounts:
         self, motif_idx: int, allow_densify: bool = False
     ) -> np.ndarray:
         """
-        Return dense counts for one motif index.
+        Return dense counts for one motif index across output rows.
 
         Sparse stores are only densified when `allow_densify=True`.
 
         Parameters
         ----------
         motif_idx
-            Zero-based motif index to extract.
+            Motif index to extract.
         allow_densify
             If `True`, allow sparse stores to be converted to a dense vector.
 
         Returns
         -------
         numpy.ndarray
-            Dense count vector with shape `(row,)`.
+            Dense count vector with shape `(output row,)`.
         """
         motif_idx = self._validate_motif_idx(motif_idx)
         if self.end_motifs.storage_mode == "dense":
@@ -508,123 +520,265 @@ class EndMotifCounts:
         values[sparse_row_index[matches].astype(int)] = sparse_count[matches]
         return values
 
-    def dense_data_frame_for_motif(
-        self,
-        motif: str,
-        allow_densify: bool = False,
-        max_blacklisted_fraction: float = 1.0,
+    def _complete_data_frame_for_indices(
+        self, row_indices: np.ndarray, motif_indices: np.ndarray, densify: bool
     ) -> pd.DataFrame:
         """
-        Build a dense data frame for one motif across all output rows.
-
-        Parameters
-        ----------
-        motif
-            Motif label to extract.
-        allow_densify
-            If `True`, allow sparse stores to be converted to dense counts.
-        max_blacklisted_fraction
-            Maximum row `blacklisted_fraction` in 0..1 to retain before
-            returning counts. The default `1.0` keeps all selected rows.
-
-        Returns
-        -------
-        pandas.DataFrame
-            Row metadata and counts for one motif.
+        Build rows for every selected output row and motif.
         """
-        return self.dense_data_frame_for_motif_idx(
-            self._resolve_motif(motif),
-            allow_densify=allow_densify,
-            max_blacklisted_fraction=max_blacklisted_fraction,
+        row_metadata = self._row_metadata_data_frame().iloc[row_indices].reset_index(
+            drop=True
         )
+        motif_metadata = self.motif_metadata().iloc[motif_indices].reset_index(
+            drop=True
+        )
+        row_count = len(row_indices)
+        motif_count = len(motif_indices)
+        if row_count == 0 or motif_count == 0:
+            return self._empty_data_frame()
 
-    def dense_data_frame_for_motif_idx(
-        self,
-        motif_idx: int,
-        allow_densify: bool = False,
-        max_blacklisted_fraction: float = 1.0,
+        counts = self.dense_counts_matrix(allow_densify=densify)
+        selected_counts = counts[np.ix_(row_indices, motif_indices)]
+        repeated_rows = row_metadata.loc[
+            row_metadata.index.repeat(motif_count)
+        ].reset_index(drop=True)
+        repeated_motifs = pd.concat(
+            [motif_metadata] * row_count, ignore_index=True
+        )
+        data_frame = pd.concat([repeated_rows, repeated_motifs], axis=1)
+        data_frame["count"] = selected_counts.ravel()
+        return data_frame
+
+    def _stored_data_frame_for_indices(
+        self, row_indices: np.ndarray, motif_indices: np.ndarray
     ) -> pd.DataFrame:
         """
-        Build a dense data frame for one motif index across all output rows.
-
-        Sparse stores are only densified when `allow_densify=True`.
-
-        Parameters
-        ----------
-        motif_idx
-            Zero-based motif index to extract.
-        allow_densify
-            If `True`, allow sparse stores to be converted to dense counts.
-        max_blacklisted_fraction
-            Maximum row `blacklisted_fraction` in 0..1 to retain before
-            returning counts. The default `1.0` keeps all selected rows.
-
-        Returns
-        -------
-        pandas.DataFrame
-            Row metadata and counts for one motif.
+        Build a selected data frame from stored COO rows.
         """
-        motif_idx = self._validate_motif_idx(motif_idx)
-        frame = self._row_metadata_frame()
-        frame["motif_index"] = int(self.end_motifs.motif_index[motif_idx])
-        frame["motif"] = self.end_motifs.motif_names[motif_idx]
-        frame["count"] = self.dense_counts_for_motif_idx(
-            motif_idx, allow_densify=allow_densify
-        )
-        return _filter_blacklisted_fraction(frame, max_blacklisted_fraction)
+        if len(row_indices) == 0 or len(motif_indices) == 0:
+            return self._empty_data_frame()
 
-    def _row_metadata_frame(self) -> pd.DataFrame:
+        sparse_rows = _required(self.end_motifs.sparse_row, "sparse/row").astype(int)
+        sparse_motifs = _required(self.end_motifs.sparse_motif, "sparse/motif").astype(
+            int
+        )
+        sparse_counts = _required(self.end_motifs.sparse_count, "sparse/count")
+        row_positions = {int(row_idx): order for order, row_idx in enumerate(row_indices)}
+        motif_positions = {
+            int(motif_idx): order for order, motif_idx in enumerate(motif_indices)
+        }
+        matches = np.asarray(
+            [
+                row_idx in row_positions and motif_idx in motif_positions
+                for row_idx, motif_idx in zip(sparse_rows, sparse_motifs)
+            ],
+            dtype=bool,
+        )
+        if not np.any(matches):
+            return self._empty_data_frame()
+
+        matched_rows = sparse_rows[matches]
+        matched_motifs = sparse_motifs[matches]
+        sort_order = np.argsort(
+            [
+                row_positions[int(row_idx)] * len(motif_indices)
+                + motif_positions[int(motif_idx)]
+                for row_idx, motif_idx in zip(matched_rows, matched_motifs)
+            ],
+            kind="stable",
+        )
+        matched_rows = matched_rows[sort_order]
+        matched_motifs = matched_motifs[sort_order]
+        matched_counts = sparse_counts[matches][sort_order]
+
+        row_metadata = self._row_metadata_data_frame().iloc[matched_rows].reset_index(
+            drop=True
+        )
+        motif_metadata = self.motif_metadata().iloc[matched_motifs].reset_index(
+            drop=True
+        )
+        data_frame = pd.concat([row_metadata, motif_metadata], axis=1)
+        data_frame["count"] = matched_counts
+        return data_frame
+
+    def _empty_data_frame(self) -> pd.DataFrame:
+        """
+        Return an empty end-motif data frame with public columns.
+        """
+        row_metadata = self._row_metadata_data_frame().iloc[[]].reset_index(drop=True)
+        motif_metadata = self.motif_metadata().iloc[[]].reset_index(drop=True)
+        data_frame = pd.concat([row_metadata, motif_metadata], axis=1)
+        data_frame["count"] = np.asarray([], dtype=float)
+        return data_frame
+
+    def _row_metadata_data_frame(self) -> pd.DataFrame:
+        """
+        Build mode-specific row metadata for the active end-motif row mode.
+
+        Global output has one labeled row. Windowed output exposes genomic
+        coordinates, and grouped output exposes group names and eligible-window
+        counts.
+        """
         if self.end_motifs.row_mode == "global":
-            frame = pd.DataFrame()
-            frame["row_label"] = self.end_motifs.row_labels
+            data_frame = pd.DataFrame()
+            data_frame["row_label"] = self.end_motifs.row_labels
         elif self.end_motifs.row_mode in {"size", "bed"}:
-            frame = pd.DataFrame()
+            data_frame = pd.DataFrame()
             row_chromosome = _required(self.end_motifs.row_chromosome, "row_chromosome")
             chromosome_names = _required(
                 self.end_motifs.chromosome_names, "chromosome_names"
             )
-            frame["window_idx"] = self.end_motifs.row
-            frame["chrom"] = chromosome_names[row_chromosome.astype(int)]
-            frame["start"] = _required(self.end_motifs.row_start_bp, "row_start_bp")
-            frame["end"] = _required(self.end_motifs.row_end_bp, "row_end_bp")
-            frame["blacklisted_fraction"] = _required(
+            data_frame["window_idx"] = self.end_motifs.row
+            data_frame["chrom"] = chromosome_names[row_chromosome.astype(int)]
+            data_frame["start"] = _required(self.end_motifs.row_start_bp, "row_start_bp")
+            data_frame["end"] = _required(self.end_motifs.row_end_bp, "row_end_bp")
+            data_frame["blacklisted_fraction"] = _required(
                 self.end_motifs.blacklisted_fraction, "blacklisted_fraction"
             )
         elif self.end_motifs.row_mode == "grouped_bed":
-            frame = pd.DataFrame()
-            frame["group_idx"] = _required(self.end_motifs.group_idx, "group")
-            frame["group_name"] = _required(self.end_motifs.group_names, "group_name")
-            frame["eligible_windows"] = _required(
+            data_frame = pd.DataFrame()
+            data_frame["group_idx"] = _required(self.end_motifs.group_idx, "group")
+            data_frame["group_name"] = _required(self.end_motifs.group_names, "group_name")
+            data_frame["eligible_windows"] = _required(
                 self.end_motifs.eligible_windows, "eligible_windows"
             )
-            frame["blacklisted_fraction"] = _required(
+            data_frame["blacklisted_fraction"] = _required(
                 self.end_motifs.blacklisted_fraction, "blacklisted_fraction"
             )
         else:
-            frame = pd.DataFrame()
-        return frame
+            data_frame = pd.DataFrame()
+        return data_frame
+
+    def _resolve_row_selector(
+        self,
+        window_idxs: int | Sequence[int] | None,
+        groups: str | Sequence[str] | None,
+        group_idxs: int | Sequence[int] | None,
+    ) -> np.ndarray:
+        """
+        Normalize row selectors for the active row mode.
+        """
+        if self.end_motifs.row_mode in {"size", "bed"}:
+            if groups is not None or group_idxs is not None:
+                raise ValueError("Grouped selectors can only be used with grouped output")
+            return normalize_zero_based_indices(
+                window_idxs,
+                size=len(self.end_motifs.row),
+                name="window_idxs",
+                index_name="window_idx",
+            )
+        if self.end_motifs.row_mode == "grouped_bed":
+            if window_idxs is not None:
+                raise ValueError("window_idxs can only be used with windowed output")
+            if groups is not None and group_idxs is not None:
+                raise ValueError("Use either groups or group_idxs, not both")
+            if groups is not None:
+                group_names = normalize_strings(groups, name="groups")
+                return np.asarray(
+                    [self.group_idx(group_name) for group_name in group_names],
+                    dtype=np.int64,
+                )
+            return normalize_zero_based_indices(
+                group_idxs,
+                size=len(self.end_motifs.row),
+                name="group_idxs",
+                index_name="group_idx",
+            )
+        if window_idxs is not None or groups is not None or group_idxs is not None:
+            raise ValueError("Row selectors cannot be used with global output")
+        return np.arange(len(self.end_motifs.row), dtype=np.int64)
+
+    def _resolve_motif_selector(
+        self,
+        motifs: str | Sequence[str] | None,
+        motif_idxs: int | Sequence[int] | None,
+    ) -> np.ndarray:
+        """
+        Normalize motif-name or motif-index selectors.
+        """
+        if motifs is not None and motif_idxs is not None:
+            raise ValueError("Use either motifs or motif_idxs, not both")
+        if motifs is None and motif_idxs is None:
+            return np.arange(len(self.end_motifs.motif_index), dtype=np.int64)
+        if motifs is not None:
+            motif_names = normalize_strings(motifs, name="motifs")
+            return np.asarray(
+                [self._resolve_motif(motif) for motif in motif_names],
+                dtype=np.int64,
+            )
+        return normalize_zero_based_indices(
+            motif_idxs,
+            size=len(self.end_motifs.motif_index),
+            name="motif_idxs",
+            index_name="motif_idx",
+        )
 
     def _resolve_motif(self, motif: str) -> int:
-        matches = np.flatnonzero(self.end_motifs.motif_names == motif)
-        if len(matches) == 0:
-            raise KeyError(f"Unknown end-motif label: {motif!r}")
-        if len(matches) > 1:
-            raise ValueError(f"End-motif label is not unique: {motif!r}")
-        return int(matches[0])
+        """
+        Resolve a motif label to its motif index.
+        """
+        return resolve_unique_match(
+            self.end_motifs.motif_names == motif,
+            missing_message=f"Unknown end-motif label: {motif!r}",
+            duplicate_message=f"End-motif label is not unique: {motif!r}",
+        )
 
     def _validate_row(self, row: int) -> int:
-        return _validate_index(row, len(self.end_motifs.row), "row")
+        """
+        Validate and normalize one row index.
+        """
+        return validate_zero_based_index(row, len(self.end_motifs.row), "row")
 
     def _validate_motif_idx(self, motif_idx: int) -> int:
-        return _validate_index(motif_idx, len(self.end_motifs.motif_index), "motif_idx")
+        """
+        Validate and normalize one motif index.
+        """
+        return validate_zero_based_index(
+            motif_idx, len(self.end_motifs.motif_index), "motif_idx"
+        )
 
 
 class GlobalEndMotifCounts(EndMotifCounts):
     """End-motif counts for global output."""
 
+    def data_frame(
+        self,
+        *,
+        densify: bool = False,
+        motifs: str | Sequence[str] | None = None,
+        motif_idxs: int | Sequence[int] | None = None,
+    ) -> pd.DataFrame:
+        """
+        Create a pandas DataFrame for global end-motif counts.
+
+        Sparse outputs return stored non-zero motif counts unless
+        `densify=True`. Densifying adds explicit zero-count rows for selected
+        observed motifs. Dense outputs always include zero counts.
+
+        Parameters
+        ----------
+        densify
+            If `True`, sparse outputs add explicit zero-count rows for selected
+            observed motifs. Dense outputs ignore this option.
+        motifs
+            Motif label or labels. Use either `motifs` or `motif_idxs`, not both.
+        motif_idxs
+            Motif index or indices. Use either `motifs` or `motif_idxs`, not both.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Global row metadata, motif metadata, and `count`.
+        """
+        return self._data_frame(
+            densify=densify,
+            motifs=motifs,
+            motif_idxs=motif_idxs,
+        )
+
     def dense_counts_vec(self, allow_densify: bool = False) -> np.ndarray:
         """
-        Return the global dense count vector.
+        Return global end-motif counts as a dense vector.
 
         Sparse stores are only densified when `allow_densify=True`.
 
@@ -640,33 +794,60 @@ class GlobalEndMotifCounts(EndMotifCounts):
         """
         return self.dense_counts_matrix(allow_densify=allow_densify)[0, :]
 
-    def dense_data_frame(self, allow_densify: bool = False) -> pd.DataFrame:
-        """
-        Build a dense motif count data frame for global output.
-
-        Sparse stores are only densified when `allow_densify=True`.
-
-        Parameters
-        ----------
-        allow_densify
-            If `True`, allow sparse stores to be converted to dense counts.
-
-        Returns
-        -------
-        pandas.DataFrame
-            One row per motif.
-        """
-        frame = self.motif_metadata()
-        frame["count"] = self.dense_counts_vec(allow_densify=allow_densify)
-        return frame
-
 
 class WindowedEndMotifCounts(EndMotifCounts):
     """End-motif counts for fixed-size or BED-window output."""
 
+    def data_frame(
+        self,
+        *,
+        window_idxs: int | Sequence[int] | None = None,
+        densify: bool = False,
+        motifs: str | Sequence[str] | None = None,
+        motif_idxs: int | Sequence[int] | None = None,
+        max_blacklisted_fraction: float = 1.0,
+    ) -> pd.DataFrame:
+        """
+        Create a pandas DataFrame of end-motif counts for genomic windows.
+
+        Use `window_idxs` to keep only selected windows and `motifs` or
+        `motif_idxs` to keep only selected motifs. Sparse outputs return stored
+        non-zero rows unless `densify=True`. Densifying adds explicit
+        zero-count rows for selected observed motifs. Dense outputs always
+        include zero counts.
+
+        Parameters
+        ----------
+        window_idxs
+            `None` for all windows, one window index, or a sequence of window
+            indices.
+        densify
+            If `True`, sparse outputs add explicit zero-count rows for selected
+            observed motifs. Dense outputs ignore this option.
+        motifs
+            Motif label or labels. Use either `motifs` or `motif_idxs`, not both.
+        motif_idxs
+            Motif index or indices. Use either `motifs` or `motif_idxs`, not both.
+        max_blacklisted_fraction
+            Maximum row `blacklisted_fraction` in 0..1 to retain before counts
+            are returned. The default `1.0` keeps all selected windows.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Window metadata, motif metadata, and `count`.
+        """
+        return self._data_frame(
+            densify=densify,
+            window_idxs=window_idxs,
+            motifs=motifs,
+            motif_idxs=motif_idxs,
+            max_blacklisted_fraction=max_blacklisted_fraction,
+        )
+
     def windows(self) -> pd.DataFrame:
         """
-        Return window metadata.
+        Get the genomic windows available in this end-motif output.
 
         Public genomic window metadata uses `window_idx`, `chrom`, `start`,
         and `end` columns.
@@ -674,18 +855,19 @@ class WindowedEndMotifCounts(EndMotifCounts):
         Returns
         -------
         pandas.DataFrame
-            One row per output window.
+            Columns are `window_idx`, `chrom`, `start`, `end`, and
+            `blacklisted_fraction`.
         """
-        return self._row_metadata_frame()
+        return self._row_metadata_data_frame()
 
     def sparse_coo_for_window(self, window_idx: int) -> sparse.coo_matrix:
         """
-        Return a sparse row matrix for one window.
+        Return sparse motif counts for one genomic window.
 
         Parameters
         ----------
         window_idx
-            Zero-based window index to extract.
+            Window index to extract.
 
         Returns
         -------
@@ -710,14 +892,14 @@ class WindowedEndMotifCounts(EndMotifCounts):
         self, window_idx: int, allow_densify: bool = False
     ) -> np.ndarray:
         """
-        Return dense counts for one window.
+        Return motif counts for one genomic window as a dense vector.
 
         Sparse stores are only densified when `allow_densify=True`.
 
         Parameters
         ----------
         window_idx
-            Zero-based window index to extract.
+            Window index to extract.
         allow_densify
             If `True`, allow sparse stores to be converted to dense counts.
 
@@ -733,60 +915,77 @@ class WindowedEndMotifCounts(EndMotifCounts):
         _require_densify(allow_densify, "dense_counts_for_window")
         return self.sparse_coo_for_window(window_idx).toarray()[0, :]
 
-    def dense_data_frame_for_window(
-        self,
-        window_idx: int,
-        allow_densify: bool = False,
-        max_blacklisted_fraction: float = 1.0,
-    ) -> pd.DataFrame:
-        """
-        Build a dense motif count data frame for one window.
-
-        Sparse stores are only densified when `allow_densify=True`.
-
-        Parameters
-        ----------
-        window_idx
-            Zero-based window index to extract.
-        allow_densify
-            If `True`, allow sparse stores to be converted to dense counts.
-        max_blacklisted_fraction
-            Maximum row `blacklisted_fraction` in 0..1 to retain before
-            returning counts. The default `1.0` keeps all selected rows.
-
-        Returns
-        -------
-        pandas.DataFrame
-            One row per motif.
-        """
-        window_idx = self._validate_row(window_idx)
-        frame = self.motif_metadata()
-        frame["count"] = self.dense_counts_for_window(
-            window_idx, allow_densify=allow_densify
-        )
-        metadata = self.windows().iloc[window_idx].to_dict()
-        for name, value in metadata.items():
-            frame[name] = value
-        return _filter_blacklisted_fraction(frame, max_blacklisted_fraction)
-
 
 class GroupedEndMotifCounts(EndMotifCounts):
     """End-motif counts for grouped BED output."""
 
-    def groups(self) -> pd.DataFrame:
+    def data_frame(
+        self,
+        *,
+        groups: str | Sequence[str] | None = None,
+        group_idxs: int | Sequence[int] | None = None,
+        densify: bool = False,
+        motifs: str | Sequence[str] | None = None,
+        motif_idxs: int | Sequence[int] | None = None,
+        max_blacklisted_fraction: float = 1.0,
+    ) -> pd.DataFrame:
         """
-        Return group metadata.
+        Create a pandas DataFrame of end-motif counts for grouped BED rows.
+
+        Use `groups` or `group_idxs` to keep only selected groups and `motifs`
+        or `motif_idxs` to keep only selected motifs. Sparse outputs return
+        stored non-zero rows unless `densify=True`. Densifying adds explicit
+        zero-count rows for selected observed motifs. Dense outputs always
+        include zero counts.
+
+        Parameters
+        ----------
+        groups
+            `None` for all groups, one group name, or a sequence of group names.
+            Use either `groups` or `group_idxs`, not both.
+        group_idxs
+            `None` for all groups, one group index, or a sequence of group
+            indices. Use either `groups` or `group_idxs`, not both.
+        densify
+            If `True`, sparse outputs add explicit zero-count rows for selected
+            observed motifs. Dense outputs ignore this option.
+        motifs
+            Motif label or labels. Use either `motifs` or `motif_idxs`, not both.
+        motif_idxs
+            Motif index or indices. Use either `motifs` or `motif_idxs`, not both.
+        max_blacklisted_fraction
+            Maximum row `blacklisted_fraction` in 0..1 to retain before counts
+            are returned. The default `1.0` keeps all selected groups.
 
         Returns
         -------
         pandas.DataFrame
-            One row per group.
+            Group metadata, motif metadata, and `count`.
         """
-        return self._row_metadata_frame()
+        return self._data_frame(
+            densify=densify,
+            groups=groups,
+            group_idxs=group_idxs,
+            motifs=motifs,
+            motif_idxs=motif_idxs,
+            max_blacklisted_fraction=max_blacklisted_fraction,
+        )
+
+    def groups(self) -> pd.DataFrame:
+        """
+        Get the BED groups available in this end-motif output.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Columns are `group_idx`, `group_name`, `eligible_windows`, and
+            `blacklisted_fraction`.
+        """
+        return self._row_metadata_data_frame()
 
     def group_idx(self, group_name: str) -> int:
         """
-        Return the index for a group name.
+        Find the end-motif row index for a group name.
 
         Parameters
         ----------
@@ -796,19 +995,18 @@ class GroupedEndMotifCounts(EndMotifCounts):
         Returns
         -------
         int
-            Zero-based group index.
+            Group index.
         """
         group_names = _required(self.end_motifs.group_names, "group_name")
-        matches = np.flatnonzero(group_names == group_name)
-        if len(matches) == 0:
-            raise KeyError(f"Unknown end-motif group name: {group_name!r}")
-        if len(matches) > 1:
-            raise ValueError(f"End-motif group name is not unique: {group_name!r}")
-        return int(matches[0])
+        return resolve_unique_match(
+            group_names == group_name,
+            missing_message=f"Unknown end-motif group name: {group_name!r}",
+            duplicate_message=f"End-motif group name is not unique: {group_name!r}",
+        )
 
     def sparse_coo_for_group(self, group: int | str) -> sparse.coo_matrix:
         """
-        Return a sparse row matrix for one group.
+        Return sparse motif counts for one grouped BED row.
 
         Parameters
         ----------
@@ -838,7 +1036,7 @@ class GroupedEndMotifCounts(EndMotifCounts):
         self, group: int | str, allow_densify: bool = False
     ) -> np.ndarray:
         """
-        Return dense counts for one group.
+        Return motif counts for one grouped BED row as a dense vector.
 
         Sparse stores are only densified when `allow_densify=True`.
 
@@ -861,51 +1059,18 @@ class GroupedEndMotifCounts(EndMotifCounts):
         _require_densify(allow_densify, "dense_counts_for_group")
         return self.sparse_coo_for_group(group_idx).toarray()[0, :]
 
-    def dense_data_frame_for_group(
-        self,
-        group: int | str,
-        allow_densify: bool = False,
-        max_blacklisted_fraction: float = 1.0,
-    ) -> pd.DataFrame:
-        """
-        Build a dense motif count data frame for one group.
-
-        Sparse stores are only densified when `allow_densify=True`.
-
-        Parameters
-        ----------
-        group
-            Group index or group name to extract.
-        allow_densify
-            If `True`, allow sparse stores to be converted to dense counts.
-        max_blacklisted_fraction
-            Maximum row `blacklisted_fraction` in 0..1 to retain before
-            returning counts. The default `1.0` keeps all selected rows.
-
-        Returns
-        -------
-        pandas.DataFrame
-            One row per motif.
-        """
-        group_idx = self._resolve_group(group)
-        frame = self.motif_metadata()
-        frame["count"] = self.dense_counts_for_group(
-            group_idx, allow_densify=allow_densify
-        )
-        group_metadata = self.groups().iloc[group_idx].to_dict()
-        for name, value in group_metadata.items():
-            frame[name] = value
-        return _filter_blacklisted_fraction(frame, max_blacklisted_fraction)
-
     def _resolve_group(self, group: int | str) -> int:
+        """
+        Resolve a group name or group index to a row index.
+        """
         if isinstance(group, str):
             return self.group_idx(group)
-        return _validate_index(group, len(self.end_motifs.row), "group")
+        return validate_zero_based_index(group, len(self.end_motifs.row), "group")
 
 
 def read_end_motifs(path: pathlib.Path | str) -> EndMotifCounts:
     """
-    Load an end-motif count Zarr store.
+    Open a cfDNAlab end-motif count Zarr store.
 
     Parameters
     ----------
@@ -929,6 +1094,9 @@ def read_end_motifs(path: pathlib.Path | str) -> EndMotifCounts:
 
 
 def _validate_zarr_store_path(path: pathlib.Path) -> None:
+    """
+    Validate that a path points to a Zarr V3 end-motif store directory.
+    """
     if not path.exists():
         raise FileNotFoundError(f"End-motif Zarr store does not exist: {path}")
     if not path.is_dir():
@@ -946,6 +1114,9 @@ def _validate_zarr_store_path(path: pathlib.Path) -> None:
 
 
 def _validate_root_metadata(store: Any) -> tuple[str, str]:
+    """
+    Validate root attributes and return storage and row modes.
+    """
     schema = store.attrs.get("cfdnalab_schema")
     if schema != "end_motif_counts":
         raise ValueError(
@@ -976,6 +1147,9 @@ def _validate_root_metadata(store: Any) -> tuple[str, str]:
 
 
 def _validate_required_arrays(store: Any, storage_mode: str, row_mode: str) -> None:
+    """
+    Require all arrays needed by the active storage mode and row mode.
+    """
     required = {"motif_index", "motif_byte", "motif_ascii", "row"}
     if storage_mode == "dense":
         required.add("counts")
@@ -1009,6 +1183,9 @@ def _validate_required_arrays(store: Any, storage_mode: str, row_mode: str) -> N
 
 
 def _has_array(store: Any, name: str) -> bool:
+    """
+    Return whether a Zarr group contains an array path.
+    """
     try:
         store[name]
     except Exception:
@@ -1017,6 +1194,9 @@ def _has_array(store: Any, name: str) -> bool:
 
 
 def _validate_dense_counts(counts: Any, n_rows: int, n_motifs: int) -> None:
+    """
+    Validate dense end-motif count array dimensions and shape.
+    """
     _validate_array_dimensions(counts, ("row", "motif"), "dense counts")
     if tuple(counts.shape) != (n_rows, n_motifs):
         raise ValueError(
@@ -1034,6 +1214,13 @@ def _validate_sparse_arrays(
     n_rows: int,
     n_motifs: int,
 ) -> None:
+    """
+    Validate sparse COO arrays against row and motif axes.
+
+    Sparse output stores row indices, motif indices, and counts as parallel
+    arrays. Shape and dimension labels are validated separately so malformed COO
+    stores fail before users convert them to SciPy matrices.
+    """
     _validate_array_dimensions(store["sparse/row"], ("nnz",), "sparse/row")
     _validate_array_dimensions(store["sparse/motif"], ("nnz",), "sparse/motif")
     _validate_array_dimensions(store["sparse/count"], ("nnz",), "sparse/count")
@@ -1062,6 +1249,7 @@ def _validate_sparse_arrays(
 
     sparse_dimension = _read_array(store, "sparse/sparse_dimension")
     _validate_axis(sparse_dimension, "sparse_dimension")
+    # Label order matters because sparse COO columns are interpreted by position
     sparse_dimension_labels = _read_labels(
         store["sparse/sparse_dimension"],
         "sparse_dimension_name",
@@ -1078,6 +1266,9 @@ def _validate_sparse_arrays(
 def _validate_array_dimensions(
     array: Any, expected: tuple[str, ...], array_name: str
 ) -> None:
+    """
+    Require a Zarr array to expose expected named dimensions.
+    """
     dimension_names = tuple(getattr(array.metadata, "dimension_names", ()) or ())
     if dimension_names != expected:
         raise ValueError(
@@ -1086,10 +1277,19 @@ def _validate_array_dimensions(
 
 
 def _read_array(store: Any, name: str) -> np.ndarray:
+    """
+    Load a Zarr array fully into a NumPy array.
+    """
     return np.asarray(store[name][:])
 
 
 def _read_motif_ascii_labels(store: Any, expected_len: int) -> np.ndarray:
+    """
+    Decode fixed-width ASCII motif labels into Python strings.
+
+    The schema stores motif labels as bytes so labels are portable across
+    languages and do not depend on object-string array support.
+    """
     motif_byte = _read_array(store, "motif_byte")
     _validate_axis(motif_byte, "motif_byte")
 
@@ -1107,6 +1307,7 @@ def _read_motif_ascii_labels(store: Any, expected_len: int) -> np.ndarray:
             f"motif_ascii must have dtype uint8, found {motif_ascii.dtype}"
         )
 
+    # Each row is one fixed-width ASCII motif label
     try:
         labels = [bytes(row).decode("ascii") for row in motif_ascii]
     except UnicodeDecodeError as error:
@@ -1117,6 +1318,9 @@ def _read_motif_ascii_labels(store: Any, expected_len: int) -> np.ndarray:
 def _read_labels(
     array: Any, field_name: str, expected_len: int, array_name: str
 ) -> np.ndarray:
+    """
+    Read string labels from a coordinate array's metadata.
+    """
     label_field = array.attrs.get("label_field")
     if label_field != field_name:
         raise ValueError(
@@ -1136,6 +1340,9 @@ def _read_labels(
 
 
 def _validate_axis(values: np.ndarray, name: str) -> None:
+    """
+    Require an axis coordinate array to be contiguous zero-based indices.
+    """
     expected = np.arange(len(values), dtype=values.dtype)
     if not np.array_equal(values, expected):
         raise ValueError(f"{name} axis must be contiguous 0-based indices")
@@ -1144,6 +1351,9 @@ def _validate_axis(values: np.ndarray, name: str) -> None:
 def _validate_same_length(
     values: np.ndarray, axis_values: np.ndarray, values_name: str, axis_name: str
 ) -> None:
+    """
+    Require a metadata vector to have the same length as its axis.
+    """
     if len(values) != len(axis_values):
         raise ValueError(
             f"{values_name} length ({len(values)}) does not match "
@@ -1151,45 +1361,10 @@ def _validate_same_length(
         )
 
 
-def _validate_index(index: int, size: int, name: str) -> int:
-    if not isinstance(index, numbers.Integral):
-        raise TypeError(f"{name} must be an integer, got {type(index).__name__}")
-    index = int(index)
-    if index < 0 or index >= size:
-        raise IndexError(f"{name} {index} is outside 0..{size - 1}")
-    return index
-
-
-def _validate_fraction(value: float, name: str) -> float:
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, numbers.Real)
-        or not np.isfinite(value)
-        or value < 0
-        or value > 1
-    ):
-        raise ValueError(f"{name} must be a single finite fraction in 0..1")
-    return float(value)
-
-
-def _filter_blacklisted_fraction(
-    frame: pd.DataFrame, max_blacklisted_fraction: float
-) -> pd.DataFrame:
-    max_blacklisted_fraction = _validate_fraction(
-        max_blacklisted_fraction, "max_blacklisted_fraction"
-    )
-    if "blacklisted_fraction" not in frame.columns:
-        if max_blacklisted_fraction == 1:
-            return frame
-        raise ValueError(
-            "Cannot filter by max_blacklisted_fraction because this output has no "
-            "blacklisted_fraction column"
-        )
-    keep = frame["blacklisted_fraction"].to_numpy() <= max_blacklisted_fraction
-    return frame.loc[keep].reset_index(drop=True)
-
-
 def _require_densify(allow_densify: bool, method_name: str) -> None:
+    """
+    Require explicit opt-in before expanding sparse output to a dense array.
+    """
     if not allow_densify:
         raise ValueError(
             f"{method_name}() would densify a sparse end-motif store. "
@@ -1200,6 +1375,9 @@ def _require_densify(allow_densify: bool, method_name: str) -> None:
 def _required(
     value: np.ndarray | zarr.Array | None, name: str
 ) -> np.ndarray | zarr.Array:
+    """
+    Return a loaded value or fail with schema context when it is unavailable.
+    """
     if value is None:
         raise ValueError(f"End-motif Zarr store does not contain {name}")
     return value

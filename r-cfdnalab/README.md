@@ -44,10 +44,10 @@ positions(midpoints)
 
 length_bin <- length_bin_idx(midpoints, 167)
 
-profile <- profile_data_frame(
+profile <- midpoint_data_frame(
   midpoints,
-  group = "LYL1",
-  length_bin_idx = length_bin
+  groups = "LYL1",
+  length_bin_idxs = length_bin
 )
 
 head(profile)
@@ -85,14 +85,14 @@ Sparse output keeps only non-zero counts in memory:
 
 ```r
 counts <- sparse_counts_matrix(ends)
-motif_counts <- sparse_data_frame_for_motif(ends, "_AA")
+motif_counts <- end_motif_data_frame(ends, motifs = "_AA")
 ```
 
 Dense output can be read as a matrix or data frame:
 
 ```r
 counts <- dense_counts_matrix(ends)
-motif_counts <- dense_data_frame_for_motif(ends, "_AA")
+motif_counts <- end_motif_data_frame(ends, motifs = "_AA")
 ```
 
 Dense helpers do not silently convert sparse stores. If you want a dense matrix from sparse output, pass `allow_densify = TRUE`.
@@ -115,7 +115,8 @@ length_counts_matrix(lengths)
 length_data_frame(lengths, value = "fraction")
 ```
 
- - Global outputs also support `length_counts_vector(lengths)`.
- - Windowed outputs support `window_metadata(lengths)` and optional `window_idx` selection in
-`length_data_frame()`.
- - Grouped outputs support `group_metadata(lengths)`, `group_idx()`, and optional `group` or `group_idx` selection.
+- Global outputs also support `length_counts_vector(lengths)`.
+- Windowed outputs support `window_metadata(lengths)` and optional `window_idxs` selection in `length_data_frame()`.
+- Grouped outputs support `group_metadata(lengths)`, `group_idx()`, and optional `groups` or `group_idxs` selection.
+
+For windowed or grouped outputs, `max_blacklisted_fraction` filters rows by `blacklisted_fraction`. Outputs without that column only accept the default keep-all cutoff.

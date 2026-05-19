@@ -73,7 +73,7 @@ def test_cfdnalab_package_builds_profile_dataframe_from_fixture(
 ) -> None:
     profiles = cfdnalab.read_midpoints(midpoint_zarr_path)
 
-    frame = profiles.data_frame_for_profile(group_idx=0, length_bin_idx=1)
+    frame = profiles.data_frame(group_idxs=0, length_bin_idxs=1)
 
     pd.testing.assert_frame_equal(
         frame,
@@ -99,8 +99,8 @@ def test_cfdnalab_package_builds_group_and_length_dataframes_from_fixture(
 ) -> None:
     profiles = cfdnalab.read_midpoints(midpoint_zarr_path)
 
-    group_frame = profiles.data_frame_from_group("beta-site")
-    length_frame = profiles.data_frame_from_length_bin(2)
+    group_frame = profiles.data_frame(groups="beta-site")
+    length_frame = profiles.data_frame(length_bin_idxs=2)
 
     assert group_frame.shape == (15, 10)
     assert group_frame["group_name"].unique().tolist() == ["beta-site"]

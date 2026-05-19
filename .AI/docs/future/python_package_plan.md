@@ -1,7 +1,8 @@
 # Python Package Plan
 
-This plan covers a small Python companion package for reading and analyzing
-cfDNAlab output files. The first useful target is midpoint Zarr output.
+This plan covers the Python companion package for reading and analyzing
+cfDNAlab output files. The current public loader API is specified in
+[`../specs/package_loader_api.md`](../specs/package_loader_api.md).
 
 ## Purpose
 
@@ -10,16 +11,15 @@ after the Rust CLI has already produced them. It is not a Python implementation
 of cfDNAlab and should not pretend to install or wrap the Rust command-line
 tool.
 
-The initial package should focus on:
+The package currently targets:
 
-- opening `<prefix>.midpoint_profiles.zarr`
-- validating the midpoint Zarr schema and version
-- exposing compact group, length-bin, and position metadata
-- extracting NumPy arrays for common slices
-- building pandas data frames for common plotting and analysis shapes
+- `<prefix>.midpoint_profiles.zarr`
+- `<prefix>.end_motifs.zarr`
+- `<prefix>.length_counts.tsv.zst`
 
-Do not add plotting in the first package version. The first useful boundary is
-clean arrays and data frames.
+The useful boundary is clean metadata, NumPy arrays, SciPy sparse matrices, and
+pandas data frames. Plotting can stay outside the first package scope until
+common display shapes stabilize.
 
 ## Naming
 
@@ -87,8 +87,13 @@ py-cfdnalab/
   src/
     cfdnalab/
       __init__.py
+      _helpers.py
+      ends.py
+      lengths.py
       midpoints.py
   tests/
+    test_ends.py
+    test_lengths.py
     test_midpoints.py
 ```
 
@@ -101,20 +106,22 @@ development commands.
 
 ## Dependencies
 
-Initial runtime dependencies:
+Runtime dependencies:
 
 ```toml
 dependencies = [
   "numpy",
   "pandas",
+  "scipy",
   "zarr>=3",
+  "zstandard",
 ]
 ```
 
-Use `requires-python = ">=3.11"` because Zarr Python 3 requires Python 3.11
-or later.
+Use `requires-python = ">=3.11"` because Zarr Python 3 requires Python 3.11 or
+later.
 
-Initial test dependency:
+Test dependency:
 
 ```toml
 [project.optional-dependencies]
@@ -124,54 +131,52 @@ test = [
 ```
 
 Do not add xarray, dask, matplotlib, seaborn, or plotnine as runtime
-dependencies for the first version. Those can remain user-side plotting choices
-or downstream compatibility checks.
+dependencies. Those can remain user-side plotting choices or downstream
+compatibility checks.
 
 ## Public API
 
-The package-level API should be:
+`cfdnalab.__init__` should re-export stable public entry points:
+
+```python
+from .ends import (
+    EndMotifCounts,
+    GlobalEndMotifCounts,
+    GroupedEndMotifCounts,
+    WindowedEndMotifCounts,
+    read_end_motifs,
+)
+from .lengths import (
+    GlobalLengthCounts,
+    GroupedLengthCounts,
+    LengthCounts,
+    WindowedLengthCounts,
+    read_lengths,
+)
+from .midpoints import MidpointProfiles, read_midpoints
+```
+
+The package-level API should stay simple:
 
 ```python
 import cfdnalab as cfl
 
 midpoints = cfl.read_midpoints("sample.midpoint_profiles.zarr")
+ends = cfl.read_end_motifs("sample.end_motifs.zarr")
+lengths = cfl.read_lengths("sample.length_counts.tsv.zst")
 ```
 
-`cfdnalab.__init__` should re-export only stable public entry points:
+The mode-specific data-frame methods and selector names are specified in
+[`../specs/package_loader_api.md`](../specs/package_loader_api.md). Keep Python
+as object-method-oriented: `.data_frame(...)` is appropriate because it is not a
+global function that risks masking another package.
 
-```python
-from .midpoints import MidpointProfiles, read_midpoints
-```
+Array and matrix helpers should make large or dense materialization visible:
 
-Initial midpoint helper methods:
-
-```python
-midpoints.groups()
-midpoints.group_names()
-midpoints.eligible_intervals()
-midpoints.length_bins()
-midpoints.positions()
-
-midpoints.group_idx(group_name="LYL1")
-midpoints.length_bin_idx(length=167)
-
-midpoints.data_frame_for_profile(group_idx=0, length_bin_idx=0)
-midpoints.data_frame_from_group(group_name="LYL1")
-midpoints.data_frame_from_group_idx(group_idx=0)
-midpoints.data_frame_from_length(length=167)
-midpoints.data_frame_from_length_bin(length_bin_idx=0)
-
-midpoints.array_for_profile(group_idx=0, length_bin_idx=0)
-midpoints.array()
-midpoints.array_from_group(group_name="LYL1")
-midpoints.array_from_group_idx(group_idx=0)
-midpoints.array_from_length(length=167)
-midpoints.array_from_length_bin(length_bin_idx=0)
-```
-
-`array()` must be documented as loading the full 3D tensor into RAM. Examples
-should prefer `array_for_profile`, `array_from_group`, or
-`array_from_length_bin` when possible.
+- midpoint `.array()` loads the full 3D tensor into RAM
+- end-motif `dense_*` helpers may load or reconstruct dense count matrices
+- end-motif `sparse_*` helpers preserve sparse storage as SciPy sparse matrices
+- length count helpers return vectors or matrices shaped by the loaded mode
 
 ## Tests
 
@@ -180,10 +185,11 @@ Use two test layers.
 Python package unit tests:
 
 - live under `py-cfdnalab/tests`
-- create a tiny valid Zarr store directly, or use a small checked-in fixture if
-  direct fixture creation is less brittle
-- test schema validation errors, metadata helpers, array slicing, dataframe
-  builders, group-name lookup, and length-bin lookup
+- create small valid package fixtures directly, or use small checked-in package
+  fixtures if direct construction is less brittle
+- test schema validation errors, metadata helpers, array/matrix extraction,
+  data-frame builders, selector validation, compressed length TSV reading, and
+  duplicate-name handling
 - run with:
 
 ```bash
@@ -194,28 +200,31 @@ pytest
 
 Downstream integration tests:
 
-- keep using cfDNAlab-generated Zarr output
+- use cfDNAlab-generated midpoint, end-motif, and length fixtures
 - verify that the Python package can read real Rust CLI output
-- should run in the existing downstream workflow or a Python-package-specific
-  job that first generates the Rust fixture
+- include fixture variants where no blacklist was used, so loader behavior does
+  not accidentally require `blacklisted_fraction`
+- should run in the existing downstream workflow or a package-specific job that
+  first generates the Rust fixture
 
 The package unit tests should not require BAM generation or the Rust CLI. The
 integration tests are the layer that catches Rust output-schema drift.
 
 ## README Requirements
 
-The full package README should include:
+The package README should include:
 
 - what this package is
 - what it is not
 - how to install the Rust CLI separately
 - how to install the Python package
-- how to load midpoint Zarr output
-- how to inspect group, length-bin, and position metadata
-- how to get one profile as a data frame
-- how to filter groups by `eligible_intervals`
-- how to get NumPy arrays
-- a warning that `array()` loads the full 3D count tensor into RAM
+- how to load midpoint, end-motif, and length-count outputs
+- how to inspect group, length-bin, window, position, and motif metadata
+- how to get representative data frames without documenting every method
+- how to get NumPy arrays and SciPy sparse matrices
+- a warning that full-array helpers can load large data into RAM
+- a note that stricter `max_blacklisted_fraction` cutoffs require
+  `blacklisted_fraction` metadata in the loaded output
 
 The first example should show the split between producing output and reading it:
 
@@ -228,8 +237,12 @@ pip install cfdnalab
 import cfdnalab as cfl
 
 midpoints = cfl.read_midpoints("sample.midpoint_profiles.zarr")
-profile = midpoints.data_frame_for_profile(group_idx=0, length_bin_idx=0)
+profile = midpoints.data_frame(group_idxs=0, length_bin_idxs=0)
 ```
+
+Keep examples representative, not exhaustive. The README should show the main
+metadata, array, sparse-matrix, and data-frame paths without becoming a full API
+reference.
 
 ## Release Notes
 
@@ -243,9 +256,7 @@ When this package is published, add a note to the main cfDNAlab documentation:
 
 Possible later additions:
 
-- R package with equivalent midpoint helpers
-- ends Zarr reader helpers after the ends schema is implemented
 - optional plotting helpers if common plot shapes stabilize
-- xarray export method if it proves useful in real workflows
-
-Do not add these before the midpoint reader API has been tested on real outputs.
+- xarray export method for midpoint profiles if it proves useful in real
+  workflows
+- GC-output loaders after those public schemas settle
