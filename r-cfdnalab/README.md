@@ -21,6 +21,8 @@ install.packages("pak")
 pak::pak("cfdnalab=github::BesenbacherLab/cfDNAlab/r-cfdnalab")
 ```
 
+<br>
+
 ## Midpoint Profiles
 
 Midpoint profile stores contain a 3D count array with axes:
@@ -52,6 +54,8 @@ head(profile)
 ```
 
 Use `profile_array()` when you only need the count vector for one profile. Use `midpoint_array()` only when you want the full 3D count array in memory.
+
+<br>
 
 ## End Motifs
 
@@ -96,6 +100,8 @@ Dense helpers do not silently convert sparse stores. If you want a dense matrix 
 ```r
 counts <- dense_counts_matrix(ends, allow_densify = TRUE)
 ```
+
+<br>
 
 ## Length Counts
 
