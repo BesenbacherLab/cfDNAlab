@@ -37,6 +37,79 @@
   margin: 3rem 0 1.2rem !important;
 }
 
+.loader-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0 2rem;
+}
+
+.loader-card {
+  display: block;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 8px;
+  padding: 1rem;
+  color: inherit;
+  text-decoration: none;
+  background: var(--ifm-background-surface-color);
+}
+
+.loader-card:hover {
+  border-color: var(--ifm-color-primary);
+  color: inherit;
+  text-decoration: none;
+}
+
+.loader-card span {
+  display: block;
+  margin-bottom: 0.15rem;
+  font-weight: 700;
+}
+
+.loader-card small {
+  display: block;
+  margin-bottom: 0.7rem;
+  color: var(--ifm-color-emphasis-700);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.loader-card p {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.api-detail {
+  margin: 0.8rem 0;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 8px;
+  padding: 0.7rem 0.9rem;
+  background: var(--ifm-background-surface-color);
+}
+
+.api-detail summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.api-detail[open] summary {
+  margin-bottom: 0.8rem;
+}
+
+.api-signature pre,
+.api-signature pre code,
+.api-signature pre code span {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.api-signature div[class*='codeBlockContent'] pre {
+  padding-right: 3.75rem;
+}
+
 .heroSection {
   min-height: calc(100vh - 60px);
   display: grid;

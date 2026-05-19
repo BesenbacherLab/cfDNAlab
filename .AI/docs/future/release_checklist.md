@@ -210,6 +210,9 @@ Before a coordinated release:
 - update `CHANGELOG`
 - update package READMEs
 - update user guides with any output-format changes
+- update the generated website loader-doc mapping in
+  `website/scripts/generate_loader_docs.py` when public Python/R loader symbols,
+  output groups, quick examples, or output filenames change
 - keep Python and R examples concise and aligned with the helper APIs
 - avoid documenting several downstream packages when one recommended path per
   language is enough
