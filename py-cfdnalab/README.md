@@ -59,9 +59,9 @@ The returned data frame has one row per midpoint position bin.
 
 ### Extract A Group Or Length Bin
 
-Use `data_frame(groups=...)` for all length and position bins in one group. 
+Use `data_frame(groups=...)` for all length and position bins in one group.
 
-Use `data_frame(with_lengths=...)` when you have a fragment length in bp and want the length bin that contains it. 
+Use `data_frame(with_lengths=...)` when you have a fragment length in bp and want the length bin that contains it.
 
 Use `with_length_range=(start, end)` for all whole length bins overlapping a half-open bp range. Range selection does not split edge bins.
 

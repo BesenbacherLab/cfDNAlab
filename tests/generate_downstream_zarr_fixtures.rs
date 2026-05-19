@@ -23,7 +23,7 @@ use fixtures::{
     bam_from_specs_strict_identity, paired_fragment, read_length_counts_text,
     read_midpoint_zarr_counts, read_midpoint_zarr_i32_1d, simple_reference_twobit, write_bed,
 };
-use ndarray::{arr3, Array2};
+use ndarray::{Array2, arr3};
 use serde_json::Value;
 use std::{
     env,
@@ -515,9 +515,11 @@ fn run_length_fixture(
     run_lengths(&config)?;
     let counts_path = output_dir.join(format!("{prefix}.length_counts.tsv.zst"));
     assert!(counts_path.is_file());
-    assert!(output_dir
-        .join(format!("{prefix}.length_settings.json"))
-        .is_file());
+    assert!(
+        output_dir
+            .join(format!("{prefix}.length_settings.json"))
+            .is_file()
+    );
     Ok(counts_path)
 }
 
@@ -565,9 +567,11 @@ fn run_end_fixture(
     run_ends(&config)?;
     let zarr_path = output_dir.join(format!("{prefix}.end_motifs.zarr"));
     assert!(zarr_path.is_dir());
-    assert!(output_dir
-        .join(format!("{prefix}.end_settings.json"))
-        .is_file());
+    assert!(
+        output_dir
+            .join(format!("{prefix}.end_settings.json"))
+            .is_file()
+    );
     Ok(zarr_path)
 }
 

@@ -10,7 +10,7 @@ This version cleans up the API and introduces `read_lengths` for reading the out
 
 **BREAKING CHANGES**:
 
- - Renames `groups()` to `group_metadata()` to remove the masking with tidyverse. 
+ - Renames `groups()` to `group_metadata()` to remove the masking with tidyverse.
  - Adds `window_metadata()` as the R window metadata helper and removes the
    `windows()` helper.
  - Standardizes public genomic window metadata columns to `window_idx`,

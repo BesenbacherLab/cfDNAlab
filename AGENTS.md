@@ -45,4 +45,3 @@ Always read [.AI/collaboration.md](/Users/au547627/Documents/Development/rust/cf
 ## R package
 
 See r-cfdnalab/DEVELOPMENT.md - especially for 1-based external indexing and 0-based internal indexing rules.
-

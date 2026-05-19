@@ -225,11 +225,14 @@ cf_read_end_motif_row_metadata <- function(path, store, row, row_mode) {
     cf_validate_index_vector(row_chromosome, length(chromosome), "row_chromosome")
     cf_validate_half_open_intervals(row_start_bp, row_end_bp, "row_start_bp", "row_end_bp")
     cf_validate_fraction_vector(blacklisted_fraction, "blacklisted_fraction")
+    if (any(row_start_bp > .Machine$integer.max) || any(row_end_bp > .Machine$integer.max)) {
+      stop("End-motif window coordinates must fit in R integer range", call. = FALSE)
+    }
     return(data.frame(
       window_idx = cf_index0_to_r_index(row),
       chrom = chromosome_name[as.integer(row_chromosome) + 1L],
-      start = row_start_bp,
-      end = row_end_bp,
+      start = as.integer(row_start_bp),
+      end = as.integer(row_end_bp),
       blacklisted_fraction = blacklisted_fraction,
       stringsAsFactors = FALSE
     ))
@@ -249,10 +252,13 @@ cf_read_end_motif_row_metadata <- function(path, store, row, row_mode) {
   cf_validate_same_length(blacklisted_fraction, row, "blacklisted_fraction", "row")
   cf_validate_nonnegative_integer_vector(eligible_windows, "eligible_windows")
   cf_validate_fraction_vector(blacklisted_fraction, "blacklisted_fraction")
+  if (any(eligible_windows > .Machine$integer.max)) {
+    stop("eligible_windows values must fit in R integer range", call. = FALSE)
+  }
   data.frame(
     group_idx = cf_index0_to_r_index(group),
     group_name = group_name,
-    eligible_windows = eligible_windows,
+    eligible_windows = as.integer(eligible_windows),
     blacklisted_fraction = blacklisted_fraction,
     stringsAsFactors = FALSE
   )

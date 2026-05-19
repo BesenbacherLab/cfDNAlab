@@ -358,13 +358,15 @@ test_that("sparse windowed end motifs stay sparse unless densification is reques
     data.frame(
       window_idx = c(1L, 2L),
       chrom = c("chr1", "chr1"),
-      start = c(10, 19),
-      end = c(11, 20),
+      start = c(10L, 19L),
+      end = c(11L, 20L),
       blacklisted_fraction = c(0, 0),
       stringsAsFactors = FALSE
     ),
     ignore_attr = TRUE
   )
+  expect_identical(window_metadata(ends)$start, c(10L, 19L))
+  expect_identical(window_metadata(ends)$end, c(11L, 20L))
 
   sparse_counts <- sparse_counts_matrix(ends)
   expect_s4_class(sparse_counts, "sparseMatrix")
@@ -402,12 +404,13 @@ test_that("sparse grouped end motifs expose group metadata and stored rows", {
     data.frame(
       group_idx = c(1L, 2L, 3L),
       group_name = c("beta", "alpha", "gamma"),
-      eligible_windows = c(2, 1, 1),
+      eligible_windows = c(2L, 1L, 1L),
       blacklisted_fraction = c(0, 0, 0),
       stringsAsFactors = FALSE
     ),
     ignore_attr = TRUE
   )
+  expect_identical(group_metadata(ends)$eligible_windows, c(2L, 1L, 1L))
 
   sparse_counts <- sparse_counts_matrix(ends)
   expect_equal(

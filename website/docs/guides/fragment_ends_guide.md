@@ -106,10 +106,11 @@ head(motifs(ends))
 
 motif <- motifs(ends)$motif[[1]]
 if (storage_mode(ends) == "sparse_coo") {
-  motif_counts <- sparse_data_frame_for_motif(ends, motif)
+  counts <- sparse_counts_matrix(ends)
 } else {
-  motif_counts <- dense_data_frame_for_motif(ends, motif)
+  counts <- dense_counts_matrix(ends)
 }
+motif_counts <- end_motif_data_frame(ends, motifs = motif)
 ```
 
 ## Handling clipped ends
