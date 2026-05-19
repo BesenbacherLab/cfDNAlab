@@ -23,11 +23,11 @@ Works on cfDNA **fragments** from either *paired-end* sequencing data or unpaire
 
 The commands are **highly flexible** with many options and good default settings. Start with the simple [examples](#examples) in this README and then check the full guides in the [docs](https://cfdnalab.tools/).
 
-Load the `Zarr` outputs with the **accompanying [R](https://github.com/BesenbacherLab/cfDNAlab/tree/main/r-cfdnalab) and [Python](https://github.com/BesenbacherLab/cfDNAlab/tree/main/py-cfdnalab) packages** for easier downstream usage (*installed separately*).
+Load the main outputs with the **accompanying [R](https://github.com/BesenbacherLab/cfDNAlab/tree/main/r-cfdnalab) and [Python](https://github.com/BesenbacherLab/cfDNAlab/tree/main/py-cfdnalab) packages** for easier downstream usage (*installed separately*).
 
 **Workflow-safe outputs**: The output files are only moved to their final location once all files have been fully written, so workflow managers don't confuse partially written files as successful completion.
 
-The package is under active development and may [change](https://github.com/BesenbacherLab/cfDNAlab/blob/main/CHANGELOG). Multiple additional commands are currently being built.
+The package is under active development and may [change](https://github.com/BesenbacherLab/cfDNAlab/blob/main/CHANGELOG.md). Multiple additional commands are currently being built.
 Suggest a tool or feature [here](https://github.com/BesenbacherLab/cfDNAlab/issues/new/choose)!
 
 <br>
@@ -782,14 +782,8 @@ import cfdnalab as cfl
 
 midpoints = cfl.read_midpoints("path_to/<sample>.midpoint_profiles.zarr")
 
-group_idx = midpoints.group_idx("LYL1")
-length_bin_idx = midpoints.length_bin_idx(167)
-
 # Get data frame for a single group and length bin
-profile = midpoints.data_frame_for_profile(
-    group_idx=group_idx,
-    length_bin_idx=length_bin_idx,
-)
+profile = midpoints.data_frame(groups="LYL1", with_lengths=167)
 
 ```
 
@@ -800,13 +794,11 @@ library(cfdnalab)
 
 midpoints <- read_midpoints("path_to/<sample>.midpoint_profiles.zarr")
 
-length_bin <- length_bin_idx(midpoints, 167)
-
 # Get data frame for a single group and length bin
-profile <- profile_data_frame(
+profile <- midpoint_data_frame(
   midpoints,
-  group = "LYL1",
-  length_bin_idx = length_bin
+  groups = "LYL1",
+  with_lengths = 167
 )
 
 ```

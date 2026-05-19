@@ -31,36 +31,34 @@ def test_dense_windowed_end_motifs_load_metadata_and_arrays(tmp_path: Path) -> N
         "shape=(2, 3)"
         ")"
     )
-    assert not hasattr(ends, "groups")
+    assert not hasattr(ends, "group_metadata")
     assert ends.storage_mode() == "dense"
     assert ends.row_mode() == "bed"
-    assert ends.motifs() == ["_AA", "_CC", "_GG"]
     assert ends.has_motif("_AA")
     assert not ends.has_motif("_TT")
     assert ends.motif_idx("_GG") == 2
     pd.testing.assert_frame_equal(
-        ends.motif_metadata(),
+        ends.motifs_metadata(),
         pd.DataFrame({"motif_index": MOTIF_INDEX, "motif": MOTIF_NAMES}),
     )
     pd.testing.assert_frame_equal(
-        ends.windows(),
+        ends.window_metadata(),
         pd.DataFrame(
             {
                 "window_idx": np.array([0, 1], dtype=np.int32),
-                "chromosome": np.array([0, 1], dtype=np.int32),
-                "chromosome_name": np.array(["chr2", "chr10"], dtype=object),
-                "window_start_bp": np.array([10, 40], dtype=np.int64),
-                "window_end_bp": np.array([20, 60], dtype=np.int64),
+                "chrom": np.array(["chr2", "chr10"], dtype=object),
+                "start": np.array([10, 40], dtype=np.int64),
+                "end": np.array([20, 60], dtype=np.int64),
                 "blacklisted_fraction": np.array([0.25, 0.0], dtype=np.float64),
             }
         ),
     )
     np.testing.assert_array_equal(
-        ends.dense_counts_matrix(),
+        ends.dense_counts_array(),
         np.array([[1.0, 0.0, 2.5], [0.5, 4.0, 0.0]], dtype=np.float64),
     )
     assert ends.dense_counts_zarr_array().shape == (2, 3)
-    assert sparse.isspmatrix_coo(ends.sparse_coo())
+    assert sparse.isspmatrix_coo(ends.sparse_counts_matrix())
 
 
 def test_dense_windowed_end_motif_slice_helpers_return_expected_frames(
@@ -69,22 +67,21 @@ def test_dense_windowed_end_motif_slice_helpers_return_expected_frames(
     store_path = _write_dense_window_store(tmp_path / "sample.end_motifs.zarr")
     ends = cfdnalab.read_end_motifs(store_path)
 
-    window_frame = ends.dense_data_frame_for_window(0)
-    motif_frame = ends.dense_data_frame_for_motif("_CC")
+    window_frame = ends.data_frame(window_idxs=0)
+    motif_frame = ends.data_frame(motifs="_CC")
 
     pd.testing.assert_frame_equal(
         window_frame,
         pd.DataFrame(
             {
+                "window_idx": np.array([0, 0, 0], dtype=np.int32),
+                "chrom": np.array(["chr2", "chr2", "chr2"], dtype=object),
+                "start": np.array([10, 10, 10], dtype=np.int64),
+                "end": np.array([20, 20, 20], dtype=np.int64),
+                "blacklisted_fraction": np.array([0.25, 0.25, 0.25]),
                 "motif_index": MOTIF_INDEX,
                 "motif": MOTIF_NAMES,
                 "count": np.array([1.0, 0.0, 2.5], dtype=np.float64),
-                "window_idx": np.array([0, 0, 0], dtype=np.int64),
-                "chromosome": np.array([0, 0, 0], dtype=np.int64),
-                "chromosome_name": np.array(["chr2", "chr2", "chr2"], dtype=object),
-                "window_start_bp": np.array([10, 10, 10], dtype=np.int64),
-                "window_end_bp": np.array([20, 20, 20], dtype=np.int64),
-                "blacklisted_fraction": np.array([0.25, 0.25, 0.25]),
             }
         ),
     )
@@ -93,32 +90,43 @@ def test_dense_windowed_end_motif_slice_helpers_return_expected_frames(
         pd.DataFrame(
             {
                 "window_idx": np.array([0, 1], dtype=np.int32),
-                "chromosome": np.array([0, 1], dtype=np.int32),
-                "chromosome_name": np.array(["chr2", "chr10"], dtype=object),
-                "window_start_bp": np.array([10, 40], dtype=np.int64),
-                "window_end_bp": np.array([20, 60], dtype=np.int64),
+                "chrom": np.array(["chr2", "chr10"], dtype=object),
+                "start": np.array([10, 40], dtype=np.int64),
+                "end": np.array([20, 60], dtype=np.int64),
                 "blacklisted_fraction": np.array([0.25, 0.0], dtype=np.float64),
-                "motif_index": np.array([1, 1], dtype=np.int64),
+                "motif_index": np.array([1, 1], dtype=np.int32),
                 "motif": ["_CC", "_CC"],
                 "count": np.array([0.0, 4.0], dtype=np.float64),
             }
         ),
     )
     np.testing.assert_array_equal(
-        ends.dense_counts_for_window(1),
-        np.array([0.5, 4.0, 0.0], dtype=np.float64),
+        ends.dense_counts_array(window_idxs=1),
+        np.array([[0.5, 4.0, 0.0]], dtype=np.float64),
     )
     np.testing.assert_array_equal(
-        ends.dense_counts_for_motif_idx(2), np.array([2.5, 0.0], dtype=np.float64)
+        ends.dense_counts_array(motif_idxs=2),
+        np.array([[2.5], [0.0]], dtype=np.float64),
     )
     np.testing.assert_array_equal(
-        ends.dense_counts_for_motif("_CC"), np.array([0.0, 4.0], dtype=np.float64)
+        ends.dense_counts_array(motifs="_CC"),
+        np.array([[0.0], [4.0]], dtype=np.float64),
+    )
+    filtered_motif_frame = ends.data_frame(motifs="_CC", max_blacklisted_fraction=0.1)
+    pd.testing.assert_frame_equal(
+        filtered_motif_frame,
+        motif_frame.iloc[[1]].reset_index(drop=True),
     )
     pd.testing.assert_frame_equal(
-        ends.dense_data_frame_for_motif_idx(1),
+        ends.data_frame(motif_idxs=1),
         motif_frame,
     )
-    assert ends.sparse_coo_for_window(1).shape == (1, 3)
+    assert ends.data_frame(window_idxs=0, max_blacklisted_fraction=0.1).empty
+    with pytest.raises(
+        ValueError, match="max_blacklisted_fraction must be a single finite fraction"
+    ):
+        ends.data_frame(window_idxs=0, max_blacklisted_fraction=1.1)
+    assert ends.sparse_counts_matrix(window_idxs=1).shape == (1, 3)
 
 
 def test_sparse_grouped_end_motifs_reconstruct_dense_matrix_and_metadata(
@@ -129,11 +137,11 @@ def test_sparse_grouped_end_motifs_reconstruct_dense_matrix_and_metadata(
     ends = cfdnalab.read_end_motifs(store_path)
 
     assert isinstance(ends, cfdnalab.GroupedEndMotifCounts)
-    assert not hasattr(ends, "windows")
+    assert not hasattr(ends, "window_metadata")
     assert ends.storage_mode() == "sparse_coo"
     assert ends.row_mode() == "grouped_bed"
     pd.testing.assert_frame_equal(
-        ends.groups(),
+        ends.group_metadata(),
         pd.DataFrame(
             {
                 "group_idx": np.array([0, 1, 2], dtype=np.int32),
@@ -144,48 +152,51 @@ def test_sparse_grouped_end_motifs_reconstruct_dense_matrix_and_metadata(
         ),
     )
     np.testing.assert_array_equal(
-        ends.dense_counts_matrix(allow_densify=True),
+        ends.dense_counts_array(allow_densify=True),
         np.array(
             [[1.0, 0.0, 2.5], [0.0, 4.25, 0.0], [0.75, 0.0, 0.0]],
             dtype=np.float64,
         ),
     )
     with pytest.raises(ValueError, match="would densify a sparse end-motif store"):
-        ends.dense_counts_matrix()
+        ends.dense_counts_array()
     np.testing.assert_array_equal(
-        ends.dense_counts_for_group("A", allow_densify=True),
-        np.array([1.0, 0.0, 2.5], dtype=np.float64),
+        ends.dense_counts_array(groups="A", allow_densify=True),
+        np.array([[1.0, 0.0, 2.5]], dtype=np.float64),
     )
     np.testing.assert_array_equal(
-        ends.dense_counts_for_motif("_AA", allow_densify=True),
-        np.array([1.0, 0.0, 0.75], dtype=np.float64),
+        ends.dense_counts_array(motifs="_AA", allow_densify=True),
+        np.array([[1.0], [0.0], [0.75]], dtype=np.float64),
     )
-    motif_coo = ends.sparse_coo_for_motif("_AA")
+    motif_coo = ends.sparse_counts_matrix(motifs="_AA")
     assert motif_coo.shape == (3, 1)
     np.testing.assert_array_equal(motif_coo.row, np.array([0, 2], dtype=np.int32))
     np.testing.assert_array_equal(motif_coo.col, np.array([0, 0], dtype=np.int32))
     np.testing.assert_array_equal(motif_coo.data, np.array([1.0, 0.75]))
-    motif_idx_coo = ends.sparse_coo_for_motif_idx(1)
+    motif_idx_coo = ends.sparse_counts_matrix(motif_idxs=1)
     assert motif_idx_coo.shape == (3, 1)
     np.testing.assert_array_equal(motif_idx_coo.row, np.array([1], dtype=np.int32))
     np.testing.assert_array_equal(motif_idx_coo.data, np.array([4.25]))
     assert ends.group_idx("long_group") == 1
-    group_coo = ends.sparse_coo_for_group("long_group")
+    group_coo = ends.sparse_counts_matrix(groups="long_group")
     assert group_coo.shape == (1, 3)
     np.testing.assert_array_equal(group_coo.row, np.array([0], dtype=np.int32))
     np.testing.assert_array_equal(group_coo.col, np.array([1], dtype=np.int32))
     np.testing.assert_array_equal(group_coo.data, np.array([4.25]))
 
 
-def test_sparse_coo_data_frame_preserves_sorted_payload(tmp_path: Path) -> None:
+def test_sparse_rows_preserve_selected_order_and_metadata(tmp_path: Path) -> None:
     store_path = _write_sparse_grouped_store(tmp_path / "sample.end_motifs.zarr")
     ends = cfdnalab.read_end_motifs(store_path)
 
     pd.testing.assert_frame_equal(
-        ends.sparse_coo_data_frame(),
+        ends.data_frame(),
         pd.DataFrame(
             {
-                "row": np.array([0, 0, 1, 2], dtype=np.int32),
+                "group_idx": np.array([0, 0, 1, 2], dtype=np.int32),
+                "group_name": np.array(["A", "A", "long_group", "mid"], dtype=object),
+                "eligible_windows": np.array([1, 1, 2, 0], dtype=np.int32),
+                "blacklisted_fraction": np.array([0.0, 0.0, 0.125, 0.0]),
                 "motif_index": np.array([0, 2, 1, 0], dtype=np.int32),
                 "motif": np.array(["_AA", "_GG", "_CC", "_AA"], dtype=object),
                 "count": np.array([1.0, 2.5, 4.25, 0.75], dtype=np.float64),
@@ -205,8 +216,8 @@ def test_sparse_windowed_end_motifs_slice_window_without_dense_roundtrip(
     assert ends.has_motif("_CC")
     assert not ends.has_motif("_TT")
     with pytest.raises(KeyError, match="Unknown end-motif label"):
-        ends.dense_counts_for_motif("_TT")
-    window_coo = ends.sparse_coo_for_window(1)
+        ends.dense_counts_array(motifs="_TT")
+    window_coo = ends.sparse_counts_matrix(window_idxs=1)
 
     assert window_coo.shape == (1, 3)
     np.testing.assert_array_equal(window_coo.row, np.array([0], dtype=np.int32))
@@ -214,21 +225,33 @@ def test_sparse_windowed_end_motifs_slice_window_without_dense_roundtrip(
     np.testing.assert_array_equal(window_coo.data, np.array([4.0]))
     with pytest.raises(ValueError, match="dense_counts_zarr_array"):
         ends.dense_counts_zarr_array()
-    with pytest.raises(ValueError, match="would densify a sparse end-motif store"):
-        ends.dense_data_frame_for_window(0)
     pd.testing.assert_frame_equal(
-        ends.dense_data_frame_for_window(0, allow_densify=True),
+        ends.data_frame(window_idxs=0),
         pd.DataFrame(
             {
+                "window_idx": np.array([0, 0], dtype=np.int32),
+                "chrom": np.array(["chr2", "chr2"], dtype=object),
+                "start": np.array([10, 10], dtype=np.int64),
+                "end": np.array([20, 20], dtype=np.int64),
+                "blacklisted_fraction": np.array([0.25, 0.25]),
+                "motif_index": np.array([0, 2], dtype=np.int32),
+                "motif": np.array(["_AA", "_GG"], dtype=object),
+                "count": np.array([1.0, 2.5], dtype=np.float64),
+            }
+        ),
+    )
+    pd.testing.assert_frame_equal(
+        ends.data_frame(window_idxs=0, densify=True),
+        pd.DataFrame(
+            {
+                "window_idx": np.array([0, 0, 0], dtype=np.int32),
+                "chrom": np.array(["chr2", "chr2", "chr2"], dtype=object),
+                "start": np.array([10, 10, 10], dtype=np.int64),
+                "end": np.array([20, 20, 20], dtype=np.int64),
+                "blacklisted_fraction": np.array([0.25, 0.25, 0.25]),
                 "motif_index": MOTIF_INDEX,
                 "motif": MOTIF_NAMES,
                 "count": np.array([1.0, 0.0, 2.5], dtype=np.float64),
-                "window_idx": np.array([0, 0, 0], dtype=np.int64),
-                "chromosome": np.array([0, 0, 0], dtype=np.int64),
-                "chromosome_name": np.array(["chr2", "chr2", "chr2"], dtype=object),
-                "window_start_bp": np.array([10, 10, 10], dtype=np.int64),
-                "window_end_bp": np.array([20, 20, 20], dtype=np.int64),
-                "blacklisted_fraction": np.array([0.25, 0.25, 0.25]),
             }
         ),
     )
@@ -243,19 +266,27 @@ def test_size_mode_end_motifs_use_windowed_helpers(tmp_path: Path) -> None:
 
     assert isinstance(ends, cfdnalab.WindowedEndMotifCounts)
     assert ends.row_mode() == "size"
-    assert ends.windows().shape == (2, 6)
+    assert ends.window_metadata().shape == (2, 5)
     np.testing.assert_array_equal(
-        ends.dense_counts_for_window(0, allow_densify=True),
-        np.array([1.0, 0.0, 2.5], dtype=np.float64),
+        ends.dense_counts_array(window_idxs=0, allow_densify=True),
+        np.array([[1.0, 0.0, 2.5]], dtype=np.float64),
     )
 
 
-def test_sparse_coo_data_frame_rejects_dense_stores(tmp_path: Path) -> None:
+def test_end_motif_data_frame_rejects_invalid_selector_combinations(
+    tmp_path: Path,
+) -> None:
     store_path = _write_dense_window_store(tmp_path / "sample.end_motifs.zarr")
     ends = cfdnalab.read_end_motifs(store_path)
 
-    with pytest.raises(ValueError, match="only available for sparse_coo output"):
-        ends.sparse_coo_data_frame()
+    with pytest.raises(TypeError, match="unexpected keyword argument 'groups'"):
+        ends.data_frame(groups="A")
+    with pytest.raises(ValueError, match="Use either motifs or motif_idxs"):
+        ends.data_frame(motifs="_AA", motif_idxs=0)
+    with pytest.raises(ValueError, match="window_idxs contains duplicate values"):
+        ends.data_frame(window_idxs=[0, 0])
+    with pytest.raises(ValueError, match="motifs contains duplicate values"):
+        ends.data_frame(motifs=["_AA", "_AA"])
 
 
 def test_global_end_motifs_read_row_label_from_json_attrs(tmp_path: Path) -> None:
@@ -264,29 +295,29 @@ def test_global_end_motifs_read_row_label_from_json_attrs(tmp_path: Path) -> Non
     ends = cfdnalab.read_end_motifs(store_path)
 
     assert isinstance(ends, cfdnalab.GlobalEndMotifCounts)
-    assert not hasattr(ends, "windows")
-    assert not hasattr(ends, "groups")
+    assert not hasattr(ends, "window_metadata")
+    assert not hasattr(ends, "group_metadata")
     assert ends.row_mode() == "global"
     pd.testing.assert_frame_equal(
-        ends.dense_data_frame_for_motif("_AA", allow_densify=True),
+        ends.data_frame(motifs="_AA", densify=True),
         pd.DataFrame(
             {
                 "row_label": np.array(["global"], dtype=object),
-                "motif_index": np.array([0], dtype=np.int64),
+                "motif_index": np.array([0], dtype=np.int32),
                 "motif": ["_AA"],
                 "count": np.array([1.25], dtype=np.float64),
             }
         ),
     )
     np.testing.assert_array_equal(
-        ends.dense_counts_vec(allow_densify=True),
-        np.array([1.25, 0.0, 3.5], dtype=np.float64),
+        ends.dense_counts_array(allow_densify=True),
+        np.array([[1.25, 0.0, 3.5]], dtype=np.float64),
     )
     pd.testing.assert_frame_equal(
-        ends.sparse_coo_data_frame(),
+        ends.data_frame(),
         pd.DataFrame(
             {
-                "row": np.array([0, 0], dtype=np.int32),
+                "row_label": np.array(["global", "global"], dtype=object),
                 "motif_index": np.array([0, 2], dtype=np.int32),
                 "motif": np.array(["_AA", "_GG"], dtype=object),
                 "count": np.array([1.25, 3.5], dtype=np.float64),
@@ -294,10 +325,10 @@ def test_global_end_motifs_read_row_label_from_json_attrs(tmp_path: Path) -> Non
         ),
     )
     np.testing.assert_array_equal(
-        ends.dense_counts_for_motif_idx(1, allow_densify=True),
-        np.array([0.0], dtype=np.float64),
+        ends.dense_counts_array(motif_idxs=1, allow_densify=True),
+        np.array([[0.0]], dtype=np.float64),
     )
-    assert ends.sparse_coo_for_motif_idx(1).nnz == 0
+    assert ends.sparse_counts_matrix(motif_idxs=1).nnz == 0
 
 
 def test_dense_global_end_motifs_load_without_sparse_arrays(tmp_path: Path) -> None:
@@ -310,13 +341,14 @@ def test_dense_global_end_motifs_load_without_sparse_arrays(tmp_path: Path) -> N
     assert ends.row_mode() == "global"
     assert ends.dense_counts_zarr_array().shape == (1, 3)
     np.testing.assert_array_equal(
-        ends.dense_counts_vec(),
-        np.array([1.0, 0.0, 2.5], dtype=np.float64),
+        ends.dense_counts_array(),
+        np.array([[1.0, 0.0, 2.5]], dtype=np.float64),
     )
     pd.testing.assert_frame_equal(
-        ends.dense_data_frame(),
+        ends.data_frame(),
         pd.DataFrame(
             {
+                "row_label": np.array(["global", "global", "global"], dtype=object),
                 "motif_index": MOTIF_INDEX,
                 "motif": MOTIF_NAMES,
                 "count": np.array([1.0, 0.0, 2.5], dtype=np.float64),
@@ -335,33 +367,37 @@ def test_dense_grouped_end_motifs_use_group_helpers(tmp_path: Path) -> None:
     assert ends.row_mode() == "grouped_bed"
     assert ends.group_idx("long_group") == 1
     np.testing.assert_array_equal(
-        ends.dense_counts_for_group(0),
-        np.array([1.0, 0.0, 2.5], dtype=np.float64),
+        ends.dense_counts_array(group_idxs=0),
+        np.array([[1.0, 0.0, 2.5]], dtype=np.float64),
     )
     np.testing.assert_array_equal(
-        ends.dense_counts_for_group("long_group"),
-        np.array([0.0, 4.25, 0.0], dtype=np.float64),
+        ends.dense_counts_array(groups="long_group"),
+        np.array([[0.0, 4.25, 0.0]], dtype=np.float64),
     )
-    group_coo = ends.sparse_coo_for_group("long_group")
+    group_coo = ends.sparse_counts_matrix(groups="long_group")
     assert group_coo.shape == (1, 3)
     np.testing.assert_array_equal(group_coo.col, np.array([1], dtype=np.int32))
     pd.testing.assert_frame_equal(
-        ends.dense_data_frame_for_group("long_group"),
+        ends.data_frame(groups="long_group"),
         pd.DataFrame(
             {
-                "motif_index": MOTIF_INDEX,
-                "motif": MOTIF_NAMES,
-                "count": np.array([0.0, 4.25, 0.0], dtype=np.float64),
-                "group_idx": np.array([1, 1, 1], dtype=np.int64),
+                "group_idx": np.array([1, 1, 1], dtype=np.int32),
                 "group_name": np.array(
                     ["long_group", "long_group", "long_group"],
                     dtype=object,
                 ),
-                "eligible_windows": np.array([2, 2, 2], dtype=np.int64),
+                "eligible_windows": np.array([2, 2, 2], dtype=np.int32),
                 "blacklisted_fraction": np.array([0.125, 0.125, 0.125]),
+                "motif_index": MOTIF_INDEX,
+                "motif": MOTIF_NAMES,
+                "count": np.array([0.0, 4.25, 0.0], dtype=np.float64),
             }
         ),
     )
+    assert ends.data_frame(groups="long_group", max_blacklisted_fraction=0.1).empty
+    filtered_motif_frame = ends.data_frame(motifs="_CC", max_blacklisted_fraction=0.1)
+    assert filtered_motif_frame["group_name"].tolist() == ["A", "mid"]
+    assert filtered_motif_frame["count"].tolist() == [0.0, 0.0]
 
 
 def test_end_motif_loader_rejects_invalid_paths(tmp_path: Path) -> None:

@@ -27,13 +27,19 @@ pub struct IndelReadInfo {
     pub insertions: Vec<InsertionAnchor>,
 }
 
-impl TryFrom<&Record> for IndelReadInfo {
-    type Error = crate::Error;
-
+impl IndelReadInfo {
+    /// Build read info, optionally collecting CIGAR-derived clipping and indel details.
+    ///
+    /// When `inspect_cigar` is false, soft clips are treated as zero and indel lists are empty.
+    /// Use that only for callers whose selected modes ignore those fields.
     #[inline]
-    fn try_from(r: &Record) -> Result<Self> {
-        let edge_info = inspect_cigar_edges(r);
-        let indel_info = inspect_cigar_indels(r);
+    pub fn from_record(r: &Record, inspect_cigar: bool) -> Result<Self> {
+        let edge_info = inspect_cigar
+            .then(|| inspect_cigar_edges(r))
+            .unwrap_or_default();
+        let indel_info = inspect_cigar
+            .then(|| inspect_cigar_indels(r))
+            .unwrap_or_default();
 
         Ok(IndelReadInfo {
             tid: r.tid(),
@@ -45,9 +51,7 @@ impl TryFrom<&Record> for IndelReadInfo {
             insertions: indel_info.insertions,
         })
     }
-}
 
-impl IndelReadInfo {
     /// Return the read's inclusive start on the reference.
     #[inline]
     pub fn start(&self) -> u32 {

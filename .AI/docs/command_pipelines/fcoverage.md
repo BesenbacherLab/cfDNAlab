@@ -7,7 +7,7 @@ Compute fragment coverage from a BAM file. The command turns alignments into fra
 ```mermaid
 flowchart TD
     input["Input BAM<br/>coordinate-sorted and indexed"]
-    tiles["Scan genome in tiles<br/>with fragment-length halos"]
+    tiles["Scan genome in tiles<br/>with fragment length halos"]
     fragments["Create fragments<br/>pair mates or use each read as a fragment"]
     filters["Keep usable fragments<br/>MAPQ, pairing, and length"]
     weights["Apply requested weights<br/>GC, scaling, and length normalization"]

@@ -7,7 +7,7 @@ test_that("midpoint loader reads locally generated schema fixture", {
   expect_equal(length_bin_idx(midpoints, 60), 2L)
   expect_output(print(midpoints), "<cfDNAlab midpoint profiles>", fixed = TRUE)
   expect_equal(
-    groups(midpoints),
+    group_metadata(midpoints),
     data.frame(
       group_idx = c(1L, 2L),
       group_name = c("A", "long_group"),
@@ -31,9 +31,25 @@ test_that("midpoint loader reads locally generated schema fixture", {
     c(0L, 5L, 10L, 15L)
   )
 
-  profile <- profile_data_frame(midpoints, group = "long_group", length = 60)
+  profile <- midpoint_data_frame(midpoints, groups = "long_group", with_lengths = 60)
   expect_equal(profile$count, c(5, 0, 0, 6.5), tolerance = 1e-8)
-  profile_by_index <- profile_data_frame(midpoints, group_idx = 1L, length_bin_idx = 1L)
+  profile_range <- midpoint_data_frame(midpoints, groups = "long_group", with_length_range = c(55L, 65L))
+  expect_equal(profile_range$length_bin_idx, rep(c(1L, 2L), each = 4L))
+  exact_range <- midpoint_data_frame(midpoints, groups = "long_group", with_length_range = c(60L, 90L))
+  expect_equal(exact_range$length_bin_idx, rep(2L, 4L))
+  expect_equal(exact_range$count, c(5, 0, 0, 6.5), tolerance = 1e-8)
+  left_edge_range <- midpoint_data_frame(midpoints, groups = "long_group", with_length_range = c(59L, 60L))
+  expect_equal(left_edge_range$length_bin_idx, rep(1L, 4L))
+  expect_equal(left_edge_range$count, c(0.25, 0, 0.75, 1), tolerance = 1e-8)
+  ordered_profiles <- midpoint_data_frame(midpoints, groups = c("long_group", "A"), with_lengths = c(60L, 30L))
+  expect_equal(ordered_profiles$group_idx, c(rep(2L, 8L), rep(1L, 8L)))
+  expect_equal(ordered_profiles$length_bin_idx, c(rep(2L, 4L), rep(1L, 4L), rep(2L, 4L), rep(1L, 4L)))
+  expect_equal(
+    ordered_profiles$count,
+    c(5, 0, 0, 6.5, 0.25, 0, 0.75, 1, 3, 0, 4.5, 0, 0, 1.5, 0, 2.25),
+    tolerance = 1e-8
+  )
+  profile_by_index <- midpoint_data_frame(midpoints, group_idxs = 1L, length_bin_idxs = 1L)
   expect_equal(profile_by_index$count, c(0, 1.5, 0, 2.25), tolerance = 1e-8)
   expect_false(any(grepl("idx0|index0", names(profile_by_index))))
   expect_equal(
@@ -43,8 +59,8 @@ test_that("midpoint loader reads locally generated schema fixture", {
   )
   expect_equal(dim(midpoint_array(midpoints)), c(2L, 2L, 4L))
   expect_error(
-    profile_data_frame(midpoints, group_idx = 0L, length_bin_idx = 1L),
-    "group_idx 0 is outside 1..2",
+    midpoint_data_frame(midpoints, group_idxs = 0L, length_bin_idxs = 1L),
+    "group_idxs contains values outside 1..2",
     fixed = TRUE
   )
   expect_error(
@@ -62,6 +78,53 @@ test_that("midpoint loader reads locally generated schema fixture", {
     "Unused argument(s): group_index",
     fixed = TRUE
   )
+  expect_error(
+    midpoint_data_frame(midpoints, with_lengths = c(30L, 59L)),
+    "with_lengths values must resolve to distinct length bins; 30 and 59 both resolve to length_bin_idx 1",
+    fixed = TRUE
+  )
+  expect_error(
+    midpoint_data_frame(midpoints, with_lengths = c(30L, 30L)),
+    "with_lengths contains duplicate values",
+    fixed = TRUE
+  )
+  expect_error(
+    midpoint_data_frame(midpoints, length_bin_idxs = c(1L, 1L)),
+    "length_bin_idxs contains duplicate values",
+    fixed = TRUE
+  )
+  expect_error(
+    midpoint_data_frame(midpoints, with_lengths = 30L, with_length_range = c(30L, 60L)),
+    "Use only one of with_lengths, with_length_range, or length_bin_idxs",
+    fixed = TRUE
+  )
+  expect_error(
+    midpoint_data_frame(midpoints, with_length_range = c(60L, 60L)),
+    "with_length_range start must be smaller than end",
+    fixed = TRUE
+  )
+  expect_error(
+    midpoint_data_frame(midpoints, with_length_range = c(30L)),
+    "with_length_range must be a numeric vector of two non-negative integer bp bounds",
+    fixed = TRUE
+  )
+  expect_error(
+    midpoint_data_frame(midpoints, with_length_range = c(30.5, 60)),
+    "with_length_range must be a numeric vector of two non-negative integer bp bounds",
+    fixed = TRUE
+  )
+  expect_error(
+    midpoint_data_frame(midpoints, with_length_range = c(-1L, 60L)),
+    "with_length_range must be a numeric vector of two non-negative integer bp bounds",
+    fixed = TRUE
+  )
+  expect_error(
+    midpoint_data_frame(midpoints, with_length_range = c(90L, 100L)),
+    "with_length_range does not overlap any length bins",
+    fixed = TRUE
+  )
+  expect_equal(nrow(midpoint_data_frame(midpoints, groups = character(0))), 0L)
+  expect_equal(nrow(midpoint_data_frame(midpoints, length_bin_idxs = integer(0))), 0L)
 })
 
 test_that("midpoint loader reads metadata and one profile", {
@@ -73,7 +136,7 @@ test_that("midpoint loader reads metadata and one profile", {
   expect_equal(schema_version(midpoints), 1L)
 
   expect_equal(
-    groups(midpoints),
+    group_metadata(midpoints),
     data.frame(
       group_idx = c(1L, 2L, 3L),
       group_name = c("alpha", "beta-site", "gamma_long"),
@@ -111,7 +174,7 @@ test_that("midpoint loader reads metadata and one profile", {
     fixed = TRUE
   )
 
-  profile <- profile_data_frame(midpoints, group = "beta-site", length_bin_idx = 2L)
+  profile <- midpoint_data_frame(midpoints, groups = "beta-site", length_bin_idxs = 2L)
   expect_equal(profile$group_idx, rep(2L, 5L))
   expect_equal(profile$group_name, rep("beta-site", 5L))
   expect_equal(profile$length_bin_idx, rep(2L, 5L))

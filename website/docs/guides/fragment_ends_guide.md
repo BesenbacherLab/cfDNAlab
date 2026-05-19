@@ -1,6 +1,6 @@
 # Extract Fragment End Motifs
 
-Multiple studies have used fragment end- and breakpoint-motifs to study cfDNA fragmentation biology [REFS]. These motif frequencies can capture sequence preferences around where fragments start and end.
+Multiple studies have used fragment end- and breakpoint-motifs to study cfDNA fragmentation biology. These motif frequencies can capture sequence preferences around where fragments start and end.
 
 ## Base command
 
@@ -70,11 +70,9 @@ cfdna ends \
   --scaling-factors <sample_directory>/scaling_factors/<sample_id>.fragment_counts.scaling_factors.tsv
 ```
 
-## Downstream usage
+## Load motif counts in Python
 
-`cfdna ends` writes `<sample_id>.end_motifs.zarr`. The helper packages give a smaller user-facing API than working with the Zarr arrays directly.
-
-In Python:
+Our `cfdnalab` **Python** package can help you load the `<sample_id>.end_motifs.zarr` output and extract data frames, arrays and meta data:
 
 ```python
 import cfdnalab as cfl
@@ -83,15 +81,17 @@ ends = cfl.read_end_motifs("<sample_id>.end_motifs.zarr")
 
 print(ends.storage_mode())
 print(ends.row_mode())
-print(ends.motif_metadata().head())
+motifs = ends.motifs_metadata()
+print(motifs.head())
 
-motif = ends.motifs()[0]
-if ends.storage_mode() == "sparse_coo":
-    nonzero_counts = ends.sparse_coo_data_frame()
-    motif_counts = nonzero_counts[nonzero_counts["motif"] == motif]
-else:
-    motif_counts = ends.dense_data_frame_for_motif(motif)
+motif = motifs.loc[0, "motif"]
+motif_counts = ends.data_frame(motifs=motif)
+motif_count_matrix = ends.sparse_counts_matrix(motifs=motif)
 ```
+
+## Load motif counts in R
+
+Our `cfdnalab` **R** package can help you load the `<sample_id>.end_motifs.zarr` output and extract data frames, arrays and meta data:
 
 In R:
 
@@ -106,10 +106,11 @@ head(motifs(ends))
 
 motif <- motifs(ends)$motif[[1]]
 if (storage_mode(ends) == "sparse_coo") {
-  motif_counts <- sparse_data_frame_for_motif(ends, motif)
+  counts <- sparse_counts_matrix(ends)
 } else {
-  motif_counts <- dense_data_frame_for_motif(ends, motif)
+  counts <- dense_counts_matrix(ends)
 }
+motif_counts <- end_motif_data_frame(ends, motifs = motif)
 ```
 
 ## Handling clipped ends

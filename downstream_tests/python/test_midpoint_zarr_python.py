@@ -45,6 +45,8 @@ def test_python_zarr_reads_midpoint_profile_schema(midpoint_zarr_path: Path) -> 
 
     assert store.attrs["cfdnalab_schema"] == "midpoint_profiles"
     assert store.attrs["cfdnalab_schema_version"] == 1
+    assert store.attrs["primary_array"] == "counts"
+    assert store.attrs["count_units"] == "weighted_midpoint_count"
     assert set(store.array_keys()) == EXPECTED_ARRAYS
     assert store["counts"].shape == (3, 3, 5)
     assert store["counts"].dtype == np.dtype("float32")

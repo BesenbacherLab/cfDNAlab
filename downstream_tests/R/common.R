@@ -30,6 +30,46 @@ sparse_grouped_end_zarr_path <- function() {
   )
 }
 
+global_length_counts_path <- function() {
+  fixture_file_path(
+    "CFDNALAB_LENGTHS_GLOBAL_TSV",
+    "tiny_lengths_global.length_counts.tsv.zst",
+    "global length-count"
+  )
+}
+
+windowed_length_counts_path <- function() {
+  fixture_file_path(
+    "CFDNALAB_LENGTHS_WINDOWED_TSV",
+    "tiny_lengths_windowed.length_counts.tsv.zst",
+    "windowed length-count"
+  )
+}
+
+grouped_length_counts_path <- function() {
+  fixture_file_path(
+    "CFDNALAB_LENGTHS_GROUPED_TSV",
+    "tiny_lengths_grouped.length_counts.tsv.zst",
+    "grouped length-count"
+  )
+}
+
+windowed_length_counts_no_blacklist_path <- function() {
+  fixture_file_path(
+    "CFDNALAB_LENGTHS_WINDOWED_NO_BLACKLIST_TSV",
+    "tiny_lengths_windowed_no_blacklist.length_counts.tsv.zst",
+    "windowed length-count without blacklist"
+  )
+}
+
+grouped_length_counts_no_blacklist_path <- function() {
+  fixture_file_path(
+    "CFDNALAB_LENGTHS_GROUPED_NO_BLACKLIST_TSV",
+    "tiny_lengths_grouped_no_blacklist.length_counts.tsv.zst",
+    "grouped length-count without blacklist"
+  )
+}
+
 fixture_path <- function(env_var, default_name, label) {
   store_path <- Sys.getenv(env_var)
   if (!nzchar(store_path)) {
@@ -43,6 +83,21 @@ fixture_path <- function(env_var, default_name, label) {
     )
   }
   store_path
+}
+
+fixture_file_path <- function(env_var, default_name, label) {
+  file_path <- Sys.getenv(env_var)
+  if (!nzchar(file_path)) {
+    file_path <- file.path("downstream_tests", "tmp", default_name)
+  }
+  if (!file.exists(file_path) || dir.exists(file_path)) {
+    stop(
+      "Missing cfDNAlab-generated ", label, " fixture: ",
+      file_path,
+      ". Generate it with the ignored downstream fixture integration tests."
+    )
+  }
+  file_path
 }
 
 zarr_array_attributes <- function(store_path, array_name) {

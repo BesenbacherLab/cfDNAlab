@@ -23,13 +23,14 @@ not expose those zero-based coordinates as ordinary user selectors.
 
 Public R selectors and public metadata data frames are one-based:
 
-- Use public names like `group_idx`, `length_bin_idx`, `position_idx`,
-  `window_idx`, `chromosome_idx`, `motif_idx`, and `row_idx`.
+- Use public index names like `group_idx`, `length_bin_idx`, `position_idx`,
+  `window_idx`, `motif_idx`, and `row_idx`.
+- Use `chrom`, `start`, and `end` for public genomic window metadata columns.
 - `group_idx(x, "alpha")`, `length_bin_idx(x, 167)`, and `motif_idx(x, "_A")`
   return one-based R indices.
-- Public data frames from helpers such as `groups()`, `length_bins()`,
-  `positions()`, `windows()`, `motifs()`, and sparse/dense data-frame helpers
-  must contain one-based `*_idx` columns.
+- Public data frames from helpers such as `group_metadata()`,
+  `window_metadata()`, `length_bins()`, `positions()`, `motifs()`, and
+  sparse/dense data frame helpers must contain one-based `*_idx` columns.
 - Public data frames must not contain internal `*_idx0` or `*_index0` columns.
 
 Internal zero-based values must be explicit in the name:

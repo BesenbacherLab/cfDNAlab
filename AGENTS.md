@@ -24,6 +24,12 @@ This file is the authoritative entry point for repo-specific agent instructions.
 - Do not start prompts with "You’re right to push on that" or similar, when it's clearly just a trick to keep the conversation flowing.
 - Do not rewrite comments or docs for generic style preference; preserve existing wording unless the change is a clear correctness, clarity, or consistency improvement tied to the current task.
 - Do not write unnecessary wrapper functions.
+- Don't make unnecessary newlines in READMEs. Especially not in existing sections.
+
+Spellings:
+
+ - "fragment length", not "fragment-length" - unless specifically relevant in the situation (e.g., "fragment-length-wise").
+ - "data frame", not "data-frame".
 
 Always read [.AI/collaboration.md](/Users/au547627/Documents/Development/rust/cfDNAlab/.AI/collaboration.md) to avoid annoying sycophanting. I want truth not praise.
 
@@ -34,3 +40,8 @@ Always read [.AI/collaboration.md](/Users/au547627/Documents/Development/rust/cf
 - For test placement, visibility, and public API boundary rules, read [.AI/api_boundaries.md](/Users/au547627/Documents/Development/rust/cfDNAlab/.AI/api_boundaries.md)
 - For reducers, aggregation, masking, tiling, normalization, and related scientific/counting code, read [.AI/scientific_code.md](/Users/au547627/Documents/Development/rust/cfDNAlab/.AI/scientific_code.md)
 - For communication style, scope, backwards-compatibility assumptions, engineering choices, and non-code interaction style, read [.AI/collaboration.md](/Users/au547627/Documents/Development/rust/cfDNAlab/.AI/collaboration.md)
+
+
+## R package
+
+See r-cfdnalab/DEVELOPMENT.md - especially for 1-based external indexing and 0-based internal indexing rules.

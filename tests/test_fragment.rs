@@ -354,8 +354,8 @@ mod tests_fragment_with_indel_counts {
         skip_indels: bool,
         count_indels: bool,
     ) -> Option<FragmentWithIndelCounts> {
-        let a_info = IndelReadInfo::try_from(a).ok()?;
-        let b_info = IndelReadInfo::try_from(b).ok()?;
+        let a_info = IndelReadInfo::from_record(a, true).ok()?;
+        let b_info = IndelReadInfo::from_record(b, true).ok()?;
         collect_fragment_with_indel_counts(&a_info, &b_info, skip_indels, count_indels)
     }
 
@@ -363,7 +363,7 @@ mod tests_fragment_with_indel_counts {
     fn indelreadinfo_parses_deletions_and_insertions() {
         // Forward read: start 100, cigar M50 D5 M45 => deletions at [150,155)
         let r = make_rec(0, 100, false, m_del_m(50, 5, 45));
-        let info = IndelReadInfo::try_from(&r).expect("test indel read should be valid");
+        let info = IndelReadInfo::from_record(&r, true).expect("test indel read should be valid");
         assert_eq!(info.start(), 100);
         assert_eq!(info.end(), 100 + 50 + 5 + 45);
         assert_eq!(
@@ -374,7 +374,7 @@ mod tests_fragment_with_indel_counts {
 
         // Reverse read: start 200, cigar M30 I4 M20 => insertion at ref pos 230 length 4
         let r2 = make_rec(0, 200, true, m_ins_m(30, 4, 20));
-        let info2 = IndelReadInfo::try_from(&r2).expect("test indel read should be valid");
+        let info2 = IndelReadInfo::from_record(&r2, true).expect("test indel read should be valid");
         assert_eq!(
             info2.insertions,
             vec![InsertionAnchor {
@@ -388,9 +388,9 @@ mod tests_fragment_with_indel_counts {
     #[test]
     fn orientation_and_inward_check() {
         // Forward at 100..160, Reverse at 150..210 (inward: forward.pos <= reverse.pos)
-        let f = IndelReadInfo::try_from(&make_rec(0, 100, false, m(60)))
+        let f = IndelReadInfo::from_record(&make_rec(0, 100, false, m(60)), true)
             .expect("test indel read should be valid");
-        let r = IndelReadInfo::try_from(&make_rec(0, 150, true, m(60)))
+        let r = IndelReadInfo::from_record(&make_rec(0, 150, true, m(60)), true)
             .expect("test indel read should be valid");
         let (fwd, rev) = oriented_pair_from_read_info(&f, &r).unwrap();
         assert!(is_inwards_oriented(fwd, rev));

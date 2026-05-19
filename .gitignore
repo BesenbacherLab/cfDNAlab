@@ -48,3 +48,4 @@ other_software/
 
 downstream_tests/tmp/
 .Rproj.user
+cfdnalab.Rcheck/

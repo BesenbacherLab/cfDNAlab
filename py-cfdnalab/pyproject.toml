@@ -1,6 +1,6 @@
 [project]
 name = "cfdnalab"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python helpers for loading and interacting with cfDNAlab output files"
 authors = [{name = "Ludvig", email = "mail@ludvigolsen.dk"}]
 readme = "README.md"
@@ -24,12 +24,13 @@ dependencies = [
     "pandas",
     "scipy",
     "zarr>=3,<4",
+    "zstandard",
 ]
 
 [project.urls]
 Repository = "https://github.com/BesenbacherLab/cfDNAlab/tree/main/py-cfdnalab"
 Issues = "https://github.com/BesenbacherLab/cfDNAlab/issues"
-Changelog = "https://github.com/BesenbacherLab/cfDNAlab/blob/main/py-cfdnalab/CHANGELOG"
+Changelog = "https://github.com/BesenbacherLab/cfDNAlab/blob/main/py-cfdnalab/CHANGELOG.md"
 
 [project.optional-dependencies]
 test = [
@@ -50,7 +51,7 @@ packages = ["src/cfdnalab"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "/CHANGELOG",
+    "/CHANGELOG.md",
     "/LICENSE",
     "/README.md",
     "/pyproject.toml",

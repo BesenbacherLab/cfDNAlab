@@ -42,13 +42,58 @@ def sparse_grouped_end_zarr_path() -> Path:
     )
 
 
+@pytest.fixture(scope="session")
+def global_length_counts_path() -> Path:
+    return _fixture_path(
+        "CFDNALAB_LENGTHS_GLOBAL_TSV",
+        "tiny_lengths_global.length_counts.tsv.zst",
+        "global length-count",
+    )
+
+
+@pytest.fixture(scope="session")
+def windowed_length_counts_path() -> Path:
+    return _fixture_path(
+        "CFDNALAB_LENGTHS_WINDOWED_TSV",
+        "tiny_lengths_windowed.length_counts.tsv.zst",
+        "windowed length-count",
+    )
+
+
+@pytest.fixture(scope="session")
+def grouped_length_counts_path() -> Path:
+    return _fixture_path(
+        "CFDNALAB_LENGTHS_GROUPED_TSV",
+        "tiny_lengths_grouped.length_counts.tsv.zst",
+        "grouped length-count",
+    )
+
+
+@pytest.fixture(scope="session")
+def windowed_length_counts_no_blacklist_path() -> Path:
+    return _fixture_path(
+        "CFDNALAB_LENGTHS_WINDOWED_NO_BLACKLIST_TSV",
+        "tiny_lengths_windowed_no_blacklist.length_counts.tsv.zst",
+        "windowed length-count without blacklist",
+    )
+
+
+@pytest.fixture(scope="session")
+def grouped_length_counts_no_blacklist_path() -> Path:
+    return _fixture_path(
+        "CFDNALAB_LENGTHS_GROUPED_NO_BLACKLIST_TSV",
+        "tiny_lengths_grouped_no_blacklist.length_counts.tsv.zst",
+        "grouped length-count without blacklist",
+    )
+
+
 def _fixture_path(env_var: str, default_name: str, label: str) -> Path:
     path = Path(
         os.environ.get(env_var, Path(__file__).parents[1] / "tmp" / default_name)
     )
     if not path.exists():
         pytest.fail(
-            f"Missing cfDNAlab-generated {label} Zarr fixture at {path}. "
+            f"Missing cfDNAlab-generated {label} fixture at {path}. "
             "Generate it with the ignored downstream fixture integration tests."
         )
     return path

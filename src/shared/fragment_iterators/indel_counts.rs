@@ -42,6 +42,7 @@ pub fn fragments_with_indel_counts_from_bam<'a, RIter, PF>(
     records: RIter,
     include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
     indel_mode: IndelMode,
+    inspect_cigar: bool,
     fragment_filter: PF,
     unpaired: bool,
 ) -> IndelCountsIter<'a>
@@ -62,8 +63,8 @@ where
             Some(pairer)
         },
     )
-    .with_bam_filter_and_mapper(include_read, |rec| {
-        IndelReadInfo::try_from(rec).map_err(anyhow::Error::from)
+    .with_bam_filter_and_mapper(include_read, move |rec| {
+        IndelReadInfo::from_record(rec, inspect_cigar).map_err(anyhow::Error::from)
     })
     .with_fragment_filter(fragment_filter);
 

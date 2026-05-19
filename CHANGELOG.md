@@ -1,5 +1,16 @@
 # Changelog
 
+This is the changelog for the main CLI tool. You can find the changelog for the downstream loader packages here:
+
+ - [Python](https://github.com/BesenbacherLab/cfDNAlab/blob/main/py-cfdnalab/CHANGELOG.md)
+ - [R](https://github.com/BesenbacherLab/cfDNAlab/blob/main/r-cfdnalab/NEWS.md)
+
+<br />
+
+## Unreleased
+
+ - In `cfdna lengths`, the `max_soft_clips` cap is only applied when `--clip-mode adjust`.
+
 ## cfDNAlab 0.2.0
 
 **BREAKING CHANGES**:

@@ -2734,6 +2734,57 @@ mod tests_lengths_command {
     }
 
     #[test]
+    fn max_soft_clips_does_not_filter_when_clip_mode_is_aligned() -> Result<()> {
+        // One unpaired 2S10M fragment at pos 10 with indel adjustment enabled.
+        //
+        // Mental derivation:
+        // - aligned clip mode ignores soft clips, so the counted length is 10
+        // - indel adjustment still triggers CIGAR inspection
+        // - max_soft_clips=1 would drop the fragment if the cap leaked into aligned mode
+        let bam = single_read_fragment_bam_with_cigar(
+            "lengths_max_soft_clips_aligned",
+            10,
+            vec![('S', 2), ('M', 10)],
+            b"TTAAAAAAAAAT".to_vec(),
+        )?;
+        let out_dir = TempDir::new()?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Adjust);
+        cfg.clip_mode = ClipMode::Aligned;
+        cfg.max_soft_clips = 1;
+        cfg.set_unpaired(UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.set_windows(DistributionWindowsArgs::default());
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_per_bp_length_bins(10, 10);
+
+        run(&cfg)?;
+
+        let counts_path = out_dir.path().join(dot_join(&[
+            cfg.output_prefix.trim(),
+            "length_counts.tsv.zst",
+        ]));
+        let counts: Array2<f64> = read_length_counts_tsv(&counts_path)?;
+
+        assert_eq!(counts.shape(), &[1, 1]);
+        assert!((counts[(0, 0)] - 1.0).abs() < 1e-6);
+        assert!((counts.sum() - 1.0).abs() < 1e-6);
+
+        Ok(())
+    }
+
+    #[test]
     fn indel_adjust_bins_by_adjusted_length_but_scales_over_reference_span() -> Result<()> {
         let bam = indel_bam_fixture()?;
         let out_dir = TempDir::new()?;

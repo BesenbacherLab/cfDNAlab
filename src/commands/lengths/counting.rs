@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 pub use crate::shared::length_axis::LengthAxis;
 
-/// Fragment-length counter over a shared output axis.
+/// Fragment length counter over a shared output axis.
 ///
 /// A `LengthCounts` value stores one count vector over the length axis: either
 /// the global result, one genomic window, or one grouped-BED group. Stacking

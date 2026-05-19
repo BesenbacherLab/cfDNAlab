@@ -23,7 +23,7 @@ use std::{io::Write, path::Path};
 
 const BLACKLISTED_FRACTION_DECIMALS: i32 = 3;
 
-/// Interpretation metadata for a fragment-length count table.
+/// Interpretation metadata for a fragment length count table.
 ///
 /// This sidecar records the information needed to understand the count columns
 /// and row semantics without inspecting the command line that produced the
@@ -48,7 +48,7 @@ struct LengthSettings<'a> {
     blacklist_used: bool,
 }
 
-/// Write the JSON sidecar that describes a fragment-length count table.
+/// Write the JSON sidecar that describes a fragment length count table.
 ///
 /// The settings are intentionally focused on interpretation. They include the
 /// length axis, row aggregation mode, assignment mode, and whether optional
@@ -88,9 +88,9 @@ pub(super) fn write_length_settings_json(
     Ok(())
 }
 
-/// Write the public fragment-length count table.
+/// Write the public fragment length count table.
 ///
-/// The table is intentionally wide: each output unit is one row, and each fragment-length bin is
+/// The table is intentionally wide: each output unit is one row, and each fragment length bin is
 /// one count column. Single-bp bins use `count_<length>`, and wider bins use
 /// `count_<start>_<end>`. This keeps row metadata from being repeated for every length bin while
 /// remaining directly readable as a TSV in R and Python. `decimals` controls only the written count

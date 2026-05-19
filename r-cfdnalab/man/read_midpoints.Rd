@@ -20,7 +20,7 @@ It validates the schema, coordinate axes, labels, and count-array shape.
 \examples{
 \dontrun{
 midpoints <- read_midpoints("sample.midpoint_profiles.zarr")
-groups(midpoints)
-profile_data_frame(midpoints, group = "LYL1", length_bin_idx = 1)
+group_metadata(midpoints)
+midpoint_data_frame(midpoints, groups = "LYL1", length_bin_idxs = 1)
 }
 }

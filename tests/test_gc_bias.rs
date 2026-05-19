@@ -3832,7 +3832,7 @@ mod tests_gc_bias {
     #[test]
     fn rejects_reference_gc_package_with_row_count_mismatched_to_length_axis() -> Result<()> {
         // Arrange: the package has two count rows, but the Zarr length axis names three concrete
-        // fragment-length rows: 30, 31, and 32.
+        // fragment length rows: 30, 31, and 32.
         let tmp = tempdir()?;
         write_reference_gc_package_with_count_row_mismatch(tmp.path())?;
 

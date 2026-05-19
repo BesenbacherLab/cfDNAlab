@@ -9,7 +9,7 @@ flowchart TD
     inputs["Input BAM and grouped BED<br/>coordinate-sorted BAM, fixed-size grouped windows"]
     setup["Prepare profile axes<br/>groups, positions, and fragment length bins"]
     interval_filter["Prefilter intervals<br/>chromosomes and blacklist safety margin"]
-    tiles["Scan interval tiles<br/>with fragment-length halos"]
+    tiles["Scan interval tiles<br/>with fragment length halos"]
     fragments["Create fragments<br/>pair mates or use each read as a fragment"]
     midpoint["Place midpoint<br/>reproducible tie handling for even fragments"]
     filters["Keep usable midpoint events<br/>MAPQ, pairing, length, blacklist, and window hit"]

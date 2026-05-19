@@ -19,6 +19,82 @@ fn make_record(qname: &[u8], pos: i64, len: u32, is_reverse: bool) -> bam::Recor
     rec
 }
 
+fn collect_no_indel_pair(
+    inspect_cigar: bool,
+) -> (Vec<FragmentWithIndelCounts>, (u64, u64, u64, u64, u64, u64)) {
+    let records = vec![
+        Ok(make_record(b"r1", 10, 5, false)), // forward [10,15)
+        Ok(make_record(b"r1", 20, 5, true)),  // reverse [20,25)
+    ];
+    let include_read = |_r: &bam::Record| true;
+    let mut iter = fragments_with_indel_counts_from_bam(
+        records.into_iter(),
+        include_read,
+        IndelMode::Ignore,
+        inspect_cigar,
+        |_f: &FragmentWithIndelCounts| true,
+        false,
+    )
+    .with_local_counters();
+    let fragments: Vec<_> = iter.by_ref().map(|f| f.unwrap()).collect();
+    let counters = iter.counters_snapshot();
+    (
+        fragments,
+        (
+            counters.incoming_reads,
+            counters.incoming_fragments,
+            counters.accepted_forward_reads,
+            counters.accepted_reverse_reads,
+            counters.produced_fragments,
+            counters.yielded_fragments,
+        ),
+    )
+}
+
+fn fragment_signature(
+    fragment: &FragmentWithIndelCounts,
+) -> (i32, (u32, u32), u32, u32, u32, u32, u32, u32, u32) {
+    (
+        fragment.tid,
+        fragment.interval.as_tuple(),
+        fragment.left_soft_clip_bp,
+        fragment.right_soft_clip_bp,
+        fragment.deletions_nonoverlap,
+        fragment.insertions_nonoverlap,
+        fragment.deletions_overlap_supported,
+        fragment.insertions_overlap_supported,
+        fragment.adjusted_len(IndelMode::Ignore, ClipMode::Aligned),
+    )
+}
+
+#[test]
+fn disabled_cigar_inspection_matches_enabled_when_pair_has_no_indels_or_clips() {
+    // Arrange + Act: Both reads are pure 5M alignments, so CIGAR inspection should not change the
+    // assembled fragment. The fragment span is [10,25), giving length 15.
+    let (with_cigar_fragments, with_cigar_counters) = collect_no_indel_pair(true);
+    let (without_cigar_fragments, without_cigar_counters) = collect_no_indel_pair(false);
+
+    // Assert: Both paths produce the same hand-derived fragment and the same iterator counters.
+    let expected_fragments = vec![(0, (10, 25), 0, 0, 0, 0, 0, 0, 15)];
+    let expected_counters = (2, 0, 1, 1, 1, 1);
+    assert_eq!(
+        with_cigar_fragments
+            .iter()
+            .map(fragment_signature)
+            .collect::<Vec<_>>(),
+        expected_fragments
+    );
+    assert_eq!(
+        without_cigar_fragments
+            .iter()
+            .map(fragment_signature)
+            .collect::<Vec<_>>(),
+        expected_fragments
+    );
+    assert_eq!(with_cigar_counters, expected_counters);
+    assert_eq!(without_cigar_counters, expected_counters);
+}
+
 #[test]
 fn yields_unpaired_fragments_and_respects_filter() {
     // Arrange
@@ -31,6 +107,7 @@ fn yields_unpaired_fragments_and_respects_filter() {
         records.into_iter(),
         include_read,
         cfdnalab::shared::indel_mode::IndelMode::Ignore,
+        true,
         // Filter out anything shorter than 5 (none here) and longer than 5 (none here)
         |f: &FragmentWithIndelCounts| f.adjusted_len(IndelMode::Ignore, ClipMode::Aligned) <= 5,
         true,
@@ -63,6 +140,7 @@ fn pairs_reads_and_yields_single_fragment() {
         records.into_iter(),
         include_read,
         cfdnalab::shared::indel_mode::IndelMode::Ignore,
+        true,
         |_f: &FragmentWithIndelCounts| true,
         false,
     )

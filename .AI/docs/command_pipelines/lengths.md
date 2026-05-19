@@ -8,7 +8,7 @@ Count fragment length distributions from a BAM file. The command turns alignment
 flowchart TD
     input["Input BAM<br/>coordinate-sorted and indexed"]
     setup["Define length outputs<br/>length bins and optional windows"]
-    tiles["Scan genome in tiles<br/>with fragment-length halos"]
+    tiles["Scan genome in tiles<br/>with fragment length halos"]
     fragments["Create fragments<br/>pair mates or use each read as a fragment"]
     length_model["Resolve fragment length<br/>aligned, indel-adjusted, or clip-adjusted"]
     filters["Keep usable fragments<br/>MAPQ, pairing, length, blacklist, indel, and clip rules"]

@@ -130,7 +130,7 @@ systematic one-base shift for the large fraction of even-length fragments.
 
 Griffin filters to one size range for a profile run. Our midpoint array keeps a
 length-bin axis. A single run can retain broad fragment classes, narrow
-nucleosome-sized classes, and finer fragment-length structure.
+nucleosome-sized classes, and finer fragment length structure.
 
 That is more useful for exploratory fragmentomics and for methods where the
 length distribution is part of the signal.

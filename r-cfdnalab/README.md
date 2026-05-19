@@ -4,11 +4,13 @@ R helpers for loading [cfDNAlab](https://github.com/BesenbacherLab/cfDNAlab) ana
 
 This package does not install or run the cfDNAlab command-line tool. The CLI is distributed separately as the Rust `cfdna` binary. Use this R package after running cfDNAlab to load, inspect, and reshape output files in R.
 
-The first supported output types are midpoint and end-motif Zarr outputs: `<prefix>.midpoint_profiles.zarr` and `<prefix>.end_motifs.zarr`.
+The first supported output types are midpoint and end-motif Zarr outputs plus length-count TSV outputs: `<prefix>.midpoint_profiles.zarr`, `<prefix>.end_motifs.zarr`, and `<prefix>.length_counts.tsv.zst`.
 
 The helpers return base `data.frame` objects, R arrays, and `Matrix` sparse matrices. Convert data frames with `tibble::as_tibble()` or `data.table::as.data.table()` when you want those workflows.
 
 Numeric indices returned by this R package are one-based, matching ordinary R indexing.
+
+NOTE: While the main CLI tool is highly tested and validated, this R package is currently being built and may have bugs or use too AI'ish language in the documentation. The core functions should work and we are actively improving it over the coming weeks. We decided to share it early to help you use the outputs of the main tool.
 
 <br>
 
@@ -20,6 +22,8 @@ Install the current development version from GitHub:
 install.packages("pak")
 pak::pak("cfdnalab=github::BesenbacherLab/cfDNAlab/r-cfdnalab")
 ```
+
+<br>
 
 ## Midpoint Profiles
 
@@ -36,22 +40,24 @@ library(cfdnalab)
 
 midpoints <- read_midpoints("sample.midpoint_profiles.zarr")
 
-groups(midpoints)
+group_metadata(midpoints)
 length_bins(midpoints)
 positions(midpoints)
 
-length_bin <- length_bin_idx(midpoints, 167)
-
-profile <- profile_data_frame(
+profile <- midpoint_data_frame(
   midpoints,
-  group = "LYL1",
-  length_bin_idx = length_bin
+  groups = "LYL1",
+  with_lengths = 167
 )
 
 head(profile)
 ```
 
+Use `with_length_range = c(start, end)` to select all whole length bins that overlap a half-open bp range.
+
 Use `profile_array()` when you only need the count vector for one profile. Use `midpoint_array()` only when you want the full 3D count array in memory.
+
+<br>
 
 ## End Motifs
 
@@ -71,22 +77,24 @@ has_motif(ends, "_AA")
 `row_mode(ends)` tells you what each row in the count table represents:
 
 - `"global"`: one row for the whole input file. Use the global count helpers.
-- `"size"`: rows are fixed-size genomic windows from `--window-size`. Use `windows(ends)` and the window count helpers.
-- `"bed"`: rows are BED intervals. Use `windows(ends)` and the window count helpers.
-- `"grouped_bed"`: rows are BED groups. Use `groups(ends)`, `group_idx()`, and the group count helpers.
+- `"size"`: rows are fixed-size genomic windows from `--window-size`. Use `window_metadata(ends)` and the window count helpers.
+- `"bed"`: rows are BED intervals. Use `window_metadata(ends)` and the window count helpers.
+- `"grouped_bed"`: rows are BED groups. Use `group_metadata(ends)`, `group_idx()`, and the group count helpers.
+
+`window_metadata(ends)` returns `window_idx`, `chrom`, `start`, `end`, and `blacklisted_fraction`.
 
 Sparse output keeps only non-zero counts in memory:
 
 ```r
 counts <- sparse_counts_matrix(ends)
-motif_counts <- sparse_data_frame_for_motif(ends, "_AA")
+motif_counts <- end_motif_data_frame(ends, motifs = "_AA")
 ```
 
 Dense output can be read as a matrix or data frame:
 
 ```r
 counts <- dense_counts_matrix(ends)
-motif_counts <- dense_data_frame_for_motif(ends, "_AA")
+motif_counts <- end_motif_data_frame(ends, motifs = "_AA")
 ```
 
 Dense helpers do not silently convert sparse stores. If you want a dense matrix from sparse output, pass `allow_densify = TRUE`.
@@ -94,3 +102,32 @@ Dense helpers do not silently convert sparse stores. If you want a dense matrix 
 ```r
 counts <- dense_counts_matrix(ends, allow_densify = TRUE)
 ```
+
+<br>
+
+## Length Counts
+
+Length-count outputs are wide TSV files from `cfdna lengths`.
+
+```r
+lengths <- read_lengths("sample.length_counts.tsv.zst")
+
+length_bins(lengths)
+length_counts_matrix(lengths)
+length_data_frame(lengths, value = "fraction")
+length_data_frame(lengths, with_length_range = c(100L, 220L))
+length_data_frame(
+  lengths,
+  with_length_range = c(100L, 220L),
+  value = "fraction",
+  denominator = "selected_bins"
+)
+```
+
+- Global outputs also support `length_counts_vector(lengths)`.
+- Windowed outputs support `window_metadata(lengths)` and optional `window_idxs` selection in `length_data_frame()`.
+- Grouped outputs support `group_metadata(lengths)`, `group_idx()`, and optional `groups` or `group_idxs` selection.
+- Length-bin selection supports `with_lengths`, `with_length_range`, and `length_bin_idxs`.
+- For `fraction` and `density`, `denominator = "all_bins"` uses all length bins and `denominator = "selected_bins"` uses only the returned bins.
+
+For windowed or grouped outputs, `max_blacklisted_fraction` filters rows by `blacklisted_fraction`. Outputs without that column only accept the default keep-all cutoff.

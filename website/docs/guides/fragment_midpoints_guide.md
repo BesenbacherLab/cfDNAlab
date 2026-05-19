@@ -83,16 +83,10 @@ import cfdnalab as cfl
 
 profiles = cfl.read_midpoints("<sample_id>.midpoint_profiles.zarr")
 
-group_idx = profiles.group_idx("LYL1")
-length_bin_idx = profiles.length_bin_idx(167)
-
-df = profiles.data_frame_for_profile(
-    group_idx=group_idx,
-    length_bin_idx=length_bin_idx,
-)
+df = profiles.data_frame(groups="LYL1", with_lengths=167)
 ```
 
-Subset before converting to a dataframe. Expanding all groups, length bins, and
+Select groups or length bins before converting to a data frame. Expanding all groups, length bins, and
 positions can create a much larger object than the Zarr store.
 
 ## Load midpoint profiles in R
@@ -104,11 +98,9 @@ library(cfdnalab)
 
 profiles <- read_midpoints("<sample_id>.midpoint_profiles.zarr")
 
-length_bin <- length_bin_idx(profiles, 167)
-
-df <- profile_data_frame(
+df <- midpoint_data_frame(
   profiles,
-  group = "LYL1",
-  length_bin_idx = length_bin
+  groups = "LYL1",
+  with_lengths = 167
 )
 ```
