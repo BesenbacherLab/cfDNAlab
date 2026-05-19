@@ -205,8 +205,8 @@ test_that("R helper package reads windowed length counts", {
     keep_wide = TRUE
   )
   expect_equal(range_fraction$window_idx, c(2L, 4L))
-  expect_equal(range_fraction$fraction_50_70, c(1, NA), tolerance = 1e-8)
-  expect_equal(range_fraction$fraction_70_100, c(0, NA), tolerance = 1e-8)
+  expect_equal(range_fraction$fraction_50_70, c(1, NA_real_), tolerance = 1e-8)
+  expect_equal(range_fraction$fraction_70_100, c(0, NA_real_), tolerance = 1e-8)
 })
 
 test_that("R helper package reads grouped length counts", {
@@ -239,9 +239,9 @@ test_that("R helper package reads grouped length counts", {
     "density_50_70",
     "density_70_100"
   ))
-  expect_equal(wide_density$density_30_50, c(0, NA), tolerance = 1e-8)
-  expect_equal(wide_density$density_50_70, c(1 / 20, NA), tolerance = 1e-8)
-  expect_equal(wide_density$density_70_100, c(0, NA), tolerance = 1e-8)
+  expect_equal(wide_density$density_30_50, c(0, NA_real_), tolerance = 1e-8)
+  expect_equal(wide_density$density_50_70, c(1 / 20, NA_real_), tolerance = 1e-8)
+  expect_equal(wide_density$density_70_100, c(0, NA_real_), tolerance = 1e-8)
 
   selected_range <- length_data_frame(
     lengths,
@@ -252,7 +252,7 @@ test_that("R helper package reads grouped length counts", {
   )
   expect_equal(selected_range$group_name, c("beta", "beta", "zero", "zero"))
   expect_equal(selected_range$length_bin_idx, c(2L, 3L, 2L, 3L))
-  expect_equal(selected_range$fraction, c(0, 1, NA, NA), tolerance = 1e-8)
+  expect_equal(selected_range$fraction, c(0, 1, NA_real_, NA_real_), tolerance = 1e-8)
 })
 
 test_that("R helper package reads no-blacklist windowed length counts", {
@@ -306,7 +306,10 @@ test_that("R helper package reads no-blacklist grouped length counts", {
     ignore_attr = TRUE
   )
   expect_equal(length_data_frame(lengths, groups = "beta")$count, c(2, 0, 1), tolerance = 1e-8)
-  expect_equal(length_data_frame(lengths, group_idxs = 4L, value = "fraction")$fraction, c(NA, NA, NA))
+  expect_equal(
+    length_data_frame(lengths, group_idxs = 4L, value = "fraction")$fraction,
+    c(NA_real_, NA_real_, NA_real_)
+  )
   expect_error(
     length_data_frame(lengths, max_blacklisted_fraction = 0.5),
     "has no blacklisted_fraction column"
