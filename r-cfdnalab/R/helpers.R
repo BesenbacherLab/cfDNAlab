@@ -211,6 +211,26 @@ cf_zarr_path <- function(array_name) {
   paste0("/", array_name)
 }
 
+#' Find a unique exact-match index.
+#'
+#' @param values Vector to search.
+#' @param value Scalar value to find.
+#' @param unknown_message Error prefix for missing values.
+#' @param duplicate_message Error prefix for duplicate values.
+#'
+#' @return A scalar one-based index into `values`.
+#' @noRd
+cf_find_unique_value_index <- function(values, value, unknown_message, duplicate_message) {
+  matches <- which(values == value)
+  if (length(matches) == 0L) {
+    stop(unknown_message, sQuote(value), call. = FALSE)
+  }
+  if (length(matches) > 1L) {
+    stop(duplicate_message, sQuote(value), call. = FALSE)
+  }
+  matches[[1L]]
+}
+
 #' Get a Zarr array node.
 #'
 #' @param store Open Zarr store.
@@ -492,6 +512,46 @@ cf_validate_fraction_vector <- function(values, value_name) {
     stop(value_name, " must contain finite fractions in 0..1", call. = FALSE)
   }
   invisible(TRUE)
+}
+
+#' Validate a scalar fraction.
+#'
+#' @param value Fraction value.
+#' @param name Human-readable value name.
+#'
+#' @return Invisibly returns `TRUE`.
+#' @noRd
+cf_validate_scalar_fraction <- function(value, name) {
+  if (
+    length(value) != 1L ||
+      !is.numeric(value) ||
+      is.na(value) ||
+      !is.finite(value) ||
+      value < 0 ||
+      value > 1
+  ) {
+    stop(name, " must be a single finite fraction in 0..1", call. = FALSE)
+  }
+  invisible(TRUE)
+}
+
+#' Apply a blacklist fraction filter to row indices.
+#'
+#' @param row_metadata Data frame with row metadata.
+#' @param row_indices One-based row indices.
+#' @param max_blacklisted_fraction Maximum blacklist fraction.
+#'
+#' @return Filtered one-based row indices.
+#' @noRd
+cf_apply_row_blacklist_filter <- function(row_metadata, row_indices, max_blacklisted_fraction) {
+  cf_validate_scalar_fraction(max_blacklisted_fraction, "max_blacklisted_fraction")
+  if (!"blacklisted_fraction" %in% names(row_metadata)) {
+    if (max_blacklisted_fraction == 1) {
+      return(row_indices)
+    }
+    stop("Cannot filter by max_blacklisted_fraction because this output has no blacklisted_fraction column", call. = FALSE)
+  }
+  row_indices[row_metadata$blacklisted_fraction[row_indices] <= max_blacklisted_fraction]
 }
 
 #' Validate two vectors have the same length.

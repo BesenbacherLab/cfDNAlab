@@ -5,7 +5,7 @@
 \alias{sparse_data_frame_for_group}
 \title{Return stored sparse end-motif counts for one group.}
 \usage{
-\method{sparse_data_frame_for_group}{cfdnalab_grouped_end_motif_counts}(x, group, ...)
+\method{sparse_data_frame_for_group}{cfdnalab_grouped_end_motif_counts}(x, group, max_blacklisted_fraction = 1, ...)
 
 sparse_data_frame_for_group(x, ...)
 }
@@ -13,6 +13,10 @@ sparse_data_frame_for_group(x, ...)
 \item{x}{A cfDNAlab grouped sparse end-motif object.}
 
 \item{group}{Group name or one-based group index.}
+
+\item{max_blacklisted_fraction}{Maximum row \code{blacklisted_fraction} in 0..1
+to retain before returning counts. The default \code{1.0} keeps all selected
+rows.}
 
 \item{...}{Method-specific group selection arguments.}
 }

@@ -111,10 +111,22 @@ def test_dense_windowed_end_motif_slice_helpers_return_expected_frames(
     np.testing.assert_array_equal(
         ends.dense_counts_for_motif("_CC"), np.array([0.0, 4.0], dtype=np.float64)
     )
+    filtered_motif_frame = ends.dense_data_frame_for_motif(
+        "_CC", max_blacklisted_fraction=0.1
+    )
+    pd.testing.assert_frame_equal(
+        filtered_motif_frame,
+        motif_frame.iloc[[1]].reset_index(drop=True),
+    )
     pd.testing.assert_frame_equal(
         ends.dense_data_frame_for_motif_idx(1),
         motif_frame,
     )
+    assert ends.dense_data_frame_for_window(0, max_blacklisted_fraction=0.1).empty
+    with pytest.raises(
+        ValueError, match="max_blacklisted_fraction must be a single finite fraction"
+    ):
+        ends.dense_data_frame_for_window(0, max_blacklisted_fraction=1.1)
     assert ends.sparse_coo_for_window(1).shape == (1, 3)
 
 
@@ -358,6 +370,14 @@ def test_dense_grouped_end_motifs_use_group_helpers(tmp_path: Path) -> None:
             }
         ),
     )
+    assert ends.dense_data_frame_for_group(
+        "long_group", max_blacklisted_fraction=0.1
+    ).empty
+    filtered_motif_frame = ends.dense_data_frame_for_motif(
+        "_CC", max_blacklisted_fraction=0.1
+    )
+    assert filtered_motif_frame["group_name"].tolist() == ["A", "mid"]
+    assert filtered_motif_frame["count"].tolist() == [0.0, 0.0]
 
 
 def test_end_motif_loader_rejects_invalid_paths(tmp_path: Path) -> None:

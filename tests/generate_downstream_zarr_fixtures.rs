@@ -1,4 +1,8 @@
-#![cfg(all(feature = "cmd_midpoints", feature = "cmd_ends"))]
+#![cfg(all(
+    feature = "cmd_midpoints",
+    feature = "cmd_ends",
+    feature = "cmd_lengths"
+))]
 
 mod fixtures;
 
@@ -10,15 +14,16 @@ use cfdnalab::commands::{
         config_structs::{AssignMotifToWindowArgs, ClipStrategy, KmerSource, WindowMotifAssigner},
         ends::run as run_ends,
     },
+    lengths::{config::LengthsConfig, lengths::run as run_lengths},
     midpoints::{
         config::MidpointsConfig, midpoints::run as run_midpoints, smoothing::MidpointSmoothing,
     },
 };
 use fixtures::{
-    bam_from_specs_strict_identity, paired_fragment, read_midpoint_zarr_counts,
-    read_midpoint_zarr_i32_1d, simple_reference_twobit, write_bed,
+    bam_from_specs_strict_identity, paired_fragment, read_length_counts_text,
+    read_midpoint_zarr_counts, read_midpoint_zarr_i32_1d, simple_reference_twobit, write_bed,
 };
-use ndarray::{Array2, arr3};
+use ndarray::{arr3, Array2};
 use serde_json::Value;
 use std::{
     env,
@@ -322,6 +327,200 @@ fn generate_end_motif_zarr_fixtures_with_cfdnalab() -> Result<()> {
     Ok(())
 }
 
+#[test]
+// This is ignored because it is not a normal correctness test. It generates real cfDNAlab
+// length-count TSV outputs for the downstream R compatibility workflow, which invokes it
+// explicitly from the downstream fixture GitHub Action.
+#[ignore = "generates the length-count fixtures consumed by downstream R compatibility tests"]
+fn generate_length_count_tsv_fixtures_with_cfdnalab() -> Result<()> {
+    let output_dir = env::var_os("CFDNALAB_DOWNSTREAM_FIXTURE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("downstream_tests/tmp"));
+    std::fs::create_dir_all(&output_dir)?;
+
+    let bam = bam_from_specs_strict_identity(
+        vec![("chr1".to_string(), 500)],
+        vec![
+            paired_fragment(10, 35, 20),
+            paired_fragment(50, 45, 20),
+            paired_fragment(120, 61, 20),
+            paired_fragment(130, 65, 20),
+            paired_fragment(215, 81, 20),
+            paired_fragment(320, 35, 20),
+        ],
+        Vec::new(),
+        "downstream_length_fixture",
+    )?;
+
+    let window_bed = output_dir.join("tiny_lengths_windows.bed");
+    write_bed(
+        &window_bed,
+        &[
+            ("chr1", 0, 100, "left"),
+            ("chr1", 100, 200, "middle"),
+            ("chr1", 200, 300, "right"),
+            ("chr1", 300, 360, "tail"),
+        ],
+    )?;
+    let grouped_bed = output_dir.join("tiny_lengths_grouped.bed");
+    write_bed(
+        &grouped_bed,
+        &[
+            ("chr1", 0, 100, "beta"),
+            ("chr1", 100, 200, "alpha"),
+            ("chr1", 200, 300, "beta"),
+            ("chr1", 300, 360, "gamma"),
+            ("chr1", 360, 390, "zero"),
+        ],
+    )?;
+    let blacklist_bed = output_dir.join("tiny_lengths_blacklist.bed");
+    write_bed(
+        &blacklist_bed,
+        &[
+            ("chr1", 96, 100, "mask_left"),
+            ("chr1", 100, 105, "mask_middle"),
+            ("chr1", 200, 210, "mask_right"),
+            ("chr1", 300, 315, "mask_tail"),
+            ("chr1", 360, 370, "mask_zero"),
+        ],
+    )?;
+
+    let global_path = run_length_fixture(&bam.bam, &output_dir, "tiny_lengths_global", None, None)?;
+    assert_eq!(
+        read_length_counts_text(&global_path)?,
+        "count_30_50\tcount_50_70\tcount_70_100\n3\t2\t1\n"
+    );
+
+    let windowed_path = run_length_fixture(
+        &bam.bam,
+        &output_dir,
+        "tiny_lengths_windowed",
+        Some(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: Some(window_bed.clone()),
+            by_grouped_bed: None,
+        }),
+        Some(blacklist_bed.clone()),
+    )?;
+    assert_eq!(
+        read_length_counts_text(&windowed_path)?,
+        concat!(
+            "chrom\tstart\tend\tblacklisted_fraction\tcount_30_50\tcount_50_70\tcount_70_100\n",
+            "chr1\t0\t100\t0.04\t2\t0\t0\n",
+            "chr1\t100\t200\t0.05\t0\t2\t0\n",
+            "chr1\t200\t300\t0.1\t0\t0\t1\n",
+            "chr1\t300\t360\t0.25\t1\t0\t0\n",
+        )
+    );
+
+    let windowed_no_blacklist_path = run_length_fixture(
+        &bam.bam,
+        &output_dir,
+        "tiny_lengths_windowed_no_blacklist",
+        Some(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: Some(window_bed),
+            by_grouped_bed: None,
+        }),
+        None,
+    )?;
+    assert_eq!(
+        read_length_counts_text(&windowed_no_blacklist_path)?,
+        concat!(
+            "chrom\tstart\tend\tcount_30_50\tcount_50_70\tcount_70_100\n",
+            "chr1\t0\t100\t2\t0\t0\n",
+            "chr1\t100\t200\t0\t2\t0\n",
+            "chr1\t200\t300\t0\t0\t1\n",
+            "chr1\t300\t360\t1\t0\t0\n",
+        )
+    );
+
+    let grouped_path = run_length_fixture(
+        &bam.bam,
+        &output_dir,
+        "tiny_lengths_grouped",
+        Some(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            by_grouped_bed: Some(grouped_bed.clone()),
+        }),
+        Some(blacklist_bed),
+    )?;
+    assert_eq!(
+        read_length_counts_text(&grouped_path)?,
+        concat!(
+            "group_name\teligible_windows\tblacklisted_fraction\tcount_30_50\tcount_50_70\tcount_70_100\n",
+            "beta\t2\t0.07\t2\t0\t1\n",
+            "alpha\t1\t0.05\t0\t2\t0\n",
+            "gamma\t1\t0.25\t1\t0\t0\n",
+            "zero\t1\t0.333\t0\t0\t0\n",
+        )
+    );
+
+    let grouped_no_blacklist_path = run_length_fixture(
+        &bam.bam,
+        &output_dir,
+        "tiny_lengths_grouped_no_blacklist",
+        Some(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            by_grouped_bed: Some(grouped_bed),
+        }),
+        None,
+    )?;
+    assert_eq!(
+        read_length_counts_text(&grouped_no_blacklist_path)?,
+        concat!(
+            "group_name\teligible_windows\tcount_30_50\tcount_50_70\tcount_70_100\n",
+            "beta\t2\t2\t0\t1\n",
+            "alpha\t1\t0\t2\t0\n",
+            "gamma\t1\t1\t0\t0\n",
+            "zero\t1\t0\t0\t0\n",
+        )
+    );
+
+    Ok(())
+}
+
+fn run_length_fixture(
+    bam_path: &Path,
+    output_dir: &Path,
+    prefix: &str,
+    windows: Option<DistributionWindowsArgs>,
+    blacklist: Option<PathBuf>,
+) -> Result<PathBuf> {
+    let mut config = LengthsConfig::new(
+        IOCArgs {
+            bam: bam_path.to_path_buf(),
+            output_dir: output_dir.to_path_buf(),
+            n_threads: 1,
+        },
+        ChromosomeArgs {
+            chromosomes: Some(vec!["chr1".to_string()]),
+            chromosomes_file: None,
+        },
+    );
+    config.output_prefix = prefix.to_string();
+    config.set_length_bins(vec![30, 50, 70, 100]);
+    config.set_min_mapq(0);
+    config.set_require_proper_pair(false);
+    config.set_tile_size(1_000_000);
+    if let Some(windows) = windows {
+        config.set_windows(windows);
+    }
+    if let Some(blacklist) = blacklist {
+        config.blacklist = Some(vec![blacklist]);
+    }
+
+    run_lengths(&config)?;
+    let counts_path = output_dir.join(format!("{prefix}.length_counts.tsv.zst"));
+    assert!(counts_path.is_file());
+    assert!(output_dir
+        .join(format!("{prefix}.length_settings.json"))
+        .is_file());
+    Ok(counts_path)
+}
+
 fn run_end_fixture(
     bam_path: &Path,
     reference_path: &Path,
@@ -366,11 +565,9 @@ fn run_end_fixture(
     run_ends(&config)?;
     let zarr_path = output_dir.join(format!("{prefix}.end_motifs.zarr"));
     assert!(zarr_path.is_dir());
-    assert!(
-        output_dir
-            .join(format!("{prefix}.end_settings.json"))
-            .is_file()
-    );
+    assert!(output_dir
+        .join(format!("{prefix}.end_settings.json"))
+        .is_file());
     Ok(zarr_path)
 }
 

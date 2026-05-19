@@ -8,6 +8,8 @@
 
  - Changes windowed end-motif `windows()` metadata columns to `window_idx`,
    `chrom`, `start`, `end`, and `blacklisted_fraction`.
+ - Adds `max_blacklisted_fraction` filtering to row-based end-motif data-frame
+   helpers.
 
 ## py-cfDNAlab 0.1.0
 

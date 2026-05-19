@@ -8,7 +8,7 @@ test_that("R helper package reads midpoint profiles", {
 
   expect_identical(schema_version(midpoints), 1L)
   expect_identical(
-    groups(midpoints)$group_name,
+    group_metadata(midpoints)$group_name,
     c("LYL1", "beta-site", "gamma_long")
   )
   expect_identical(
@@ -61,6 +61,15 @@ test_that("R helper package reads sparse windowed end motifs", {
     as.matrix(sparse_counts_matrix(sparse_windowed)),
     matrix(c(0, 1, 1, 0), nrow = 2, byrow = TRUE)
   )
+  expect_equal(
+    dense_data_frame_for_motif(
+      sparse_windowed,
+      "_A",
+      allow_densify = TRUE,
+      max_blacklisted_fraction = 0
+    )$count,
+    c(0, 1)
+  )
   expect_equal(sparse_data_frame_for_window(sparse_windowed, 1L)$count, 1)
   expect_equal(sparse_data_frame_for_motif(sparse_windowed, "_G")$count, 1)
 })
@@ -72,7 +81,7 @@ test_that("R helper package reads sparse grouped end motifs", {
   expect_identical(row_mode(sparse_grouped), "grouped_bed")
   expect_identical(group_idx(sparse_grouped, "alpha"), 2L)
   expect_identical(
-    groups(sparse_grouped)$group_name,
+    group_metadata(sparse_grouped)$group_name,
     c("beta", "alpha", "gamma")
   )
   expect_equal(
@@ -80,4 +89,160 @@ test_that("R helper package reads sparse grouped end motifs", {
     matrix(c(1, 2, 1, 0, 0, 0), nrow = 3, byrow = TRUE)
   )
   expect_equal(sparse_data_frame_for_group(sparse_grouped, "beta")$count, c(1, 2))
+  expect_equal(
+    dense_data_frame_for_group(
+      sparse_grouped,
+      "beta",
+      allow_densify = TRUE,
+      max_blacklisted_fraction = 0
+    )$count,
+    c(1, 2)
+  )
+})
+
+test_that("R helper package reads global length counts", {
+  lengths <- read_lengths(global_length_counts_path())
+
+  expect_s3_class(lengths, "cfdnalab_global_length_counts")
+  expect_equal(
+    length_bins(lengths),
+    data.frame(
+      length_bin_idx = c(1L, 2L, 3L),
+      length_start_bp = c(30L, 50L, 70L),
+      length_end_bp = c(50L, 70L, 100L),
+      length_midpoint_bp = c(40, 60, 85),
+      length_width_bp = c(20L, 20L, 30L),
+      count_column = c("count_30_50", "count_50_70", "count_70_100"),
+      stringsAsFactors = FALSE
+    ),
+    ignore_attr = TRUE
+  )
+  expect_equal(length_counts_vector(lengths), c(count_30_50 = 3, count_50_70 = 2, count_70_100 = 1))
+
+  fractions <- length_data_frame(lengths, value = "fraction")
+  expect_equal(fractions$fraction, c(0.5, 1 / 3, 1 / 6), tolerance = 1e-8)
+  expect_equal(length_data_frame(lengths, value = "density")$density, c(0.025, 1 / 60, 1 / 180), tolerance = 1e-8)
+})
+
+test_that("R helper package reads windowed length counts", {
+  lengths <- read_lengths(windowed_length_counts_path())
+
+  expect_s3_class(lengths, "cfdnalab_windowed_length_counts")
+  expect_equal(
+    window_metadata(lengths),
+    data.frame(
+      window_idx = 1:4,
+      chrom = rep("chr1", 4),
+      start = c(0L, 100L, 200L, 300L),
+      end = c(100L, 200L, 300L, 360L),
+      blacklisted_fraction = c(0.04, 0.05, 0.1, 0.25),
+      stringsAsFactors = FALSE
+    ),
+    ignore_attr = TRUE
+  )
+
+  expect_equal(
+    length_counts_matrix(lengths),
+    matrix(
+      c(2, 0, 0, 0, 2, 0, 0, 0, 1, 1, 0, 0),
+      nrow = 4,
+      byrow = TRUE,
+      dimnames = list(NULL, c("count_30_50", "count_50_70", "count_70_100"))
+    ),
+    tolerance = 1e-8
+  )
+
+  selected <- length_data_frame(lengths, window_idx = c(2L, 4L), value = "fraction", keep_wide = TRUE)
+  expect_equal(names(selected), c("window_idx", "chrom", "start", "end", "blacklisted_fraction", "fraction_30_50", "fraction_50_70", "fraction_70_100"))
+  expect_equal(selected$fraction_30_50, c(0, 1), tolerance = 1e-8)
+  expect_equal(selected$fraction_50_70, c(1, 0), tolerance = 1e-8)
+  expect_equal(selected$fraction_70_100, c(0, 0), tolerance = 1e-8)
+
+  filtered <- length_data_frame(lengths, max_blacklisted_fraction = 0.05)
+  expect_identical(unique(filtered$window_idx), c(1L, 2L))
+})
+
+test_that("R helper package reads grouped length counts", {
+  lengths <- read_lengths(grouped_length_counts_path())
+
+  expect_s3_class(lengths, "cfdnalab_grouped_length_counts")
+  expect_equal(
+    group_metadata(lengths),
+    data.frame(
+      group_idx = 1:4,
+      group_name = c("beta", "alpha", "gamma", "zero"),
+      eligible_windows = c(2L, 1L, 1L, 1L),
+      blacklisted_fraction = c(0.07, 0.05, 0.25, 0.333),
+      stringsAsFactors = FALSE
+    ),
+    ignore_attr = TRUE
+  )
+  expect_identical(group_idx(lengths, "gamma"), 3L)
+
+  beta <- length_data_frame(lengths, group = "beta")
+  expect_equal(beta$count, c(2, 0, 1), tolerance = 1e-8)
+
+  wide_density <- length_data_frame(lengths, group = c("alpha", "zero"), value = "density", keep_wide = TRUE)
+  expect_equal(names(wide_density), c("group_idx", "group_name", "eligible_windows", "blacklisted_fraction", "density_30_50", "density_50_70", "density_70_100"))
+  expect_equal(wide_density$density_30_50, c(0, NA), tolerance = 1e-8)
+  expect_equal(wide_density$density_50_70, c(1 / 20, NA), tolerance = 1e-8)
+  expect_equal(wide_density$density_70_100, c(0, NA), tolerance = 1e-8)
+})
+
+test_that("R helper package reads no-blacklist windowed length counts", {
+  lengths <- read_lengths(windowed_length_counts_no_blacklist_path())
+
+  expect_s3_class(lengths, "cfdnalab_windowed_length_counts")
+  expect_equal(
+    window_metadata(lengths),
+    data.frame(
+      window_idx = 1:4,
+      chrom = rep("chr1", 4),
+      start = c(0L, 100L, 200L, 300L),
+      end = c(100L, 200L, 300L, 360L),
+      stringsAsFactors = FALSE
+    ),
+    ignore_attr = TRUE
+  )
+  expect_equal(
+    length_counts_matrix(lengths),
+    matrix(
+      c(2, 0, 0, 0, 2, 0, 0, 0, 1, 1, 0, 0),
+      nrow = 4,
+      byrow = TRUE,
+      dimnames = list(NULL, c("count_30_50", "count_50_70", "count_70_100"))
+    ),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    length_data_frame(lengths, max_blacklisted_fraction = 1)$count,
+    c(2, 0, 0, 0, 2, 0, 0, 0, 1, 1, 0, 0),
+    tolerance = 1e-8
+  )
+  expect_error(
+    length_data_frame(lengths, max_blacklisted_fraction = 0.5),
+    "has no blacklisted_fraction column"
+  )
+})
+
+test_that("R helper package reads no-blacklist grouped length counts", {
+  lengths <- read_lengths(grouped_length_counts_no_blacklist_path())
+
+  expect_s3_class(lengths, "cfdnalab_grouped_length_counts")
+  expect_equal(
+    group_metadata(lengths),
+    data.frame(
+      group_idx = 1:4,
+      group_name = c("beta", "alpha", "gamma", "zero"),
+      eligible_windows = c(2L, 1L, 1L, 1L),
+      stringsAsFactors = FALSE
+    ),
+    ignore_attr = TRUE
+  )
+  expect_equal(length_data_frame(lengths, group = "beta")$count, c(2, 0, 1), tolerance = 1e-8)
+  expect_equal(length_data_frame(lengths, group_idx = 4L, value = "fraction")$fraction, c(NA, NA, NA))
+  expect_error(
+    length_data_frame(lengths, max_blacklisted_fraction = 0.5),
+    "has no blacklisted_fraction column"
+  )
 })

@@ -509,7 +509,10 @@ class EndMotifCounts:
         return values
 
     def dense_data_frame_for_motif(
-        self, motif: str, allow_densify: bool = False
+        self,
+        motif: str,
+        allow_densify: bool = False,
+        max_blacklisted_fraction: float = 1.0,
     ) -> pd.DataFrame:
         """
         Build a dense data frame for one motif across all output rows.
@@ -520,6 +523,9 @@ class EndMotifCounts:
             Motif label to extract.
         allow_densify
             If `True`, allow sparse stores to be converted to dense counts.
+        max_blacklisted_fraction
+            Maximum row `blacklisted_fraction` in 0..1 to retain before
+            returning counts. The default `1.0` keeps all selected rows.
 
         Returns
         -------
@@ -527,11 +533,16 @@ class EndMotifCounts:
             Row metadata and counts for one motif.
         """
         return self.dense_data_frame_for_motif_idx(
-            self._resolve_motif(motif), allow_densify=allow_densify
+            self._resolve_motif(motif),
+            allow_densify=allow_densify,
+            max_blacklisted_fraction=max_blacklisted_fraction,
         )
 
     def dense_data_frame_for_motif_idx(
-        self, motif_idx: int, allow_densify: bool = False
+        self,
+        motif_idx: int,
+        allow_densify: bool = False,
+        max_blacklisted_fraction: float = 1.0,
     ) -> pd.DataFrame:
         """
         Build a dense data frame for one motif index across all output rows.
@@ -544,6 +555,9 @@ class EndMotifCounts:
             Zero-based motif index to extract.
         allow_densify
             If `True`, allow sparse stores to be converted to dense counts.
+        max_blacklisted_fraction
+            Maximum row `blacklisted_fraction` in 0..1 to retain before
+            returning counts. The default `1.0` keeps all selected rows.
 
         Returns
         -------
@@ -557,7 +571,7 @@ class EndMotifCounts:
         frame["count"] = self.dense_counts_for_motif_idx(
             motif_idx, allow_densify=allow_densify
         )
-        return frame
+        return _filter_blacklisted_fraction(frame, max_blacklisted_fraction)
 
     def _row_metadata_frame(self) -> pd.DataFrame:
         if self.end_motifs.row_mode == "global":
@@ -720,7 +734,10 @@ class WindowedEndMotifCounts(EndMotifCounts):
         return self.sparse_coo_for_window(window_idx).toarray()[0, :]
 
     def dense_data_frame_for_window(
-        self, window_idx: int, allow_densify: bool = False
+        self,
+        window_idx: int,
+        allow_densify: bool = False,
+        max_blacklisted_fraction: float = 1.0,
     ) -> pd.DataFrame:
         """
         Build a dense motif count data frame for one window.
@@ -733,6 +750,9 @@ class WindowedEndMotifCounts(EndMotifCounts):
             Zero-based window index to extract.
         allow_densify
             If `True`, allow sparse stores to be converted to dense counts.
+        max_blacklisted_fraction
+            Maximum row `blacklisted_fraction` in 0..1 to retain before
+            returning counts. The default `1.0` keeps all selected rows.
 
         Returns
         -------
@@ -747,7 +767,7 @@ class WindowedEndMotifCounts(EndMotifCounts):
         metadata = self.windows().iloc[window_idx].to_dict()
         for name, value in metadata.items():
             frame[name] = value
-        return frame
+        return _filter_blacklisted_fraction(frame, max_blacklisted_fraction)
 
 
 class GroupedEndMotifCounts(EndMotifCounts):
@@ -842,7 +862,10 @@ class GroupedEndMotifCounts(EndMotifCounts):
         return self.sparse_coo_for_group(group_idx).toarray()[0, :]
 
     def dense_data_frame_for_group(
-        self, group: int | str, allow_densify: bool = False
+        self,
+        group: int | str,
+        allow_densify: bool = False,
+        max_blacklisted_fraction: float = 1.0,
     ) -> pd.DataFrame:
         """
         Build a dense motif count data frame for one group.
@@ -855,6 +878,9 @@ class GroupedEndMotifCounts(EndMotifCounts):
             Group index or group name to extract.
         allow_densify
             If `True`, allow sparse stores to be converted to dense counts.
+        max_blacklisted_fraction
+            Maximum row `blacklisted_fraction` in 0..1 to retain before
+            returning counts. The default `1.0` keeps all selected rows.
 
         Returns
         -------
@@ -869,7 +895,7 @@ class GroupedEndMotifCounts(EndMotifCounts):
         group_metadata = self.groups().iloc[group_idx].to_dict()
         for name, value in group_metadata.items():
             frame[name] = value
-        return frame
+        return _filter_blacklisted_fraction(frame, max_blacklisted_fraction)
 
     def _resolve_group(self, group: int | str) -> int:
         if isinstance(group, str):
@@ -1132,6 +1158,35 @@ def _validate_index(index: int, size: int, name: str) -> int:
     if index < 0 or index >= size:
         raise IndexError(f"{name} {index} is outside 0..{size - 1}")
     return index
+
+
+def _validate_fraction(value: float, name: str) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, numbers.Real)
+        or not np.isfinite(value)
+        or value < 0
+        or value > 1
+    ):
+        raise ValueError(f"{name} must be a single finite fraction in 0..1")
+    return float(value)
+
+
+def _filter_blacklisted_fraction(
+    frame: pd.DataFrame, max_blacklisted_fraction: float
+) -> pd.DataFrame:
+    max_blacklisted_fraction = _validate_fraction(
+        max_blacklisted_fraction, "max_blacklisted_fraction"
+    )
+    if "blacklisted_fraction" not in frame.columns:
+        if max_blacklisted_fraction == 1:
+            return frame
+        raise ValueError(
+            "Cannot filter by max_blacklisted_fraction because this output has no "
+            "blacklisted_fraction column"
+        )
+    keep = frame["blacklisted_fraction"].to_numpy() <= max_blacklisted_fraction
+    return frame.loc[keep].reset_index(drop=True)
 
 
 def _require_densify(allow_densify: bool, method_name: str) -> None:

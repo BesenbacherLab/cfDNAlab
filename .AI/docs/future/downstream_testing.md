@@ -128,7 +128,7 @@ r-cfdnalab/
   R/
     midpoints.R
     end_motifs.R
-    zarr_helpers.R
+    helpers.R
 ```
 
 These helpers are not part of the Rust command implementation. They are thin

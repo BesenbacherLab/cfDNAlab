@@ -5,7 +5,7 @@
 \alias{sparse_data_frame_for_motif}
 \title{Return stored sparse end-motif counts for one motif.}
 \usage{
-\method{sparse_data_frame_for_motif}{cfdnalab_end_motif_counts}(x, motif, ...)
+\method{sparse_data_frame_for_motif}{cfdnalab_end_motif_counts}(x, motif, max_blacklisted_fraction = 1, ...)
 
 sparse_data_frame_for_motif(x, ...)
 }
@@ -13,6 +13,10 @@ sparse_data_frame_for_motif(x, ...)
 \item{x}{A cfDNAlab sparse end-motif object.}
 
 \item{motif}{Motif label.}
+
+\item{max_blacklisted_fraction}{Maximum row \code{blacklisted_fraction} in 0..1
+to retain before returning counts. The default \code{1.0} keeps all selected
+rows.}
 
 \item{...}{Method-specific motif selection arguments.}
 }

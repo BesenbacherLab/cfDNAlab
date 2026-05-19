@@ -5,7 +5,7 @@
 \alias{sparse_data_frame_for_window}
 \title{Return stored sparse end-motif counts for one window.}
 \usage{
-\method{sparse_data_frame_for_window}{cfdnalab_windowed_end_motif_counts}(x, window_idx, ...)
+\method{sparse_data_frame_for_window}{cfdnalab_windowed_end_motif_counts}(x, window_idx, max_blacklisted_fraction = 1, ...)
 
 sparse_data_frame_for_window(x, ...)
 }
@@ -13,6 +13,10 @@ sparse_data_frame_for_window(x, ...)
 \item{x}{A cfDNAlab windowed sparse end-motif object.}
 
 \item{window_idx}{One-based window index.}
+
+\item{max_blacklisted_fraction}{Maximum row \code{blacklisted_fraction} in 0..1
+to retain before returning counts. The default \code{1.0} keeps all selected
+rows.}
 
 \item{...}{Method-specific window selection arguments.}
 }

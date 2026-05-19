@@ -104,7 +104,7 @@ Current candidate Zarr readers:
 First implementation decision:
 
 - Start with CRAN `zarr` as the internal backend because it has native Zarr v3 support and keeps installation simpler for ordinary R users.
-- Keep all backend access in `R/zarr_helpers.R` so we can swap or add `Rarr` later if downstream tests reveal missing support.
+- Keep all backend access in `R/helpers.R` so we can swap or add `Rarr` later if downstream tests reveal missing support.
 
 Decision rule:
 
@@ -319,7 +319,7 @@ length_data_frame(
   lengths,
   value = c("count", "fraction", "density"),
   keep_wide = FALSE,
-  max_blacklisted_fraction = NULL
+  max_blacklisted_fraction = 1.0
 )
 ```
 
@@ -378,13 +378,14 @@ the original `count_*` column names. `value = "fraction"` should return
 `fraction_*` columns, and `value = "density"` should return `density_*`
 columns, using the same length-bin suffixes as the source count columns.
 
-`max_blacklisted_fraction` should filter output units before reshaping. When it
-is `NULL`, no blacklist filtering is applied. When it is numeric, keep only
-windows or groups with `blacklisted_fraction <= max_blacklisted_fraction`.
-If the loaded output does not contain `blacklisted_fraction`, requesting this
-filter should error with a clear message. This avoids silently treating outputs
-that were not written with blacklist metadata as if they had no blacklisted
-content.
+`max_blacklisted_fraction` should filter output units before reshaping. It must
+be a single finite fraction in 0..1. The default `1.0` keeps all rows with valid
+blacklist fractions and effectively disables filtering. Values below `1.0`
+keep only windows or groups with
+`blacklisted_fraction <= max_blacklisted_fraction`. If the loaded output does
+not contain `blacklisted_fraction`, the default `1.0` should keep all rows, and
+stricter cutoffs should error with a clear message because the package cannot
+evaluate the requested filter.
 
 `value = "fraction"` should compute the within-output-unit fraction:
 
@@ -427,7 +428,7 @@ length_data_frame(
   window_idx = NULL,
   value = c("count", "fraction", "density"),
   keep_wide = FALSE,
-  max_blacklisted_fraction = NULL
+  max_blacklisted_fraction = 1.0
 )
 ```
 
@@ -492,7 +493,7 @@ length_data_frame(
   group_idx = NULL,
   value = c("count", "fraction", "density"),
   keep_wide = FALSE,
-  max_blacklisted_fraction = NULL
+  max_blacklisted_fraction = 1.0
 )
 ```
 
@@ -525,7 +526,7 @@ length_ratio_data_frame(
   num_length_bin_idx,
   denom_length_bin_idx,
   denom_zero = c("NA", "error"),
-  max_blacklisted_fraction = NULL
+  max_blacklisted_fraction = 1.0
 )
 ```
 
@@ -643,12 +644,12 @@ For `cfdnalab_windowed_end_motif_counts`:
 ```r
 window_metadata(ends)
 dense_counts_matrix(ends)
-dense_data_frame_for_window(ends, window_idx)
-dense_data_frame_for_motif(ends, motif)
+dense_data_frame_for_window(ends, window_idx, max_blacklisted_fraction = 1.0)
+dense_data_frame_for_motif(ends, motif, max_blacklisted_fraction = 1.0)
 sparse_counts_matrix(ends)
 sparse_data_frame(ends)
-sparse_data_frame_for_window(ends, window_idx)
-sparse_data_frame_for_motif(ends, motif)
+sparse_data_frame_for_window(ends, window_idx, max_blacklisted_fraction = 1.0)
+sparse_data_frame_for_motif(ends, motif, max_blacklisted_fraction = 1.0)
 ```
 
 `window_metadata()` should return:
@@ -666,6 +667,9 @@ windowed length counts. `chrom`, `start`, and `end` match the standard
 BED-like table shape. They are genomic coordinates, not R indices.
 
 Sparse helpers should avoid constructing the full dense matrix.
+Row-based end-motif data-frame helpers should accept
+`max_blacklisted_fraction = 1.0` with the same 0..1 validation and keep-all
+default as `length_data_frame()`.
 
 ### Grouped End Motifs
 
@@ -675,12 +679,12 @@ For `cfdnalab_grouped_end_motif_counts`:
 group_metadata(ends)
 group_idx(ends, group_name)
 dense_counts_matrix(ends)
-dense_data_frame_for_group(ends, group)
-dense_data_frame_for_motif(ends, motif)
+dense_data_frame_for_group(ends, group, max_blacklisted_fraction = 1.0)
+dense_data_frame_for_motif(ends, motif, max_blacklisted_fraction = 1.0)
 sparse_counts_matrix(ends)
 sparse_data_frame(ends)
-sparse_data_frame_for_group(ends, group)
-sparse_data_frame_for_motif(ends, motif)
+sparse_data_frame_for_group(ends, group, max_blacklisted_fraction = 1.0)
+sparse_data_frame_for_motif(ends, motif, max_blacklisted_fraction = 1.0)
 ```
 
 `group_metadata()` should return:
@@ -760,7 +764,7 @@ plot_lengths(
   x,
   groups = NULL,
   value = c("fraction", "count", "density"),
-  max_blacklisted_fraction = NULL,
+  max_blacklisted_fraction = 1.0,
   display = c("line", "facet", "ridges", "tiles"),
   max_groups = 12,
   ...
@@ -774,7 +778,7 @@ plot_lengths(
   x,
   window_idx = NULL,
   value = c("fraction", "count", "density"),
-  max_blacklisted_fraction = NULL,
+  max_blacklisted_fraction = 1.0,
   display = c("line", "facet", "ridges", "tiles"),
   max_windows = 12,
   ...
@@ -827,7 +831,7 @@ plot_length_ratio(
   min_num_count = 0,
   min_denom_count = 0,
   min_total_count = 0,
-  max_blacklisted_fraction = NULL,
+  max_blacklisted_fraction = 1.0,
   support_color = c("none", "total_count", "num_count", "denom_count", "blacklisted_fraction"),
   require_regular_windows = TRUE,
   display = c("genome", "chromosome_facets"),
@@ -849,7 +853,7 @@ plot_length_ratio_track(
   min_num_count = 0,
   min_denom_count = 0,
   min_total_count = 0,
-  max_blacklisted_fraction = NULL,
+  max_blacklisted_fraction = 1.0,
   support_color = c("none", "total_count", "num_count", "denom_count", "blacklisted_fraction"),
   require_regular_windows = TRUE,
   display = c("genome", "chromosome_facets"),
@@ -919,7 +923,7 @@ Suggested files:
 
 ```text
 R/
-  zarr_helpers.R
+  helpers.R
   schema.R
   midpoints.R
   end_motifs.R
@@ -936,7 +940,7 @@ tests/
     test-schema-validation.R
 ```
 
-`zarr_helpers.R` should own:
+`helpers.R` should own:
 
 - root metadata reads
 - array metadata reads
@@ -999,8 +1003,9 @@ Minimum tests:
 - length `length_data_frame(..., keep_wide = TRUE)` returns selected rows in
   wide shape for `count`, `fraction`, and `density`, with `fraction_*` and
   `density_*` columns when transformed values are requested
-- length `length_data_frame()` and ratio helpers filter by
-  `blacklisted_fraction` when `max_blacklisted_fraction` is supplied, and error
+- length `length_data_frame()` and ratio helpers use
+  `max_blacklisted_fraction = 1.0` as the keep-all default, filter by
+  `blacklisted_fraction` for stricter cutoffs, and error for stricter cutoffs
   if the output has no blacklist metadata
 - length ratio helpers use one-based numerator and denominator length-bin
   indices from `length_bins()`

@@ -42,9 +42,9 @@ group_metadata <- function(x, ...) {
   UseMethod("group_metadata")
 }
 
-#' Return midpoint length-bin metadata.
+#' Return length-bin metadata.
 #'
-#' @param x A cfDNAlab midpoint-profile object.
+#' @param x A cfDNAlab object with length bins.
 #' @param ... Reserved for future methods.
 #'
 #' @return A data frame with one row per length bin.
@@ -87,9 +87,9 @@ group_idx <- function(x, ...) {
   UseMethod("group_idx")
 }
 
-#' Look up the midpoint length-bin index containing a fragment length.
+#' Look up the length-bin index containing a fragment length.
 #'
-#' @param x A cfDNAlab midpoint-profile object.
+#' @param x A cfDNAlab object with length bins.
 #' @param ... Method-specific lookup arguments.
 #'
 #' @return A scalar one-based integer length-bin index.
@@ -162,6 +162,40 @@ profile_data_frame <- function(x, ...) {
 #' @export
 midpoint_array <- function(x, ...) {
   UseMethod("midpoint_array")
+}
+
+#' Return length-count values as a matrix.
+#'
+#' @param x A cfDNAlab length-count object.
+#' @param ... Reserved for future methods.
+#'
+#' @return A numeric matrix with one row per output unit and one column per
+#'   length bin.
+#' @export
+length_counts_matrix <- function(x, ...) {
+  UseMethod("length_counts_matrix")
+}
+
+#' Return global length-count values as a vector.
+#'
+#' @param x A cfDNAlab global length-count object.
+#' @param ... Reserved for future methods.
+#'
+#' @return A named numeric vector with one value per length bin.
+#' @export
+length_counts_vector <- function(x, ...) {
+  UseMethod("length_counts_vector")
+}
+
+#' Return length-count values as a data frame.
+#'
+#' @param x A cfDNAlab length-count object.
+#' @param ... Method-specific selection arguments.
+#'
+#' @return A data frame with length-bin metadata and count-derived values.
+#' @export
+length_data_frame <- function(x, ...) {
+  UseMethod("length_data_frame")
 }
 
 #' Return end-motif counts as a dense matrix.

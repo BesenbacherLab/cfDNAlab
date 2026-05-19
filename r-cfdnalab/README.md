@@ -4,7 +4,7 @@ R helpers for loading [cfDNAlab](https://github.com/BesenbacherLab/cfDNAlab) ana
 
 This package does not install or run the cfDNAlab command-line tool. The CLI is distributed separately as the Rust `cfdna` binary. Use this R package after running cfDNAlab to load, inspect, and reshape output files in R.
 
-The first supported output types are midpoint and end-motif Zarr outputs: `<prefix>.midpoint_profiles.zarr` and `<prefix>.end_motifs.zarr`.
+The first supported output types are midpoint and end-motif Zarr outputs plus length-count TSV outputs: `<prefix>.midpoint_profiles.zarr`, `<prefix>.end_motifs.zarr`, and `<prefix>.length_counts.tsv.zst`.
 
 The helpers return base `data.frame` objects, R arrays, and `Matrix` sparse matrices. Convert data frames with `tibble::as_tibble()` or `data.table::as.data.table()` when you want those workflows.
 
@@ -96,3 +96,20 @@ Dense helpers do not silently convert sparse stores. If you want a dense matrix 
 ```r
 counts <- dense_counts_matrix(ends, allow_densify = TRUE)
 ```
+
+## Length Counts
+
+Length-count outputs are wide TSV files from `cfdna lengths`.
+
+```r
+lengths <- read_lengths("sample.length_counts.tsv.zst")
+
+length_bins(lengths)
+length_counts_matrix(lengths)
+length_data_frame(lengths, value = "fraction")
+```
+
+ - Global outputs also support `length_counts_vector(lengths)`.
+ - Windowed outputs support `window_metadata(lengths)` and optional `window_idx` selection in
+`length_data_frame()`.
+ - Grouped outputs support `group_metadata(lengths)`, `group_idx()`, and optional `group` or `group_idx` selection.

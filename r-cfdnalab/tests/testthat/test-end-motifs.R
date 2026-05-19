@@ -104,6 +104,14 @@ test_that("dense windowed end motifs expose dense and sparse views", {
     c(1.5, 0, 4),
     tolerance = 1e-8
   )
+  expect_equal(nrow(dense_data_frame_for_window(ends, 2L, max_blacklisted_fraction = 0.1)), 0L)
+  filtered_motif <- dense_data_frame_for_motif(ends, "_A", max_blacklisted_fraction = 0.1)
+  expect_equal(filtered_motif$window_idx, 1L)
+  expect_equal(filtered_motif$count, 0, tolerance = 1e-8)
+  expect_error(
+    dense_data_frame_for_window(ends, 1L, max_blacklisted_fraction = 1.1),
+    "max_blacklisted_fraction must be a single finite fraction in 0..1"
+  )
   expect_error(
     dense_data_frame_for_window(ends, 0L),
     "window_idx 0 is outside 1..2",
@@ -170,6 +178,10 @@ test_that("sparse windowed end motifs read from locally generated schema fixture
     c(1.5, 0, 4),
     tolerance = 1e-8
   )
+  expect_equal(nrow(sparse_data_frame_for_window(ends, 2L, max_blacklisted_fraction = 0.1)), 0L)
+  filtered_sparse_motif <- sparse_data_frame_for_motif(ends, "_T", max_blacklisted_fraction = 0.1)
+  expect_equal(filtered_sparse_motif$window_idx, 3L)
+  expect_equal(filtered_sparse_motif$count, 3, tolerance = 1e-8)
 
   window_frame <- sparse_data_frame_for_window(ends, 1L)
   expect_equal(window_frame$motif, "_G")
@@ -225,6 +237,7 @@ test_that("dense grouped end motifs expose group helpers without densification f
     c(0, 0, 0),
     tolerance = 1e-8
   )
+  expect_equal(nrow(dense_data_frame_for_group(ends, "alpha", max_blacklisted_fraction = 0.1)), 0L)
   expect_equal(
     dense_data_frame_for_motif(ends, "_G")$count,
     c(5, 0),
@@ -268,11 +281,13 @@ test_that("sparse grouped end motifs read from locally generated schema fixture"
     c(1, 5),
     tolerance = 1e-8
   )
+  expect_equal(nrow(sparse_data_frame_for_group(ends, "alpha", max_blacklisted_fraction = 0.1)), 0L)
   expect_equal(
     sparse_data_frame_for_motif(ends, "_G")$count,
     5,
     tolerance = 1e-8
   )
+  expect_equal(nrow(sparse_data_frame_for_motif(ends, "_G", max_blacklisted_fraction = 0.1)), 0L)
   expect_equal(
     sparse_data_frame(ends)$count,
     c(1, 5),

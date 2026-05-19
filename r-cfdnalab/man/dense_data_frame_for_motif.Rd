@@ -5,7 +5,13 @@
 \alias{dense_data_frame_for_motif}
 \title{Return dense end-motif counts for one motif.}
 \usage{
-\method{dense_data_frame_for_motif}{cfdnalab_end_motif_counts}(x, motif, allow_densify = FALSE, ...)
+\method{dense_data_frame_for_motif}{cfdnalab_end_motif_counts}(
+  x,
+  motif,
+  allow_densify = FALSE,
+  max_blacklisted_fraction = 1,
+  ...
+)
 
 dense_data_frame_for_motif(x, ...)
 }
@@ -16,6 +22,10 @@ dense_data_frame_for_motif(x, ...)
 
 \item{allow_densify}{If \code{TRUE}, allow sparse stores to be converted to dense
 in memory before returning the data frame.}
+
+\item{max_blacklisted_fraction}{Maximum row \code{blacklisted_fraction} in 0..1
+to retain before returning counts. The default \code{1.0} keeps all selected
+rows.}
 
 \item{...}{Method-specific motif selection arguments.}
 }

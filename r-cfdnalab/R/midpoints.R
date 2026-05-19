@@ -156,14 +156,13 @@ positions.cfdnalab_midpoint_profiles <- function(x, ...) {
 group_idx.cfdnalab_midpoint_profiles <- function(x, group_name, ...) {
   cf_reject_unused_arguments(...)
   group_name <- cf_validate_scalar_string(group_name, "group_name")
-  matches <- which(x$group_name == group_name)
-  if (length(matches) == 0L) {
-    stop("Unknown midpoint group name: ", sQuote(group_name), call. = FALSE)
-  }
-  if (length(matches) > 1L) {
-    stop("Midpoint group name is not unique: ", sQuote(group_name), call. = FALSE)
-  }
-  cf_index0_to_r_index(x$group_idx0[[matches]])
+  matched_index <- cf_find_unique_value_index(
+    x$group_name,
+    group_name,
+    "Unknown midpoint group name: ",
+    "Midpoint group name is not unique: "
+  )
+  cf_index0_to_r_index(x$group_idx0[[matched_index]])
 }
 
 #' @export

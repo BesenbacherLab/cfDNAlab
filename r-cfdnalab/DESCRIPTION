@@ -9,9 +9,9 @@ Authors@R: c(
            email = "r-pkgs@ludvigolsen.dk",
            comment = c(ORCID = "0009-0006-6798-7454"))
   )
-Description: Helpers for loading cfDNAlab Zarr outputs into R data frames,
-    arrays, and sparse matrices. This package does not install or wrap the
-    cfDNAlab command-line tool.
+Description: Helpers for loading cfDNAlab Zarr and TSV outputs into R data
+    frames, arrays, and sparse matrices. This package does not install or wrap
+    the cfDNAlab command-line tool.
 License: MIT + file LICENSE
 URL: https://github.com/BesenbacherLab/cfDNAlab/tree/main/r-cfdnalab
 BugReports: https://github.com/BesenbacherLab/cfDNAlab/issues
@@ -19,6 +19,7 @@ Encoding: UTF-8
 LazyData: true
 Imports:
     bit64,
+    data.table,
     jsonlite,
     Matrix,
     qs2,
