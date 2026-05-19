@@ -11,6 +11,8 @@ This is the changelog for the main CLI tool. You can find the changelog for the 
 
  - In `cfdna lengths`, the `max_soft_clips` cap is only applied when `--clip-mode adjust`.
 
+<br />
+
 ## cfDNAlab 0.2.0
 
 **BREAKING CHANGES**:
@@ -41,6 +43,8 @@ While the new `.zarr` format has many benefits, such as being self-contained and
 - Adds `zarrs=0.23.11` dependency.
 - Adds downstream Zarr compatibility checks for Python and R reader packages.
 - We no longer expose the former `gen_cli_docs` binary that is for internal use only.
+
+<br />
 
 ## cfDNAlab 0.1.0
 

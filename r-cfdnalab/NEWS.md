@@ -6,6 +6,8 @@
 
 ## Unreleased
 
+<br />
+
 ## r-cfDNAlab 0.2.0
 
 This version cleans up the API and introduces `read_lengths` for reading the output of `cfdna lengths`.
@@ -33,6 +35,8 @@ This version cleans up the API and introduces `read_lengths` for reading the out
  - Replaces the R midpoint and end-motif data frame families with
    `midpoint_data_frame()` and `end_motif_data_frame()`, using plural selectors
    such as `groups`, `group_idxs`, `window_idxs`, `motifs`, and `motif_idxs`.
+
+<br />
 
 ## r-cfDNAlab 0.1.0
 

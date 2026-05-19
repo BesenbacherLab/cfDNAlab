@@ -6,6 +6,8 @@
 
 ## Unreleased
 
+<br />
+
 ## py-cfDNAlab 0.2.0
 
 This version cleans up the API and introduces `read_lengths` for reading the output of `cfdna lengths`.
@@ -32,6 +34,8 @@ This version cleans up the API and introduces `read_lengths` for reading the out
    `window_idxs`, `motifs`, and `motif_idxs`.
  - Replaces rank-dropping array helpers with `counts_array()`,
    `dense_counts_array()`, and `sparse_counts_matrix()`.
+
+<br />
 
 ## py-cfDNAlab 0.1.0
 
