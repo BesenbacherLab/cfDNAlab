@@ -9,6 +9,13 @@ conda create -n cfdnalab rust=1.94.0 zstandard perl fontconfig conda-forge::llvm
 conda activate cfdnalab
 ```
 
+## Latest release
+
+```bash
+cargo install cfdnalab
+cfdna --help
+```
+
 ## Build from GitHub
 
 ```bash

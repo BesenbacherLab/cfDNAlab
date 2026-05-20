@@ -110,6 +110,18 @@
   padding-right: 3.75rem;
 }
 
+.footer.footer--dark .footer__copyright a {
+  color: var(--ifm-footer-color) !important;
+  text-decoration: underline !important;
+  text-underline-offset: 0.15em;
+}
+
+.footer.footer--dark .footer__copyright a:hover {
+  color: var(--ifm-footer-color) !important;
+  text-decoration: underline !important;
+  text-decoration-thickness: 2px !important;
+}
+
 .heroSection {
   min-height: calc(100vh - 60px);
   display: grid;
