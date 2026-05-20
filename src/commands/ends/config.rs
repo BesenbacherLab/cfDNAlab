@@ -26,15 +26,15 @@ const ENDS_LONG_ABOUT: &str = concat!(
     r#"For `--k-inside 2 --k-outside 2`:
 
 ```text
-Reference 5' >>>>>>>>>>>>>>> 3'
-             ATCGTTTTTTTCATC
-Fragment     --|---------|--
+Reference 5' >>>>>>>>>>>>>>>>>>>> 3'
+             ATCGTTTTTTTTTTTTCATC
+Fragment     --|--------------|--
 Forward     5' |>>>>>>>| 3'
   Outside    AT
   Inside       CG
-Reverse      3' |<<<<<<<<| 5'
-  Inside                CA
-  Outside                 TC
+Reverse            3' |<<<<<<<| 5'
+  Inside                     CA
+  Outside                      TC
 ```
 
 Reverse (`CATC`) is reverse complemented to `GATG`
