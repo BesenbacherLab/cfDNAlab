@@ -344,27 +344,178 @@ group_idx.cfdnalab_grouped_end_motif_counts <- function(x, group_name, ...) {
 
 #' @export
 #' @rdname sparse_counts_matrix
-sparse_counts_matrix.cfdnalab_end_motif_counts <- function(x, ...) {
+#' @param motifs Optional motif label vector. Use either `motifs` or
+#'   `motif_idxs`, not both.
+#' @param motif_idxs Optional one-based motif index vector.
+sparse_counts_matrix.cfdnalab_global_end_motif_counts <- function(
+  x,
+  motifs = NULL,
+  motif_idxs = NULL,
+  ...
+) {
   cf_reject_unused_arguments(...)
+  cf_sparse_end_motif_matrix_for_indices(
+    x,
+    row_indices = seq_len(length(x$row_idx0)),
+    motif_indices = cf_resolve_end_motif_indices(x, motifs, motif_idxs)
+  )
+}
+
+#' @export
+#' @rdname sparse_counts_matrix
+#' @param window_idxs Optional one-based window index vector for windowed output.
+sparse_counts_matrix.cfdnalab_windowed_end_motif_counts <- function(
+  x,
+  window_idxs = NULL,
+  motifs = NULL,
+  motif_idxs = NULL,
+  ...
+) {
+  cf_reject_unused_arguments(...)
+  cf_sparse_end_motif_matrix_for_indices(
+    x,
+    row_indices = cf_resolve_end_motif_window_indices(x, window_idxs),
+    motif_indices = cf_resolve_end_motif_indices(x, motifs, motif_idxs)
+  )
+}
+
+#' @export
+#' @rdname sparse_counts_matrix
+#' @param groups Optional group name vector for grouped output. Use either
+#'   `groups` or `group_idxs`, not both.
+#' @param group_idxs Optional one-based group index vector for grouped output.
+sparse_counts_matrix.cfdnalab_grouped_end_motif_counts <- function(
+  x,
+  groups = NULL,
+  group_idxs = NULL,
+  motifs = NULL,
+  motif_idxs = NULL,
+  ...
+) {
+  cf_reject_unused_arguments(...)
+  cf_sparse_end_motif_matrix_for_indices(
+    x,
+    row_indices = cf_resolve_end_motif_group_indices(x, groups, group_idxs),
+    motif_indices = cf_resolve_end_motif_indices(x, motifs, motif_idxs)
+  )
+}
+
+#' Build a sparse end-motif matrix for selected rows and motifs.
+#'
+#' @param x End-motif object.
+#' @param row_indices One-based row indices.
+#' @param motif_indices One-based motif indices.
+#'
+#' @return A `Matrix` sparse matrix.
+#' @noRd
+cf_sparse_end_motif_matrix_for_indices <- function(x, row_indices, motif_indices) {
   if (identical(x$storage_mode, "dense")) {
-    return(Matrix::Matrix(x$counts$read(), sparse = TRUE))
+    return(Matrix::Matrix(
+      x$counts$read()[row_indices, motif_indices, drop = FALSE],
+      sparse = TRUE
+    ))
   }
+  selected_row_idx0 <- cf_r_index_to_index0(row_indices)
+  selected_motif_idx0 <- cf_r_index_to_index0(motif_indices)
+  sparse_row_idx0 <- as.integer(x$sparse$row_idx0)
+  sparse_motif_idx0 <- as.integer(x$sparse$motif_idx0)
+  matches <- sparse_row_idx0 %in% selected_row_idx0 &
+    sparse_motif_idx0 %in% selected_motif_idx0
   Matrix::sparseMatrix(
-    i = cf_index0_to_r_index(x$sparse$row_idx0),
-    j = cf_index0_to_r_index(x$sparse$motif_idx0),
-    x = as.numeric(x$sparse$count),
-    dims = as.integer(x$sparse$shape)
+    i = match(sparse_row_idx0[matches], selected_row_idx0),
+    j = match(sparse_motif_idx0[matches], selected_motif_idx0),
+    x = as.numeric(x$sparse$count[matches]),
+    dims = as.integer(c(length(row_indices), length(motif_indices)))
   )
 }
 
 #' @export
 #' @rdname dense_counts_matrix
+#' @param motifs Optional motif label vector. Use either `motifs` or
+#'   `motif_idxs`, not both.
+#' @param motif_idxs Optional one-based motif index vector.
 #' @param allow_densify If `TRUE`, allow sparse stores to be converted to a dense
 #'   in-memory matrix. Sparse stores error by default.
-dense_counts_matrix.cfdnalab_end_motif_counts <- function(x, allow_densify = FALSE, ...) {
+dense_counts_matrix.cfdnalab_global_end_motif_counts <- function(
+  x,
+  allow_densify = FALSE,
+  motifs = NULL,
+  motif_idxs = NULL,
+  ...
+) {
   cf_reject_unused_arguments(...)
+  cf_dense_end_motif_matrix_for_indices(
+    x,
+    row_indices = seq_len(length(x$row_idx0)),
+    motif_indices = cf_resolve_end_motif_indices(x, motifs, motif_idxs),
+    allow_densify = allow_densify
+  )
+}
+
+#' @export
+#' @rdname dense_counts_matrix
+#' @param window_idxs Optional one-based window index vector for windowed output.
+dense_counts_matrix.cfdnalab_windowed_end_motif_counts <- function(
+  x,
+  allow_densify = FALSE,
+  window_idxs = NULL,
+  motifs = NULL,
+  motif_idxs = NULL,
+  ...
+) {
+  cf_reject_unused_arguments(...)
+  cf_dense_end_motif_matrix_for_indices(
+    x,
+    row_indices = cf_resolve_end_motif_window_indices(x, window_idxs),
+    motif_indices = cf_resolve_end_motif_indices(x, motifs, motif_idxs),
+    allow_densify = allow_densify
+  )
+}
+
+#' @export
+#' @rdname dense_counts_matrix
+#' @param groups Optional group name vector for grouped output. Use either
+#'   `groups` or `group_idxs`, not both.
+#' @param group_idxs Optional one-based group index vector for grouped output.
+dense_counts_matrix.cfdnalab_grouped_end_motif_counts <- function(
+  x,
+  allow_densify = FALSE,
+  groups = NULL,
+  group_idxs = NULL,
+  motifs = NULL,
+  motif_idxs = NULL,
+  ...
+) {
+  cf_reject_unused_arguments(...)
+  cf_dense_end_motif_matrix_for_indices(
+    x,
+    row_indices = cf_resolve_end_motif_group_indices(x, groups, group_idxs),
+    motif_indices = cf_resolve_end_motif_indices(x, motifs, motif_idxs),
+    allow_densify = allow_densify
+  )
+}
+
+#' Build a dense end-motif matrix for selected rows and motifs.
+#'
+#' @param x End-motif object.
+#' @param row_indices One-based row indices.
+#' @param motif_indices One-based motif indices.
+#' @param allow_densify Whether to allow sparse-store densification.
+#'
+#' @return A dense numeric matrix.
+#' @noRd
+cf_dense_end_motif_matrix_for_indices <- function(
+  x,
+  row_indices,
+  motif_indices,
+  allow_densify
+) {
   if (identical(x$storage_mode, "dense")) {
-    return(cf_read_array(x$store, "counts", "End-motif"))
+    return(cf_read_array(x$store, "counts", "End-motif")[
+      row_indices,
+      motif_indices,
+      drop = FALSE
+    ])
   }
   if (!isTRUE(allow_densify)) {
     stop(
@@ -372,7 +523,7 @@ dense_counts_matrix.cfdnalab_end_motif_counts <- function(x, allow_densify = FAL
       call. = FALSE
     )
   }
-  as.matrix(sparse_counts_matrix(x))
+  as.matrix(cf_sparse_end_motif_matrix_for_indices(x, row_indices, motif_indices))
 }
 
 #' @export
@@ -429,20 +580,9 @@ end_motif_data_frame.cfdnalab_windowed_end_motif_counts <- function(
   ...
 ) {
   cf_reject_unused_arguments(...)
-  row_indices <- if (is.null(window_idxs)) {
-    seq_len(length(x$row_idx0))
-  } else {
-    window_indices <- cf_validate_r_indices(
-      window_idxs,
-      length(x$row_idx0),
-      "window_idxs"
-    )
-    cf_validate_unique_values(window_indices, "window_idxs")
-    window_indices
-  }
   cf_end_motif_data_frame(
     x,
-    row_indices = row_indices,
+    row_indices = cf_resolve_end_motif_window_indices(x, window_idxs),
     motif_indices = cf_resolve_end_motif_indices(x, motifs, motif_idxs),
     densify = densify,
     max_blacklisted_fraction = max_blacklisted_fraction
@@ -551,6 +691,26 @@ cf_resolve_end_motif_group_indices <- function(x, groups, group_idxs) {
     return(group_indices)
   }
   seq_len(length(x$row_idx0))
+}
+
+#' Resolve windowed end-motif selectors to one-based row indices.
+#'
+#' @param x Windowed end-motif object.
+#' @param window_idxs Optional one-based window indices.
+#'
+#' @return One-based row indices.
+#' @noRd
+cf_resolve_end_motif_window_indices <- function(x, window_idxs) {
+  if (is.null(window_idxs)) {
+    return(seq_len(length(x$row_idx0)))
+  }
+  window_indices <- cf_validate_r_indices(
+    window_idxs,
+    length(x$row_idx0),
+    "window_idxs"
+  )
+  cf_validate_unique_values(window_indices, "window_idxs")
+  window_indices
 }
 
 #' Resolve end-motif selectors to one-based motif indices.

@@ -179,9 +179,9 @@ motif_counts <- end_motif_data_frame(ends, motifs = motif)
 # Extract the counts in a sparse/dense matrix 
 # depending on how the data was stored
 if (storage_mode(ends) == "sparse_coo") {
-  counts <- sparse_counts_matrix(ends)
+  counts <- sparse_counts_matrix(ends, motifs=motif)
 } else {
-  counts <- dense_counts_matrix(ends)
+  counts <- dense_counts_matrix(ends, motifs=motif)
 }
 ```
 
