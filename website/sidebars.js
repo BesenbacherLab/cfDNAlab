@@ -19,7 +19,8 @@ const sidebars = {
         'guides/fragment_coverage_guide',
         'guides/fragment_ends_guide',
         'guides/fragment_lengths_guide',
-        'guides/fragment_midpoints_guide'
+        'guides/fragment_midpoints_guide',
+        'guides/short_long_ratios'
       ]
     },
     {

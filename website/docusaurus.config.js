@@ -54,6 +54,9 @@ const config = {
   themeConfig:
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
     ({
+      prism: {
+        additionalLanguages: ['r', 'bash']
+      },
       navbar: {
         title: 'cfDNAlab',
         logo: {
@@ -91,7 +94,7 @@ const config = {
             ]
           }
         ],
-        copyright: `Copyright © ${new Date().getFullYear()} cfDNAlab`
+        copyright: `Copyright © ${new Date().getFullYear()}<br /><a href="https://ludvigolsen.dk" target="_blank" rel="noopener">Ludvig Renbo Olsen</a>, <a href="https://pure.au.dk/portal/da/persons/besenbacher@clin.au.dk/" target="_blank" rel="noopener">Søren Besenbacher</a>, <a href="https://www.moma.dk/bioinformatics/computational-genomics" target="_blank" rel="noopener">BesenbacherLab</a>`
       }
     }),
 

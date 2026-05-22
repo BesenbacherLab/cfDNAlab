@@ -6,6 +6,8 @@
 
 ## Unreleased
 
+ - Adds the common `motifs`/`motif_idxs`, `groups`/`group_idxs`, and `window_idxs` selectors to the `sparse_counts_matrix()` and `dense_counts_matrix` functions.
+
 <br />
 
 ## r-cfDNAlab 0.2.0

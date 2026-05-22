@@ -22,8 +22,23 @@ test_that("dense global end motifs read from locally generated schema fixture", 
     tolerance = 1e-8
   )
   expect_equal(
+    dense_counts_matrix(ends, motifs = "_G"),
+    matrix(2.5, nrow = 1L),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    dense_counts_matrix(ends, motif_idxs = c(3L, 1L)),
+    matrix(c(2.5, 1), nrow = 1L),
+    tolerance = 1e-8
+  )
+  expect_equal(
     as.matrix(sparse_counts_matrix(ends)),
     matrix(c(1, 0, 2.5, 0), nrow = 1L),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    as.matrix(sparse_counts_matrix(ends, motifs = "_G")),
+    matrix(2.5, nrow = 1L),
     tolerance = 1e-8
   )
   expect_equal(end_motif_data_frame(ends)$count, c(1, 0, 2.5, 0), tolerance = 1e-8)
@@ -46,10 +61,20 @@ test_that("sparse global end motifs can be densified explicitly", {
     matrix(c(1.25, 0, 3.5, 0), nrow = 1L),
     tolerance = 1e-8
   )
+  expect_equal(
+    as.matrix(sparse_counts_matrix(ends, motifs = "_G")),
+    matrix(3.5, nrow = 1L),
+    tolerance = 1e-8
+  )
   expect_error(dense_counts_vector(ends), "Use sparse_counts_matrix")
   expect_equal(
     dense_counts_vector(ends, allow_densify = TRUE),
     c("_A" = 1.25, "_C" = 0, "_G" = 3.5, "_T" = 0),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    dense_counts_matrix(ends, motifs = c("_C", "_G"), allow_densify = TRUE),
+    matrix(c(0, 3.5), nrow = 1L),
     tolerance = 1e-8
   )
   expect_equal(
@@ -88,8 +113,18 @@ test_that("dense windowed end motifs expose dense and sparse views", {
     tolerance = 1e-8
   )
   expect_equal(
+    dense_counts_matrix(ends, window_idxs = 2L, motifs = c("_T", "_A")),
+    matrix(c(4, 1.5), nrow = 1L),
+    tolerance = 1e-8
+  )
+  expect_equal(
     as.matrix(sparse_counts_matrix(ends)),
     matrix(c(0, 2, 0, 1.5, 0, 4), nrow = 2L, byrow = TRUE),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    as.matrix(sparse_counts_matrix(ends, window_idxs = 2L, motifs = c("_T", "_A"))),
+    matrix(c(4, 1.5), nrow = 1L),
     tolerance = 1e-8
   )
   expect_equal(
@@ -154,10 +189,25 @@ test_that("sparse windowed end motifs read from locally generated schema fixture
     matrix(c(0, 2, 0, 1.5, 0, 4, 0, 0, 3), nrow = 3L, byrow = TRUE),
     tolerance = 1e-8
   )
+  expect_equal(
+    as.matrix(sparse_counts_matrix(ends, window_idxs = c(3L, 1L), motifs = c("_T", "_G"))),
+    matrix(c(3, 0, 0, 2), nrow = 2L, byrow = TRUE),
+    tolerance = 1e-8
+  )
   expect_error(dense_counts_matrix(ends), "Use sparse_counts_matrix")
   expect_equal(
     dense_counts_matrix(ends, allow_densify = TRUE),
     matrix(c(0, 2, 0, 1.5, 0, 4, 0, 0, 3), nrow = 3L, byrow = TRUE),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    dense_counts_matrix(
+      ends,
+      window_idxs = c(3L, 1L),
+      motifs = c("_T", "_G"),
+      allow_densify = TRUE
+    ),
+    matrix(c(3, 0, 0, 2), nrow = 2L, byrow = TRUE),
     tolerance = 1e-8
   )
 
@@ -216,6 +266,16 @@ test_that("dense grouped end motifs expose group helpers without densification f
   expect_equal(row_mode(ends), "grouped_bed")
   expect_equal(group_idx(ends, "alpha"), 1L)
   expect_equal(
+    dense_counts_matrix(ends, groups = "alpha", motifs = c("_G", "_A")),
+    matrix(c(5, 1), nrow = 1L),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    as.matrix(sparse_counts_matrix(ends, groups = "alpha", motifs = c("_G", "_A"))),
+    matrix(c(5, 1), nrow = 1L),
+    tolerance = 1e-8
+  )
+  expect_equal(
     end_motif_data_frame(ends, group_idxs = 1L)$count,
     c(1, 0, 5),
     tolerance = 1e-8
@@ -264,6 +324,21 @@ test_that("sparse grouped end motifs read from locally generated schema fixture"
   expect_equal(
     as.matrix(sparse_counts_matrix(ends)),
     matrix(c(1, 0, 5, 0, 0, 0), nrow = 2L, byrow = TRUE),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    as.matrix(sparse_counts_matrix(ends, groups = c("beta", "alpha"), motifs = c("_G", "_A"))),
+    matrix(c(0, 0, 5, 1), nrow = 2L, byrow = TRUE),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    dense_counts_matrix(
+      ends,
+      groups = c("beta", "alpha"),
+      motifs = c("_G", "_A"),
+      allow_densify = TRUE
+    ),
+    matrix(c(0, 0, 5, 1), nrow = 2L, byrow = TRUE),
     tolerance = 1e-8
   )
 
