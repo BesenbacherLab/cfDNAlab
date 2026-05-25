@@ -26,31 +26,31 @@ impl Style {
 
 /// Per-fragment visualization data.
 #[derive(Debug, Clone)]
-pub struct LengthVisualization {
-    pub fragment_length: u32,
-    pub tracks: Vec<Track>,
+pub(crate) struct LengthVisualization {
+    pub(crate) fragment_length: u32,
+    pub(crate) tracks: Vec<Track>,
 }
 
 impl LengthVisualization {
-    pub fn all_tracks_empty(&self) -> bool {
+    pub(crate) fn all_tracks_empty(&self) -> bool {
         self.tracks.iter().all(Track::is_empty)
     }
 }
 
 /// Parsed representation of the CLI configuration.
 #[derive(Debug, Clone)]
-pub struct VizConfig {
-    pub position_specs: Vec<PositionalSelectionSpec>,
-    pub bases: BasesFrom,
-    pub mismatch_bases_from: MismatchBasesFrom,
-    pub kmer_sizes: Option<Vec<u8>>,
-    pub fragment_lengths: Vec<u32>,
-    pub style: Style,
-    pub width: usize,
-    pub height: u32,
-    pub output: Option<PathBuf>,
-    pub label: Option<String>,
-    pub show_index: bool,
-    pub show_half: bool,
-    pub show_mid: bool,
+pub(crate) struct VizConfig {
+    pub(crate) position_specs: Vec<PositionalSelectionSpec>,
+    pub(crate) bases: BasesFrom,
+    pub(crate) mismatch_bases_from: MismatchBasesFrom,
+    pub(crate) kmer_sizes: Option<Vec<u8>>,
+    pub(crate) fragment_lengths: Vec<u32>,
+    pub(crate) style: Style,
+    pub(crate) width: usize,
+    pub(crate) height: u32,
+    pub(crate) output: Option<PathBuf>,
+    pub(crate) label: Option<String>,
+    pub(crate) show_index: bool,
+    pub(crate) show_half: bool,
+    pub(crate) show_mid: bool,
 }

@@ -61,7 +61,7 @@ const COMMAND_TARGET: &str = "wps-peaks";
 /// -------
 /// - `Result<()>`:
 ///     Indicates whether peak calling finished and all outputs were written successfully.
-pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
+pub(crate) fn run(opt: &WPSPeaksConfig) -> Result<()> {
     let start_time = Instant::now();
     if opt.shared_args.unpaired.reads_are_fragments && opt.shared_args.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
@@ -462,7 +462,7 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
     Ok(())
 }
 
-pub struct GlobalWriter {
+pub(crate) struct GlobalWriter {
     writer: BufWriter<Box<dyn Write>>,
 }
 
@@ -485,25 +485,25 @@ impl GlobalWriter {
     }
 }
 
-pub struct TileResult {
-    pub counter: WPSPeaksCounters,
-    pub peak_file_path: PathBuf,
-    pub stats: Option<Vec<WindowStatsContribution>>,
+pub(crate) struct TileResult {
+    pub(crate) counter: WPSPeaksCounters,
+    pub(crate) peak_file_path: PathBuf,
+    pub(crate) stats: Option<Vec<WindowStatsContribution>>,
 }
 
 // TODO: Document all arguments
-pub struct WindowStatsContribution {
-    pub window_idx: u64,
-    pub count: u32,
-    pub first_peak: Option<u64>,
-    pub last_peak: Option<u64>,
-    pub first_segment: Option<u64>,
-    pub last_segment: Option<u64>,
-    pub distance_sum: f64,
-    pub distance_histogram: BTreeMap<u32, u32>,
+pub(crate) struct WindowStatsContribution {
+    pub(crate) window_idx: u64,
+    pub(crate) count: u32,
+    pub(crate) first_peak: Option<u64>,
+    pub(crate) last_peak: Option<u64>,
+    pub(crate) first_segment: Option<u64>,
+    pub(crate) last_segment: Option<u64>,
+    pub(crate) distance_sum: f64,
+    pub(crate) distance_histogram: BTreeMap<u32, u32>,
 }
 
-pub fn tile_peaks_path(
+pub(crate) fn tile_peaks_path(
     root: &Path,
     prefix: &str,
     tile: &Tile,
@@ -519,7 +519,7 @@ pub fn tile_peaks_path(
     )))
 }
 
-pub fn stream_tile_peaks<F>(path: &Path, mut handler: F) -> Result<()>
+pub(crate) fn stream_tile_peaks<F>(path: &Path, mut handler: F) -> Result<()>
 where
     F: FnMut(PeakCall) -> Result<()>,
 {
@@ -717,7 +717,7 @@ impl WindowOutputMode {
 }
 
 // TODO: document this with pedagogical explanations
-pub struct WindowOutputWriter {
+pub(crate) struct WindowOutputWriter {
     writer: BufWriter<Box<dyn Write>>,
     accumulator: WindowAccumulator,
     window_source: WindowSource,
@@ -954,7 +954,7 @@ impl WindowOutputWriter {
         Ok(())
     }
 
-    pub fn collect_aligned_unique_peaks(path: &Path) -> Result<BTreeMap<u64, f32>> {
+    pub(crate) fn collect_aligned_unique_peaks(path: &Path) -> Result<BTreeMap<u64, f32>> {
         let mut best_by_position = BTreeMap::<u64, f32>::new();
         stream_tile_peaks(path, |peak| {
             let entry = best_by_position
@@ -993,7 +993,7 @@ impl WindowOutputWriter {
     }
 }
 
-pub fn peaks_for_tile(
+pub(crate) fn peaks_for_tile(
     opt: &WPSPeaksConfig,
     tile: &Tile,
     tile_span: Option<&TileWindowSpan>,
@@ -1073,7 +1073,7 @@ pub fn peaks_for_tile(
     Ok((counter, peaks))
 }
 
-pub fn compute_window_stats_contributions(
+pub(crate) fn compute_window_stats_contributions(
     windows: &[IndexedInterval<u64>],
     peaks: &[PeakCall],
 ) -> Vec<WindowStatsContribution> {
@@ -1173,7 +1173,7 @@ fn last_mask_end_before(intervals: &[Interval<u64>], position: u64) -> u64 {
 }
 
 /// Tracks windows currently spanned by the active tile and accumulates per-window outputs.
-pub struct WindowAccumulator {
+pub(crate) struct WindowAccumulator {
     kind: WindowAccumulatorKind,
     decimals: usize,
     current_chr: String,
@@ -1188,7 +1188,7 @@ enum WindowAccumulatorKind {
     Stats,
 }
 
-pub struct WindowState {
+pub(crate) struct WindowState {
     entry: IndexedInterval<u64>,
     data: WindowStateData,
 }
@@ -1196,18 +1196,18 @@ pub struct WindowState {
 /// Configuration for running the smoothing/normalization + peak calling pipeline on an
 /// in-memory WPS signal.
 #[derive(Debug, Clone)]
-pub struct PeakSignalProcessingOptions {
+pub(crate) struct PeakSignalProcessingOptions {
     /// Whether Savitzky-Golay smoothing should be applied before normalization.
-    pub smoothing: bool,
+    pub(crate) smoothing: bool,
     /// Size of the rolling-median window used for baseline subtraction. When `None`, the
     /// incoming values are treated as residuals.
-    pub normalization_bp: Option<usize>,
+    pub(crate) normalization_bp: Option<usize>,
     /// Minimum usable bases required inside the normalization window.
-    pub min_unmasked: usize,
+    pub(crate) min_unmasked: usize,
     /// Minimum residual height required to keep a peak.
-    pub min_peak_height: f32,
+    pub(crate) min_peak_height: f32,
     /// Segment marker inherited from upstream tiles (usually the end of the last masked region).
-    pub initial_segment_marker: u64,
+    pub(crate) initial_segment_marker: u64,
 }
 
 /// Process an in-memory WPS signal (with optional mask) and return Snyder-style peaks.
@@ -1215,7 +1215,7 @@ pub struct PeakSignalProcessingOptions {
 /// This helper mirrors the per-tile pipeline executed by `peaks_for_tile`, but skips all BAM IO.
 /// It enables unit tests to exercise the smoothing + normalization + peak-calling logic using
 /// synthetic fixtures.
-pub fn peaks_from_wps_values(
+pub(crate) fn peaks_from_wps_values(
     chromosome: &str,
     start_offset: u64,
     wps_values: &[f32],
@@ -1276,7 +1276,7 @@ enum WindowStateData {
 }
 
 impl WindowAccumulator {
-    pub fn new(action: PeaksWindowAction, decimals: usize) -> Self {
+    pub(crate) fn new(action: PeaksWindowAction, decimals: usize) -> Self {
         let kind = match action {
             PeaksWindowAction::OnlyIncludeThesePositionsUnique => WindowAccumulatorKind::Unique,
             PeaksWindowAction::OnlyIncludeThesePositionsIndexed => WindowAccumulatorKind::Indexed,
@@ -1291,7 +1291,7 @@ impl WindowAccumulator {
         }
     }
 
-    pub fn reset_for_chromosome(&mut self, chr: String) {
+    pub(crate) fn reset_for_chromosome(&mut self, chr: String) {
         self.current_chr = chr;
         self.active.clear();
         self.scan_start = 0;
@@ -1320,7 +1320,7 @@ impl WindowAccumulator {
         });
     }
 
-    pub fn add_windows_for_tile(
+    pub(crate) fn add_windows_for_tile(
         &mut self,
         windows: &[IndexedInterval<u64>],
         next_idx: &mut usize,
@@ -1344,7 +1344,7 @@ impl WindowAccumulator {
     /// This is used whenever we do not have a pre-computed contribution (e.g., unique/indexed
     /// outputs or stats for the final partial window). For stats we store the first peak seen so
     /// that subsequent tiles can add one cross-tile distance when merging contributions.
-    pub fn push_peak(&mut self, peak: &PeakCall) {
+    pub(crate) fn push_peak(&mut self, peak: &PeakCall) {
         while self.scan_start < self.active.len()
             && self.active[self.scan_start].entry.end() <= peak.peak_position
         {
@@ -1405,7 +1405,7 @@ impl WindowAccumulator {
         }
     }
 
-    pub fn flush_completed_windows<W: Write>(
+    pub(crate) fn flush_completed_windows<W: Write>(
         &mut self,
         tile_end: u64,
         writer: &mut W,
@@ -1430,7 +1430,7 @@ impl WindowAccumulator {
         Ok(())
     }
 
-    pub fn flush_all<W: Write>(&mut self, writer: &mut W) -> Result<()> {
+    pub(crate) fn flush_all<W: Write>(&mut self, writer: &mut W) -> Result<()> {
         let drained: Vec<WindowState> = self.active.drain(..).collect();
         for state in drained {
             self.write_window(writer, state)?;
@@ -1445,7 +1445,7 @@ impl WindowAccumulator {
     /// between the previous tile's last peak and this contribution's first peak (if both exist),
     /// then accumulate the histograms. This produces the same result as streaming every peak in
     /// order but avoids replaying them when the per-tile contribution is available.
-    pub fn apply_stats_contribution(
+    pub(crate) fn apply_stats_contribution(
         &mut self,
         contribution: &WindowStatsContribution,
     ) -> Result<()> {
@@ -1514,7 +1514,7 @@ impl WindowAccumulator {
         }
     }
 
-    pub fn write_window<W: Write>(&self, writer: &mut W, state: WindowState) -> Result<()> {
+    pub(crate) fn write_window<W: Write>(&self, writer: &mut W, state: WindowState) -> Result<()> {
         let (start, end, idx) = state.entry.as_tuple();
         match state.data {
             WindowStateData::Unique(map) => {
@@ -1591,7 +1591,7 @@ fn format_float(value: f32, decimals: usize) -> String {
 /// -------
 /// - `f32`:
 ///     Median distance in base pairs, or `NaN` if the histogram has no entries.
-pub fn histogram_median(hist: &BTreeMap<u32, u32>) -> f32 {
+pub(crate) fn histogram_median(hist: &BTreeMap<u32, u32>) -> f32 {
     let total_count: u32 = hist.values().copied().sum();
     if total_count == 0 {
         return f32::NAN;
@@ -1623,7 +1623,10 @@ pub fn histogram_median(hist: &BTreeMap<u32, u32>) -> f32 {
     }
 }
 
-pub fn stats_distance_summary(distance_sum: f64, histogram: &BTreeMap<u32, u32>) -> (f32, f32) {
+pub(crate) fn stats_distance_summary(
+    distance_sum: f64,
+    histogram: &BTreeMap<u32, u32>,
+) -> (f32, f32) {
     let total_distances: u32 = histogram.values().copied().sum();
     if total_distances == 0 {
         (f32::NAN, f32::NAN)

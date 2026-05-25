@@ -15,16 +15,17 @@ use std::{io::Write, path::Path};
 /// Lightweight view into the window configuration for a given tile.
 ///
 /// Stores the context needed to convert chromosome-local indices into global window ids for a tile.
-pub struct WindowContext<'a> {
-    pub spec: &'a WindowSpec,
-    pub windows: Option<&'a [IndexedInterval<u64>]>,
-    pub chr_idx_offset: u64,
+pub(crate) struct WindowContext<'a> {
+    pub(crate) spec: &'a WindowSpec,
+    pub(crate) windows: Option<&'a [IndexedInterval<u64>]>,
+    pub(crate) chr_idx_offset: u64,
 }
 
 impl<'a> WindowContext<'a> {
     #[inline]
     /// Return the per-chromosome windows slice when operating in BED mode.
-    pub fn windows_slice(&self) -> Option<&'a [IndexedInterval<u64>]> {
+    #[cfg(feature = "cmd_fragment_kmers")]
+    pub(crate) fn windows_slice(&self) -> Option<&'a [IndexedInterval<u64>]> {
         self.windows
     }
 
@@ -36,7 +37,7 @@ impl<'a> WindowContext<'a> {
     /// -----------
     /// `chrom_window_idx`: Index of the window relative to the *chromosome*, as supplied by
     /// [`find_overlapping_windows`] (it counts from the start of the chromosome, not the tile).
-    pub fn original_idx(&self, chrom_window_idx: usize) -> u64 {
+    pub(crate) fn original_idx(&self, chrom_window_idx: usize) -> u64 {
         match self.spec {
             WindowSpec::Global => 0,
             WindowSpec::Size(window_bp) => {
@@ -67,7 +68,7 @@ impl<'a> WindowContext<'a> {
 ///   offset for chromosome *k* is the cumulative number of bins emitted for chromosomes `< k`.
 /// - `Bed`: offsets remain `0` because each BED entry already carries its own globally unique
 ///   `original_idx`; consumers must use that `original_idx` when addressing global arrays.
-pub fn compute_window_offsets(
+pub(crate) fn compute_window_offsets(
     window_opt: &WindowSpec,
     chromosomes: &[String],
     contigs: &Contigs,
@@ -118,7 +119,9 @@ pub fn compute_window_offsets(
 /// BED loaders keep empty chromosome entries when a chromosome whitelist is supplied. This helper
 /// checks the actual surviving windows so commands can fail early when a BED file is empty after
 /// chromosome filtering.
-pub fn ensure_plain_bed_windows_not_empty(windows_map: &FxHashMap<String, Windows>) -> Result<()> {
+pub(crate) fn ensure_plain_bed_windows_not_empty(
+    windows_map: &FxHashMap<String, Windows>,
+) -> Result<()> {
     ensure!(
         windows_map.values().any(|windows| !windows.is_empty()),
         "BED file did not contain any valid windows on the selected chromosomes"
@@ -131,7 +134,7 @@ pub fn ensure_plain_bed_windows_not_empty(windows_map: &FxHashMap<String, Window
 /// Grouped BED loaders keep empty chromosome entries when a chromosome whitelist is supplied. This
 /// checks the actual surviving grouped windows so commands fail early when every grouped BED row is
 /// removed by chromosome filtering.
-pub fn ensure_grouped_bed_windows_not_empty(
+pub(crate) fn ensure_grouped_bed_windows_not_empty(
     windows_map: &FxHashMap<String, GroupedWindows>,
 ) -> Result<()> {
     ensure!(
@@ -146,19 +149,19 @@ pub fn ensure_grouped_bed_windows_not_empty(
 /// `output_index` is the global output row index for fixed-size windows. In BED mode, it is the
 /// original BED window index preserved by the loader.
 #[derive(Clone, Debug, PartialEq)]
-pub struct WindowBinInfo {
-    pub chromosome: String,
-    pub start: u64,
-    pub end: u64,
-    pub output_index: u64,
-    pub blacklisted_fraction: f64,
+pub(crate) struct WindowBinInfo {
+    pub(crate) chromosome: String,
+    pub(crate) start: u64,
+    pub(crate) end: u64,
+    pub(crate) output_index: u64,
+    pub(crate) blacklisted_fraction: f64,
 }
 
 /// Build per-window metadata (coordinates, blacklist overlap, etc.) for downstream consumers.
 ///
 /// When running in BED mode the `original_idx` embedded in the loaded windows is preserved so the
 /// caller must continue using that identifier when addressing global vectors.
-pub fn build_bin_info(
+pub(crate) fn build_bin_info(
     window_opt: &WindowSpec,
     chromosomes: &[String],
     contigs: &Contigs,
@@ -241,7 +244,10 @@ pub fn build_bin_info(
 /// Write ordinary window metadata to a TSV next to matrix outputs.
 ///
 /// Output has header `chrom\tstart\tend\tblacklisted_fraction`.
-pub fn write_bin_info_tsv(output_path: impl AsRef<Path>, bin_info: &[WindowBinInfo]) -> Result<()> {
+pub(crate) fn write_bin_info_tsv(
+    output_path: impl AsRef<Path>,
+    bin_info: &[WindowBinInfo],
+) -> Result<()> {
     let mut writer = create_text_writer(output_path.as_ref()).context("creating bins TSV")?;
     writeln!(writer, "chrom\tstart\tend\tblacklisted_fraction")
         .context("writing bins TSV header")?;
@@ -269,7 +275,7 @@ pub fn write_bin_info_tsv(output_path: impl AsRef<Path>, bin_info: &[WindowBinIn
 ///
 /// Intervals are counted exactly as loaded, so overlapping intervals in the same group contribute
 /// separately to both the numerator and denominator.
-pub fn write_group_index_with_blacklist_tsv(
+pub(crate) fn write_group_index_with_blacklist_tsv(
     output_path: impl AsRef<Path>,
     group_idx_to_name: &FxHashMap<u64, String>,
     chromosomes: &[String],

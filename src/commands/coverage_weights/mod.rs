@@ -1,4 +1,4 @@
-pub mod config;
-pub mod coverage_weights;
-pub mod scaling_weights_config;
-pub mod striding;
+pub(crate) mod config;
+pub(crate) mod coverage_weights;
+pub(crate) mod scaling_weights_config;
+pub(crate) mod striding;

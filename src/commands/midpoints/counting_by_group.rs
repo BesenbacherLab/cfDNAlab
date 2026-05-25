@@ -199,13 +199,13 @@ fn write_sparse_profile_partial_file_npz(
 /// create bins `[20, 50)` and `[50, 100)`. A raw fragment length is accepted when it falls inside
 /// the half-open range covered by the axis.
 #[derive(Debug, Clone)]
-pub struct ProfileGroupsCounts {
+pub(crate) struct ProfileGroupsCounts {
     /// Flattened dense counts in `(group, length_bin, position)` order.
-    pub counts: Vec<f32>,
+    pub(crate) counts: Vec<f32>,
     /// Number of positions per group profile.
-    pub window_size: usize,
+    pub(crate) window_size: usize,
     /// Number of grouped BED labels represented in the profile.
-    pub num_groups: usize,
+    pub(crate) num_groups: usize,
     /// Shared fragment length axis used to map raw lengths to output bins.
     length_axis: Arc<LengthAxis>,
 }
@@ -225,7 +225,7 @@ impl ProfileGroupsCounts {
     ///     Number of groups from the grouped BED input.
     /// - `length_axis`:
     ///     Shared length-bin lookup used to map raw fragment lengths to bins.
-    pub fn new(window_size: usize, num_groups: usize, length_axis: Arc<LengthAxis>) -> Self {
+    pub(crate) fn new(window_size: usize, num_groups: usize, length_axis: Arc<LengthAxis>) -> Self {
         let flattened_size = flattened_profile_size(window_size, num_groups, &length_axis);
 
         let counts = vec![0f32; flattened_size];
@@ -241,7 +241,7 @@ impl ProfileGroupsCounts {
     ///
     /// This is the first configured length-bin edge and is inclusive.
     #[inline]
-    pub fn min_fragment_length(&self) -> u32 {
+    pub(crate) fn min_fragment_length(&self) -> u32 {
         self.length_axis.min_fragment_length()
     }
 
@@ -249,13 +249,13 @@ impl ProfileGroupsCounts {
     ///
     /// Length bins are half-open internally, so this is one less than the final configured edge.
     #[inline]
-    pub fn max_fragment_length(&self) -> u32 {
+    pub(crate) fn max_fragment_length(&self) -> u32 {
         self.length_axis.max_fragment_length()
     }
 
     /// Return the half-open length-bin edges used by this profile.
     #[inline]
-    pub fn length_bins(&self) -> &[u32] {
+    pub(crate) fn length_bins(&self) -> &[u32] {
         self.length_axis.edges()
     }
 
@@ -266,7 +266,13 @@ impl ProfileGroupsCounts {
     ///
     /// Returns an error if `position`, `group_idx`, or `length` is outside the profile shape.
     #[inline]
-    pub fn index_of(&self, position: usize, group_idx: usize, length: usize) -> Result<usize> {
+    #[allow(dead_code)]
+    pub(crate) fn index_of(
+        &self,
+        position: usize,
+        group_idx: usize,
+        length: usize,
+    ) -> Result<usize> {
         checked_profile_flat_index(
             position,
             group_idx,
@@ -281,6 +287,7 @@ impl ProfileGroupsCounts {
     ///
     /// `length` is a raw fragment length in base pairs.
     #[inline]
+    #[allow(dead_code)]
     pub fn get(&self, position: usize, group_idx: usize, length: usize) -> Result<f32> {
         let flat_idx = self.index_of(position, group_idx, length)?;
         Ok(self.counts[flat_idx])
@@ -290,29 +297,8 @@ impl ProfileGroupsCounts {
     ///
     /// This is one less than the number of length-bin edges.
     #[inline]
-    pub fn n_lengths(&self) -> usize {
+    pub(crate) fn n_lengths(&self) -> usize {
         self.length_axis.num_bins()
-    }
-
-    /// Return the number of positions per group profile.
-    #[inline]
-    pub fn n_positions(&self) -> usize {
-        self.window_size
-    }
-
-    /// Return the number of grouped BED labels represented.
-    #[inline]
-    pub fn n_groups(&self) -> usize {
-        self.num_groups
-    }
-
-    /// View the dense count vector as a one-dimensional ndarray.
-    ///
-    /// This preserves the `(group, length_bin, position)` flattening. It is useful for low-level
-    /// validation and inspection code that needs the raw vector shape.
-    #[inline]
-    pub fn as_ndarray1(&self) -> ArrayView1<'_, f32> {
-        ArrayView1::from(&self.counts)
     }
 
     /// View the dense profile as `(group, length_bin, position)` without copying.
@@ -320,7 +306,7 @@ impl ProfileGroupsCounts {
     /// The returned ndarray view is contiguous and has the same axis order as the final `.npy`
     /// output.
     #[inline]
-    pub fn view_ndarray3_group_len_pos(&self) -> ArrayView3<'_, f32> {
+    pub(crate) fn view_ndarray3_group_len_pos(&self) -> ArrayView3<'_, f32> {
         let num_groups = self.num_groups;
         let num_length_bins = self.n_lengths();
         let num_positions = self.window_size;
@@ -336,7 +322,7 @@ impl ProfileGroupsCounts {
     ///
     /// The public output remains dense. Sparsity is only an internal optimization for temporary
     /// files and merge memory.
-    pub fn add_from_sparse_npz_files_parallel<P>(&mut self, paths: Vec<P>) -> Result<()>
+    pub(crate) fn add_from_sparse_npz_files_parallel<P>(&mut self, paths: Vec<P>) -> Result<()>
     where
         P: AsRef<Path> + Send + Sync,
     {

@@ -5,7 +5,7 @@ use anyhow::{Context, Result, bail};
 
 /// A single distance bin rule.
 #[derive(Debug, Clone, Copy)]
-pub enum DistanceExpr {
+pub(crate) enum DistanceExpr {
     Lt(i32),
     Le(i32),
     Gt(i32),
@@ -14,20 +14,20 @@ pub enum DistanceExpr {
 }
 
 #[derive(Debug, Clone)]
-pub struct DistanceBin {
+pub(crate) struct DistanceBin {
     label: String,
     expr: DistanceExpr,
 }
 
 /// Parsed distance-binning rules, checked in order; first match wins.
 #[derive(Debug, Default)]
-pub struct DistanceBins {
+pub(crate) struct DistanceBins {
     rules: Vec<DistanceBin>,
 }
 
 impl DistanceBins {
     #[inline]
-    pub fn match_label(&self, distance: i32) -> Option<&str> {
+    pub(crate) fn match_label(&self, distance: i32) -> Option<&str> {
         for rule in &self.rules {
             let m = match rule.expr {
                 DistanceExpr::Lt(x) => distance < x,
@@ -55,7 +55,7 @@ impl DistanceBins {
 /// -------
 /// - bins:
 ///     Parsed rules preserving input order.
-pub fn parse_distance_bins(specs: &[String]) -> Result<DistanceBins> {
+pub(crate) fn parse_distance_bins(specs: &[String]) -> Result<DistanceBins> {
     let mut rules = Vec::with_capacity(specs.len());
     for spec in specs {
         let (label, expr) = spec
@@ -145,7 +145,7 @@ fn parse_distance_range_bounds(expr: &str) -> Result<Option<(i32, i32)>> {
 
 /// Comparator used for score filter.
 #[derive(Debug, Clone, Copy)]
-pub enum CmpOp {
+pub(crate) enum CmpOp {
     Gt,
     Ge,
     Lt,
@@ -155,14 +155,14 @@ pub enum CmpOp {
 }
 
 #[derive(Debug, Clone)]
-pub struct ScoreFilter {
+pub(crate) struct ScoreFilter {
     op: CmpOp,
     value: f32,
 }
 
 impl ScoreFilter {
     #[inline]
-    pub fn eval(&self, score: f32) -> bool {
+    pub(crate) fn eval(&self, score: f32) -> bool {
         match self.op {
             CmpOp::Gt => score > self.value,
             CmpOp::Ge => score >= self.value,
@@ -185,7 +185,7 @@ impl ScoreFilter {
 /// -------
 /// - filter:
 ///     Parsed filter ready to evaluate scores.
-pub fn parse_score_filter(s: &str) -> Result<ScoreFilter> {
+pub(crate) fn parse_score_filter(s: &str) -> Result<ScoreFilter> {
     let s = s.trim();
     let (op, rest) = if let Some(x) = s.strip_prefix(">=") {
         (CmpOp::Ge, x)
@@ -237,7 +237,7 @@ pub fn parse_score_filter(s: &str) -> Result<ScoreFilter> {
 ///     Group string (empty if none).
 /// - score:
 ///     Optional score.
-pub struct ColumnIndices {
+pub(crate) struct ColumnIndices {
     chrom: usize,
     start: usize,
     end: usize,
@@ -245,7 +245,7 @@ pub struct ColumnIndices {
     score: Option<usize>,
 }
 
-pub fn resolve_column_indices(
+pub(crate) fn resolve_column_indices(
     cols_spec: &str,
     group_cols: &[String],
     score_col: Option<&str>,
@@ -269,7 +269,7 @@ pub fn resolve_column_indices(
     })
 }
 
-pub fn parse_record_line(
+pub(crate) fn parse_record_line(
     line: &str,
     separator: char,
     cols: &ColumnIndices,
@@ -333,7 +333,7 @@ pub fn parse_record_line(
     Ok((chrom, start, end, group, score))
 }
 
-pub fn parse_cols_indices(cols_spec: &str) -> Result<(usize, usize, usize)> {
+pub(crate) fn parse_cols_indices(cols_spec: &str) -> Result<(usize, usize, usize)> {
     let mut chrom_idx = None;
     let mut start_idx = None;
     let mut end_idx = None;

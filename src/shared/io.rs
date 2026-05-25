@@ -19,7 +19,7 @@ const REPLACEABLE_DIRECTORY_EXTENSIONS: &[&str] = &["zarr"];
 /// prefix is omitted. For example, `["sample", "length_counts.npy"]` becomes
 /// `sample.length_counts.npy`, while `["", "length_counts.npy"]` becomes
 /// `length_counts.npy`.
-pub fn dot_join(parts: &[&str]) -> String {
+pub(crate) fn dot_join(parts: &[&str]) -> String {
     parts
         .iter()
         .map(|part| part.trim())
@@ -31,7 +31,7 @@ pub fn dot_join(parts: &[&str]) -> String {
 /// Open a text reader that transparently handles `.gz`, `.bgz`, `.zst`, or plain files.
 ///
 /// The caller is responsible for handling "-" or stdin separately.
-pub fn open_text_reader(path: &Path) -> Result<Box<dyn BufRead>> {
+pub(crate) fn open_text_reader(path: &Path) -> Result<Box<dyn BufRead>> {
     let ext = path
         .extension()
         .and_then(|s| s.to_str())
@@ -57,6 +57,7 @@ pub fn open_text_reader(path: &Path) -> Result<Box<dyn BufRead>> {
 }
 
 enum WriterInner {
+    #[cfg(feature = "cmd_prepare_windows")]
     Stdout(BufWriter<io::Stdout>),
     Plain(BufWriter<File>),
     Gzip(GzEncoder<BufWriter<File>>),
@@ -64,7 +65,7 @@ enum WriterInner {
 }
 
 /// Writer that finishes compression streams when dropped via [`finish`](TextWriter::finish).
-pub struct TextWriter {
+pub(crate) struct TextWriter {
     inner: WriterInner,
 }
 
@@ -74,8 +75,9 @@ impl TextWriter {
     }
 
     /// Finalize the underlying stream and flush any buffered bytes.
-    pub fn finish(self) -> Result<()> {
+    pub(crate) fn finish(self) -> Result<()> {
         match self.inner {
+            #[cfg(feature = "cmd_prepare_windows")]
             WriterInner::Stdout(mut w) => {
                 w.flush()?;
                 Ok(())
@@ -100,6 +102,7 @@ impl TextWriter {
 impl Write for TextWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match &mut self.inner {
+            #[cfg(feature = "cmd_prepare_windows")]
             WriterInner::Stdout(w) => w.write(buf),
             WriterInner::Plain(w) => w.write(buf),
             WriterInner::Gzip(w) => w.write(buf),
@@ -109,6 +112,7 @@ impl Write for TextWriter {
 
     fn flush(&mut self) -> io::Result<()> {
         match &mut self.inner {
+            #[cfg(feature = "cmd_prepare_windows")]
             WriterInner::Stdout(w) => w.flush(),
             WriterInner::Plain(w) => w.flush(),
             WriterInner::Gzip(w) => w.flush(),
@@ -118,7 +122,8 @@ impl Write for TextWriter {
 }
 
 /// Construct a writer suitable for stdout.
-pub fn stdout_text_writer() -> TextWriter {
+#[cfg(feature = "cmd_prepare_windows")]
+pub(crate) fn stdout_text_writer() -> TextWriter {
     TextWriter::new(WriterInner::Stdout(BufWriter::with_capacity(
         BUF_CAP,
         io::stdout(),
@@ -126,7 +131,7 @@ pub fn stdout_text_writer() -> TextWriter {
 }
 
 /// Create a writer that compresses according to the file extension (`.gz`, `.zst`).
-pub fn create_text_writer(path: &Path) -> Result<TextWriter> {
+pub(crate) fn create_text_writer(path: &Path) -> Result<TextWriter> {
     let ext = path
         .extension()
         .and_then(|s| s.to_str())

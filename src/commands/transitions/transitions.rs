@@ -42,7 +42,7 @@ use std::time::Instant;
 /// -------
 /// - `freqs`:
 ///     Dense cube with identical shape where each motif entry stores its conditional probability.
-pub fn compute_transition_frequencies(
+pub(crate) fn compute_transition_frequencies(
     counts: &Array3<f64>,
     order: u8,
     motifs: &[String],
@@ -132,7 +132,7 @@ pub fn compute_transition_frequencies(
 /// Errors:
 /// - Propagates IO and parsing errors when reading inputs or writing results, aborting the run on
 ///   the first failure.
-pub fn run(opt: &TransitionsConfig) -> Result<()> {
+pub(crate) fn run(opt: &TransitionsConfig) -> Result<()> {
     let start_time = Instant::now();
     opt.shared_args.fragment_lengths.validate()?;
 

@@ -7,7 +7,7 @@ use crate::shared::fragment::minimal_fragment::{
 
 use super::{InputItem, Pairer, PairingAdapter};
 
-pub struct BasicPairer;
+pub(crate) struct BasicPairer;
 
 impl Pairer for BasicPairer {
     type Read = MinimalReadInfo;
@@ -18,14 +18,14 @@ impl Pairer for BasicPairer {
     }
 }
 
-pub type BasicFragmentIter<'a> = PairingAdapter<
-    Box<dyn Iterator<Item = Result<InputItem<Fragment>>> + 'a>,
+pub(crate) type BasicFragmentIter<'a> = PairingAdapter<
+    Box<dyn Iterator<Item = Result<InputItem>> + 'a>,
     BasicPairer,
     MinimalReadInfo,
     Fragment,
 >;
 
-pub fn fragments_from_bam<'a, RIter, PF>(
+pub(crate) fn fragments_from_bam<'a, RIter, PF>(
     records: RIter,
     include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
     gc_tag: Option<&[u8]>,
@@ -37,7 +37,7 @@ where
     PF: Fn(&Fragment) -> bool + Send + Sync + 'static,
 {
     let gc_tag_bytes = gc_tag.map(|tag| tag.to_vec());
-    let mapped: Box<dyn Iterator<Item = Result<InputItem<Fragment>>> + 'a> =
+    let mapped: Box<dyn Iterator<Item = Result<InputItem>> + 'a> =
         Box::new(records.map(|res| res.context("reading BAM record").map(InputItem::BamRecord)));
 
     let mut adapter = PairingAdapter::new(
@@ -59,21 +59,4 @@ where
     }
 
     adapter
-}
-
-pub fn fragments_from_iter<I, PF>(
-    frags: I,
-    fragment_filter: PF,
-) -> PairingAdapter<
-    impl Iterator<Item = Result<InputItem<Fragment>>>,
-    BasicPairer,
-    MinimalReadInfo,
-    Fragment,
->
-where
-    I: Iterator<Item = Result<Fragment>>,
-    PF: Fn(&Fragment) -> bool + Send + Sync + 'static,
-{
-    let mapped = frags.map(|res| res.map(InputItem::Fragment));
-    PairingAdapter::new(mapped, None::<BasicPairer>).with_fragment_filter(fragment_filter)
 }

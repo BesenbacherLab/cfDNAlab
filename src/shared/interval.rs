@@ -614,7 +614,7 @@ where
 
     /// Create a span from bounds that are already known to be ordered.
     #[inline]
-    pub(crate) fn from_ordered(start: T, end: T) -> Self {
+    pub fn from_ordered(start: T, end: T) -> Self {
         debug_assert!(end >= start, "span bounds must be ordered");
         Self { start, end }
     }

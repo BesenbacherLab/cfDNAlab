@@ -83,19 +83,19 @@ fn fold_reduced_segment_into_group(
 /// - exact additive raw fields, which are needed for grouped folding and auditing
 /// - final derived values, which are needed for TSV output
 #[derive(Debug, Clone, Copy)]
-pub struct SummaryStatsRow {
-    pub span_positions: u64,
-    pub blacklisted_positions: u64,
-    pub eligible_positions: u64,
-    pub nonzero_positions: u64,
-    pub coverage_sum: f64,
-    pub coverage_sum_of_squares: f64,
-    pub average_coverage: f64,
-    pub total_coverage: f64,
-    pub variance_coverage: f64,
-    pub sd_coverage: f64,
-    pub coefficient_of_variation_coverage: f64,
-    pub covered_fraction: f64,
+pub(crate) struct SummaryStatsRow {
+    pub(crate) span_positions: u64,
+    pub(crate) blacklisted_positions: u64,
+    pub(crate) eligible_positions: u64,
+    pub(crate) nonzero_positions: u64,
+    pub(crate) coverage_sum: f64,
+    pub(crate) coverage_sum_of_squares: f64,
+    pub(crate) average_coverage: f64,
+    pub(crate) total_coverage: f64,
+    pub(crate) variance_coverage: f64,
+    pub(crate) sd_coverage: f64,
+    pub(crate) coefficient_of_variation_coverage: f64,
+    pub(crate) covered_fraction: f64,
 }
 
 /// Formatter for the CV column only.
@@ -148,7 +148,7 @@ fn coverage_cv_overflow_label() -> String {
 }
 
 /// Build derived summary statistics from exact raw aggregate values.
-pub fn derive_summary_stats(
+pub(crate) fn derive_summary_stats(
     span_positions: u64,
     blacklisted_positions: u64,
     eligible_positions: u64,
@@ -385,7 +385,7 @@ fn write_non_summary_reduced_row<W: Write>(
 
 /// Write a final aggregate row: `chromosome  start  end  value  blacklisted_positions`
 #[inline]
-pub fn write_final_row<W: Write>(
+pub(crate) fn write_final_row<W: Write>(
     w: &mut W,
     chr: &str,
     interval: Interval<u64>,
@@ -406,7 +406,7 @@ pub fn write_final_row<W: Write>(
 }
 
 /// Write a headerless summary-stats row for BED or fixed-size outputs.
-pub fn write_summary_stats_row<W: Write>(
+pub(crate) fn write_summary_stats_row<W: Write>(
     w: &mut W,
     chr: &str,
     interval: Interval<u64>,
@@ -420,7 +420,7 @@ pub fn write_summary_stats_row<W: Write>(
 }
 
 /// Write a headerless grouped aggregate row.
-pub fn write_grouped_value_row<W: Write>(
+pub(crate) fn write_grouped_value_row<W: Write>(
     w: &mut W,
     group_idx: u64,
     span_positions: u64,
@@ -442,7 +442,7 @@ pub fn write_grouped_value_row<W: Write>(
 }
 
 /// Write a headerless grouped summary-stats row.
-pub fn write_grouped_summary_stats_row<W: Write>(
+pub(crate) fn write_grouped_summary_stats_row<W: Write>(
     w: &mut W,
     group_idx: u64,
     stats: SummaryStatsRow,
@@ -905,7 +905,7 @@ pub(crate) fn write_size_aggregate_output(
 ///
 /// # Returns
 /// `Ok(())` on success, or the underlying I/O error.
-pub fn write_bedgraph_runs<W: Write>(
+pub(crate) fn write_bedgraph_runs<W: Write>(
     chr: &str,
     cov: &[f32],
     mask: Option<&[u8]>,    // 1 = blacklisted(masked), 0 = allowed
@@ -962,7 +962,7 @@ pub fn write_bedgraph_runs<W: Write>(
 ///
 /// # Returns
 /// `Ok(())` on success, or the underlying I/O error.
-pub fn write_windowed_runs<W: Write>(
+pub(crate) fn write_windowed_runs<W: Write>(
     chr: &str,
     cov: &[f32],
     mask: Option<&[u8]>,    // 1 = blacklisted(masked), 0 = allowed

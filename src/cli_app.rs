@@ -35,7 +35,7 @@ use crate::commands::wps_peaks::config::WPSPeaksConfig;
 use clap::CommandFactory;
 use clap::builder::styling::{AnsiColor, Style, Styles};
 
-pub const CLI_SEPARATOR_WIDTH: usize = 48;
+pub(crate) const CLI_SEPARATOR_WIDTH: usize = 48;
 
 #[cfg(all(
     feature = "cli",
@@ -63,13 +63,13 @@ compile_error!("Building the CLI requires enabling at least one cmd_* feature.")
 
 #[cfg_attr(feature = "cli", derive(clap::Parser))]
 #[command(name = "cfdna", version, about = env!("CARGO_PKG_DESCRIPTION"))]
-pub struct Cli {
+pub(crate) struct Cli {
     #[command(subcommand)]
-    pub cmd: Cmd,
+    pub(crate) cmd: Cmd,
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Subcommand))]
-pub enum Cmd {
+pub(crate) enum Cmd {
     #[cfg(feature = "cmd_gc_bias")]
     GCBias(GCConfig),
     #[cfg(feature = "cmd_ref_gc_bias")]
@@ -106,8 +106,160 @@ pub enum Cmd {
     FragToBam(FragToBamConfig),
 }
 
+#[cfg(feature = "cli")]
+pub(crate) fn run_cli() {
+    use clap::FromArgMatches;
+
+    if crate::shared::tiled_run::run_temp_dir_cleanup_helper_if_requested() {
+        return;
+    }
+
+    let command = build_terminal_command();
+    let matches = command.clone().get_matches();
+    let command_name = matches.subcommand_name().unwrap_or("help").to_string();
+    let cli = Cli::from_arg_matches(&matches).expect("parse");
+
+    let (log_spec, default_output_dir) = match &cli.cmd {
+        #[cfg(feature = "cmd_coverage_weights")]
+        Cmd::CoverageWeights(config) => (
+            config.shared.logging.log.clone(),
+            Some(config.shared.ioc.output_dir.as_path()),
+        ),
+        #[cfg(feature = "cmd_fragment_count_weights")]
+        Cmd::FragmentCountWeights(config) => (
+            config.shared.logging.log.clone(),
+            Some(config.shared.ioc.output_dir.as_path()),
+        ),
+        #[cfg(feature = "cmd_fcoverage")]
+        Cmd::Fcoverage(config) => (
+            config.logging.log.clone(),
+            Some(config.ioc.output_dir.as_path()),
+        ),
+        #[cfg(feature = "cmd_gc_bias")]
+        Cmd::GCBias(config) => (
+            config.logging.log.clone(),
+            Some(config.ioc.output_dir.as_path()),
+        ),
+        #[cfg(feature = "cmd_ref_gc_bias")]
+        Cmd::RefGcBias(config) => (
+            config.logging.log.clone(),
+            Some(config.output_dir.as_path()),
+        ),
+        #[cfg(feature = "cmd_transitions")]
+        Cmd::Transitions(config) => (
+            config.shared_args.logging.log.clone(),
+            Some(config.shared_args.ioc.output_dir.as_path()),
+        ),
+        #[cfg(feature = "cmd_ends")]
+        Cmd::Ends(config) => (
+            config.logging.log.clone(),
+            Some(config.ioc.output_dir.as_path()),
+        ),
+        #[cfg(feature = "cmd_lengths")]
+        Cmd::Lengths(config) => (
+            config.logging.log.clone(),
+            Some(config.ioc.output_dir.as_path()),
+        ),
+        #[cfg(feature = "cmd_wps")]
+        Cmd::WPS(config) => (
+            config.shared_args.logging.log.clone(),
+            Some(config.shared_args.ioc.output_dir.as_path()),
+        ),
+        #[cfg(feature = "cmd_wps_peaks")]
+        Cmd::WPSPeaks(config) => (
+            config.shared_args.logging.log.clone(),
+            Some(config.shared_args.ioc.output_dir.as_path()),
+        ),
+        #[cfg(feature = "cmd_midpoints")]
+        Cmd::Midpoints(config) => (
+            config.logging.log.clone(),
+            Some(config.ioc.output_dir.as_path()),
+        ),
+        #[cfg(feature = "cmd_fragment_kmers")]
+        Cmd::FragmentKmers(config) => (
+            config.shared_args.logging.log.clone(),
+            Some(config.shared_args.ioc.output_dir.as_path()),
+        ),
+        #[cfg(feature = "cmd_bam_to_bam")]
+        Cmd::BamToBam(config) => (config.logging.log.clone(), config.out_bam.parent()),
+        #[cfg(feature = "cmd_bam_to_frag")]
+        Cmd::BamToFrag(config) => (
+            config.logging.log.clone(),
+            Some(config.ioc.output_dir.as_path()),
+        ),
+        #[cfg(feature = "cmd_frag_to_bam")]
+        Cmd::FragToBam(config) => (
+            config.logging.log.clone(),
+            Some(config.output_dir.as_path()),
+        ),
+        #[cfg(feature = "cmd_prepare_windows")]
+        Cmd::PrepWindows(_config) => (crate::shared::logging::LogSpec::Stdout, None),
+        #[cfg(feature = "cmd_visualize_positions")]
+        Cmd::VisualizePositions(_config) => (crate::shared::logging::LogSpec::Stdout, None),
+    };
+
+    if let Err(error) =
+        crate::shared::logging::init_cli_logging(&command_name, &log_spec, default_output_dir)
+    {
+        eprintln!("{:#}", error);
+        std::process::exit(1);
+    }
+
+    crate::shared::cli_output::print_command_banner(&command_name);
+    let result: anyhow::Result<()> = match cli.cmd {
+        #[cfg(feature = "cmd_gc_bias")]
+        Cmd::GCBias(config) => crate::commands::gc_bias::gc_bias::run(&config),
+        #[cfg(feature = "cmd_ref_gc_bias")]
+        Cmd::RefGcBias(config) => crate::commands::ref_gc_bias::ref_gc_bias::run(&config),
+        #[cfg(feature = "cmd_transitions")]
+        Cmd::Transitions(config) => crate::commands::transitions::transitions::run(&config),
+        #[cfg(feature = "cmd_coverage_weights")]
+        Cmd::CoverageWeights(config) => {
+            crate::commands::coverage_weights::coverage_weights::run(&config)
+        }
+        #[cfg(feature = "cmd_fragment_count_weights")]
+        Cmd::FragmentCountWeights(config) => {
+            crate::commands::fragment_count_weights::fragment_count_weights::run(&config)
+        }
+        #[cfg(feature = "cmd_ends")]
+        Cmd::Ends(config) => crate::commands::ends::ends::run(&config),
+        #[cfg(feature = "cmd_lengths")]
+        Cmd::Lengths(config) => crate::commands::lengths::lengths::run(&config),
+        #[cfg(feature = "cmd_fcoverage")]
+        Cmd::Fcoverage(config) => crate::commands::fcoverage::fcoverage::run(&config),
+        #[cfg(feature = "cmd_wps")]
+        Cmd::WPS(config) => crate::commands::wps::wps::run(&config),
+        #[cfg(feature = "cmd_wps_peaks")]
+        Cmd::WPSPeaks(config) => crate::commands::wps_peaks::wps_peaks::run(&config),
+        #[cfg(feature = "cmd_midpoints")]
+        Cmd::Midpoints(config) => crate::commands::midpoints::midpoints::run(&config),
+        #[cfg(feature = "cmd_fragment_kmers")]
+        Cmd::FragmentKmers(config) => crate::commands::fragment_kmers::fragment_kmers::run(&config),
+        #[cfg(feature = "cmd_prepare_windows")]
+        Cmd::PrepWindows(config) => crate::commands::prepare_windows::prepare_windows::run(&config),
+        #[cfg(feature = "cmd_visualize_positions")]
+        Cmd::VisualizePositions(config) => {
+            crate::commands::visualize_positions::visualize_positions::run(&config)
+        }
+        #[cfg(feature = "cmd_bam_to_bam")]
+        Cmd::BamToBam(config) => crate::commands::bam_to_bam::bam_to_bam::run(&config),
+        #[cfg(feature = "cmd_bam_to_frag")]
+        Cmd::BamToFrag(config) => crate::commands::bam_to_frag::bam_to_frag::run(&config),
+        #[cfg(feature = "cmd_frag_to_bam")]
+        Cmd::FragToBam(config) => crate::commands::frag_to_bam::frag_to_bam::run(&config),
+    };
+    crate::shared::cli_output::print_command_footer();
+
+    if let Err(error) = result {
+        let rendered_error = format!("{:#}", error);
+        eprintln!("{}", rendered_error);
+        crate::shared::logging::duplicate_stderr_line_to_file(&rendered_error);
+        std::process::exit(1);
+    }
+}
+
 /// Build terminal-oriented clap command with sanitized docs and branded signature
-pub fn build_terminal_command() -> clap::Command {
+pub(crate) fn build_terminal_command() -> clap::Command {
     let mut command = Cli::command();
     let styles = Styles::styled()
         .header(AnsiColor::Yellow.on_default().bold())
@@ -123,7 +275,7 @@ pub fn build_terminal_command() -> clap::Command {
 }
 
 /// Build docs-oriented clap command with raw help text
-pub fn build_docs_command() -> clap::Command {
+pub(crate) fn build_docs_command() -> clap::Command {
     Cli::command()
         .help_template("{name} {version}\n{about}\n\n{usage-heading} {usage}\n\n{all-args}\n")
 }
@@ -318,13 +470,13 @@ fn sanitize_command(mut command: clap::Command) -> clap::Command {
 }
 
 /// Build the branded terminal signature shown in CLI help and command banners.
-pub fn terminal_signature() -> String {
+pub(crate) fn terminal_signature() -> String {
     let accent = Style::new().bold();
     terminal_signature_with_bars(&format!("{accent}"), &format!("{accent:#}"))
 }
 
 /// Build the plain-text terminal signature for non-terminal sinks such as log files.
-pub fn plain_terminal_signature() -> String {
+pub(crate) fn plain_terminal_signature() -> String {
     terminal_signature_with_bars("", "")
 }
 

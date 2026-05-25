@@ -1,4 +1,4 @@
-// Shared iterator adaptor for BAM pairing and pre-built fragments.
+// Shared iterator adaptor for BAM pairing.
 //
 // ------------------------ Usage examples ------------------------
 /*
@@ -53,60 +53,23 @@ for _ in it2 {}
 let stats = shared.snapshot();
 eprintln!("shared: {:?}", stats);
 
-Example 3 (Ready-made fragments, still want yielded count):
-
-let mut it = fragments_from_iter(frag_iter_anyhow, |f| {
-    let len = f.len();
-    len >= min && len <= max
-}).with_local_counters();
-
-for _ in it.by_ref() {}
-let stats = it.counters_snapshot();
 */
 
+use crate::shared::iterator_counter::SharedCounters;
+use crate::shared::iterator_counter::{
+    FragmentCounterSnapshot, FragmentCounters, LocalCounters, NoopCounters,
+};
 use anyhow::{Result, anyhow};
 use fxhash::FxHashMap;
 use rust_htslib::bam::Record;
 
-use crate::shared::{
-    fragment::{minimal_fragment::MinimalReadInfo, segment_fragment::SegmentedReadInfo},
-    iterator_counter::{
-        FragmentCounterSnapshot, FragmentCounters, LocalCounters, NoopCounters, SharedCounters,
-    },
-};
-
-pub trait HasStrand {
-    fn is_reverse(&self) -> bool;
-}
-
-/// Shared trait to expose counter snapshots on boxed iterators.
-pub trait FragmentIterCounters {
-    fn counters_snapshot(&self) -> FragmentCounterSnapshot;
-}
-
-impl HasStrand for SegmentedReadInfo {
-    #[inline]
-    fn is_reverse(&self) -> bool {
-        self.is_reverse
-    }
-}
-
-impl HasStrand for MinimalReadInfo {
-    #[inline]
-    fn is_reverse(&self) -> bool {
-        self.is_reverse
-    }
-}
-
-/// Normalized items flowing into the adaptor: either a read (paired later by qname),
-/// or a ready-made fragment that passes through as-is.
-pub enum InputItem<F> {
+/// Normalized BAM records flowing into the adaptor.
+pub(crate) enum InputItem {
     BamRecord(Record),
-    Fragment(F),
 }
 
 /// Policy for turning two reads into a fragment.
-pub trait Pairer {
+pub(crate) trait Pairer {
     type Read;
     type Output;
 
@@ -115,7 +78,7 @@ pub trait Pairer {
 
 /// Iterator adaptor that consumes `InputItem`s, pairs reads by qname,
 /// and yields fragments.
-pub struct PairingAdapter<I, P, R, F> {
+pub(crate) struct PairingAdapter<I, P, R, F> {
     inner: I,
     pairer: Option<P>,
     stash: FxHashMap<Vec<u8>, R>,
@@ -130,10 +93,10 @@ pub struct PairingAdapter<I, P, R, F> {
 
 impl<I, P, R, F> PairingAdapter<I, P, R, F>
 where
-    I: Iterator<Item = Result<InputItem<F>>>,
+    I: Iterator<Item = Result<InputItem>>,
     P: Pairer<Read = R, Output = F>,
 {
-    pub fn new(inner: I, pairer: Option<P>) -> Self {
+    pub(crate) fn new(inner: I, pairer: Option<P>) -> Self {
         Self {
             inner,
             pairer,
@@ -147,13 +110,16 @@ where
         }
     }
 
-    pub fn with_fragment_filter(mut self, f: impl Fn(&F) -> bool + Send + Sync + 'static) -> Self {
+    pub(crate) fn with_fragment_filter(
+        mut self,
+        f: impl Fn(&F) -> bool + Send + Sync + 'static,
+    ) -> Self {
         self.fragment_filter = Some(Box::new(f));
         self
     }
 
     /// BAM-only: set the include_read predicate and the Record->R mapper.
-    pub fn with_bam_filter_and_mapper(
+    pub(crate) fn with_bam_filter_and_mapper(
         mut self,
         include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
         map_read: impl Fn(&Record) -> Result<R> + Send + Sync + 'static,
@@ -164,7 +130,7 @@ where
     }
 
     /// Unpaired: set the mapped-read -> fragment converter (used only when `pairer` is `None`).
-    pub fn with_bam_single_fragment_from_read(
+    pub(crate) fn with_bam_single_fragment_from_read(
         mut self,
         map_fragment: impl Fn(&R) -> Option<F> + Send + Sync + 'static,
     ) -> Self {
@@ -174,7 +140,7 @@ where
 
     /// Overwrite counters with fast, thread-local counters.
     #[inline]
-    pub fn with_local_counters(mut self) -> Self {
+    pub(crate) fn with_local_counters(mut self) -> Self {
         self.counters = Box::new(LocalCounters::new());
         self
     }
@@ -182,14 +148,18 @@ where
     /// Overwrite counters with a shared, atomic implementation.
     /// Hold on to a clone of `shared` if you want to read totals externally.
     #[inline]
-    pub fn with_shared_counters(mut self, shared: SharedCounters) -> Self {
+    #[expect(
+        dead_code,
+        reason = "kept for future multi-iterator counting across threads"
+    )]
+    pub(crate) fn with_shared_counters(mut self, shared: SharedCounters) -> Self {
         self.counters = Box::new(shared);
         self
     }
 
     /// Read counters at any time (e.g., after a `for` loop using `.by_ref()`).
     #[inline]
-    pub fn counters_snapshot(&self) -> FragmentCounterSnapshot {
+    pub(crate) fn counters_snapshot(&self) -> FragmentCounterSnapshot {
         self.counters.snapshot()
     }
 }
@@ -229,7 +199,7 @@ fn ensure_nondecreasing_bam_coordinates(
 
 impl<I, P, R, F> Iterator for PairingAdapter<I, P, R, F>
 where
-    I: Iterator<Item = Result<InputItem<F>>>,
+    I: Iterator<Item = Result<InputItem>>,
     P: Pairer<Read = R, Output = F>,
 {
     type Item = Result<F>;
@@ -239,17 +209,6 @@ where
             let next_in = self.inner.next()?;
             match next_in {
                 Err(e) => return Some(Err(e)),
-                Ok(InputItem::Fragment(f)) => {
-                    // Fragment already assembled upstream
-                    self.counters.inc_incoming_fragments();
-                    if let Some(accept_fragment) = &self.fragment_filter
-                        && !accept_fragment(&f)
-                    {
-                        continue;
-                    }
-                    self.counters.inc_yielded_fragments();
-                    return Some(Ok(f));
-                }
                 Ok(InputItem::BamRecord(rec)) => {
                     if let Err(error) =
                         ensure_nondecreasing_bam_coordinates(&mut self.last_bam_coord, &rec)
@@ -323,17 +282,6 @@ where
                 }
             }
         }
-    }
-}
-
-impl<I, P, R, F> FragmentIterCounters for PairingAdapter<I, P, R, F>
-where
-    I: Iterator<Item = Result<InputItem<F>>>,
-    P: Pairer<Read = R, Output = F>,
-{
-    #[inline]
-    fn counters_snapshot(&self) -> FragmentCounterSnapshot {
-        PairingAdapter::counters_snapshot(self)
     }
 }
 

@@ -4,7 +4,7 @@ use crate::commands::{
 };
 use anyhow::Result;
 
-pub fn run(opt: &FragmentCountWeightsConfig) -> Result<()> {
+pub(crate) fn run(opt: &FragmentCountWeightsConfig) -> Result<()> {
     run_with_fcoverage(
         &opt.shared,
         true,

@@ -67,8 +67,8 @@ pub(crate) enum EndSide {
 /// that per-fragment bookkeeping separate from the per-window accumulation map.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct CountedEndFlags {
-    pub left_counted: bool,
-    pub right_counted: bool,
+    pub(crate) left_counted: bool,
+    pub(crate) right_counted: bool,
 }
 
 impl CountedEndFlags {

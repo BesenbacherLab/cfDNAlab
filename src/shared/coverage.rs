@@ -1,4 +1,5 @@
-use crate::shared::fragment::{minimal_fragment::Fragment, segment_fragment::FragmentWithSegments};
+use crate::shared::fragment::minimal_fragment::Fragment;
+use crate::shared::fragment::segment_fragment::FragmentWithSegments;
 use crate::shared::interval::Interval;
 use anyhow::{Result, bail};
 use rayon::prelude::*;
@@ -64,7 +65,7 @@ enum Stage {
 /// # }
 /// ```
 #[derive(Debug, Clone)]
-pub struct Coverage {
+pub(crate) struct Coverage {
     length: u32,                // Total sequence length in bases (e.g., chrom_len)
     delta: Vec<f64>,            // +w at start, -w at end, length = length + 1 (last is sentinel)
     coverage: Option<Vec<f32>>, // Per-base coverage after finalize_coverage, length = length
@@ -91,6 +92,10 @@ pub(crate) fn clamp_finite_coverage_below_to_zero(values: &mut [f32], floor: f32
     }
 }
 
+#[expect(
+    dead_code,
+    reason = "kept for programmatic coverage construction and query reuse"
+)]
 impl Coverage {
     /// Create new `Coverage` instance.
     ///
@@ -103,7 +108,7 @@ impl Coverage {
     /// -------
     /// - self:
     ///     New empty prefix.
-    pub fn new(length: u32) -> Self {
+    pub(crate) fn new(length: u32) -> Self {
         Self {
             length,
             delta: vec![0.0_f64; length as usize + 1],
@@ -123,7 +128,7 @@ impl Coverage {
     /// - frag:
     ///     Fragment on the reference `[start, end)`, 0-based, end-exclusive.
     #[inline]
-    pub fn add_fragment(&mut self, frag: Fragment) -> Result<()> {
+    pub(crate) fn add_fragment(&mut self, frag: Fragment) -> Result<()> {
         self.add_fragment_weighted(frag, 1.0)
     }
 
@@ -136,7 +141,7 @@ impl Coverage {
     /// - weight:
     ///     Weight to add, must be finite and >= 0.
     #[inline]
-    pub fn add_fragment_weighted(&mut self, frag: Fragment, weight: f64) -> Result<()> {
+    pub(crate) fn add_fragment_weighted(&mut self, frag: Fragment, weight: f64) -> Result<()> {
         if !self.prefix_available() {
             anyhow::bail!(
                 "prefix was dropped; cannot add fragments. Rebuild or create a new Coverage"
@@ -187,7 +192,7 @@ impl Coverage {
     /// -----
     /// Inter-mate gap handling and ref-gap segmentation are decided upstream in
     /// `collect_fragment_with_segments`, so this method only applies what it is given.
-    pub fn add_fragment_with_segments(
+    pub(crate) fn add_fragment_with_segments(
         &mut self,
         frag: FragmentWithSegments,
         weight: f64,
@@ -249,7 +254,7 @@ impl Coverage {
     /// -------
     /// - coverage:
     ///     Borrowed slice of per-base coverage with length = `length`.
-    pub fn finalize_coverage(&mut self, drop_delta: bool) -> &[f32] {
+    pub(crate) fn finalize_coverage(&mut self, drop_delta: bool) -> &[f32] {
         // Build coverage from the +w/-w prefix without destroying delta
         let mut cov = vec![0.0_f32; self.length as usize];
 
@@ -285,7 +290,7 @@ impl Coverage {
     ///
     /// Errors
     /// - Returns an error if any interval violates the contract (out of bounds or empty).
-    pub fn set_blacklist_mask(&mut self, intervals: &[Interval<u64>]) -> Result<()> {
+    pub(crate) fn set_blacklist_mask(&mut self, intervals: &[Interval<u64>]) -> Result<()> {
         if intervals.is_empty() {
             // No blacklist -> drop mask to avoid allocating an all-zero vector.
             self.bl_mask = None;
@@ -331,7 +336,7 @@ impl Coverage {
     /// Safety
     /// ------
     /// - Requires `finalize_coverage()` to have been called
-    pub fn build_indexes(&mut self, drop_coverage: bool) -> anyhow::Result<()> {
+    pub(crate) fn build_indexes(&mut self, drop_coverage: bool) -> anyhow::Result<()> {
         let cov = self.coverage.as_ref().ok_or_else(|| {
             anyhow::anyhow!("coverage not finalized, call finalize_coverage() first")
         })?;
@@ -408,7 +413,7 @@ impl Coverage {
     /// - `interval` must be non-empty because `Interval` enforces `end > start`.
     /// - The interval must lie within `0..self.length`.
     #[inline]
-    pub fn sum_coverage(
+    pub(crate) fn sum_coverage(
         &mut self,
         interval: Interval<u32>,
         exclude_blacklisted: bool,
@@ -449,7 +454,7 @@ impl Coverage {
     /// - When `exclude_blacklisted` is true and every position in the interval is blacklisted,
     ///   this returns `0.0`.
     #[inline]
-    pub fn avg_coverage(
+    pub(crate) fn avg_coverage(
         &mut self,
         interval: Interval<u32>,
         exclude_blacklisted: bool,
@@ -493,7 +498,7 @@ impl Coverage {
     /// - `sums`:
     ///     One coverage sum per interval, in the same order as the input slice.
     #[inline]
-    pub fn bulk_sum_coverage(
+    pub(crate) fn bulk_sum_coverage(
         &mut self,
         intervals: &[Interval<u32>],
         exclude_blacklisted: bool,
@@ -534,7 +539,7 @@ impl Coverage {
     /// - When `exclude_blacklisted` is true and an interval is fully blacklisted, the returned
     ///   average for that interval is `0.0`.
     #[inline]
-    pub fn bulk_avg_coverage(
+    pub(crate) fn bulk_avg_coverage(
         &mut self,
         intervals: &[Interval<u32>],
         exclude_blacklisted: bool,
@@ -571,7 +576,7 @@ impl Coverage {
     /// -------
     /// - values:
     ///     Coverage values at each requested position.
-    pub fn coverage_at_positions(&self, positions: &[u32]) -> Result<Vec<f32>> {
+    pub(crate) fn coverage_at_positions(&self, positions: &[u32]) -> Result<Vec<f32>> {
         let cov = match self.coverage.as_ref() {
             Some(c) => c,
             None => {
@@ -605,7 +610,7 @@ impl Coverage {
     /// -------
     /// - values:
     ///     Coverage values; blacklisted sites are `f32::NAN`.
-    pub fn coverage_at_positions_nan(&self, positions: &[u32]) -> Result<Vec<f32>> {
+    pub(crate) fn coverage_at_positions_nan(&self, positions: &[u32]) -> Result<Vec<f32>> {
         let cov = match self.coverage.as_ref() {
             Some(c) => c,
             None => {
@@ -653,7 +658,7 @@ impl Coverage {
     /// -------
     /// - mask:
     ///     Mask values at each requested position; if no blacklist, all zeros.
-    pub fn mask_at_positions(&self, positions: &[u32]) -> Result<Vec<u8>> {
+    pub(crate) fn mask_at_positions(&self, positions: &[u32]) -> Result<Vec<u8>> {
         let len = self.length as usize;
         let mut out = Vec::with_capacity(positions.len());
 
@@ -695,7 +700,7 @@ impl Coverage {
     /// -------
     /// - values:
     ///     Coverage values for each position in `[start, end)`, with optional `f32::NAN`s for blacklisted
-    pub fn coverage_in_window(
+    pub(crate) fn coverage_in_window(
         &self,
         start: u32,
         end: u32,
@@ -733,7 +738,7 @@ impl Coverage {
     /// -------
     /// - coverage:
     ///     Per-base coverage of length `length`, if available.
-    pub fn coverage(&self) -> Option<&[f32]> {
+    pub(crate) fn coverage(&self) -> Option<&[f32]> {
         self.coverage.as_deref()
     }
 
@@ -743,7 +748,7 @@ impl Coverage {
     /// -------
     /// - coverage:
     ///     Mutable per-base coverage of length `length`, if available.
-    pub fn coverage_mut(&mut self) -> Option<&mut [f32]> {
+    pub(crate) fn coverage_mut(&mut self) -> Option<&mut [f32]> {
         self.coverage.as_deref_mut()
     }
 
@@ -753,47 +758,49 @@ impl Coverage {
     /// -------
     /// - mask:
     ///     Per-base mask where 1 = blacklisted.
-    pub fn blacklist_mask(&self) -> Option<&[u8]> {
+    pub(crate) fn blacklist_mask(&self) -> Option<&[u8]> {
         self.bl_mask.as_deref()
     }
 
     /// Length accessor
-    pub fn length(&self) -> u32 {
+    pub(crate) fn length(&self) -> u32 {
         self.length
     }
 
     /// Length acessor (alias for length)
-    pub fn len(&self) -> u32 {
+    pub(crate) fn len(&self) -> u32 {
         self.length()
     }
 
     /// Drop the +w/-w delta to free memory. Further add_* calls will error.
-    pub fn drop_deltas(&mut self) {
+    pub(crate) fn drop_deltas(&mut self) {
         self.delta.clear();
         self.delta.shrink_to_fit();
     }
 
     /// Drop the coverage vector to free memory. The various coverage getters will error.
-    pub fn drop_coverage(&mut self) {
+    pub(crate) fn drop_coverage(&mut self) {
         self.coverage = None;
     }
 
     // Remove the current blacklist if it exists
-    pub fn clear_blacklist(&mut self) {
+    pub(crate) fn clear_blacklist(&mut self) {
         self.bl_mask = None;
         self.invalidate_indexes();
     }
 
     #[inline]
-    pub fn psum_all_ref(&self) -> Option<&[f64]> {
+    pub(crate) fn psum_all_ref(&self) -> Option<&[f64]> {
         self.psum_all.as_deref()
     }
+
     #[inline]
-    pub fn psum_unmasked_ref(&self) -> Option<&[f64]> {
+    pub(crate) fn psum_unmasked_ref(&self) -> Option<&[f64]> {
         self.psum_unmasked.as_deref()
     }
+
     #[inline]
-    pub fn psum_unmasked_count_ref(&self) -> Option<&[u32]> {
+    pub(crate) fn psum_unmasked_count_ref(&self) -> Option<&[u32]> {
         self.psum_unmasked_count.as_deref()
     }
 
@@ -901,7 +908,7 @@ impl Coverage {
     }
 
     // True if a blacklist is present
-    pub fn has_blacklist(&self) -> bool {
+    pub(crate) fn has_blacklist(&self) -> bool {
         self.bl_mask.is_some()
     }
 }

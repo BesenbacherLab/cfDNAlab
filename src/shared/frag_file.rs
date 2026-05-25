@@ -32,10 +32,10 @@ use crate::shared::fragment::minimal_fragment::Fragment;
 use crate::shared::interval::Interval;
 
 /// Function type for mapping chromosome names to `tid`
-pub type NameToTidFn = Arc<dyn Fn(&str) -> Option<i32> + Send + Sync>;
+pub(crate) type NameToTidFn = Arc<dyn Fn(&str) -> Option<i32> + Send + Sync>;
 
 /// Supported input formats
-pub enum FragFormat {
+pub(crate) enum FragFormat {
     /// Columns: `tid  start  end`
     Tid3,
     /// Columns: `chrom  start  end` with provided mapper
@@ -45,7 +45,7 @@ pub enum FragFormat {
 }
 
 /// Streaming iterator over a fragment file
-pub struct FragFileIter<R: BufRead> {
+pub(crate) struct FragFileIter<R: BufRead> {
     reader: R,
     buf: String,
     line_no: usize,
@@ -54,7 +54,7 @@ pub struct FragFileIter<R: BufRead> {
 
 impl FragFileIter<BufReader<File>> {
     /// Open a path with a chosen format
-    pub fn open(path: impl AsRef<Path>, fmt: FragFormat) -> Result<Self> {
+    pub(crate) fn open(path: impl AsRef<Path>, fmt: FragFormat) -> Result<Self> {
         let f = File::open(&path).with_context(|| {
             format!(
                 "failed to open fragment file: {}",
@@ -67,7 +67,7 @@ impl FragFileIter<BufReader<File>> {
 
 impl<R: BufRead> FragFileIter<R> {
     /// Construct from any `BufRead`
-    pub fn new(reader: R, fmt: FragFormat) -> Self {
+    pub(crate) fn new(reader: R, fmt: FragFormat) -> Self {
         Self {
             reader,
             buf: String::new(),

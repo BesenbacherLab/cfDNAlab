@@ -49,18 +49,18 @@ use std::{env, mem};
 ///
 /// Coordinates are 0-based, half-open `[start, end)`.
 #[derive(Debug, Clone)]
-pub struct Window {
-    pub chrom: Arc<str>,
-    pub original_interval: Interval<u32>,
-    pub resized_interval: Interval<u32>,
-    pub merged: bool,
-    pub label_tuples: Vec<LabelTuple>, // Atomic label tuples for this window
-    pub group_key: String,             // Grouping key for merge and minimum-distance filtering
-    pub score: Option<f32>,            // Present only if parsed and requested
+pub(crate) struct Window {
+    pub(crate) chrom: Arc<str>,
+    pub(crate) original_interval: Interval<u32>,
+    pub(crate) resized_interval: Interval<u32>,
+    pub(crate) merged: bool,
+    pub(crate) label_tuples: Vec<LabelTuple>, // Atomic label tuples for this window
+    pub(crate) group_key: String, // Grouping key for merge and minimum-distance filtering
+    pub(crate) score: Option<f32>, // Present only if parsed and requested
 }
 
 impl Window {
-    pub fn from_bounds(
+    pub(crate) fn from_bounds(
         chrom: Arc<str>,
         original_start: u32,
         original_end: u32,
@@ -82,27 +82,27 @@ impl Window {
     }
 
     #[inline]
-    pub fn original_start(&self) -> u32 {
+    pub(crate) fn original_start(&self) -> u32 {
         self.original_interval.start()
     }
 
     #[inline]
-    pub fn original_end(&self) -> u32 {
+    pub(crate) fn original_end(&self) -> u32 {
         self.original_interval.end()
     }
 
     #[inline]
-    pub fn resized_start(&self) -> u32 {
+    pub(crate) fn resized_start(&self) -> u32 {
         self.resized_interval.start()
     }
 
     #[inline]
-    pub fn resized_end(&self) -> u32 {
+    pub(crate) fn resized_end(&self) -> u32 {
         self.resized_interval.end()
     }
 
     #[inline]
-    pub fn start_for(&self, coord_set: CoordinateSet) -> u32 {
+    pub(crate) fn start_for(&self, coord_set: CoordinateSet) -> u32 {
         match coord_set {
             CoordinateSet::Original => self.original_start(),
             CoordinateSet::Resized => self.resized_start(),
@@ -110,7 +110,7 @@ impl Window {
     }
 
     #[inline]
-    pub fn end_for(&self, coord_set: CoordinateSet) -> u32 {
+    pub(crate) fn end_for(&self, coord_set: CoordinateSet) -> u32 {
         match coord_set {
             CoordinateSet::Original => self.original_end(),
             CoordinateSet::Resized => self.resized_end(),
@@ -118,23 +118,17 @@ impl Window {
     }
 
     #[inline]
-    pub fn length_for(&self, coord_set: CoordinateSet) -> u32 {
+    pub(crate) fn length_for(&self, coord_set: CoordinateSet) -> u32 {
         self.end_for(coord_set) - self.start_for(coord_set)
     }
 
     #[inline]
-    pub fn set_resized_interval(&mut self, interval: Interval<u32>) {
+    pub(crate) fn set_resized_interval(&mut self, interval: Interval<u32>) {
         self.resized_interval = interval;
     }
 
     #[inline]
-    pub fn set_resized_bounds(&mut self, start: u32, end: u32) -> crate::Result<()> {
-        self.set_resized_interval(Interval::new(start, end)?);
-        Ok(())
-    }
-
-    #[inline]
-    pub fn expand_intervals_to_include(&mut self, other: &Window) {
+    pub(crate) fn expand_intervals_to_include(&mut self, other: &Window) {
         self.original_interval = self
             .original_interval
             .expand_to_include(other.original_interval);
@@ -146,14 +140,14 @@ impl Window {
 
 /// Streaming cursor for blacklist interval sweeps.
 #[derive(Debug, Default)]
-pub struct BlacklistCursor {
-    pub intervals: Vec<Interval<u64>>,
-    pub pre_cursor: usize,  // Early filtering
-    pub post_cursor: usize, // Post-merge filtering
+pub(crate) struct BlacklistCursor {
+    pub(crate) intervals: Vec<Interval<u64>>,
+    pub(crate) pre_cursor: usize,  // Early filtering
+    pub(crate) post_cursor: usize, // Post-merge filtering
 }
 
 /// Run the prepare pipeline using the provided configuration.
-pub fn run(cfg: &PrepareConfig) -> Result<()> {
+pub(crate) fn run(cfg: &PrepareConfig) -> Result<()> {
     let start_time = Instant::now();
 
     println!("Preparing windows");

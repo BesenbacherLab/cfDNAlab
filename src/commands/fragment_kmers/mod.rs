@@ -1,8 +1,8 @@
-pub mod config;
-pub mod fragment_kmers;
-pub mod nearest_frame_guard;
-pub mod parse;
-pub mod positional_output;
-pub mod positions;
-pub mod selection;
-pub mod tiling;
+pub(crate) mod config;
+pub(crate) mod fragment_kmers;
+pub(crate) mod nearest_frame_guard;
+pub(crate) mod parse;
+pub(crate) mod positional_output;
+pub(crate) mod positions;
+pub(crate) mod selection;
+pub(crate) mod tiling;

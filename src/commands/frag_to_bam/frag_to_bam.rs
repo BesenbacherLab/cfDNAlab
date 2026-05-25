@@ -89,7 +89,7 @@ struct FragColumnLayout {
 /// Errors:
 /// - Propagates IO and parsing errors when reading inputs or writing results, aborting the run on
 ///   the first failure.
-pub fn run(opt: &FragToBamConfig) -> Result<()> {
+pub(crate) fn run(opt: &FragToBamConfig) -> Result<()> {
     let start_time = Instant::now();
     let (counters, output_path) = run_inner(opt)?;
 

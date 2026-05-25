@@ -55,7 +55,7 @@ const COMMAND_TARGET: &str = "bam-to-bam";
 /// Errors:
 /// - Propagates IO and parsing errors when reading inputs or writing results, aborting the run on
 ///   the first failure.
-pub fn run(opt: &BamToBamConfig) -> Result<()> {
+pub(crate) fn run(opt: &BamToBamConfig) -> Result<()> {
     let start_time = Instant::now();
     let global_counter = run_inner(opt)?;
     let elapsed = start_time.elapsed();
@@ -82,7 +82,7 @@ pub fn run(opt: &BamToBamConfig) -> Result<()> {
     Ok(())
 }
 
-pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToBamCounters> {
+pub(crate) fn run_inner(opt: &BamToBamConfig) -> Result<BamToBamCounters> {
     opt.fragment_lengths.validate()?;
     opt.gc.validate(opt.ref_2bit.as_deref())?;
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {

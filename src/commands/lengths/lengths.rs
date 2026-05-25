@@ -180,7 +180,7 @@ fn reorder_bed_outputs_by_original_index(
 /// Errors:
 /// - Propagates IO and parsing errors when reading inputs or writing results, aborting the run on
 ///   the first failure.
-pub fn run(opt: &LengthsConfig) -> Result<()> {
+pub(crate) fn run(opt: &LengthsConfig) -> Result<()> {
     let start_time = Instant::now();
     let length_axis = Arc::new(LengthAxis::new(opt.resolve_length_bins()?)?);
     validate_gc_length_trim_rare(opt.gc_length_trim_rare)?;

@@ -66,10 +66,10 @@ const COMMAND_TARGET: &str = "fcoverage";
 ///
 /// This is used by other commands that reuse the tiled counting and final by-size
 /// reduction without wanting `fcoverage`'s outer statistics wrapper.
-pub struct FCoverageRunResult {
-    pub counters: FCoverageCounters,
-    pub mean_normalization_length: Option<f64>,
-    pub final_out_path: PathBuf,
+pub(crate) struct FCoverageRunResult {
+    pub(crate) counters: FCoverageCounters,
+    pub(crate) mean_normalization_length: Option<f64>,
+    pub(crate) final_out_path: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -109,7 +109,7 @@ enum FCoverageTileTempOutput {
 /// Errors:
 /// - Returns an error if the BAM cannot be read, auxiliary files are invalid, or writing outputs
 ///   fails at any stage.
-pub fn run(opt: &FCoverageConfig) -> Result<()> {
+pub(crate) fn run(opt: &FCoverageConfig) -> Result<()> {
     let start_time = Instant::now();
 
     let run_result = run_inner(opt)?;
@@ -154,7 +154,7 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
     Ok(())
 }
 
-pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
+pub(crate) fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
     opt.fragment_lengths.validate()?;
     opt.gc.validate(opt.ref_2bit.as_deref())?;
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
@@ -1636,7 +1636,7 @@ fn add_clipped_blacklist_to_cp(
 /// - `Ok(false)` if every segment falls outside the core after clipping.
 /// - An error when the coverage accumulator rejects the update.
 #[inline]
-pub fn add_fragment_clipped_to_core(
+pub(crate) fn add_fragment_clipped_to_core(
     cp: &mut Coverage,
     fragment: &FragmentWithSegments,
     weight: f64,

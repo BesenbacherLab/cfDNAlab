@@ -3,10 +3,10 @@ use plotters::{coord::Shift, prelude::*};
 use std::path::Path;
 
 /// One labeled series for multi-line QC plots.
-pub struct LinePlotSeries<'a> {
-    pub label: &'a str,
-    pub x_values: &'a [f64],
-    pub y_values: &'a [f64],
+pub(crate) struct LinePlotSeries<'a> {
+    pub(crate) label: &'a str,
+    pub(crate) x_values: &'a [f64],
+    pub(crate) y_values: &'a [f64],
 }
 
 /// Render a quick-look line plot to a PNG file for fast QC.
@@ -39,7 +39,7 @@ pub struct LinePlotSeries<'a> {
 /// -------
 /// - `Result<()>`:
 ///     Ok when the plot is written.
-pub fn write_line_plot_png<P: AsRef<Path>>(
+pub(crate) fn write_line_plot_png<P: AsRef<Path>>(
     out_path: P,
     title: &str,
     x_label: &str,
@@ -80,7 +80,7 @@ pub fn write_line_plot_png<P: AsRef<Path>>(
 /// -------
 /// - `Result<()>`:
 ///     Ok when the plot is written.
-pub fn write_multi_line_plot_png<P: AsRef<Path>>(
+pub(crate) fn write_multi_line_plot_png<P: AsRef<Path>>(
     out_path: P,
     title: &str,
     x_label: &str,
@@ -122,7 +122,7 @@ pub fn write_multi_line_plot_png<P: AsRef<Path>>(
 /// -------
 /// - `Result<()>`:
 ///     Ok when the plot is written.
-pub fn write_line_plot_svg<P: AsRef<Path>>(
+pub(crate) fn write_line_plot_svg<P: AsRef<Path>>(
     out_path: P,
     title: &str,
     x_label: &str,

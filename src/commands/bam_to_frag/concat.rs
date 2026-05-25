@@ -20,7 +20,7 @@ use zstd::stream::read::Decoder;
 /// -------
 /// - result:
 ///     Ok on success, or an error explaining what failed.
-pub fn concat_frag_zst_to_gzip(
+pub(crate) fn concat_frag_zst_to_gzip(
     input_paths: &[PathBuf],
     output_path: &Path,
     has_header: bool,

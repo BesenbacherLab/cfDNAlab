@@ -8,7 +8,7 @@ use crate::shared::fragment::with_records_fragment::{
 
 use super::{InputItem, Pairer, PairingAdapter};
 
-pub struct WithRecordReadInfoPairer;
+pub(crate) struct WithRecordReadInfoPairer;
 
 impl Pairer for WithRecordReadInfoPairer {
     type Read = WithRecordReadInfo;
@@ -19,13 +19,13 @@ impl Pairer for WithRecordReadInfoPairer {
     }
 }
 
-pub fn fragments_with_records_from_bam<RIter, PF>(
+pub(crate) fn fragments_with_records_from_bam<RIter, PF>(
     records: RIter,
     include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
     fragment_filter: PF,
     unpaired: bool,
 ) -> PairingAdapter<
-    impl Iterator<Item = Result<InputItem<WithRecordsFragment>>>,
+    impl Iterator<Item = Result<InputItem>>,
     WithRecordReadInfoPairer,
     WithRecordReadInfo,
     WithRecordsFragment,

@@ -12,12 +12,12 @@ use std::io::BufReader;
 use std::path::PathBuf;
 
 #[derive(Clone)]
-pub struct CrossingPart {
-    pub idx: usize,
-    pub counts: GCCounts,
+pub(crate) struct CrossingPart {
+    pub(crate) idx: usize,
+    pub(crate) counts: GCCounts,
 }
 
-pub fn write_crossing_parts(
+pub(crate) fn write_crossing_parts(
     temp_dir: &PathBuf,
     tile_idx: u32,
     template: &GCCounts,
@@ -84,7 +84,7 @@ pub fn write_crossing_parts(
 /// -------
 /// - `(GCCounts, usize)`:
 ///     Sum of scaled windows and the number of windows contributing to that sum.
-pub fn stream_crossing_files(
+pub(crate) fn stream_crossing_files(
     mut files: Vec<PathBuf>,
     template: &GCCounts,
     opt: &GCConfig,

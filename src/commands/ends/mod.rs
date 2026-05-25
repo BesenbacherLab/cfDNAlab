@@ -1,9 +1,9 @@
-pub mod config;
-pub mod config_structs;
-pub mod counting;
-pub mod ends;
-pub mod motifs;
-pub mod output;
-pub mod tiling;
-pub mod write;
+pub(crate) mod config;
+pub(crate) mod config_structs;
+pub(crate) mod counting;
+pub(crate) mod ends;
+pub(crate) mod motifs;
+pub(crate) mod output;
+pub(crate) mod tiling;
+pub(crate) mod write;
 pub(crate) mod zarr;

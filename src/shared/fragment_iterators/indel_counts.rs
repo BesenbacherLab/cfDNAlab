@@ -13,8 +13,8 @@ use super::{InputItem, Pairer, PairingAdapter};
 
 /* WithIndelCounts pairing */
 
-pub struct WithIndelCountsPairer {
-    pub indel_mode: IndelMode,
+pub(crate) struct WithIndelCountsPairer {
+    pub(crate) indel_mode: IndelMode,
 }
 
 impl Pairer for WithIndelCountsPairer {
@@ -31,14 +31,14 @@ impl Pairer for WithIndelCountsPairer {
     }
 }
 
-pub type IndelCountsIter<'a> = PairingAdapter<
-    Box<dyn Iterator<Item = Result<InputItem<FragmentWithIndelCounts>>> + 'a>,
+pub(crate) type IndelCountsIter<'a> = PairingAdapter<
+    Box<dyn Iterator<Item = Result<InputItem>> + 'a>,
     WithIndelCountsPairer,
     IndelReadInfo,
     FragmentWithIndelCounts,
 >;
 
-pub fn fragments_with_indel_counts_from_bam<'a, RIter, PF>(
+pub(crate) fn fragments_with_indel_counts_from_bam<'a, RIter, PF>(
     records: RIter,
     include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
     indel_mode: IndelMode,
@@ -52,7 +52,7 @@ where
 {
     let pairer = WithIndelCountsPairer { indel_mode };
     // Map BAM records -> InputItem::BamRecord, converting read errors to anyhow with context
-    let mapped: Box<dyn Iterator<Item = Result<InputItem<FragmentWithIndelCounts>>> + 'a> =
+    let mapped: Box<dyn Iterator<Item = Result<InputItem>> + 'a> =
         Box::new(records.map(|res| res.context("reading BAM record").map(InputItem::BamRecord)));
 
     let mut adapter = PairingAdapter::new(
@@ -77,18 +77,4 @@ where
     }
 
     adapter
-}
-
-pub fn fragments_with_indel_counts_from_iter<'a, I, PF>(
-    frags: I,
-    fragment_filter: PF,
-) -> IndelCountsIter<'a>
-where
-    I: Iterator<Item = Result<FragmentWithIndelCounts>> + 'a,
-    PF: Fn(&FragmentWithIndelCounts) -> bool + Send + Sync + 'static,
-{
-    let mapped: Box<dyn Iterator<Item = Result<InputItem<FragmentWithIndelCounts>>> + 'a> =
-        Box::new(frags.map(|res| res.map(InputItem::Fragment)));
-
-    PairingAdapter::new(mapped, None::<WithIndelCountsPairer>).with_fragment_filter(fragment_filter)
 }

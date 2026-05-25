@@ -7,7 +7,7 @@ use anyhow::{Context, Result, bail};
 use fxhash::FxHashMap;
 
 /// Get window length and ensure it's the same for ALL windows.
-pub fn ensure_uniform_window_len(
+pub(crate) fn ensure_uniform_window_len(
     windows_by_chr: &FxHashMap<String, GroupedWindows>,
 ) -> Result<usize> {
     let mut reference_len: Option<usize> = None;
@@ -39,9 +39,9 @@ pub fn ensure_uniform_window_len(
 
 #[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
 pub(crate) struct MidpointIntervalStats {
-    pub loaded_after_chromosome_filtering: usize,
-    pub dropped_by_blacklist_prefilter: usize,
-    pub retained_for_counting: usize,
+    pub(crate) loaded_after_chromosome_filtering: usize,
+    pub(crate) dropped_by_blacklist_prefilter: usize,
+    pub(crate) retained_for_counting: usize,
 }
 
 /// Prepare midpoint windows for counting without changing the public output span.

@@ -25,7 +25,7 @@ const CHROM_NAME: &str = "chr1";
 const FRAGMENT_GAP: u32 = 20;
 
 /// Execute the visualize-selected-region command.
-pub fn run(cfg: &VisualizePositionsConfig) -> Result<()> {
+pub(crate) fn run(cfg: &VisualizePositionsConfig) -> Result<()> {
     let viz_cfg = cfg.build()?;
 
     fs::create_dir_all(&cfg.work_dir)

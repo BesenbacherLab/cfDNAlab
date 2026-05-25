@@ -1,14 +1,14 @@
 #[derive(Debug, Clone, Copy)]
-pub struct NearestGuardBounds {
+pub(crate) struct NearestGuardBounds {
     /// Inclusive 0-based start index for forward (left) k-mers.
-    pub max_forward_start: u64,
+    pub(crate) max_forward_start: u64,
     /// Inclusive 0-based anchor index (last base) for reverse (right) k-mers.
-    pub min_reverse_anchor: u64,
+    pub(crate) min_reverse_anchor: u64,
 }
 
 impl NearestGuardBounds {
     /// Inclusive 0-based start index for reverse k-mers.
-    pub fn min_reverse_start(&self, k_span: u32) -> u64 {
+    pub(crate) fn min_reverse_start(&self, k_span: u32) -> u64 {
         let span = k_span as u64;
         if span == 0 {
             0
@@ -23,7 +23,7 @@ impl NearestGuardBounds {
 ///
 /// Returns `None` when the k-mer span exceeds the fragment length or when either
 /// operand is zero.
-pub fn nearest_guard_bounds(length: u32, k_span: u32) -> Option<NearestGuardBounds> {
+pub(crate) fn nearest_guard_bounds(length: u32, k_span: u32) -> Option<NearestGuardBounds> {
     if length == 0 || k_span == 0 || k_span > length {
         return None;
     }

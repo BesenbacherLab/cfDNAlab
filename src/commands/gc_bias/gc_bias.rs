@@ -66,7 +66,7 @@ const COMMAND_TARGET: &str = "gc-bias";
 ///
 /// Returns `None` when the trimmed interval is empty, outside the loaded sequence,
 /// or lacks sufficient ACGT support.
-pub fn get_fragment_gc(
+pub(crate) fn get_fragment_gc(
     fragment_interval: Interval<u64>,
     sequence_interval: Interval<u64>,
     end_offset: u32,
@@ -124,7 +124,7 @@ fn fragment_assignment_interval(
     }
 }
 
-pub fn finalize_window_buffer(
+pub(crate) fn finalize_window_buffer(
     buf: &mut WindowState,
     gc_prefixes: &GCPrefixes,
     sequence_interval: Interval<u64>,
@@ -246,7 +246,7 @@ impl ReduceState {
     }
 }
 
-pub fn run(opt: &GCConfig) -> Result<()> {
+pub(crate) fn run(opt: &GCConfig) -> Result<()> {
     let start_time = Instant::now();
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
@@ -1281,7 +1281,7 @@ fn process_tile(
     Ok((tile_output, counter))
 }
 
-pub fn process_window_in_place(
+pub(crate) fn process_window_in_place(
     gc_counts: &mut GCCounts,
     opt: &GCConfig,
     avg_window_span: f64,
@@ -1313,7 +1313,7 @@ pub fn process_window_in_place(
     Ok(true)
 }
 
-pub fn process_window(
+pub(crate) fn process_window(
     mut gc_counts: GCCounts,
     opt: &GCConfig,
     avg_window_span: f64,
@@ -1324,7 +1324,7 @@ pub fn process_window(
     Ok(None)
 }
 
-pub fn mean_scale_per_length_array<S, M>(
+pub(crate) fn mean_scale_per_length_array<S, M>(
     x: &ArrayBase<S, Ix2>,
     pseudo_count: f64,
     support_mask: Option<&ArrayBase<M, Ix2>>,
@@ -1382,7 +1382,7 @@ where
     out
 }
 
-pub fn interpolate_masked_corrections(
+pub(crate) fn interpolate_masked_corrections(
     matrix: &mut Array2<f64>,
     support_mask: &Array2<bool>,
 ) -> Result<()> {
@@ -1431,7 +1431,7 @@ pub fn interpolate_masked_corrections(
 // Overall scaling
 // Elements that are marked as `false` in the support mask are
 // still scaled but do not contribute to the mean
-pub fn mean_scale_array<S, M>(
+pub(crate) fn mean_scale_array<S, M>(
     x: &ArrayBase<S, Ix2>,
     support_mask: Option<&ArrayBase<M, Ix2>>,
 ) -> Option<Array2<f64>>

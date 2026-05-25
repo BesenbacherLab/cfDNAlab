@@ -1,15 +1,16 @@
 use crate::commands::gc_bias::counting::calculate_gc_bin;
 use ndarray::{Array2, ArrayBase, Data, Ix2, Zip};
 
-pub struct StatsBySupportMask {
-    pub sum_for_supported: f64,
-    pub sum_for_unsupported: f64,
-    pub n_supported: u64,
-    pub n_unsupported: u64,
+#[allow(dead_code)]
+pub(crate) struct StatsBySupportMask {
+    pub(crate) sum_for_supported: f64,
+    pub(crate) sum_for_unsupported: f64,
+    pub(crate) n_supported: u64,
+    pub(crate) n_unsupported: u64,
 }
 
 /// Get count and value-sums for all supported/unsupported bins.
-pub fn stats_by_support_mask<S, M>(
+pub(crate) fn stats_by_support_mask<S, M>(
     matrix: &ArrayBase<S, Ix2>,
     support_mask: &ArrayBase<M, Ix2>,
 ) -> StatsBySupportMask
@@ -54,7 +55,7 @@ where
 ///
 ///   - The N most extreme GC bins on each side.
 ///   - The M shortest-length bins (often very sparse below ~70-100bp).
-pub fn build_extreme_bins_support_mask(
+pub(crate) fn build_extreme_bins_support_mask(
     shape: (usize, usize),
     extreme_gc_bins_per_side: usize,
     short_length_bins: usize,
@@ -90,7 +91,11 @@ pub fn build_extreme_bins_support_mask(
     mask
 }
 
-pub fn set_masked_entries_to_value(matrix: &mut Array2<f64>, mask: &Array2<bool>, fill_value: f64) {
+pub(crate) fn set_masked_entries_to_value(
+    matrix: &mut Array2<f64>,
+    mask: &Array2<bool>,
+    fill_value: f64,
+) {
     Zip::from(matrix).and(mask).for_each(|value, &is_valid| {
         if !is_valid {
             *value = fill_value;
@@ -109,7 +114,7 @@ pub fn set_masked_entries_to_value(matrix: &mut Array2<f64>, mask: &Array2<bool>
 /// The idea is that some elements are almost non-existent
 /// (e.g. 100% GC in an 800bp fragment interval), so no matter
 /// the number of sampled starts they will have almost no counts.
-pub fn create_support_mask_threshold_per_mb(
+pub(crate) fn create_support_mask_threshold_per_mb(
     counts: &[Array2<f64>],
     num_acgt_positions: u64,
     threshold_per_mb: f64,
@@ -123,20 +128,6 @@ pub fn create_support_mask_threshold_per_mb(
     let mut mask = Array2::from_elem(global_counts.dim(), true);
     for ((row, col), &value) in global_counts.indexed_iter() {
         mask[(row, col)] = value >= threshold;
-    }
-
-    Some(mask)
-}
-
-/// Create mask of usable elements. Elements are usable
-/// when they have a non-zero count in any of the windows.
-pub fn create_support_mask(counts: &[Array2<f64>]) -> Option<Array2<bool>> {
-    let global_counts = sum_arrays(counts)?;
-
-    // Create mask of usable elements
-    let mut mask = Array2::from_elem(global_counts.dim(), true);
-    for ((row, col), &value) in global_counts.indexed_iter() {
-        mask[(row, col)] = value > 0.;
     }
 
     Some(mask)
@@ -160,7 +151,7 @@ fn sum_arrays(arrays: &[Array2<f64>]) -> Option<Array2<f64>> {
     Some(sum)
 }
 
-pub fn build_theoretical_support_mask(
+pub(crate) fn build_theoretical_support_mask(
     length_min: usize,
     length_max: usize,
     gc_min: usize,

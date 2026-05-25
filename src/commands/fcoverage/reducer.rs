@@ -20,9 +20,9 @@ type StreamHeap = BinaryHeap<Reverse<(u64, usize)>>;
 /// contributions use the reducer rule that missing cross-index entries mean one contribution.
 #[derive(Debug, Clone)]
 pub(crate) struct TileAggregateTempFiles {
-    pub tile_index: u32,
-    pub partials_path: PathBuf,
-    pub cross_index_path: Option<PathBuf>,
+    pub(crate) tile_index: u32,
+    pub(crate) partials_path: PathBuf,
+    pub(crate) cross_index_path: Option<PathBuf>,
 }
 
 /// Parse one tab-delimited column with consistent missing/invalid diagnostics.
@@ -383,14 +383,14 @@ impl AggregateAccum {
 /// BED and fixed-size reducers both produce this same row shape, even though they recover the
 /// interval differently.
 #[derive(Debug, Clone, Copy)]
-pub struct ReducedAggregateRow {
-    pub idx: u64,
-    pub interval: Interval<u64>,
-    pub coverage_sum: f64,
-    pub eligible_positions: u64,
-    pub blacklisted_positions: u64,
-    pub nonzero_positions: u64,
-    pub coverage_sum_of_squares: f64,
+pub(crate) struct ReducedAggregateRow {
+    pub(crate) idx: u64,
+    pub(crate) interval: Interval<u64>,
+    pub(crate) coverage_sum: f64,
+    pub(crate) eligible_positions: u64,
+    pub(crate) blacklisted_positions: u64,
+    pub(crate) nonzero_positions: u64,
+    pub(crate) coverage_sum_of_squares: f64,
 }
 
 /// Build the BED interval lookup keyed by stable original row index.
@@ -788,8 +788,8 @@ pub(crate) fn reduce_size_rows(
 /// Sidecar type information for one tile
 #[derive(Default, Clone)]
 struct TileFiles {
-    pub partials_path: Option<PathBuf>,
-    pub cross_index_path: Option<PathBuf>,
+    pub(crate) partials_path: Option<PathBuf>,
+    pub(crate) cross_index_path: Option<PathBuf>,
 }
 
 #[cfg(test)]

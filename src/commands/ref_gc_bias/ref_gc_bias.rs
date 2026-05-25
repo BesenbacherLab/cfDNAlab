@@ -68,7 +68,7 @@ use tracing::info;
 
 const COMMAND_TARGET: &str = "ref-gc-bias";
 
-pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
+pub(crate) fn run(opt: &RefGCBiasConfig) -> Result<()> {
     let start_time = Instant::now();
     opt.fragment_lengths.validate()?;
     ensure!(

@@ -12,77 +12,69 @@ use crate::shared::interval::{Interval, TouchingMergePolicy, merge_sorted_interv
 
 /// Represents a fragment together with the reference segments that are safe for k-mer analysis.
 #[derive(Debug, Clone)]
-pub struct FragmentWithKmerSegments {
-    pub tid: i32,
-    pub interval: Interval<u32>,
-    pub segments: SmallVec<[Interval<u32>; 12]>,
-    pub gc_tag: GCTagValue,
+pub(crate) struct FragmentWithKmerSegments {
+    pub(crate) interval: Interval<u32>,
+    pub(crate) segments: SmallVec<[Interval<u32>; 12]>,
+    pub(crate) gc_tag: GCTagValue,
 }
 
 impl FragmentWithKmerSegments {
     #[inline]
-    pub fn start(&self) -> u32 {
+    pub(crate) fn start(&self) -> u32 {
         self.interval.start()
     }
 
     #[inline]
-    pub fn end(&self) -> u32 {
+    pub(crate) fn end(&self) -> u32 {
         self.interval.end()
     }
 
     #[inline]
-    pub fn len(&self) -> u32 {
+    pub(crate) fn len(&self) -> u32 {
         self.interval.len()
-    }
-
-    #[inline]
-    pub fn total_segment_len(&self) -> u32 {
-        self.segments
-            .iter()
-            .fold(0u32, |acc, segment| acc + segment.len())
     }
 }
 
 /// Captures per-read segment data together with indel information that influences k-mer counting.
 #[derive(Debug, Clone)]
-pub struct KmerSegmentedReadInfo {
-    pub tid: i32,
-    pub interval: Interval<u32>,
-    pub is_reverse: bool,
-    pub has_insertion: bool,
-    pub has_deletion: bool,
-    pub leading_insertion: bool,
-    pub trailing_insertion: bool,
-    pub ref_mapped_segments: Vec<(u32, u32)>,
-    pub gc_tag: GCTagValue,
+pub(crate) struct KmerSegmentedReadInfo {
+    pub(crate) tid: i32,
+    pub(crate) interval: Interval<u32>,
+    pub(crate) is_reverse: bool,
+    pub(crate) has_insertion: bool,
+    pub(crate) has_deletion: bool,
+    pub(crate) leading_insertion: bool,
+    pub(crate) trailing_insertion: bool,
+    pub(crate) ref_mapped_segments: Vec<(u32, u32)>,
+    pub(crate) gc_tag: GCTagValue,
 }
 
 impl KmerSegmentedReadInfo {
     /// Return the read's inclusive start on the reference.
     #[inline]
-    pub fn start(&self) -> u32 {
+    pub(crate) fn start(&self) -> u32 {
         self.interval.start()
     }
 
     /// Return the read's exclusive end on the reference.
     #[inline]
-    pub fn end(&self) -> u32 {
+    pub(crate) fn end(&self) -> u32 {
         self.interval.end()
     }
 
     /// Return the read's aligned reference span `[pos, end)`.
     #[inline]
-    pub fn aligned_interval(&self) -> Interval<u32> {
+    pub(crate) fn aligned_interval(&self) -> Interval<u32> {
         self.interval
     }
 
     #[inline]
-    pub fn has_indel(&self) -> bool {
+    pub(crate) fn has_indel(&self) -> bool {
         self.has_insertion || self.has_deletion
     }
 
     #[inline]
-    pub fn absolute_segments(&self) -> Vec<Interval<u32>> {
+    pub(crate) fn absolute_segments(&self) -> Vec<Interval<u32>> {
         if self.ref_mapped_segments.is_empty() {
             vec![self.aligned_interval()]
         } else {
@@ -100,7 +92,11 @@ impl KmerSegmentedReadInfo {
 
 impl KmerSegmentedReadInfo {
     /// Build read metadata, optionally collecting reference segments for indel-aware counting.
-    pub fn from_record(r: &Record, capture_segments: bool, gc_tag: Option<&[u8]>) -> Result<Self> {
+    pub(crate) fn from_record(
+        r: &Record,
+        capture_segments: bool,
+        gc_tag: Option<&[u8]>,
+    ) -> Result<Self> {
         // First pass: gather flags that drive pairing decisions and mate-gap handling.
         let mut has_insertion = false;
         let mut has_deletion = false;
@@ -281,7 +277,6 @@ fn collect_flat_fragment(
     }
 
     Some(FragmentWithKmerSegments {
-        tid: forward.tid,
         interval: Interval::new(span_start, span_end).ok()?,
         segments,
         gc_tag,
@@ -304,7 +299,7 @@ fn collect_flat_fragment(
 ///
 /// Returns `None` when the read pair fails orientation checks, is filtered out by `indel_mode`, or
 /// trimming removes all reference sequence.
-pub fn collect_fragment_with_kmer_segments(
+pub(crate) fn collect_fragment_with_kmer_segments(
     a: &KmerSegmentedReadInfo,
     b: &KmerSegmentedReadInfo,
     indel_mode: IndelMode,
@@ -420,7 +415,6 @@ pub fn collect_fragment_with_kmer_segments(
     }
 
     Some(FragmentWithKmerSegments {
-        tid: forward.tid,
         interval: Interval::new(span_start, span_end).ok()?,
         segments,
         gc_tag,
@@ -428,7 +422,7 @@ pub fn collect_fragment_with_kmer_segments(
 }
 
 /// Build a fragment with k-mer-safe segments from a single read (unpaired input).
-pub fn collect_fragment_with_kmer_segments_from_single_read(
+pub(crate) fn collect_fragment_with_kmer_segments_from_single_read(
     read: &KmerSegmentedReadInfo,
     indel_mode: IndelMode,
     end_offset: u32,
@@ -486,7 +480,6 @@ pub fn collect_fragment_with_kmer_segments_from_single_read(
     }
 
     Some(FragmentWithKmerSegments {
-        tid: read.tid,
         interval: Interval::new(span_start, span_end).ok()?,
         segments,
         gc_tag: read.gc_tag,

@@ -5,10 +5,10 @@ use std::collections::BTreeSet;
 
 /// Label validation helpers and reserved words.
 
-pub const RESERVED_LABEL_NONE: &str = "none";
-pub const MISSING_GROUP_LABEL: &str = "[NA]";
-pub const NO_NEAR_LABEL: &str = "[NONE]";
-pub const NO_NEAR_BIN_LABEL: &str = "[NO-NEAR]";
+pub(crate) const RESERVED_LABEL_NONE: &str = "none";
+pub(crate) const MISSING_GROUP_LABEL: &str = "[NA]";
+pub(crate) const NO_NEAR_LABEL: &str = "[NONE]";
+pub(crate) const NO_NEAR_BIN_LABEL: &str = "[NO-NEAR]";
 
 const RESERVED_LABELS: [&str; 6] = [
     "input",
@@ -20,7 +20,7 @@ const RESERVED_LABELS: [&str; 6] = [
 ];
 
 /// Return true if the label token is reserved.
-pub fn is_reserved_label(token: &str) -> bool {
+pub(crate) fn is_reserved_label(token: &str) -> bool {
     RESERVED_LABELS
         .iter()
         .any(|reserved| token.eq_ignore_ascii_case(reserved))
@@ -29,7 +29,7 @@ pub fn is_reserved_label(token: &str) -> bool {
 /// Validate a label token for user-defined labels.
 ///
 /// Tokens must be ASCII alphanumerics and cannot be reserved.
-pub fn validate_label_token(token: &str, context: &str) -> Result<(), String> {
+pub(crate) fn validate_label_token(token: &str, context: &str) -> Result<(), String> {
     if token.is_empty() {
         return Err(format!("{context} cannot be empty"));
     }
@@ -44,7 +44,7 @@ pub fn validate_label_token(token: &str, context: &str) -> Result<(), String> {
 
 /// Atomic label parts carried by each window.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub enum AtomicLabelPart {
+pub(crate) enum AtomicLabelPart {
     Input,
     NearWindowSide,
     NearName,
@@ -53,7 +53,7 @@ pub enum AtomicLabelPart {
 }
 
 impl AtomicLabelPart {
-    pub fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Input => "input",
             Self::NearWindowSide => "win-direction",
@@ -63,7 +63,7 @@ impl AtomicLabelPart {
         }
     }
 
-    pub fn from_token(token: &str) -> Option<Self> {
+    pub(crate) fn from_token(token: &str) -> Option<Self> {
         match token {
             "input" => Some(Self::Input),
             "win-direction" => Some(Self::NearWindowSide),
@@ -76,7 +76,7 @@ impl AtomicLabelPart {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
-pub enum LabelKey {
+pub(crate) enum LabelKey {
     /// Reference an atomic label part like `input` or `win-direction`.
     Atomic(AtomicLabelPart),
     /// Reference a named composition by index in the schema composition list.
@@ -92,7 +92,7 @@ pub enum LabelKey {
 /// Each part is either an atomic label or a reference to an earlier
 /// named composition in the schema.
 #[derive(Clone, Debug)]
-pub enum LabelPartRef {
+pub(crate) enum LabelPartRef {
     Atomic(AtomicLabelPart),
     Composition(usize),
 }
@@ -103,10 +103,10 @@ pub enum LabelPartRef {
 /// stays stable. The `depends_on` set tracks which atomic parts are required
 /// for optimization decisions during rendering.
 #[derive(Clone, Debug)]
-pub struct LabelComposition {
-    pub name: String,
-    pub parts: Vec<LabelPartRef>,
-    pub depends_on: BTreeSet<AtomicLabelPart>,
+pub(crate) struct LabelComposition {
+    pub(crate) name: String,
+    pub(crate) parts: Vec<LabelPartRef>,
+    pub(crate) depends_on: BTreeSet<AtomicLabelPart>,
 }
 
 /// Resolved schema for named compositions and their indices.
@@ -114,7 +114,7 @@ pub struct LabelComposition {
 /// This stores compositions in declaration order and provides a
 /// name-to-index lookup for fast resolution.
 #[derive(Clone, Debug, Default)]
-pub struct LabelSchema {
+pub(crate) struct LabelSchema {
     compositions: Vec<LabelComposition>,
     composition_by_name: FxHashMap<String, usize>,
 }
@@ -134,7 +134,7 @@ impl LabelSchema {
     /// -------
     /// - `schema`:
     ///     Schema with resolved part references and dependency sets.
-    pub fn new(specs: &[ComposeSpec]) -> AnyResult<Self> {
+    pub(crate) fn new(specs: &[ComposeSpec]) -> AnyResult<Self> {
         let mut schema = Self::default();
         for spec in specs {
             if AtomicLabelPart::from_token(&spec.name).is_some() {
@@ -183,7 +183,7 @@ impl LabelSchema {
     /// -------
     /// - `key`:
     ///     Resolved label key.
-    pub fn resolve_key(&self, token: &str) -> AnyResult<LabelKey> {
+    pub(crate) fn resolve_key(&self, token: &str) -> AnyResult<LabelKey> {
         if let Some(atomic) = AtomicLabelPart::from_token(token) {
             return Ok(LabelKey::Atomic(atomic));
         }
@@ -219,7 +219,7 @@ impl LabelSchema {
     /// -------
     /// - `keys`:
     ///     Resolved label keys in the same order.
-    pub fn resolve_keys(&self, tokens: &[String]) -> AnyResult<Vec<LabelKey>> {
+    pub(crate) fn resolve_keys(&self, tokens: &[String]) -> AnyResult<Vec<LabelKey>> {
         let mut keys = Vec::with_capacity(tokens.len());
         for token in tokens {
             keys.push(self.resolve_key(token)?);
@@ -235,24 +235,24 @@ impl LabelSchema {
     /// -------
     /// - `compositions`:
     ///     Slice of composition definitions.
-    pub fn compositions(&self) -> &[LabelComposition] {
+    pub(crate) fn compositions(&self) -> &[LabelComposition] {
         &self.compositions
     }
 }
 
 /// Atomic label tuple attached to a window.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct LabelTuple {
-    pub input: String,
+pub(crate) struct LabelTuple {
+    pub(crate) input: String,
     // TODO: Should be near_window_side?
-    pub near_side: Option<String>,
-    pub near_name: Option<String>,
-    pub bin: Option<String>,
-    pub cluster: Option<String>,
+    pub(crate) near_side: Option<String>,
+    pub(crate) near_name: Option<String>,
+    pub(crate) bin: Option<String>,
+    pub(crate) cluster: Option<String>,
 }
 
 impl LabelTuple {
-    pub fn new(input: String) -> Self {
+    pub(crate) fn new(input: String) -> Self {
         Self {
             input,
             near_side: None,
@@ -310,7 +310,10 @@ fn build_composition_values(tuple: &LabelTuple, compositions: &[LabelComposition
 /// - `values`:
 ///     Per-tuple composition values in schema order.
 #[inline]
-pub fn build_tuple_compositions(tuples: &[LabelTuple], schema: &LabelSchema) -> Vec<Vec<String>> {
+pub(crate) fn build_tuple_compositions(
+    tuples: &[LabelTuple],
+    schema: &LabelSchema,
+) -> Vec<Vec<String>> {
     tuples
         .iter()
         .map(|tuple| build_composition_values(tuple, schema.compositions()))
@@ -326,7 +329,7 @@ pub fn build_tuple_compositions(tuples: &[LabelTuple], schema: &LabelSchema) -> 
 /// ----------
 /// - `tuples`:
 ///     Label tuples to normalize.
-pub fn normalize_label_tuples(tuples: &mut Vec<LabelTuple>) {
+pub(crate) fn normalize_label_tuples(tuples: &mut Vec<LabelTuple>) {
     let mut seen: FxHashSet<LabelTuple> = FxHashSet::default();
     tuples.retain(|tuple| seen.insert(tuple.clone()));
 }
@@ -454,7 +457,7 @@ fn render_composition_label(
 /// -------
 /// - `label`:
 ///     Rendered label string for output or grouping.
-pub fn render_label_for_key(
+pub(crate) fn render_label_for_key(
     tuples: &[LabelTuple],
     tuple_compositions: &[Vec<String>],
     key: &LabelKey,

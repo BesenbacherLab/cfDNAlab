@@ -14,45 +14,40 @@ const SUPPORT_FLOOR: f64 = 1e-10;
 /// The same field can represent smoothed average coverage or a smoothed
 /// fragment count, depending on which command produced the raw stride value.
 #[derive(Debug, Clone, Copy)]
-pub struct StrideBin {
+pub(crate) struct StrideBin {
     /// Checked genomic span of the stride-bin
-    pub interval: Interval<u32>,
+    pub(crate) interval: Interval<u32>,
     /// Number of non-blacklisted bases that support the stride-bin value
-    pub eligible_positions: u32,
+    pub(crate) eligible_positions: u32,
     /// Eligible support as a fraction of the configured stride.
     ///
     /// This is precomputed when stride bins are loaded so smoothing can weight
     /// short final bins and partly blacklisted bins without recalculating it
     /// for every overlapping kernel position.
-    pub support_ratio: f64,
+    pub(crate) support_ratio: f64,
     /// Raw command-specific value for this stride bin.
     ///
     /// This is average coverage for `coverage-weights` and a fractional  
     /// fragment count for `fragment-count-weights`.
-    pub stride_value: f32,
+    pub(crate) stride_value: f32,
     /// Triangular weighted average of the stride values from the center and
     /// surrounding stride bins
-    pub smoothed_value: f32,
+    pub(crate) smoothed_value: f32,
     /// Multiplicative scaling factor for normalizing across the genome
-    pub scaling_factor: f32,
+    pub(crate) scaling_factor: f32,
 }
 
 impl StrideBin {
     /// Return the inclusive start coordinate of the stride-bin.
     #[inline]
-    pub fn start(&self) -> u32 {
+    pub(crate) fn start(&self) -> u32 {
         self.interval.start()
     }
 
     /// Return the exclusive end coordinate of the stride-bin.
     #[inline]
-    pub fn end(&self) -> u32 {
+    pub(crate) fn end(&self) -> u32 {
         self.interval.end()
-    }
-
-    /// Calculates the size (length) of the bin.
-    pub fn size(&self) -> u32 {
-        self.interval.len()
     }
 }
 
@@ -136,7 +131,7 @@ fn triangular_weights(half_window: usize) -> Vec<usize> {
 ///     Large window size; used only to derive the kernel radius.
 /// - stride:
 ///     Stride size; used only to derive the kernel radius.
-pub fn fill_triangular_overlap(bins: &mut Vec<StrideBin>, bin_size: u32, stride: u32) {
+pub(crate) fn fill_triangular_overlap(bins: &mut Vec<StrideBin>, bin_size: u32, stride: u32) {
     // Kernel radius in *stride-bins*
     // If radius is 0, no neighbors -> identity
     let half_window = (bin_size / stride).saturating_sub(1) as usize;
@@ -228,7 +223,7 @@ pub fn fill_triangular_overlap(bins: &mut Vec<StrideBin>, bin_size: u32, stride:
 /// -------
 /// - mean_before:
 ///     The global mean used for normalization (before scaling)
-pub fn normalize_weighted_average_overlap_by_global_mean(
+pub(crate) fn normalize_weighted_average_overlap_by_global_mean(
     bins_by_chr: &mut FxHashMap<String, Vec<StrideBin>>,
     length_weighted: bool,
     invert: bool,

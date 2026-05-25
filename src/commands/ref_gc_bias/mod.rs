@@ -1,3 +1,3 @@
-pub mod config;
-pub mod ref_gc_bias;
-pub mod zarr;
+pub(crate) mod config;
+pub(crate) mod ref_gc_bias;
+pub(crate) mod zarr;

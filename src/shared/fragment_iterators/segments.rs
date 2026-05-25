@@ -8,9 +8,9 @@ use crate::shared::fragment::segment_fragment::{
 
 use super::{InputItem, Pairer, PairingAdapter};
 
-pub struct WithSegmentsPairer {
-    pub trigger_min_gap_bp: u32,
-    pub include_inter_mate_gap: bool,
+pub(crate) struct WithSegmentsPairer {
+    pub(crate) trigger_min_gap_bp: u32,
+    pub(crate) include_inter_mate_gap: bool,
 }
 
 impl Pairer for WithSegmentsPairer {
@@ -22,7 +22,7 @@ impl Pairer for WithSegmentsPairer {
     }
 }
 
-pub fn fragments_with_segments_from_bam<RIter, PF>(
+pub(crate) fn fragments_with_segments_from_bam<RIter, PF>(
     records: RIter,
     include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
     trigger_min_gap_bp: u32,
@@ -31,7 +31,7 @@ pub fn fragments_with_segments_from_bam<RIter, PF>(
     fragment_filter: PF,
     unpaired: bool,
 ) -> PairingAdapter<
-    impl Iterator<Item = Result<InputItem<FragmentWithSegments>>>,
+    impl Iterator<Item = Result<InputItem>>,
     WithSegmentsPairer,
     SegmentedReadInfo,
     FragmentWithSegments,
@@ -69,21 +69,4 @@ where
     }
 
     adapter
-}
-
-pub fn fragments_with_segments_from_iter<I, PF>(
-    frags: I,
-    fragment_filter: PF,
-) -> PairingAdapter<
-    impl Iterator<Item = Result<InputItem<FragmentWithSegments>>>,
-    WithSegmentsPairer,
-    SegmentedReadInfo,
-    FragmentWithSegments,
->
-where
-    I: Iterator<Item = Result<FragmentWithSegments>>,
-    PF: Fn(&FragmentWithSegments) -> bool + Send + Sync + 'static,
-{
-    let mapped = frags.map(|res| res.map(InputItem::Fragment));
-    PairingAdapter::new(mapped, None::<WithSegmentsPairer>).with_fragment_filter(fragment_filter)
 }

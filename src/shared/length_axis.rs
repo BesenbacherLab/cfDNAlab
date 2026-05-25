@@ -25,7 +25,7 @@ enum LengthBinDefinition<'a> {
 /// edges and a lookup table from absolute fragment length to output column. Exact per-bp bins and
 /// wider bins therefore use the same column resolution path.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LengthAxis {
+pub(crate) struct LengthAxis {
     edges: Vec<u32>,
     length_to_bin: Vec<usize>,
     single_bp_bins: bool,
@@ -47,7 +47,7 @@ impl LengthAxis {
     /// -------
     /// - `LengthAxis`:
     ///   A resolved axis with O(1) length-to-column lookup.
-    pub fn new(edges: Vec<u32>) -> Result<Self> {
+    pub(crate) fn new(edges: Vec<u32>) -> Result<Self> {
         ensure!(
             edges.len() >= 2,
             "length bin edges must contain at least two values"
@@ -97,25 +97,25 @@ impl LengthAxis {
     /// Consecutive edge pairs define output columns. The interval for column `i` is
     /// `[edges[i], edges[i + 1])`.
     #[inline]
-    pub fn edges(&self) -> &[u32] {
+    pub(crate) fn edges(&self) -> &[u32] {
         &self.edges
     }
 
     /// Number of output length bins.
     #[inline]
-    pub fn num_bins(&self) -> usize {
+    pub(crate) fn num_bins(&self) -> usize {
         self.edges.len() - 1
     }
 
     /// Minimum included fragment length.
     #[inline]
-    pub fn min_fragment_length(&self) -> u32 {
+    pub(crate) fn min_fragment_length(&self) -> u32 {
         self.edges[0]
     }
 
     /// Maximum included fragment length.
     #[inline]
-    pub fn max_fragment_length(&self) -> u32 {
+    pub(crate) fn max_fragment_length(&self) -> u32 {
         *self.edges.last().expect("length edges checked non-empty") - 1
     }
 
@@ -124,7 +124,7 @@ impl LengthAxis {
     /// This uses the same lookup table as `bin_index()` and is intended for cheap inclusion checks
     /// before adding count mass.
     #[inline]
-    pub fn contains(&self, length: u32) -> bool {
+    pub(crate) fn contains(&self, length: u32) -> bool {
         self.bin_index(length as usize).is_some()
     }
 
@@ -134,14 +134,14 @@ impl LengthAxis {
     /// in gaps. Gaps are not produced by the current resolver, but the sentinel keeps the lookup
     /// robust if construction changes later.
     #[inline]
-    pub fn bin_index(&self, length: usize) -> Option<usize> {
+    pub(crate) fn bin_index(&self, length: usize) -> Option<usize> {
         let bin_index = *self.length_to_bin.get(length)?;
         (bin_index != usize::MAX).then_some(bin_index)
     }
 
     /// Whether every length bin has width 1 bp.
     #[inline]
-    pub fn is_single_bp_bins(&self) -> bool {
+    pub(crate) fn is_single_bp_bins(&self) -> bool {
         self.single_bp_bins
     }
 

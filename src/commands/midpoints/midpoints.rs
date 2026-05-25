@@ -91,7 +91,7 @@ const DENSE_PROFILE_SIZE_WARNING_BYTES: usize = 50 * 1_000_000_000;
 /// ------
 /// - Returns an error if any input cannot be read, the grouped BED is invalid, or writing the
 ///   outputs fails.
-pub fn run(opt: &MidpointsConfig) -> Result<()> {
+pub(crate) fn run(opt: &MidpointsConfig) -> Result<()> {
     let start_time = Instant::now();
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
@@ -961,7 +961,7 @@ fn process_tile(
 ///     `Some((sites, fetch_span))` when at least one midpoint site overlaps the tile and a
 ///     non-empty fetch interval remains after clamping. `None` when the tile has no overlapping
 ///     sites or the clamped fetch interval is empty.
-pub fn get_overlapping_sites_and_adapt_fetch_to_extremes(
+pub(crate) fn get_overlapping_sites_and_adapt_fetch_to_extremes(
     grouped_windows: &GroupedWindows,
     tile_span: Option<&TileWindowSpan>,
     tile: &Tile,

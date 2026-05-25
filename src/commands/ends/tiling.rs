@@ -22,10 +22,9 @@ use std::{
 /// Each parallel tile writes its sparse counts to disk and returns one of these
 /// structs so the outer reducer can later merge the files and combine the
 /// command statistics.
-pub struct TileResult {
-    pub chr: String,
-    pub counts_path: PathBuf,
-    pub counter: EndsCounters,
+pub(crate) struct TileResult {
+    pub(crate) counts_path: PathBuf,
+    pub(crate) counter: EndsCounters,
 }
 
 /// Persist per-tile end-motif counts so they can be merged after parallel tile processing.
@@ -41,7 +40,7 @@ pub struct TileResult {
 /// -------
 /// - `Result<()>`:
 ///   `Ok(())` after the tile payload has been flushed to disk
-pub fn serialize_tile_counts(path: &Path, payload: &[TileWindowEndCounts]) -> Result<()> {
+pub(crate) fn serialize_tile_counts(path: &Path, payload: &[TileWindowEndCounts]) -> Result<()> {
     let file = File::create(path)
         .with_context(|| format!("creating tile counts file: {}", path.display()))?;
     let mut writer = BufWriter::with_capacity(512 * 1024, file);
@@ -66,7 +65,7 @@ pub fn serialize_tile_counts(path: &Path, payload: &[TileWindowEndCounts]) -> Re
 /// -------
 /// - `Result<Vec<TileWindowEndCounts>>`:
 ///   The decoded sparse tile payload
-pub fn deserialize_tile_counts(path: &Path) -> Result<Vec<TileWindowEndCounts>> {
+pub(crate) fn deserialize_tile_counts(path: &Path) -> Result<Vec<TileWindowEndCounts>> {
     let file = File::open(path)
         .with_context(|| format!("opening tile counts file: {}", path.display()))?;
     let mut reader = BufReader::with_capacity(512 * 1024, file);
@@ -85,7 +84,7 @@ pub fn deserialize_tile_counts(path: &Path) -> Result<Vec<TileWindowEndCounts>> 
 /// -------
 /// - `Vec<TileWindowEndCounts>`:
 ///   Stable, sorted payload ready for serialization
-pub fn build_tile_payload(
+pub(crate) fn build_tile_payload(
     counts_by_window: FxHashMap<u64, EndMotifCounts>,
 ) -> Vec<TileWindowEndCounts> {
     let mut payload: Vec<TileWindowEndCounts> = counts_by_window
@@ -135,7 +134,7 @@ pub fn build_tile_payload(
 /// -------
 /// - `Result<()>`:
 ///   `Ok(())` after all counts have been merged
-pub fn merge_tile_payload(
+pub(crate) fn merge_tile_payload(
     merged: &mut EndCountsByWindow,
     tile_payload: Vec<TileWindowEndCounts>,
 ) -> Result<()> {

@@ -112,7 +112,7 @@ fn outside_kmer_clip_strategy_warning(
 /// Errors:
 /// - Propagates IO and parsing errors when reading inputs or writing results, aborting the run on
 ///   the first failure.
-pub fn run(opt: &EndsConfig) -> Result<()> {
+pub(crate) fn run(opt: &EndsConfig) -> Result<()> {
     let start_time = Instant::now();
     opt.fragment_lengths.validate()?;
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
@@ -1092,7 +1092,6 @@ fn process_tile(
     serialize_tile_counts(&counts_path, &payload)?;
 
     Ok(Some(TileResult {
-        chr: tile.chr.clone(),
         counts_path,
         counter,
     }))

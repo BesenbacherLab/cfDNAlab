@@ -14,10 +14,10 @@ use super::{InputItem, Pairer, PairingAdapter};
 /* Kmer segments pairing */
 
 #[derive(Clone, Copy)]
-pub struct KmerSegmentsPairer {
-    pub indel_mode: IndelMode,
-    pub include_inter_mate_gap: bool,
-    pub end_offset: u32,
+pub(crate) struct KmerSegmentsPairer {
+    pub(crate) indel_mode: IndelMode,
+    pub(crate) include_inter_mate_gap: bool,
+    pub(crate) end_offset: u32,
 }
 
 impl Pairer for KmerSegmentsPairer {
@@ -35,7 +35,7 @@ impl Pairer for KmerSegmentsPairer {
     }
 }
 
-pub fn fragments_with_kmer_segments_from_bam<RIter, PF>(
+pub(crate) fn fragments_with_kmer_segments_from_bam<RIter, PF>(
     records: RIter,
     include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
     indel_mode: IndelMode,
@@ -45,7 +45,7 @@ pub fn fragments_with_kmer_segments_from_bam<RIter, PF>(
     fragment_filter: PF,
     unpaired: bool,
 ) -> PairingAdapter<
-    impl Iterator<Item = Result<InputItem<FragmentWithKmerSegments>>>,
+    impl Iterator<Item = Result<InputItem>>,
     KmerSegmentsPairer,
     KmerSegmentedReadInfo,
     FragmentWithKmerSegments,

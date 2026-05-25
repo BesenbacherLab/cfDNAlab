@@ -6,7 +6,7 @@ const PARALLEL_SORT_MIN_LEN: usize = 50_000;
 
 /// Canonical sort orders used throughout the prepare_windows pipeline.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum WindowSortOrder {
+pub(crate) enum WindowSortOrder {
     /// Group-first ordering used by minimum-distance filtering/deduplication `(group_key, chrom, start, end)`.
     GroupChromStartEnd,
     /// Genomic ordering that uses `group_key` as a tie-breaker `(chrom, start, end, group_key)`.
@@ -16,7 +16,7 @@ pub enum WindowSortOrder {
 }
 
 /// Sort a slice of windows in place according to the requested ordering.
-pub fn sort_windows_in_place(
+pub(crate) fn sort_windows_in_place(
     windows: &mut [Window],
     order: WindowSortOrder,
     coord_set: CoordinateSet,
@@ -66,11 +66,4 @@ pub fn sort_windows_in_place(
             }
         }
     }
-}
-
-/// Convenience helper that consumes and returns a sorted vector.
-#[inline]
-pub fn sort_windows_vec(mut windows: Vec<Window>, order: WindowSortOrder) -> Vec<Window> {
-    sort_windows_in_place(&mut windows, order, CoordinateSet::Resized);
-    windows
 }

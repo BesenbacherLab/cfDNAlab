@@ -111,7 +111,9 @@ impl ScalingWeightsCommand {
 /// ------
 /// - Returns an error if internal `fcoverage` fails, the intermediate TSV is malformed, or the
 ///   final scaling output cannot be written.
-pub fn run(opt: &crate::commands::coverage_weights::config::CoverageWeightsConfig) -> Result<()> {
+pub(crate) fn run(
+    opt: &crate::commands::coverage_weights::config::CoverageWeightsConfig,
+) -> Result<()> {
     run_with_fcoverage(
         &opt.shared,
         false,

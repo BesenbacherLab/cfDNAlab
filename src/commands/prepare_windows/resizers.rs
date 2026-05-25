@@ -41,7 +41,7 @@ use crate::shared::interval::Interval;
 /// -------
 /// - out:
 ///     Transformed checked interval, or `None` when the chosen policy drops it.
-pub fn apply_size_transform(
+pub(crate) fn apply_size_transform(
     start: u32,
     end: u32,
     chrom_size_bp: Option<u32>,

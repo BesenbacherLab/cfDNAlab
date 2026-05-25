@@ -1,6 +1,7 @@
 use crate::shared::interval::{
-    IndexedInterval, Interval, ScoredInterval, Span, TouchingMergePolicy, push_merged_interval,
+    IndexedInterval, Interval, TouchingMergePolicy, push_merged_interval,
 };
+use crate::shared::interval::{ScoredInterval, Span};
 use crate::shared::io::open_text_reader;
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::{FxHashMap, FxHashSet};
@@ -30,7 +31,7 @@ use std::{
 /// Returns
 /// -------
 ///  - Mapping of 'chromosome -> sorted window coordinates (start, end, original window index)'.
-pub fn load_windows_from_bed(
+pub(crate) fn load_windows_from_bed(
     bed: impl AsRef<Path>,
     chromosomes: Option<&[String]>,
     filter_fn: Option<&dyn Fn(&str, u64, u64) -> bool>,
@@ -218,9 +219,10 @@ fn start_end_are_valid_coordinates(start_str: &str, end_str: &str) -> Option<()>
 /// - `windows` should be sorted by start (ascending order).
 /// - Coordinates are half-open: `[start, end)`.
 #[derive(Debug, Clone)]
-pub struct Windows {
-    pub windows: Vec<IndexedInterval<u64>>,
+pub(crate) struct Windows {
+    pub(crate) windows: Vec<IndexedInterval<u64>>,
     /// Cached outer envelope across all windows.
+    #[allow(dead_code)]
     span: Span<i64>,
 }
 
@@ -228,7 +230,7 @@ impl Windows {
     /// Construct from any window list (may be unsorted/overlapping).
     /// Ensures start- and end-sorted order (does not retain initial order)
     /// and computes span as `min(start)` .. `max(end)`.
-    pub fn new(mut windows: Vec<IndexedInterval<u64>>) -> Self {
+    pub(crate) fn new(mut windows: Vec<IndexedInterval<u64>>) -> Self {
         windows.sort_unstable_by_key(|window| (window.start(), window.end()));
         Windows::from_sorted(windows)
     }
@@ -237,13 +239,13 @@ impl Windows {
     ///
     /// Use this when a loader or tiny fixture still naturally produces tuples.
     /// Prefer `new` and `from_sorted` when the windows are already checked.
-    pub fn from_tuples(windows: &[(u64, u64, u64)]) -> crate::Result<Self> {
+    pub(crate) fn from_tuples(windows: &[(u64, u64, u64)]) -> crate::Result<Self> {
         Ok(Self::new(IndexedInterval::from_tuples(windows)?))
     }
 
     /// Construct from a list you guarantee is already sorted by start (non-decreasing).
     /// Computes span as `min(start)` .. `max(end)` (robust to irregular ends).
-    pub fn from_sorted(indexed_windows: Vec<IndexedInterval<u64>>) -> Self {
+    pub(crate) fn from_sorted(indexed_windows: Vec<IndexedInterval<u64>>) -> Self {
         debug_assert!(
             is_sorted_by_start_indexed(&indexed_windows),
             "windows must be start-sorted"
@@ -267,39 +269,41 @@ impl Windows {
 
     /// Number of windows.
     #[inline]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.windows.len()
     }
 
     /// True if there are no windows.
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.windows.is_empty()
     }
 
     /// Borrow the underlying windows.
     #[inline]
-    pub fn as_slice(&self) -> &[IndexedInterval<u64>] {
+    pub(crate) fn as_slice(&self) -> &[IndexedInterval<u64>] {
         &self.windows
     }
 
     /// Consume and return the inner vector.
     #[inline]
-    pub fn into_inner(self) -> Vec<IndexedInterval<u64>> {
+    pub(crate) fn into_inner(self) -> Vec<IndexedInterval<u64>> {
         self.windows
     }
 
     /// Span start (inclusive).
     /// This is the most-left coordinate covered by any of the windows.
+    #[allow(dead_code)]
     #[inline]
-    pub fn span_start(&self) -> i64 {
+    pub(crate) fn span_start(&self) -> i64 {
         self.span.start()
     }
 
     /// Span end (exclusive).
     /// This is the most-right coordinate covered by any of the windows.
+    #[allow(dead_code)]
     #[inline]
-    pub fn span_end(&self) -> i64 {
+    pub(crate) fn span_end(&self) -> i64 {
         self.span.end()
     }
 
@@ -311,8 +315,9 @@ impl Windows {
     ///
     /// There are no guarantees that every position inside this span is covered
     /// by a window.
+    #[allow(dead_code)]
     #[inline]
-    pub fn span(&self) -> Span<i64> {
+    pub(crate) fn span(&self) -> Span<i64> {
         self.span
     }
 
@@ -334,7 +339,7 @@ impl Windows {
     /// - (merged, next_start_idx):
     ///     - `merged`: New `Windows` with merged, start-sorted `(start, end, new_idx)` tuples.
     ///     - `next_start_idx`: `start_idx + merged.len()`; pass this to the next chromosome.
-    pub fn into_flattened_reindexed(self, start_idx: u64) -> (Windows, u64) {
+    pub(crate) fn into_flattened_reindexed(self, start_idx: u64) -> (Windows, u64) {
         let mut merged_windows = self.windows; // Take ownership; reuse allocation
         if merged_windows.is_empty() {
             return (
@@ -405,22 +410,6 @@ impl Windows {
             next_idx,
         )
     }
-
-    /// Borrowing variant: leaves `self` intact and returns a flattened copy.
-    ///
-    /// Parameters
-    /// ----------
-    /// - start_idx:
-    ///     Starting index for the first merged interval.
-    ///
-    /// Returns
-    /// -------
-    /// - (merged, next_start_idx):
-    ///     See `into_flattened_reindexed`.
-    pub fn flattened_reindexed(&self, start_idx: u64) -> (Windows, u64) {
-        // Clone once, then consume in the main routine to avoid duplicating logic.
-        self.clone().into_flattened_reindexed(start_idx)
-    }
 }
 
 fn is_sorted_by_start_indexed(ws: &[IndexedInterval<u64>]) -> bool {
@@ -428,6 +417,7 @@ fn is_sorted_by_start_indexed(ws: &[IndexedInterval<u64>]) -> bool {
         .all(|window_pair| window_pair[0].start() <= window_pair[1].start())
 }
 
+#[allow(dead_code)]
 #[inline]
 fn is_sorted_by_start_with_scores(ws: &[ScoredInterval<u64>]) -> bool {
     ws.windows(2)
@@ -462,7 +452,7 @@ const GROUPED_BED_STRAND_SAMPLE_ROWS: usize = 200;
 ///  - Mapping of 'group index -> group name'.
 ///
 ///  - Optional strand-detection metadata when `read_strands` is enabled.
-pub fn load_grouped_windows_from_bed(
+pub(crate) fn load_grouped_windows_from_bed(
     bed: impl AsRef<Path>,
     chromosomes: Option<&[String]>,
     read_strands: bool,
@@ -714,7 +704,7 @@ pub fn load_grouped_windows_from_bed(
 
 /// Site orientation read from a BED file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Strand {
+pub(crate) enum Strand {
     /// Site has no directional interpretation.
     Unstranded,
     /// Site is forward-oriented.
@@ -753,7 +743,7 @@ fn parse_bed_strand_token(value: &str, lineno: usize, column_number: usize) -> R
 
 /// Strand column found during grouped BED sampling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GroupedBedStrandColumn {
+pub(crate) enum GroupedBedStrandColumn {
     Column5,
     Column6,
 }
@@ -765,10 +755,10 @@ pub enum GroupedBedStrandColumn {
 /// when a wide BED-like file was treated as unstranded because column 6 did not contain `+`, `-`,
 /// or `.`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GroupedBedStrandDetection {
-    pub sampled_rows: usize,
-    pub column: Option<GroupedBedStrandColumn>,
-    pub saw_column6: bool,
+pub(crate) struct GroupedBedStrandDetection {
+    pub(crate) sampled_rows: usize,
+    pub(crate) column: Option<GroupedBedStrandColumn>,
+    pub(crate) saw_column6: bool,
 }
 
 /// Return whether a BED line should be ignored before field parsing.
@@ -900,10 +890,11 @@ fn parse_grouped_bed_strand_value(
 /// - Coordinates are half-open: `[start, end)`.
 /// - `strands`, when present, is one-to-one with `windows` and uses the same order.
 #[derive(Debug, Clone)]
-pub struct GroupedWindows {
-    pub windows: Vec<IndexedInterval<u64>>, // (start, end, group idx)
-    pub strands: Option<Vec<Strand>>,       // strands in the same order
+pub(crate) struct GroupedWindows {
+    pub(crate) windows: Vec<IndexedInterval<u64>>, // (start, end, group idx)
+    pub(crate) strands: Option<Vec<Strand>>,       // strands in the same order
     /// Cached outer envelope across all windows.
+    #[allow(dead_code)]
     span: Span<i64>,
 }
 
@@ -911,7 +902,10 @@ impl GroupedWindows {
     /// Construct from any window list (may be unsorted/overlapping).
     /// Ensures start- and end-sorted order (does not retain initial order)
     /// and computes span as `min(start)` .. `max(end)`.
-    pub fn new(mut windows: Vec<IndexedInterval<u64>>, strands: Option<Vec<Strand>>) -> Self {
+    pub(crate) fn new(
+        mut windows: Vec<IndexedInterval<u64>>,
+        strands: Option<Vec<Strand>>,
+    ) -> Self {
         match strands {
             Some(strands) => {
                 assert_eq!(
@@ -937,14 +931,15 @@ impl GroupedWindows {
     ///
     /// Use this when grouped BED parsing still works in tuple space.
     /// Prefer `new` and `from_sorted` when the windows are already checked.
-    pub fn from_tuples(
+    #[allow(dead_code)]
+    pub(crate) fn from_tuples(
         windows: &[(u64, u64, u64)],
         strands: Option<Vec<Strand>>,
     ) -> crate::Result<Self> {
         Ok(Self::new(IndexedInterval::from_tuples(windows)?, strands))
     }
 
-    pub fn mut_windows_and_strands(
+    pub(crate) fn mut_windows_and_strands(
         &mut self,
     ) -> (&mut Vec<IndexedInterval<u64>>, &mut Option<Vec<Strand>>) {
         (&mut self.windows, &mut self.strands)
@@ -952,7 +947,7 @@ impl GroupedWindows {
 
     /// Construct from a list you guarantee is already sorted by start (non-decreasing).
     /// Computes span as `min(start)` .. `max(end)` (robust to irregular ends).
-    pub fn from_sorted(
+    pub(crate) fn from_sorted(
         grouped_windows: Vec<IndexedInterval<u64>>,
         strands: Option<Vec<Strand>>,
     ) -> Self {
@@ -987,39 +982,42 @@ impl GroupedWindows {
 
     /// Number of windows.
     #[inline]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.windows.len()
     }
 
     /// True if there are no windows.
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.windows.is_empty()
     }
 
     /// Borrow the underlying windows.
     #[inline]
-    pub fn windows_as_slice(&self) -> &[IndexedInterval<u64>] {
+    pub(crate) fn windows_as_slice(&self) -> &[IndexedInterval<u64>] {
         &self.windows
     }
 
     /// Consume and return the inner vector.
+    #[allow(dead_code)]
     #[inline]
-    pub fn into_inner(self) -> Vec<IndexedInterval<u64>> {
+    pub(crate) fn into_inner(self) -> Vec<IndexedInterval<u64>> {
         self.windows
     }
 
     /// Span start (inclusive).
     /// This is the most-left coordinate covered by any of the windows.
+    #[allow(dead_code)]
     #[inline]
-    pub fn span_start(&self) -> i64 {
+    pub(crate) fn span_start(&self) -> i64 {
         self.span.start()
     }
 
     /// Span end (exclusive).
     /// This is the most-right coordinate covered by any of the windows.
+    #[allow(dead_code)]
     #[inline]
-    pub fn span_end(&self) -> i64 {
+    pub(crate) fn span_end(&self) -> i64 {
         self.span.end()
     }
 
@@ -1031,14 +1029,16 @@ impl GroupedWindows {
     ///
     /// There are no guarantees that every position inside this span is covered
     /// by a window.
+    #[allow(dead_code)]
     #[inline]
-    pub fn span(&self) -> Span<i64> {
+    pub(crate) fn span(&self) -> Span<i64> {
         self.span
     }
 
     /// The intervals have strand information.
+    #[allow(dead_code)]
     #[inline]
-    pub fn has_strands(&self) -> bool {
+    pub(crate) fn has_strands(&self) -> bool {
         self.strands.is_some()
     }
 }
@@ -1058,11 +1058,11 @@ impl Default for GroupedWindows {
 /// Each stored segment carries a stable `segment_idx` in the `IndexedInterval`, while the
 /// `segment_idx_to_group_idx` map preserves the grouped row identity.
 #[derive(Debug, Clone)]
-pub struct GroupedCoverageLayout {
-    pub segments_by_chr: FxHashMap<String, Windows>,
-    pub segment_idx_to_group_idx: FxHashMap<u64, u64>,
-    pub group_span_positions: FxHashMap<u64, u64>,
-    pub group_idx_to_name: FxHashMap<u64, String>,
+pub(crate) struct GroupedCoverageLayout {
+    pub(crate) segments_by_chr: FxHashMap<String, Windows>,
+    pub(crate) segment_idx_to_group_idx: FxHashMap<u64, u64>,
+    pub(crate) group_span_positions: FxHashMap<u64, u64>,
+    pub(crate) group_idx_to_name: FxHashMap<u64, String>,
 }
 
 /// Build a grouped coverage layout for grouped `fcoverage` outputs.
@@ -1085,7 +1085,7 @@ pub struct GroupedCoverageLayout {
 /// -------
 /// - `layout`:
 ///     Per-chromosome segments plus stable maps back to the grouped row identity.
-pub fn build_grouped_coverage_layout(
+pub(crate) fn build_grouped_coverage_layout(
     grouped_windows_by_chr: &FxHashMap<String, GroupedWindows>,
     group_idx_to_name: &FxHashMap<u64, String>,
     chromosomes: &[String],
@@ -1223,7 +1223,7 @@ fn merged_group_segments(
 /// - Output has a header: `group_idx\tgroup_name`
 /// - Rows are sorted by `group_idx` ascending for determinism.
 /// - Creates the parent directory if needed.
-pub fn write_group_idx_to_name_tsv<P: AsRef<Path>>(
+pub(crate) fn write_group_idx_to_name_tsv<P: AsRef<Path>>(
     output_path: P,
     group_idx_to_name: &FxHashMap<u64, String>,
 ) -> Result<()> {
@@ -1275,7 +1275,8 @@ pub fn write_group_idx_to_name_tsv<P: AsRef<Path>>(
 /// Returns
 /// -------
 ///  - Mapping of 'chromosome -> sorted window coordinates (start, end, score, original index)'.
-pub fn load_scored_windows_from_bed(
+#[allow(dead_code)]
+pub(crate) fn load_scored_windows_from_bed(
     bed: impl AsRef<Path>,
     chromosomes: Option<&[String]>,
     filter_fn: Option<&dyn Fn(&str, u64, u64, f64) -> bool>,
@@ -1468,34 +1469,36 @@ pub fn load_scored_windows_from_bed(
 /// - `windows` should be sorted by start (ascending order).
 /// - Coordinates are half-open: `[start, end)`.
 #[derive(Debug, Clone)]
-pub struct ScoredWindows {
-    pub windows: Vec<ScoredInterval<u64>>, // (start, end, original_idx, score)
+#[allow(dead_code)]
+pub(crate) struct ScoredWindows {
+    pub(crate) windows: Vec<ScoredInterval<u64>>, // (start, end, original_idx, score)
     /// Cached outer envelope across all windows.
     span: Span<i64>,
 }
 
+#[allow(dead_code)]
 impl ScoredWindows {
     /// Construct from any window list (may be unsorted/overlapping).
     /// Ensures start- and end-sorted order (does not retain initial order)
     /// and computes span as `min(start)` .. `max(end)`.
-    pub fn new(mut windows: Vec<ScoredInterval<u64>>) -> Self {
+    pub(crate) fn new(mut windows: Vec<ScoredInterval<u64>>) -> Self {
         windows.sort_unstable_by_key(|window| (window.start(), window.end()));
         ScoredWindows::from_sorted(windows)
     }
 
     /// Construct from raw `(start, end, idx, score)` tuples.
-    pub fn from_tuples(windows: &[(u64, u64, u64, f64)]) -> crate::Result<Self> {
+    pub(crate) fn from_tuples(windows: &[(u64, u64, u64, f64)]) -> crate::Result<Self> {
         Ok(Self::new(ScoredInterval::from_tuples(windows)?))
     }
 
     /// Convert to Windows collection by dropping the score.
-    pub fn to_windows(&self) -> Windows {
+    pub(crate) fn to_windows(&self) -> Windows {
         Windows::from_sorted(self.windows.iter().map(|window| window.window).collect())
     }
 
     /// Construct from a list you guarantee is already sorted by start (non-decreasing).
     /// Computes span as `min(start)` .. `max(end)` (robust to irregular ends).
-    pub fn from_sorted(windows: Vec<ScoredInterval<u64>>) -> Self {
+    pub(crate) fn from_sorted(windows: Vec<ScoredInterval<u64>>) -> Self {
         debug_assert!(
             is_sorted_by_start_with_scores(&windows),
             "windows must be start-sorted"
@@ -1512,39 +1515,39 @@ impl ScoredWindows {
 
     /// Number of windows.
     #[inline]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.windows.len()
     }
 
     /// True if there are no windows.
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.windows.is_empty()
     }
 
     /// Borrow the underlying windows.
     #[inline]
-    pub fn as_slice(&self) -> &[ScoredInterval<u64>] {
+    pub(crate) fn as_slice(&self) -> &[ScoredInterval<u64>] {
         &self.windows
     }
 
     /// Consume and return the inner vector.
     #[inline]
-    pub fn into_inner(self) -> Vec<ScoredInterval<u64>> {
+    pub(crate) fn into_inner(self) -> Vec<ScoredInterval<u64>> {
         self.windows
     }
 
     /// Span start (inclusive).
     /// This is the most-left coordinate covered by any of the windows.
     #[inline]
-    pub fn span_start(&self) -> i64 {
+    pub(crate) fn span_start(&self) -> i64 {
         self.span.start()
     }
 
     /// Span end (exclusive).
     /// This is the most-right coordinate covered by any of the windows.
     #[inline]
-    pub fn span_end(&self) -> i64 {
+    pub(crate) fn span_end(&self) -> i64 {
         self.span.end()
     }
 
@@ -1557,7 +1560,7 @@ impl ScoredWindows {
     /// There are no guarantees that every position inside this span is covered
     /// by a window.
     #[inline]
-    pub fn span(&self) -> Span<i64> {
+    pub(crate) fn span(&self) -> Span<i64> {
         self.span
     }
 }
@@ -1565,7 +1568,8 @@ impl ScoredWindows {
 /* Other utilities */
 
 /// Check whether line looks like a header or an observation
-pub fn line_looks_like_header(line: &str, separator: char) -> bool {
+#[cfg(feature = "cmd_prepare_windows")]
+pub(crate) fn line_looks_like_header(line: &str, separator: char) -> bool {
     let trimmed = line.trim_start();
     if trimmed.starts_with('#') {
         return true;
@@ -1596,7 +1600,8 @@ pub fn line_looks_like_header(line: &str, separator: char) -> bool {
 /// -------
 /// - has_header:
 ///     True if a header is likely present.
-pub fn detect_header(path: &Path, separator: char) -> Result<bool> {
+#[cfg(feature = "cmd_prepare_windows")]
+pub(crate) fn detect_header(path: &Path, separator: char) -> Result<bool> {
     let mut reader = open_text_reader(path)?;
     let mut line = String::new();
     loop {

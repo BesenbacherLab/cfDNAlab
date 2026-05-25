@@ -14,12 +14,12 @@ const MID_EXAMPLE: &str = "--positions -10..10";
 
 /// Error type used when the range grammar does not match expectations.
 #[derive(Debug)]
-pub struct RangeParseError {
+pub(crate) struct RangeParseError {
     message: String,
 }
 
 impl RangeParseError {
-    pub fn new(message: impl Into<String>, example: &'static str) -> Self {
+    pub(crate) fn new(message: impl Into<String>, example: &'static str) -> Self {
         let mut msg = message.into();
         if !msg.contains("Example:") {
             msg.push_str(" Example: ");
@@ -38,14 +38,14 @@ impl fmt::Display for RangeParseError {
 impl Error for RangeParseError {}
 
 #[derive(Debug, Clone)]
-pub struct PositionalSelectionSpec {
-    pub frame: ReferenceFrame,
-    pub positions: PositionsSpec,
-    pub positions_string: String,
-    pub step: NonZeroUsize,
+pub(crate) struct PositionalSelectionSpec {
+    pub(crate) frame: ReferenceFrame,
+    pub(crate) positions: PositionsSpec,
+    pub(crate) positions_string: String,
+    pub(crate) step: NonZeroUsize,
 }
 
-pub fn parse_positions(
+pub(crate) fn parse_positions(
     position_spec: &UnparsedPositionalSelectionSpec,
 ) -> Result<PositionalSelectionSpec, RangeParseError> {
     let step = NonZeroUsize::new(position_spec.step)

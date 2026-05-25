@@ -11,13 +11,13 @@ use std::path::Path;
 use super::histogram::HistogramSpec;
 
 /// Output formats supported by the heatmap writer.
-pub enum HeatmapFormat {
+pub(crate) enum HeatmapFormat {
     Png,
     Svg,
 }
 
 /// Upsampling algorithm for heatmap rendering.
-pub enum HeatmapUpsample {
+pub(crate) enum HeatmapUpsample {
     Nearest,
     Bilinear,
 }
@@ -125,7 +125,7 @@ const HIST_BAR_COLOR: RGBColor = RGBColor(161, 174, 177);
 /// -------
 /// - `Result<()>`:
 ///     Ok when the plot is written.
-pub fn write_heatmap<P: AsRef<Path>>(
+pub(crate) fn write_heatmap<P: AsRef<Path>>(
     out_path: P,
     title: &str,
     x_label: &str,
@@ -211,7 +211,7 @@ pub fn write_heatmap<P: AsRef<Path>>(
 ///     Optional histogram to render above the heatmap using the x-axis scale.
 /// - `y_hist`:
 ///     Optional histogram to render to the right of the heatmap using the y-axis scale.
-pub fn write_heatmap_with_histograms<P: AsRef<Path>>(
+pub(crate) fn write_heatmap_with_histograms<P: AsRef<Path>>(
     out_path: P,
     title: &str,
     x_label: &str,

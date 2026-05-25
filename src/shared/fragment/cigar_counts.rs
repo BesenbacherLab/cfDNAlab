@@ -4,26 +4,26 @@ use crate::shared::interval::{Interval, TouchingMergePolicy, merge_sorted_interv
 
 /// Terminal clipping summary in BAM storage orientation.
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
-pub struct CigarEdgeInfo {
-    pub left_soft_clip_bp: u32,
-    pub right_soft_clip_bp: u32,
-    pub has_hard_clip: bool,
+pub(crate) struct CigarEdgeInfo {
+    pub(crate) left_soft_clip_bp: u32,
+    pub(crate) right_soft_clip_bp: u32,
+    pub(crate) has_hard_clip: bool,
 }
 
 /// Insertion anchored at one reference position with a positive inserted length.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub struct InsertionAnchor {
-    pub reference_position: u32,
-    pub inserted_length: u32,
+pub(crate) struct InsertionAnchor {
+    pub(crate) reference_position: u32,
+    pub(crate) inserted_length: u32,
 }
 
 /// Compact indel summary extracted from one record's CIGAR string.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
-pub struct CigarIndelInfo {
+pub(crate) struct CigarIndelInfo {
     /// Deletions and ref-skips as reference intervals `[start, end)`.
-    pub deletions: Vec<Interval<u32>>,
+    pub(crate) deletions: Vec<Interval<u32>>,
     /// Insertions anchored at one reference position with their inserted length.
-    pub insertions: Vec<InsertionAnchor>,
+    pub(crate) insertions: Vec<InsertionAnchor>,
 }
 
 /// Inspect terminal clipping in BAM storage orientation.
@@ -38,7 +38,7 @@ pub struct CigarIndelInfo {
 ///
 /// Soft clips contribute to the returned clip lengths.
 /// Hard clips only contribute to the `has_hard_clip` flag.
-pub fn inspect_cigar_edges(record: &Record) -> CigarEdgeInfo {
+pub(crate) fn inspect_cigar_edges(record: &Record) -> CigarEdgeInfo {
     let mut info = CigarEdgeInfo::default();
 
     for op in record.cigar().iter() {
@@ -73,7 +73,7 @@ pub fn inspect_cigar_edges(record: &Record) -> CigarEdgeInfo {
 /// Reference-consuming operations are tracked in aligned reference coordinates starting at
 /// `record.pos()`. Adjacent or overlapping deletion-like intervals are merged after parsing so
 /// downstream code can assume a normalized representation.
-pub fn inspect_cigar_indels(record: &Record) -> CigarIndelInfo {
+pub(crate) fn inspect_cigar_indels(record: &Record) -> CigarIndelInfo {
     let mut deletions: Vec<Interval<u32>> = Vec::new();
     let mut insertions: Vec<InsertionAnchor> = Vec::new();
 

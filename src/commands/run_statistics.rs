@@ -13,9 +13,9 @@ pub(crate) const TILE_DOUBLE_COUNT_NOTE: &str = "Note: A few reads/fragments may
 /// Labels for the common fragment-statistics block.
 #[derive(Clone, Copy)]
 pub(crate) struct FragmentStatisticsLabels<'a> {
-    pub total_reads: &'a str,
-    pub accepted_reads: &'a str,
-    pub counted_fragments: &'a str,
+    pub(crate) total_reads: &'a str,
+    pub(crate) accepted_reads: &'a str,
+    pub(crate) counted_fragments: &'a str,
 }
 
 /// Default labels for commands that report ordinary fragment counting.
@@ -29,20 +29,20 @@ pub(crate) const DEFAULT_FRAGMENT_STATISTICS_LABELS: FragmentStatisticsLabels<'s
 /// Optional GC-related statistics shared by commands that use GC correction or GC tags.
 #[derive(Clone, Copy)]
 pub(crate) struct GCStatisticsSummary {
-    pub neutralize_invalid_gc: bool,
-    pub failed_fragments: u64,
-    pub missing_tags: Option<u64>,
-    pub out_of_range_tags: Option<u64>,
+    pub(crate) neutralize_invalid_gc: bool,
+    pub(crate) failed_fragments: u64,
+    pub(crate) missing_tags: Option<u64>,
+    pub(crate) out_of_range_tags: Option<u64>,
 }
 
 /// Common options for fragment-processing command statistics.
 #[derive(Clone, Copy)]
 pub(crate) struct FragmentRunStatisticsOptions<'a> {
-    pub include_section_header: bool,
-    pub notes: &'a [&'a str],
-    pub labels: FragmentStatisticsLabels<'a>,
-    pub blacklist_excluded_fragments: Option<u64>,
-    pub gc: Option<GCStatisticsSummary>,
+    pub(crate) include_section_header: bool,
+    pub(crate) notes: &'a [&'a str],
+    pub(crate) labels: FragmentStatisticsLabels<'a>,
+    pub(crate) blacklist_excluded_fragments: Option<u64>,
+    pub(crate) gc: Option<GCStatisticsSummary>,
 }
 
 /// Print the shared statistics block used by fragment-oriented commands.

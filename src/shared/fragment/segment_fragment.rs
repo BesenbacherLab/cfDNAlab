@@ -14,27 +14,27 @@ use crate::shared::interval::{Interval, TouchingMergePolicy, merge_sorted_interv
 /// If `segments` is `None`, use the plain fragment interval `[start, end)`
 /// If `segments` is `Some`, use those `[start, end)` segments instead
 #[derive(Debug, Clone)]
-pub struct FragmentWithSegments {
-    pub tid: i32,
-    pub interval: Interval<u32>, // forward.start .. reverse.end
-    pub segments: Option<SmallVec<[Interval<u32>; 12]>>,
-    pub gc_tag: GCTagValue,
+pub(crate) struct FragmentWithSegments {
+    pub(crate) tid: i32,
+    pub(crate) interval: Interval<u32>, // forward.start .. reverse.end
+    pub(crate) segments: Option<SmallVec<[Interval<u32>; 12]>>,
+    pub(crate) gc_tag: GCTagValue,
 }
 
 impl FragmentWithSegments {
     #[inline]
-    pub fn start(&self) -> u32 {
+    pub(crate) fn start(&self) -> u32 {
         self.interval.start()
     }
 
     #[inline]
-    pub fn end(&self) -> u32 {
+    pub(crate) fn end(&self) -> u32 {
         self.interval.end()
     }
 
     /// Length of the fragment (end - start).
     #[inline]
-    pub fn len(&self) -> u32 {
+    pub(crate) fn len(&self) -> u32 {
         self.interval.len()
     }
 }
@@ -63,37 +63,37 @@ impl From<Fragment> for FragmentWithSegments {
 /// - `ref_mapped_segments` elements are relative to `interval.start()`
 /// - Adjacent segments separated only by non-reference ops are merged
 #[derive(Debug, Clone)]
-pub struct SegmentedReadInfo {
-    pub tid: i32,                // Contig id
-    pub interval: Interval<u32>, // Aligned reference span [start: pos(), end: reference_end())
-    pub is_reverse: bool,
-    pub has_ref_gap: bool,                    // True if any D/N present
-    pub max_ref_gap: u32,                     // Longest single D/N length (0 if none)
-    pub ref_mapped_segments: Vec<(u32, u32)>, // Relative segments: (offset_from_pos, len)
-    pub gc_tag: GCTagValue,
+pub(crate) struct SegmentedReadInfo {
+    pub(crate) tid: i32,                // Contig id
+    pub(crate) interval: Interval<u32>, // Aligned reference span [start: pos(), end: reference_end())
+    pub(crate) is_reverse: bool,
+    pub(crate) has_ref_gap: bool, // True if any D/N present
+    pub(crate) max_ref_gap: u32,  // Longest single D/N length (0 if none)
+    pub(crate) ref_mapped_segments: Vec<(u32, u32)>, // Relative segments: (offset_from_pos, len)
+    pub(crate) gc_tag: GCTagValue,
 }
 
 impl SegmentedReadInfo {
     /// Return the read's inclusive start on the reference.
     #[inline]
-    pub fn start(&self) -> u32 {
+    pub(crate) fn start(&self) -> u32 {
         self.interval.start()
     }
 
     /// Return the read's exclusive end on the reference.
     #[inline]
-    pub fn end(&self) -> u32 {
+    pub(crate) fn end(&self) -> u32 {
         self.interval.end()
     }
 
     /// Return the read's aligned reference span `[pos, end)`.
     #[inline]
-    pub fn aligned_interval(&self) -> Interval<u32> {
+    pub(crate) fn aligned_interval(&self) -> Interval<u32> {
         self.interval
     }
 
     #[inline]
-    pub fn from_record_with_gc_tag(r: &Record, gc_tag: Option<&[u8]>) -> Result<Self> {
+    pub(crate) fn from_record_with_gc_tag(r: &Record, gc_tag: Option<&[u8]>) -> Result<Self> {
         // Detect any D/N and track max gap length
         let mut has_ref_gap = false;
         let mut max_gap: u32 = 0;
@@ -215,7 +215,7 @@ impl PairOrientable for SegmentedReadInfo {
 /// -------
 /// - frag: FragmentWithSegments covering `[forward.pos, reverse.reference_end)`
 ///   With `segments = None` when no triggering gap is present
-pub fn collect_fragment_with_segments(
+pub(crate) fn collect_fragment_with_segments(
     a: &SegmentedReadInfo,
     b: &SegmentedReadInfo,
     trigger_min_gap_bp: u32,
@@ -333,7 +333,7 @@ pub fn collect_fragment_with_segments(
 }
 
 /// Build a fragment from a single segmented read (unpaired input).
-pub fn collect_fragment_with_segments_from_single_read(
+pub(crate) fn collect_fragment_with_segments_from_single_read(
     read: &SegmentedReadInfo,
     trigger_min_gap_bp: u32,
 ) -> Option<FragmentWithSegments> {

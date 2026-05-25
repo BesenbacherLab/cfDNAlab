@@ -1,2 +1,2 @@
-pub mod config;
-pub mod transitions;
+pub(crate) mod config;
+pub(crate) mod transitions;

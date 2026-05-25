@@ -1,2 +1,2 @@
-pub mod config;
-pub mod wps;
+pub(crate) mod config;
+pub(crate) mod wps;

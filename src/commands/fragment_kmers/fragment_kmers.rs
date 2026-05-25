@@ -88,7 +88,7 @@ const COMMAND_TARGET: &str = "fragment-kmers";
 /// Errors:
 /// - Propagates IO and parsing errors when reading inputs or writing results, aborting the run on
 ///   the first failure.
-pub fn run(opt: &FragmentKmersConfig) -> Result<()> {
+pub(crate) fn run(opt: &FragmentKmersConfig) -> Result<()> {
     let start_time = Instant::now();
     opt.shared_args.fragment_lengths.validate()?;
     opt.shared_args
@@ -128,11 +128,11 @@ pub fn run(opt: &FragmentKmersConfig) -> Result<()> {
     Ok(())
 }
 
-pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
+pub(crate) fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
     run_inner_with_reporting(opt, true)
 }
 
-pub fn run_inner_silent(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
+pub(crate) fn run_inner_silent(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
     run_inner_with_reporting(opt, false)
 }
 
@@ -791,7 +791,7 @@ fn process_tile(
     })
 }
 
-pub fn count_kmers_at_positions(
+pub(crate) fn count_kmers_at_positions(
     fragment: &FragmentWithKmerSegments,
     cache: &PositionSelectionCache,
     store_positions: bool,

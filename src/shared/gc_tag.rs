@@ -6,38 +6,38 @@ use tracing::warn;
 
 /// GC weight extracted from an AUX tag together with validity status.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct GCTagValue {
+pub(crate) struct GCTagValue {
     /// Parsed GC weight if present and valid.
-    pub weight: Option<f32>,
+    pub(crate) weight: Option<f32>,
     /// True when the tag was not present on the read.
-    pub was_missing: bool,
+    pub(crate) was_missing: bool,
     /// True when the tag was present but unusable (wrong type, NaN, or outside the supported
     /// positive range after zero-snapping).
-    pub had_invalid: bool,
+    pub(crate) had_invalid: bool,
     /// True when the tag value was outside the supported positive range.
-    pub was_out_of_range: bool,
+    pub(crate) was_out_of_range: bool,
 }
 
 /// Smallest supported positive GC weight.
-pub const MIN_REASONABLE_GC_WEIGHT: f32 = 1.0e-3;
+pub(crate) const MIN_REASONABLE_GC_WEIGHT: f32 = 1.0e-3;
 
 /// Reject GC weights that are clearly out of range to avoid runaway coverage when tags are corrupt.
 ///
 /// Correction weights are expected to hover around 0–a few hundred at most.
 /// Values far beyond that are treated as invalid.
-pub const MAX_REASONABLE_GC_WEIGHT: f32 = 1.0e3;
+pub(crate) const MAX_REASONABLE_GC_WEIGHT: f32 = 1.0e3;
 const MAX_GC_WARNINGS: usize = 5;
 static EXTREME_GC_WARNINGS: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum SanitizedGCWeight {
+pub(crate) enum SanitizedGCWeight {
     Usable(f64),
     Unusable { out_of_range: bool },
 }
 
 /// Explicit classification of fragment-level GC-tag state.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ClassifiedGCTagWeight {
+pub(crate) enum ClassifiedGCTagWeight {
     /// Usable GC weight to apply to the fragment.
     Usable(f32),
     /// The requested GC tag was not present.
@@ -75,7 +75,7 @@ fn is_zeroish_gc_weight(weight: Option<f32>) -> bool {
 }
 
 /// Describe how unusable GC information is handled for user-facing logs.
-pub fn gc_failure_action_description(neutralize_invalid_gc: bool) -> &'static str {
+pub(crate) fn gc_failure_action_description(neutralize_invalid_gc: bool) -> &'static str {
     if neutralize_invalid_gc {
         "fragment counted with weight 1.0"
     } else {
@@ -92,7 +92,7 @@ pub fn gc_failure_action_description(neutralize_invalid_gc: bool) -> &'static st
 /// - positive values in `(ZEROISH_F32_TOLERANCE, 1e-3)` -> unusable
 /// - positive values in `[1e-3, 1e3]` -> usable
 /// - positive values above `1e3` and infinities -> unusable
-pub fn sanitize_gc_weight(v: f64) -> SanitizedGCWeight {
+pub(crate) fn sanitize_gc_weight(v: f64) -> SanitizedGCWeight {
     if v.is_nan() {
         return SanitizedGCWeight::Unusable {
             out_of_range: false,
@@ -115,7 +115,7 @@ pub fn sanitize_gc_weight(v: f64) -> SanitizedGCWeight {
 
 impl GCTagValue {
     #[inline]
-    pub fn missing() -> Self {
+    pub(crate) fn missing() -> Self {
         GCTagValue {
             weight: None,
             was_missing: true,
@@ -150,7 +150,7 @@ impl GCTagValue {
     ///
     /// This keeps command code from having to manually decode the state from
     /// multiple flags and ensures impossible combinations fail loudly.
-    pub fn classify(self) -> Result<ClassifiedGCTagWeight> {
+    pub(crate) fn classify(self) -> Result<ClassifiedGCTagWeight> {
         match (self.weight, self.was_missing, self.had_invalid) {
             (Some(weight), false, false) => Ok(ClassifiedGCTagWeight::Usable(weight)),
             (None, true, false) => Ok(ClassifiedGCTagWeight::Missing),
@@ -173,7 +173,7 @@ impl GCTagValue {
 /// Accepts integer and floating-point tag types. Returns `weight=None` when the
 /// tag is missing. Marks `had_invalid=true` when the tag is present but has an
 /// unsupported type, NaN, or a value outside the allowed range.
-pub fn read_gc_tag_from_record(rec: &Record, tag: &[u8]) -> GCTagValue {
+pub(crate) fn read_gc_tag_from_record(rec: &Record, tag: &[u8]) -> GCTagValue {
     match rec.aux(tag) {
         Ok(Aux::Float(v)) => GCTagValue::from_number(v),
         Ok(Aux::Double(v)) => GCTagValue::from_number(v as f32),
@@ -201,7 +201,7 @@ pub fn read_gc_tag_from_record(rec: &Record, tag: &[u8]) -> GCTagValue {
 /// - One usable mate plus one missing mate -> use the usable mate weight.
 /// - Missing tag on both mates -> missing fragment weight.
 /// - Otherwise average the two mate weights, then validate the fragment-level result.
-pub fn combine_gc_tag_values(a: &GCTagValue, b: &GCTagValue) -> GCTagValue {
+pub(crate) fn combine_gc_tag_values(a: &GCTagValue, b: &GCTagValue) -> GCTagValue {
     if is_zeroish_gc_weight(a.weight) || is_zeroish_gc_weight(b.weight) {
         return GCTagValue {
             weight: Some(0.0),

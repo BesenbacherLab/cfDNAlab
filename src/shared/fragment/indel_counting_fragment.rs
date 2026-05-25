@@ -11,20 +11,20 @@ use crate::shared::fragment::minimal_fragment::{
 use crate::shared::indel_mode::IndelMode;
 use crate::shared::interval::Interval;
 
-pub use crate::shared::fragment::cigar_counts::InsertionAnchor;
+pub(crate) use crate::shared::fragment::cigar_counts::InsertionAnchor;
 
 /// Compact per-read info with extracted indel events.
 #[derive(Debug, Clone)]
-pub struct IndelReadInfo {
-    pub tid: i32,
-    pub interval: Interval<u32>, // Aligned reference span [start: pos(), end: reference_end())
-    pub is_reverse: bool,
-    pub left_soft_clip_bp: u32,
-    pub right_soft_clip_bp: u32,
+pub(crate) struct IndelReadInfo {
+    pub(crate) tid: i32,
+    pub(crate) interval: Interval<u32>, // Aligned reference span [start: pos(), end: reference_end())
+    pub(crate) is_reverse: bool,
+    pub(crate) left_soft_clip_bp: u32,
+    pub(crate) right_soft_clip_bp: u32,
     /// Deletions (and ref-skips if present) as reference intervals [start, end)
-    pub deletions: Vec<Interval<u32>>,
+    pub(crate) deletions: Vec<Interval<u32>>,
     /// Insertions anchored at one reference position with their inserted length.
-    pub insertions: Vec<InsertionAnchor>,
+    pub(crate) insertions: Vec<InsertionAnchor>,
 }
 
 impl IndelReadInfo {
@@ -33,7 +33,7 @@ impl IndelReadInfo {
     /// When `inspect_cigar` is false, soft clips are treated as zero and indel lists are empty.
     /// Use that only for callers whose selected modes ignore those fields.
     #[inline]
-    pub fn from_record(r: &Record, inspect_cigar: bool) -> Result<Self> {
+    pub(crate) fn from_record(r: &Record, inspect_cigar: bool) -> Result<Self> {
         let edge_info = inspect_cigar
             .then(|| inspect_cigar_edges(r))
             .unwrap_or_default();
@@ -54,19 +54,19 @@ impl IndelReadInfo {
 
     /// Return the read's inclusive start on the reference.
     #[inline]
-    pub fn start(&self) -> u32 {
+    pub(crate) fn start(&self) -> u32 {
         self.interval.start()
     }
 
     /// Return the read's exclusive end on the reference.
     #[inline]
-    pub fn end(&self) -> u32 {
+    pub(crate) fn end(&self) -> u32 {
         self.interval.end()
     }
 
     /// Return the read's aligned reference span `[start, end)`.
     #[inline]
-    pub fn aligned_interval(&self) -> Interval<u32> {
+    pub(crate) fn aligned_interval(&self) -> Interval<u32> {
         self.interval
     }
 }
@@ -93,35 +93,34 @@ impl PairOrientable for IndelReadInfo {
 ///     * Deletions: add the intersection of deletion spans from the two reads
 ///     * Insertions: add at reference positions present in **both** mates (min length if disagree)
 #[derive(Debug, Clone)]
-pub struct FragmentWithIndelCounts {
-    pub tid: i32,
-    pub interval: Interval<u32>, // forward.pos .. reverse.end
-    pub left_soft_clip_bp: u32,
-    pub right_soft_clip_bp: u32,
+pub(crate) struct FragmentWithIndelCounts {
+    pub(crate) interval: Interval<u32>, // forward.pos .. reverse.end
+    pub(crate) left_soft_clip_bp: u32,
+    pub(crate) right_soft_clip_bp: u32,
 
     // Totals accumulated under the "pair-supported in overlap" policy:
-    pub deletions_nonoverlap: u32,
-    pub insertions_nonoverlap: u32,
-    pub deletions_overlap_supported: u32,
-    pub insertions_overlap_supported: u32,
+    pub(crate) deletions_nonoverlap: u32,
+    pub(crate) insertions_nonoverlap: u32,
+    pub(crate) deletions_overlap_supported: u32,
+    pub(crate) insertions_overlap_supported: u32,
 }
 
 impl FragmentWithIndelCounts {
     /// Inclusive fragment start on the reference.
     #[inline]
-    pub fn start(&self) -> u32 {
+    pub(crate) fn start(&self) -> u32 {
         self.interval.start()
     }
 
     /// Exclusive fragment end on the reference.
     #[inline]
-    pub fn end(&self) -> u32 {
+    pub(crate) fn end(&self) -> u32 {
         self.interval.end()
     }
 
     /// Reference-span fragment length (end - start).
     #[inline]
-    pub fn len_ref(&self) -> u32 {
+    pub(crate) fn len_ref(&self) -> u32 {
         self.interval.len()
     }
 
@@ -130,7 +129,7 @@ impl FragmentWithIndelCounts {
     /// The aligned reference length is adjusted for indels by adding inserts and subtracting deletions.
     /// Then the number of clipped bases are added.
     #[inline]
-    pub fn adjusted_len(&self, indel_mode: IndelMode, clip_mode: ClipMode) -> u32 {
+    pub(crate) fn adjusted_len(&self, indel_mode: IndelMode, clip_mode: ClipMode) -> u32 {
         let mut length = self.len_ref() as u64;
 
         // Adjust for indels
@@ -157,13 +156,13 @@ impl FragmentWithIndelCounts {
 
     /// Whether either relevant fragment end has any soft clipping.
     #[inline]
-    pub fn has_soft_clipping(&self) -> bool {
+    pub(crate) fn has_soft_clipping(&self) -> bool {
         self.left_soft_clip_bp > 0 || self.right_soft_clip_bp > 0
     }
 
     /// Whether both relevant fragment ends satisfy the configured soft-clip limit.
     #[inline]
-    pub fn soft_clips_within_limit(&self, max_soft_clips: u32) -> bool {
+    pub(crate) fn soft_clips_within_limit(&self, max_soft_clips: u32) -> bool {
         self.left_soft_clip_bp <= max_soft_clips && self.right_soft_clip_bp <= max_soft_clips
     }
 
@@ -172,14 +171,14 @@ impl FragmentWithIndelCounts {
     /// The stored deletion fields already follow the fragment-level support policy used for length
     /// adjustment. This includes `D` and `N` operations seen by the reads.
     #[inline]
-    pub fn deletion_bases(&self) -> u32 {
+    pub(crate) fn deletion_bases(&self) -> u32 {
         self.deletions_nonoverlap
             .saturating_add(self.deletions_overlap_supported)
     }
 
     /// Whether the fragment satisfies the configured deletion-base limit.
     #[inline]
-    pub fn deletion_bases_within_limit(&self, max_deletion_bases: u32) -> bool {
+    pub(crate) fn deletion_bases_within_limit(&self, max_deletion_bases: u32) -> bool {
         self.deletion_bases() <= max_deletion_bases
     }
 
@@ -188,7 +187,7 @@ impl FragmentWithIndelCounts {
     /// This only changes the fragment coordinates for soft clipping. Indel-aware length changes do
     /// not alter the reference interval stored here.
     #[inline]
-    pub fn assignment_interval_with_clip_mode(
+    pub(crate) fn assignment_interval_with_clip_mode(
         &self,
         clip_mode: ClipMode,
     ) -> crate::Result<Interval<u64>> {
@@ -276,7 +275,7 @@ fn partition_insertion_by_aligned_overlap(
 /// Indel handling follows `collect_fragment_with_indel_counts` semantics:
 /// - Skip when `skip_indels` is true and the read has any insertions or deletions.
 /// - When `count_indels` is true, insertions increase the length and deletions decrease it.
-pub fn collect_fragment_with_indel_counts_from_single_read(
+pub(crate) fn collect_fragment_with_indel_counts_from_single_read(
     read: &IndelReadInfo,
     skip_indels: bool,
     count_indels: bool,
@@ -290,7 +289,6 @@ pub fn collect_fragment_with_indel_counts_from_single_read(
 
     if !fragment_has_indels || !count_indels {
         return Some(FragmentWithIndelCounts {
-            tid: read.tid,
             interval: fragment_interval,
             left_soft_clip_bp: read.left_soft_clip_bp,
             right_soft_clip_bp: read.right_soft_clip_bp,
@@ -305,7 +303,6 @@ pub fn collect_fragment_with_indel_counts_from_single_read(
     let insertions_bp: u32 = read.insertions.iter().map(|ins| ins.inserted_length).sum();
 
     Some(FragmentWithIndelCounts {
-        tid: read.tid,
         interval: fragment_interval,
         left_soft_clip_bp: read.left_soft_clip_bp,
         right_soft_clip_bp: read.right_soft_clip_bp,
@@ -350,7 +347,7 @@ pub fn collect_fragment_with_indel_counts_from_single_read(
 /// -------
 /// - `Some(FragmentWithIndelCounts)` if the pair is inward on the same contig;
 ///   otherwise `None`.
-pub fn collect_fragment_with_indel_counts(
+pub(crate) fn collect_fragment_with_indel_counts(
     a: &IndelReadInfo,
     b: &IndelReadInfo,
     skip_indels: bool,
@@ -377,7 +374,6 @@ pub fn collect_fragment_with_indel_counts(
     // return plain fragment with zero adjustments
     if !fragment_has_indels || !count_indels {
         return Some(FragmentWithIndelCounts {
-            tid: forward.tid,
             interval: fragment_interval,
             left_soft_clip_bp: forward.left_soft_clip_bp,
             right_soft_clip_bp: reverse.right_soft_clip_bp,
@@ -470,7 +466,6 @@ pub fn collect_fragment_with_indel_counts(
     }
 
     Some(FragmentWithIndelCounts {
-        tid: forward.tid,
         interval: fragment_interval,
         left_soft_clip_bp: forward.left_soft_clip_bp,
         right_soft_clip_bp: reverse.right_soft_clip_bp,

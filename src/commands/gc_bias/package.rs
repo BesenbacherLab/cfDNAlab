@@ -32,7 +32,7 @@ pub struct GCCorrectionPackage {
 }
 
 impl GCCorrectionPackage {
-    pub fn from_components(
+    pub(crate) fn from_components(
         version: u32,
         length_bins: &BinnedAxis,
         gc_bins: &BinnedAxis,

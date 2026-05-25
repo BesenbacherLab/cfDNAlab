@@ -1,7 +1,7 @@
-pub mod apply_mask;
-pub mod load;
-pub mod overlaps;
-pub mod strategy;
+pub(crate) mod apply_mask;
+pub(crate) mod load;
+pub(crate) mod overlaps;
+pub(crate) mod strategy;
 
 // Curate the top-level API:
 pub use apply_mask::apply_blacklist_mask_to_seq;

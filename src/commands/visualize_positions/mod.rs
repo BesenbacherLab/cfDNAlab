@@ -1,14 +1,11 @@
-pub mod config;
-pub mod model;
-pub mod parse;
-pub mod render_ascii;
-pub mod render_svg;
-pub mod select;
-pub mod visualize_positions;
+pub(crate) mod config;
+pub(crate) mod model;
+pub(crate) mod parse;
+pub(crate) mod render_ascii;
+pub(crate) mod render_svg;
+pub(crate) mod select;
+pub(crate) mod visualize_positions;
 
-pub use crate::commands::fragment_kmers::parse::{RangeParseError, parse_positions};
-pub use crate::commands::fragment_kmers::positions::{LinearRange, PositionsSpec};
-pub use model::{LengthVisualization, Style, VizConfig};
-pub use render_ascii::render_ascii;
-pub use render_svg::render_svg;
-pub use select::{ReadClamp, build_kmer_start_overlays, build_tracks_for_length};
+pub(crate) use model::{Style, VizConfig};
+pub(crate) use render_ascii::render_ascii;
+pub(crate) use render_svg::render_svg;

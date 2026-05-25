@@ -1,135 +1,5 @@
 use anyhow::{Result, ensure};
 
-/// Fill zero-valued histogram bins by fitting local weighted polynomials from bins
-/// that were non-zero before interpolation.
-///
-/// Operates in-place when the original histogram contains at least
-/// `polynomial_degree + 1` genuine non-zero anchor bins. Contiguous zero runs are
-/// interpolated with a single weighted polynomial and clamped to the neighbouring
-/// anchor range. Edge runs can be interpolated from one-sided real support by
-/// adding mirrored or boundary-valued pseudo anchors. Runs are left unchanged
-/// only when the real anchor set is too small or the local fit fails.
-///
-/// Parameters
-/// ----------
-/// - `histogram`:
-///     Dense 1D histogram to mutate.
-/// - `polynomial_degree`:
-///     Degree of the fitting polynomial (1 = linear, 2 = quadratic, etc.).
-/// - `min_neighbours`:
-///     Minimum number of non-zero neighbouring bins required to fit a zero run.
-///     The closest neighbouring bins on the left and right are used first.
-///     If one side has too few real neighbours, the fit first adds artificial bins
-///     at distances mirrored from real neighbours on the opposite side. If more bins
-///     are still needed, it adds artificial bins farther outward using the nearest
-///     available boundary value.
-/// - `max_neighbours_per_side`:
-///     Cap on how many anchors to take from each side of the zero run.
-///
-/// Returns
-/// -------
-/// - `Ok(())`:
-///     Interpolation succeeded or was skipped due to insufficient anchors.
-/// - `Err`:
-///     Validation failed (empty histogram or invalid tuning parameters).
-pub fn fill_zero_bins_with_polynomial(
-    histogram: &mut [f64],
-    polynomial_degree: usize,
-    min_neighbours: usize,
-    max_neighbours_per_side: usize,
-) -> Result<()> {
-    ensure!(
-        !histogram.is_empty(),
-        "histogram must contain at least one bin before interpolation"
-    );
-    ensure!(polynomial_degree > 0, "polynomial_degree must be >= 1");
-    ensure!(min_neighbours > 0, "min_neighbours must be >= 1");
-    ensure!(
-        max_neighbours_per_side > 0,
-        "max_neighbours_per_side must be >= 1"
-    );
-
-    // Freeze the anchor set to the original non-zero counts so interpolation never bootstraps itself
-    let anchors: Vec<(usize, f64)> = histogram
-        .iter()
-        .enumerate()
-        .filter_map(|(bin_idx, &count)| {
-            if count > 0.0 {
-                Some((bin_idx, count))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    if anchors.len() < polynomial_degree + 1 {
-        // Not enough information to fit anything meaningful
-        return Ok(());
-    }
-
-    let mut cursor_idx = 0;
-    while cursor_idx < histogram.len() {
-        if histogram[cursor_idx] != 0.0 {
-            cursor_idx += 1;
-            continue;
-        }
-
-        // Walk one contiguous zero run [run_start_idx, run_end_idx)
-        let run_start_idx = cursor_idx;
-        while cursor_idx < histogram.len() && histogram[cursor_idx] == 0.0 {
-            cursor_idx += 1;
-        }
-        let run_end_idx = cursor_idx;
-
-        // Clamp interpolation to the neighbouring anchor range (missing sides default to zero)
-        let left_anchor = if run_start_idx > 0 {
-            histogram[run_start_idx - 1]
-        } else {
-            0.0
-        };
-        let right_anchor = histogram.get(run_end_idx).copied().unwrap_or(0.0);
-        let lower_bound = left_anchor.min(right_anchor);
-        let upper_bound = left_anchor.max(right_anchor);
-
-        // Fit once for the entire run and evaluate across the gap so every bin shares one polynomial
-        let left_anchor = if run_start_idx > 0 {
-            histogram[run_start_idx - 1]
-        } else {
-            histogram.get(run_end_idx).copied().unwrap_or(0.0)
-        };
-        let right_anchor = histogram.get(run_end_idx).copied().unwrap_or(left_anchor);
-
-        if let Some(polynomial_fit) = fit_run_polynomial(
-            run_start_idx,
-            run_end_idx,
-            polynomial_degree,
-            min_neighbours,
-            max_neighbours_per_side,
-            &anchors,
-        ) {
-            for target_idx in run_start_idx..run_end_idx {
-                let mut interpolated_value =
-                    evaluate_polynomial_fit(&polynomial_fit, target_idx as f64);
-                if lower_bound != upper_bound {
-                    interpolated_value = interpolated_value.max(lower_bound).min(upper_bound);
-                } else {
-                    interpolated_value = lower_bound;
-                }
-                histogram[target_idx] = interpolated_value.max(0.0); // Guard against tiny negatives
-            }
-
-            // Enforce monotonic slope between the surrounding anchors to avoid wiggles.
-            enforce_monotonic_segment(
-                &mut histogram[run_start_idx..run_end_idx],
-                left_anchor,
-                right_anchor,
-            );
-        }
-        // Leave untouched when we lack enough neighbours or the fit fails
-    }
-    Ok(())
-}
-
 /// Interpolate unsupported bins using nearby supported anchors.
 ///
 /// Treats every `false` entry in `support_mask` as a gap and fits a weighted
@@ -165,7 +35,7 @@ pub fn fill_zero_bins_with_polynomial(
 ///     All unsupported runs were either interpolated or skipped due to insufficient anchors.
 /// - `Err`:
 ///     Validation failed (mask length mismatch or invalid tuning parameters).
-pub fn fill_unsupported_bins_with_polynomial(
+pub(crate) fn fill_unsupported_bins_with_polynomial(
     histogram: &mut [f64],
     support_mask: &mut [bool],
     polynomial_degree: usize,
@@ -477,7 +347,7 @@ fn fit_weighted_polynomial(
     solve_sym_posdef(&mut normal_matrix, &mut rhs_vector)
 }
 
-pub fn enforce_monotonic_segment(segment: &mut [f64], left_anchor: f64, right_anchor: f64) {
+pub(crate) fn enforce_monotonic_segment(segment: &mut [f64], left_anchor: f64, right_anchor: f64) {
     if segment.is_empty() || (left_anchor - right_anchor).abs() < f64::EPSILON {
         return;
     }

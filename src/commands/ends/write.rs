@@ -33,7 +33,7 @@ use std::{
 /// -------
 /// - `Result<PathBuf>`:
 ///   Path to the written settings sidecar
-pub fn write_end_settings_json(
+pub(crate) fn write_end_settings_json(
     output_dir: &Path,
     prefix: &str,
     opt: &EndsConfig,

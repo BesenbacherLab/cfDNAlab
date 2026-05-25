@@ -2,7 +2,7 @@ use rust_htslib::bam::Record;
 use rust_htslib::bam::record::Aux;
 
 /// Whether to include the read or continue (paired-end sequencing).
-pub fn default_include_read_paired_end(
+pub(crate) fn default_include_read_paired_end(
     rec: &Record,
     require_proper_pair: bool,
     min_mapq: u8,
@@ -20,7 +20,7 @@ pub fn default_include_read_paired_end(
 }
 
 /// Whether to include the read or continue (unpaired sequencing where each read is a fragment).
-pub fn default_include_read_unpaired(rec: &Record, min_mapq: u8) -> bool {
+pub(crate) fn default_include_read_unpaired(rec: &Record, min_mapq: u8) -> bool {
     !(rec.is_unmapped()
         || rec.is_secondary()
         || rec.is_supplementary()
@@ -38,7 +38,11 @@ pub fn default_include_read_unpaired(rec: &Record, min_mapq: u8) -> bool {
 /// Returns
 /// -------
 ///  - NM tag.
-pub fn read_nm_tag(rec: &Record) -> Option<u16> {
+#[expect(
+    dead_code,
+    reason = "kept for future mismatch-aware read and fragment filters"
+)]
+pub(crate) fn read_nm_tag(rec: &Record) -> Option<u16> {
     // Extract NM tag as u16, returning None on missing/out-of-range
     let nm: u16 = match rec.aux(b"NM") {
         // I believe it's always i32 but not sure
@@ -65,7 +69,11 @@ pub fn read_nm_tag(rec: &Record) -> Option<u16> {
 ///
 /// This function returns the raw MD string (without the "MD:Z:" prefix)
 /// or None if the tag is missing or not a string
-pub fn read_md_tag(rec: &Record) -> Option<String> {
+#[expect(
+    dead_code,
+    reason = "kept for future mismatch-aware read and fragment filters"
+)]
+pub(crate) fn read_md_tag(rec: &Record) -> Option<String> {
     match rec.aux(b"MD") {
         Ok(Aux::String(s)) => Some(s.to_owned()),
         _ => None,
@@ -92,7 +100,11 @@ pub fn read_md_tag(rec: &Record) -> Option<String> {
 /// 5. At each new mismatch run, record the start position; on next number >0 or end, record the end position
 ///
 /// Returns empty vectors if no mismatches occur (purely numeric tag)
-pub fn parse_md_tag(md_tag: &str, offset: u32) -> (Vec<u32>, Vec<u32>) {
+#[expect(
+    dead_code,
+    reason = "kept for future mismatch-aware read and fragment filters"
+)]
+pub(crate) fn parse_md_tag(md_tag: &str, offset: u32) -> (Vec<u32>, Vec<u32>) {
     // These will hold the start and end positions of each mismatch run
     // Relative to the read
     let mut starts = Vec::new();
