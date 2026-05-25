@@ -67,11 +67,13 @@ pub(crate) struct WithRecordsFragment {
 
 impl WithRecordsFragment {
     #[inline]
+    #[allow(dead_code)]
     pub fn start(&self) -> u32 {
         self.interval.start()
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub fn end(&self) -> u32 {
         self.interval.end()
     }

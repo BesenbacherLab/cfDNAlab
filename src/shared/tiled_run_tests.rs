@@ -234,15 +234,16 @@ fn precompute_tile_window_spans_keeps_boundary_crossing_windows_for_both_neighbo
     assert_eq!(second_span.last_idx_exclusive, 3);
 }
 
-/* candidate_window_span for core-overlap */
+/* precomputed tile window spans for core-overlap */
 
 #[test]
-fn candidate_window_span_for_tile_core_overlap_keeps_fully_internal_window() {
+fn precompute_tile_window_spans_core_overlap_keeps_fully_internal_window() {
     // Human verification status: Verified
-    let tile = make_tile(10, 20, 6, 24, 0);
+    let tiles = vec![make_tile(10, 20, 6, 24, 0)];
     let windows = indexed_windows(&[(12, 13, 0)]);
 
-    let span = candidate_window_span_for_tile_core_overlap(&windows, &tile)
+    let spans = precompute_tile_window_spans(&tiles, |_| windows.as_slice(), 0, 0);
+    let span = spans[0]
         .expect("internal core-overlap window should produce a span");
 
     assert_eq!(span.first_idx, 0);
@@ -250,12 +251,13 @@ fn candidate_window_span_for_tile_core_overlap_keeps_fully_internal_window() {
 }
 
 #[test]
-fn candidate_window_span_for_tile_core_overlap_keeps_left_boundary_crossing_window() {
+fn precompute_tile_window_spans_core_overlap_keeps_left_boundary_crossing_window() {
     // Human verification status: Verified
-    let tile = make_tile(10, 20, 6, 24, 0);
+    let tiles = vec![make_tile(10, 20, 6, 24, 0)];
     let windows = indexed_windows(&[(8, 12, 0)]);
 
-    let span = candidate_window_span_for_tile_core_overlap(&windows, &tile)
+    let spans = precompute_tile_window_spans(&tiles, |_| windows.as_slice(), 0, 0);
+    let span = spans[0]
         .expect("left boundary-crossing window should produce a span");
 
     assert_eq!(span.first_idx, 0);
@@ -263,12 +265,13 @@ fn candidate_window_span_for_tile_core_overlap_keeps_left_boundary_crossing_wind
 }
 
 #[test]
-fn candidate_window_span_for_tile_core_overlap_keeps_right_boundary_crossing_window() {
+fn precompute_tile_window_spans_core_overlap_keeps_right_boundary_crossing_window() {
     // Human verification status: Verified
-    let tile = make_tile(10, 20, 6, 24, 0);
+    let tiles = vec![make_tile(10, 20, 6, 24, 0)];
     let windows = indexed_windows(&[(18, 22, 0)]);
 
-    let span = candidate_window_span_for_tile_core_overlap(&windows, &tile)
+    let spans = precompute_tile_window_spans(&tiles, |_| windows.as_slice(), 0, 0);
+    let span = spans[0]
         .expect("right boundary-crossing window should produce a span");
 
     assert_eq!(span.first_idx, 0);
@@ -276,53 +279,72 @@ fn candidate_window_span_for_tile_core_overlap_keeps_right_boundary_crossing_win
 }
 
 #[test]
-fn candidate_window_span_for_tile_core_overlap_drops_window_ending_at_core_start() {
+fn precompute_tile_window_spans_core_overlap_drops_window_ending_at_core_start() {
     // Human verification status: Verified
-    let tile = make_tile(10, 20, 6, 24, 0);
+    let tiles = vec![make_tile(10, 20, 6, 24, 0)];
     let windows = indexed_windows(&[(9, 10, 0)]);
 
-    let span = candidate_window_span_for_tile_core_overlap(&windows, &tile);
+    let spans = precompute_tile_window_spans(&tiles, |_| windows.as_slice(), 0, 0);
 
-    assert!(span.is_none());
+    assert!(spans[0].is_none());
 }
 
 #[test]
-fn candidate_window_span_for_tile_core_overlap_drops_window_starting_at_core_end() {
+fn precompute_tile_window_spans_core_overlap_drops_window_starting_at_core_end() {
     // Human verification status: Verified
-    let tile = make_tile(10, 20, 6, 24, 0);
+    let tiles = vec![make_tile(10, 20, 6, 24, 0)];
     let windows = indexed_windows(&[(20, 21, 0)]);
 
-    let span = candidate_window_span_for_tile_core_overlap(&windows, &tile);
+    let spans = precompute_tile_window_spans(&tiles, |_| windows.as_slice(), 0, 0);
 
-    assert!(span.is_none());
+    assert!(spans[0].is_none());
 }
 
 #[test]
-fn candidate_window_span_for_tile_core_overlap_keeps_only_true_core_windows_in_mixed_case() {
+fn precompute_tile_window_spans_core_overlap_keeps_only_true_core_windows_in_mixed_case() {
     // Human verification status: Verified
-    let tile = make_tile(10, 20, 6, 24, 0);
+    let tiles = vec![make_tile(10, 20, 6, 24, 0)];
     let windows = indexed_windows(&[(8, 9, 0), (10, 11, 1), (18, 22, 2), (22, 23, 3)]);
 
-    let span = candidate_window_span_for_tile_core_overlap(&windows, &tile)
+    let spans = precompute_tile_window_spans(&tiles, |_| windows.as_slice(), 0, 0);
+    let span = spans[0]
         .expect("mixed core-overlap case should keep the true core windows");
 
     assert_eq!(span.first_idx, 1);
     assert_eq!(span.last_idx_exclusive, 3);
 }
 
-/* candidate_window_span for fragment reach
+#[test]
+fn overlapping_windows_for_tile_without_cached_span_uses_core_overlap_boundaries() {
+    // Manual derivation:
+    // - Tile core is [10,20).
+    // - [8,10) ends exactly at core_start and must be dropped.
+    // - [8,12), [12,13), and [18,22) overlap the core and must be kept.
+    // - [20,21) starts exactly at core_end and must be dropped.
+    let tile = make_tile(10, 20, 6, 24, 0);
+    let windows = indexed_windows(&[(8, 10, 0), (8, 12, 1), (12, 13, 2), (18, 22, 3), (20, 21, 4)]);
+
+    let overlapping: Vec<_> = overlapping_windows_for_tile(&windows, &tile, None)
+        .map(|window| window.as_tuple())
+        .collect();
+
+    assert_eq!(overlapping, vec![(8, 12, 1), (12, 13, 2), (18, 22, 3)]);
+}
+
+/* precomputed tile window spans for fragment reach
 
 Note that it's the left and right reach values that determine these tests, not the fetch halos.
 */
 
 #[test]
-fn candidate_window_span_for_tile_fragment_reach_has_no_left_reach_in_aligned_models() {
+fn precompute_tile_window_spans_fragment_reach_has_no_left_reach_in_aligned_models() {
     // Human verification status: Verified
-    let tile = make_tile(10, 20, 6, 24, 0);
+    let tiles = vec![make_tile(10, 20, 6, 24, 0)];
     let windows = indexed_windows(&[(9, 10, 0), (10, 11, 1), (22, 23, 2)]);
 
     // The relevant window span reach "halo" are the ones specified here (0 and 4)
-    let span = candidate_window_span_for_tile_fragment_reach(&windows, &tile, 0, 4)
+    let spans = precompute_tile_window_spans(&tiles, |_| windows.as_slice(), 0, 4);
+    let span = spans[0]
         .expect("aligned fragment reach should keep a span");
 
     assert_eq!(span.first_idx, 1);
@@ -330,12 +352,13 @@ fn candidate_window_span_for_tile_fragment_reach_has_no_left_reach_in_aligned_mo
 }
 
 #[test]
-fn candidate_window_span_for_tile_fragment_reach_keeps_one_right_halo_only_window() {
+fn precompute_tile_window_spans_fragment_reach_keeps_one_right_halo_only_window() {
     // Human verification status: Verified
-    let tile = make_tile(10, 20, 6, 24, 0);
+    let tiles = vec![make_tile(10, 20, 6, 24, 0)];
     let windows = indexed_windows(&[(22, 23, 0)]);
 
-    let span = candidate_window_span_for_tile_fragment_reach(&windows, &tile, 0, 4)
+    let spans = precompute_tile_window_spans(&tiles, |_| windows.as_slice(), 0, 4);
+    let span = spans[0]
         .expect("right halo-only fragment-reach window should keep a span");
 
     assert_eq!(span.first_idx, 0);
@@ -343,23 +366,24 @@ fn candidate_window_span_for_tile_fragment_reach_keeps_one_right_halo_only_windo
 }
 
 #[test]
-fn candidate_window_span_for_tile_fragment_reach_drops_window_at_exclusive_right_bound() {
+fn precompute_tile_window_spans_fragment_reach_drops_window_at_exclusive_right_bound() {
     // Human verification status: Verified
-    let tile = make_tile(10, 20, 6, 28, 0);
+    let tiles = vec![make_tile(10, 20, 6, 28, 0)];
     let windows = indexed_windows(&[(24, 25, 0)]);
 
-    let span = candidate_window_span_for_tile_fragment_reach(&windows, &tile, 0, 4);
+    let spans = precompute_tile_window_spans(&tiles, |_| windows.as_slice(), 0, 4);
 
-    assert!(span.is_none());
+    assert!(spans[0].is_none());
 }
 
 #[test]
-fn candidate_window_span_for_tile_fragment_reach_keeps_core_and_right_halo_windows_together() {
+fn precompute_tile_window_spans_fragment_reach_keeps_core_and_right_halo_windows_together() {
     // Human verification status: Verified
-    let tile = make_tile(10, 20, 6, 21, 0);
+    let tiles = vec![make_tile(10, 20, 6, 21, 0)];
     let windows = indexed_windows(&[(10, 11, 0), (22, 23, 1)]);
 
-    let span = candidate_window_span_for_tile_fragment_reach(&windows, &tile, 0, 4)
+    let spans = precompute_tile_window_spans(&tiles, |_| windows.as_slice(), 0, 4);
+    let span = spans[0]
         .expect("core and right halo windows should share one fragment-reach span");
 
     assert_eq!(span.first_idx, 0);
@@ -367,12 +391,13 @@ fn candidate_window_span_for_tile_fragment_reach_keeps_core_and_right_halo_windo
 }
 
 #[test]
-fn candidate_window_span_for_tile_fragment_reach_drops_left_non_overlap_in_mixed_case() {
+fn precompute_tile_window_spans_fragment_reach_drops_left_non_overlap_in_mixed_case() {
     // Human verification status: Verified
-    let tile = make_tile(10, 20, 6, 24, 0);
+    let tiles = vec![make_tile(10, 20, 6, 24, 0)];
     let windows = indexed_windows(&[(8, 9, 0), (10, 11, 1), (22, 23, 2)]);
 
-    let span = candidate_window_span_for_tile_fragment_reach(&windows, &tile, 0, 4)
+    let spans = precompute_tile_window_spans(&tiles, |_| windows.as_slice(), 0, 4);
+    let span = spans[0]
         .expect("mixed fragment-reach case should keep a span");
 
     assert_eq!(span.first_idx, 1);
@@ -380,8 +405,8 @@ fn candidate_window_span_for_tile_fragment_reach_drops_left_non_overlap_in_mixed
 }
 
 #[test]
-fn candidate_window_span_for_tile_fragment_reach_selects_downstream_window_also_selected_in_next_tile()
- {
+fn precompute_tile_window_spans_fragment_reach_selects_downstream_window_also_selected_in_next_tile()
+{
     // Human verification status: Verified
     // Manual derivation:
     // - Tile 0 core is [10,20) with right reach 4, so its candidate region is [10,24).
@@ -395,10 +420,10 @@ fn candidate_window_span_for_tile_fragment_reach_selects_downstream_window_also_
     let tiles = vec![make_tile(10, 20, 6, 24, 0), make_tile(20, 30, 16, 34, 1)];
     let windows = indexed_windows(&[(22, 23, 0), (25, 28, 1), (38, 42, 2)]);
 
-    let first_span = candidate_window_span_for_tile_fragment_reach(&windows, &tiles[0], 0, 4)
+    let spans = precompute_tile_window_spans(&tiles, |_| windows.as_slice(), 0, 4);
+    let first_span = spans[0]
         .expect("window in downstream tile within fragment reach should be included ");
-    let second_span = candidate_window_span_for_tile_fragment_reach(&windows, &tiles[1], 0, 4)
-        .expect("on-tile windows should be found");
+    let second_span = spans[1].expect("on-tile windows should be found");
 
     assert_eq!(first_span.first_idx, 0);
     assert_eq!(first_span.last_idx_exclusive, 1);
@@ -407,12 +432,13 @@ fn candidate_window_span_for_tile_fragment_reach_selects_downstream_window_also_
 }
 
 #[test]
-fn candidate_window_span_for_tile_raw_fragment_reach_keeps_left_halo_only_window() {
+fn precompute_tile_window_spans_raw_fragment_reach_keeps_left_halo_only_window() {
     // Human verification status: Verified
-    let tile = make_tile(10, 20, 10, 24, 0);
+    let tiles = vec![make_tile(10, 20, 10, 24, 0)];
     let windows = indexed_windows(&[(8, 9, 0)]);
 
-    let span = candidate_window_span_for_tile_fragment_reach(&windows, &tile, 2, 4)
+    let spans = precompute_tile_window_spans(&tiles, |_| windows.as_slice(), 2, 4);
+    let span = spans[0]
         .expect("raw left halo-only window should keep a span");
 
     assert_eq!(span.first_idx, 0);
@@ -420,24 +446,25 @@ fn candidate_window_span_for_tile_raw_fragment_reach_keeps_left_halo_only_window
 }
 
 #[test]
-fn candidate_window_span_for_tile_raw_fragment_reach_drops_window_at_left_exclusive_bound() {
+fn precompute_tile_window_spans_raw_fragment_reach_drops_window_at_left_exclusive_bound() {
     // Human verification status: Verified
-    let tile = make_tile(10, 20, 6, 24, 0);
+    let tiles = vec![make_tile(10, 20, 6, 24, 0)];
     let windows = indexed_windows(&[(7, 8, 0)]);
 
-    let span = candidate_window_span_for_tile_fragment_reach(&windows, &tile, 2, 4);
+    let spans = precompute_tile_window_spans(&tiles, |_| windows.as_slice(), 2, 4);
 
-    assert!(span.is_none());
+    assert!(spans[0].is_none());
 }
 
 #[test]
-fn candidate_window_span_for_tile_raw_fragment_reach_keeps_left_core_and_far_right_windows_together()
- {
+fn precompute_tile_window_spans_raw_fragment_reach_keeps_left_core_and_far_right_windows_together()
+{
     // Human verification status: Verified
-    let tile = make_tile(10, 20, 6, 24, 0);
+    let tiles = vec![make_tile(10, 20, 6, 24, 0)];
     let windows = indexed_windows(&[(8, 9, 0), (10, 11, 1), (32, 33, 2)]);
 
-    let span = candidate_window_span_for_tile_fragment_reach(&windows, &tile, 2, 14)
+    let spans = precompute_tile_window_spans(&tiles, |_| windows.as_slice(), 2, 14);
+    let span = spans[0]
         .expect("raw fragment reach should keep left/core/right mixed candidates");
 
     assert_eq!(span.first_idx, 0);
@@ -445,17 +472,18 @@ fn candidate_window_span_for_tile_raw_fragment_reach_keeps_left_core_and_far_rig
 }
 
 #[test]
-fn candidate_window_span_for_tile_raw_fragment_reach_uses_asymmetric_left_and_right_bounds() {
+fn precompute_tile_window_spans_raw_fragment_reach_uses_asymmetric_left_and_right_bounds() {
     // Human verification status: Verified
     // Manual derivation:
     // - Tile core is [10,20).
     // - Raw left reach is 2 bp, so [7,8) is too far left and must be dropped.
     // - Raw right reach is 14 bp, so [32,33) is still reachable and must stay.
     // - A symmetric implementation would either keep both or drop both.
-    let tile = make_tile(10, 20, 6, 24, 0);
+    let tiles = vec![make_tile(10, 20, 6, 24, 0)];
     let windows = indexed_windows(&[(7, 8, 0), (10, 11, 1), (32, 33, 2)]);
 
-    let span = candidate_window_span_for_tile_fragment_reach(&windows, &tile, 2, 14)
+    let spans = precompute_tile_window_spans(&tiles, |_| windows.as_slice(), 2, 14);
+    let span = spans[0]
         .expect("asymmetric raw fragment reach should keep the core and far-right windows");
 
     assert_eq!(span.first_idx, 1);

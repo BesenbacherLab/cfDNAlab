@@ -71,6 +71,7 @@ impl ProgressFactory {
     }
 
     /// Create a spinner with the repo-wide default template and tick interval.
+    #[allow(dead_code)]
     pub(crate) fn default_spinner(&self) -> ProgressBar {
         self.spinner_with_style(Self::default_spinner_style())
     }

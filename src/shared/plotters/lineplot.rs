@@ -122,6 +122,7 @@ pub(crate) fn write_multi_line_plot_png<P: AsRef<Path>>(
 /// -------
 /// - `Result<()>`:
 ///     Ok when the plot is written.
+#[allow(dead_code)]
 pub(crate) fn write_line_plot_svg<P: AsRef<Path>>(
     out_path: P,
     title: &str,

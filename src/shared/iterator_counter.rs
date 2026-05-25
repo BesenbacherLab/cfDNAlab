@@ -95,19 +95,13 @@ impl FragmentCounters for LocalCounters {
 
 /// Cross-thread, shareable counters (atomics). Use when multiple iterators should report to one place.
 #[derive(Clone, Default)]
-#[expect(
-    dead_code,
-    reason = "kept for future multi-iterator counting across threads"
-)]
+#[allow(dead_code)]
 pub(crate) struct SharedCounters {
     inner: std::sync::Arc<SharedCountersInner>,
 }
 
 #[derive(Default)]
-#[expect(
-    dead_code,
-    reason = "inner state is only constructed through SharedCounters"
-)]
+#[allow(dead_code)]
 struct SharedCountersInner {
     incoming_reads: std::sync::atomic::AtomicU64,
     accepted_forward_reads: std::sync::atomic::AtomicU64,

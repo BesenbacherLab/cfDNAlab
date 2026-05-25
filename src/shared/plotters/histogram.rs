@@ -56,6 +56,7 @@ impl HistogramSpec {
     /// callers notice data quality problems instead of silently discarding
     /// input. Rarely used in this codebase because most callers operate on
     /// pre-summarized counts rather than raw observations.
+    #[allow(dead_code)]
     pub(crate) fn from_data(data: &[f64], start: f64, end: f64, bin_width: f64) -> Result<Self> {
         ensure!(bin_width > 0.0, "Histogram bin width must be positive");
         ensure!(end > start, "Histogram end must be greater than start");
@@ -97,6 +98,7 @@ impl HistogramSpec {
     }
 
     /// Total mass stored in the histogram.
+    #[allow(dead_code)]
     pub(crate) fn total(&self) -> f64 {
         self.counts.iter().copied().sum()
     }
@@ -107,6 +109,7 @@ impl HistogramSpec {
     /// bins are uniform and contiguous. When `bin_width` is `None`, a unit
     /// width of 1.0 is used. Prefer this over `from_binned` when you only have
     /// counts and a uniform spacing, not arbitrary edges.
+    #[allow(dead_code)]
     pub(crate) fn from_counts(counts: Vec<f64>, bin_width: Option<f64>) -> Result<Self> {
         ensure!(
             !counts.is_empty(),

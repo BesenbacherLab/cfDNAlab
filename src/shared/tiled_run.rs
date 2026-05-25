@@ -386,75 +386,6 @@ pub(crate) fn overlapping_windows_for_tile<'a>(
     }
 }
 
-/// Return the cached candidate-window span for a core-overlap tile/window model.
-///
-/// Coordinate space:
-/// - consumes BED window coordinates
-/// - returns a BED-window index span
-///
-/// Fragment ownership rule:
-/// - none; this helper does not reason about fragment ownership
-///
-/// Counting or assignment interval assumption:
-/// - none; relevance is defined only by BED/core overlap
-///
-/// Aligned fetch narrowing:
-/// - not performed here
-///
-/// This helper answers only:
-/// - which BED windows overlap the tile core?
-///
-/// It is not valid for fragment-reach commands such as `lengths`, `ends`, or `gc_bias`.
-pub(crate) fn candidate_window_span_for_tile_core_overlap(
-    windows: &[IndexedInterval<u64>],
-    tile: &Tile,
-) -> Option<TileWindowSpan> {
-    let core_start = tile.core_start() as u64;
-    let core_end = tile.core_end() as u64;
-    let (first_idx, last_idx_exclusive) = span_bounds_without_cache(windows, core_start, core_end);
-    (first_idx < last_idx_exclusive).then_some(TileWindowSpan {
-        first_idx,
-        last_idx_exclusive,
-    })
-}
-
-/// Return the cached candidate-window span for a fragment-reach tile/window model.
-///
-/// Coordinate space:
-/// - consumes BED window coordinates
-/// - returns a BED-window index span
-///
-/// Fragment ownership rule:
-/// - fragment is owned iff its aligned start lies in the tile core
-///
-/// Counting or assignment interval assumption:
-/// - the caller must choose the left and right reach values that correspond to the command's
-///   actual counting or assignment interval
-///
-/// Aligned fetch narrowing:
-/// - not performed here
-///
-/// This helper answers only:
-/// - which BED windows could receive counts from tile-owned fragments under the supplied reach?
-///
-/// It is not valid for future commands that use a different ownership rule, such as "fragment end
-/// lies in the tile core", unless they define a separate helper or prove the same reach model.
-pub(crate) fn candidate_window_span_for_tile_fragment_reach(
-    windows: &[IndexedInterval<u64>],
-    tile: &Tile,
-    left_reach_bp: u64,
-    right_reach_bp: u64,
-) -> Option<TileWindowSpan> {
-    let left_bound = (tile.core_start() as u64).saturating_sub(left_reach_bp);
-    let right_bound = (tile.core_end() as u64).saturating_add(right_reach_bp);
-    let (first_idx, last_idx_exclusive) =
-        span_bounds_without_cache(windows, left_bound, right_bound);
-    (first_idx < last_idx_exclusive).then_some(TileWindowSpan {
-        first_idx,
-        last_idx_exclusive,
-    })
-}
-
 /// Tightens a tile's fetch bounds to the observed window span while respecting halos.
 ///
 /// The narrowed span subtracts the left/right halo from the minimum/maximum window edges and then
@@ -612,31 +543,6 @@ pub(crate) enum TileMode<'w> {
         cross_idx_out: std::path::PathBuf, // Sidecar listing crossers
         guaranteed_aligned: bool, // Tiles and window_bp align, so write per-tile FINALS (no reducer needed)
     },
-}
-
-/// Filters a chromosome's windows down to those that touch the tile core.
-///
-/// The iterator simply checks for half-open interval overlap between each window and the core
-/// bounds expressed as absolute coordinates.
-///
-/// # Parameters
-/// - `windows_chr`: Chromosome-specific windows `(start, end, idx)` in start order.
-/// - `core_start`: Inclusive tile core start in absolute bases.
-/// - `core_end`: Exclusive tile core end in absolute bases.
-///
-/// # Returns
-/// An iterator yielding references to the overlapping windows.
-#[inline]
-pub(crate) fn windows_overlapping_core(
-    windows_chr: &[IndexedInterval<u64>],
-    core_start: u32,
-    core_end: u32,
-) -> impl Iterator<Item = &IndexedInterval<u64>> {
-    let core_start_abs = core_start as u64;
-    let core_end_abs = core_end as u64;
-    windows_chr
-        .iter()
-        .filter(move |window| window.end() > core_start_abs && window.start() < core_end_abs)
 }
 
 /// Extracts the tile index suffix from a coverage filename.

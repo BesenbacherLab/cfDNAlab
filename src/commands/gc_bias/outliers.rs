@@ -31,6 +31,7 @@ pub(crate) enum OutlierAction {
     /// Cap to the computed [lower, upper] bounds (winsorization).
     Winsorize,
     /// Replace with NaN (so a NaN-aware smoother can ignore them).
+    #[allow(dead_code)]
     MaskNaN,
 }
 

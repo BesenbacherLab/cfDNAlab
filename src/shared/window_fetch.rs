@@ -46,6 +46,7 @@ use crate::{
 pub(crate) enum BedFetchPolicy {
     CoreOverlap,
     CandidateWindowExtent,
+    #[allow(dead_code)]
     KeepTileFetch,
 }
 

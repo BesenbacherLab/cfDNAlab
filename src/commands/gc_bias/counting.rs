@@ -1,5 +1,5 @@
 use anyhow::{Result, ensure};
-use ndarray::{Array2, Array3, ArrayBase, Axis, Data, DataMut, Ix2, s};
+use ndarray::{Array2, ArrayBase, Axis, Data, DataMut, Ix2};
 
 use crate::commands::gc_bias::smoothing::smooth_length_row_in_place;
 use crate::shared::interval::{IndexedInterval, Interval};
@@ -244,6 +244,7 @@ impl GCCounts {
     /// -------
     /// count: Option<f64>
     ///     The count if indices are in range, otherwise `None`.
+    #[allow(dead_code)]
     pub fn get(&self, length: usize, gc: usize) -> Option<f64> {
         self.flat_index(length, gc).map(|idx| self.counts[idx])
     }
@@ -258,6 +259,7 @@ impl GCCounts {
     ///     GC bin (absolute).
     /// count: f64
     ///     Value to set as count.
+    #[allow(dead_code)]
     pub fn set(&mut self, length: usize, gc: usize, count: f64) {
         if let Some(idx) = self.flat_index(length, gc) {
             self.counts[idx] = count;
@@ -486,6 +488,7 @@ impl GCCounts {
     /// // let by_chr: HashMap<String, GCCounts> = ...;
     /// let total = GCCounts::collapse(by_chr.values())?;
     /// ```
+    #[allow(dead_code)]
     pub fn collapse<'a, I>(iter: I) -> Result<Self>
     where
         I: IntoIterator<Item = &'a GCCounts>,
@@ -574,23 +577,6 @@ impl std::fmt::Display for GCCounts {
     }
 }
 
-/// Stack counts from vector of `Array2` windows to a single 3d array.
-pub fn stack_gc_counts(all_counts: &[Array2<f64>]) -> Array3<f64> {
-    let n = all_counts.len();
-    assert!(n > 0, "stack_gc_counts requires at least one window");
-
-    let rows = all_counts[0].nrows();
-    let cols = all_counts[0].ncols();
-
-    let mut stacked = Array3::<f64>::zeros((n, rows, cols));
-    for (idx, window) in all_counts.iter().enumerate() {
-        assert_eq!(window.nrows(), rows, "mismatched length bins at {}", idx);
-        assert_eq!(window.ncols(), cols, "mismatched GC bins at {}", idx);
-        stacked.slice_mut(s![idx, .., ..]).assign(window);
-    }
-
-    stacked
-}
 /// Count reference GC per fragment length for every window on one chromosome.
 ///
 /// For each window `[start, end)` and each given start position `s` within that

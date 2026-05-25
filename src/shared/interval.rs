@@ -874,6 +874,7 @@ pub struct ScoredInterval<T, I = u64, S = f64> {
     pub score: S,
 }
 
+#[allow(dead_code)]
 impl<T, I, S> ScoredInterval<T, I, S>
 where
     T: Copy + PartialOrd + Display,

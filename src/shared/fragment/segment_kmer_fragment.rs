@@ -25,6 +25,7 @@ impl FragmentWithKmerSegments {
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub(crate) fn end(&self) -> u32 {
         self.interval.end()
     }

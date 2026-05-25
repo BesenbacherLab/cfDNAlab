@@ -14,6 +14,7 @@ pub(crate) fn temp_chrom_token(index: usize) -> String {
 #[derive(Debug, Clone)]
 pub(crate) struct TempChromNameMap {
     raw_to_token: HashMap<String, String>,
+    #[allow(dead_code)]
     token_to_raw: HashMap<String, String>,
 }
 
@@ -46,6 +47,8 @@ impl TempChromNameMap {
             .map(String::as_str)
             .ok_or_else(|| anyhow::anyhow!("missing temp filename token for contig '{}'", contig))
     }
+
+    #[allow(dead_code)]
     pub(crate) fn raw_for(&self, token: &str) -> Result<&str> {
         self.token_to_raw
             .get(token)

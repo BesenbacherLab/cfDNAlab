@@ -13,12 +13,14 @@ use super::histogram::HistogramSpec;
 /// Output formats supported by the heatmap writer.
 pub(crate) enum HeatmapFormat {
     Png,
+    #[allow(dead_code)]
     Svg,
 }
 
 /// Upsampling algorithm for heatmap rendering.
 pub(crate) enum HeatmapUpsample {
     Nearest,
+    #[allow(dead_code)]
     Bilinear,
 }
 
