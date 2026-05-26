@@ -188,3 +188,8 @@ pub(crate) fn stream_crossing_files(
 
     Ok((total_sum, total_weight))
 }
+
+#[cfg(test)]
+mod tests {
+    include!("cross_tile_parts_tests.rs");
+}

@@ -1,6 +1,6 @@
 // KEEP-IN-TESTS: public reusable interval API behavior.
 
-use cfdnalab::shared::interval::{
+use cfdnalab::interval::{
     IndexedInterval, Interval, Span, TouchingMergePolicy, merge_intervals, merge_sorted_intervals,
     push_merged_interval,
 };

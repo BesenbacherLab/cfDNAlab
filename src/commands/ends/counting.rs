@@ -31,6 +31,13 @@ pub(crate) struct EndMotifCounts {
 pub(crate) type EndCountsByWindow = FxHashMap<u64, EndMotifCounts>;
 
 impl EndMotifCounts {
+    /// Create an empty sparse count map.
+    #[inline]
+    #[allow(dead_code)]
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
     /// Add a single already-validated weighted motif observation to this window.
     ///
     /// Callers are responsible for checking `EndMotifCounts::should_store_weight` before calling

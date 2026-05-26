@@ -30,12 +30,12 @@ mod tests_bam_to_frag {
     };
     #[cfg(feature = "cmd_bam_to_bam")]
     use super::fixtures::{build_real_neutral_gc_package, build_real_non_neutral_gc_package};
+    use cfdnalab::RunOptions;
+    use cfdnalab::gc_bias::GCCorrectionPackage;
     #[cfg(feature = "cmd_bam_to_bam")]
     use cfdnalab::run_like_cli::bam_to_bam::{
         BamToBamConfig, BamToBamRunResult, run_bam_to_bam as run_bam_to_bam_command,
     };
-    use cfdnalab::RunOptions;
-    use cfdnalab::gc_bias::GCCorrectionPackage;
     use cfdnalab::run_like_cli::bam_to_frag::{
         BamToFragConfig, BamToFragRunResult, run_bam_to_frag,
     };
@@ -46,7 +46,8 @@ mod tests_bam_to_frag {
     };
     #[cfg(feature = "cmd_fragment_count_weights")]
     use cfdnalab::run_like_cli::fragment_count_weights::{
-        FragmentCountWeightsConfig, run_fragment_count_weights as run_fragment_count_weights_command,
+        FragmentCountWeightsConfig,
+        run_fragment_count_weights as run_fragment_count_weights_command,
     };
     use cfdnalab::{
         constants::GC_CORRECTION_SCHEMA_VERSION,
@@ -1110,7 +1111,8 @@ mod tests_bam_to_frag {
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
 
         // Act
-        let err = run_bam_to_frag_for_test(&cfg).expect_err("directory-valued GC package path should fail");
+        let err = run_bam_to_frag_for_test(&cfg)
+            .expect_err("directory-valued GC package path should fail");
 
         // Assert
         let msg = err.to_string();
@@ -2221,7 +2223,8 @@ mod tests_bam_to_frag {
         cfg.set_min_mapq(0);
 
         // Act
-        let err = run_bam_to_frag_for_test(&cfg).expect_err("truncated count scaling TSV should fail");
+        let err =
+            run_bam_to_frag_for_test(&cfg).expect_err("truncated count scaling TSV should fail");
 
         // Assert
         let msg = format!("{err:#}");

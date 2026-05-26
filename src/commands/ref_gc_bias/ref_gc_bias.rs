@@ -128,10 +128,7 @@ impl CommandRunResult for RefGCBiasRunResult {
 /// ------
 /// Returns an error when the configuration is invalid, the reference or BED input cannot be read,
 /// or the package cannot be written.
-pub fn run_ref_gc_bias(
-    opt: &RefGCBiasConfig,
-    options: RunOptions,
-) -> Result<RefGCBiasRunResult> {
+pub fn run_ref_gc_bias(opt: &RefGCBiasConfig, options: RunOptions) -> Result<RefGCBiasRunResult> {
     let start_time = Instant::now();
     opt.fragment_lengths.validate()?;
     ensure!(

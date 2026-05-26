@@ -486,3 +486,8 @@ pub(crate) fn collect_fragment_with_kmer_segments_from_single_read(
         gc_tag: read.gc_tag,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    include!("segment_kmer_fragment_tests.rs");
+}

@@ -1164,3 +1164,8 @@ where
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    include!("heatmap_tests.rs");
+}

@@ -122,14 +122,14 @@ pub mod run_like_cli {
 
     #[cfg(feature = "cmd_bam_to_bam")]
     pub mod bam_to_bam {
-        pub use crate::commands::bam_to_bam::config::BamToBamConfig;
         pub use crate::commands::bam_to_bam::bam_to_bam::{BamToBamRunResult, run_bam_to_bam};
+        pub use crate::commands::bam_to_bam::config::BamToBamConfig;
     }
 
     #[cfg(feature = "cmd_bam_to_frag")]
     pub mod bam_to_frag {
-        pub use crate::commands::bam_to_frag::config::BamToFragConfig;
         pub use crate::commands::bam_to_frag::bam_to_frag::{BamToFragRunResult, run_bam_to_frag};
+        pub use crate::commands::bam_to_frag::config::BamToFragConfig;
     }
 
     #[cfg(feature = "cmd_coverage_weights")]
@@ -218,15 +218,15 @@ pub mod run_like_cli {
     #[cfg(feature = "cmd_ref_gc_bias")]
     pub mod ref_gc_bias {
         pub use crate::commands::ref_gc_bias::config::{RefGCBiasConfig, RefGCWindowsArgs};
-        pub use crate::commands::ref_gc_bias::ref_gc_bias::{
-            RefGCBiasRunResult, run_ref_gc_bias,
-        };
+        pub use crate::commands::ref_gc_bias::ref_gc_bias::{RefGCBiasRunResult, run_ref_gc_bias};
     }
 
     #[cfg(feature = "cmd_transitions")]
     pub mod transitions {
         pub use crate::commands::transitions::config::TransitionsConfig;
-        pub use crate::commands::transitions::transitions::{TransitionsRunResult, run_transitions};
+        pub use crate::commands::transitions::transitions::{
+            TransitionsRunResult, run_transitions,
+        };
     }
 
     #[cfg(feature = "cmd_visualize_positions")]
@@ -247,7 +247,7 @@ pub mod run_like_cli {
     #[cfg(feature = "cmd_wps_peaks")]
     pub mod wps_peaks {
         pub use crate::commands::wps_peaks::config::WPSPeaksConfig;
-        pub use crate::commands::wps_peaks::wps_peaks::{WPSPeaksRunResult, run_wps_peaks};
         pub use crate::commands::wps_peaks::window_peak_results::PeaksWindowAction;
+        pub use crate::commands::wps_peaks::wps_peaks::{WPSPeaksRunResult, run_wps_peaks};
     }
 }

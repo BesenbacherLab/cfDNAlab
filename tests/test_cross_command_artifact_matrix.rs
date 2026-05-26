@@ -320,7 +320,10 @@ fn lengths_consumes_shared_real_artifacts_with_expected_weighted_count() -> Resu
     run_lengths(&cfg, RunOptions::new_quiet())?;
 
     // Assert
-    let counts_path = out_dir.join(format!("{}.length_counts.tsv.zst", cfg.output_prefix.trim()));
+    let counts_path = out_dir.join(format!(
+        "{}.length_counts.tsv.zst",
+        cfg.output_prefix.trim()
+    ));
     let arr: Array2<f64> = read_length_counts_tsv(&counts_path)?;
     assert_eq!(arr.dim(), (1, 1));
     assert_close_f64(

@@ -398,3 +398,8 @@ pub(crate) fn collect_fragment_with_segments_from_single_read(
         gc_tag: read.gc_tag,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    include!("segment_fragment_tests.rs");
+}

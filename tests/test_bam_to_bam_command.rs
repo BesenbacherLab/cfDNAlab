@@ -8,6 +8,7 @@ use std::{collections::HashMap, fs, path::Path};
 
 use anyhow::{Context, Result};
 use cfdnalab::RunOptions;
+use cfdnalab::gc_bias::GCCorrectionPackage;
 #[cfg(feature = "cmd_coverage_weights")]
 use cfdnalab::run_like_cli::coverage_weights::{
     CoverageWeightsConfig, run_coverage_weights as run_coverage_weights_command,
@@ -16,7 +17,6 @@ use cfdnalab::run_like_cli::coverage_weights::{
 use cfdnalab::run_like_cli::fragment_count_weights::{
     FragmentCountWeightsConfig, run_fragment_count_weights as run_fragment_count_weights_command,
 };
-use cfdnalab::gc_bias::GCCorrectionPackage;
 use cfdnalab::run_like_cli::{
     bam_to_bam::{BamToBamConfig, BamToBamRunResult, run_bam_to_bam},
     common::{ApplyGCArgFileOnly, ChromosomeArgs},

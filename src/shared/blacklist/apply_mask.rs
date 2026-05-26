@@ -48,3 +48,8 @@ pub fn apply_blacklist_mask_to_seq(seq: &mut [u8], intervals: &[Interval<u64>], 
         seq[mask_start..mask_end].fill(BLACKLIST_BYTE);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    include!("apply_mask_tests.rs");
+}

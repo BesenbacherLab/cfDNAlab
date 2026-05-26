@@ -8,21 +8,21 @@ mod tests_lengths_command {
 
     use anyhow::Result;
     use cfdnalab::RunOptions;
+    use cfdnalab::constants::GC_CORRECTION_SCHEMA_VERSION;
     use cfdnalab::gc_bias::{
         GCCorrectionPackage, GCLengthRange, MarginalizeLengthsWeightingScheme,
     };
+    use cfdnalab::reference::{ContigFootprintEntry, twobit_contig_footprint};
     use cfdnalab::run_like_cli::common::{
         AssignToWindowArgs, ChromosomeArgs, DistributionWindowsArgs, IOCArgs, UnpairedArgs,
         WindowAssigner,
     };
+    use cfdnalab::run_like_cli::common::{BlacklistStrategy, ClipMode, IndelMode};
     #[cfg(feature = "cmd_coverage_weights")]
     use cfdnalab::run_like_cli::coverage_weights::{
         CoverageWeightsConfig, run_coverage_weights as run_coverage_weights_command,
     };
     use cfdnalab::run_like_cli::lengths::{LengthsConfig, run_lengths};
-    use cfdnalab::run_like_cli::common::{BlacklistStrategy, ClipMode, IndelMode};
-    use cfdnalab::constants::GC_CORRECTION_SCHEMA_VERSION;
-    use cfdnalab::reference::{ContigFootprintEntry, twobit_contig_footprint};
     use fixtures::{
         BamFixture, FragmentSpec, ReadSpec, bam_from_specs, build_real_neutral_gc_package,
         build_real_neutral_gc_package_for_range, build_real_non_neutral_gc_package,

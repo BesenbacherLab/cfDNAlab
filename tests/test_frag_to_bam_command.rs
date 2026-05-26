@@ -6,6 +6,12 @@ mod fixtures;
 
 use anyhow::{Context, Result};
 use cfdnalab::RunOptions;
+use cfdnalab::blacklist::BlacklistStrategy;
+use cfdnalab::constants::GC_CORRECTION_SCHEMA_VERSION;
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
+use cfdnalab::gc_bias::GCCorrectionPackage;
+#[cfg(feature = "cmd_bam_to_frag")]
+use cfdnalab::reference::twobit_contig_footprint;
 #[cfg(all(feature = "cmd_bam_to_bam", feature = "cmd_bam_to_frag"))]
 use cfdnalab::run_like_cli::bam_to_bam::{
     BamToBamConfig, run_bam_to_bam as run_bam_to_bam_command,
@@ -22,22 +28,16 @@ use cfdnalab::run_like_cli::common::IOCArgs;
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
 use cfdnalab::run_like_cli::common::{ApplyGCArgFileOnly, ApplyGCArgs};
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_fcoverage"))]
-use cfdnalab::run_like_cli::fcoverage::{
-    FCoverageConfig, run_fcoverage as run_fcoverage_command,
+use cfdnalab::run_like_cli::fcoverage::{FCoverageConfig, run_fcoverage as run_fcoverage_command};
+use cfdnalab::run_like_cli::frag_to_bam::{
+    FragToBamConfig, run_frag_to_bam as run_frag_to_bam_command,
 };
-use cfdnalab::run_like_cli::frag_to_bam::{FragToBamConfig, run_frag_to_bam as run_frag_to_bam_command};
-#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
-use cfdnalab::gc_bias::GCCorrectionPackage;
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_lengths"))]
 use cfdnalab::run_like_cli::lengths::{LengthsConfig, run_lengths as run_lengths_command};
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
 use cfdnalab::run_like_cli::midpoints::{
     MidpointSmoothing, MidpointsConfig, run_midpoints as run_midpoints_command,
 };
-use cfdnalab::blacklist::BlacklistStrategy;
-use cfdnalab::constants::GC_CORRECTION_SCHEMA_VERSION;
-#[cfg(feature = "cmd_bam_to_frag")]
-use cfdnalab::reference::twobit_contig_footprint;
 #[cfg(feature = "cmd_bam_to_frag")]
 use flate2::read::MultiGzDecoder;
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]

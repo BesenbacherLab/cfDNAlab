@@ -45,7 +45,6 @@ impl Fragment {
     pub fn len(&self) -> u32 {
         self.interval.len()
     }
-
 }
 
 /// Minimal per-read info needed to build a Fragment without stashing full Records.
@@ -178,4 +177,9 @@ pub(crate) fn oriented_pair_from_read_info<'a, T: PairOrientable>(
 #[inline]
 pub(crate) fn is_inwards_oriented<'a, T: PairOrientable>(forward: &'a T, backward: &'a T) -> bool {
     forward.pos() <= backward.pos()
+}
+
+#[cfg(test)]
+mod tests {
+    include!("minimal_fragment_tests.rs");
 }

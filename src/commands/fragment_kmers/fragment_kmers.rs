@@ -538,7 +538,10 @@ fn final_paths_for_same_named_temp_files(
         .iter()
         .map(|temp_path| {
             let file_name = temp_path.file_name().with_context(|| {
-                format!("temporary output path has no filename: {}", temp_path.display())
+                format!(
+                    "temporary output path has no filename: {}",
+                    temp_path.display()
+                )
             })?;
             Ok(output_dir.join(file_name))
         })

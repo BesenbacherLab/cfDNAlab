@@ -131,3 +131,8 @@ pub(crate) fn collect_fragment_with_frag_file_info_from_single_read(
         read1_strand: read.strand,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    include!("frag_file_fragment_tests.rs");
+}

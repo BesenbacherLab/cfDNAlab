@@ -1,7 +1,5 @@
-#![cfg(feature = "plotters")]
-
 use anyhow::Result;
-use cfdnalab::shared::plotters::heatmap::{HeatmapFormat, HeatmapUpsample, write_heatmap};
+use crate::shared::plotters::heatmap::{HeatmapFormat, HeatmapUpsample, write_heatmap};
 use ndarray::Array2;
 use tempfile::TempDir;
 

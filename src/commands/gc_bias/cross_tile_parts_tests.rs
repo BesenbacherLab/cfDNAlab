@@ -1,10 +1,8 @@
-#![cfg(feature = "cmd_gc_bias")]
-
 mod tests_stream_helpers_and_finalizer {
     use anyhow::Result;
     use tempfile::tempdir;
 
-    use cfdnalab::commands::{
+    use crate::commands::{
         cli_common::{ChromosomeArgs, IOCArgs},
         gc_bias::{
             config::GCConfig,
@@ -13,7 +11,7 @@ mod tests_stream_helpers_and_finalizer {
             windows::{WindowState, fixed_size_window_interval, overlap_length},
         },
     };
-    use cfdnalab::shared::interval::Interval;
+    use crate::shared::interval::Interval;
 
     fn make_config(tmp: &tempfile::TempDir) -> GCConfig {
         let ioc = IOCArgs {
@@ -286,7 +284,7 @@ mod tests_streaming_parts {
     use anyhow::Result;
     use tempfile::tempdir;
 
-    use cfdnalab::commands::{
+    use crate::commands::{
         cli_common::{ChromosomeArgs, IOCArgs},
         gc_bias::{
             config::GCConfig,

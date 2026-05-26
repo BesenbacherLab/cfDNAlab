@@ -100,3 +100,8 @@ fn accumulate_blacklist_windows(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    include!("load_tests.rs");
+}

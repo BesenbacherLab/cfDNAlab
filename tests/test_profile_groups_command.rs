@@ -5,9 +5,10 @@
 mod fixtures;
 
 use anyhow::Result;
-use cfdnalab::RunOptions;
 #[cfg(feature = "cli")]
 use anyhow::{Context, bail};
+use cfdnalab::RunOptions;
+use cfdnalab::gc_bias::GCCorrectionPackage;
 #[cfg(feature = "cmd_bam_to_bam")]
 use cfdnalab::run_like_cli::bam_to_bam::{
     BamToBamConfig, run_bam_to_bam as run_bam_to_bam_command,
@@ -17,7 +18,6 @@ use cfdnalab::run_like_cli::common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, Scale
 use cfdnalab::run_like_cli::coverage_weights::{
     CoverageWeightsConfig, run_coverage_weights as run_coverage_weights_command,
 };
-use cfdnalab::gc_bias::GCCorrectionPackage;
 use cfdnalab::run_like_cli::midpoints::{
     MidpointSmoothing, MidpointsConfig, run_midpoints as run_midpoints_command,
 };

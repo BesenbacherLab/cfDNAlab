@@ -830,7 +830,10 @@ pub fn run_gc_bias(opt: &GCConfig, options: RunOptions) -> Result<GCBiasRunResul
         .join(dot_join(&[prefix, "gc_bias_correction.zarr"]));
     let temp_correction_package_path = final_outputs.temp_path_for(&correction_package_path)?;
     correction_pkg.write_zarr(&temp_correction_package_path)?;
-    final_outputs.record(temp_correction_package_path, correction_package_path.clone())?;
+    final_outputs.record(
+        temp_correction_package_path,
+        correction_package_path.clone(),
+    )?;
 
     // Plot the avg. gc-bias across lengths for quick QC
     #[cfg(feature = "plotters")]
@@ -1617,4 +1620,9 @@ impl IntermediateFileSaver {
         }
         Ok(())
     }
+}
+
+#[cfg(test)]
+mod tests {
+    include!("gc_bias_tests.rs");
 }

@@ -101,10 +101,7 @@ impl CommandRunResult for WPSPeaksRunResult {
 /// ------
 /// Returns an error if the BAM cannot be read, auxiliary files are invalid, WPS calculation fails,
 /// or peak outputs cannot be written.
-pub fn run_wps_peaks(
-    opt: &WPSPeaksConfig,
-    options: RunOptions,
-) -> Result<WPSPeaksRunResult> {
+pub fn run_wps_peaks(opt: &WPSPeaksConfig, options: RunOptions) -> Result<WPSPeaksRunResult> {
     let start_time = Instant::now();
     if opt.shared_args.unpaired.reads_are_fragments && opt.shared_args.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
