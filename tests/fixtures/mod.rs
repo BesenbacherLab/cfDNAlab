@@ -1,20 +1,21 @@
 #![allow(dead_code)]
 
+// KEEP-IN-TESTS: shared fixture builders for integration tests that exercise public command/API behavior.
+
 use anyhow::{Context, Result, anyhow, ensure};
-use cfdnalab::commands::cli_common::{BaseSelectionArgs, FragmentPositionSelectionArgs};
+use cfdnalab::RunOptions;
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
-use cfdnalab::commands::cli_common::{
+use cfdnalab::reference::twobit_contig_lengths;
+use cfdnalab::run_like_cli::common::{BaseSelectionArgs, FragmentPositionSelectionArgs};
+use cfdnalab::run_like_cli::common::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
+#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+use cfdnalab::run_like_cli::common::{
     ChromosomeArgs, GCWindowsArgs, IOCArgs, LoggingArgs, Ref2BitRequiredArgs,
 };
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
-use cfdnalab::commands::gc_bias::{config::GCConfig, gc_bias::run as run_gc_bias};
+use cfdnalab::run_like_cli::gc_bias::{GCConfig, OutlierMethodArg, run_gc_bias};
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
-use cfdnalab::commands::ref_gc_bias::{
-    config::RefGCBiasConfig, ref_gc_bias::run as run_ref_gc_bias,
-};
-use cfdnalab::shared::positioning::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
-#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
-use cfdnalab::shared::reference::twobit_contig_lengths;
+use cfdnalab::run_like_cli::ref_gc_bias::{RefGCBiasConfig, RefGCWindowsArgs, run_ref_gc_bias};
 use ndarray::{Array2, Array3};
 use rust_htslib::bam::{self, header::HeaderRecord, record::Cigar, record::CigarString};
 use std::{
@@ -271,7 +272,7 @@ fn configure_gc_bias_common(gc_cfg: &mut GCConfig) {
     gc_cfg.set_min_window_acgt_pct(0);
     gc_cfg.set_num_extreme_gc_bins(0);
     gc_cfg.set_num_short_length_bins(0);
-    gc_cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
+    gc_cfg.outlier_method = OutlierMethodArg::None;
     gc_cfg.set_windows(GCWindowsArgs {
         by_size: None,
         by_bed: None,
@@ -334,7 +335,7 @@ pub fn build_real_neutral_gc_package_for_range(
         windows: Default::default(),
         chromosomes: base_chromosomes(&["chr1"]),
         blacklist: None,
-        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+        fragment_lengths: cfdnalab::run_like_cli::common::FragmentLengthArgs {
             min_fragment_length,
             max_fragment_length,
         },
@@ -346,7 +347,7 @@ pub fn build_real_neutral_gc_package_for_range(
         tile_size: 1_000_000,
         logging: LoggingArgs::default(),
     };
-    run_ref_gc_bias(&ref_cfg)?;
+    run_ref_gc_bias(&ref_cfg, RunOptions::new_quiet())?;
 
     let gc_out_dir = out_dir.join(format!(
         "real_gc_bias_neutral_len_{}-{}",
@@ -369,7 +370,7 @@ pub fn build_real_neutral_gc_package_for_range(
     // broader configured length range.
     gc_cfg.set_min_length_bin_mass(0.0);
     gc_cfg.set_min_length_bin_width(1);
-    run_gc_bias(&gc_cfg)?;
+    run_gc_bias(&gc_cfg, RunOptions::new_quiet())?;
 
     Ok(gc_out_dir.join("gc_bias_correction.zarr"))
 }
@@ -392,8 +393,8 @@ pub fn build_real_neutral_gc_package(
 
 #[cfg(feature = "cmd_gc_bias")]
 pub fn write_constant_gc_package(path: &Path, fragment_length: u32, weight: f64) -> Result<()> {
-    let package = cfdnalab::commands::gc_bias::package::GCCorrectionPackage {
-        version: cfdnalab::shared::constants::GC_CORRECTION_SCHEMA_VERSION,
+    let package = cfdnalab::gc_bias::GCCorrectionPackage {
+        version: cfdnalab::constants::GC_CORRECTION_SCHEMA_VERSION,
         end_offset: 0,
         length_edges: vec![fragment_length, fragment_length + 1],
         gc_edges: vec![0, 101],
@@ -411,10 +412,10 @@ pub fn write_two_bin_gc_package(
     fragment_length: u32,
     low_gc_weight: f64,
     high_gc_weight: f64,
-    reference_contig_footprint: Vec<cfdnalab::shared::reference::ContigFootprintEntry>,
+    reference_contig_footprint: Vec<cfdnalab::reference::ContigFootprintEntry>,
 ) -> Result<()> {
-    let package = cfdnalab::commands::gc_bias::package::GCCorrectionPackage {
-        version: cfdnalab::shared::constants::GC_CORRECTION_SCHEMA_VERSION,
+    let package = cfdnalab::gc_bias::GCCorrectionPackage {
+        version: cfdnalab::constants::GC_CORRECTION_SCHEMA_VERSION,
         end_offset: 0,
         length_edges: vec![fragment_length, fragment_length + 1],
         gc_edges: vec![0, 51, 101],
@@ -472,12 +473,12 @@ pub fn build_real_non_neutral_gc_package(
         // producer/consumer weights easy to audit next to each test.
         n_positions,
         seed: Some(23),
-        windows: cfdnalab::commands::ref_gc_bias::config::RefGCWindowsArgs {
+        windows: RefGCWindowsArgs {
             by_bed: Some(bed_path),
         },
         chromosomes: base_chromosomes(&["chr1"]),
         blacklist: None,
-        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+        fragment_lengths: cfdnalab::run_like_cli::common::FragmentLengthArgs {
             min_fragment_length: fragment_length,
             max_fragment_length: fragment_length,
         },
@@ -489,7 +490,7 @@ pub fn build_real_non_neutral_gc_package(
         tile_size: 1_000_000,
         logging: LoggingArgs::default(),
     };
-    run_ref_gc_bias(&ref_cfg)?;
+    run_ref_gc_bias(&ref_cfg, RunOptions::new_quiet())?;
 
     let gc_out_dir = out_dir.join(format!("real_gc_bias_non_neutral_len_{fragment_length}"));
     std::fs::create_dir_all(&gc_out_dir)?;
@@ -507,7 +508,7 @@ pub fn build_real_non_neutral_gc_package(
     gc_cfg.set_min_gc_bin_mass(1.0);
     gc_cfg.set_min_length_bin_mass(0.0);
     gc_cfg.set_min_length_bin_width(1);
-    run_gc_bias(&gc_cfg)?;
+    run_gc_bias(&gc_cfg, RunOptions::new_quiet())?;
 
     Ok(gc_out_dir.join("gc_bias_correction.zarr"))
 }

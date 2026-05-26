@@ -1,5 +1,7 @@
 #![cfg(feature = "cli")]
 
+// KEEP-IN-TESTS: CLI smoke tests exercise the installed binary surface.
+
 mod fixtures;
 
 use anyhow::{Context, Result, bail};

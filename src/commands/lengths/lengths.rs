@@ -1,4 +1,5 @@
 use crate::{
+    command_run::{CommandRunResult, RunOptions},
     commands::{
         cli_common::{
             DistributionWindowSpec, WindowAssigner, ensure_output_dir, load_blacklist_map,
@@ -65,6 +66,38 @@ use std::{
 use tracing::info;
 
 const COMMAND_TARGET: &str = "lengths";
+
+/// Result from `lengths`.
+///
+/// The command writes a fragment length count table and settings JSON. The result keeps those
+/// output paths together with the counters from the fragment iteration.
+#[derive(Debug)]
+pub struct LengthsRunResult {
+    /// Fragment and filtering counters collected during the run.
+    pub counters: LengthsCounters,
+    /// Final length-count table path.
+    pub length_counts_path: PathBuf,
+    /// Settings JSON written alongside the counts.
+    pub settings_path: PathBuf,
+    /// Final output files produced by the command.
+    pub output_files: Vec<PathBuf>,
+}
+
+impl CommandRunResult for LengthsRunResult {
+    type Counters = LengthsCounters;
+
+    fn counters(&self) -> &Self::Counters {
+        &self.counters
+    }
+
+    fn output_files(&self) -> &[PathBuf] {
+        &self.output_files
+    }
+
+    fn primary_output(&self) -> Option<&Path> {
+        Some(self.length_counts_path.as_path())
+    }
+}
 
 // Map original window index to counts plus containment flag for this tile
 #[derive(Clone)]
@@ -169,18 +202,32 @@ fn reorder_bed_outputs_by_original_index(
     Ok(())
 }
 
-/// Execute the fragment length counting pipeline end-to-end.
+/// Run the `lengths` command.
 ///
-/// Parameters:
-/// - `opt`: Fully resolved configuration for the `lengths` command.
+/// This command counts fragments by length and optional window assignment. It applies configured
+/// fragment filters, optional indel or clipping adjustments, blacklists, GC correction, and genomic
+/// scaling before writing the count table.
 ///
-/// Returns:
-/// - `Ok(())` when the counts and accompanying metadata files are written successfully.
+/// Reporting is controlled by `options`. `report_statistics` prints the final summary and
+/// `show_progress` controls progress bars. This command does not use status logs.
 ///
-/// Errors:
-/// - Propagates IO and parsing errors when reading inputs or writing results, aborting the run on
-///   the first failure.
-pub(crate) fn run(opt: &LengthsConfig) -> Result<()> {
+/// Parameters
+/// ----------
+/// - `opt`:
+///     Fully resolved configuration for the `lengths` command.
+/// - `options`:
+///     Reporting controls for statistics and progress bars.
+///
+/// Returns
+/// -------
+/// - `Ok(LengthsRunResult)`:
+///     Counters and output paths for the completed run.
+///
+/// Errors
+/// ------
+/// Returns an error when the configuration is invalid, an input cannot be read, or any output file
+/// cannot be written.
+pub fn run_lengths(opt: &LengthsConfig, options: RunOptions) -> Result<LengthsRunResult> {
     let start_time = Instant::now();
     let length_axis = Arc::new(LengthAxis::new(opt.resolve_length_bins()?)?);
     validate_gc_length_trim_rare(opt.gc_length_trim_rare)?;
@@ -309,7 +356,7 @@ pub(crate) fn run(opt: &LengthsConfig) -> Result<()> {
     )?;
     let temp_chrom_name_map = TempChromNameMap::from_contigs(&chromosomes)?;
 
-    let progress = ProgressFactory::new();
+    let progress = ProgressFactory::with_enabled(options.show_progress);
     let pb = Arc::new(progress.default_bar(tiles.len() as u64));
 
     let windows_lookup = indexed_windows_map.as_ref();
@@ -383,7 +430,11 @@ pub(crate) fn run(opt: &LengthsConfig) -> Result<()> {
         })
         .collect::<Result<_>>()?; // Short-circuits on the first Err
 
-    pb.finish_with_message("| Finished counting");
+    if options.show_progress {
+        pb.finish_with_message("| Finished counting");
+    } else {
+        pb.finish_and_clear();
+    }
 
     // Release per-tile inputs before merging outputs
     drop(tile_window_spans_for_threads);
@@ -578,7 +629,7 @@ pub(crate) fn run(opt: &LengthsConfig) -> Result<()> {
             temp_counts_path.display()
         )
     })?;
-    final_outputs.record(temp_counts_path, final_counts_path)?;
+    final_outputs.record(temp_counts_path, final_counts_path.clone())?;
 
     let settings_path = opt
         .ioc
@@ -586,7 +637,7 @@ pub(crate) fn run(opt: &LengthsConfig) -> Result<()> {
         .join(dot_join(&[prefix, "length_settings.json"]));
     let temp_settings_path = final_outputs.temp_path_for(&settings_path)?;
     write_length_settings_json(&temp_settings_path, opt, &window_opt, &length_axis)?;
-    final_outputs.record(temp_settings_path, settings_path)?;
+    final_outputs.record(temp_settings_path, settings_path.clone())?;
 
     final_outputs.move_into_place()?;
 
@@ -655,24 +706,31 @@ pub(crate) fn run(opt: &LengthsConfig) -> Result<()> {
     drop(blacklist_map);
 
     let elapsed = start_time.elapsed();
-    print_fragment_run_statistics(
-        &global_counter.base,
-        elapsed,
-        FragmentRunStatisticsOptions {
-            include_section_header: true,
-            notes: &[],
-            labels: DEFAULT_FRAGMENT_STATISTICS_LABELS,
-            blacklist_excluded_fragments: Some(global_counter.blacklisted_fragments),
-            gc: opt.gc.gc_file.is_some().then_some(GCStatisticsSummary {
-                neutralize_invalid_gc: opt.gc.neutralize_invalid_gc,
-                failed_fragments: global_counter.gc_failed_fragments,
-                missing_tags: None,
-                out_of_range_tags: None,
-            }),
-        },
-        std::iter::empty::<&str>(),
-    );
-    Ok(())
+    if options.report_statistics {
+        print_fragment_run_statistics(
+            &global_counter.base,
+            elapsed,
+            FragmentRunStatisticsOptions {
+                include_section_header: true,
+                notes: &[],
+                labels: DEFAULT_FRAGMENT_STATISTICS_LABELS,
+                blacklist_excluded_fragments: Some(global_counter.blacklisted_fragments),
+                gc: opt.gc.gc_file.is_some().then_some(GCStatisticsSummary {
+                    neutralize_invalid_gc: opt.gc.neutralize_invalid_gc,
+                    failed_fragments: global_counter.gc_failed_fragments,
+                    missing_tags: None,
+                    out_of_range_tags: None,
+                }),
+            },
+            std::iter::empty::<&str>(),
+        );
+    }
+    Ok(LengthsRunResult {
+        counters: global_counter,
+        length_counts_path: final_counts_path.clone(),
+        settings_path: settings_path.clone(),
+        output_files: vec![final_counts_path, settings_path],
+    })
 }
 
 fn process_tile(

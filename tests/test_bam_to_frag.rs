@@ -1,5 +1,7 @@
 #![cfg(feature = "cmd_bam_to_frag")]
 
+// KEEP-IN-TESTS: all active tests in this file cover bam-to-frag command output, errors, or artifacts.
+
 mod fixtures;
 
 mod tests_bam_to_frag {
@@ -29,22 +31,24 @@ mod tests_bam_to_frag {
     #[cfg(feature = "cmd_bam_to_bam")]
     use super::fixtures::{build_real_neutral_gc_package, build_real_non_neutral_gc_package};
     #[cfg(feature = "cmd_bam_to_bam")]
-    use cfdnalab::commands::bam_to_bam::{
-        bam_to_bam::run_inner as run_bam_to_bam, config::BamToBamConfig,
+    use cfdnalab::run_like_cli::bam_to_bam::{
+        BamToBamConfig, BamToBamRunResult, run_bam_to_bam as run_bam_to_bam_command,
     };
-    use cfdnalab::commands::bam_to_frag::{bam_to_frag::run_inner, config::BamToFragConfig};
-    use cfdnalab::commands::cli_common::{ApplyGCArgFileOnly, ChromosomeArgs, IOCArgs};
+    use cfdnalab::RunOptions;
+    use cfdnalab::gc_bias::GCCorrectionPackage;
+    use cfdnalab::run_like_cli::bam_to_frag::{
+        BamToFragConfig, BamToFragRunResult, run_bam_to_frag,
+    };
+    use cfdnalab::run_like_cli::common::{ApplyGCArgFileOnly, ChromosomeArgs, IOCArgs};
     #[cfg(feature = "cmd_coverage_weights")]
-    use cfdnalab::commands::coverage_weights::{
-        config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
+    use cfdnalab::run_like_cli::coverage_weights::{
+        CoverageWeightsConfig, run_coverage_weights as run_coverage_weights_command,
     };
     #[cfg(feature = "cmd_fragment_count_weights")]
-    use cfdnalab::commands::fragment_count_weights::{
-        config::FragmentCountWeightsConfig,
-        fragment_count_weights::run as run_fragment_count_weights,
+    use cfdnalab::run_like_cli::fragment_count_weights::{
+        FragmentCountWeightsConfig, run_fragment_count_weights as run_fragment_count_weights_command,
     };
-    use cfdnalab::commands::gc_bias::package::GCCorrectionPackage;
-    use cfdnalab::shared::{
+    use cfdnalab::{
         constants::GC_CORRECTION_SCHEMA_VERSION,
         reference::{ContigFootprintEntry, twobit_contig_footprint},
     };
@@ -52,6 +56,25 @@ mod tests_bam_to_frag {
     use rust_htslib::bam::Read;
     #[cfg(feature = "cmd_bam_to_bam")]
     use rust_htslib::bam::record::Aux;
+
+    fn run_bam_to_frag_for_test(cfg: &BamToFragConfig) -> Result<BamToFragRunResult> {
+        run_bam_to_frag(cfg, RunOptions::new_quiet())
+    }
+
+    #[cfg(feature = "cmd_bam_to_bam")]
+    fn run_bam_to_bam_for_test(cfg: &BamToBamConfig) -> Result<BamToBamRunResult> {
+        run_bam_to_bam_command(cfg, RunOptions::new_quiet())
+    }
+
+    #[cfg(feature = "cmd_coverage_weights")]
+    fn run_coverage_weights(cfg: &CoverageWeightsConfig) -> Result<()> {
+        run_coverage_weights_command(cfg, RunOptions::new_quiet()).map(|_| ())
+    }
+
+    #[cfg(feature = "cmd_fragment_count_weights")]
+    fn run_fragment_count_weights(cfg: &FragmentCountWeightsConfig) -> Result<()> {
+        run_fragment_count_weights_command(cfg, RunOptions::new_quiet()).map(|_| ())
+    }
 
     #[test]
     fn bam_to_frag_smoke_two_chroms() -> Result<()> {
@@ -98,7 +121,9 @@ mod tests_bam_to_frag {
         cfg.set_blacklist(None);
 
         // Run the command
-        let counters = run_inner(&cfg).context("run_inner failed")?;
+        let counters = run_bam_to_frag_for_test(&cfg)
+            .context("bam-to-frag run failed")?
+            .counters;
         assert!(
             counters.base.counted_fragments >= 3,
             "Expected at least 3 fragments counted"
@@ -169,7 +194,7 @@ mod tests_bam_to_frag {
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
 
-        run_inner(&cfg)?;
+        run_bam_to_frag_for_test(&cfg)?;
 
         let frag_path = out_dir.join("three_chr_global.frag.tsv.gz");
         let mut parsed = parse_frag_rows(&read_frag_gz(&frag_path)?);
@@ -243,8 +268,8 @@ mod tests_bam_to_frag {
         bed_cfg.set_by_bed(Some(bed_path));
 
         // Act
-        run_inner(&global_cfg)?;
-        run_inner(&bed_cfg)?;
+        run_bam_to_frag_for_test(&global_cfg)?;
+        run_bam_to_frag_for_test(&bed_cfg)?;
 
         // Assert
         let global_rows = read_frag_gz(&global_out.join("global.frag.tsv.gz"))?;
@@ -317,8 +342,8 @@ mod tests_bam_to_frag {
         cfg.set_by_bed(Some(bed_path));
 
         // Act
-        run_inner(&global_cfg)?;
-        run_inner(&cfg)?;
+        run_bam_to_frag_for_test(&global_cfg)?;
+        run_bam_to_frag_for_test(&cfg)?;
 
         // Assert:
         // First prove the fixture and output path preserve both chromosomes in global mode.
@@ -492,7 +517,7 @@ mod tests_bam_to_frag {
         cfg.set_require_proper_pair(false);
 
         // Act
-        run_inner(&cfg)?;
+        run_bam_to_frag_for_test(&cfg)?;
 
         // Assert
         let rows = parse_frag_rows(&read_frag_gz(&out_dir.join("header_order.frag.tsv.gz"))?);
@@ -667,7 +692,7 @@ mod tests_bam_to_frag {
         cfg.set_require_proper_pair(false);
 
         // Act
-        run_inner(&cfg)?;
+        run_bam_to_frag_for_test(&cfg)?;
 
         // Assert
         let rows = parse_frag_rows(&read_frag_gz(&out_dir.join("explicit_order.frag.tsv.gz"))?);
@@ -739,9 +764,9 @@ mod tests_bam_to_frag {
         explicit_thirty_cfg.set_min_mapq(30);
 
         // Act
-        run_inner(&default_cfg)?;
-        run_inner(&explicit_zero_cfg)?;
-        run_inner(&explicit_thirty_cfg)?;
+        run_bam_to_frag_for_test(&default_cfg)?;
+        run_bam_to_frag_for_test(&explicit_zero_cfg)?;
+        run_bam_to_frag_for_test(&explicit_thirty_cfg)?;
 
         // Assert
         let default_rows = read_frag_gz(&out_default.join("default.frag.tsv.gz"))?;
@@ -790,7 +815,7 @@ mod tests_bam_to_frag {
         cfg.set_require_proper_pair(false);
         cfg.set_by_bed(Some(bed_path));
 
-        run_inner(&cfg)?;
+        run_bam_to_frag_for_test(&cfg)?;
 
         let frag_path = out_dir.join("three_chr_bed.frag.tsv.gz");
         let mut parsed = parse_frag_rows(&read_frag_gz(&frag_path)?);
@@ -851,7 +876,7 @@ mod tests_bam_to_frag {
         // - The GC corrector requires at least 10 A/C/G/T bases, so the lookup fails.
         // - With `neutralize_invalid_gc=true`, `bam-to-frag` keeps the fragment and writes `gc_weight=1.0`,
         //   increments `gc_failed_fragments`, and still emits the GC column in the header.
-        let counters = run_inner(&cfg)?;
+        let counters = run_bam_to_frag_for_test(&cfg)?.counters;
 
         assert_eq!(counters.base.counted_fragments, 1);
         assert_eq!(counters.gc_failed_fragments, 1);
@@ -909,7 +934,7 @@ mod tests_bam_to_frag {
         // - The one fixture fragment again fails GC lookup because only 8 effective A/C/G/T bases remain.
         // - With the default GC behavior, unusable GC information makes the fragment get skipped.
         // - The converter still writes the header with the GC column because GC correction was requested.
-        let counters = run_inner(&cfg)?;
+        let counters = run_bam_to_frag_for_test(&cfg)?.counters;
 
         assert_eq!(counters.base.counted_fragments, 0);
         assert_eq!(counters.gc_failed_fragments, 1);
@@ -983,7 +1008,7 @@ mod tests_bam_to_frag {
         }
 
         // Act
-        let err = run_inner(&cfg).expect_err("out-of-range GC package should fail");
+        let err = run_bam_to_frag_for_test(&cfg).expect_err("out-of-range GC package should fail");
 
         // Assert
         let msg = err.to_string();
@@ -1039,7 +1064,7 @@ mod tests_bam_to_frag {
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
 
         // Act
-        let err = run_inner(&cfg).expect_err("schema version mismatch should fail");
+        let err = run_bam_to_frag_for_test(&cfg).expect_err("schema version mismatch should fail");
 
         // Assert
         let msg = err.to_string();
@@ -1085,7 +1110,7 @@ mod tests_bam_to_frag {
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
 
         // Act
-        let err = run_inner(&cfg).expect_err("directory-valued GC package path should fail");
+        let err = run_bam_to_frag_for_test(&cfg).expect_err("directory-valued GC package path should fail");
 
         // Assert
         let msg = err.to_string();
@@ -1134,11 +1159,11 @@ mod tests_bam_to_frag {
         frag_cfg.set_output_prefix("scaled");
         frag_cfg.set_min_mapq(0);
         frag_cfg.set_require_proper_pair(false);
-        let mut frag_scale = cfdnalab::commands::cli_common::ScaleGenomeArgs::default();
+        let mut frag_scale = cfdnalab::run_like_cli::common::ScaleGenomeArgs::default();
         frag_scale.scaling_factors = Some(scaling_path.clone());
         frag_cfg.set_coverage_scaling_factors(frag_scale.scaling_factors);
 
-        run_inner(&frag_cfg)?;
+        run_bam_to_frag_for_test(&frag_cfg)?;
         let frag_rows = read_frag_gz(&frag_out_dir.join("scaled.frag.tsv.gz"))?;
         assert_eq!(frag_rows, vec!["chr1\t20\t80\t60\t+\t2"]);
 
@@ -1146,11 +1171,11 @@ mod tests_bam_to_frag {
         let mut bam_cfg = BamToBamConfig::new(bam.bam.clone(), bam_out.clone(), chroms);
         bam_cfg.set_min_mapq(0);
         bam_cfg.set_require_proper_pair(false);
-        let mut bam_scale = cfdnalab::commands::cli_common::ScaleGenomeArgs::default();
+        let mut bam_scale = cfdnalab::run_like_cli::common::ScaleGenomeArgs::default();
         bam_scale.scaling_factors = Some(scaling_path);
         bam_cfg.set_coverage_scaling_factors(bam_scale.scaling_factors);
 
-        run_bam_to_bam(&bam_cfg)?;
+        run_bam_to_bam_for_test(&bam_cfg)?;
         let mut reader = rust_htslib::bam::Reader::from_path(&bam_out)?;
         let mut cov_tags = Vec::new();
         for record in reader.records() {
@@ -1198,7 +1223,7 @@ mod tests_bam_to_frag {
         frag_cfg.set_require_proper_pair(false);
         frag_cfg.set_count_scaling_factors(Some(scaling_path.clone()));
 
-        run_inner(&frag_cfg)?;
+        run_bam_to_frag_for_test(&frag_cfg)?;
         let frag_rows = read_frag_gz(&frag_out_dir.join("scaled.frag.tsv.gz"))?;
         let frag_header = std::fs::read_to_string(frag_out_dir.join("scaled.frag.header.tsv"))?;
         assert_eq!(
@@ -1213,7 +1238,7 @@ mod tests_bam_to_frag {
         bam_cfg.set_require_proper_pair(false);
         bam_cfg.set_count_scaling_factors(Some(scaling_path));
 
-        run_bam_to_bam(&bam_cfg)?;
+        run_bam_to_bam_for_test(&bam_cfg)?;
         let mut reader = rust_htslib::bam::Reader::from_path(&bam_out)?;
         let mut cnt_tags = Vec::new();
         for record in reader.records() {
@@ -1270,7 +1295,7 @@ mod tests_bam_to_frag {
         frag_cfg.set_count_scaling_factors(Some(fragment_count_scaling_path));
 
         // Act
-        run_inner(&frag_cfg)?;
+        run_bam_to_frag_for_test(&frag_cfg)?;
 
         // Assert
         let frag_rows = read_frag_gz(&frag_out_dir.join("scaled.frag.tsv.gz"))?;
@@ -1319,7 +1344,7 @@ mod tests_bam_to_frag {
         frag_cfg.set_count_scaling_factors(Some(scaling_path));
 
         // Act
-        run_inner(&frag_cfg)?;
+        run_bam_to_frag_for_test(&frag_cfg)?;
 
         // Assert
         let frag_rows = read_frag_gz(&frag_out_dir.join("scaled.frag.tsv.gz"))?;
@@ -1392,7 +1417,7 @@ mod tests_bam_to_frag {
             neutralize_invalid_gc: false,
         });
         frag_cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
-        let mut frag_scale = cfdnalab::commands::cli_common::ScaleGenomeArgs::default();
+        let mut frag_scale = cfdnalab::run_like_cli::common::ScaleGenomeArgs::default();
         frag_scale.scaling_factors = Some(scaling_path.clone());
         frag_cfg.set_coverage_scaling_factors(frag_scale.scaling_factors);
         {
@@ -1410,7 +1435,7 @@ mod tests_bam_to_frag {
             neutralize_invalid_gc: false,
         });
         bam_cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
-        let mut bam_scale = cfdnalab::commands::cli_common::ScaleGenomeArgs::default();
+        let mut bam_scale = cfdnalab::run_like_cli::common::ScaleGenomeArgs::default();
         bam_scale.scaling_factors = Some(scaling_path);
         bam_cfg.set_coverage_scaling_factors(bam_scale.scaling_factors);
         {
@@ -1419,8 +1444,8 @@ mod tests_bam_to_frag {
             fragment_lengths.max_fragment_length = 100;
         }
 
-        let frag_counters = run_inner(&frag_cfg)?;
-        let bam_counters = run_bam_to_bam(&bam_cfg)?;
+        let frag_counters = run_bam_to_frag_for_test(&frag_cfg)?.counters;
+        let bam_counters = run_bam_to_bam_for_test(&bam_cfg)?.counters;
 
         let frag_rows = read_frag_gz(&frag_out_dir.join("combined.frag.tsv.gz"))?;
         let frag_header = std::fs::read_to_string(frag_out_dir.join("combined.frag.header.tsv"))?;
@@ -1533,11 +1558,11 @@ mod tests_bam_to_frag {
         frag_cfg.set_output_prefix("scaled_real");
         frag_cfg.set_min_mapq(0);
         frag_cfg.set_require_proper_pair(false);
-        let mut frag_scale = cfdnalab::commands::cli_common::ScaleGenomeArgs::default();
+        let mut frag_scale = cfdnalab::run_like_cli::common::ScaleGenomeArgs::default();
         frag_scale.scaling_factors = Some(scaling_path.clone());
         frag_cfg.set_coverage_scaling_factors(frag_scale.scaling_factors);
 
-        run_inner(&frag_cfg)?;
+        run_bam_to_frag_for_test(&frag_cfg)?;
         let frag_rows = read_frag_gz(&frag_out_dir.join("scaled_real.frag.tsv.gz"))?;
         assert_eq!(frag_rows.len(), 1);
         let frag_parts: Vec<_> = frag_rows[0].split('\t').collect();
@@ -1552,11 +1577,11 @@ mod tests_bam_to_frag {
         let mut bam_cfg = BamToBamConfig::new(bam.bam.clone(), bam_out.clone(), chroms);
         bam_cfg.set_min_mapq(0);
         bam_cfg.set_require_proper_pair(false);
-        let mut bam_scale = cfdnalab::commands::cli_common::ScaleGenomeArgs::default();
+        let mut bam_scale = cfdnalab::run_like_cli::common::ScaleGenomeArgs::default();
         bam_scale.scaling_factors = Some(scaling_path);
         bam_cfg.set_coverage_scaling_factors(bam_scale.scaling_factors);
 
-        run_bam_to_bam(&bam_cfg)?;
+        run_bam_to_bam_for_test(&bam_cfg)?;
         let mut reader = rust_htslib::bam::Reader::from_path(&bam_out)?;
         let mut cov_tags = Vec::new();
         for record in reader.records() {
@@ -1652,7 +1677,7 @@ mod tests_bam_to_frag {
             fragment_lengths.max_fragment_length = 100;
         }
 
-        run_inner(&frag_cfg)?;
+        run_bam_to_frag_for_test(&frag_cfg)?;
         let frag_rows = read_frag_gz(&frag_out_dir.join("scaled_real.frag.tsv.gz"))?;
         let mut parsed_rows: Vec<(u64, f64)> = frag_rows
             .iter()
@@ -1675,7 +1700,7 @@ mod tests_bam_to_frag {
             fragment_lengths.max_fragment_length = 100;
         }
 
-        run_bam_to_bam(&bam_cfg)?;
+        run_bam_to_bam_for_test(&bam_cfg)?;
         let bam_fragment_cnts = read_fragment_level_cnts_from_bam(&bam_out)?;
 
         assert_eq!(parsed_rows.len(), 2, "expected exactly two frag rows");
@@ -1812,7 +1837,7 @@ mod tests_bam_to_frag {
         }
 
         // Act
-        let counters = run_inner(&frag_cfg)?;
+        let counters = run_bam_to_frag_for_test(&frag_cfg)?.counters;
         let frag_rows = read_frag_gz(&frag_out_dir.join("scaled_multi_chr.frag.tsv.gz"))?;
         let frag_header =
             std::fs::read_to_string(frag_out_dir.join("scaled_multi_chr.frag.header.tsv"))?;
@@ -1934,8 +1959,8 @@ mod tests_bam_to_frag {
             fragment_lengths.max_fragment_length = 60;
         }
 
-        let frag_counters = run_inner(&frag_cfg)?;
-        let bam_counters = run_bam_to_bam(&bam_cfg)?;
+        let frag_counters = run_bam_to_frag_for_test(&frag_cfg)?.counters;
+        let bam_counters = run_bam_to_bam_for_test(&bam_cfg)?.counters;
 
         let frag_rows = read_frag_gz(&frag_out_dir.join("real_gc.frag.tsv.gz"))?;
         let frag_header = std::fs::read_to_string(frag_out_dir.join("real_gc.frag.header.tsv"))?;
@@ -2061,8 +2086,8 @@ mod tests_bam_to_frag {
         }
 
         // Act
-        let frag_counters = run_inner(&frag_cfg)?;
-        let bam_counters = run_bam_to_bam(&bam_cfg)?;
+        let frag_counters = run_bam_to_frag_for_test(&frag_cfg)?.counters;
+        let bam_counters = run_bam_to_bam_for_test(&bam_cfg)?.counters;
 
         // Assert
         let frag_rows = read_frag_gz(&frag_out_dir.join("real_gc.frag.tsv.gz"))?;
@@ -2151,7 +2176,7 @@ mod tests_bam_to_frag {
         cfg.set_min_mapq(0);
 
         // Act
-        let err = run_inner(&cfg).expect_err("truncated scaling TSV should fail");
+        let err = run_bam_to_frag_for_test(&cfg).expect_err("truncated scaling TSV should fail");
 
         // Assert:
         // `bam-to-frag` also wraps the shared loader with `load scaling factors`, so inspect
@@ -2196,7 +2221,7 @@ mod tests_bam_to_frag {
         cfg.set_min_mapq(0);
 
         // Act
-        let err = run_inner(&cfg).expect_err("truncated count scaling TSV should fail");
+        let err = run_bam_to_frag_for_test(&cfg).expect_err("truncated count scaling TSV should fail");
 
         // Assert
         let msg = format!("{err:#}");
@@ -2250,7 +2275,7 @@ mod tests_bam_to_frag {
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
 
         // Act
-        let err = run_inner(&cfg)
+        let err = run_bam_to_frag_for_test(&cfg)
             .expect_err("uncorrected count scaling must fail in a GC-corrected bam-to-frag run");
 
         // Assert

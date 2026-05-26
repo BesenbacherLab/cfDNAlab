@@ -1,33 +1,35 @@
 #![cfg(feature = "cmd_fcoverage")]
 
+// KEEP-IN-TESTS: all active tests in this file cover fcoverage command output, errors, or artifacts.
+
 mod fixtures;
 
 use anyhow::Result;
-#[cfg(feature = "cmd_bam_to_bam")]
-use cfdnalab::commands::bam_to_bam::{
-    bam_to_bam::run_inner as run_bam_to_bam, config::BamToBamConfig,
+use cfdnalab::RunOptions;
+use cfdnalab::constants::GC_CORRECTION_SCHEMA_VERSION;
+use cfdnalab::fragment::{
+    Fragment, MinimalReadInfo, collect_fragment, default_include_read_paired_end,
 };
-use cfdnalab::commands::cli_common::{
+use cfdnalab::gc_bias::GCCorrectionPackage;
+use cfdnalab::indel_mode::IndelMode;
+use cfdnalab::reference::{ContigFootprintEntry, twobit_contig_footprint};
+#[cfg(feature = "cmd_bam_to_bam")]
+use cfdnalab::run_like_cli::bam_to_bam::{
+    BamToBamConfig, run_bam_to_bam as run_bam_to_bam_command,
+};
+use cfdnalab::run_like_cli::common::{
     ApplyGCArgs, AssignToWindowArgs, ChromosomeArgs, DistributionWindowsArgs, IOCArgs,
     ScaleGenomeArgs,
 };
 #[cfg(feature = "cmd_coverage_weights")]
-use cfdnalab::commands::coverage_weights::{
-    config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
+use cfdnalab::run_like_cli::coverage_weights::{
+    CoverageWeightsConfig, run_coverage_weights as run_coverage_weights_command,
 };
-use cfdnalab::commands::fcoverage::config::{FCoverageConfig, LengthNormalizationMode};
-use cfdnalab::commands::fcoverage::fcoverage::{run, run_inner};
-use cfdnalab::commands::fcoverage::window_results::CoverageWindowAction;
-use cfdnalab::commands::gc_bias::package::GCCorrectionPackage;
-use cfdnalab::commands::lengths::{config::LengthsConfig, lengths::run as run_lengths};
-use cfdnalab::shared::fragment::minimal_fragment::{MinimalReadInfo, collect_fragment};
-use cfdnalab::shared::indel_mode::IndelMode;
-use cfdnalab::shared::io::dot_join;
-use cfdnalab::shared::read::default_include_read_paired_end;
-use cfdnalab::shared::{
-    constants::GC_CORRECTION_SCHEMA_VERSION,
-    reference::{ContigFootprintEntry, twobit_contig_footprint},
+use cfdnalab::run_like_cli::fcoverage::{
+    CoverageWindowAction, FCoverageConfig, FCoverageRunResult, LengthNormalizationMode,
+    run_fcoverage as run_fcoverage_command,
 };
+use cfdnalab::run_like_cli::lengths::{LengthsConfig, run_lengths as run_lengths_command};
 use fixtures::{
     BamFixture, FragmentSpec, LONG_FRAGMENT_LENGTH, LONG_FRAGMENT_STARTS, ReadSpec, bam_from_specs,
     bam_from_specs_strict_identity, build_real_neutral_gc_package,
@@ -38,17 +40,36 @@ use fixtures::{
 };
 use ndarray::array;
 use rust_htslib::bam::record::Aux;
-use rust_htslib::bam::{self, Read, Reader};
+use rust_htslib::bam::{self, Read, Reader, Record};
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
-fn collect_fragment_from_records_for_test(
-    a: &rust_htslib::bam::Record,
-    b: &rust_htslib::bam::Record,
-) -> Option<cfdnalab::shared::fragment::minimal_fragment::Fragment> {
+fn run(cfg: &FCoverageConfig) -> Result<FCoverageRunResult> {
+    run_fcoverage_command(cfg, RunOptions::new_quiet())
+}
+
+#[cfg(feature = "cmd_bam_to_bam")]
+fn run_bam_to_bam(cfg: &BamToBamConfig) -> Result<()> {
+    run_bam_to_bam_command(cfg, RunOptions::new_quiet()).map(|_| ())
+}
+
+#[cfg(feature = "cmd_coverage_weights")]
+fn run_coverage_weights(cfg: &CoverageWeightsConfig) -> Result<()> {
+    run_coverage_weights_command(cfg, RunOptions::new_quiet()).map(|_| ())
+}
+
+fn run_lengths(cfg: &LengthsConfig) -> Result<()> {
+    run_lengths_command(cfg, RunOptions::new_quiet()).map(|_| ())
+}
+
+fn dot_join(parts: &[&str]) -> String {
+    parts.join(".")
+}
+
+fn collect_fragment_from_records_for_test(first: &Record, second: &Record) -> Option<Fragment> {
     collect_fragment(
-        &MinimalReadInfo::from_record_with_gc_tag(a, None).ok()?,
-        &MinimalReadInfo::from_record_with_gc_tag(b, None).ok()?,
+        &MinimalReadInfo::from_record_with_gc_tag(first, None).ok()?,
+        &MinimalReadInfo::from_record_with_gc_tag(second, None).ok()?,
     )
 }
 
@@ -97,7 +118,7 @@ fn fcoverage_rejects_inverted_fragment_length_range_before_reading_inputs() -> R
         fragment_lengths.max_fragment_length = 100;
     }
 
-    let error = match run_inner(&cfg) {
+    let error = match run(&cfg) {
         Ok(_) => panic!("inverted fragment length range should fail"),
         Err(error) => error,
     };
@@ -122,7 +143,7 @@ fn fcoverage_rejects_gc_file_without_ref_2bit_before_output_setup() -> Result<()
         neutralize_invalid_gc: false,
     });
 
-    let error = match run_inner(&cfg) {
+    let error = match run(&cfg) {
         Ok(_) => panic!("GC file without --ref-2bit should fail"),
         Err(error) => error,
     };
@@ -733,7 +754,7 @@ fn gc_file_windowed_late_tile_uses_reference_coordinates_after_fetch_narrowing()
     }
 
     // Act
-    let result = run_inner(&cfg)?;
+    let result = run(&cfg)?;
     let text = read_zst_to_string(&result.final_out_path)?;
 
     // Assert
@@ -1110,7 +1131,7 @@ fn restore_mean_positional_output_uses_mean_normalization_length_for_mixed_fragm
     cfg.set_keep_zero_runs(false);
     set_restore_mean_length_normalization(&mut cfg);
 
-    let result = run_inner(&cfg)?;
+    let result = run(&cfg)?;
     assert!(
         result
             .final_out_path
@@ -1150,7 +1171,7 @@ fn restore_mean_positional_output_is_basewise_tile_size_invariant_across_tile_bo
         cfg.set_tile_size(tile_size);
         set_restore_mean_length_normalization(&mut cfg);
 
-        let result = run_inner(&cfg)?;
+        let result = run(&cfg)?;
         let text = read_zst_to_string(&result.final_out_path)?;
         observed_coverages.push(dense_bedgraph_for_chromosome(&text, "chr1", 200));
     }
@@ -1197,7 +1218,7 @@ fn restore_mean_unique_positions_windowed_output_scales_selected_runs() -> Resul
     cfg.set_decimals(2);
     set_restore_mean_length_normalization(&mut cfg);
 
-    let result = run_inner(&cfg)?;
+    let result = run(&cfg)?;
     let text = read_zst_to_string(&result.final_out_path)?;
 
     assert_eq!(text, "chr1\t20\t50\t1.5\nchr1\t120\t180\t0.75\n");
@@ -1241,7 +1262,7 @@ fn restore_mean_indexed_positions_keep_window_indices_and_scaled_values() -> Res
     cfg.set_decimals(2);
     set_restore_mean_length_normalization(&mut cfg);
 
-    let result = run_inner(&cfg)?;
+    let result = run(&cfg)?;
     let text = read_zst_to_string(&result.final_out_path)?;
 
     assert_eq!(
@@ -1278,7 +1299,7 @@ fn restore_mean_by_size_total_counts_mean_normalization_length_per_fragment() ->
     });
     set_restore_mean_length_normalization(&mut cfg);
 
-    let result = run_inner(&cfg)?;
+    let result = run(&cfg)?;
     let text = read_zst_to_string(&result.final_out_path)?;
 
     assert_eq!(
@@ -1313,7 +1334,7 @@ fn restore_mean_by_size_average_restores_global_mean_level_for_single_full_windo
     });
     set_restore_mean_length_normalization(&mut cfg);
 
-    let result = run_inner(&cfg)?;
+    let result = run(&cfg)?;
     let text = read_zst_to_string(&result.final_out_path)?;
 
     assert_eq!(
@@ -1353,7 +1374,7 @@ fn restore_mean_by_size_total_aligned_fast_path_matches_general_path() -> Result
         });
         set_restore_mean_length_normalization(&mut cfg);
 
-        let result = run_inner(&cfg)?;
+        let result = run(&cfg)?;
         outputs.push(read_zst_to_string(&result.final_out_path)?);
     }
 
@@ -1400,7 +1421,7 @@ fn restore_mean_by_size_summary_stats_derives_scaled_raw_and_derived_values() ->
     });
     set_restore_mean_length_normalization(&mut cfg);
 
-    let result = run_inner(&cfg)?;
+    let result = run(&cfg)?;
     let text = read_zst_to_string(&result.final_out_path)?;
     let rows = parse_tsv(&text);
 
@@ -1462,7 +1483,7 @@ fn restore_mean_per_position_handles_three_chromosomes_in_global_mode() -> Resul
     cfg.set_keep_zero_runs(false);
     set_restore_mean_length_normalization(&mut cfg);
 
-    let result = run_inner(&cfg)?;
+    let result = run(&cfg)?;
     let text = read_zst_to_string(&result.final_out_path)?;
 
     assert_eq!(
@@ -1510,7 +1531,7 @@ fn restore_mean_by_bed_average_handles_three_chromosomes_with_global_window_indi
     });
     set_restore_mean_length_normalization(&mut cfg);
 
-    let result = run_inner(&cfg)?;
+    let result = run(&cfg)?;
     let text = read_zst_to_string(&result.final_out_path)?;
 
     assert_eq!(
@@ -1552,7 +1573,7 @@ fn restore_mean_by_bed_average_skips_chromosomes_without_windows_and_keeps_later
     });
     set_restore_mean_length_normalization(&mut cfg);
 
-    let result = run_inner(&cfg)?;
+    let result = run(&cfg)?;
     let text = read_zst_to_string(&result.final_out_path)?;
 
     assert_eq!(
@@ -1587,7 +1608,7 @@ fn restore_mean_by_size_total_handles_three_chromosomes() -> Result<()> {
     });
     set_restore_mean_length_normalization(&mut cfg);
 
-    let result = run_inner(&cfg)?;
+    let result = run(&cfg)?;
     let text = read_zst_to_string(&result.final_out_path)?;
 
     assert_eq!(
@@ -1639,7 +1660,7 @@ fn restore_mean_grouped_total_on_unique_bases_merges_same_group_overlaps_after_s
     });
     set_restore_mean_length_normalization(&mut cfg);
 
-    let result = run_inner(&cfg)?;
+    let result = run(&cfg)?;
     let text = read_zst_to_string(&result.final_out_path)?;
     let rows = parse_tsv(&text);
 
@@ -1700,7 +1721,7 @@ fn restore_mean_grouped_summary_stats_on_unique_bases_writes_scaled_rows() -> Re
     });
     set_restore_mean_length_normalization(&mut cfg);
 
-    let result = run_inner(&cfg)?;
+    let result = run(&cfg)?;
     let text = read_zst_to_string(&result.final_out_path)?;
     let rows = parse_tsv(&text);
 
@@ -1765,7 +1786,7 @@ fn restore_mean_grouped_plain_summary_stats_writes_scaled_rows() -> Result<()> {
     });
     set_restore_mean_length_normalization(&mut cfg);
 
-    let result = run_inner(&cfg)?;
+    let result = run(&cfg)?;
     let output = read_zst_to_string(&result.final_out_path)?;
     let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
     let rows_by_name = grouped_rows_by_name(&output, &sidecar);
@@ -1845,7 +1866,7 @@ fn restore_mean_grouped_plain_summary_stats_is_invariant_when_segments_cross_til
         });
         set_restore_mean_length_normalization(&mut cfg);
 
-        let result = run_inner(&cfg)?;
+        let result = run(&cfg)?;
         outputs.push(read_zst_to_string(&result.final_out_path)?);
         sidecars.push(std::fs::read_to_string(
             out_dir.path().join("testcov.group_index.tsv"),
@@ -1927,7 +1948,7 @@ fn restore_mean_segmented_fragment_still_multiplies_gc_and_scaling() -> Result<(
         frag.max_fragment_length = 50;
     }
 
-    let result = run_inner(&cfg)?;
+    let result = run(&cfg)?;
     let text = read_zst_to_string(&result.final_out_path)?;
 
     assert_eq!(
@@ -1955,7 +1976,7 @@ fn restore_mean_keep_zero_runs_writes_zero_flanks_and_zero_gaps() -> Result<()> 
     cfg.set_keep_zero_runs(true);
     set_restore_mean_length_normalization(&mut cfg);
 
-    let result = run_inner(&cfg)?;
+    let result = run(&cfg)?;
     let text = read_zst_to_string(&result.final_out_path)?;
 
     assert_eq!(
@@ -1994,7 +2015,7 @@ fn restore_mean_blacklist_masks_positions_in_positional_output() -> Result<()> {
     cfg.set_blacklist(Some(vec![blacklist_path]));
     set_restore_mean_length_normalization(&mut cfg);
 
-    let result = run_inner(&cfg)?;
+    let result = run(&cfg)?;
     let text = read_zst_to_string(&result.final_out_path)?;
 
     assert_eq!(
@@ -2027,7 +2048,7 @@ fn restore_mean_with_no_counted_fragments_keeps_zero_signal_and_returns_no_mean(
     cfg.set_keep_zero_runs(true);
     set_restore_mean_length_normalization(&mut cfg);
 
-    let result = run_inner(&cfg)?;
+    let result = run(&cfg)?;
     let text = read_zst_to_string(&result.final_out_path)?;
 
     assert_eq!(text, "chr1\t0\t200\t0\n");
@@ -2072,7 +2093,7 @@ fn restore_mean_by_bed_total_is_invariant_when_windows_cross_tile_boundaries() -
         });
         set_restore_mean_length_normalization(&mut cfg);
 
-        let result = run_inner(&cfg)?;
+        let result = run(&cfg)?;
         outputs.push(read_zst_to_string(&result.final_out_path)?);
     }
 
@@ -2133,7 +2154,7 @@ fn restore_mean_by_bed_summary_stats_is_invariant_when_windows_cross_tiles() -> 
         });
         set_restore_mean_length_normalization(&mut cfg);
 
-        let result = run_inner(&cfg)?;
+        let result = run(&cfg)?;
         outputs.push(read_zst_to_string(&result.final_out_path)?);
     }
 
@@ -2190,7 +2211,7 @@ fn restore_mean_by_bed_total_keeps_coordinate_sorted_output_when_same_start_wind
     });
     set_restore_mean_length_normalization(&mut cfg);
 
-    let result = run_inner(&cfg)?;
+    let result = run(&cfg)?;
     let text = read_zst_to_string(&result.final_out_path)?;
 
     assert_eq!(
@@ -2242,7 +2263,7 @@ fn restore_mean_by_bed_total_halo_only_window_is_not_double_counted_across_tiles
     });
     set_restore_mean_length_normalization(&mut cfg);
 
-    let result = run_inner(&cfg)?;
+    let result = run(&cfg)?;
     let text = read_zst_to_string(&result.final_out_path)?;
 
     assert_eq!(
@@ -2293,7 +2314,7 @@ fn restore_mean_grouped_bed_total_uses_site_weighted_group_semantics() -> Result
     });
     set_restore_mean_length_normalization(&mut cfg);
 
-    let result = run_inner(&cfg)?;
+    let result = run(&cfg)?;
     let output = read_zst_to_string(&result.final_out_path)?;
     let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
     let rows_by_name = grouped_rows_by_name(&output, &sidecar);
@@ -2357,7 +2378,7 @@ fn restore_mean_grouped_bed_total_is_invariant_when_plain_group_segments_cross_t
         });
         set_restore_mean_length_normalization(&mut cfg);
 
-        let result = run_inner(&cfg)?;
+        let result = run(&cfg)?;
         outputs.push(read_zst_to_string(&result.final_out_path)?);
         sidecars.push(std::fs::read_to_string(
             out_dir.path().join("testcov.group_index.tsv"),
@@ -2398,7 +2419,7 @@ fn restore_mean_grouped_bed_ignores_groups_on_filtered_out_chromosomes() -> Resu
     });
     set_restore_mean_length_normalization(&mut cfg);
 
-    let result = run_inner(&cfg)?;
+    let result = run(&cfg)?;
     let output = read_zst_to_string(&result.final_out_path)?;
     let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
     let rows_by_name = grouped_rows_by_name(&output, &sidecar);
@@ -4797,7 +4818,7 @@ fn bam_to_bam_gc_file_output_drives_fcoverage_gc_tag_same_as_original_gc_file() 
         base_chromosomes(&["chr1"]),
     );
     bam_to_bam_cfg.min_mapq = 0;
-    bam_to_bam_cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
+    bam_to_bam_cfg.set_gc(cfdnalab::run_like_cli::common::ApplyGCArgFileOnly {
         gc_file: Some(gc_path.clone()),
         neutralize_invalid_gc: false,
     });
@@ -4932,7 +4953,7 @@ fn gc_tag_paired_edge_cases_follow_fragment_combination_rules() -> Result<()> {
         //     gc_failed_fragments = 0
         //     gc_out_of_range_tags = 0
         //     counted_fragments = 1
-        let run_result = run_inner(&cfg)?;
+        let run_result = run(&cfg)?;
 
         let output_path = out_dir
             .path()
@@ -5821,7 +5842,7 @@ fn grouped_bed_errors_when_chromosome_filter_excludes_every_group() -> Result<()
         by_grouped_bed: Some(grouped_bed),
     });
 
-    let error = match run_inner(&cfg) {
+    let error = match run(&cfg) {
         Ok(_) => panic!("grouped BED with no selected rows should fail"),
         Err(error) => error,
     };

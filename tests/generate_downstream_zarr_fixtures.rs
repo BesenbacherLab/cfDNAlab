@@ -4,20 +4,20 @@
     feature = "cmd_lengths"
 ))]
 
+// KEEP-IN-TESTS: ignored integration tests generate downstream compatibility artifacts.
+
 mod fixtures;
 
 use anyhow::{Context, Result};
-use cfdnalab::commands::{
-    cli_common::{ChromosomeArgs, DistributionWindowsArgs, IOCArgs},
+use cfdnalab::RunOptions;
+use cfdnalab::run_like_cli::{
+    common::{ChromosomeArgs, DistributionWindowsArgs, IOCArgs},
     ends::{
-        config::EndsConfig,
-        config_structs::{AssignMotifToWindowArgs, ClipStrategy, KmerSource, WindowMotifAssigner},
-        ends::run as run_ends,
+        AssignMotifToWindowArgs, ClipStrategy, EndsConfig, KmerSource, WindowMotifAssigner,
+        run_ends,
     },
-    lengths::{config::LengthsConfig, lengths::run as run_lengths},
-    midpoints::{
-        config::MidpointsConfig, midpoints::run as run_midpoints, smoothing::MidpointSmoothing,
-    },
+    lengths::{LengthsConfig, run_lengths},
+    midpoints::{MidpointSmoothing, MidpointsConfig, run_midpoints},
 };
 use fixtures::{
     bam_from_specs_strict_identity, paired_fragment, read_length_counts_text,
@@ -130,7 +130,7 @@ fn generate_midpoint_zarr_fixture_with_cfdnalab() -> Result<()> {
     config.set_require_proper_pair(false);
     config.plot_groups.clear();
 
-    run_midpoints(&config)?;
+    run_midpoints(&config, RunOptions::new_quiet())?;
 
     let zarr_path = output_dir.join("tiny.midpoint_profiles.zarr");
     let group_index_path = output_dir.join("tiny.group_index.tsv");
@@ -532,7 +532,7 @@ fn run_length_fixture(
         config.blacklist = Some(vec![blacklist]);
     }
 
-    run_lengths(&config)?;
+    run_lengths(&config, RunOptions::new_quiet())?;
     let counts_path = output_dir.join(format!("{prefix}.length_counts.tsv.zst"));
     assert!(counts_path.is_file());
     assert!(
@@ -590,7 +590,7 @@ fn run_end_fixture(
         lengths.max_fragment_length = 10;
     }
 
-    run_ends(&config)?;
+    run_ends(&config, RunOptions::new_quiet())?;
     let zarr_path = output_dir.join(format!("{prefix}.end_motifs.zarr"));
     assert!(zarr_path.is_dir());
     assert!(

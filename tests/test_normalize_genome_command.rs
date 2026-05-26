@@ -1,25 +1,36 @@
 #![cfg(feature = "cmd_coverage_weights")]
 
+// normalization helper tests in this file should move with the striding module.
+
 mod fixtures;
 
 use anyhow::Result;
-use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs};
-use cfdnalab::commands::coverage_weights::config::CoverageWeightsConfig;
-use cfdnalab::commands::coverage_weights::coverage_weights::run;
+use cfdnalab::RunOptions;
 use cfdnalab::commands::coverage_weights::striding::{
     StrideBin, normalize_weighted_average_overlap_by_global_mean,
 };
+use cfdnalab::interval::Interval;
+use cfdnalab::run_like_cli::common::{ChromosomeArgs, IOCArgs};
+use cfdnalab::run_like_cli::coverage_weights::{CoverageWeightsConfig, run_coverage_weights};
 #[cfg(feature = "cmd_fragment_count_weights")]
-use cfdnalab::commands::fragment_count_weights::{
-    config::FragmentCountWeightsConfig, fragment_count_weights::run as run_fragment_count_weights,
+use cfdnalab::run_like_cli::fragment_count_weights::{
+    FragmentCountWeightsConfig, run_fragment_count_weights,
 };
-use cfdnalab::shared::interval::Interval;
 use fixtures::{
     FragmentSpec, ReadSpec, bam_from_specs, bam_from_specs_strict_identity, paired_fragment,
     simple_inward_bam, write_bed,
 };
 use fxhash::FxHashMap;
 use tempfile::TempDir;
+
+fn run(cfg: &CoverageWeightsConfig) -> Result<()> {
+    run_coverage_weights(cfg, RunOptions::new_quiet()).map(|_| ())
+}
+
+#[cfg(feature = "cmd_fragment_count_weights")]
+fn run_fragment_count_weights_quiet(cfg: &FragmentCountWeightsConfig) -> Result<()> {
+    run_fragment_count_weights(cfg, RunOptions::new_quiet()).map(|_| ())
+}
 
 fn base_chromosomes(chrs: &[&str]) -> ChromosomeArgs {
     ChromosomeArgs {
@@ -247,6 +258,7 @@ fn advanced_scaling_weights_bam(name: &str) -> Result<fixtures::BamFixture> {
     )
 }
 
+// KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
 #[test]
 fn coverage_scaling_written_with_expected_ranges() -> Result<()> {
     let bam = simple_inward_bam()?;
@@ -298,6 +310,7 @@ fn coverage_scaling_written_with_expected_ranges() -> Result<()> {
     Ok(())
 }
 
+// KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
 #[test]
 fn coverage_weights_errors_clearly_when_filters_remove_all_smoothed_mass() -> Result<()> {
     // Arrange:
@@ -325,6 +338,7 @@ fn coverage_weights_errors_clearly_when_filters_remove_all_smoothed_mass() -> Re
     Ok(())
 }
 
+// KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
 #[test]
 fn coverage_weights_ignore_gap_omits_inter_mate_gap_and_writes_metadata() -> Result<()> {
     let bam = paired_fragment_with_inter_mate_gap_bam("coverage_weights_ignore_gap")?;
@@ -358,6 +372,7 @@ fn coverage_weights_ignore_gap_omits_inter_mate_gap_and_writes_metadata() -> Res
 }
 
 #[cfg(feature = "cmd_fragment_count_weights")]
+// KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
 #[test]
 fn fragment_count_scaling_written_with_expected_ranges() -> Result<()> {
     // Arrange: simple_inward_bam has chr1 length 200 and one fragment spanning [20,80).
@@ -368,7 +383,7 @@ fn fragment_count_scaling_written_with_expected_ranges() -> Result<()> {
     let cfg = make_simple_fragment_count_weights_config(out_dir.path(), &bam.bam);
 
     // Act
-    run_fragment_count_weights(&cfg)?;
+    run_fragment_count_weights_quiet(&cfg)?;
 
     // Assert
     let tsv_path = out_dir
@@ -389,6 +404,7 @@ fn fragment_count_scaling_written_with_expected_ranges() -> Result<()> {
     Ok(())
 }
 
+// KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
 #[test]
 fn given_simple_fragment_when_coverage_weights_run_then_output_bins_cover_chromosome_without_gaps()
 -> Result<()> {
@@ -439,6 +455,7 @@ fn given_simple_fragment_when_coverage_weights_run_then_output_bins_cover_chromo
 }
 
 #[cfg(feature = "cmd_fragment_count_weights")]
+// KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
 #[test]
 fn fragment_count_weights_differs_from_coverage_weights_for_mixed_fragment_lengths() -> Result<()> {
     // Arrange
@@ -506,7 +523,7 @@ fn fragment_count_weights_differs_from_coverage_weights_for_mixed_fragment_lengt
 
     // Act
     run(&coverage_cfg)?;
-    run_fragment_count_weights(&counts_cfg)?;
+    run_fragment_count_weights_quiet(&counts_cfg)?;
 
     let coverage_rows = parse_scaling_rows(
         &coverage_out
@@ -579,6 +596,7 @@ fn fragment_count_weights_differs_from_coverage_weights_for_mixed_fragment_lengt
 }
 
 #[cfg(feature = "cmd_fragment_count_weights")]
+// KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
 #[test]
 fn scaling_weights_handle_multichrom_multitile_blacklist_and_short_final_bins() -> Result<()> {
     // Arrange
@@ -816,7 +834,7 @@ fn scaling_weights_handle_multichrom_multitile_blacklist_and_short_final_bins() 
 
     // Act
     run(&coverage_cfg)?;
-    run_fragment_count_weights(&counts_cfg)?;
+    run_fragment_count_weights_quiet(&counts_cfg)?;
 
     let coverage_rows =
         parse_scaling_rows(&coverage_out.join("coverage.coverage.scaling_factors.tsv"))?;
@@ -906,6 +924,7 @@ fn assert_scaling_row(
     );
 }
 
+// KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
 #[test]
 fn given_simple_fragment_when_coverage_weights_run_then_scaling_values_match_hand_derivation()
 -> Result<()> {
@@ -986,6 +1005,7 @@ fn given_simple_fragment_when_coverage_weights_run_then_scaling_values_match_han
     Ok(())
 }
 
+// KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
 #[test]
 fn given_unpaired_read_fragment_when_coverage_weights_run_then_scaling_matches_same_fragment_span()
 -> Result<()> {
@@ -1340,6 +1360,7 @@ fn normalize_smoothed_values_weights_short_final_bin_in_global_mean() -> Result<
     Ok(())
 }
 
+// KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
 #[test]
 fn multi_chromosome_scaling_uses_one_shared_global_mean() -> Result<()> {
     // Arrange:
@@ -1491,6 +1512,7 @@ fn multi_chromosome_scaling_uses_one_shared_global_mean() -> Result<()> {
     Ok(())
 }
 
+// KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
 #[test]
 fn coverage_weights_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero()
 -> Result<()> {
@@ -1705,6 +1727,7 @@ fn coverage_weights_default_min_mapq_matches_explicit_thirty_and_differs_from_ex
     Ok(())
 }
 
+// KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
 #[test]
 fn explicit_chromosome_order_controls_scaling_tsv_row_order() -> Result<()> {
     // Arrange:
@@ -1755,6 +1778,7 @@ fn explicit_chromosome_order_controls_scaling_tsv_row_order() -> Result<()> {
     Ok(())
 }
 
+// KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
 #[test]
 fn chromosomes_all_uses_bam_header_order_for_scaling_tsv_rows() -> Result<()> {
     // Arrange:
@@ -1802,6 +1826,7 @@ fn chromosomes_all_uses_bam_header_order_for_scaling_tsv_rows() -> Result<()> {
     Ok(())
 }
 
+// KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
 #[test]
 fn blacklist_masking_treats_fully_masked_stride_as_missing_for_smoothing_and_scaling() -> Result<()>
 {

@@ -1087,10 +1087,9 @@ mod tests_wps_peaks_command {
         read_zst_to_string, write_bed,
     };
     use anyhow::Result;
-    use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs, WindowsArgs};
-    use cfdnalab::commands::wps_peaks::config::WPSPeaksConfig;
-    use cfdnalab::commands::wps_peaks::window_peak_results::PeaksWindowAction;
-    use cfdnalab::commands::wps_peaks::wps_peaks::run;
+    use cfdnalab::RunOptions;
+    use cfdnalab::run_like_cli::common::{ChromosomeArgs, IOCArgs, WindowsArgs};
+    use cfdnalab::run_like_cli::wps_peaks::{PeaksWindowAction, WPSPeaksConfig, run_wps_peaks};
     use std::fs::File;
     use std::io::Write;
     use std::path::{Path, PathBuf};
@@ -1108,6 +1107,10 @@ mod tests_wps_peaks_command {
     const SHOULDER_OFFSET_BP: u64 = BASE_LEFT_BP + 199;
     const SHOULDER_HEIGHT: f32 = 1.0;
 
+    fn run(cfg: &WPSPeaksConfig) -> Result<()> {
+        run_wps_peaks(cfg, RunOptions::new_quiet()).map(|_| ())
+    }
+
     fn empty_three_chrom_bam(name: &str) -> Result<BamFixture> {
         bam_from_specs(
             vec![
@@ -1121,6 +1124,7 @@ mod tests_wps_peaks_command {
         )
     }
 
+    // KEEP-IN-TESTS: wps-peaks command output or artifact behavior.
     #[test]
     fn run_emits_expected_peaks_and_stats_for_fixed_size_windows() -> Result<()> {
         let bam = long_fragment_bam("wps_peaks_600bp_fragments")?;
@@ -1259,6 +1263,7 @@ mod tests_wps_peaks_command {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: wps-peaks command output or artifact behavior.
     #[test]
     fn global_mode_handles_three_chromosomes() -> Result<()> {
         let bam = empty_three_chrom_bam("wps_peaks_three_chr_global")?;
@@ -1303,6 +1308,7 @@ mod tests_wps_peaks_command {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: wps-peaks command output or artifact behavior.
     #[test]
     fn by_size_stats_handles_three_chromosomes() -> Result<()> {
         let bam = empty_three_chrom_bam("wps_peaks_three_chr_by_size")?;
@@ -1360,6 +1366,7 @@ mod tests_wps_peaks_command {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: wps-peaks command output or artifact behavior.
     #[test]
     fn by_bed_stats_handles_three_chromosomes() -> Result<()> {
         let bam = empty_three_chrom_bam("wps_peaks_three_chr_by_bed")?;
@@ -1425,6 +1432,7 @@ mod tests_wps_peaks_command {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: wps-peaks command output or artifact behavior.
     #[test]
     fn blacklist_near_boundary_removes_cross_tile_distance() -> Result<()> {
         let bam = long_fragment_bam("wps_peaks_boundary_blacklist")?;

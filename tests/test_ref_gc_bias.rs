@@ -1,6 +1,7 @@
 #![cfg(feature = "cmd_ref_gc_bias")]
 
 use anyhow::Result;
+use cfdnalab::RunOptions;
 use ndarray::array;
 use std::path::Path;
 use tempfile::TempDir;
@@ -13,7 +14,7 @@ use cfdnalab::{
     },
     commands::gc_bias::load_reference_bias::load_reference_gc_data,
     commands::gc_bias::support_masking::create_support_mask_threshold_per_mb,
-    commands::ref_gc_bias::{config::RefGCBiasConfig, ref_gc_bias::run},
+    run_like_cli::ref_gc_bias::{RefGCBiasConfig, run_ref_gc_bias},
     shared::{
         blacklist::apply_blacklist_mask_to_seq,
         interval::{IndexedInterval, Interval},
@@ -21,6 +22,10 @@ use cfdnalab::{
     },
 };
 mod fixtures;
+
+fn run(cfg: &RefGCBiasConfig) -> Result<()> {
+    run_ref_gc_bias(cfg, RunOptions::new_quiet()).map(|_| ())
+}
 
 fn load_ref_gc_package_arrays(
     package_path: &Path,
@@ -296,6 +301,8 @@ fn support_threshold_per_mb_steps_at_hundred_million_positions() -> Result<()> {
     Ok(())
 }
 
+// Prefix/counting helper tests above this point should move module-local.
+// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn ref_gc_bias_run_writes_expected_prefixed_package_metadata_and_shapes() -> Result<()> {
     let reference = fixtures::simple_reference_twobit()?;
@@ -303,7 +310,7 @@ fn ref_gc_bias_run_writes_expected_prefixed_package_metadata_and_shapes() -> Res
     let output_prefix = "unit_ref_gc";
 
     let cfg = RefGCBiasConfig {
-        ref_genome: cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
+        ref_genome: cfdnalab::run_like_cli::common::Ref2BitRequiredArgs {
             ref_2bit: reference.path.clone(),
         },
         output_dir: out_dir.path().to_path_buf(),
@@ -317,7 +324,7 @@ fn ref_gc_bias_run_writes_expected_prefixed_package_metadata_and_shapes() -> Res
             chromosomes_file: None,
         },
         blacklist: None,
-        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+        fragment_lengths: cfdnalab::run_like_cli::common::FragmentLengthArgs {
             min_fragment_length: 10,
             max_fragment_length: 12,
         },
@@ -436,6 +443,7 @@ fn ref_gc_bias_run_writes_expected_prefixed_package_metadata_and_shapes() -> Res
     Ok(())
 }
 
+// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn ref_gc_bias_run_counts_expected_two_bin_reference_distribution() -> Result<()> {
     // Arrange:
@@ -491,7 +499,7 @@ fn ref_gc_bias_run_counts_expected_two_bin_reference_distribution() -> Result<()
     std::fs::write(&bed_path, "chr1\t0\t91\nchr1\t100\t191\n")?;
 
     let cfg = RefGCBiasConfig {
-        ref_genome: cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
+        ref_genome: cfdnalab::run_like_cli::common::Ref2BitRequiredArgs {
             ref_2bit: reference.path.clone(),
         },
         output_dir: out_dir.path().to_path_buf(),
@@ -499,7 +507,7 @@ fn ref_gc_bias_run_counts_expected_two_bin_reference_distribution() -> Result<()
         n_threads: 1,
         n_positions: 191,
         seed: Some(23),
-        windows: cfdnalab::commands::ref_gc_bias::config::RefGCWindowsArgs {
+        windows: cfdnalab::run_like_cli::ref_gc_bias::RefGCWindowsArgs {
             by_bed: Some(bed_path),
         },
         chromosomes: ChromosomeArgs {
@@ -507,7 +515,7 @@ fn ref_gc_bias_run_counts_expected_two_bin_reference_distribution() -> Result<()
             chromosomes_file: None,
         },
         blacklist: None,
-        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+        fragment_lengths: cfdnalab::run_like_cli::common::FragmentLengthArgs {
             min_fragment_length: 10,
             max_fragment_length: 10,
         },
@@ -578,6 +586,7 @@ fn ref_gc_bias_run_counts_expected_two_bin_reference_distribution() -> Result<()
     Ok(())
 }
 
+// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn ref_gc_bias_run_blacklist_removes_exactly_the_overlapping_start_positions() -> Result<()> {
     // Arrange:
@@ -625,7 +634,7 @@ fn ref_gc_bias_run_blacklist_removes_exactly_the_overlapping_start_positions() -
     std::fs::write(&blacklist_path, "chr1\t45\t55\n")?;
 
     let cfg = RefGCBiasConfig {
-        ref_genome: cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
+        ref_genome: cfdnalab::run_like_cli::common::Ref2BitRequiredArgs {
             ref_2bit: reference.path.clone(),
         },
         output_dir: out_dir.path().to_path_buf(),
@@ -633,7 +642,7 @@ fn ref_gc_bias_run_blacklist_removes_exactly_the_overlapping_start_positions() -
         n_threads: 1,
         n_positions: 191,
         seed: Some(23),
-        windows: cfdnalab::commands::ref_gc_bias::config::RefGCWindowsArgs {
+        windows: cfdnalab::run_like_cli::ref_gc_bias::RefGCWindowsArgs {
             by_bed: Some(bed_path),
         },
         chromosomes: ChromosomeArgs {
@@ -641,7 +650,7 @@ fn ref_gc_bias_run_blacklist_removes_exactly_the_overlapping_start_positions() -
             chromosomes_file: None,
         },
         blacklist: Some(vec![blacklist_path]),
-        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+        fragment_lengths: cfdnalab::run_like_cli::common::FragmentLengthArgs {
             min_fragment_length: 10,
             max_fragment_length: 10,
         },
@@ -714,6 +723,7 @@ fn ref_gc_bias_run_blacklist_removes_exactly_the_overlapping_start_positions() -
     Ok(())
 }
 
+// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn ref_gc_bias_run_end_offset_counts_expected_trimmed_two_bin_distribution() -> Result<()> {
     // Arrange:
@@ -773,7 +783,7 @@ fn ref_gc_bias_run_end_offset_counts_expected_trimmed_two_bin_distribution() -> 
     std::fs::write(&bed_path, "chr1\t0\t90\nchr1\t99\t189\n")?;
 
     let cfg = RefGCBiasConfig {
-        ref_genome: cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
+        ref_genome: cfdnalab::run_like_cli::common::Ref2BitRequiredArgs {
             ref_2bit: reference.path.clone(),
         },
         output_dir: out_dir.path().to_path_buf(),
@@ -781,7 +791,7 @@ fn ref_gc_bias_run_end_offset_counts_expected_trimmed_two_bin_distribution() -> 
         n_threads: 1,
         n_positions: 189,
         seed: Some(37),
-        windows: cfdnalab::commands::ref_gc_bias::config::RefGCWindowsArgs {
+        windows: cfdnalab::run_like_cli::ref_gc_bias::RefGCWindowsArgs {
             by_bed: Some(bed_path),
         },
         chromosomes: ChromosomeArgs {
@@ -789,7 +799,7 @@ fn ref_gc_bias_run_end_offset_counts_expected_trimmed_two_bin_distribution() -> 
             chromosomes_file: None,
         },
         blacklist: None,
-        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+        fragment_lengths: cfdnalab::run_like_cli::common::FragmentLengthArgs {
             min_fragment_length: 12,
             max_fragment_length: 12,
         },
@@ -860,6 +870,7 @@ fn ref_gc_bias_run_end_offset_counts_expected_trimmed_two_bin_distribution() -> 
     Ok(())
 }
 
+// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn ref_gc_bias_run_blacklist_with_end_offset_drops_only_trimmed_overlaps() -> Result<()> {
     // Arrange:
@@ -907,7 +918,7 @@ fn ref_gc_bias_run_blacklist_with_end_offset_drops_only_trimmed_overlaps() -> Re
     std::fs::write(&blacklist_path, "chr1\t45\t55\n")?;
 
     let cfg = RefGCBiasConfig {
-        ref_genome: cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
+        ref_genome: cfdnalab::run_like_cli::common::Ref2BitRequiredArgs {
             ref_2bit: reference.path.clone(),
         },
         output_dir: out_dir.path().to_path_buf(),
@@ -915,7 +926,7 @@ fn ref_gc_bias_run_blacklist_with_end_offset_drops_only_trimmed_overlaps() -> Re
         n_threads: 1,
         n_positions: 189,
         seed: Some(37),
-        windows: cfdnalab::commands::ref_gc_bias::config::RefGCWindowsArgs {
+        windows: cfdnalab::run_like_cli::ref_gc_bias::RefGCWindowsArgs {
             by_bed: Some(bed_path),
         },
         chromosomes: ChromosomeArgs {
@@ -923,7 +934,7 @@ fn ref_gc_bias_run_blacklist_with_end_offset_drops_only_trimmed_overlaps() -> Re
             chromosomes_file: None,
         },
         blacklist: Some(vec![blacklist_path]),
-        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+        fragment_lengths: cfdnalab::run_like_cli::common::FragmentLengthArgs {
             min_fragment_length: 12,
             max_fragment_length: 12,
         },
@@ -996,6 +1007,7 @@ fn ref_gc_bias_run_blacklist_with_end_offset_drops_only_trimmed_overlaps() -> Re
     Ok(())
 }
 
+// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn ref_gc_bias_run_smoothing_enabled_spreads_three_gc_anchors_by_known_kernel() -> Result<()> {
     // Arrange:
@@ -1052,7 +1064,7 @@ fn ref_gc_bias_run_smoothing_enabled_spreads_three_gc_anchors_by_known_kernel() 
     std::fs::write(&bed_path, "chr1\t0\t10\nchr1\t20\t30\nchr1\t40\t50\n")?;
 
     let cfg = RefGCBiasConfig {
-        ref_genome: cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
+        ref_genome: cfdnalab::run_like_cli::common::Ref2BitRequiredArgs {
             ref_2bit: reference.path.clone(),
         },
         output_dir: out_dir.path().to_path_buf(),
@@ -1060,7 +1072,7 @@ fn ref_gc_bias_run_smoothing_enabled_spreads_three_gc_anchors_by_known_kernel() 
         n_threads: 1,
         n_positions: 41,
         seed: Some(11),
-        windows: cfdnalab::commands::ref_gc_bias::config::RefGCWindowsArgs {
+        windows: cfdnalab::run_like_cli::ref_gc_bias::RefGCWindowsArgs {
             by_bed: Some(bed_path),
         },
         chromosomes: ChromosomeArgs {
@@ -1068,7 +1080,7 @@ fn ref_gc_bias_run_smoothing_enabled_spreads_three_gc_anchors_by_known_kernel() 
             chromosomes_file: None,
         },
         blacklist: None,
-        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+        fragment_lengths: cfdnalab::run_like_cli::common::FragmentLengthArgs {
             min_fragment_length: 10,
             max_fragment_length: 10,
         },
@@ -1134,6 +1146,7 @@ fn ref_gc_bias_run_smoothing_enabled_spreads_three_gc_anchors_by_known_kernel() 
     Ok(())
 }
 
+// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn ref_gc_bias_run_interpolation_enabled_fills_between_equal_supported_anchors() -> Result<()> {
     // Arrange:
@@ -1169,7 +1182,7 @@ fn ref_gc_bias_run_interpolation_enabled_fills_between_equal_supported_anchors()
     std::fs::write(&bed_path, "chr1\t0\t10\nchr1\t20\t30\nchr1\t40\t50\n")?;
 
     let cfg = RefGCBiasConfig {
-        ref_genome: cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
+        ref_genome: cfdnalab::run_like_cli::common::Ref2BitRequiredArgs {
             ref_2bit: reference.path.clone(),
         },
         output_dir: out_dir.path().to_path_buf(),
@@ -1177,7 +1190,7 @@ fn ref_gc_bias_run_interpolation_enabled_fills_between_equal_supported_anchors()
         n_threads: 1,
         n_positions: 41,
         seed: Some(11),
-        windows: cfdnalab::commands::ref_gc_bias::config::RefGCWindowsArgs {
+        windows: cfdnalab::run_like_cli::ref_gc_bias::RefGCWindowsArgs {
             by_bed: Some(bed_path),
         },
         chromosomes: ChromosomeArgs {
@@ -1185,7 +1198,7 @@ fn ref_gc_bias_run_interpolation_enabled_fills_between_equal_supported_anchors()
             chromosomes_file: None,
         },
         blacklist: None,
-        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+        fragment_lengths: cfdnalab::run_like_cli::common::FragmentLengthArgs {
             min_fragment_length: 10,
             max_fragment_length: 10,
         },
@@ -1227,6 +1240,7 @@ fn ref_gc_bias_run_interpolation_enabled_fills_between_equal_supported_anchors()
     Ok(())
 }
 
+// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn overlapping_and_touching_bed_windows_match_explicitly_merged_ref_gc_bias_run() -> Result<()> {
     let reference = fixtures::simple_reference_twobit()?;
@@ -1239,7 +1253,7 @@ fn overlapping_and_touching_bed_windows_match_explicitly_merged_ref_gc_bias_run(
     std::fs::write(&bed_merged, "chr1\t0\t80\n")?;
 
     let make_cfg = |output_dir: &Path, bed_path: &Path| RefGCBiasConfig {
-        ref_genome: cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
+        ref_genome: cfdnalab::run_like_cli::common::Ref2BitRequiredArgs {
             ref_2bit: reference.path.clone(),
         },
         output_dir: output_dir.to_path_buf(),
@@ -1247,7 +1261,7 @@ fn overlapping_and_touching_bed_windows_match_explicitly_merged_ref_gc_bias_run(
         n_threads: 1,
         n_positions: 100,
         seed: Some(11),
-        windows: cfdnalab::commands::ref_gc_bias::config::RefGCWindowsArgs {
+        windows: cfdnalab::run_like_cli::ref_gc_bias::RefGCWindowsArgs {
             by_bed: Some(bed_path.to_path_buf()),
         },
         chromosomes: ChromosomeArgs {
@@ -1255,7 +1269,7 @@ fn overlapping_and_touching_bed_windows_match_explicitly_merged_ref_gc_bias_run(
             chromosomes_file: None,
         },
         blacklist: None,
-        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+        fragment_lengths: cfdnalab::run_like_cli::common::FragmentLengthArgs {
             min_fragment_length: 10,
             max_fragment_length: 12,
         },
@@ -1304,6 +1318,7 @@ fn overlapping_and_touching_bed_windows_match_explicitly_merged_ref_gc_bias_run(
     Ok(())
 }
 
+// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn overlapping_and_touching_bed_windows_with_blacklist_match_explicitly_merged_ref_gc_bias_run()
 -> Result<()> {
@@ -1333,7 +1348,7 @@ fn overlapping_and_touching_bed_windows_with_blacklist_match_explicitly_merged_r
     std::fs::write(&blacklist_path, "chr1\t30\t50\n")?;
 
     let make_cfg = |output_dir: &Path, bed_path: &Path| RefGCBiasConfig {
-        ref_genome: cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
+        ref_genome: cfdnalab::run_like_cli::common::Ref2BitRequiredArgs {
             ref_2bit: reference.path.clone(),
         },
         output_dir: output_dir.to_path_buf(),
@@ -1341,7 +1356,7 @@ fn overlapping_and_touching_bed_windows_with_blacklist_match_explicitly_merged_r
         n_threads: 1,
         n_positions: 100,
         seed: Some(11),
-        windows: cfdnalab::commands::ref_gc_bias::config::RefGCWindowsArgs {
+        windows: cfdnalab::run_like_cli::ref_gc_bias::RefGCWindowsArgs {
             by_bed: Some(bed_path.to_path_buf()),
         },
         chromosomes: ChromosomeArgs {
@@ -1349,7 +1364,7 @@ fn overlapping_and_touching_bed_windows_with_blacklist_match_explicitly_merged_r
             chromosomes_file: None,
         },
         blacklist: Some(vec![blacklist_path.clone()]),
-        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+        fragment_lengths: cfdnalab::run_like_cli::common::FragmentLengthArgs {
             min_fragment_length: 10,
             max_fragment_length: 12,
         },
@@ -1390,6 +1405,7 @@ fn overlapping_and_touching_bed_windows_with_blacklist_match_explicitly_merged_r
     Ok(())
 }
 
+// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn full_chromosome_bed_window_matches_global_ref_gc_bias_run() -> Result<()> {
     // Arrange:
@@ -1407,7 +1423,7 @@ fn full_chromosome_bed_window_matches_global_ref_gc_bias_run() -> Result<()> {
     std::fs::write(&bed_path, "chr1\t0\t256\n")?;
 
     let make_global_cfg = |output_dir: &Path| RefGCBiasConfig {
-        ref_genome: cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
+        ref_genome: cfdnalab::run_like_cli::common::Ref2BitRequiredArgs {
             ref_2bit: reference.path.clone(),
         },
         output_dir: output_dir.to_path_buf(),
@@ -1421,7 +1437,7 @@ fn full_chromosome_bed_window_matches_global_ref_gc_bias_run() -> Result<()> {
             chromosomes_file: None,
         },
         blacklist: None,
-        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+        fragment_lengths: cfdnalab::run_like_cli::common::FragmentLengthArgs {
             min_fragment_length: 10,
             max_fragment_length: 12,
         },
@@ -1434,7 +1450,7 @@ fn full_chromosome_bed_window_matches_global_ref_gc_bias_run() -> Result<()> {
         logging: LoggingArgs::default(),
     };
     let make_bed_cfg = |output_dir: &Path| RefGCBiasConfig {
-        windows: cfdnalab::commands::ref_gc_bias::config::RefGCWindowsArgs {
+        windows: cfdnalab::run_like_cli::ref_gc_bias::RefGCWindowsArgs {
             by_bed: Some(bed_path.clone()),
         },
         ..make_global_cfg(output_dir)
@@ -1464,6 +1480,7 @@ fn full_chromosome_bed_window_matches_global_ref_gc_bias_run() -> Result<()> {
     Ok(())
 }
 
+// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn full_chromosome_bed_window_with_blacklist_matches_global_ref_gc_bias_run() -> Result<()> {
     // Arrange:
@@ -1490,7 +1507,7 @@ fn full_chromosome_bed_window_with_blacklist_matches_global_ref_gc_bias_run() ->
     std::fs::write(&blacklist_path, "chr1\t40\t80\n")?;
 
     let make_global_cfg = |output_dir: &Path| RefGCBiasConfig {
-        ref_genome: cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
+        ref_genome: cfdnalab::run_like_cli::common::Ref2BitRequiredArgs {
             ref_2bit: reference.path.clone(),
         },
         output_dir: output_dir.to_path_buf(),
@@ -1504,7 +1521,7 @@ fn full_chromosome_bed_window_with_blacklist_matches_global_ref_gc_bias_run() ->
             chromosomes_file: None,
         },
         blacklist: Some(vec![blacklist_path.clone()]),
-        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+        fragment_lengths: cfdnalab::run_like_cli::common::FragmentLengthArgs {
             min_fragment_length: 10,
             max_fragment_length: 12,
         },
@@ -1517,7 +1534,7 @@ fn full_chromosome_bed_window_with_blacklist_matches_global_ref_gc_bias_run() ->
         logging: LoggingArgs::default(),
     };
     let make_bed_cfg = |output_dir: &Path| RefGCBiasConfig {
-        windows: cfdnalab::commands::ref_gc_bias::config::RefGCWindowsArgs {
+        windows: cfdnalab::run_like_cli::ref_gc_bias::RefGCWindowsArgs {
             by_bed: Some(bed_path.clone()),
         },
         ..make_global_cfg(output_dir)
@@ -1547,6 +1564,7 @@ fn full_chromosome_bed_window_with_blacklist_matches_global_ref_gc_bias_run() ->
     Ok(())
 }
 
+// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn multiple_blacklist_files_with_touching_intervals_match_single_merged_ref_gc_bias_run()
 -> Result<()> {
@@ -1577,7 +1595,7 @@ fn multiple_blacklist_files_with_touching_intervals_match_single_merged_ref_gc_b
     std::fs::write(&merged, "chr1\t40\t80\n")?;
 
     let make_cfg = |output_dir: &Path, blacklist: Vec<std::path::PathBuf>| RefGCBiasConfig {
-        ref_genome: cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
+        ref_genome: cfdnalab::run_like_cli::common::Ref2BitRequiredArgs {
             ref_2bit: reference.path.clone(),
         },
         output_dir: output_dir.to_path_buf(),
@@ -1591,7 +1609,7 @@ fn multiple_blacklist_files_with_touching_intervals_match_single_merged_ref_gc_b
             chromosomes_file: None,
         },
         blacklist: Some(blacklist),
-        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+        fragment_lengths: cfdnalab::run_like_cli::common::FragmentLengthArgs {
             min_fragment_length: 10,
             max_fragment_length: 12,
         },
@@ -1635,13 +1653,14 @@ fn multiple_blacklist_files_with_touching_intervals_match_single_merged_ref_gc_b
     Ok(())
 }
 
+// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn rejects_n_positions_when_sampling_density_would_exceed_one() -> Result<()> {
     let reference = fixtures::simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
 
     let cfg = RefGCBiasConfig {
-        ref_genome: cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
+        ref_genome: cfdnalab::run_like_cli::common::Ref2BitRequiredArgs {
             ref_2bit: reference.path.clone(),
         },
         output_dir: out_dir.path().to_path_buf(),
@@ -1661,7 +1680,7 @@ fn rejects_n_positions_when_sampling_density_would_exceed_one() -> Result<()> {
             chromosomes_file: None,
         },
         blacklist: None,
-        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+        fragment_lengths: cfdnalab::run_like_cli::common::FragmentLengthArgs {
             min_fragment_length: 60,
             max_fragment_length: 60,
         },
@@ -1684,6 +1703,7 @@ fn rejects_n_positions_when_sampling_density_would_exceed_one() -> Result<()> {
     Ok(())
 }
 
+// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn fixed_seed_ref_gc_bias_is_invariant_to_thread_count() -> Result<()> {
     let reference = fixtures::simple_reference_twobit()?;
@@ -1691,7 +1711,7 @@ fn fixed_seed_ref_gc_bias_is_invariant_to_thread_count() -> Result<()> {
     let two_thread_out = TempDir::new()?;
 
     let make_cfg = |output_dir: &Path, n_threads: usize| RefGCBiasConfig {
-        ref_genome: cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
+        ref_genome: cfdnalab::run_like_cli::common::Ref2BitRequiredArgs {
             ref_2bit: reference.path.clone(),
         },
         output_dir: output_dir.to_path_buf(),
@@ -1705,7 +1725,7 @@ fn fixed_seed_ref_gc_bias_is_invariant_to_thread_count() -> Result<()> {
             chromosomes_file: None,
         },
         blacklist: None,
-        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+        fragment_lengths: cfdnalab::run_like_cli::common::FragmentLengthArgs {
             min_fragment_length: 10,
             max_fragment_length: 12,
         },
@@ -1747,6 +1767,7 @@ fn fixed_seed_ref_gc_bias_is_invariant_to_thread_count() -> Result<()> {
     Ok(())
 }
 
+// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn fixed_seed_ref_gc_bias_with_blacklist_and_bed_is_invariant_to_thread_count() -> Result<()> {
     // Arrange:
@@ -1768,7 +1789,7 @@ fn fixed_seed_ref_gc_bias_with_blacklist_and_bed_is_invariant_to_thread_count() 
     std::fs::write(&blacklist_path, "chr1\t140\t160\n")?;
 
     let make_cfg = |output_dir: &Path, n_threads: usize| RefGCBiasConfig {
-        ref_genome: cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
+        ref_genome: cfdnalab::run_like_cli::common::Ref2BitRequiredArgs {
             ref_2bit: reference.path.clone(),
         },
         output_dir: output_dir.to_path_buf(),
@@ -1776,7 +1797,7 @@ fn fixed_seed_ref_gc_bias_with_blacklist_and_bed_is_invariant_to_thread_count() 
         n_threads,
         n_positions: 100,
         seed: Some(29),
-        windows: cfdnalab::commands::ref_gc_bias::config::RefGCWindowsArgs {
+        windows: cfdnalab::run_like_cli::ref_gc_bias::RefGCWindowsArgs {
             by_bed: Some(bed_path.clone()),
         },
         chromosomes: ChromosomeArgs {
@@ -1784,7 +1805,7 @@ fn fixed_seed_ref_gc_bias_with_blacklist_and_bed_is_invariant_to_thread_count() 
             chromosomes_file: None,
         },
         blacklist: Some(vec![blacklist_path.clone()]),
-        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+        fragment_lengths: cfdnalab::run_like_cli::common::FragmentLengthArgs {
             min_fragment_length: 10,
             max_fragment_length: 12,
         },
@@ -1821,6 +1842,7 @@ fn fixed_seed_ref_gc_bias_with_blacklist_and_bed_is_invariant_to_thread_count() 
     Ok(())
 }
 
+// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn fixed_seed_ref_gc_bias_is_deterministic_for_same_tile_size() -> Result<()> {
     let reference = fixtures::simple_reference_twobit()?;
@@ -1828,7 +1850,7 @@ fn fixed_seed_ref_gc_bias_is_deterministic_for_same_tile_size() -> Result<()> {
     let second_out = TempDir::new()?;
 
     let make_cfg = |output_dir: &Path| RefGCBiasConfig {
-        ref_genome: cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
+        ref_genome: cfdnalab::run_like_cli::common::Ref2BitRequiredArgs {
             ref_2bit: reference.path.clone(),
         },
         output_dir: output_dir.to_path_buf(),
@@ -1842,7 +1864,7 @@ fn fixed_seed_ref_gc_bias_is_deterministic_for_same_tile_size() -> Result<()> {
             chromosomes_file: None,
         },
         blacklist: None,
-        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+        fragment_lengths: cfdnalab::run_like_cli::common::FragmentLengthArgs {
             min_fragment_length: 10,
             max_fragment_length: 12,
         },

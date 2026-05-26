@@ -1,5 +1,7 @@
 #![cfg(feature = "cli")]
 
+// KEEP-IN-TESTS: CLI logging tests exercise binary behavior and user-visible output.
+
 mod fixtures;
 
 use anyhow::{Context, Result, bail};

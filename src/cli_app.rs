@@ -1,3 +1,4 @@
+use crate::command_run::RunOptions;
 #[cfg(feature = "cmd_bam_to_bam")]
 use crate::commands::bam_to_bam::config::BamToBamConfig;
 #[cfg(feature = "cmd_bam_to_frag")]
@@ -208,45 +209,118 @@ pub(crate) fn run_cli() {
     crate::shared::cli_output::print_command_banner(&command_name);
     let result: anyhow::Result<()> = match cli.cmd {
         #[cfg(feature = "cmd_gc_bias")]
-        Cmd::GCBias(config) => crate::commands::gc_bias::gc_bias::run(&config),
+        Cmd::GCBias(config) => {
+            crate::commands::gc_bias::gc_bias::run_gc_bias(&config, RunOptions::new_cli())
+                .map(|_| ())
+        }
         #[cfg(feature = "cmd_ref_gc_bias")]
-        Cmd::RefGcBias(config) => crate::commands::ref_gc_bias::ref_gc_bias::run(&config),
+        Cmd::RefGcBias(config) => {
+            crate::commands::ref_gc_bias::ref_gc_bias::run_ref_gc_bias(
+                &config,
+                RunOptions::new_cli(),
+            )
+            .map(|_| ())
+        }
         #[cfg(feature = "cmd_transitions")]
-        Cmd::Transitions(config) => crate::commands::transitions::transitions::run(&config),
+        Cmd::Transitions(config) => {
+            crate::commands::transitions::transitions::run_transitions(
+                &config,
+                RunOptions::new_cli(),
+            )
+            .map(|_| ())
+        }
         #[cfg(feature = "cmd_coverage_weights")]
         Cmd::CoverageWeights(config) => {
-            crate::commands::coverage_weights::coverage_weights::run(&config)
+            crate::commands::coverage_weights::coverage_weights::run_coverage_weights(
+                &config,
+                RunOptions::new_cli(),
+            )
+            .map(|_| ())
         }
         #[cfg(feature = "cmd_fragment_count_weights")]
         Cmd::FragmentCountWeights(config) => {
-            crate::commands::fragment_count_weights::fragment_count_weights::run(&config)
+            crate::commands::fragment_count_weights::fragment_count_weights::run_fragment_count_weights(
+                &config,
+                RunOptions::new_cli(),
+            )
+            .map(|_| ())
         }
         #[cfg(feature = "cmd_ends")]
-        Cmd::Ends(config) => crate::commands::ends::ends::run(&config),
+        Cmd::Ends(config) => {
+            crate::commands::ends::ends::run_ends(&config, RunOptions::new_cli()).map(|_| ())
+        }
         #[cfg(feature = "cmd_lengths")]
-        Cmd::Lengths(config) => crate::commands::lengths::lengths::run(&config),
+        Cmd::Lengths(config) => {
+            crate::commands::lengths::lengths::run_lengths(&config, RunOptions::new_cli())
+                .map(|_| ())
+        }
         #[cfg(feature = "cmd_fcoverage")]
-        Cmd::Fcoverage(config) => crate::commands::fcoverage::fcoverage::run(&config),
+        Cmd::Fcoverage(config) => {
+            crate::commands::fcoverage::fcoverage::run_fcoverage(&config, RunOptions::new_cli())
+                .map(|_| ())
+        }
         #[cfg(feature = "cmd_wps")]
-        Cmd::WPS(config) => crate::commands::wps::wps::run(&config),
+        Cmd::WPS(config) => {
+            crate::commands::wps::wps::run_wps(&config, RunOptions::new_cli()).map(|_| ())
+        }
         #[cfg(feature = "cmd_wps_peaks")]
-        Cmd::WPSPeaks(config) => crate::commands::wps_peaks::wps_peaks::run(&config),
+        Cmd::WPSPeaks(config) => {
+            crate::commands::wps_peaks::wps_peaks::run_wps_peaks(&config, RunOptions::new_cli())
+                .map(|_| ())
+        }
         #[cfg(feature = "cmd_midpoints")]
-        Cmd::Midpoints(config) => crate::commands::midpoints::midpoints::run(&config),
+        Cmd::Midpoints(config) => {
+            crate::commands::midpoints::midpoints::run_midpoints(&config, RunOptions::new_cli())
+                .map(|_| ())
+        }
         #[cfg(feature = "cmd_fragment_kmers")]
-        Cmd::FragmentKmers(config) => crate::commands::fragment_kmers::fragment_kmers::run(&config),
+        Cmd::FragmentKmers(config) => {
+            crate::commands::fragment_kmers::fragment_kmers::run_fragment_kmers(
+                &config,
+                RunOptions::new_cli(),
+            )
+            .map(|_| ())
+        }
         #[cfg(feature = "cmd_prepare_windows")]
-        Cmd::PrepWindows(config) => crate::commands::prepare_windows::prepare_windows::run(&config),
+        Cmd::PrepWindows(config) => {
+            crate::commands::prepare_windows::prepare_windows::run_prepare_windows(
+                &config,
+                RunOptions::new_cli(),
+            )
+            .map(|_| ())
+        }
         #[cfg(feature = "cmd_visualize_positions")]
         Cmd::VisualizePositions(config) => {
-            crate::commands::visualize_positions::visualize_positions::run(&config)
+            crate::commands::visualize_positions::visualize_positions::run_visualize_positions(
+                &config,
+                RunOptions::new_cli(),
+            )
+            .map(|_| ())
         }
         #[cfg(feature = "cmd_bam_to_bam")]
-        Cmd::BamToBam(config) => crate::commands::bam_to_bam::bam_to_bam::run(&config),
+        Cmd::BamToBam(config) => {
+            crate::commands::bam_to_bam::bam_to_bam::run_bam_to_bam(
+                &config,
+                RunOptions::new_cli(),
+            )
+            .map(|_| ())
+        }
         #[cfg(feature = "cmd_bam_to_frag")]
-        Cmd::BamToFrag(config) => crate::commands::bam_to_frag::bam_to_frag::run(&config),
+        Cmd::BamToFrag(config) => {
+            crate::commands::bam_to_frag::bam_to_frag::run_bam_to_frag(
+                &config,
+                RunOptions::new_cli(),
+            )
+            .map(|_| ())
+        }
         #[cfg(feature = "cmd_frag_to_bam")]
-        Cmd::FragToBam(config) => crate::commands::frag_to_bam::frag_to_bam::run(&config),
+        Cmd::FragToBam(config) => {
+            crate::commands::frag_to_bam::frag_to_bam::run_frag_to_bam(
+                &config,
+                RunOptions::new_cli(),
+            )
+            .map(|_| ())
+        }
     };
     crate::shared::cli_output::print_command_footer();
 

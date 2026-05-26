@@ -2,6 +2,7 @@
 //!
 //! The intended logic is specified in the `peak_calling_logic.md` document.
 
+use crate::command_run::{CommandRunResult, RunOptions};
 use crate::commands::cli_common::{
     WindowSpec, ensure_output_dir, load_blacklist_map, load_scaling_map,
     resolve_chromosomes_and_contigs, validate_output_prefix,
@@ -45,23 +46,65 @@ use tracing::info;
 const EXTRA_PEAK_HALO_BP: u32 = 450;
 const COMMAND_TARGET: &str = "wps-peaks";
 
-/// Execute the Snyder-style peak calling pipeline on top of windowed protection scores.
+/// Result from `wps-peaks`.
 ///
-/// This command shares most of the setup with `cfdna wps`: we resolve chromosomes,
-/// prepare blacklist and scaling lookups, then iterate tiles to compute WPS values.
-/// The positional WPS stay in memory per tile so we can smooth, normalize, and call peaks
-/// without writing intermediate files.
+/// The command writes peak calls derived from windowed protection scores. The result records the
+/// peak output path, all final output files, and counters from the underlying WPS calculation.
+#[derive(Debug)]
+pub struct WPSPeaksRunResult {
+    /// Fragment and filtering counters collected during the run.
+    pub counters: WPSPeaksCounters,
+    /// Main peak output path.
+    pub output_path: PathBuf,
+    /// Final output files produced by the command.
+    pub output_files: Vec<PathBuf>,
+}
+
+impl CommandRunResult for WPSPeaksRunResult {
+    type Counters = WPSPeaksCounters;
+
+    fn counters(&self) -> &Self::Counters {
+        &self.counters
+    }
+
+    fn output_files(&self) -> &[PathBuf] {
+        &self.output_files
+    }
+
+    fn primary_output(&self) -> Option<&Path> {
+        Some(self.output_path.as_path())
+    }
+}
+
+/// Run the `wps-peaks` command.
+///
+/// This command shares most setup with `wps`. It resolves chromosomes, prepares blacklist and
+/// scaling lookups, computes WPS values per tile, smooths and normalizes them in memory, then
+/// writes called peaks.
+///
+/// Reporting is controlled by `options`. `report_statistics` prints the final summary and
+/// `show_progress` controls progress bars. This command does not use status logs.
 ///
 /// Parameters
 /// ----------
 /// - `opt`:
 ///     Fully resolved configuration for the `wps-peaks` command.
+/// - `options`:
+///     Reporting controls for statistics and progress bars.
 ///
 /// Returns
 /// -------
-/// - `Result<()>`:
-///     Indicates whether peak calling finished and all outputs were written successfully.
-pub(crate) fn run(opt: &WPSPeaksConfig) -> Result<()> {
+/// - `Ok(WPSPeaksRunResult)`:
+///     Counters and output paths for the completed run.
+///
+/// Errors
+/// ------
+/// Returns an error if the BAM cannot be read, auxiliary files are invalid, WPS calculation fails,
+/// or peak outputs cannot be written.
+pub fn run_wps_peaks(
+    opt: &WPSPeaksConfig,
+    options: RunOptions,
+) -> Result<WPSPeaksRunResult> {
     let start_time = Instant::now();
     if opt.shared_args.unpaired.reads_are_fragments && opt.shared_args.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
@@ -221,7 +264,7 @@ pub(crate) fn run(opt: &WPSPeaksConfig) -> Result<()> {
     ));
 
     let total_tiles = tiles.len();
-    let progress = ProgressFactory::new();
+    let progress = ProgressFactory::with_enabled(options.show_progress);
     let pb = Arc::new(progress.default_bar(total_tiles as u64));
     info!(target: COMMAND_TARGET, "Calling peaks per tile");
 
@@ -332,7 +375,11 @@ pub(crate) fn run(opt: &WPSPeaksConfig) -> Result<()> {
         })
         .collect::<Result<_>>()?;
 
-    pb.finish_with_message("| Finished peak calling");
+    if options.show_progress {
+        pb.finish_with_message("| Finished peak calling");
+    } else {
+        pb.finish_and_clear();
+    }
 
     let mut total_counter = WPSPeaksCounters::default();
     let (final_output_path, wrote_stats) = match opt.per_window {
@@ -431,35 +478,41 @@ pub(crate) fn run(opt: &WPSPeaksConfig) -> Result<()> {
     }
 
     let elapsed = start_time.elapsed();
-    print_fragment_run_statistics(
-        &total_counter.base,
-        elapsed,
-        FragmentRunStatisticsOptions {
-            include_section_header: true,
-            notes: &[TILE_DOUBLE_COUNT_NOTE],
-            labels: DEFAULT_FRAGMENT_STATISTICS_LABELS,
-            blacklist_excluded_fragments: None,
-            gc: (opt.shared_args.gc.gc_file.is_some() || opt.shared_args.gc.gc_tag.is_some())
-                .then_some(GCStatisticsSummary {
-                    neutralize_invalid_gc: opt.shared_args.gc.neutralize_invalid_gc,
-                    failed_fragments: total_counter.gc_failed_fragments,
-                    missing_tags: opt
-                        .shared_args
-                        .gc
-                        .gc_tag
-                        .is_some()
-                        .then_some(total_counter.gc_missing_tags),
-                    out_of_range_tags: opt
-                        .shared_args
-                        .gc
-                        .gc_tag
-                        .is_some()
-                        .then_some(total_counter.gc_out_of_range_tags),
-                }),
-        },
-        std::iter::empty::<&str>(),
-    );
-    Ok(())
+    if options.report_statistics {
+        print_fragment_run_statistics(
+            &total_counter.base,
+            elapsed,
+            FragmentRunStatisticsOptions {
+                include_section_header: true,
+                notes: &[TILE_DOUBLE_COUNT_NOTE],
+                labels: DEFAULT_FRAGMENT_STATISTICS_LABELS,
+                blacklist_excluded_fragments: None,
+                gc: (opt.shared_args.gc.gc_file.is_some() || opt.shared_args.gc.gc_tag.is_some())
+                    .then_some(GCStatisticsSummary {
+                        neutralize_invalid_gc: opt.shared_args.gc.neutralize_invalid_gc,
+                        failed_fragments: total_counter.gc_failed_fragments,
+                        missing_tags: opt
+                            .shared_args
+                            .gc
+                            .gc_tag
+                            .is_some()
+                            .then_some(total_counter.gc_missing_tags),
+                        out_of_range_tags: opt
+                            .shared_args
+                            .gc
+                            .gc_tag
+                            .is_some()
+                            .then_some(total_counter.gc_out_of_range_tags),
+                    }),
+            },
+            std::iter::empty::<&str>(),
+        );
+    }
+    Ok(WPSPeaksRunResult {
+        counters: total_counter,
+        output_path: final_output_path.clone(),
+        output_files: vec![final_output_path],
+    })
 }
 
 pub(crate) struct GlobalWriter {

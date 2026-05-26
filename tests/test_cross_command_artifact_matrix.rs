@@ -8,25 +8,26 @@
     feature = "cmd_ref_gc_bias"
 ))]
 
+// KEEP-IN-TESTS: cross-command artifact compatibility is end-to-end public behavior.
+
 mod fixtures;
 
 use anyhow::Result;
-use cfdnalab::commands::{
-    bam_to_bam::{bam_to_bam::run_inner as run_bam_to_bam, config::BamToBamConfig},
-    cli_common::{
-        ApplyGCArgFileOnly, ApplyGCArgs, AssignToWindowArgs, ChromosomeArgs,
-        DistributionWindowsArgs, IOCArgs, ScaleGenomeArgs,
-    },
-    coverage_weights::{
-        config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
-    },
-    fcoverage::{config::FCoverageConfig, fcoverage::run as run_fcoverage},
-    lengths::{config::LengthsConfig, lengths::run as run_lengths},
-    midpoints::{
-        config::MidpointsConfig, midpoints::run as run_midpoints, smoothing::MidpointSmoothing,
+use cfdnalab::{
+    RunOptions,
+    indel_mode::IndelMode,
+    run_like_cli::{
+        bam_to_bam::{BamToBamConfig, run_bam_to_bam},
+        common::{
+            ApplyGCArgFileOnly, ApplyGCArgs, AssignToWindowArgs, ChromosomeArgs,
+            DistributionWindowsArgs, IOCArgs, ScaleGenomeArgs,
+        },
+        coverage_weights::{CoverageWeightsConfig, run_coverage_weights},
+        fcoverage::{FCoverageConfig, run_fcoverage},
+        lengths::{LengthsConfig, run_lengths},
+        midpoints::{MidpointSmoothing, MidpointsConfig, run_midpoints},
     },
 };
-use cfdnalab::shared::{indel_mode::IndelMode, io::dot_join};
 use fixtures::{
     BamFixture, TwoBitFixture, bam_from_specs, build_real_neutral_gc_package,
     build_real_neutral_gc_package_for_range, paired_fragment, read_length_counts_tsv,
@@ -144,7 +145,7 @@ fn shared_real_artifact_cache() -> Result<&'static SharedRealArtifactCache> {
                 neutralize_invalid_gc: false,
             });
             scaling_cfg.set_ref_2bit(Some(reference.path.clone()));
-            run_coverage_weights(&scaling_cfg)?;
+            run_coverage_weights(&scaling_cfg, RunOptions::new_quiet())?;
 
             let scaling_path = weights_out_dir.join("coverage.coverage.scaling_factors.tsv");
             let gc_path = build_real_neutral_gc_package(
@@ -266,7 +267,7 @@ fn bam_to_bam_consumes_shared_real_artifacts_with_expected_fragment_tags() -> Re
     }
 
     // Act
-    run_bam_to_bam(&cfg)?;
+    run_bam_to_bam(&cfg, RunOptions::new_quiet())?;
 
     // Assert
     let tags = read_bam_tags(&out_bam)?;
@@ -316,13 +317,10 @@ fn lengths_consumes_shared_real_artifacts_with_expected_weighted_count() -> Resu
     cfg.set_per_bp_length_bins(61, 61);
 
     // Act
-    run_lengths(&cfg)?;
+    run_lengths(&cfg, RunOptions::new_quiet())?;
 
     // Assert
-    let counts_path = out_dir.join(dot_join(&[
-        cfg.output_prefix.trim(),
-        "length_counts.tsv.zst",
-    ]));
+    let counts_path = out_dir.join(format!("{}.length_counts.tsv.zst", cfg.output_prefix.trim()));
     let arr: Array2<f64> = read_length_counts_tsv(&counts_path)?;
     assert_eq!(arr.dim(), (1, 1));
     assert_close_f64(
@@ -374,7 +372,7 @@ fn midpoints_consumes_shared_real_artifacts_with_expected_profile_mass() -> Resu
     cfg.set_ref_2bit(Some(artifacts.reference_path.clone()));
 
     // Act
-    run_midpoints(&cfg)?;
+    run_midpoints(&cfg, RunOptions::new_quiet())?;
 
     // Assert
     let counts_path = out_dir.join("sites.midpoint_profiles.zarr");
@@ -443,7 +441,7 @@ fn fcoverage_consumes_shared_real_artifacts_with_expected_per_base_profile() -> 
     }
 
     // Act
-    run_fcoverage(&cfg)?;
+    run_fcoverage(&cfg, RunOptions::new_quiet())?;
 
     // Assert
     let bedgraph_path = out_dir.join("testcov.fcoverage.per_position.bedgraph.zst");

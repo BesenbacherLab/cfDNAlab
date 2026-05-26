@@ -84,15 +84,20 @@ mod transitions_command_tests {
         FragmentSpec, ReadSpec, bam_from_specs, single_position_selection, twobit_from_sequences,
     };
     use anyhow::{Context, Result};
-    use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs, Ref2BitRequiredArgs};
-    use cfdnalab::commands::transitions::config::TransitionsConfig;
-    use cfdnalab::commands::transitions::transitions::run as run_transitions;
-    use cfdnalab::shared::positioning::ReferenceFrame;
+    use cfdnalab::RunOptions;
+    use cfdnalab::run_like_cli::common::{
+        ChromosomeArgs, IOCArgs, Ref2BitRequiredArgs, ReferenceFrame,
+    };
+    use cfdnalab::run_like_cli::transitions::{TransitionsConfig, run_transitions};
     use ndarray::{Array3, s};
     use ndarray_npy::read_npy;
     use std::collections::HashMap;
     use std::fs;
     use tempfile::TempDir;
+
+    fn run_transitions_quiet(cfg: &TransitionsConfig) -> Result<()> {
+        run_transitions(cfg, RunOptions::new_quiet()).map(|_| ())
+    }
 
     fn base_chromosomes(chrs: &[&str]) -> ChromosomeArgs {
         ChromosomeArgs {
@@ -152,6 +157,7 @@ mod transitions_command_tests {
         vec![make_fragment(0, 20), make_fragment(4, 24)]
     }
 
+    // KEEP-IN-TESTS: transitions command output behavior.
     #[test]
     fn run_transitions_produces_expected_frequencies() -> Result<()> {
         // Reference repeats "AACGAGTTACGA" so the motifs at successive offsets are predictable
@@ -198,7 +204,7 @@ mod transitions_command_tests {
             lengths.max_fragment_length = 24;
         }
 
-        run_transitions(&cfg)?;
+        run_transitions_quiet(&cfg)?;
 
         let prefix = cfg.shared_args.output_prefix.trim();
         let freqs_path = out_dir.path().join(format!("{prefix}.k2_left_freqs.npy"));

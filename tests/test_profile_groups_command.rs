@@ -1,24 +1,27 @@
 #![cfg(feature = "cmd_midpoints")]
 
+// KEEP-IN-TESTS: all active tests in this file cover midpoint/profile command output, errors, or artifacts.
+
 mod fixtures;
 
 use anyhow::Result;
+use cfdnalab::RunOptions;
 #[cfg(feature = "cli")]
 use anyhow::{Context, bail};
 #[cfg(feature = "cmd_bam_to_bam")]
-use cfdnalab::commands::bam_to_bam::{
-    bam_to_bam::run_inner as run_bam_to_bam, config::BamToBamConfig,
+use cfdnalab::run_like_cli::bam_to_bam::{
+    BamToBamConfig, run_bam_to_bam as run_bam_to_bam_command,
 };
-use cfdnalab::commands::cli_common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, ScaleGenomeArgs};
+use cfdnalab::run_like_cli::common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, ScaleGenomeArgs};
 #[cfg(feature = "cmd_coverage_weights")]
-use cfdnalab::commands::coverage_weights::{
-    config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
+use cfdnalab::run_like_cli::coverage_weights::{
+    CoverageWeightsConfig, run_coverage_weights as run_coverage_weights_command,
 };
-use cfdnalab::commands::gc_bias::package::GCCorrectionPackage;
-use cfdnalab::commands::midpoints::config::MidpointsConfig;
-use cfdnalab::commands::midpoints::midpoints::run;
-use cfdnalab::commands::midpoints::smoothing::MidpointSmoothing;
-use cfdnalab::shared::{
+use cfdnalab::gc_bias::GCCorrectionPackage;
+use cfdnalab::run_like_cli::midpoints::{
+    MidpointSmoothing, MidpointsConfig, run_midpoints as run_midpoints_command,
+};
+use cfdnalab::{
     blacklist::BlacklistStrategy,
     constants::GC_CORRECTION_SCHEMA_VERSION,
     reference::{ContigFootprintEntry, twobit_contig_footprint},
@@ -44,6 +47,20 @@ use std::path::PathBuf;
 #[cfg(feature = "cli")]
 use std::process::Command;
 use tempfile::TempDir;
+
+fn run(cfg: &MidpointsConfig) -> Result<()> {
+    run_midpoints_command(cfg, RunOptions::new_quiet()).map(|_| ())
+}
+
+#[cfg(feature = "cmd_bam_to_bam")]
+fn run_bam_to_bam(cfg: &BamToBamConfig) -> Result<()> {
+    run_bam_to_bam_command(cfg, RunOptions::new_quiet()).map(|_| ())
+}
+
+#[cfg(feature = "cmd_coverage_weights")]
+fn run_coverage_weights(cfg: &CoverageWeightsConfig) -> Result<()> {
+    run_coverage_weights_command(cfg, RunOptions::new_quiet()).map(|_| ())
+}
 
 const MIDPOINT_F32_TOL: f32 = 1e-5;
 
@@ -1003,7 +1020,7 @@ fn blacklist_midpoint_filtering_checks_both_centers_for_even_fragments() -> Resu
         cfg.set_require_proper_pair(false);
         cfg.set_scale_genome(ScaleGenomeArgs::default());
         cfg.blacklist = blacklist;
-        cfg.blacklist_strategy = cfdnalab::shared::blacklist::BlacklistStrategy::Midpoint;
+        cfg.blacklist_strategy = cfdnalab::blacklist::BlacklistStrategy::Midpoint;
         // This test targets fragment-level midpoint blacklist behavior. The interval prefilter
         // would correctly remove this tiny test window before the fragment filter runs
         cfg.set_keep_blacklisted_intervals(true);
@@ -2541,7 +2558,7 @@ fn bam_to_bam_gc_file_output_drives_midpoints_gc_tag_same_as_original_gc_file() 
         base_chromosomes(&["chr1"]),
     );
     bam_to_bam_cfg.min_mapq = 0;
-    bam_to_bam_cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
+    bam_to_bam_cfg.set_gc(cfdnalab::run_like_cli::common::ApplyGCArgFileOnly {
         gc_file: Some(gc_path.clone()),
         neutralize_invalid_gc: false,
     });

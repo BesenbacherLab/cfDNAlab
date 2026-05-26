@@ -1,24 +1,25 @@
 #![cfg(feature = "cmd_ends")]
 
+// KEEP-IN-TESTS: ends command output and artifact behavior.
+
 mod fixtures;
 
 use anyhow::{Context, Result, ensure};
+use cfdnalab::RunOptions;
 #[cfg(feature = "cmd_gc_bias")]
-use cfdnalab::commands::gc_bias::package::GCCorrectionPackage;
-use cfdnalab::commands::{
-    cli_common::{ApplyGCArgs, ChromosomeArgs, DistributionWindowsArgs, IOCArgs, UnpairedArgs},
+use cfdnalab::gc_bias::GCCorrectionPackage;
+use cfdnalab::run_like_cli::{
+    common::{
+        ApplyGCArgs, BlacklistStrategy, ChromosomeArgs, DistributionWindowsArgs, IOCArgs,
+        IndelMotifFilterPolicy, UnpairedArgs,
+    },
     ends::{
-        config::EndsConfig,
-        config_structs::{
-            AssignMotifToWindowArgs, BaseQualityFilter, ClipStrategy, KmerSource,
-            WindowMotifAssigner,
-        },
-        ends::run,
+        AssignMotifToWindowArgs, BaseQualityFilter, ClipStrategy, EndsConfig, KmerSource,
+        WindowMotifAssigner, run_ends,
     },
 };
-use cfdnalab::shared::constants::{DEFAULT_MAX_SOFT_CLIPS, GC_CORRECTION_SCHEMA_VERSION};
-use cfdnalab::shared::{
-    blacklist::BlacklistStrategy, indel_mode::IndelMotifFilterPolicy,
+use cfdnalab::{
+    constants::{DEFAULT_MAX_SOFT_CLIPS, GC_CORRECTION_SCHEMA_VERSION},
     reference::twobit_contig_footprint,
 };
 use fixtures::{
@@ -40,6 +41,10 @@ use std::{
 };
 use tempfile::TempDir;
 use zarrs::{array::Array, filesystem::FilesystemStore};
+
+fn run(cfg: &EndsConfig) -> Result<()> {
+    run_ends(cfg, RunOptions::new_quiet()).map(|_| ())
+}
 
 fn base_chromosomes(chrs: &[&str]) -> ChromosomeArgs {
     ChromosomeArgs {

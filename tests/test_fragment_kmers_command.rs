@@ -1,12 +1,16 @@
 #![cfg(feature = "cmd_fragment_kmers")]
 
+// KEEP-IN-TESTS: fragment-kmers command output and artifact behavior.
+
 mod fixtures;
 
 use anyhow::Result;
-use cfdnalab::commands::cli_common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, WindowsArgs};
-use cfdnalab::commands::fragment_kmers::{config::FragmentKmersConfig, fragment_kmers::run};
-use cfdnalab::shared::io::dot_join;
-use cfdnalab::shared::reference::twobit_contig_footprint;
+use cfdnalab::RunOptions;
+use cfdnalab::reference::twobit_contig_footprint;
+use cfdnalab::run_like_cli::common::{
+    ApplyGCArgs, ChromosomeArgs, IOCArgs, Ref2BitRequiredArgs, WindowsArgs,
+};
+use cfdnalab::run_like_cli::fragment_kmers::{FragmentKmersConfig, run_fragment_kmers};
 use fixtures::{
     ReadSpec, bam_from_specs, late_origin_gc_reference_sequence, simple_inward_bam,
     simple_reference_twobit, twobit_from_sequences, write_bed, write_two_bin_gc_package,
@@ -14,6 +18,10 @@ use fixtures::{
 use ndarray::Array2;
 use ndarray_npy::read_npy;
 use tempfile::TempDir;
+
+fn run(cfg: &FragmentKmersConfig) -> Result<()> {
+    run_fragment_kmers(cfg, RunOptions::new_quiet()).map(|_| ())
+}
 
 fn base_chromosomes(chrs: &[&str]) -> ChromosomeArgs {
     ChromosomeArgs {
@@ -47,7 +55,7 @@ fn bed_windowed_runs_write_prefixed_bins_tsv_with_exact_blacklisted_fractions() 
             output_dir: out_dir.path().to_path_buf(),
             n_threads: 1,
         },
-        cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
+        Ref2BitRequiredArgs {
             ref_2bit: reference.path.clone(),
         },
         base_chromosomes(&["chr1"]),
@@ -69,8 +77,7 @@ fn bed_windowed_runs_write_prefixed_bins_tsv_with_exact_blacklisted_fractions() 
 
     // Act
     run(&cfg)?;
-    let bins_tsv =
-        std::fs::read_to_string(out_dir.path().join(dot_join(&["sampleA", "bins.tsv"])))?;
+    let bins_tsv = std::fs::read_to_string(out_dir.path().join("sampleA.bins.tsv"))?;
 
     // Assert
     assert_eq!(
@@ -135,7 +142,7 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
             output_dir: out_dir.path().to_path_buf(),
             n_threads: 1,
         },
-        cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
+        Ref2BitRequiredArgs {
             ref_2bit: reference.path.clone(),
         },
         base_chromosomes(&["chr1"]),

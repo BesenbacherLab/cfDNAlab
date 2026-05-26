@@ -3,16 +3,23 @@
 mod tests_prepare_windows_pipeline {
 
     use anyhow::Result;
-    use cfdnalab::commands::prepare_windows::config::{
-        CoordinateSet, DedupKeep, DistSign, DistancePolicy, HeaderMode, MergeLabel, MergeScope,
-        NearDirection, NearEdge, NearTiePolicy, OobPolicy, PrepareConfig,
+    use cfdnalab::RunOptions;
+    use cfdnalab::run_like_cli::{
+        common::BlacklistStrategy,
+        prepare_windows::{
+            CoordinateSet, DedupKeep, DistSign, DistancePolicy, HeaderMode, MergeLabel, MergeScope,
+            NearDirection, NearEdge, NearTiePolicy, OobPolicy, PrepareConfig, run_prepare_windows,
+        },
     };
-    use cfdnalab::commands::prepare_windows::prepare_windows::run;
     use flate2::{Compression, write::GzEncoder};
     use std::fs;
     use std::io::{BufWriter, Read, Write};
     use tempfile::TempDir;
     use zstd::Decoder as ZstdDecoder;
+
+    fn run(cfg: &PrepareConfig) -> Result<()> {
+        run_prepare_windows(cfg, RunOptions::new_quiet()).map(|_| ())
+    }
 
     fn write_temp_file(dir: &TempDir, name: &str, lines: &[&str]) -> Result<std::path::PathBuf> {
         let path = dir.path().join(name);
@@ -42,6 +49,7 @@ mod tests_prepare_windows_pipeline {
             .collect())
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn should_write_windows_verbatim_when_no_transformations() -> Result<()> {
         // Arrange
@@ -65,6 +73,7 @@ mod tests_prepare_windows_pipeline {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn should_drop_blacklisted_windows_and_label_with_near_distance() -> Result<()> {
         // Arrange
@@ -92,7 +101,7 @@ mod tests_prepare_windows_pipeline {
         cfg.output = output;
         cfg.header = HeaderMode::Absent;
         cfg.blacklist = Some(vec![blacklist]);
-        cfg.blacklist_strategy = cfdnalab::shared::blacklist::BlacklistStrategy::Any;
+        cfg.blacklist_strategy = BlacklistStrategy::Any;
         cfg.blacklist_halo = 0;
         cfg.near = Some(near);
         cfg.near_header = HeaderMode::Absent;
@@ -124,6 +133,7 @@ mod tests_prepare_windows_pipeline {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn should_merge_then_apply_blacklist() -> Result<()> {
         let tmpdir = TempDir::new()?;
@@ -140,7 +150,7 @@ mod tests_prepare_windows_pipeline {
         cfg.output = output;
         cfg.header = HeaderMode::Absent;
         cfg.blacklist = Some(vec![blacklist]);
-        cfg.blacklist_strategy = cfdnalab::shared::blacklist::BlacklistStrategy::Any;
+        cfg.blacklist_strategy = BlacklistStrategy::Any;
         cfg.group_cols = vec!["3".to_string()];
         cfg.merge_scope = MergeScope::Within;
         cfg.merge_gap = Some(4);
@@ -152,6 +162,7 @@ mod tests_prepare_windows_pipeline {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn should_resize_before_merging() -> Result<()> {
         let tmpdir = TempDir::new()?;
@@ -184,6 +195,7 @@ mod tests_prepare_windows_pipeline {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn should_resize_after_merging_when_merge_on_original() -> Result<()> {
         // Arrange
@@ -222,6 +234,7 @@ mod tests_prepare_windows_pipeline {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn should_assign_three_distance_bins() -> Result<()> {
         let tmpdir = TempDir::new()?;
@@ -266,6 +279,7 @@ mod tests_prepare_windows_pipeline {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn should_use_resized_coordinates_for_distance_binning() -> Result<()> {
         // Arrange
@@ -305,6 +319,7 @@ mod tests_prepare_windows_pipeline {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn should_use_original_coordinates_for_distance_binning() -> Result<()> {
         // Arrange
@@ -344,6 +359,7 @@ mod tests_prepare_windows_pipeline {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn should_annotate_ties_with_directional_groups_upstream_downstream() -> Result<()> {
         let tmpdir = TempDir::new()?;
@@ -375,6 +391,7 @@ mod tests_prepare_windows_pipeline {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn should_annotate_ties_with_directional_groups_downstream_downstream() -> Result<()> {
         let tmpdir = TempDir::new()?;
@@ -408,6 +425,7 @@ mod tests_prepare_windows_pipeline {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn should_drop_ties_when_configured() -> Result<()> {
         let tmpdir = TempDir::new()?;
@@ -436,6 +454,7 @@ mod tests_prepare_windows_pipeline {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn should_add_direction_prefix_for_unique_hits() -> Result<()> {
         let tmpdir = TempDir::new()?;
@@ -464,6 +483,7 @@ mod tests_prepare_windows_pipeline {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn should_add_direction_prefix_without_near_groups() -> Result<()> {
         // Arrange
@@ -497,6 +517,7 @@ mod tests_prepare_windows_pipeline {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn should_exclude_windows_by_atomic_label() -> Result<()> {
         // Arrange
@@ -527,6 +548,7 @@ mod tests_prepare_windows_pipeline {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn should_exclude_windows_by_composition_label() -> Result<()> {
         // Arrange
@@ -563,6 +585,7 @@ mod tests_prepare_windows_pipeline {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn should_filter_by_min_per_for_input_groups() -> Result<()> {
         // Arrange
@@ -594,6 +617,7 @@ mod tests_prepare_windows_pipeline {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn should_tag_clusters_across_groups() -> Result<()> {
         // Arrange
@@ -636,6 +660,7 @@ mod tests_prepare_windows_pipeline {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn should_cluster_before_min_distance_when_configured() -> Result<()> {
         // Arrange
@@ -663,6 +688,7 @@ mod tests_prepare_windows_pipeline {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn should_cluster_after_min_distance_by_default() -> Result<()> {
         // Arrange
@@ -690,6 +716,7 @@ mod tests_prepare_windows_pipeline {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn should_resize_and_deduplicate_windows_with_spacing() -> Result<()> {
         // Arrange
@@ -722,6 +749,7 @@ mod tests_prepare_windows_pipeline {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn should_flank_windows_and_clip_to_allowed_bounds() -> Result<()> {
         // Arrange
@@ -746,6 +774,7 @@ mod tests_prepare_windows_pipeline {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn should_merge_within_group() -> Result<()> {
         // Arrange
@@ -783,6 +812,7 @@ mod tests_prepare_windows_pipeline {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn should_execute_full_pipeline_end_to_end() -> Result<()> {
         // Arrange
@@ -808,7 +838,7 @@ mod tests_prepare_windows_pipeline {
         cfg.output = output;
         cfg.header = HeaderMode::Absent;
         cfg.blacklist = Some(vec![blacklist]);
-        cfg.blacklist_strategy = cfdnalab::shared::blacklist::BlacklistStrategy::Any;
+        cfg.blacklist_strategy = BlacklistStrategy::Any;
         cfg.blacklist_halo = 2;
         cfg.near = Some(near);
         cfg.near_header = HeaderMode::Absent;
@@ -858,6 +888,7 @@ mod tests_prepare_windows_pipeline {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn should_error_when_chromosome_reappears_out_of_order() -> Result<()> {
         // Arrange
@@ -885,6 +916,7 @@ mod tests_prepare_windows_pipeline {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn should_error_when_start_coordinate_decreases() -> Result<()> {
         // Arrange
@@ -906,6 +938,7 @@ mod tests_prepare_windows_pipeline {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn should_accept_gz_input_and_emit_zst_output() -> Result<()> {
         let tmpdir = TempDir::new()?;
@@ -2439,6 +2472,7 @@ mod tests_stdio {
         }
     }
 
+    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn run_supports_stdio() -> Result<()> {
         let mut cfg = PrepareConfig::default();

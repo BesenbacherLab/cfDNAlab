@@ -1,13 +1,15 @@
 #![cfg(feature = "cmd_wps")]
 
+// KEEP-IN-TESTS: WPS command output and artifact behavior.
+
 mod fixtures;
 
 use anyhow::{Context, Result, ensure};
-use cfdnalab::commands::cli_common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, WindowsArgs};
-use cfdnalab::commands::fcoverage::window_results::CoverageWindowAction;
-use cfdnalab::commands::wps::config::WPSConfig;
-use cfdnalab::commands::wps::wps::run as run_fn;
-use cfdnalab::shared::reference::twobit_contig_footprint;
+use cfdnalab::RunOptions;
+use cfdnalab::reference::twobit_contig_footprint;
+use cfdnalab::run_like_cli::common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, WindowsArgs};
+use cfdnalab::run_like_cli::fcoverage::CoverageWindowAction;
+use cfdnalab::run_like_cli::wps::{WPSConfig, run_wps as run_fn};
 use fixtures::{
     BamFixture, FragmentSpec, ReadSpec, bam_from_specs, late_origin_gc_reference_sequence,
     long_fragment_bam, read_zst_to_string, twobit_from_sequences, write_bed,
@@ -25,6 +27,10 @@ const FLAG_FIRST_MATE: u16 = 0x40;
 const FLAG_SECOND_MATE: u16 = 0x80;
 const FLAG_PROPER_PAIR: u16 = 0x2;
 const FLAG_MATE_REVERSE: u16 = 0x20;
+
+fn run_wps_quiet(cfg: &WPSConfig) -> Result<()> {
+    run_fn(cfg, RunOptions::new_quiet()).map(|_| ())
+}
 const WPS_WINDOW_SIZE_BP: u32 = 120;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -167,7 +173,7 @@ fn run_wps(cfg: &WPSConfig) -> Result<Vec<WpsRun>> {
 }
 
 fn run_wps_with_chrom(cfg: &WPSConfig) -> Result<Vec<WpsRun>> {
-    run_fn(cfg)?;
+    run_wps_quiet(cfg)?;
     let prefix = cfg.shared_args.output_prefix.trim();
     let bedgraph_path = cfg
         .shared_args
@@ -579,7 +585,7 @@ fn by_size_total_handles_three_chromosomes() -> Result<()> {
     // - [12, 21) -> +9
     // - [21, 23) -> -2
     // Total WPS over the chromosome window [0, 100) is therefore 4.
-    run_fn(&cfg)?;
+    run_wps_quiet(&cfg)?;
 
     let output_path = out_dir.path().join("three_chr_by_size.wps.total.tsv.zst");
     let text = read_zst_to_string(&output_path)?;
@@ -629,7 +635,7 @@ fn by_size_total_non_aligned_tiles_reduce_crossing_bins_by_logical_start() -> Re
     // - Empty BAM means total WPS is 0 in both bins.
     // - With window size 4, invalid centers are 0, 1, and 299 because the WPS window would extend
     //   past chromosome bounds. That gives blacklisted_positions 2 for [0,150) and 1 for [150,300).
-    run_fn(&cfg)?;
+    run_wps_quiet(&cfg)?;
 
     let output_path = out_dir.path().join("non_aligned_by_size.wps.total.tsv.zst");
     let text = read_zst_to_string(&output_path)?;
@@ -673,7 +679,7 @@ fn by_bed_total_handles_three_chromosomes() -> Result<()> {
     };
     cfg.per_window = Some(CoverageWindowAction::Total);
 
-    run_fn(&cfg)?;
+    run_wps_quiet(&cfg)?;
 
     let output_path = out_dir.path().join("three_chr_by_bed.wps.total.tsv.zst");
     let text = read_zst_to_string(&output_path)?;
@@ -718,7 +724,7 @@ fn by_bed_total_skips_chromosomes_without_windows_and_keeps_later_chromosomes() 
     // - chr1 has a fragment but no BED windows, so BED mode should skip that chromosome entirely.
     // - chr2 has one fragment [10, 22) and one BED window [0, 100). The single-fragment
     //   derivation used elsewhere in this file gives a total WPS sum of 4 over that whole window.
-    run_fn(&cfg)?;
+    run_wps_quiet(&cfg)?;
 
     let output_path = out_dir.path().join("chr2_only_by_bed.wps.total.tsv.zst");
     let text = read_zst_to_string(&output_path)?;

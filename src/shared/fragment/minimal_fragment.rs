@@ -6,7 +6,7 @@ use rust_htslib::bam::record::Record;
 
 /// Basic fragment on the reference (0-based, end-exclusive).
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Fragment {
+pub struct Fragment {
     /// tid/contig id
     pub(crate) tid: i32,
     /// Checked non-empty fragment span on the reference.
@@ -16,28 +16,41 @@ pub(crate) struct Fragment {
 }
 
 impl Fragment {
+    /// Contig id from the BAM header.
+    #[inline]
+    pub fn tid(&self) -> i32 {
+        self.tid
+    }
+
+    /// Checked fragment span on the reference.
+    #[inline]
+    pub fn interval(&self) -> Interval<u32> {
+        self.interval
+    }
+
     /// Inclusive start (left boundary of the forward read).
     #[inline]
-    pub(crate) fn start(&self) -> u32 {
+    pub fn start(&self) -> u32 {
         self.interval.start()
     }
 
     /// Exclusive end (right boundary of the reverse read).
     #[inline]
-    pub(crate) fn end(&self) -> u32 {
+    pub fn end(&self) -> u32 {
         self.interval.end()
     }
 
     /// Length of the fragment (end - start).
     #[inline]
-    pub(crate) fn len(&self) -> u32 {
+    pub fn len(&self) -> u32 {
         self.interval.len()
     }
+
 }
 
 /// Minimal per-read info needed to build a Fragment without stashing full Records.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct MinimalReadInfo {
+pub struct MinimalReadInfo {
     pub(crate) tid: i32,                // Contig id
     pub(crate) interval: Interval<u32>, // Aligned reference span [start: pos(), end: reference_end())
     pub(crate) is_reverse: bool,
@@ -46,7 +59,7 @@ pub(crate) struct MinimalReadInfo {
 
 impl MinimalReadInfo {
     #[inline]
-    pub(crate) fn from_record_with_gc_tag(r: &Record, gc_tag: Option<&[u8]>) -> Result<Self> {
+    pub fn from_record_with_gc_tag(r: &Record, gc_tag: Option<&[u8]>) -> Result<Self> {
         let gc_tag_value = gc_tag
             .map(|tag| crate::shared::gc_tag::read_gc_tag_from_record(r, tag))
             .unwrap_or_default();
@@ -61,19 +74,19 @@ impl MinimalReadInfo {
 
     /// Return the read's inclusive start on the reference.
     #[inline]
-    pub(crate) fn start(&self) -> u32 {
+    pub fn start(&self) -> u32 {
         self.interval.start()
     }
 
     /// Return the read's exclusive end on the reference.
     #[inline]
-    pub(crate) fn end(&self) -> u32 {
+    pub fn end(&self) -> u32 {
         self.interval.end()
     }
 
     /// Return the read's aligned reference span `[pos, end)`.
     #[inline]
-    pub(crate) fn aligned_interval(&self) -> Interval<u32> {
+    pub fn aligned_interval(&self) -> Interval<u32> {
         self.interval
     }
 }
@@ -94,7 +107,7 @@ impl PairOrientable for MinimalReadInfo {
 }
 
 /// Build a Fragment from two `MinimalReadInfo`s (no full BAM records needed).
-pub(crate) fn collect_fragment(a: &MinimalReadInfo, b: &MinimalReadInfo) -> Option<Fragment> {
+pub fn collect_fragment(a: &MinimalReadInfo, b: &MinimalReadInfo) -> Option<Fragment> {
     let (forward, reverse) = oriented_pair_from_read_info(a, b)?;
     if !is_inwards_oriented(forward, reverse) {
         return None;
@@ -109,7 +122,7 @@ pub(crate) fn collect_fragment(a: &MinimalReadInfo, b: &MinimalReadInfo) -> Opti
 }
 
 /// Build a Fragment from a single read (unpaired input).
-pub(crate) fn collect_fragment_from_single_read(read: &MinimalReadInfo) -> Option<Fragment> {
+pub fn collect_fragment_from_single_read(read: &MinimalReadInfo) -> Option<Fragment> {
     Some(Fragment {
         tid: read.tid,
         interval: read.aligned_interval(),

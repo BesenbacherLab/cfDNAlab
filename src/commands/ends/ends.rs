@@ -1,6 +1,7 @@
 use crate::commands::ends::write::clip_strategy_name;
 use crate::shared::gc_tag::ClassifiedGCTagWeight;
 use crate::{
+    command_run::{CommandRunResult, RunOptions},
     commands::{
         cli_common::{
             DistributionWindowSpec, ensure_output_dir, load_blacklist_map, load_scaling_map,
@@ -76,7 +77,7 @@ use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::{
     convert::TryInto,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -86,6 +87,36 @@ use std::{
 use tracing::{info, warn};
 
 const COMMAND_TARGET: &str = "ends";
+
+/// Result from `ends`.
+///
+/// The command writes end-motif counts for the selected windows or global profile. The result
+/// records the motif output artifact and the fragment counters used in the run summary.
+#[derive(Debug)]
+pub struct EndsRunResult {
+    /// Fragment, filtering, and motif counters collected during the run.
+    pub counters: EndsCounters,
+    /// Main motif-count output path.
+    pub motif_output_path: PathBuf,
+    /// Final output files produced by the command.
+    pub output_files: Vec<PathBuf>,
+}
+
+impl CommandRunResult for EndsRunResult {
+    type Counters = EndsCounters;
+
+    fn counters(&self) -> &Self::Counters {
+        &self.counters
+    }
+
+    fn output_files(&self) -> &[PathBuf] {
+        &self.output_files
+    }
+
+    fn primary_output(&self) -> Option<&Path> {
+        Some(self.motif_output_path.as_path())
+    }
+}
 
 fn outside_kmer_clip_strategy_warning(
     k_outside: usize,
@@ -101,18 +132,32 @@ fn outside_kmer_clip_strategy_warning(
     ))
 }
 
-/// Execute the end-motif counting pipeline end-to-end.
+/// Run the `ends` command.
 ///
-/// Parameters:
-/// - `opt`: Fully resolved configuration for the `ends` command.
+/// This command counts fragment-end motifs from reads or the reference, with optional quality
+/// filtering, clipping policy, blacklists, GC correction, and genomic scaling. It writes the
+/// configured motif-count artifact and returns counters for the accepted fragments and motifs.
 ///
-/// Returns:
-/// - `Ok(())` when the counts and accompanying metadata files are written successfully.
+/// Reporting is controlled by `options`. `report_statistics` prints the final summary and
+/// `show_progress` controls progress bars. This command does not use status logs.
 ///
-/// Errors:
-/// - Propagates IO and parsing errors when reading inputs or writing results, aborting the run on
-///   the first failure.
-pub(crate) fn run(opt: &EndsConfig) -> Result<()> {
+/// Parameters
+/// ----------
+/// - `opt`:
+///     Fully resolved configuration for the `ends` command.
+/// - `options`:
+///     Reporting controls for statistics and progress bars.
+///
+/// Returns
+/// -------
+/// - `Ok(EndsRunResult)`:
+///     Counters and output paths for the completed run.
+///
+/// Errors
+/// ------
+/// Returns an error when the configuration is invalid, an input cannot be read, or any output file
+/// cannot be written.
+pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> {
     let start_time = Instant::now();
     opt.fragment_lengths.validate()?;
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
@@ -254,7 +299,7 @@ pub(crate) fn run(opt: &EndsConfig) -> Result<()> {
     let (tiles, _) = build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp, align_bp)?;
     let temp_chrom_name_map = TempChromNameMap::from_contigs(&chromosomes)?;
 
-    let progress = ProgressFactory::new();
+    let progress = ProgressFactory::with_enabled(options.show_progress);
     let pb = Arc::new(progress.default_bar(tiles.len() as u64));
 
     // TODO: Add comment explaining these two halos. Mention reach and tile ownership
@@ -364,7 +409,11 @@ pub(crate) fn run(opt: &EndsConfig) -> Result<()> {
         .flatten()
         .collect();
 
-    pb.finish_with_message("| Finished counting");
+    if options.show_progress {
+        pb.finish_with_message("| Finished counting");
+    } else {
+        pb.finish_and_clear();
+    }
 
     // Release per-tile inputs before merging outputs
     drop(chr_offsets_for_threads);
@@ -492,6 +541,14 @@ pub(crate) fn run(opt: &EndsConfig) -> Result<()> {
         row_metadata,
         write_dense_output,
     )?;
+    let motif_file_name = temp_motif_output_path.file_name().with_context(|| {
+        format!(
+            "temporary output path has no filename: {}",
+            temp_motif_output_path.display()
+        )
+    })?;
+    let motif_output_path = opt.ioc.output_dir.join(motif_file_name);
+    let mut output_files = vec![motif_output_path.clone()];
     final_outputs
         .record_temp_files_with_same_names_in([temp_motif_output_path], &opt.ioc.output_dir)?;
 
@@ -503,7 +560,8 @@ pub(crate) fn run(opt: &EndsConfig) -> Result<()> {
         )
     })?;
     let settings_path = opt.ioc.output_dir.join(settings_file_name);
-    final_outputs.record(temp_settings_path, settings_path)?;
+    final_outputs.record(temp_settings_path, settings_path.clone())?;
+    output_files.push(settings_path);
 
     // Write window coordinates plus overlap metadata as TSV to output_dir
     match &window_opt {
@@ -528,7 +586,8 @@ pub(crate) fn run(opt: &EndsConfig) -> Result<()> {
                 &blacklist_map,
                 opt.blacklist.is_some(),
             )?;
-            final_outputs.record(temp_group_index_path, group_index_path)?;
+            final_outputs.record(temp_group_index_path, group_index_path.clone())?;
+            output_files.push(group_index_path);
         }
         DistributionWindowSpec::Global => {}
         _ => {
@@ -536,7 +595,8 @@ pub(crate) fn run(opt: &EndsConfig) -> Result<()> {
             let bins_path = opt.ioc.output_dir.join(dot_join(&[prefix, "bins.tsv"]));
             let temp_bins_path = final_outputs.temp_path_for(&bins_path)?;
             write_bin_info_tsv(&temp_bins_path, &bin_info)?;
-            final_outputs.record(temp_bins_path, bins_path)?;
+            final_outputs.record(temp_bins_path, bins_path.clone())?;
+            output_files.push(bins_path);
         }
     }
 
@@ -545,41 +605,47 @@ pub(crate) fn run(opt: &EndsConfig) -> Result<()> {
     drop(blacklist_map);
 
     let elapsed = start_time.elapsed();
-    print_fragment_run_statistics(
-        &global_counter.base,
-        elapsed,
-        FragmentRunStatisticsOptions {
-            include_section_header: true,
-            notes: &["Note: counts below cover only tiles with relevant output windows"],
-            labels: FragmentStatisticsLabels {
-                total_reads: "Observed reads in processed tiles",
-                accepted_reads: "Initially accepted reads",
-                counted_fragments: "Fragments with one or more counted motifs",
-            },
-            blacklist_excluded_fragments: Some(global_counter.blacklisted_fragments),
-            gc: (opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some()).then_some(
-                GCStatisticsSummary {
-                    neutralize_invalid_gc: opt.gc.neutralize_invalid_gc,
-                    failed_fragments: global_counter.gc_failed_fragments,
-                    missing_tags: opt
-                        .gc
-                        .gc_tag
-                        .is_some()
-                        .then_some(global_counter.gc_missing_tags),
-                    out_of_range_tags: opt
-                        .gc
-                        .gc_tag
-                        .is_some()
-                        .then_some(global_counter.gc_out_of_range_tags),
+    if options.report_statistics {
+        print_fragment_run_statistics(
+            &global_counter.base,
+            elapsed,
+            FragmentRunStatisticsOptions {
+                include_section_header: true,
+                notes: &["Note: counts below cover only tiles with relevant output windows"],
+                labels: FragmentStatisticsLabels {
+                    total_reads: "Observed reads in processed tiles",
+                    accepted_reads: "Initially accepted reads",
+                    counted_fragments: "Fragments with one or more counted motifs",
                 },
-            ),
-        },
-        [format!(
-            "Distinct counted end motifs across those fragments: {}",
-            global_counter.counted_motifs
-        )],
-    );
-    Ok(())
+                blacklist_excluded_fragments: Some(global_counter.blacklisted_fragments),
+                gc: (opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some()).then_some(
+                    GCStatisticsSummary {
+                        neutralize_invalid_gc: opt.gc.neutralize_invalid_gc,
+                        failed_fragments: global_counter.gc_failed_fragments,
+                        missing_tags: opt
+                            .gc
+                            .gc_tag
+                            .is_some()
+                            .then_some(global_counter.gc_missing_tags),
+                        out_of_range_tags: opt
+                            .gc
+                            .gc_tag
+                            .is_some()
+                            .then_some(global_counter.gc_out_of_range_tags),
+                    },
+                ),
+            },
+            [format!(
+                "Distinct counted end motifs across those fragments: {}",
+                global_counter.counted_motifs
+            )],
+        );
+    }
+    Ok(EndsRunResult {
+        counters: global_counter,
+        motif_output_path,
+        output_files,
+    })
 }
 
 /// Update the `ends` statistics for one fully processed fragment.

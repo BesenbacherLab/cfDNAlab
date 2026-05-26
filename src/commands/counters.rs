@@ -2,19 +2,19 @@ use crate::shared::iterator_counter::FragmentCounterSnapshot;
 use std::ops::AddAssign;
 
 #[derive(Debug, Default, Clone, Copy)]
-pub(crate) struct BaseCounters {
+pub struct BaseCounters {
     /// Reads encountered
-    pub(crate) total_reads: u64,
+    pub total_reads: u64,
     /// Fragments collected from reads
-    pub(crate) collected_fragments: u64,
+    pub collected_fragments: u64,
     /// Forward reads accepted by first filters
-    pub(crate) accepted_forward: u64,
+    pub accepted_forward: u64,
     /// Reverse reads accepted by first filters
-    pub(crate) accepted_reverse: u64,
+    pub accepted_reverse: u64,
     /// Fragments yielded from iterator
-    pub(crate) yielded_fragments: u64,
+    pub yielded_fragments: u64,
     /// *Fragments* counted
-    pub(crate) counted_fragments: u64,
+    pub counted_fragments: u64,
 }
 
 impl AddAssign for BaseCounters {
@@ -45,8 +45,8 @@ macro_rules! counter_struct {
     // No extra fields
     ($name:ident ;) => {
         #[derive(Debug, Default, Clone, Copy)]
-        pub(crate) struct $name {
-            pub(crate) base: BaseCounters,
+        pub struct $name {
+            pub base: BaseCounters,
         }
         impl AddAssign for $name {
             fn add_assign(&mut self, other: Self) {
@@ -55,6 +55,7 @@ macro_rules! counter_struct {
         }
         impl $name {
             /// Add counts from snapshot
+            #[allow(dead_code)]
             pub(crate) fn add_from_snapshot(&mut self, snap: FragmentCounterSnapshot) {
                 self.base.add_from_snapshot(snap);
             }
@@ -63,9 +64,9 @@ macro_rules! counter_struct {
     // With extra fields
     ($name:ident ; $( $field:ident : $ty:ty ),+ $(,)? ) => {
         #[derive(Debug, Default, Clone, Copy)]
-        pub(crate) struct $name {
-            pub(crate) base: BaseCounters,
-            $( pub(crate) $field: $ty, )+
+        pub struct $name {
+            pub base: BaseCounters,
+            $( pub $field: $ty, )+
         }
         impl AddAssign for $name {
             fn add_assign(&mut self, other: Self) {
@@ -75,6 +76,7 @@ macro_rules! counter_struct {
         }
         impl $name {
             /// Add counts from snapshot
+            #[allow(dead_code)]
             pub(crate) fn add_from_snapshot(&mut self, snap: FragmentCounterSnapshot) {
                 self.base.add_from_snapshot(snap);
             }

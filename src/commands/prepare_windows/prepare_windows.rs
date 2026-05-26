@@ -13,6 +13,7 @@
 //!  The implementation favors determinism, clear rules, and low memory usage. It
 //!  assumes input is sorted by (chrom, start).
 
+use crate::command_run::{CommandRunResult, RunOptions};
 use crate::commands::prepare_windows::chunk::{flush_chromosome, process_and_write_chunk};
 use crate::commands::prepare_windows::config::*;
 use crate::commands::prepare_windows::filters::{
@@ -40,7 +41,7 @@ use fxhash::{FxHashMap, FxHashSet};
 use indicatif::ProgressStyle;
 use std::collections::hash_map::Entry;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use std::{env, mem};
@@ -146,14 +147,75 @@ pub(crate) struct BlacklistCursor {
     pub(crate) post_cursor: usize, // Post-merge filtering
 }
 
-/// Run the prepare pipeline using the provided configuration.
-pub(crate) fn run(cfg: &PrepareConfig) -> Result<()> {
+/// Result from `prepare-windows`.
+///
+/// The command writes a transformed BED-like file or stdout output. The result records the output
+/// path when one exists and the list of final files produced by the run.
+#[derive(Debug)]
+pub struct PrepareWindowsRunResult {
+    /// Empty counter placeholder for the shared command result interface.
+    pub counters: (),
+    /// Output path when the command writes to a file, or `None` when it writes to stdout.
+    pub output_path: Option<PathBuf>,
+    /// Final output files produced by the command.
+    pub output_files: Vec<PathBuf>,
+}
+
+impl CommandRunResult for PrepareWindowsRunResult {
+    type Counters = ();
+
+    fn counters(&self) -> &Self::Counters {
+        &self.counters
+    }
+
+    fn output_files(&self) -> &[PathBuf] {
+        &self.output_files
+    }
+
+    fn primary_output(&self) -> Option<&Path> {
+        self.output_path.as_deref()
+    }
+}
+
+/// Run the `prepare-windows` command.
+///
+/// This command streams BED-like windows, applies configured filters and transforms, and writes the
+/// resulting window table. It can resize, flank, merge, deduplicate, annotate nearest intervals,
+/// and apply blacklist-based filtering without loading the full output into memory.
+///
+/// Reporting is controlled by `options`. `report_statistics` prints elapsed time,
+/// `show_progress` controls progress bars, and `log_statuses` controls status messages.
+///
+/// Parameters
+/// ----------
+/// - `cfg`:
+///     Fully resolved configuration for the `prepare-windows` command.
+/// - `options`:
+///     Reporting controls for elapsed time, progress bars, and status logs.
+///
+/// Returns
+/// -------
+/// - `Ok(PrepareWindowsRunResult)`:
+///     Output path information for the completed run.
+///
+/// Errors
+/// ------
+/// Returns an error when an input row is invalid, a referenced file cannot be read, or the output
+/// cannot be written.
+pub fn run_prepare_windows(
+    cfg: &PrepareConfig,
+    options: RunOptions,
+) -> Result<PrepareWindowsRunResult> {
     let start_time = Instant::now();
 
-    println!("Preparing windows");
+    if options.log_statuses {
+        println!("Preparing windows");
+    }
 
     // Prepare the temp directory early so we fail fast on missing write permissions
-    println!("Start: Creating temporary directory");
+    if options.log_statuses {
+        println!("Start: Creating temporary directory");
+    }
     let base_output_dir = match &cfg.output {
         path if path.as_os_str() != "-" => path
             .parent()
@@ -196,7 +258,9 @@ pub(crate) fn run(cfg: &PrepareConfig) -> Result<()> {
 
     // Compile distance bins (if any)
     let distance_bins = if let Some(specs) = &cfg.distance_bins {
-        println!("Start: Parsing distance bins");
+        if options.log_statuses {
+            println!("Start: Parsing distance bins");
+        }
         Some(parse_distance_bins(specs)?)
     } else {
         None
@@ -204,14 +268,18 @@ pub(crate) fn run(cfg: &PrepareConfig) -> Result<()> {
 
     // Compile score filter (if any)
     let score_filter = if let Some(expr) = &cfg.score_filter {
-        println!("Start: Parsing score filter");
+        if options.log_statuses {
+            println!("Start: Parsing score filter");
+        }
         Some(parse_score_filter(expr)?)
     } else {
         None
     };
 
     // Resolve label schema and key references
-    println!("Start: Resolving label schema");
+    if options.log_statuses {
+        println!("Start: Resolving label schema");
+    }
     let label_schema = LabelSchema::new(&cfg.compose)?;
     let available_parts = available_atomic_parts(cfg);
     validate_compositions_available(&label_schema, &available_parts)?;
@@ -226,12 +294,16 @@ pub(crate) fn run(cfg: &PrepareConfig) -> Result<()> {
     validate_available_keys(&out_labels, &label_schema, &available_parts, "out-labels")?;
 
     if !cfg.min_per.is_empty() {
-        println!("Start: Parsing min-per rules");
+        if options.log_statuses {
+            println!("Start: Parsing min-per rules");
+        }
     }
     let min_per_rules = parse_min_per_rules(&cfg.min_per, &label_schema, &available_parts)?;
 
     if !cfg.exclude_labels.is_empty() {
-        println!("Start: Parsing exclude rules");
+        if options.log_statuses {
+            println!("Start: Parsing exclude rules");
+        }
     }
     let exclude_rules: Vec<ExcludeRule> =
         parse_exclude_rules(&cfg.exclude_labels, &label_schema, &available_parts)?;
@@ -257,7 +329,9 @@ pub(crate) fn run(cfg: &PrepareConfig) -> Result<()> {
     };
 
     let mut near_index = if let Some(path) = &cfg.near {
-        println!("Start: Loading near file");
+        if options.log_statuses {
+            println!("Start: Loading near file");
+        }
         let has_header_final = match cfg.near_header {
             HeaderMode::Present => true,
             HeaderMode::Absent => false,
@@ -283,7 +357,9 @@ pub(crate) fn run(cfg: &PrepareConfig) -> Result<()> {
     // Load blacklist intervals (optional)
     let mut blacklist_cursors: FxHashMap<String, BlacklistCursor> = FxHashMap::default();
     if let Some(paths) = &cfg.blacklist {
-        println!("Start: Loading blacklist intervals");
+        if options.log_statuses {
+            println!("Start: Loading blacklist intervals");
+        }
         let loaded = load_blacklists(
             paths.as_slice(),
             1,
@@ -304,7 +380,9 @@ pub(crate) fn run(cfg: &PrepareConfig) -> Result<()> {
     let blacklist_look_back: u64 = 0;
 
     // Open input and initial reader
-    println!("Start: Opening input reader");
+    if options.log_statuses {
+        println!("Start: Opening input reader");
+    }
     let input_reader: Box<dyn BufRead> = if cfg.input.as_os_str() == "-" {
         Box::new(BufReader::with_capacity(1 << 20, std::io::stdin()))
     } else {
@@ -343,7 +421,7 @@ pub(crate) fn run(cfg: &PrepareConfig) -> Result<()> {
     init_global_pool(cfg.n_threads as usize)?;
 
     let has_known_chroms = !chromosomes.is_empty();
-    let progress = ProgressFactory::new();
+    let progress = ProgressFactory::with_enabled(options.show_progress);
     let pb = if has_known_chroms {
         Arc::new(progress.default_bar(chromosomes.len() as u64))
     } else {
@@ -391,18 +469,24 @@ pub(crate) fn run(cfg: &PrepareConfig) -> Result<()> {
     // for resize/flank transforms and enables early OOB validation even when no transform
     // is active
     let chrom_sizes_map: FxHashMap<String, u32> = if let Some(path) = cfg.chrom_sizes.as_ref() {
-        println!("Start: Loading chromosome sizes");
+        if options.log_statuses {
+            println!("Start: Loading chromosome sizes");
+        }
         load_chrom_sizes(path)?
     } else {
         FxHashMap::default()
     };
 
-    println!("Start: Resolving input columns");
+    if options.log_statuses {
+        println!("Start: Resolving input columns");
+    }
     let column_indices =
         resolve_column_indices(&cfg.cols, &cfg.group_cols, cfg.score_col.as_deref())?;
 
     // Stream input records
-    println!("Start: Streaming input records");
+    if options.log_statuses {
+        println!("Start: Streaming input records");
+    }
 
     if has_known_chroms {
         pb.set_position(0);
@@ -628,17 +712,27 @@ pub(crate) fn run(cfg: &PrepareConfig) -> Result<()> {
     }
 
     if has_known_chroms {
-        pb.finish_with_message(format!(
-            "{} processed of {}",
-            processed_chrom_count,
-            chromosomes.len()
-        ));
+        if options.show_progress {
+            pb.finish_with_message(format!(
+                "{} processed of {}",
+                processed_chrom_count,
+                chromosomes.len()
+            ));
+        } else {
+            pb.finish_and_clear();
+        }
     } else {
-        pb.finish_with_message(format!("{} processed (input order)", processed_chrom_count));
+        if options.show_progress {
+            pb.finish_with_message(format!("{} processed (input order)", processed_chrom_count));
+        } else {
+            pb.finish_and_clear();
+        }
     }
 
     // Final pass: apply filtering and write output
-    println!("Start: Finalizing output");
+    if options.log_statuses {
+        println!("Start: Finalizing output");
+    }
     let temp_entries = finalize_temp_writers(&mut temp_writers)?;
     let output_chromosomes = if use_input_chrom_order {
         chrom_order
@@ -679,12 +773,22 @@ pub(crate) fn run(cfg: &PrepareConfig) -> Result<()> {
         outputs.move_into_place()?;
     }
 
-    println!("Start: Removing temporary directory");
+    if options.log_statuses {
+        println!("Start: Removing temporary directory");
+    }
     temp_dir_guard.remove()?;
 
     let elapsed = start_time.elapsed();
-    println!("Elapsed time: {:.2?}", elapsed);
-    Ok(())
+    if options.report_statistics {
+        println!("Elapsed time: {:.2?}", elapsed);
+    }
+    let output_path = (cfg.output.as_os_str() != "-").then(|| cfg.output.clone());
+    let output_files = output_path.iter().cloned().collect();
+    Ok(PrepareWindowsRunResult {
+        counters: (),
+        output_path,
+        output_files,
+    })
 }
 
 fn available_atomic_parts(cfg: &PrepareConfig) -> FxHashSet<AtomicLabelPart> {

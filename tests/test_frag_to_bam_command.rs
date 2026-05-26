@@ -1,41 +1,43 @@
 #![cfg(feature = "cmd_frag_to_bam")]
 
+// KEEP-IN-TESTS: all active tests in this file cover frag-to-bam command output, errors, or end-to-end round trips.
+
 mod fixtures;
 
 use anyhow::{Context, Result};
+use cfdnalab::RunOptions;
 #[cfg(all(feature = "cmd_bam_to_bam", feature = "cmd_bam_to_frag"))]
-use cfdnalab::commands::bam_to_bam::{
-    bam_to_bam::run_inner as run_bam_to_bam, config::BamToBamConfig,
+use cfdnalab::run_like_cli::bam_to_bam::{
+    BamToBamConfig, run_bam_to_bam as run_bam_to_bam_command,
 };
 #[cfg(feature = "cmd_bam_to_frag")]
-use cfdnalab::commands::bam_to_frag::{
-    bam_to_frag::run_inner as run_bam_to_frag, config::BamToFragConfig,
+use cfdnalab::run_like_cli::bam_to_frag::{
+    BamToFragConfig, run_bam_to_frag as run_bam_to_frag_command,
 };
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_lengths"))]
-use cfdnalab::commands::cli_common::AssignToWindowArgs;
-use cfdnalab::commands::cli_common::ChromosomeArgs;
+use cfdnalab::run_like_cli::common::AssignToWindowArgs;
+use cfdnalab::run_like_cli::common::ChromosomeArgs;
 #[cfg(feature = "cmd_bam_to_frag")]
-use cfdnalab::commands::cli_common::IOCArgs;
+use cfdnalab::run_like_cli::common::IOCArgs;
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
-use cfdnalab::commands::cli_common::{ApplyGCArgFileOnly, ApplyGCArgs};
+use cfdnalab::run_like_cli::common::{ApplyGCArgFileOnly, ApplyGCArgs};
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_fcoverage"))]
-use cfdnalab::commands::fcoverage::{config::FCoverageConfig, fcoverage::run as run_fcoverage};
-use cfdnalab::commands::frag_to_bam::{
-    config::FragToBamConfig, frag_to_bam::run as run_frag_to_bam,
+use cfdnalab::run_like_cli::fcoverage::{
+    FCoverageConfig, run_fcoverage as run_fcoverage_command,
 };
+use cfdnalab::run_like_cli::frag_to_bam::{FragToBamConfig, run_frag_to_bam as run_frag_to_bam_command};
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
-use cfdnalab::commands::gc_bias::package::GCCorrectionPackage;
+use cfdnalab::gc_bias::GCCorrectionPackage;
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_lengths"))]
-use cfdnalab::commands::lengths::{config::LengthsConfig, lengths::run as run_lengths};
+use cfdnalab::run_like_cli::lengths::{LengthsConfig, run_lengths as run_lengths_command};
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
-use cfdnalab::commands::midpoints::{
-    config::MidpointsConfig, midpoints::run as run_midpoints, smoothing::MidpointSmoothing,
+use cfdnalab::run_like_cli::midpoints::{
+    MidpointSmoothing, MidpointsConfig, run_midpoints as run_midpoints_command,
 };
-use cfdnalab::shared::blacklist::BlacklistStrategy;
-use cfdnalab::shared::constants::GC_CORRECTION_SCHEMA_VERSION;
-use cfdnalab::shared::io::dot_join;
+use cfdnalab::blacklist::BlacklistStrategy;
+use cfdnalab::constants::GC_CORRECTION_SCHEMA_VERSION;
 #[cfg(feature = "cmd_bam_to_frag")]
-use cfdnalab::shared::reference::twobit_contig_footprint;
+use cfdnalab::reference::twobit_contig_footprint;
 #[cfg(feature = "cmd_bam_to_frag")]
 use flate2::read::MultiGzDecoder;
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
@@ -63,6 +65,35 @@ use fixtures::{
     build_real_non_neutral_gc_package, paired_fragment, simple_reference_twobit,
     twobit_from_sequences,
 };
+
+fn run_frag_to_bam(config: &FragToBamConfig) -> Result<()> {
+    run_frag_to_bam_command(config, RunOptions::new_quiet()).map(|_| ())
+}
+
+#[cfg(feature = "cmd_bam_to_frag")]
+fn run_bam_to_frag(config: &BamToFragConfig) -> Result<()> {
+    run_bam_to_frag_command(config, RunOptions::new_quiet()).map(|_| ())
+}
+
+#[cfg(all(feature = "cmd_bam_to_bam", feature = "cmd_bam_to_frag"))]
+fn run_bam_to_bam(config: &BamToBamConfig) -> Result<()> {
+    run_bam_to_bam_command(config, RunOptions::new_quiet()).map(|_| ())
+}
+
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_fcoverage"))]
+fn run_fcoverage(config: &FCoverageConfig) -> Result<()> {
+    run_fcoverage_command(config, RunOptions::new_quiet()).map(|_| ())
+}
+
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_lengths"))]
+fn run_lengths(config: &LengthsConfig) -> Result<()> {
+    run_lengths_command(config, RunOptions::new_quiet()).map(|_| ())
+}
+
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
+fn run_midpoints(config: &MidpointsConfig) -> Result<()> {
+    run_midpoints_command(config, RunOptions::new_quiet()).map(|_| ())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct BamRow {
@@ -179,7 +210,11 @@ fn make_config(
 }
 
 fn output_bam_path(output_dir: &Path, prefix: &str) -> PathBuf {
-    output_dir.join(dot_join(&[prefix, "fragments.bam"]))
+    output_dir.join(format!("{prefix}.fragments.bam"))
+}
+
+fn dot_join(parts: &[&str]) -> String {
+    parts.join(".")
 }
 
 fn build_bai_for_test_bam(bam_path: &Path) -> Result<PathBuf> {

@@ -114,6 +114,7 @@ mod tests_seq_blacklisting {
         Interval::from_tuples(entries).expect("test intervals should be valid")
     }
 
+    // KEEP-IN-TESTS: public reusable blacklist API behavior.
     #[test]
     fn mask_simple() {
         let mut seq = b"ACGTACGT".to_vec();
@@ -122,6 +123,7 @@ mod tests_seq_blacklisting {
         assert_eq!(seq, b"ACXXACXX");
     }
 
+    // KEEP-IN-TESTS: public reusable blacklist API behavior.
     #[test]
     fn mask_past_end_is_safe() {
         let mut seq = b"AAAA".to_vec();
@@ -130,6 +132,7 @@ mod tests_seq_blacklisting {
         assert_eq!(seq, b"AAXX");
     }
 
+    // KEEP-IN-TESTS: public reusable blacklist API behavior.
     #[test]
     fn no_intervals_no_change() {
         let original = b"TGCA".to_vec();
@@ -138,6 +141,7 @@ mod tests_seq_blacklisting {
         assert_eq!(seq, original);
     }
 
+    // KEEP-IN-TESTS: public reusable blacklist API behavior.
     #[test]
     fn uses_correct_byte() {
         let mut seq = b"GGGG".to_vec();
@@ -146,6 +150,7 @@ mod tests_seq_blacklisting {
         assert!(seq.iter().all(|&b| b == BLACKLIST_BYTE));
     }
 
+    // KEEP-IN-TESTS: public reusable blacklist API behavior.
     #[test]
     fn masks_with_offset_slice() {
         let mut seq = b"ACGTACGT".to_vec();
@@ -170,6 +175,7 @@ mod tests_load_blacklists {
         Ok(file)
     }
 
+    // KEEP-IN-TESTS: public reusable blacklist API behavior.
     #[test]
     fn should_filter_by_min_size_and_whitelist() -> Result<()> {
         // Arrange
@@ -188,6 +194,7 @@ mod tests_load_blacklists {
         Ok(())
     }
 
+    // KEEP-IN-TESTS: public reusable blacklist API behavior.
     #[test]
     fn should_expand_by_halo_before_merging() -> Result<()> {
         // Arrange

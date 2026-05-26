@@ -1,8 +1,10 @@
+// KEEP-IN-TESTS: public reusable reference-loading API behavior.
+
 use anyhow::{Result, anyhow};
-use cfdnalab::commands::cli_common::{ChromosomeArgs, ContigSource};
-use cfdnalab::shared::reference::{
+use cfdnalab::reference::{
     load_chrom_sizes, read_seq, read_seq_in_range, twobit_contig_lengths, twobit_contig_names,
 };
+use cfdnalab::run_like_cli::common::{ChromosomeArgs, ContigSource};
 use std::io::{BufWriter, Write};
 use tempfile::NamedTempFile;
 use twobit::convert::{fasta::FastaReader, to_2bit};
