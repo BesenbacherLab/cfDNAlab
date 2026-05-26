@@ -224,9 +224,27 @@ pub struct EndsConfig {
     )]
     pub collapse_complement: bool,
 
-    /// Include every possible motif in the output, even if its count is zero  [flag]
+    /// Include every possible motif in the output, even if its count is zero `[flag]`
+    ///
+    /// **NOTE**: When `--motifs-file` is specified, it defines the "possible" motifs.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Motifs"))]
     pub all_motifs: bool,
+
+    /// File with motifs to include `[path]`
+    ///
+    /// TSV-like file (tab-separated) with one motif per line.
+    /// Add a second column with a group name for collapsed counts.
+    ///
+    /// A motif should be defined as `"<outside>_<inside>"` with each
+    /// side matching the number of characters to `--k-outside` and
+    /// `--k-inside`. When only one of those arguments a non-zero, the
+    /// "_" can be omitted.
+    ///
+    /// Specifying the allowed subset of motifs beforehand enables
+    /// counting of much larger k-mers (motif-lengths) without
+    /// exploding memory.
+    #[cfg_attr(feature = "cli", clap(long, value_parser, help_heading = "Motifs"))]
+    pub motifs_file: Option<PathBuf>,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub fragment_lengths: FragmentLengthArgs,
@@ -358,6 +376,7 @@ impl EndsConfig {
             },
             indel_filter: IndelMotifFilterPolicy::Auto,
             all_motifs: false,
+            motifs_file: None,
             collapse_complement: false,
             windows: DistributionWindowsArgs::default(),
             window_assignment: AssignMotifToWindowArgs::default(),
