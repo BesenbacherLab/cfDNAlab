@@ -232,12 +232,12 @@ pub struct EndsConfig {
 
     /// File with motifs to include `[path]`
     ///
-    /// TSV-like file (tab-separated) with one motif per line.
-    /// Add a second column with a group name for collapsed counts.
+    /// TSV-like file (tab-separated, no header) with one motif per line.
+    /// Add a second column with a group name to count multiple motifs together.
     ///
     /// A motif should be defined as `"<outside>_<inside>"` with each
     /// side matching the number of characters to `--k-outside` and
-    /// `--k-inside`. When only one of those arguments a non-zero, the
+    /// `--k-inside`. When only one of those arguments is non-zero, the
     /// "_" can be omitted.
     ///
     /// Specifying the allowed subset of motifs beforehand enables

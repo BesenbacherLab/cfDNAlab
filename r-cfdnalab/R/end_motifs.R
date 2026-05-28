@@ -12,6 +12,11 @@ END_MOTIF_VALID_STORAGE_MODES <- c("dense", "sparse_coo")
 #' @noRd
 END_MOTIF_VALID_ROW_MODES <- c("global", "size", "bed", "grouped_bed")
 
+#' Supported end-motif column-axis kinds.
+#'
+#' @noRd
+END_MOTIF_VALID_AXIS_KINDS <- c("motif", "motif_group")
+
 #' Read cfDNAlab end-motif counts.
 #'
 #' Loads a `<prefix>.end_motifs.zarr` store created with the \code{cfdna ends}
@@ -47,22 +52,43 @@ read_end_motifs <- function(path) {
     END_MOTIF_VALID_ROW_MODES,
     "end-motif row mode"
   )
+  motif_axis_kind <- root_attributes$motif_axis_kind
+  if (is.null(motif_axis_kind)) {
+    if (!identical(as.integer(root_attributes$cfdnalab_schema_version), 1L)) {
+      stop("end-motif schema v2 stores must declare motif_axis_kind", call. = FALSE)
+    }
+    motif_axis_kind <- "motif"
+  }
+  motif_axis_kind <- cf_validate_allowed_string(
+    motif_axis_kind,
+    END_MOTIF_VALID_AXIS_KINDS,
+    "end-motif motif axis kind"
+  )
 
   store <- cf_open_zarr(path, "end-motif")
-  cf_required_arrays(store, cf_end_motif_required_arrays(storage_mode, row_mode), "End-motif")
+  cf_required_arrays(
+    store,
+    cf_end_motif_required_arrays(storage_mode, row_mode, motif_axis_kind),
+    "End-motif"
+  )
   cf_validate_dimension_names(path, "motif_index", "motif")
-  cf_validate_dimension_names(path, "motif_byte", "motif_byte")
-  cf_validate_dimension_names(path, "motif_ascii", c("motif", "motif_byte"))
   cf_validate_dimension_names(path, "row", "row")
 
   motif_axis <- cf_read_vector(store, "motif_index", "End-motif")
-  motif_byte <- cf_read_vector(store, "motif_byte", "End-motif")
   row <- cf_read_vector(store, "row", "End-motif")
-  motif_ascii <- cf_read_array(store, "motif_ascii", "End-motif")
-  motif <- cf_decode_motif_ascii(motif_ascii, length(motif_axis), length(motif_byte))
+  motif <- NULL
+  if (identical(motif_axis_kind, "motif")) {
+    cf_validate_dimension_names(path, "motif_byte", "motif_byte")
+    cf_validate_dimension_names(path, "motif_ascii", c("motif", "motif_byte"))
+    motif_byte <- cf_read_vector(store, "motif_byte", "End-motif")
+    motif_ascii <- cf_read_array(store, "motif_ascii", "End-motif")
+    motif <- cf_decode_motif_ascii(motif_ascii, length(motif_axis), length(motif_byte))
+    cf_validate_axis(motif_byte, "motif_byte")
+  } else {
+    motif <- cf_read_labels(path, "motif_index", "motif_group", length(motif_axis))
+  }
 
   cf_validate_axis(motif_axis, "motif_index")
-  cf_validate_axis(motif_byte, "motif_byte")
   cf_validate_axis(row, "row")
   if (identical(row_mode, "global") && length(row) != 1L) {
     stop("global end-motif stores must contain exactly one row", call. = FALSE)
@@ -131,6 +157,7 @@ read_end_motifs <- function(path) {
     root_attributes = root_attributes,
     storage_mode = storage_mode,
     row_mode = row_mode,
+    motif_axis_kind = motif_axis_kind,
     motif_idx0 = as.integer(motif_axis),
     motif = motif,
     row_idx0 = as.integer(row),
@@ -157,11 +184,15 @@ read_end_motifs <- function(path) {
 #'
 #' @param storage_mode End-motif storage mode.
 #' @param row_mode End-motif row mode.
+#' @param motif_axis_kind End-motif column-axis kind.
 #'
 #' @return Character vector of required array paths.
 #' @noRd
-cf_end_motif_required_arrays <- function(storage_mode, row_mode) {
-  required <- c("motif_index", "motif_byte", "motif_ascii", "row")
+cf_end_motif_required_arrays <- function(storage_mode, row_mode, motif_axis_kind) {
+  required <- c("motif_index", "row")
+  if (identical(motif_axis_kind, "motif")) {
+    required <- c(required, "motif_byte", "motif_ascii")
+  }
   if (identical(storage_mode, "dense")) {
     required <- c(required, "counts")
   } else {

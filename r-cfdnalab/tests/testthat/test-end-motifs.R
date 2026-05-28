@@ -101,6 +101,118 @@ test_that("sparse global end motifs can be densified explicitly", {
   )
 })
 
+test_that("dense global motif-group end motifs load through motif-axis selectors", {
+  ends <- read_end_motifs(make_dense_global_end_motif_group_zarr_fixture())
+
+  expect_s3_class(ends, "cfdnalab_global_end_motif_counts")
+  expect_equal(schema_version(ends), 2L)
+  expect_equal(storage_mode(ends), "dense")
+  expect_equal(row_mode(ends), "global")
+  expect_equal(
+    motifs(ends),
+    data.frame(
+      motif_idx = c(1L, 2L),
+      motif = c("short", "group-two"),
+      stringsAsFactors = FALSE
+    ),
+    ignore_attr = TRUE
+  )
+  expect_equal(motif_idx(ends, "group-two"), 2L)
+  expect_true(has_motif(ends, "short"))
+  expect_equal(
+    dense_counts_vector(ends),
+    stats::setNames(c(1.5, 3), c("short", "group-two")),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    dense_counts_matrix(ends, motifs = "group-two"),
+    matrix(3, nrow = 1L),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    dense_counts_matrix(ends, motif_idxs = c(2L, 1L)),
+    matrix(c(3, 1.5), nrow = 1L),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    as.matrix(sparse_counts_matrix(ends, motifs = c("group-two", "short"))),
+    matrix(c(3, 1.5), nrow = 1L),
+    tolerance = 1e-8
+  )
+  group_frame <- end_motif_data_frame(ends, motifs = "group-two")
+  expect_equal(names(group_frame), c("row_label", "motif_idx", "motif", "count"))
+  expect_equal(group_frame$motif_idx, 2L)
+  expect_equal(group_frame$motif, "group-two")
+  expect_equal(group_frame$count, 3, tolerance = 1e-8)
+  expect_false(any(grepl("idx0|index0", names(group_frame))))
+  expect_error(
+    end_motif_data_frame(ends, motifs = "_A"),
+    "Unknown end-motif label",
+    fixed = TRUE
+  )
+})
+
+test_that("sparse global motif-group end motifs densify and keep motif columns", {
+  ends <- read_end_motifs(make_sparse_global_end_motif_group_zarr_fixture())
+
+  expect_s3_class(ends, "cfdnalab_global_end_motif_counts")
+  expect_equal(schema_version(ends), 2L)
+  expect_equal(storage_mode(ends), "sparse_coo")
+  expect_equal(row_mode(ends), "global")
+  expect_equal(
+    motifs(ends),
+    data.frame(
+      motif_idx = c(1L, 2L),
+      motif = c("short", "group-two"),
+      stringsAsFactors = FALSE
+    ),
+    ignore_attr = TRUE
+  )
+  expect_equal(
+    as.matrix(sparse_counts_matrix(ends)),
+    matrix(c(1.5, 0), nrow = 1L),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    as.matrix(sparse_counts_matrix(ends, motif_idxs = c(2L, 1L))),
+    matrix(c(0, 1.5), nrow = 1L),
+    tolerance = 1e-8
+  )
+  expect_error(dense_counts_matrix(ends), "Use sparse_counts_matrix")
+  expect_equal(
+    dense_counts_matrix(ends, allow_densify = TRUE),
+    matrix(c(1.5, 0), nrow = 1L),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    dense_counts_matrix(ends, motifs = "group-two", allow_densify = TRUE),
+    matrix(0, nrow = 1L),
+    tolerance = 1e-8
+  )
+
+  stored_frame <- end_motif_data_frame(ends)
+  expect_equal(names(stored_frame), c("row_label", "motif_idx", "motif", "count"))
+  expect_equal(stored_frame$motif_idx, 1L)
+  expect_equal(stored_frame$motif, "short")
+  expect_equal(stored_frame$count, 1.5, tolerance = 1e-8)
+
+  dense_frame <- end_motif_data_frame(ends, densify = TRUE)
+  expect_equal(names(dense_frame), c("row_label", "motif_idx", "motif", "count"))
+  expect_equal(dense_frame$motif_idx, c(1L, 2L))
+  expect_equal(dense_frame$motif, c("short", "group-two"))
+  expect_equal(dense_frame$count, c(1.5, 0), tolerance = 1e-8)
+
+  missing_group_frame <- end_motif_data_frame(ends, motifs = "group-two", densify = TRUE)
+  expect_equal(missing_group_frame$motif_idx, 2L)
+  expect_equal(missing_group_frame$motif, "group-two")
+  expect_equal(missing_group_frame$count, 0, tolerance = 1e-8)
+  expect_error(
+    end_motif_data_frame(ends, motifs = "_A"),
+    "Unknown end-motif label",
+    fixed = TRUE
+  )
+})
+
 test_that("dense windowed end motifs expose dense and sparse views", {
   ends <- read_end_motifs(make_dense_windowed_end_motif_zarr_fixture())
 

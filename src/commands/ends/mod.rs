@@ -3,6 +3,7 @@ pub mod config_structs;
 pub mod counting;
 pub mod ends;
 pub mod motifs;
+pub(crate) mod motifs_file;
 pub mod output;
 pub mod tiling;
 pub mod write;

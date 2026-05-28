@@ -23,9 +23,10 @@ from ._helpers import (
 )
 
 END_MOTIF_MIN_SUPPORTED_SCHEMA_VERSION = 1
-END_MOTIF_MAX_SUPPORTED_SCHEMA_VERSION = 1
+END_MOTIF_MAX_SUPPORTED_SCHEMA_VERSION = 2
 VALID_STORAGE_MODES = {"dense", "sparse_coo"}
 VALID_ROW_MODES = {"global", "size", "bed", "grouped_bed"}
+VALID_MOTIF_AXIS_KINDS = {"motif", "motif_group"}
 
 
 @dataclass
@@ -35,8 +36,9 @@ class LoadedEndMotifs:
     store: Any
     storage_mode: str
     row_mode: str
+    motif_axis_kind: str
     motif_index: np.ndarray
-    motif_names: np.ndarray
+    motif_names: np.ndarray | None
     row: np.ndarray
     counts: zarr.Array | None
     sparse_row: np.ndarray | None
@@ -124,12 +126,20 @@ class EndMotifCounts:
                 f"Could not open end-motif Zarr store at {path}"
             ) from error
 
-        storage_mode, row_mode = _validate_root_metadata(store)
-        _validate_required_arrays(store, storage_mode, row_mode)
+        storage_mode, row_mode, motif_axis_kind = _validate_root_metadata(store)
+        _validate_required_arrays(store, storage_mode, row_mode, motif_axis_kind)
 
         # Motif and row axes are small coordinate arrays, so keep them in memory
         motif_index = _read_array(store, "motif_index")
-        motif_names = _read_motif_ascii_labels(store, len(motif_index))
+        if motif_axis_kind == "motif":
+            motif_names = _read_motif_ascii_labels(store, len(motif_index))
+        else:
+            motif_names = _read_labels(
+                store["motif_index"],
+                "motif_group",
+                len(motif_index),
+                "motif_index",
+            )
         row = _read_array(store, "row")
         _validate_axis(motif_index, "motif_index")
         _validate_axis(row, "row")
@@ -215,6 +225,7 @@ class EndMotifCounts:
             store=store,
             storage_mode=storage_mode,
             row_mode=row_mode,
+            motif_axis_kind=motif_axis_kind,
             motif_index=motif_index,
             motif_names=motif_names,
             row=row,
@@ -259,7 +270,10 @@ class EndMotifCounts:
 
     def motifs_metadata(self) -> pd.DataFrame:
         """
-        Return motif labels and motif indices available in this output.
+        Return motif-axis labels and motif indices available in this output.
+
+        For grouped motifs-file output, the `motif` labels are the group names
+        used during counting.
 
         Returns
         -------
@@ -269,7 +283,7 @@ class EndMotifCounts:
         return pd.DataFrame(
             {
                 "motif_index": self.end_motifs.motif_index,
-                "motif": self.end_motifs.motif_names,
+                "motif": _required(self.end_motifs.motif_names, "motif_names"),
             }
         )
 
@@ -306,7 +320,8 @@ class EndMotifCounts:
         bool
             Whether the motif can be resolved in this output.
         """
-        return bool(np.any(self.end_motifs.motif_names == motif))
+        motif_names = _required(self.end_motifs.motif_names, "motif_names")
+        return bool(np.any(motif_names == motif))
 
     def _sparse_counts_matrix_all(self) -> sparse.coo_matrix:
         """
@@ -345,9 +360,11 @@ class EndMotifCounts:
         """
         if len(row_indices) == 0 or len(motif_indices) == 0:
             return sparse.coo_matrix((len(row_indices), len(motif_indices)))
-        return self._sparse_counts_matrix_all().tocsr()[row_indices, :][
-            :, motif_indices
-        ].tocoo()
+        return (
+            self._sparse_counts_matrix_all()
+            .tocsr()[row_indices, :][:, motif_indices]
+            .tocoo()
+        )
 
     def _sparse_counts_matrix(
         self,
@@ -377,11 +394,15 @@ class EndMotifCounts:
         """
         allow_densify = validate_scalar_bool(allow_densify, "allow_densify")
         if self.end_motifs.storage_mode == "dense":
-            counts = np.asarray(_required(self.end_motifs.counts, "counts")[:])
-        else:
-            _require_densify(allow_densify, "dense_counts_array")
-            counts = self._sparse_counts_matrix_all().toarray()
-        return counts[np.ix_(row_indices, motif_indices)]
+            counts = _required(self.end_motifs.counts, "counts")
+            return np.asarray(
+                counts.get_orthogonal_selection((row_indices, motif_indices))
+            )
+
+        _require_densify(allow_densify, "dense_counts_array")
+        return self._sparse_counts_matrix_for_indices(
+            row_indices, motif_indices
+        ).toarray()
 
     def _dense_counts_array(
         self,
@@ -428,7 +449,9 @@ class EndMotifCounts:
         )
         if self.end_motifs.storage_mode == "sparse_coo" and not densify:
             return self._stored_data_frame_for_indices(row_indices, motif_indices)
-        return self._complete_data_frame_for_indices(row_indices, motif_indices, densify)
+        return self._complete_data_frame_for_indices(
+            row_indices, motif_indices, densify
+        )
 
     def dense_counts_zarr_array(self) -> zarr.Array:
         """
@@ -454,10 +477,14 @@ class EndMotifCounts:
         """
         Build rows for every selected output row and motif.
         """
-        row_metadata = self._row_metadata_data_frame().iloc[row_indices].reset_index(
-            drop=True
+        row_metadata = (
+            self._row_metadata_data_frame().iloc[row_indices].reset_index(drop=True)
         )
-        motif_metadata = self.motifs_metadata().iloc[motif_indices].reset_index(drop=True)
+        motif_metadata = (
+            self._motif_axis_metadata_data_frame()
+            .iloc[motif_indices]
+            .reset_index(drop=True)
+        )
         row_count = len(row_indices)
         motif_count = len(motif_indices)
         if row_count == 0 or motif_count == 0:
@@ -471,9 +498,7 @@ class EndMotifCounts:
         repeated_rows = row_metadata.loc[
             row_metadata.index.repeat(motif_count)
         ].reset_index(drop=True)
-        repeated_motifs = pd.concat(
-            [motif_metadata] * row_count, ignore_index=True
-        )
+        repeated_motifs = pd.concat([motif_metadata] * row_count, ignore_index=True)
         data_frame = pd.concat([repeated_rows, repeated_motifs], axis=1)
         data_frame["count"] = selected_counts.ravel()
         return data_frame
@@ -492,7 +517,9 @@ class EndMotifCounts:
             int
         )
         sparse_counts = _required(self.end_motifs.sparse_count, "sparse/count")
-        row_positions = {int(row_idx): order for order, row_idx in enumerate(row_indices)}
+        row_positions = {
+            int(row_idx): order for order, row_idx in enumerate(row_indices)
+        }
         motif_positions = {
             int(motif_idx): order for order, motif_idx in enumerate(motif_indices)
         }
@@ -520,10 +547,14 @@ class EndMotifCounts:
         matched_motifs = matched_motifs[sort_order]
         matched_counts = sparse_counts[matches][sort_order]
 
-        row_metadata = self._row_metadata_data_frame().iloc[matched_rows].reset_index(
-            drop=True
+        row_metadata = (
+            self._row_metadata_data_frame().iloc[matched_rows].reset_index(drop=True)
         )
-        motif_metadata = self.motifs_metadata().iloc[matched_motifs].reset_index(drop=True)
+        motif_metadata = (
+            self._motif_axis_metadata_data_frame()
+            .iloc[matched_motifs]
+            .reset_index(drop=True)
+        )
         data_frame = pd.concat([row_metadata, motif_metadata], axis=1)
         data_frame["count"] = matched_counts
         return data_frame
@@ -533,10 +564,18 @@ class EndMotifCounts:
         Return an empty end-motif data frame with public columns.
         """
         row_metadata = self._row_metadata_data_frame().iloc[[]].reset_index(drop=True)
-        motif_metadata = self.motifs_metadata().iloc[[]].reset_index(drop=True)
+        motif_metadata = (
+            self._motif_axis_metadata_data_frame().iloc[[]].reset_index(drop=True)
+        )
         data_frame = pd.concat([row_metadata, motif_metadata], axis=1)
         data_frame["count"] = np.asarray([], dtype=float)
         return data_frame
+
+    def _motif_axis_metadata_data_frame(self) -> pd.DataFrame:
+        """
+        Build metadata for the active count-column axis.
+        """
+        return self.motifs_metadata()
 
     def _row_metadata_data_frame(self) -> pd.DataFrame:
         """
@@ -557,7 +596,9 @@ class EndMotifCounts:
             )
             data_frame["window_idx"] = self.end_motifs.row
             data_frame["chrom"] = chromosome_names[row_chromosome.astype(int)]
-            data_frame["start"] = _required(self.end_motifs.row_start_bp, "row_start_bp")
+            data_frame["start"] = _required(
+                self.end_motifs.row_start_bp, "row_start_bp"
+            )
             data_frame["end"] = _required(self.end_motifs.row_end_bp, "row_end_bp")
             data_frame["blacklisted_fraction"] = _required(
                 self.end_motifs.blacklisted_fraction, "blacklisted_fraction"
@@ -565,7 +606,9 @@ class EndMotifCounts:
         elif self.end_motifs.row_mode == "grouped_bed":
             data_frame = pd.DataFrame()
             data_frame["group_idx"] = _required(self.end_motifs.group_idx, "group")
-            data_frame["group_name"] = _required(self.end_motifs.group_names, "group_name")
+            data_frame["group_name"] = _required(
+                self.end_motifs.group_names, "group_name"
+            )
             data_frame["eligible_windows"] = _required(
                 self.end_motifs.eligible_windows, "eligible_windows"
             )
@@ -587,7 +630,9 @@ class EndMotifCounts:
         """
         if self.end_motifs.row_mode in {"size", "bed"}:
             if groups is not None or group_idxs is not None:
-                raise ValueError("Grouped selectors can only be used with grouped output")
+                raise ValueError(
+                    "Grouped selectors can only be used with grouped output"
+                )
             return normalize_zero_based_indices(
                 window_idxs,
                 size=len(self.end_motifs.row),
@@ -621,7 +666,7 @@ class EndMotifCounts:
         motif_idxs: int | Sequence[int] | None,
     ) -> np.ndarray:
         """
-        Normalize motif-name or motif-index selectors.
+        Normalize column selectors for the active motif axis.
         """
         if motifs is not None and motif_idxs is not None:
             raise ValueError("Use either motifs or motif_idxs, not both")
@@ -645,7 +690,7 @@ class EndMotifCounts:
         Resolve a motif label to its motif index.
         """
         return resolve_unique_match(
-            self.end_motifs.motif_names == motif,
+            _required(self.end_motifs.motif_names, "motif_names") == motif,
             missing_message=f"Unknown end-motif label: {motif!r}",
             duplicate_message=f"End-motif label is not unique: {motif!r}",
         )
@@ -747,7 +792,10 @@ class GlobalEndMotifCounts(EndMotifCounts):
         scipy.sparse.coo_matrix
             Sparse count matrix with shape `(global row, motif)`.
         """
-        return self._sparse_counts_matrix(motifs=motifs, motif_idxs=motif_idxs)
+        return self._sparse_counts_matrix(
+            motifs=motifs,
+            motif_idxs=motif_idxs,
+        )
 
 
 class WindowedEndMotifCounts(EndMotifCounts):
@@ -1108,7 +1156,7 @@ def _validate_zarr_store_path(path: pathlib.Path) -> None:
         )
 
 
-def _validate_root_metadata(store: Any) -> tuple[str, str]:
+def _validate_root_metadata(store: Any) -> tuple[str, str, str]:
     """
     Validate root attributes and return storage and row modes.
     """
@@ -1138,14 +1186,26 @@ def _validate_root_metadata(store: Any) -> tuple[str, str]:
     if row_mode not in VALID_ROW_MODES:
         raise ValueError(f"Unsupported end-motif row mode: {row_mode!r}")
 
-    return storage_mode, row_mode
+    motif_axis_kind = store.attrs.get("motif_axis_kind")
+    if motif_axis_kind is None:
+        if int(schema_version) != 1:
+            raise ValueError("end-motif schema v2 stores must declare motif_axis_kind")
+        motif_axis_kind = "motif"
+    if motif_axis_kind not in VALID_MOTIF_AXIS_KINDS:
+        raise ValueError(f"Unsupported end-motif motif axis kind: {motif_axis_kind!r}")
+
+    return storage_mode, row_mode, motif_axis_kind
 
 
-def _validate_required_arrays(store: Any, storage_mode: str, row_mode: str) -> None:
+def _validate_required_arrays(
+    store: Any, storage_mode: str, row_mode: str, motif_axis_kind: str
+) -> None:
     """
     Require all arrays needed by the active storage mode and row mode.
     """
-    required = {"motif_index", "motif_byte", "motif_ascii", "row"}
+    required = {"motif_index", "row"}
+    if motif_axis_kind == "motif":
+        required.update({"motif_byte", "motif_ascii"})
     if storage_mode == "dense":
         required.add("counts")
     else:

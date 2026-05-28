@@ -768,19 +768,35 @@ fn settings_path(out_dir: &Path) -> PathBuf {
 fn read_dense_output(out_dir: &Path) -> Result<(Vec<String>, Array2<f64>)> {
     let store_path = end_motifs_zarr_path(out_dir);
     let motifs = read_motif_labels(&store_path)?;
-    let counts: Vec<f64> = read_zarr_array(&store_path, "/counts")?;
-    let shape = read_zarr_shape(&store_path, "counts")?;
-    let matrix = Array2::from_shape_vec((shape[0], shape[1]), counts)?;
+    let matrix = read_dense_matrix(&store_path)?;
     Ok((motifs, matrix))
+}
+
+fn read_dense_group_output(out_dir: &Path) -> Result<(Vec<String>, Array2<f64>)> {
+    let store_path = end_motifs_zarr_path(out_dir);
+    let motifs = read_motif_group_labels(&store_path)?;
+    let matrix = read_dense_matrix(&store_path)?;
+    Ok((motifs, matrix))
+}
+
+fn read_dense_matrix(store_path: &Path) -> Result<Array2<f64>> {
+    let counts: Vec<f64> = read_zarr_array(store_path, "/counts")?;
+    let shape = read_zarr_shape(store_path, "counts")?;
+    Ok(Array2::from_shape_vec((shape[0], shape[1]), counts)?)
 }
 
 fn read_sparse_output(out_dir: &Path) -> Result<(Vec<String>, Array2<f64>)> {
     let store_path = end_motifs_zarr_path(out_dir);
     let motifs = read_motif_labels(&store_path)?;
-    let row: Vec<i32> = read_zarr_array(&store_path, "/sparse/row")?;
-    let col: Vec<i32> = read_zarr_array(&store_path, "/sparse/motif")?;
-    let data: Vec<f64> = read_zarr_array(&store_path, "/sparse/count")?;
-    let shape: Vec<i32> = read_zarr_array(&store_path, "/sparse/shape")?;
+    let matrix = read_sparse_matrix(&store_path)?;
+    Ok((motifs, matrix))
+}
+
+fn read_sparse_matrix(store_path: &Path) -> Result<Array2<f64>> {
+    let row: Vec<i32> = read_zarr_array(store_path, "/sparse/row")?;
+    let col: Vec<i32> = read_zarr_array(store_path, "/sparse/motif")?;
+    let data: Vec<f64> = read_zarr_array(store_path, "/sparse/count")?;
+    let shape: Vec<i32> = read_zarr_array(store_path, "/sparse/shape")?;
 
     let n_rows = usize::try_from(shape[0]).context("sparse row count must be non-negative")?;
     let n_cols = usize::try_from(shape[1]).context("sparse motif count must be non-negative")?;
@@ -791,7 +807,7 @@ fn read_sparse_output(out_dir: &Path) -> Result<(Vec<String>, Array2<f64>)> {
         dense[(row, col)] = value;
     }
 
-    Ok((motifs, dense))
+    Ok(dense)
 }
 
 fn read_motif_labels(store_path: &Path) -> Result<Vec<String>> {
@@ -832,6 +848,33 @@ fn read_motif_labels(store_path: &Path) -> Result<Vec<String>> {
             String::from_utf8(bytes.to_vec()).context("motif_ascii row must be valid UTF-8")
         })
         .collect::<Result<Vec<_>>>()
+}
+
+fn read_motif_group_labels(store_path: &Path) -> Result<Vec<String>> {
+    let motif_metadata = parse_json(&read_text_file(
+        &store_path.join("motif_index").join("zarr.json"),
+    )?);
+    let attributes = motif_metadata
+        .get("attributes")
+        .and_then(Value::as_object)
+        .context("motif_index metadata must contain attributes")?;
+    ensure!(
+        attributes.get("label_field") == Some(&Value::String("motif_group".to_string())),
+        "motif_index metadata must declare label_field = motif_group"
+    );
+    let labels = attributes
+        .get("labels")
+        .and_then(Value::as_array)
+        .context("motif_index metadata must contain motif_group labels")?;
+    labels
+        .iter()
+        .map(|label| {
+            label
+                .as_str()
+                .map(ToString::to_string)
+                .context("motif_group label must be a string")
+        })
+        .collect()
 }
 
 fn read_zarr_array<T>(store_path: &Path, array_path: &str) -> Result<Vec<T>>
@@ -944,6 +987,16 @@ fn end_motif_storage_mode(out_dir: &Path) -> Result<String> {
         .as_str()
         .map(str::to_string)
         .context("end-motif Zarr root metadata must contain storage_mode")
+}
+
+fn end_motif_axis_kind(out_dir: &Path) -> Result<String> {
+    let root_metadata = parse_json(&read_text_file(
+        &out_dir.join("ends.end_motifs.zarr").join("zarr.json"),
+    )?);
+    root_metadata["attributes"]["motif_axis_kind"]
+        .as_str()
+        .map(str::to_string)
+        .context("end-motif Zarr root metadata must contain motif_axis_kind")
 }
 
 fn parse_group_index_rows(text: &str) -> Vec<(u64, String, f64)> {
@@ -3357,6 +3410,139 @@ fn sparse_output_is_the_default_when_all_motifs_is_disabled() -> Result<()> {
             "skip-affected-end",
         )
     );
+    Ok(())
+}
+
+#[test]
+fn motifs_file_sparse_output_writes_selected_motifs_as_motif_ascii() -> Result<()> {
+    // Arrange: the reference-backed 10 bp fragment contributes `_A` at the left end and `_G` at
+    // the right end. The motifs file puts `_G` first and includes an unobserved `_T`; sparse
+    // selected output should keep observed selected motifs in file order and write them as motifs.
+    let bam = simple_paired_fragment_bam("ends_motifs_file_sparse_motifs", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let motifs_file = out_dir.path().join("selected_motifs.tsv");
+    std::fs::write(&motifs_file, "G\nA\nT\n")?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = false;
+    cfg.motifs_file = Some(motifs_file);
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_sparse_output(out_dir.path())?;
+
+    // Assert
+    let store_path = end_motifs_zarr_path(out_dir.path());
+    let motif_metadata = parse_json(&read_text_file(
+        &store_path.join("motif_index").join("zarr.json"),
+    )?);
+    assert_eq!(end_motif_storage_mode(out_dir.path())?, "sparse_coo");
+    assert_eq!(end_motif_axis_kind(out_dir.path())?, "motif");
+    assert_eq!(motif_metadata["attributes"]["label_array"], "motif_ascii");
+    assert!(store_path.join("motif_ascii").exists());
+    assert_eq!(motifs, vec!["_G", "_A"]);
+    assert_eq!(matrix.shape(), &[1, 2]);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 1.0);
+    assert_eq!(matrix.sum(), 2.0);
+    Ok(())
+}
+
+#[test]
+fn grouped_motifs_file_dense_output_writes_group_labels_without_motif_ascii() -> Result<()> {
+    // Arrange: --all-motifs retains every motifs-file target. The two observed motifs count into
+    // their groups, while the selected but unobserved `_T` group remains as a zero-count column.
+    let bam = simple_paired_fragment_bam("ends_motifs_file_dense_groups", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let motifs_file = out_dir.path().join("selected_groups.tsv");
+    std::fs::write(
+        &motifs_file,
+        "G\tgroup.two\nA\tgroup-one\nT\tunused_group\n",
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.motifs_file = Some(motifs_file);
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (groups, matrix) = read_dense_group_output(out_dir.path())?;
+
+    // Assert
+    let store_path = end_motifs_zarr_path(out_dir.path());
+    assert_eq!(end_motif_storage_mode(out_dir.path())?, "dense");
+    assert_eq!(end_motif_axis_kind(out_dir.path())?, "motif_group");
+    assert!(!store_path.join("motif_ascii").exists());
+    assert!(!store_path.join("motif_byte").exists());
+    assert_eq!(groups, vec!["group.two", "group-one", "unused_group"]);
+    assert_eq!(matrix.shape(), &[1, 3]);
+    assert_eq!(motif_count(&matrix, &groups, 0, "group.two"), 1.0);
+    assert_eq!(motif_count(&matrix, &groups, 0, "group-one"), 1.0);
+    assert_eq!(motif_count(&matrix, &groups, 0, "unused_group"), 0.0);
+    assert_eq!(matrix.sum(), 2.0);
+    Ok(())
+}
+
+#[test]
+fn motifs_file_all_motifs_uses_selected_axis_size_not_full_kmer_universe() -> Result<()> {
+    // Arrange: k=15 has a full universe of 4^15 motifs, which is too large for the default dense
+    // output guard. With --motifs-file, --all-motifs should mean "all selected targets", so only
+    // the three file rows define the dense motif axis.
+    let bam = simple_paired_fragment_bam("ends_motifs_file_all_motifs_k15", 10, 30, 20)?;
+    let out_dir = TempDir::new()?;
+    let motifs_file = out_dir.path().join("selected_k15_motifs.tsv");
+    std::fs::write(
+        &motifs_file,
+        format!(
+            "{}\n{}\n{}\n",
+            "A".repeat(15),
+            "T".repeat(15),
+            "C".repeat(15)
+        ),
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 15, 0);
+    cfg.all_motifs = true;
+    cfg.motifs_file = Some(motifs_file);
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 30;
+        lengths.max_fragment_length = 30;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(end_motif_storage_mode(out_dir.path())?, "dense");
+    assert_eq!(end_motif_axis_kind(out_dir.path())?, "motif");
+    assert_eq!(
+        motifs,
+        vec![
+            format!("_{}", "A".repeat(15)),
+            format!("_{}", "T".repeat(15)),
+            format!("_{}", "C".repeat(15)),
+        ]
+    );
+    assert_eq!(matrix.shape(), &[1, 3]);
+    assert_eq!(matrix.sum(), 2.0);
     Ok(())
 }
 

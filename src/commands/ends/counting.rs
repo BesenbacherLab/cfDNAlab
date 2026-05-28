@@ -30,6 +30,65 @@ pub struct EndMotifCounts {
 /// Sparse motif counts for all windows touched by one tile.
 pub type EndCountsByWindow = FxHashMap<u64, EndMotifCounts>;
 
+/// Meaning of the public `motif` axis in end-motif Zarr output.
+///
+/// The count matrix always uses a numeric column coordinate internally. This enum records whether
+/// those numeric columns should be interpreted as concrete motif labels or as motif-file group
+/// labels when metadata is written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EndMotifColumnKind {
+    /// Each column is one concrete `<outside>_<inside>` motif
+    Motif,
+    /// Each column is one user-defined group from the second motifs-file column
+    MotifGroup,
+}
+
+/// Precomputed motifs-file lookup used by the selected counting path.
+///
+/// A motifs file defines two related things:
+/// - The output target axis, stored in `labels`
+/// - The encoded motif states that should count into each target, stored in `lookup`
+///
+/// `lookup` is keyed by the same encoded state that the hot counting path already builds for
+/// ordinary motif counting. It includes the `reverse_on_decode` flag, so a left-end motif and the
+/// reverse-complemented right-end state stay distinct when the motifs file maps them to different
+/// targets.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct SelectedEndMotifLookup {
+    /// Output labels in motifs-file target order
+    pub(crate) labels: Vec<String>,
+    /// Whether `labels` are concrete motifs or user-defined motif groups
+    pub(crate) column_kind: EndMotifColumnKind,
+    /// Encoded end-motif key to original target index in `labels`
+    pub(crate) lookup: FxHashMap<EncodedEndMotifKey, u32>,
+}
+
+impl SelectedEndMotifLookup {
+    /// Return the motifs-file target for an encoded end motif.
+    ///
+    /// This is intentionally a thin map lookup. The ordinary no-file path never calls it, and the
+    /// selected path has already paid the parsing and validation cost before tile processing starts.
+    ///
+    /// Parameters
+    /// ----------
+    /// - `key`:
+    ///   Encoded motif state observed for one fragment end
+    ///
+    /// Returns
+    /// -------
+    /// - `Option<u32>`:
+    ///   Original motifs-file target index when the observed state is selected
+    pub(crate) fn target_for(&self, key: EncodedEndMotifKey) -> Option<u32> {
+        self.lookup.get(&key).copied()
+    }
+}
+
+/// Sparse selected-target counts for all windows touched by one tile.
+///
+/// The outer key is the global output row. The inner key is the motifs-file target index assigned
+/// during parsing. Post-processing compacts those target indices when `--all-motifs` is not set.
+pub(crate) type SelectedEndCountsByWindow = FxHashMap<u64, FxHashMap<u32, f64>>;
+
 impl EndMotifCounts {
     /// Create an empty sparse end-motif counter.
     ///
@@ -212,7 +271,11 @@ pub fn format_end_motif_label(
 ) -> String {
     let inside_len = inside_spec.map_or(0, |spec| spec.k);
     let outside_len = outside_spec.map_or(0, |spec| spec.k);
-    debug_assert_eq!(full_motif.len(), inside_len + outside_len);
+    assert_eq!(
+        full_motif.len(),
+        inside_len + outside_len,
+        "decoded end motif length did not match configured k-mer sizes"
+    );
 
     let (outside, inside) = full_motif.split_at(outside_len);
     format!("{outside}_{inside}")

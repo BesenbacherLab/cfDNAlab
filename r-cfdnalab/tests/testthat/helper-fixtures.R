@@ -207,6 +207,47 @@ make_dense_global_end_motif_zarr_fixture <- function() {
   store_path
 }
 
+make_dense_global_end_motif_group_zarr_fixture <- function() {
+  testthat::skip_if_not_installed("zarr")
+
+  store_path <- local_zarr_store_path("r-dense-global-end-motif-group-fixture")
+  zarr_store <- zarr::create_zarr(store_path)
+  patch_zarr_metadata(
+    store_path,
+    attributes = list(
+      cfdnalab_schema = "end_motif_counts",
+      cfdnalab_schema_version = 2L,
+      storage_mode = "dense",
+      row_mode = "global",
+      motif_axis_kind = "motif_group"
+    )
+  )
+
+  add_fixture_array(
+    zarr_store,
+    store_path,
+    "/",
+    "motif_index",
+    0:1,
+    "int32",
+    "motif",
+    list(label_field = "motif_group", labels = list("short", "group-two"))
+  )
+  add_fixture_array(
+    zarr_store,
+    store_path,
+    "/",
+    "row",
+    0L,
+    "int32",
+    "row",
+    list(label_field = "row_label", labels = list("global"))
+  )
+  add_fixture_array(zarr_store, store_path, "/", "counts", matrix(c(1.5, 3), nrow = 1L), "float64", c("row", "motif"))
+
+  store_path
+}
+
 make_sparse_windowed_end_motif_zarr_fixture <- function(row_mode = "bed") {
   testthat::skip_if_not_installed("zarr")
 
@@ -294,6 +335,61 @@ make_sparse_global_end_motif_zarr_fixture <- function() {
   add_fixture_array(zarr_store, store_path, "/sparse", "motif", c(0L, 2L), "int32", "nnz")
   add_fixture_array(zarr_store, store_path, "/sparse", "count", c(1.25, 3.5), "float64", "nnz")
   add_fixture_array(zarr_store, store_path, "/sparse", "shape", c(1L, 4L), "int32", "sparse_dimension")
+  add_fixture_array(
+    zarr_store,
+    store_path,
+    "/sparse",
+    "sparse_dimension",
+    0:1,
+    "int32",
+    "sparse_dimension",
+    list(label_field = "sparse_dimension_name", labels = list("row", "motif"))
+  )
+
+  store_path
+}
+
+make_sparse_global_end_motif_group_zarr_fixture <- function() {
+  testthat::skip_if_not_installed("zarr")
+
+  store_path <- local_zarr_store_path("r-sparse-global-end-motif-group-fixture")
+  zarr_store <- zarr::create_zarr(store_path)
+  zarr_store$add_group("/", "sparse")
+  patch_zarr_metadata(
+    store_path,
+    attributes = list(
+      cfdnalab_schema = "end_motif_counts",
+      cfdnalab_schema_version = 2L,
+      storage_mode = "sparse_coo",
+      row_mode = "global",
+      motif_axis_kind = "motif_group"
+    )
+  )
+
+  add_fixture_array(
+    zarr_store,
+    store_path,
+    "/",
+    "motif_index",
+    0:1,
+    "int32",
+    "motif",
+    list(label_field = "motif_group", labels = list("short", "group-two"))
+  )
+  add_fixture_array(
+    zarr_store,
+    store_path,
+    "/",
+    "row",
+    0L,
+    "int32",
+    "row",
+    list(label_field = "row_label", labels = list("global"))
+  )
+  add_fixture_array(zarr_store, store_path, "/sparse", "row", 0L, "int32", "nnz")
+  add_fixture_array(zarr_store, store_path, "/sparse", "motif", 0L, "int32", "nnz")
+  add_fixture_array(zarr_store, store_path, "/sparse", "count", 1.5, "float64", "nnz")
+  add_fixture_array(zarr_store, store_path, "/sparse", "shape", c(1L, 2L), "int32", "sparse_dimension")
   add_fixture_array(
     zarr_store,
     store_path,

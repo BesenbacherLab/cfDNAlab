@@ -30,6 +30,14 @@ sparse_grouped_end_zarr_path <- function() {
   )
 }
 
+sparse_grouped_motif_group_end_zarr_path <- function() {
+  fixture_path(
+    "CFDNALAB_ENDS_SPARSE_GROUPED_MOTIF_GROUP_ZARR",
+    "tiny_sparse_grouped_motif_groups.end_motifs.zarr",
+    "sparse grouped motif-group end-motif"
+  )
+}
+
 global_length_counts_path <- function() {
   fixture_file_path(
     "CFDNALAB_LENGTHS_GLOBAL_TSV",

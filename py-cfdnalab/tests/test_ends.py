@@ -13,6 +13,8 @@ import cfdnalab
 
 MOTIF_INDEX = np.array([0, 1, 2], dtype=np.int32)
 MOTIF_NAMES = np.array(["_AA", "_CC", "_GG"], dtype=object)
+MOTIF_GROUP_INDEX = np.array([0, 1], dtype=np.int32)
+MOTIF_GROUP_NAMES = np.array(["short", "group-two"], dtype=object)
 
 
 def test_dense_windowed_end_motifs_load_metadata_and_arrays(tmp_path: Path) -> None:
@@ -357,6 +359,118 @@ def test_dense_global_end_motifs_load_without_sparse_arrays(tmp_path: Path) -> N
     )
 
 
+def test_dense_global_motif_group_axis_uses_json_labels(tmp_path: Path) -> None:
+    store_path = _write_dense_global_motif_group_store(
+        tmp_path / "sample.end_motifs.zarr"
+    )
+
+    ends = cfdnalab.read_end_motifs(store_path)
+
+    pd.testing.assert_frame_equal(
+        ends.motifs_metadata(),
+        pd.DataFrame(
+            {
+                "motif_index": MOTIF_GROUP_INDEX,
+                "motif": MOTIF_GROUP_NAMES,
+            }
+        ),
+    )
+    assert ends.motif_idx("group-two") == 1
+    assert ends.has_motif("short")
+    np.testing.assert_array_equal(
+        ends.dense_counts_array(motifs="group-two"),
+        np.array([[3.0]], dtype=np.float64),
+    )
+    pd.testing.assert_frame_equal(
+        ends.data_frame(motifs="group-two"),
+        pd.DataFrame(
+            {
+                "row_label": np.array(["global"], dtype=object),
+                "motif_index": np.array([1], dtype=np.int32),
+                "motif": np.array(["group-two"], dtype=object),
+                "count": np.array([3.0], dtype=np.float64),
+            }
+        ),
+    )
+
+
+def test_sparse_global_motif_group_axis_converts_with_motif_columns(
+    tmp_path: Path,
+) -> None:
+    store_path = _write_sparse_global_motif_group_store(
+        tmp_path / "sample.end_motifs.zarr"
+    )
+
+    ends = cfdnalab.read_end_motifs(store_path)
+
+    assert isinstance(ends, cfdnalab.GlobalEndMotifCounts)
+    assert ends.storage_mode() == "sparse_coo"
+    pd.testing.assert_frame_equal(
+        ends.motifs_metadata(),
+        pd.DataFrame(
+            {
+                "motif_index": MOTIF_GROUP_INDEX,
+                "motif": MOTIF_GROUP_NAMES,
+            }
+        ),
+    )
+    np.testing.assert_array_equal(
+        ends.sparse_counts_matrix().toarray(),
+        np.array([[1.5, 0.0]], dtype=np.float64),
+    )
+    np.testing.assert_array_equal(
+        ends.sparse_counts_matrix(motifs=["group-two", "short"]).toarray(),
+        np.array([[0.0, 1.5]], dtype=np.float64),
+    )
+    with pytest.raises(ValueError, match="would densify a sparse end-motif store"):
+        ends.dense_counts_array()
+    np.testing.assert_array_equal(
+        ends.dense_counts_array(allow_densify=True),
+        np.array([[1.5, 0.0]], dtype=np.float64),
+    )
+    np.testing.assert_array_equal(
+        ends.dense_counts_array(motif_idxs=[1, 0], allow_densify=True),
+        np.array([[0.0, 1.5]], dtype=np.float64),
+    )
+    np.testing.assert_array_equal(
+        ends.dense_counts_array(motifs="group-two", allow_densify=True),
+        np.array([[0.0]], dtype=np.float64),
+    )
+    pd.testing.assert_frame_equal(
+        ends.data_frame(),
+        pd.DataFrame(
+            {
+                "row_label": np.array(["global"], dtype=object),
+                "motif_index": np.array([0], dtype=np.int32),
+                "motif": np.array(["short"], dtype=object),
+                "count": np.array([1.5], dtype=np.float64),
+            }
+        ),
+    )
+    pd.testing.assert_frame_equal(
+        ends.data_frame(densify=True),
+        pd.DataFrame(
+            {
+                "row_label": np.array(["global", "global"], dtype=object),
+                "motif_index": MOTIF_GROUP_INDEX,
+                "motif": MOTIF_GROUP_NAMES,
+                "count": np.array([1.5, 0.0], dtype=np.float64),
+            }
+        ),
+    )
+    pd.testing.assert_frame_equal(
+        ends.data_frame(motifs="group-two", densify=True),
+        pd.DataFrame(
+            {
+                "row_label": np.array(["global"], dtype=object),
+                "motif_index": np.array([1], dtype=np.int32),
+                "motif": np.array(["group-two"], dtype=object),
+                "count": np.array([0.0], dtype=np.float64),
+            }
+        ),
+    )
+
+
 def test_dense_grouped_end_motifs_use_group_helpers(tmp_path: Path) -> None:
     store_path = _write_dense_grouped_store(tmp_path / "sample.end_motifs.zarr")
 
@@ -539,6 +653,91 @@ def _write_dense_global_store(path: Path) -> Path:
         np.array([[1.0, 0.0, 2.5]], dtype=np.float64),
         chunks=(1, 3),
         dimension_names=("row", "motif"),
+    )
+
+    return path
+
+
+def _write_dense_global_motif_group_store(path: Path) -> Path:
+    root = zarr.open_group(str(path), mode="w", zarr_format=3)
+    root.attrs["cfdnalab_schema"] = "end_motif_counts"
+    root.attrs["cfdnalab_schema_version"] = 2
+    root.attrs["storage_mode"] = "dense"
+    root.attrs["row_mode"] = "global"
+    root.attrs["motif_axis_kind"] = "motif_group"
+
+    _create_motif_group_axis(root, MOTIF_GROUP_NAMES)
+    _create_labeled_axis(
+        root,
+        "row",
+        np.array([0], dtype=np.int32),
+        "row_label",
+        np.array(["global"], dtype=object),
+    )
+    _create_array(
+        root,
+        "counts",
+        np.array([[1.5, 3.0]], dtype=np.float64),
+        chunks=(1, 2),
+        dimension_names=("row", "motif"),
+    )
+
+    return path
+
+
+def _write_sparse_global_motif_group_store(path: Path) -> Path:
+    root = zarr.open_group(str(path), mode="w", zarr_format=3)
+    root.attrs["cfdnalab_schema"] = "end_motif_counts"
+    root.attrs["cfdnalab_schema_version"] = 2
+    root.attrs["storage_mode"] = "sparse_coo"
+    root.attrs["row_mode"] = "global"
+    root.attrs["motif_axis_kind"] = "motif_group"
+
+    _create_motif_group_axis(root, MOTIF_GROUP_NAMES)
+    _create_labeled_axis(
+        root,
+        "row",
+        np.array([0], dtype=np.int32),
+        "row_label",
+        np.array(["global"], dtype=object),
+    )
+
+    sparse_group = root.create_group("sparse")
+    _create_array(
+        sparse_group,
+        "row",
+        np.array([0], dtype=np.int32),
+        chunks=(1,),
+        dimension_names=("nnz",),
+    )
+    _create_array(
+        sparse_group,
+        "motif",
+        np.array([0], dtype=np.int32),
+        chunks=(1,),
+        dimension_names=("nnz",),
+    )
+    _create_array(
+        sparse_group,
+        "count",
+        np.array([1.5], dtype=np.float64),
+        chunks=(1,),
+        dimension_names=("nnz",),
+    )
+    _create_array(
+        sparse_group,
+        "shape",
+        np.array([1, 2], dtype=np.int32),
+        chunks=(2,),
+        dimension_names=("sparse_dimension",),
+    )
+    _create_labeled_axis(
+        sparse_group,
+        "sparse_dimension",
+        np.array([0, 1], dtype=np.int32),
+        "sparse_dimension_name",
+        np.array(["row", "motif"], dtype=object),
+        dimension_names=("sparse_dimension",),
     )
 
     return path
@@ -831,6 +1030,17 @@ def _create_motif_axis(root: zarr.Group, labels: np.ndarray) -> None:
         "motif_ascii",
         motif_ascii,
         chunks=(max(len(labels), 1), max(motif_width, 1)),
+    )
+
+
+def _create_motif_group_axis(root: zarr.Group, labels: np.ndarray) -> None:
+    _create_labeled_axis(
+        root,
+        "motif_index",
+        MOTIF_GROUP_INDEX,
+        "motif_group",
+        labels,
+        dimension_names=("motif",),
     )
 
 

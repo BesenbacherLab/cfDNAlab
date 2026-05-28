@@ -8,7 +8,10 @@ use crate::{
     commands::ends::{
         config::EndsConfig,
         config_structs::{ClipStrategy, KmerSource, WindowMotifAssigner},
-        counting::{EncodedEndMotifKey, EndCountsByWindow, EndMotifCounts},
+        counting::{
+            EncodedEndMotifKey, EndCountsByWindow, EndMotifCounts, SelectedEndCountsByWindow,
+            SelectedEndMotifLookup,
+        },
     },
     shared::{
         blacklist::{apply_blacklist_mask_to_seq, apply_mask::BLACKLIST_BYTE},
@@ -399,6 +402,118 @@ pub(crate) fn count_fragment_in_window(
     Ok(counted_end_flags)
 }
 
+/// Count selected end motifs from one fragment into one output window.
+///
+/// This mirrors [`count_fragment_in_window`] up to the point where an encoded motif key has been
+/// produced. Instead of inserting every valid motif key, it looks the key up in the motifs-file
+/// selection and only increments a target when the key is present.
+///
+/// The lookup key includes the `reverse_on_decode` state. That means right-end observations are not
+/// accidentally treated as left-end motifs, and reverse-complement-related motif labels can still
+/// map to different groups when the motifs file says so.
+///
+/// Parameters
+/// ----------
+/// - `counts_by_window`:
+///   Selected-target sparse output counts updated in place
+/// - `selected_motifs`:
+///   Precomputed motifs-file lookup
+/// - `original_idx`:
+///   Global output-row index for the current window
+/// - `window_interval`:
+///   Genomic coordinates of the current output window
+/// - `fragment`:
+///   Fragment with already-resolved ends
+/// - `weight`:
+///   Combined overlap, scaling, and GC weight for this count
+/// - `motif_context`:
+///   Tile-local reference resources
+/// - `source_inside`:
+///   Whether inside bases come from the read or the reference
+/// - `assign_by`:
+///   Window-assignment rule for deciding whether each end counts here
+///
+/// Returns
+/// -------
+/// - `Result<CountedEndFlags>`:
+///   Which fragment ends contributed at least one selected motif count in this window
+pub(crate) fn count_selected_fragment_in_window(
+    counts_by_window: &mut SelectedEndCountsByWindow,
+    selected_motifs: &SelectedEndMotifLookup,
+    original_idx: u64,
+    window_interval: Interval<u64>,
+    fragment: &FragmentWithEnds,
+    weight: f64,
+    motif_context: &TileMotifContext<'_>,
+    source_inside: KmerSource,
+    assign_by: WindowMotifAssigner,
+) -> Result<CountedEndFlags> {
+    let mut counted_end_flags = CountedEndFlags::default();
+    if !EndMotifCounts::should_store_weight(weight)? {
+        return Ok(counted_end_flags);
+    }
+
+    if let Some(left_end) = fragment.left_end.as_ref() {
+        // Endpoint mode decides per end, while other window modes decide at fragment level
+        let count_left_end = match assign_by {
+            WindowMotifAssigner::Endpoint => {
+                window_interval.contains_point(left_end.boundary_pos as u64)
+            }
+            _ => true,
+        };
+        if count_left_end {
+            if let Some(key) =
+                maybe_encode_end_motif_key(left_end, EndSide::Left, motif_context, source_inside)?
+            {
+                // Missing lookup entries are the expected fast skip path for unselected motifs
+                if let Some(target_idx) = selected_motifs.target_for(key) {
+                    counts_by_window
+                        .entry(original_idx)
+                        .or_default()
+                        .entry(target_idx)
+                        .and_modify(|value| *value += weight)
+                        .or_insert(weight);
+                    counted_end_flags.left_counted = true;
+                }
+            }
+        }
+    }
+
+    if let Some(right_end) = fragment.right_end.as_ref() {
+        // Endpoint assignment uses the terminal base coordinate. For the right end,
+        // `boundary_pos` is the split point after that base, so the terminal base is
+        // `boundary_pos - 1`.
+        let right_endpoint_pos = right_end
+            .boundary_pos
+            .checked_sub(1)
+            .expect("right boundary must be > 0 for a valid half-open interval");
+        let count_right_end = match assign_by {
+            WindowMotifAssigner::Endpoint => {
+                window_interval.contains_point(right_endpoint_pos as u64)
+            }
+            _ => true,
+        };
+        if count_right_end {
+            if let Some(key) =
+                maybe_encode_end_motif_key(right_end, EndSide::Right, motif_context, source_inside)?
+            {
+                // The key includes `reverse_on_decode = true`, so right-end mappings stay explicit
+                if let Some(target_idx) = selected_motifs.target_for(key) {
+                    counts_by_window
+                        .entry(original_idx)
+                        .or_default()
+                        .entry(target_idx)
+                        .and_modify(|value| *value += weight)
+                        .or_insert(weight);
+                    counted_end_flags.right_counted = true;
+                }
+            }
+        }
+    }
+
+    Ok(counted_end_flags)
+}
+
 /// Encode one end motif if both halves are valid.
 ///
 /// Invalid means either:
@@ -532,7 +647,7 @@ fn encode_inside_code(
 ///
 /// This is only used for `source_inside=read`, where the emitted inside code still comes from the
 /// read but blacklist filtering must remain genomic. `inside_reference_validation_bp` tells us how
-/// much of `inside_bases` still maps to concrete reference positions; in
+/// much of `inside_bases` still maps to concrete reference positions. In
 /// `include-at-aligned-boundary`, clipped-only inside bases are intentionally ignored here because they
 /// lie outside the aligned reference span.
 ///

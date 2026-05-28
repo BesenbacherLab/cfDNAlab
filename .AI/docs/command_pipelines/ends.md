@@ -63,3 +63,5 @@ The default assignment counts each motif in the row containing its endpoint. Oth
 ## Outputs
 
 By default, the command writes only observed motif columns as sparse COO arrays inside `end_motifs.zarr`. With `--all-motifs`, it writes a dense `counts[row, motif]` array containing every possible motif for the selected inside/outside lengths. The Zarr store contains motif labels and row metadata, while `end_settings.json` keeps the human-readable command settings. Window metadata TSVs are still written for direct inspection.
+
+When a motifs file groups motifs during counting, the Zarr schema records that the motif axis contains group labels. Downstream R and Python helpers still use `motifs()` and motif selectors for that column axis, so users select the group names with the same API they use for ordinary motif labels.

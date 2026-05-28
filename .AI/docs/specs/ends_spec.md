@@ -80,6 +80,7 @@
 - Dense output with `--all-motifs` writes `counts[row, motif]` inside the same Zarr store and enumerates every possible motif label.
 - Dense output is guarded by `CFDNALAB_ENDS_MAX_DENSE_OUTPUT_BYTES`, default 5 GiB.
 - Motif labels are sorted deterministically. `motif_index[motif]` stores the numeric count-column coordinate, `motif_byte[motif_byte]` stores byte offsets, and `motif_ascii[motif, motif_byte]` stores fixed-width ASCII motif labels in count-column order.
+- Schema version 2 stores declare `motif_axis_kind`. Downstream packages still expose the count-column axis through `motifs()` and motif selectors. When `motif_axis_kind` is `motif_group`, those motif labels are user-defined group names from the motifs file rather than concrete DNA motifs.
 - The numeric `row` coordinate stores row indices. Global output stores `row_label` as JSON labels on `row`.
 - Fixed-size and BED row metadata includes `chromosome`, `row_chromosome`, `row_start_bp`, `row_end_bp`, and `blacklisted_fraction`. Chromosome names are stored as JSON labels on `chromosome`, and `row_chromosome` indexes that chromosome axis.
 - Grouped-BED row metadata includes `group`, `eligible_windows`, and `blacklisted_fraction`. Group names are stored as JSON labels on `group`, and grouped rows require contiguous zero-based group indices matching count rows.

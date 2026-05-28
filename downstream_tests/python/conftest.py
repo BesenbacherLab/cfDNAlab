@@ -43,6 +43,15 @@ def sparse_grouped_end_zarr_path() -> Path:
 
 
 @pytest.fixture(scope="session")
+def sparse_grouped_motif_group_end_zarr_path() -> Path:
+    return _fixture_path(
+        "CFDNALAB_ENDS_SPARSE_GROUPED_MOTIF_GROUP_ZARR",
+        "tiny_sparse_grouped_motif_groups.end_motifs.zarr",
+        "sparse grouped motif-group end-motif",
+    )
+
+
+@pytest.fixture(scope="session")
 def global_length_counts_path() -> Path:
     return _fixture_path(
         "CFDNALAB_LENGTHS_GLOBAL_TSV",

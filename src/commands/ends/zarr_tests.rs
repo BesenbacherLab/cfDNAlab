@@ -1,4 +1,5 @@
 use super::*;
+use crate::commands::ends::counting::EndMotifColumnKind;
 use crate::shared::bed::GroupedWindows;
 use serde_json::Value;
 use std::sync::Arc;
@@ -8,11 +9,14 @@ use zarrs::{array::Array, filesystem::FilesystemStore};
 #[test]
 fn dense_end_motif_zarr_writes_counts_motifs_and_window_metadata() {
     let temp = TempDir::new().expect("temp dir should be created");
-    let bins = vec![
-        FxHashMap::from_iter([("_AA".to_string(), 1.0), ("_GG".to_string(), 2.5)]),
-        FxHashMap::from_iter([("_GG".to_string(), 3.0)]),
-    ];
     let motifs = vec!["_AA".to_string(), "_GG".to_string()];
+    let bins = index_label_bins(
+        &motifs,
+        vec![
+            FxHashMap::from_iter([("_AA", 1.0), ("_GG", 2.5)]),
+            FxHashMap::from_iter([("_GG", 3.0)]),
+        ],
+    );
     let bin_info = vec![
         WindowBinInfo {
             chromosome: "chr2".to_string(),
@@ -35,6 +39,7 @@ fn dense_end_motif_zarr_writes_counts_motifs_and_window_metadata() {
         "sample",
         &bins,
         &motifs,
+        EndMotifColumnKind::Motif,
         EndMotifRowMetadata::Windows {
             bin_info: &bin_info,
             row_mode: EndWindowRowMode::Bed,
@@ -48,7 +53,11 @@ fn dense_end_motif_zarr_writes_counts_motifs_and_window_metadata() {
     // Keep this literal so schema-version bumps require an explicit test update.
     assert_eq!(
         root_metadata["attributes"]["cfdnalab_schema_version"],
-        serde_json::json!(1)
+        serde_json::json!(2)
+    );
+    assert_eq!(
+        root_metadata["attributes"]["motif_axis_kind"],
+        serde_json::json!("motif")
     );
     assert_eq!(root_metadata["attributes"]["storage_mode"], "dense");
     assert_eq!(root_metadata["attributes"]["row_mode"], "bed");
@@ -94,17 +103,18 @@ fn dense_end_motif_zarr_writes_counts_motifs_and_window_metadata() {
 #[test]
 fn sparse_end_motif_zarr_writes_sorted_coo_arrays() {
     let temp = TempDir::new().expect("temp dir should be created");
-    let bins = vec![FxHashMap::from_iter([
-        ("_GG".to_string(), 2.5),
-        ("_AA".to_string(), 1.0),
-    ])];
     let motifs = vec!["_AA".to_string(), "_GG".to_string()];
+    let bins = index_label_bins(
+        &motifs,
+        vec![FxHashMap::from_iter([("_GG", 2.5), ("_AA", 1.0)])],
+    );
 
     let store_path = write_end_motif_zarr(
         temp.path(),
         "sample",
         &bins,
         &motifs,
+        EndMotifColumnKind::Motif,
         EndMotifRowMetadata::Global,
         false,
     )
@@ -138,6 +148,135 @@ fn sparse_end_motif_zarr_writes_sorted_coo_arrays() {
 }
 
 #[test]
+fn motif_group_zarr_writes_json_labels_without_motif_ascii() {
+    let temp = TempDir::new().expect("temp dir should be created");
+    let motif_groups = vec!["short".to_string(), "group-two".to_string()];
+    let bins = index_label_bins(
+        &motif_groups,
+        vec![FxHashMap::from_iter([("short", 1.0), ("group-two", 2.5)])],
+    );
+
+    let store_path = write_end_motif_zarr(
+        temp.path(),
+        "sample",
+        &bins,
+        &motif_groups,
+        EndMotifColumnKind::MotifGroup,
+        EndMotifRowMetadata::Global,
+        false,
+    )
+    .expect("motif-group Zarr output should write");
+
+    let root_metadata = read_json(&store_path.join("zarr.json"));
+    assert_eq!(
+        root_metadata["attributes"]["cfdnalab_schema_version"],
+        serde_json::json!(2)
+    );
+    assert_eq!(
+        root_metadata["attributes"]["motif_axis_kind"],
+        serde_json::json!("motif_group")
+    );
+    assert_eq!(read_i32_array(&store_path, "/motif_index"), vec![0, 1]);
+    let motif_metadata = read_json(&store_path.join("motif_index/zarr.json"));
+    assert_eq!(motif_metadata["attributes"]["label_field"], "motif_group");
+    assert_eq!(
+        motif_metadata["attributes"]["labels"],
+        serde_json::json!(["short", "group-two"])
+    );
+    assert!(!store_path.join("motif_byte").exists());
+    assert!(!store_path.join("motif_ascii").exists());
+    assert_eq!(read_i32_array(&store_path, "/sparse/motif"), vec![0, 1]);
+}
+
+#[test]
+fn selected_motif_zarr_writes_motif_ascii_labels_in_supplied_order() {
+    // Arrange: selected ungrouped motifs are already final output labels when they reach the
+    // writer. The writer must expose them as ordinary motif labels, not as motif groups.
+    let temp = TempDir::new().expect("temp dir should be created");
+    let motifs = vec!["G_T".to_string(), "A_C".to_string()];
+    let bins = index_label_bins(
+        &motifs,
+        vec![FxHashMap::from_iter([("A_C", 2.0), ("G_T", 1.0)])],
+    );
+
+    // Act
+    let store_path = write_end_motif_zarr(
+        temp.path(),
+        "sample",
+        &bins,
+        &motifs,
+        EndMotifColumnKind::Motif,
+        EndMotifRowMetadata::Global,
+        false,
+    )
+    .expect("selected motif Zarr output should write");
+
+    // Assert
+    let root_metadata = read_json(&store_path.join("zarr.json"));
+    assert_eq!(
+        root_metadata["attributes"]["motif_axis_kind"],
+        serde_json::json!("motif")
+    );
+    assert_eq!(read_i32_array(&store_path, "/motif_index"), vec![0, 1]);
+    let motif_metadata = read_json(&store_path.join("motif_index/zarr.json"));
+    assert_eq!(motif_metadata["attributes"]["label_array"], "motif_ascii");
+    assert!(motif_metadata["attributes"].get("label_field").is_none());
+    assert_eq!(read_i32_array(&store_path, "/motif_byte"), vec![0, 1, 2]);
+    assert_eq!(
+        read_u8_array(&store_path, "/motif_ascii"),
+        b"G_TA_C".to_vec()
+    );
+    assert_eq!(read_i32_array(&store_path, "/sparse/motif"), vec![0, 1]);
+    assert_eq!(read_f64_array(&store_path, "/sparse/count"), vec![1.0, 2.0]);
+}
+
+#[test]
+fn dense_motif_group_zarr_writes_json_labels_and_counts_without_motif_ascii() {
+    // Arrange: --all-motifs with a grouped motifs file keeps unobserved groups as zero-count
+    // dense columns. Group labels are variable-width strings, so they must stay in JSON metadata.
+    let temp = TempDir::new().expect("temp dir should be created");
+    let motif_groups = vec![
+        "left.hit".to_string(),
+        "right-hit".to_string(),
+        "unused_group".to_string(),
+    ];
+    let bins = index_label_bins(
+        &motif_groups,
+        vec![FxHashMap::from_iter([("left.hit", 2.0), ("right-hit", 1.0)])],
+    );
+
+    // Act
+    let store_path = write_end_motif_zarr(
+        temp.path(),
+        "sample",
+        &bins,
+        &motif_groups,
+        EndMotifColumnKind::MotifGroup,
+        EndMotifRowMetadata::Global,
+        true,
+    )
+    .expect("dense motif-group Zarr output should write");
+
+    // Assert
+    let root_metadata = read_json(&store_path.join("zarr.json"));
+    assert_eq!(root_metadata["attributes"]["storage_mode"], "dense");
+    assert_eq!(
+        root_metadata["attributes"]["motif_axis_kind"],
+        serde_json::json!("motif_group")
+    );
+    let motif_metadata = read_json(&store_path.join("motif_index/zarr.json"));
+    assert_eq!(motif_metadata["attributes"]["label_field"], "motif_group");
+    assert_eq!(
+        motif_metadata["attributes"]["labels"],
+        serde_json::json!(["left.hit", "right-hit", "unused_group"])
+    );
+    assert_eq!(read_i32_array(&store_path, "/motif_index"), vec![0, 1, 2]);
+    assert_eq!(read_f64_array(&store_path, "/counts"), vec![2.0, 1.0, 0.0]);
+    assert!(!store_path.join("motif_byte").exists());
+    assert!(!store_path.join("motif_ascii").exists());
+}
+
+#[test]
 fn sparse_end_motif_zarr_round_trips_to_dense_matrix_and_metadata() {
     // Arrange:
     // Three rows and three fixed-width motifs exercise sparse row order, motif order, and a
@@ -148,16 +287,15 @@ fn sparse_end_motif_zarr_round_trips_to_dense_matrix_and_metadata() {
     // row 1: _AA = 0.0,  _CC = 4.25, _GG = 0.0
     // row 2: _AA = 0.75, _CC = 0.0,  _GG = 8.0
     let temp = TempDir::new().expect("temp dir should be created");
-    let bins = vec![
-        FxHashMap::from_iter([("_GG".to_string(), 2.5), ("_AA".to_string(), 1.0)]),
-        FxHashMap::from_iter([("_CC".to_string(), 4.25)]),
-        FxHashMap::from_iter([
-            ("_AA".to_string(), 0.75),
-            ("_CC".to_string(), 0.0),
-            ("_GG".to_string(), 8.0),
-        ]),
-    ];
     let motifs = vec!["_AA".to_string(), "_CC".to_string(), "_GG".to_string()];
+    let bins = index_label_bins(
+        &motifs,
+        vec![
+            FxHashMap::from_iter([("_GG", 2.5), ("_AA", 1.0)]),
+            FxHashMap::from_iter([("_CC", 4.25)]),
+            FxHashMap::from_iter([("_AA", 0.75), ("_CC", 0.0), ("_GG", 8.0)]),
+        ],
+    );
     let bin_info = vec![
         WindowBinInfo {
             chromosome: "chr2".to_string(),
@@ -188,6 +326,7 @@ fn sparse_end_motif_zarr_round_trips_to_dense_matrix_and_metadata() {
         "sample",
         &bins,
         &motifs,
+        EndMotifColumnKind::Motif,
         EndMotifRowMetadata::Windows {
             bin_info: &bin_info,
             row_mode: EndWindowRowMode::Size,
@@ -263,7 +402,7 @@ fn sparse_end_motif_zarr_round_trips_to_dense_matrix_and_metadata() {
 #[test]
 fn sparse_end_motif_zarr_allows_no_observed_motifs() {
     let temp = TempDir::new().expect("temp dir should be created");
-    let bins = vec![FxHashMap::default()];
+    let bins: Vec<FxHashMap<u32, f64>> = vec![FxHashMap::default()];
     let motifs = Vec::new();
 
     let store_path = write_end_motif_zarr(
@@ -271,6 +410,7 @@ fn sparse_end_motif_zarr_allows_no_observed_motifs() {
         "empty",
         &bins,
         &motifs,
+        EndMotifColumnKind::Motif,
         EndMotifRowMetadata::Global,
         false,
     )
@@ -290,12 +430,15 @@ fn grouped_end_motif_zarr_writes_group_metadata_and_dense_counts() {
     // Group rows must stay in count-row order. Variable-width group names exercise label attrs,
     // and an all-zero row checks that empty groups still have metadata.
     let temp = TempDir::new().expect("temp dir should be created");
-    let bins = vec![
-        FxHashMap::from_iter([("_AA".to_string(), 1.0)]),
-        FxHashMap::from_iter([("_CT".to_string(), 2.5)]),
-        FxHashMap::default(),
-    ];
     let motifs = vec!["_AA".to_string(), "_CT".to_string()];
+    let bins = index_label_bins(
+        &motifs,
+        vec![
+            FxHashMap::from_iter([("_AA", 1.0)]),
+            FxHashMap::from_iter([("_CT", 2.5)]),
+            FxHashMap::default(),
+        ],
+    );
     let groups = vec![
         EndGroupSummary {
             group_idx: 0,
@@ -323,6 +466,7 @@ fn grouped_end_motif_zarr_writes_group_metadata_and_dense_counts() {
         "sample",
         &bins,
         &motifs,
+        EndMotifColumnKind::Motif,
         EndMotifRowMetadata::Groups(groups),
         true,
     )
@@ -361,8 +505,11 @@ fn end_motif_zarr_rejects_control_characters_in_public_labels() {
     // Arrange: public labels are used in JSON attrs and dataframe columns downstream, so the writer
     // rejects control characters instead of silently rewriting them.
     let temp = TempDir::new().expect("temp dir should be created");
-    let bins = vec![FxHashMap::from_iter([("bad\tmotif".to_string(), 1.0)])];
     let bad_motifs = vec!["bad\tmotif".to_string()];
+    let bins = index_label_bins(
+        &bad_motifs,
+        vec![FxHashMap::from_iter([("bad\tmotif", 1.0)])],
+    );
 
     // Act
     let motif_error = write_end_motif_zarr(
@@ -370,6 +517,7 @@ fn end_motif_zarr_rejects_control_characters_in_public_labels() {
         "bad_motif",
         &bins,
         &bad_motifs,
+        EndMotifColumnKind::Motif,
         EndMotifRowMetadata::Global,
         false,
     )
@@ -383,8 +531,8 @@ fn end_motif_zarr_rejects_control_characters_in_public_labels() {
     );
 
     // Arrange: chromosome names use the same public-label rule.
-    let good_bins = vec![FxHashMap::from_iter([("_AA".to_string(), 1.0)])];
     let good_motifs = vec!["_AA".to_string()];
+    let good_bins = index_label_bins(&good_motifs, vec![FxHashMap::from_iter([("_AA", 1.0)])]);
     let bin_info = vec![WindowBinInfo {
         chromosome: "chr1\nbad".to_string(),
         start: 10,
@@ -399,6 +547,7 @@ fn end_motif_zarr_rejects_control_characters_in_public_labels() {
         "bad_chromosome",
         &good_bins,
         &good_motifs,
+        EndMotifColumnKind::Motif,
         EndMotifRowMetadata::Windows {
             bin_info: &bin_info,
             row_mode: EndWindowRowMode::Bed,
@@ -429,6 +578,7 @@ fn end_motif_zarr_rejects_control_characters_in_public_labels() {
         "bad_group",
         &good_bins,
         &good_motifs,
+        EndMotifColumnKind::Motif,
         EndMotifRowMetadata::Groups(bad_groups),
         false,
     )
@@ -502,13 +652,16 @@ fn grouped_end_row_metadata_rejects_non_contiguous_group_indices() {
 
 #[test]
 fn stack_end_motif_counts_places_values_in_expected_rows_and_columns() {
-    let bins = vec![
-        FxHashMap::from_iter([("_AA".to_string(), 1.0), ("_GG".to_string(), 2.5)]),
-        FxHashMap::from_iter([("_GG".to_string(), 3.0)]),
-    ];
     let motifs = vec!["_AA".to_string(), "_GG".to_string()];
+    let bins = index_label_bins(
+        &motifs,
+        vec![
+            FxHashMap::from_iter([("_AA", 1.0), ("_GG", 2.5)]),
+            FxHashMap::from_iter([("_GG", 3.0)]),
+        ],
+    );
 
-    let counts = stack_end_motif_counts(&bins, &motifs).expect("dense counts should build");
+    let counts = stack_end_motif_counts(&bins, 2).expect("dense counts should build");
 
     assert_eq!(counts.shape(), &[2, 2]);
     assert_eq!(counts[(0, 0)], 1.0);
@@ -520,13 +673,14 @@ fn stack_end_motif_counts_places_values_in_expected_rows_and_columns() {
 #[test]
 fn motif_metadata_rejects_variable_width_or_non_ascii_labels() {
     let temp = TempDir::new().expect("temp dir should be created");
-    let bins = vec![FxHashMap::default()];
+    let bins: Vec<FxHashMap<u32, f64>> = vec![FxHashMap::default()];
 
     let variable_width_error = write_end_motif_zarr(
         temp.path(),
         "variable_width",
         &bins,
         &["_AA".to_string(), "_AAAA".to_string()],
+        EndMotifColumnKind::Motif,
         EndMotifRowMetadata::Global,
         false,
     )
@@ -542,6 +696,7 @@ fn motif_metadata_rejects_variable_width_or_non_ascii_labels() {
         "non_ascii",
         &bins,
         &["_ÅA".to_string()],
+        EndMotifColumnKind::Motif,
         EndMotifRowMetadata::Global,
         false,
     )
@@ -578,6 +733,35 @@ fn dense_count_chunk_shape_limits_wide_motif_axis() {
     let chunk_shape = dense_count_chunk_shape(shape).expect("wide shape should be valid");
 
     assert_eq!(chunk_shape, [1, 2_000_000]);
+}
+
+fn index_label_bins(
+    column_labels: &[String],
+    bins: Vec<FxHashMap<&str, f64>>,
+) -> Vec<FxHashMap<u32, f64>> {
+    let column_by_label: FxHashMap<&str, u32> = column_labels
+        .iter()
+        .enumerate()
+        .map(|(column_idx, label)| {
+            (
+                label.as_str(),
+                u32::try_from(column_idx).expect("test column index should fit in u32"),
+            )
+        })
+        .collect();
+
+    bins.into_iter()
+        .map(|bin| {
+            bin.into_iter()
+                .map(|(label, count)| {
+                    let column_idx = column_by_label.get(label).copied().unwrap_or_else(|| {
+                        panic!("test bin label `{label}` is missing from {column_labels:?}")
+                    });
+                    (column_idx, count)
+                })
+                .collect()
+        })
+        .collect()
 }
 
 fn read_json(path: &std::path::Path) -> Value {

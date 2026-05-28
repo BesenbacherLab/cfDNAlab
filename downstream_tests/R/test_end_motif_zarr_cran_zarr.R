@@ -53,3 +53,24 @@ stopifnot(identical(as.integer(read_cran_zarr_array(grouped_root, "sparse/shape"
 stopifnot(identical(as.integer(read_cran_zarr_array(grouped_root, "sparse/row")), c(0L, 0L, 1L)))
 stopifnot(identical(as.integer(read_cran_zarr_array(grouped_root, "sparse/motif")), c(0L, 1L, 0L)))
 stopifnot(isTRUE(all.equal(read_cran_zarr_array(grouped_root, "sparse/count"), c(1, 2, 1))))
+
+motif_grouped_path <- sparse_grouped_motif_group_end_zarr_path()
+motif_grouped_root <- zarr::open_zarr(motif_grouped_path, read_only = TRUE)
+motif_grouped_metadata <- jsonlite::fromJSON(file.path(motif_grouped_path, "zarr.json"), simplifyVector = FALSE)
+
+stopifnot(identical(motif_grouped_metadata$attributes$cfdnalab_schema_version, 2L))
+stopifnot(identical(motif_grouped_metadata$attributes$motif_axis_kind, "motif_group"))
+stopifnot(!dir.exists(file.path(motif_grouped_path, "motif_ascii")))
+stopifnot(identical(
+  labels_from_array_attributes(motif_grouped_path, "motif_index", "motif_group"),
+  c("left-hit", "right-hit")
+))
+stopifnot(identical(
+  labels_from_array_attributes(motif_grouped_path, "group", "group_name"),
+  c("beta", "alpha", "gamma")
+))
+stopifnot(identical(as.integer(read_cran_zarr_array(motif_grouped_root, "motif_index")), c(0L, 1L)))
+stopifnot(identical(as.integer(read_cran_zarr_array(motif_grouped_root, "sparse/shape")), c(3L, 2L)))
+stopifnot(identical(as.integer(read_cran_zarr_array(motif_grouped_root, "sparse/row")), c(0L, 0L, 1L)))
+stopifnot(identical(as.integer(read_cran_zarr_array(motif_grouped_root, "sparse/motif")), c(0L, 1L, 1L)))
+stopifnot(isTRUE(all.equal(read_cran_zarr_array(motif_grouped_root, "sparse/count"), c(2, 1, 1))))

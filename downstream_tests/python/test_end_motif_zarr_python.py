@@ -133,3 +133,43 @@ def test_python_zarr_reads_sparse_grouped_end_motif_schema(
         dense,
         np.array([[1.0, 2.0], [1.0, 0.0], [0.0, 0.0]], dtype=np.float64),
     )
+
+
+def test_python_zarr_reads_sparse_grouped_motif_group_end_motif_schema(
+    sparse_grouped_motif_group_end_zarr_path: Path,
+) -> None:
+    store = zarr.open_group(
+        str(sparse_grouped_motif_group_end_zarr_path),
+        mode="r",
+        zarr_format=3,
+    )
+
+    assert store.attrs["cfdnalab_schema"] == "end_motif_counts"
+    assert store.attrs["cfdnalab_schema_version"] == 2
+    assert store.attrs["storage_mode"] == "sparse_coo"
+    assert store.attrs["row_mode"] == "grouped_bed"
+    assert store.attrs["motif_axis_kind"] == "motif_group"
+    assert "motif_ascii" not in store
+    assert store["motif_index"].attrs["label_field"] == "motif_group"
+    assert store["motif_index"].attrs["labels"] == ["left-hit", "right-hit"]
+    np.testing.assert_array_equal(
+        store["motif_index"][:],
+        np.array([0, 1], dtype=np.int32),
+    )
+    assert store["group"].attrs["labels"] == ["beta", "alpha", "gamma"]
+    np.testing.assert_array_equal(
+        store["sparse/shape"][:],
+        np.array([3, 2], dtype=np.int32),
+    )
+    np.testing.assert_array_equal(
+        store["sparse/row"][:],
+        np.array([0, 0, 1], dtype=np.int32),
+    )
+    np.testing.assert_array_equal(
+        store["sparse/motif"][:],
+        np.array([0, 1, 1], dtype=np.int32),
+    )
+    np.testing.assert_allclose(
+        store["sparse/count"][:],
+        np.array([2.0, 1.0, 1.0], dtype=np.float64),
+    )

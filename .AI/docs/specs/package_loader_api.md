@@ -328,3 +328,8 @@ file. Dense stores ignore `densify` and return their available dense grid.
 
 Dense and sparse end-motif data frames use the same public columns for a given
 row mode. Only the set of returned rows differs.
+
+Schema version 2 end-motif stores may mark the motif axis as `motif_group`.
+R and Python loaders still expose that count-column axis as `motifs` and
+`motif_idxs`. In that case the returned motif labels are user-defined group
+names, not concrete DNA motifs.
