@@ -1,9 +1,84 @@
 # Ends Motifs File Spec
 
-This is a future design note for adding `--motifs-file` behavior to `cfdna ends`.
-The goal is to let users restrict counting to a known motif subset, and optionally
-count directly into user-defined motif groups, so large combined end motifs can be
-handled without expanding memory usage to the full motif universe.
+This is a tracking note for the partially implemented `--motifs-file` behavior
+in `cfdna ends`. The goal is to let users restrict counting to a known motif
+subset, and optionally count directly into user-defined motif groups, so large
+combined end motifs can be handled without expanding memory usage to the full
+motif universe.
+
+## Current Gap
+
+The selected counting/output path is wired, but selected-subspace encoding is
+not wired into the command yet.
+
+Currently implemented:
+
+- The parser accepts one-column motif files and two-column grouped motif files.
+- Counting can route selected observations into compact numeric target columns.
+- Tile payloads, reduction, post-processing, and Zarr writing have selected
+  paths.
+- `--all-motifs` with `--motifs-file` uses the file-defined target axis rather
+  than the full motif universe.
+
+Not yet implemented:
+
+- The motifs-file path still builds ordinary `KmerSpec` values through
+  `build_optional_kmer_spec`.
+- That keeps the ordinary per-side k limit and prevents `--motifs-file` from
+  counting k-mers larger than the radix-5 full-space representation supports.
+- `SubspaceKmerSpec` exists in `kmer_codec.rs`, but it is not used by
+  `cfdna ends`.
+
+Until this is fixed, the CLI help promise about much larger motifs is not fully
+true.
+
+## Implementation Plan
+
+1. Parse the motifs file into validated motif rows before building encoded
+   lookup keys. Keep target assignment and group first-seen order as currently
+   implemented.
+
+2. Build selected side subspaces from the parsed rows:
+   - one optional `SubspaceKmerSpec` for inside bases when `k_inside > 0`
+   - one optional `SubspaceKmerSpec` for outside bases when `k_outside > 0`
+   - no subspace for a disabled side; the disabled side should still encode as
+     the existing zero code.
+
+3. Replace the selected lookup key with a key whose side codes come from the
+   selected subspaces, not from ordinary radix-5 `KmerSpec` codes. Keep
+   `reverse_on_decode` in the key.
+
+4. Encode parser-derived left and right observable states through the selected
+   subspace specs:
+   - left key uses the motif as written
+   - right key uses reverse-complemented inside/outside halves and
+     `reverse_on_decode = true`
+   - both keys map to the target assigned by the motif row.
+
+5. Update selected counting so it encodes observed motif halves through the
+   selected subspace specs and skips immediately when either enabled side returns
+   the missing sentinel. Only construct the combined selected key after both
+   enabled sides are selected.
+
+6. Update reference precomputation for selected motifs. Tile context should
+   build one selected-code array per enabled side from `SubspaceKmerSpec`.
+   Radix-backed subspaces can reuse ordinary precomputation and remap codes;
+   byte-backed subspaces scan the reference slice and look up normalized bytes.
+
+7. Keep the no-file path unchanged. It should continue using ordinary
+   `KmerSpec`, ordinary `EncodedEndMotifKey`, existing decoding, and the current
+   k limit.
+
+8. Add regression tests:
+   - `--motifs-file` with `k_inside > 27` succeeds on a tiny selected axis.
+   - unselected large-k observations are skipped before target insertion.
+   - right-end reverse-complement state maps to the correct target/group.
+   - no-file large k still fails on the ordinary path.
+   - `--motifs-file + --collapse-complement` is rejected.
+
+9. After the implementation is real, distill current behavior into
+   `.AI/docs/specs/ends_spec.md` and remove or rewrite this future note so it no
+   longer describes stale design-only structures.
 
 ## Motif Identity
 

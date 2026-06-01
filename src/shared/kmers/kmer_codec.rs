@@ -6,6 +6,9 @@ use anyhow::{Context, Result, bail, ensure};
 use fxhash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 
+/// Largest k-mer length whose full radix-5 code space fits in `u64` with sentinel values.
+pub const MAX_RADIX5_KMER_SIZE: usize = 27;
+
 /// * `k`    – length
 /// * `code` – packed reference code in the narrowest type, promoted to u64
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -266,9 +269,8 @@ pub fn build_kmer_specs(kmer_sizes: &[u8]) -> Result<FxHashMap<u8, KmerSpec>> {
         if k < 1 {
             bail!("Illegal k-mer size {k}. Must be positive.");
         }
-        // TODO: Calculate actual limit possible!
-        if k > 27 {
-            bail!("k-mer size {k} is too large. Highest allowed k is 27");
+        if k as usize > MAX_RADIX5_KMER_SIZE {
+            bail!("k-mer size {k} is too large. Highest allowed k is {MAX_RADIX5_KMER_SIZE}");
         }
         if !seen.insert(k) {
             bail!("Duplicate k-mer size {k}");
@@ -391,6 +393,11 @@ pub fn build_left_aligned_codes_per_k(
     }
 
     map
+}
+
+/// Build one packed left-aligned code vector for a single k-mer spec.
+pub(crate) fn build_left_aligned_codes_for_spec(seq: &[u8], spec: &KmerSpec) -> KmerCodes {
+    pack_codes(spec.build_left_aligned_codes(seq), spec.width)
 }
 
 /* ------------------------------------------------------------------------- */

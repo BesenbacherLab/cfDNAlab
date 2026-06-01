@@ -11,7 +11,7 @@ use crate::{
             config::EndsConfig,
             config_structs::{ClipStrategy, KmerSource, WindowMotifAssigner},
             counting::{
-                EndCountsByWindow, EndMotifColumnKind, SelectedEndCountsByWindow,
+                EndCountsByWindow, EndMotifColumnKind, EndMotifHalfSpec, SelectedEndCountsByWindow,
                 SelectedEndMotifLookup, decode_end_motif_counts,
             },
             motifs::{
@@ -337,8 +337,36 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     let mut final_outputs = FinalOutputFiles::new(temp_dir)?;
 
     let counts_prefix = &dot_join(&[prefix, "counts"]);
-    let inside_spec = build_optional_kmer_spec(opt.k_inside, "inside")?;
-    let outside_spec = build_optional_kmer_spec(opt.k_outside, "outside")?;
+
+    // Final sparse output decodes observed radix-5 motif keys into strings. Motifs-file output
+    // uses public labels from the file, so these are intentionally `None` when `--motifs-file` is
+    // used.
+    let (inside_decode_spec, outside_decode_spec) = if selected_motifs.is_none() {
+        (
+            build_optional_kmer_spec(opt.k_inside, "inside")?,
+            build_optional_kmer_spec(opt.k_outside, "outside")?,
+        )
+    } else {
+        (None, None)
+    };
+
+    // Tile counting needs an encoder for each enabled motif half. Without a motifs file this is the
+    // full radix-5 codec. With a motifs file it is the parsed codec, which may be a compact
+    // selected subspace for large k. Cloning `EndMotifHalfSpec` only clones Arc handles to codec
+    // metadata, never per-tile reference-code arrays.
+    let (inside_counting_spec, outside_counting_spec) = match selected_motifs.as_ref() {
+        Some(lookup) => (lookup.inside_spec.clone(), lookup.outside_spec.clone()),
+        None => (
+            inside_decode_spec
+                .as_ref()
+                .cloned()
+                .map(EndMotifHalfSpec::from_radix5),
+            outside_decode_spec
+                .as_ref()
+                .cloned()
+                .map(EndMotifHalfSpec::from_radix5),
+        ),
+    };
 
     info!(target: COMMAND_TARGET, "Counting per tile");
 
@@ -381,8 +409,8 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
                 temp_dir,
                 counts_prefix,
                 &temp_chrom_name_map,
-                inside_spec.as_ref(),
-                outside_spec.as_ref(),
+                inside_counting_spec.as_ref(),
+                outside_counting_spec.as_ref(),
                 selected_motifs.as_ref(),
             )?;
             pb.inc(1);
@@ -472,8 +500,8 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
                     |(original_idx, counts)| -> Result<(usize, FxHashMap<String, f64>)> {
                         let decoded = decode_end_motif_counts(
                             &counts,
-                            inside_spec.as_ref(),
-                            outside_spec.as_ref(),
+                            inside_decode_spec.as_ref(),
+                            outside_decode_spec.as_ref(),
                             opt.collapse_complement,
                         );
                         let idx: usize = original_idx
@@ -502,8 +530,8 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
             }
             let motif_order = if opt.all_motifs {
                 build_all_end_motif_order(
-                    inside_spec.as_ref(),
-                    outside_spec.as_ref(),
+                    inside_decode_spec.as_ref(),
+                    outside_decode_spec.as_ref(),
                     opt.collapse_complement,
                 )?
             } else {
@@ -744,8 +772,8 @@ fn process_tile(
     temp_dir: &Path,
     counts_prefix: &str,
     temp_chrom_name_map: &TempChromNameMap,
-    inside_spec: Option<&crate::shared::kmers::kmer_codec::KmerSpec>,
-    outside_spec: Option<&crate::shared::kmers::kmer_codec::KmerSpec>,
+    inside_spec: Option<&crate::commands::ends::counting::EndMotifHalfSpec>,
+    outside_spec: Option<&crate::commands::ends::counting::EndMotifHalfSpec>,
     selected_motifs: Option<&SelectedEndMotifLookup>,
 ) -> Result<Option<TileResult>> {
     let fetch_window_opt = window_opt.as_fetch_window_spec();

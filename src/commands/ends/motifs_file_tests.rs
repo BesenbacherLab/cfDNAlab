@@ -1,5 +1,8 @@
 use super::*;
-use crate::commands::ends::counting::{EndMotifColumnKind, SelectedEndCountsByWindow};
+use crate::commands::ends::counting::{
+    EndMotifColumnKind, EndMotifHalfSpec, SelectedEndCountsByWindow,
+};
+use crate::shared::kmers::kmer_codec::KmerSpec;
 use std::io::Write;
 
 fn parse_text(
@@ -231,6 +234,47 @@ fn reads_motifs_file_from_path() -> anyhow::Result<()> {
 
     // Assert
     assert_eq!(target_labels(&lookup), vec!["AC_GT"]);
+
+    Ok(())
+}
+
+#[test]
+fn parses_crlf_terminated_motifs_file_rows() -> anyhow::Result<()> {
+    // Arrange: Windows-authored TSV files commonly keep `\r` before `\n`. The parser should treat
+    // that as the line ending, not as part of the motif or group label.
+    let contents = "AC_GT\tgroup_one\r\nTT_AA\tgroup_two\r\n";
+
+    // Act
+    let lookup = parse_text(contents, 2, 2)?;
+
+    // Assert
+    assert_eq!(lookup.column_kind, EndMotifColumnKind::MotifGroup);
+    assert_eq!(target_labels(&lookup), vec!["group_one", "group_two"]);
+
+    Ok(())
+}
+
+#[test]
+fn shares_one_selected_subspace_when_inside_and_outside_large_k_match() -> anyhow::Result<()> {
+    // Arrange: both motif halves use k=30, so they can share one selected half-code universe. The
+    // full inside/outside motif pair is still filtered by the encoded lookup after each half has
+    // been encoded.
+    let contents = format!("{}_{}\n", "C".repeat(30), "A".repeat(30));
+
+    // Act
+    let lookup = parse_text(&contents, 30, 30)?;
+
+    // Assert
+    match (&lookup.inside_spec, &lookup.outside_spec) {
+        (
+            Some(EndMotifHalfSpec::Subspace(inside_spec)),
+            Some(EndMotifHalfSpec::Subspace(outside_spec)),
+        ) => assert!(
+            std::sync::Arc::ptr_eq(inside_spec, outside_spec),
+            "inside and outside should share the same selected subspace"
+        ),
+        other => panic!("expected shared subspace specs, got {other:?}"),
+    }
 
     Ok(())
 }

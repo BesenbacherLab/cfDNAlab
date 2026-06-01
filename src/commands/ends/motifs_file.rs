@@ -13,17 +13,20 @@
 use crate::{
     commands::ends::{
         counting::{
-            EncodedEndMotifKey, EndMotifColumnKind, EndMotifCounts, SelectedEndCountsByWindow,
-            SelectedEndMotifLookup,
+            EncodedEndMotifKey, EndMotifColumnKind, EndMotifCounts, EndMotifHalfSpec,
+            SelectedEndCountsByWindow, SelectedEndMotifLookup,
         },
         motifs::build_optional_kmer_spec,
         output::ensure_dense_end_motif_output_size,
     },
-    shared::{base::rev_complement, kmers::kmer_codec::KmerSpec},
+    shared::{
+        base::rev_complement,
+        kmers::kmer_codec::{MAX_RADIX5_KMER_SIZE, build_subspace_kmer_spec},
+    },
 };
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::{FxHashMap, FxHashSet};
-use std::{fs, path::Path};
+use std::{fs, path::Path, sync::Arc};
 
 /// Shape of the motifs file after splitting each row on tabs.
 ///
@@ -49,6 +52,12 @@ struct ParsedEndMotifLabel {
     outside: String,
     /// Uppercase inside-of-fragment sequence, empty when `k_inside = 0`
     inside: String,
+}
+
+struct ParsedMotifsFileRow {
+    motif: ParsedEndMotifLabel,
+    target_idx: u32,
+    line_number: usize,
 }
 
 /// Parse a selected end-motifs file from disk.
@@ -213,18 +222,16 @@ fn parse_selected_end_motifs(
         "--motifs-file must contain at least one motif"
     );
 
-    let inside_spec = build_optional_kmer_spec(k_inside, "--k-inside")?;
-    let outside_spec = build_optional_kmer_spec(k_outside, "--k-outside")?;
-
     let mut mode = None;
     let mut labels = Vec::new();
     let mut target_by_group = FxHashMap::default();
-    let mut lookup = FxHashMap::default();
     let mut seen_motif_labels = FxHashSet::default();
+    let mut rows = Vec::new();
 
     for (line_index, line) in contents.lines().enumerate() {
         let line_number = line_index + 1;
         // A motifs file is a simple TSV
+        let line = line.trim_end_matches('\r');
         let columns: Vec<&str> = line.split('\t').collect();
         let row_mode = parse_row_mode(&columns, line_number)?;
         match mode {
@@ -253,20 +260,38 @@ fn parse_selected_end_motifs(
             }
         };
 
-        // Store both observable end states for this public motif label
-        for key in encoded_keys_for_motif(&motif, inside_spec.as_ref(), outside_spec.as_ref())? {
-            insert_lookup_key(&mut lookup, key, target_idx, &motif.label, line_number)?;
-        }
+        rows.push(ParsedMotifsFileRow {
+            motif,
+            target_idx,
+            line_number,
+        });
     }
 
     let column_kind = match mode.context("--motifs-file must contain at least one motif")? {
         MotifsFileMode::Ungrouped => EndMotifColumnKind::Motif,
         MotifsFileMode::Grouped => EndMotifColumnKind::MotifGroup,
     };
+    let (inside_spec, outside_spec) = build_selected_motif_half_specs(k_inside, k_outside, &rows)?;
+    let mut lookup = FxHashMap::default();
+    for row in &rows {
+        // Store both observable end states for this public motif label
+        for key in encoded_keys_for_motif(&row.motif, inside_spec.as_ref(), outside_spec.as_ref())?
+        {
+            insert_lookup_key(
+                &mut lookup,
+                key,
+                row.target_idx,
+                &row.motif.label,
+                row.line_number,
+            )?;
+        }
+    }
 
     Ok(SelectedEndMotifLookup {
         labels,
         column_kind,
+        inside_spec,
+        outside_spec,
         lookup,
     })
 }
@@ -490,6 +515,68 @@ fn target_idx_for_group(
     Ok(target_idx)
 }
 
+fn build_selected_motif_half_specs(
+    k_inside: usize,
+    k_outside: usize,
+    rows: &[ParsedMotifsFileRow],
+) -> Result<(Option<EndMotifHalfSpec>, Option<EndMotifHalfSpec>)> {
+    if k_inside > MAX_RADIX5_KMER_SIZE && k_inside == k_outside && k_inside > 0 {
+        // One selected subspace is enough when both halves have the same length. The full
+        // inside/outside pair is still checked by the encoded lookup, so sharing this half-code
+        // universe only broadens the cheap prefilter and avoids duplicate per-tile code arrays.
+        let mut selected_halves = Vec::with_capacity(rows.len() * 4);
+        for row in rows {
+            collect_selected_half_states(&mut selected_halves, &row.motif.inside);
+            collect_selected_half_states(&mut selected_halves, &row.motif.outside);
+        }
+        let shared_spec = Arc::new(
+            build_subspace_kmer_spec(k_inside, &selected_halves)
+                .with_context(|| "building shared selected motif-half subspace")?,
+        );
+        return Ok((
+            Some(EndMotifHalfSpec::from_shared_subspace(shared_spec.clone())),
+            Some(EndMotifHalfSpec::from_shared_subspace(shared_spec)),
+        ));
+    }
+
+    Ok((
+        build_optional_selected_motif_half_spec(k_inside, "--k-inside", rows, |motif| {
+            motif.inside.as_str()
+        })?,
+        build_optional_selected_motif_half_spec(k_outside, "--k-outside", rows, |motif| {
+            motif.outside.as_str()
+        })?,
+    ))
+}
+
+fn build_optional_selected_motif_half_spec(
+    k: usize,
+    label: &str,
+    rows: &[ParsedMotifsFileRow],
+    motif_half: impl Fn(&ParsedEndMotifLabel) -> &str,
+) -> Result<Option<EndMotifHalfSpec>> {
+    if k == 0 {
+        return Ok(None);
+    }
+    if k <= MAX_RADIX5_KMER_SIZE {
+        return build_optional_kmer_spec(k, label)
+            .map(|spec| spec.map(EndMotifHalfSpec::from_radix5));
+    }
+
+    let mut selected_halves = Vec::with_capacity(rows.len() * 2);
+    for row in rows {
+        collect_selected_half_states(&mut selected_halves, motif_half(&row.motif));
+    }
+    let spec = build_subspace_kmer_spec(k, &selected_halves)
+        .with_context(|| format!("building selected {label} subspace"))?;
+    Ok(Some(EndMotifHalfSpec::from_subspace(spec)))
+}
+
+fn collect_selected_half_states(selected_halves: &mut Vec<String>, half: &str) {
+    selected_halves.push(half.to_string());
+    selected_halves.push(rev_complement(half));
+}
+
 /// Build the encoded lookup keys produced by one public motif label.
 ///
 /// The left key is the motif as written. The right key uses reverse complements for both halves and
@@ -511,8 +598,8 @@ fn target_idx_for_group(
 ///   Encoded left-end and right-end states for the motif
 fn encoded_keys_for_motif(
     motif: &ParsedEndMotifLabel,
-    inside_spec: Option<&KmerSpec>,
-    outside_spec: Option<&KmerSpec>,
+    inside_spec: Option<&EndMotifHalfSpec>,
+    outside_spec: Option<&EndMotifHalfSpec>,
 ) -> Result<[EncodedEndMotifKey; 2]> {
     let left_key = EncodedEndMotifKey {
         inside_code: encode_optional_motif_half(
@@ -574,7 +661,7 @@ fn encoded_keys_for_motif(
 ///   Encoded motif-half code, or zero for a disabled side
 fn encode_optional_motif_half(
     motif_half: &str,
-    spec: Option<&KmerSpec>,
+    spec: Option<&EndMotifHalfSpec>,
     side_name: &str,
     motif_label: &str,
 ) -> Result<u64> {
@@ -589,14 +676,10 @@ fn encode_optional_motif_half(
     // The parser already checked length and bases, but sentinel checks keep the codec boundary safe
     let code = spec.encode_kmer_bytes(motif_half.as_bytes());
     ensure!(
-        code != spec.sentinel_none(),
+        !spec.code_is_invalid(code),
         "motif `{motif_label}` has {side_name} length {}, expected {}",
         motif_half.len(),
-        spec.k
-    );
-    ensure!(
-        code != spec.sentinel_n(),
-        "motif `{motif_label}` has invalid {side_name} bases"
+        spec.k()
     );
     Ok(code)
 }

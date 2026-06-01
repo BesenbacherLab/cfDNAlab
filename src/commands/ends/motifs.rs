@@ -9,23 +9,20 @@ use crate::{
         config::EndsConfig,
         config_structs::{ClipStrategy, KmerSource, WindowMotifAssigner},
         counting::{
-            EncodedEndMotifKey, EndCountsByWindow, EndMotifCounts, SelectedEndCountsByWindow,
-            SelectedEndMotifLookup,
+            EncodedEndMotifKey, EndCountsByWindow, EndMotifCounts, EndMotifHalfSpec,
+            SelectedEndCountsByWindow, SelectedEndMotifLookup,
         },
     },
     shared::{
         blacklist::{apply_blacklist_mask_to_seq, apply_mask::BLACKLIST_BYTE},
         fragment::ends_fragment::{FragmentWithEnds, ResolvedFragmentEnd},
         interval::Interval,
-        kmers::kmer_codec::{
-            KmerCodes, KmerSpec, build_kmer_specs, build_left_aligned_codes_per_k,
-        },
+        kmers::kmer_codec::{KmerCodes, KmerSpec, build_kmer_specs},
         reference::read_seq_in_range,
         tiled_run::Tile,
     },
 };
 use anyhow::{Context, Result};
-use fxhash::FxHashMap;
 use std::sync::Arc;
 
 /// Reference-backed motif resources for one tile.
@@ -40,9 +37,9 @@ pub(crate) struct TileMotifContext<'a> {
     /// Tile reference bases, already blacklist-masked when needed
     reference_bases: Option<Vec<u8>>,
     /// Spec for the inside half, if `k_inside > 0`
-    inside_spec: Option<KmerSpec>,
+    inside_spec: Option<EndMotifHalfSpec>,
     /// Spec for the outside half, if `k_outside > 0`
-    outside_spec: Option<KmerSpec>,
+    outside_spec: Option<EndMotifHalfSpec>,
     /// Precomputed masked-reference codes for inside lookups
     inside_codes: Option<Arc<KmerCodes>>,
     /// Precomputed masked-reference codes for outside lookups
@@ -207,8 +204,8 @@ pub(crate) fn build_tile_motif_context<'a>(
     reference_span: Interval<u64>,
     chrom_len: u64,
     blacklist_intervals: &'a [Interval<u64>],
-    inside_spec: Option<&KmerSpec>,
-    outside_spec: Option<&KmerSpec>,
+    inside_spec: Option<&EndMotifHalfSpec>,
+    outside_spec: Option<&EndMotifHalfSpec>,
 ) -> Result<TileMotifContext<'a>> {
     let inside_spec = inside_spec.cloned();
     let outside_spec = outside_spec.cloned();
@@ -255,9 +252,12 @@ pub(crate) fn build_tile_motif_context<'a>(
     }
 
     let (inside_codes, outside_codes) = match (inside_spec.as_ref(), outside_spec.as_ref()) {
-        (Some(inside_spec), Some(outside_spec)) if inside_spec.k == outside_spec.k => {
+        (Some(inside_spec), Some(outside_spec))
+            if inside_spec.can_share_reference_codes_with(outside_spec) =>
+        {
             let shared_codes =
                 build_precomputed_reference_codes(Some(inside_spec), &reference_bases);
+            // Clone the `Arc` handle, not the underlying precomputed code vector
             (shared_codes.clone(), shared_codes)
         }
         _ => (
@@ -278,7 +278,12 @@ pub(crate) fn build_tile_motif_context<'a>(
     })
 }
 
-/// Precompute one tile-local radix-5 code vector for a single motif half.
+/// Precompute one tile-local reference-code vector for a single motif half.
+///
+/// `EndMotifHalfSpec` owns the storage choice. Full-space radix-5 specs build packed radix-5
+/// arrays, while selected-subspace specs build compact arrays over the requested motif halves.
+/// Keeping that dispatch behind the spec prevents the tile code from rebuilding temporary spec maps
+/// and keeps same-k inside/outside sharing explicit at the call site.
 ///
 /// Parameters
 /// ----------
@@ -292,20 +297,11 @@ pub(crate) fn build_tile_motif_context<'a>(
 /// - `Option<Arc<KmerCodes>>`:
 ///   Shared per-position codes for that `k`, or `None` when the half is empty
 fn build_precomputed_reference_codes(
-    spec: Option<&KmerSpec>,
+    spec: Option<&EndMotifHalfSpec>,
     reference_bases: &[u8],
 ) -> Option<Arc<KmerCodes>> {
     let spec = spec?;
-    let k: u8 = spec
-        .k
-        .try_into()
-        .expect("validated k-mer size should fit into u8");
-    let mut spec_map = FxHashMap::default();
-    spec_map.insert(k, spec.clone());
-    let mut codes_by_k = build_left_aligned_codes_per_k(reference_bases, &spec_map);
-    Some(Arc::new(codes_by_k.remove(&k).expect(
-        "missing precomputed k-mer codes after precomputation",
-    )))
+    Some(Arc::new(spec.build_left_aligned_codes(reference_bases)))
 }
 
 /// Count the relevant end motifs from one fragment into one output window.
@@ -572,11 +568,11 @@ fn maybe_encode_end_motif_key(
 /// - `bool`:
 ///   `true` when the code is a sentinel and the end should be skipped
 #[inline]
-fn motif_code_is_invalid(code: u64, spec: Option<&KmerSpec>) -> bool {
+fn motif_code_is_invalid(code: u64, spec: Option<&EndMotifHalfSpec>) -> bool {
     let Some(spec) = spec else {
         return false;
     };
-    code == spec.sentinel_none() || code == spec.sentinel_n()
+    spec.code_is_invalid(code)
 }
 
 /// Encode the inside-fragment half for one end.
@@ -625,9 +621,9 @@ fn encode_inside_code(
             let start_pos = match end_side {
                 EndSide::Left => end.boundary_pos as u64,
                 EndSide::Right => {
-                    let k = spec.k as u64;
+                    let k = spec.k() as u64;
                     if (end.boundary_pos as u64) < k {
-                        return Ok(spec.sentinel_none());
+                        return Ok(spec.missing_reference_code());
                     }
                     end.boundary_pos as u64 - k
                 }
@@ -670,7 +666,7 @@ fn encode_inside_code(
 fn validate_blacklist_for_read_inside_code(
     end: &ResolvedFragmentEnd,
     end_side: EndSide,
-    spec: &KmerSpec,
+    spec: &EndMotifHalfSpec,
     motif_context: &TileMotifContext<'_>,
 ) -> Result<Option<u64>> {
     if motif_context.blacklist_intervals.is_empty() {
@@ -687,7 +683,7 @@ fn validate_blacklist_for_read_inside_code(
         EndSide::Right => {
             let validation_bp = validation_bp as u64;
             if (end.boundary_pos as u64) < validation_bp {
-                return Ok(Some(spec.sentinel_none()));
+                return Ok(Some(spec.missing_reference_code()));
             }
             end.boundary_pos as u64 - validation_bp
         }
@@ -698,7 +694,7 @@ fn validate_blacklist_for_read_inside_code(
     if is_unmasked {
         Ok(None)
     } else {
-        Ok(Some(spec.sentinel_n()))
+        Ok(Some(spec.masked_reference_code()))
     }
 }
 
@@ -707,7 +703,7 @@ fn validate_blacklist_for_read_inside_code(
 fn masked_reference_span_is_valid(
     start_pos: u64,
     span_bp: usize,
-    spec: &KmerSpec,
+    spec: &EndMotifHalfSpec,
     motif_context: &TileMotifContext<'_>,
 ) -> Result<bool> {
     if start_pos + span_bp as u64 > motif_context.chrom_len {
@@ -723,7 +719,7 @@ fn masked_reference_span_is_valid(
             let loaded_end = motif_context.reference_start + reference_bases.len() as u64;
             format!(
                 "motif reference lookup escaped preloaded tile span: start={start_pos}, k={}, loaded_reference_span=[{}, {})",
-                spec.k, motif_context.reference_start, loaded_end
+                spec.k(), motif_context.reference_start, loaded_end
             )
         })?;
 
@@ -757,9 +753,9 @@ fn encode_outside_code(
 
     let start_pos = match end_side {
         EndSide::Left => {
-            let k = spec.k as u64;
+            let k = spec.k() as u64;
             if boundary_pos < k {
-                return Ok(spec.sentinel_none());
+                return Ok(spec.missing_reference_code());
             }
             boundary_pos - k
         }
@@ -793,23 +789,23 @@ fn encode_outside_code(
 ///   Encoded reference-backed motif code or an invalid sentinel
 fn get_reference_code(
     start_pos: u64,
-    spec: &KmerSpec,
+    spec: &EndMotifHalfSpec,
     precomputed_codes: Option<&KmerCodes>,
     motif_context: &TileMotifContext<'_>,
 ) -> Result<u64> {
-    if start_pos + spec.k as u64 > motif_context.chrom_len {
-        return Ok(spec.sentinel_none());
+    if start_pos + spec.k() as u64 > motif_context.chrom_len {
+        return Ok(spec.missing_reference_code());
     }
 
     let codes = precomputed_codes
         .context("missing precomputed reference codes for a reference-backed motif lookup")?;
-    let local_start = try_reference_start_index(start_pos, spec.k, motif_context).with_context(
+    let local_start = try_reference_start_index(start_pos, spec.k(), motif_context).with_context(
         || {
             let loaded_end = motif_context.reference_start
                 + motif_context.reference_bases.as_ref().map_or(0, Vec::len) as u64;
             format!(
                 "motif reference lookup escaped preloaded tile span: start={start_pos}, k={}, loaded_reference_span=[{}, {})",
-                spec.k, motif_context.reference_start, loaded_end
+                spec.k(), motif_context.reference_start, loaded_end
             )
         },
     )?;

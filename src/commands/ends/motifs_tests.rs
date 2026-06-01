@@ -5,17 +5,22 @@ use crate::shared::{
     tiled_run::Tile,
 };
 use crate::commands::ends::counting::decode_end_motif_counts;
+use fxhash::FxHashMap;
 
 fn spec_for_k(k: u8) -> KmerSpec {
     let specs = build_kmer_specs(&[k]).expect("valid k-mer spec");
     specs[&k].clone()
 }
 
+fn half_spec_for_k(k: u8) -> EndMotifHalfSpec {
+    EndMotifHalfSpec::from_radix5(spec_for_k(k))
+}
+
 fn read_only_motif_context(k_inside: u8) -> TileMotifContext<'static> {
     TileMotifContext {
         reference_start: 0,
         reference_bases: None,
-        inside_spec: Some(spec_for_k(k_inside)),
+        inside_spec: Some(half_spec_for_k(k_inside)),
         outside_spec: None,
         inside_codes: None,
         outside_codes: None,
@@ -38,10 +43,12 @@ fn reference_motif_context_with_chrom_len(
     k_outside: Option<u8>,
     chrom_len: u64,
 ) -> TileMotifContext<'static> {
-    let inside_spec = k_inside.map(spec_for_k);
-    let outside_spec = k_outside.map(spec_for_k);
+    let inside_spec = k_inside.map(half_spec_for_k);
+    let outside_spec = k_outside.map(half_spec_for_k);
     let (inside_codes, outside_codes) = match (inside_spec.as_ref(), outside_spec.as_ref()) {
-        (Some(inside_spec), Some(outside_spec)) if inside_spec.k == outside_spec.k => {
+        (Some(inside_spec), Some(outside_spec))
+            if inside_spec.can_share_reference_codes_with(outside_spec) =>
+        {
             let shared_codes = build_precomputed_reference_codes(Some(inside_spec), seq);
             (shared_codes.clone(), shared_codes)
         }
@@ -316,10 +323,12 @@ fn count_fragment_in_window_reference_source_decodes_directional_left_and_right_
         }
     );
     let encoded_counts = counts_by_window.get(&11).expect("window should be present");
+    let inside_spec = spec_for_k(2);
+    let outside_spec = spec_for_k(2);
     let decoded_counts = decode_end_motif_counts(
         encoded_counts,
-        motif_context.inside_spec.as_ref(),
-        motif_context.outside_spec.as_ref(),
+        Some(&inside_spec),
+        Some(&outside_spec),
         false,
     );
 
@@ -362,10 +371,12 @@ fn count_fragment_in_window_reference_source_endpoint_decodes_only_right_termina
         }
     );
     let encoded_counts = counts_by_window.get(&12).expect("window should be present");
+    let inside_spec = spec_for_k(2);
+    let outside_spec = spec_for_k(2);
     let decoded_counts = decode_end_motif_counts(
         encoded_counts,
-        motif_context.inside_spec.as_ref(),
-        motif_context.outside_spec.as_ref(),
+        Some(&inside_spec),
+        Some(&outside_spec),
         false,
     );
 
@@ -392,6 +403,8 @@ fn count_selected_fragment_in_window_counts_only_lookup_hits() {
     let selected_motifs = SelectedEndMotifLookup {
         labels: vec!["_AC".to_string()],
         column_kind: crate::commands::ends::counting::EndMotifColumnKind::Motif,
+        inside_spec: None,
+        outside_spec: None,
         lookup: FxHashMap::from_iter([(left_key, 0)]),
     };
     let mut counts_by_window = SelectedEndCountsByWindow::default();
@@ -457,6 +470,8 @@ fn count_selected_fragment_in_window_reference_source_uses_reverse_state_for_tar
             "wrong_right_orientation".to_string(),
         ],
         column_kind: crate::commands::ends::counting::EndMotifColumnKind::MotifGroup,
+        inside_spec: None,
+        outside_spec: None,
         lookup: FxHashMap::from_iter([
             (left_key, 0),
             (right_key, 1),
@@ -525,7 +540,8 @@ fn validate_blacklist_for_read_inside_code_returns_masked_reference_code_for_rea
     // - left inside with `k=2` at boundary 2 reads genomic bases [2, 4)
     // - after masking [2, 3), that span starts with `N`
     // - any k-mer containing `N` must encode as `sentinel_n`
-    let inside_spec = spec_for_k(2);
+    let inside_radix_spec = spec_for_k(2);
+    let inside_spec = EndMotifHalfSpec::from_radix5(inside_radix_spec.clone());
     let mut reference_bases = b"ACGTAC".to_vec();
     let blacklist = [Interval::new(2_u64, 3_u64).expect("valid blacklist")];
     apply_blacklist_mask_to_seq(&mut reference_bases, &blacklist, 0);
@@ -556,14 +572,15 @@ fn validate_blacklist_for_read_inside_code_returns_masked_reference_code_for_rea
     .expect("blacklist validation should work");
 
     // Assert
-    assert_eq!(code, Some(inside_spec.sentinel_n()));
+    assert_eq!(code, Some(inside_radix_spec.sentinel_n()));
 }
 
 #[test]
 fn validate_blacklist_for_read_inside_code_ignores_clipped_only_prefix_in_include_at_aligned_boundary_mode() {
     // Arrange: the blacklist masks genomic position 1, but this left end only validates the
     // aligned-overlapping suffix at position 2. The clipped-only prefix must not trigger skipping.
-    let inside_spec = spec_for_k(2);
+    let inside_radix_spec = spec_for_k(2);
+    let inside_spec = EndMotifHalfSpec::from_radix5(inside_radix_spec);
     let mut reference_bases = b"ACGTAC".to_vec();
     let blacklist = [Interval::new(1_u64, 2_u64).expect("valid blacklist")];
     apply_blacklist_mask_to_seq(&mut reference_bases, &blacklist, 0);

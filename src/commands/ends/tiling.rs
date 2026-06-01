@@ -304,7 +304,7 @@ pub(crate) fn merge_selected_tile_payload(
 ) -> Result<()> {
     for window_counts in tile_payload {
         for entry in window_counts.entries {
-            // Keep the same sparse-count rules as the ordinary motif path
+            // Keep the same sparse-count rules as full motif counting
             if EndMotifCounts::should_store_weight(entry.value)? {
                 merged
                     .entry(window_counts.original_idx)

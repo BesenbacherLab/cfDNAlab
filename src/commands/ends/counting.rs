@@ -1,10 +1,11 @@
 use crate::shared::{
     base::{ZEROISH_F64_TOLERANCE, make_canonical, rev_complement},
-    kmers::kmer_codec::KmerSpec,
+    kmers::kmer_codec::{KmerCodes, KmerSpec, SubspaceKmerSpec, build_left_aligned_codes_for_spec},
 };
 use anyhow::{Result, ensure};
 use fxhash::FxHashMap;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// Encoded key for one full end motif before final decoding.
 ///
@@ -49,16 +50,19 @@ pub(crate) enum EndMotifColumnKind {
 /// - The output target axis, stored in `labels`
 /// - The encoded motif states that should count into each target, stored in `lookup`
 ///
-/// `lookup` is keyed by the same encoded state that the hot counting path already builds for
-/// ordinary motif counting. It includes the `reverse_on_decode` flag, so a left-end motif and the
-/// reverse-complemented right-end state stay distinct when the motifs file maps them to different
-/// targets.
-#[derive(Debug, Clone, PartialEq)]
+/// `lookup` is keyed by the same encoded state that tile-local motif counting builds. It includes
+/// the `reverse_on_decode` flag, so left-end motifs and reverse-complemented right-end states stay
+/// distinct when the motifs file maps them to different targets.
+#[derive(Debug, Clone)]
 pub(crate) struct SelectedEndMotifLookup {
     /// Output labels in motifs-file target order
     pub(crate) labels: Vec<String>,
     /// Whether `labels` are concrete motifs or user-defined motif groups
     pub(crate) column_kind: EndMotifColumnKind,
+    /// Codec spec for the inside half, if `k_inside > 0`
+    pub(crate) inside_spec: Option<EndMotifHalfSpec>,
+    /// Codec spec for the outside half, if `k_outside > 0`
+    pub(crate) outside_spec: Option<EndMotifHalfSpec>,
     /// Encoded end-motif key to original target index in `labels`
     pub(crate) lookup: FxHashMap<EncodedEndMotifKey, u32>,
 }
@@ -66,8 +70,9 @@ pub(crate) struct SelectedEndMotifLookup {
 impl SelectedEndMotifLookup {
     /// Return the motifs-file target for an encoded end motif.
     ///
-    /// This is intentionally a thin map lookup. The ordinary no-file path never calls it, and the
-    /// selected path has already paid the parsing and validation cost before tile processing starts.
+    /// This is intentionally a thin map lookup. Counting without a motifs file never calls it, and
+    /// motifs-file counting has already paid the parsing and validation cost before tile processing
+    /// starts.
     ///
     /// Parameters
     /// ----------
@@ -88,6 +93,104 @@ impl SelectedEndMotifLookup {
 /// The outer key is the global output row. The inner key is the motifs-file target index assigned
 /// during parsing. Post-processing compacts those target indices when `--all-motifs` is not set.
 pub(crate) type SelectedEndCountsByWindow = FxHashMap<u64, FxHashMap<u32, f64>>;
+
+/// Codec used for one inside or outside motif half during tile-local counting.
+///
+/// Full motif output uses the radix-5 [`KmerSpec`] so sparse encoded keys can be decoded into motif
+/// strings during reduction. Motifs-file output can use [`SubspaceKmerSpec`] for k values that are
+/// too large for the full radix-5 universe, because output labels already come from the motifs file.
+#[derive(Clone, Debug)]
+pub(crate) enum EndMotifHalfSpec {
+    /// Full radix-5 k-mer space
+    Radix5(Arc<KmerSpec>),
+    /// Compact selected-k-mer subspace
+    Subspace(Arc<SubspaceKmerSpec>),
+}
+
+impl EndMotifHalfSpec {
+    /// Wrap a full-space radix-5 spec in the end-motif codec enum.
+    pub(crate) fn from_radix5(spec: KmerSpec) -> Self {
+        EndMotifHalfSpec::Radix5(Arc::new(spec))
+    }
+
+    /// Wrap a selected-subspace spec in the end-motif codec enum.
+    pub(crate) fn from_subspace(spec: SubspaceKmerSpec) -> Self {
+        EndMotifHalfSpec::Subspace(Arc::new(spec))
+    }
+
+    /// Wrap a shared selected-subspace spec in the end-motif codec enum.
+    pub(crate) fn from_shared_subspace(spec: Arc<SubspaceKmerSpec>) -> Self {
+        EndMotifHalfSpec::Subspace(spec)
+    }
+
+    /// Return the motif-half length.
+    #[inline]
+    pub(crate) fn k(&self) -> usize {
+        match self {
+            EndMotifHalfSpec::Radix5(spec) => spec.k,
+            EndMotifHalfSpec::Subspace(spec) => spec.k,
+        }
+    }
+
+    /// Encode one exact motif-half byte slice.
+    #[inline]
+    pub(crate) fn encode_kmer_bytes(&self, seq: &[u8]) -> u64 {
+        match self {
+            EndMotifHalfSpec::Radix5(spec) => spec.encode_kmer_bytes(seq),
+            EndMotifHalfSpec::Subspace(spec) => spec.encode_kmer_bytes(seq),
+        }
+    }
+
+    /// Build per-position codes for a tile-local reference slice.
+    #[inline]
+    pub(crate) fn build_left_aligned_codes(&self, seq: &[u8]) -> KmerCodes {
+        match self {
+            EndMotifHalfSpec::Radix5(spec) => build_left_aligned_codes_for_spec(seq, spec),
+            EndMotifHalfSpec::Subspace(spec) => spec.build_left_aligned_codes(seq),
+        }
+    }
+
+    /// Return whether an encoded code is invalid for this motif half.
+    #[inline]
+    pub(crate) fn code_is_invalid(&self, code: u64) -> bool {
+        match self {
+            EndMotifHalfSpec::Radix5(spec) => {
+                code == spec.sentinel_none() || code == spec.sentinel_n()
+            }
+            EndMotifHalfSpec::Subspace(spec) => code == spec.sentinel_missing(),
+        }
+    }
+
+    /// Return the invalid code used when a reference-coordinate lookup has no full motif half.
+    #[inline]
+    pub(crate) fn missing_reference_code(&self) -> u64 {
+        match self {
+            EndMotifHalfSpec::Radix5(spec) => spec.sentinel_none(),
+            EndMotifHalfSpec::Subspace(spec) => spec.sentinel_missing(),
+        }
+    }
+
+    /// Return the invalid code used when blacklist masking touches a reference motif half.
+    #[inline]
+    pub(crate) fn masked_reference_code(&self) -> u64 {
+        match self {
+            EndMotifHalfSpec::Radix5(spec) => spec.sentinel_n(),
+            EndMotifHalfSpec::Subspace(spec) => spec.sentinel_missing(),
+        }
+    }
+
+    /// Return whether two specs can share one precomputed reference-code vector.
+    #[inline]
+    pub(crate) fn can_share_reference_codes_with(&self, other: &Self) -> bool {
+        matches!(
+            (self, other),
+            (EndMotifHalfSpec::Radix5(left), EndMotifHalfSpec::Radix5(right)) if left.k == right.k
+        ) || matches!(
+            (self, other),
+            (EndMotifHalfSpec::Subspace(left), EndMotifHalfSpec::Subspace(right)) if Arc::ptr_eq(left, right)
+        )
+    }
+}
 
 impl EndMotifCounts {
     /// Create an empty sparse end-motif counter.

@@ -52,7 +52,7 @@ const TARGET_DENSE_COUNT_CHUNK_CELLS: usize = 2_000_000;
 pub(crate) enum EndMotifRowMetadata<'a> {
     /// One row covering all selected chromosomes.
     Global,
-    /// Ordinary genomic windows in the same row order as the count matrix.
+    /// Genomic window rows in the same row order as the count matrix.
     Windows {
         /// Per-row chromosome, coordinate, and blacklist metadata
         bin_info: &'a [WindowBinInfo],
@@ -63,7 +63,7 @@ pub(crate) enum EndMotifRowMetadata<'a> {
     Groups(Vec<EndGroupSummary<'a>>),
 }
 
-/// Source of ordinary genomic count rows.
+/// Source of genomic window count rows.
 ///
 /// This is written into root metadata as `row_mode`, so downstream readers can distinguish
 /// generated size windows from user-provided BED windows without inspecting coordinate spacing.

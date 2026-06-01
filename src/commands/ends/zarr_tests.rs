@@ -191,7 +191,7 @@ fn motif_group_zarr_writes_json_labels_without_motif_ascii() {
 #[test]
 fn selected_motif_zarr_writes_motif_ascii_labels_in_supplied_order() {
     // Arrange: selected ungrouped motifs are already final output labels when they reach the
-    // writer. The writer must expose them as ordinary motif labels, not as motif groups.
+    // writer. The writer must expose them as concrete motif labels, not as motif groups.
     let temp = TempDir::new().expect("temp dir should be created");
     let motifs = vec!["G_T".to_string(), "A_C".to_string()];
     let bins = index_label_bins(
