@@ -8,6 +8,7 @@
 
  - Adds support for schema v2 end-motif Zarr stores written by `cfdna ends --motifs-file`, including outputs where the motif axis contains user-defined motif groups instead of concrete motif labels.
  - Adds the common `motifs`/`motif_idxs`, `groups`/`group_idxs`, and `window_idxs` selectors to the `sparse_counts_matrix()` and `dense_counts_matrix` functions.
+ - `ends`: Improves error message when sparse data has no counts.
 
 <br />
 

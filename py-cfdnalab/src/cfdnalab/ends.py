@@ -5,6 +5,7 @@ Load cfDNAlab end-motif Zarr outputs.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import numbers
 import pathlib
 from typing import Any, Sequence
@@ -118,6 +119,7 @@ class EndMotifCounts:
         """
         path = pathlib.Path(path)
         _validate_zarr_store_path(path)
+        _reject_empty_end_motif_counts_from_metadata(path)
 
         try:
             store = zarr.open_group(str(path), mode="r", zarr_format=3)
@@ -143,6 +145,8 @@ class EndMotifCounts:
         row = _read_array(store, "row")
         _validate_axis(motif_index, "motif_index")
         _validate_axis(row, "row")
+        if len(motif_index) == 0:
+            _raise_no_end_motif_counts_available()
 
         counts = None
         sparse_row = None
@@ -159,6 +163,8 @@ class EndMotifCounts:
             sparse_motif = _read_array(store, "sparse/motif")
             sparse_count = _read_array(store, "sparse/count")
             sparse_shape = _read_array(store, "sparse/shape")
+            if len(sparse_count) == 0:
+                _raise_no_end_motif_counts_available()
             _validate_sparse_arrays(
                 store,
                 sparse_row,
@@ -1154,6 +1160,72 @@ def _validate_zarr_store_path(path: pathlib.Path) -> None:
         raise ValueError(
             f"End-motif Zarr store is missing Zarr V3 metadata file: {path / 'zarr.json'}"
         )
+
+
+def _raise_no_end_motif_counts_available() -> None:
+    """
+    Raise the public error for sparse stores with no stored counts.
+    """
+    raise ValueError(
+        "No end-motif counts are available in this store. "
+        "If you expected motifs or groups from `--motifs-file` with zero counts to remain in the output, "
+        "rerun `cfdna ends` with `--all-motifs`."
+    )
+
+
+def _reject_empty_end_motif_counts_from_metadata(path: pathlib.Path) -> None:
+    """
+    Reject sparse no-count stores before the Zarr library opens every array node.
+    """
+    root_attributes = _raw_zarr_attributes(path)
+    if root_attributes.get("cfdnalab_schema") != "end_motif_counts":
+        return
+
+    motif_shape = _raw_zarr_array_shape(path, "motif_index")
+    if motif_shape is not None and len(motif_shape) >= 1 and motif_shape[0] == 0:
+        _raise_no_end_motif_counts_available()
+
+    if root_attributes.get("storage_mode") == "sparse_coo":
+        sparse_count_shape = _raw_zarr_array_shape(path, "sparse/count")
+        if (
+            sparse_count_shape is not None
+            and len(sparse_count_shape) >= 1
+            and sparse_count_shape[0] == 0
+        ):
+            _raise_no_end_motif_counts_available()
+
+
+def _raw_zarr_attributes(path: pathlib.Path) -> dict[str, Any]:
+    """
+    Read root attributes directly from `zarr.json`.
+    """
+    try:
+        metadata = json.loads((path / "zarr.json").read_text())
+    except OSError:
+        return {}
+    attributes = metadata.get("attributes")
+    return attributes if isinstance(attributes, dict) else {}
+
+
+def _raw_zarr_array_shape(path: pathlib.Path, array_name: str) -> tuple[int, ...] | None:
+    """
+    Read one array shape directly from its metadata file.
+    """
+    metadata_path = path.joinpath(*array_name.split("/"), "zarr.json")
+    if not metadata_path.is_file():
+        return None
+    metadata = json.loads(metadata_path.read_text())
+    shape = metadata.get("shape")
+    if not isinstance(shape, list):
+        return None
+    parsed_shape = []
+    for dimension in shape:
+        if not isinstance(dimension, numbers.Integral) or int(dimension) < 0:
+            raise ValueError(
+                f"{array_name} metadata shape must be a non-negative integer vector"
+            )
+        parsed_shape.append(int(dimension))
+    return tuple(parsed_shape)
 
 
 def _validate_root_metadata(store: Any) -> tuple[str, str, str]:

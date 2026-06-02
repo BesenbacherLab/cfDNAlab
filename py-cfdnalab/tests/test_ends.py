@@ -558,6 +558,9 @@ def test_end_motif_loader_rejects_schema_and_shape_problems(tmp_path: Path) -> N
         tmp_path / "wrong_sparse_dimension_labels.end_motifs.zarr",
         sparse_dimension_labels=np.array(["motif", "row"], dtype=object),
     )
+    empty_sparse_counts = _write_empty_sparse_global_store(
+        tmp_path / "empty_sparse_counts.end_motifs.zarr",
+    )
     missing_motif_ascii = _write_dense_window_store(
         tmp_path / "missing_motif_ascii.end_motifs.zarr",
         omit={"motif_ascii"},
@@ -577,6 +580,8 @@ def test_end_motif_loader_rejects_schema_and_shape_problems(tmp_path: Path) -> N
         cfdnalab.read_end_motifs(wrong_sparse_dimensions)
     with pytest.raises(ValueError, match="sparse_dimension labels must be"):
         cfdnalab.read_end_motifs(wrong_sparse_dimension_labels)
+    with pytest.raises(ValueError, match="No end-motif counts are available"):
+        cfdnalab.read_end_motifs(empty_sparse_counts)
     with pytest.raises(ValueError, match="missing arrays: \\['motif_ascii'\\]"):
         cfdnalab.read_end_motifs(missing_motif_ascii)
 
@@ -969,6 +974,63 @@ def _write_sparse_global_store(path: Path) -> Path:
         "count",
         np.array([1.25, 3.5], dtype=np.float64),
         chunks=(2,),
+        dimension_names=("nnz",),
+    )
+    _create_array(
+        sparse,
+        "shape",
+        np.array([1, 3], dtype=np.int32),
+        chunks=(2,),
+        dimension_names=("sparse_dimension",),
+    )
+    _create_labeled_axis(
+        sparse,
+        "sparse_dimension",
+        np.array([0, 1], dtype=np.int32),
+        "sparse_dimension_name",
+        np.array(["row", "motif"], dtype=object),
+        dimension_names=("sparse_dimension",),
+    )
+
+    return path
+
+
+def _write_empty_sparse_global_store(path: Path) -> Path:
+    root = zarr.open_group(str(path), mode="w", zarr_format=3)
+    root.attrs["cfdnalab_schema"] = "end_motif_counts"
+    root.attrs["cfdnalab_schema_version"] = 1
+    root.attrs["storage_mode"] = "sparse_coo"
+    root.attrs["row_mode"] = "global"
+
+    _create_motif_axis(root, MOTIF_NAMES)
+    _create_labeled_axis(
+        root,
+        "row",
+        np.array([0], dtype=np.int32),
+        "row_label",
+        np.array(["global"], dtype=object),
+    )
+
+    sparse = root.create_group("sparse")
+    _create_array(
+        sparse,
+        "row",
+        np.array([], dtype=np.int32),
+        chunks=(1,),
+        dimension_names=("nnz",),
+    )
+    _create_array(
+        sparse,
+        "motif",
+        np.array([], dtype=np.int32),
+        chunks=(1,),
+        dimension_names=("nnz",),
+    )
+    _create_array(
+        sparse,
+        "count",
+        np.array([], dtype=np.float64),
+        chunks=(1,),
         dimension_names=("nnz",),
     )
     _create_array(

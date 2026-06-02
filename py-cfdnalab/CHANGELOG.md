@@ -7,6 +7,7 @@
 ## Unreleased
 
  - Adds support for schema v2 end-motif Zarr stores written by `cfdna ends --motifs-file`, including outputs where the motif axis contains user-defined motif groups instead of concrete motif labels.
+ - `ends`: Improves error message when sparse data has no counts.
 
 <br />
 

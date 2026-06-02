@@ -78,6 +78,21 @@ patch_zarr_metadata <- function(
   write_fixture_json(metadata_path, metadata)
 }
 
+write_minimal_array_metadata <- function(store_path, array_name, shape) {
+  metadata_path <- do.call(
+    file.path,
+    as.list(c(store_path, strsplit(array_name, "/", fixed = TRUE)[[1L]], "zarr.json"))
+  )
+  write_fixture_json(
+    metadata_path,
+    list(
+      zarr_format = 3L,
+      node_type = "array",
+      shape = as.list(shape)
+    )
+  )
+}
+
 add_fixture_array <- function(
   zarr_store,
   store_path,
@@ -346,6 +361,27 @@ make_sparse_global_end_motif_zarr_fixture <- function() {
     list(label_field = "sparse_dimension_name", labels = list("row", "motif"))
   )
 
+  store_path
+}
+
+make_empty_sparse_end_motif_metadata_fixture <- function() {
+  store_path <- local_zarr_store_path("r-empty-sparse-end-fixture")
+  write_fixture_json(
+    file.path(store_path, "zarr.json"),
+    list(
+      zarr_format = 3L,
+      node_type = "group",
+      attributes = list(
+        cfdnalab_schema = "end_motif_counts",
+        cfdnalab_schema_version = 2L,
+        storage_mode = "sparse_coo",
+        row_mode = "global",
+        motif_axis_kind = "motif"
+      )
+    )
+  )
+  write_minimal_array_metadata(store_path, "motif_index", c(3L))
+  write_minimal_array_metadata(store_path, "sparse/count", c(0L))
   store_path
 }
 

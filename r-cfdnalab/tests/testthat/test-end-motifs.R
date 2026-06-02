@@ -101,6 +101,14 @@ test_that("sparse global end motifs can be densified explicitly", {
   )
 })
 
+test_that("sparse end motifs without stored counts report a loader error", {
+  expect_error(
+    read_end_motifs(make_empty_sparse_end_motif_metadata_fixture()),
+    "No end-motif counts are available",
+    fixed = TRUE
+  )
+})
+
 test_that("dense global motif-group end motifs load through motif-axis selectors", {
   ends <- read_end_motifs(make_dense_global_end_motif_group_zarr_fixture())
 
