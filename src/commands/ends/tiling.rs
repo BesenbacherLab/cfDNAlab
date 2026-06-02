@@ -34,19 +34,19 @@ pub struct TileResult {
 /// Parameters
 /// ----------
 /// - `path`:
-///   Destination for the serialized tile payload
-/// - `payload`:
+///   Destination for the serialized tile count records
+/// - `count_records`:
 ///   Sparse per-window counts for one tile
 ///
 /// Returns
 /// -------
 /// - `Result<()>`:
-///   `Ok(())` after the tile payload has been flushed to disk
-pub fn serialize_tile_counts(path: &Path, payload: &[TileWindowEndCounts]) -> Result<()> {
+///   `Ok(())` after the tile count records have been flushed to disk
+pub fn serialize_tile_counts(path: &Path, count_records: &[TileWindowEndCounts]) -> Result<()> {
     let file = File::create(path)
         .with_context(|| format!("creating tile counts file: {}", path.display()))?;
     let mut writer = BufWriter::with_capacity(512 * 1024, file);
-    encode_into_std_write(payload, &mut writer, standard())
+    encode_into_std_write(count_records, &mut writer, standard())
         .with_context(|| format!("serialising tile counts to {}", path.display()))?;
     writer.flush().with_context(|| {
         format!(
@@ -61,12 +61,12 @@ pub fn serialize_tile_counts(path: &Path, payload: &[TileWindowEndCounts]) -> Re
 /// Parameters
 /// ----------
 /// - `path`:
-///   Location of the serialized tile payload
+///   Location of the serialized tile count records
 ///
 /// Returns
 /// -------
 /// - `Result<Vec<TileWindowEndCounts>>`:
-///   The decoded sparse tile payload
+///   Decoded sparse tile count records
 pub fn deserialize_tile_counts(path: &Path) -> Result<Vec<TileWindowEndCounts>> {
     let file = File::open(path)
         .with_context(|| format!("opening tile counts file: {}", path.display()))?;
@@ -92,7 +92,7 @@ pub(crate) struct TileSelectedEndMotifCountEntry {
 ///
 /// Tile workers write these structs to temporary files so parallel counting does not hold all tile
 /// results in memory. `entries` are sorted by target index before serialization for deterministic
-/// payloads and easier test fixtures.
+/// count files and easier test fixtures.
 #[cfg_attr(not(test), doc(hidden))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct TileWindowSelectedEndCounts {
@@ -104,29 +104,29 @@ pub(crate) struct TileWindowSelectedEndCounts {
 
 /// Persist per-tile selected end-motif counts so they can be reduced later.
 ///
-/// This is the selected-motif equivalent of [`serialize_tile_counts`]. It uses a separate payload
+/// This is the selected-motif equivalent of [`serialize_tile_counts`]. It uses a separate record
 /// shape because selected counts are already mapped to numeric target indices and do not need to
 /// preserve encoded inside and outside motif halves.
 ///
 /// Parameters
 /// ----------
 /// - `path`:
-///   Destination for the serialized tile payload
-/// - `payload`:
+///   Destination for the serialized selected-count records
+/// - `count_records`:
 ///   Sparse selected-target counts for one tile
 ///
 /// Returns
 /// -------
 /// - `Result<()>`:
-///   `Ok(())` after the tile payload has been flushed to disk
+///   `Ok(())` after the selected-count records have been flushed to disk
 pub(crate) fn serialize_selected_tile_counts(
     path: &Path,
-    payload: &[TileWindowSelectedEndCounts],
+    count_records: &[TileWindowSelectedEndCounts],
 ) -> Result<()> {
     let file = File::create(path)
         .with_context(|| format!("creating selected tile counts file: {}", path.display()))?;
     let mut writer = BufWriter::with_capacity(512 * 1024, file);
-    encode_into_std_write(payload, &mut writer, standard())
+    encode_into_std_write(count_records, &mut writer, standard())
         .with_context(|| format!("serialising selected tile counts to {}", path.display()))?;
     writer.flush().with_context(|| {
         format!(
@@ -141,12 +141,12 @@ pub(crate) fn serialize_selected_tile_counts(
 /// Parameters
 /// ----------
 /// - `path`:
-///   Location of the serialized selected-target tile payload
+///   Location of the serialized selected-count records
 ///
 /// Returns
 /// -------
 /// - `Result<Vec<TileWindowSelectedEndCounts>>`:
-///   Decoded sparse selected-target payload
+///   Decoded sparse selected-count records
 pub(crate) fn deserialize_selected_tile_counts(
     path: &Path,
 ) -> Result<Vec<TileWindowSelectedEndCounts>> {
@@ -157,7 +157,7 @@ pub(crate) fn deserialize_selected_tile_counts(
         .with_context(|| format!("deserialising selected tile counts from {}", path.display()))
 }
 
-/// Convert sparse per-window count maps into a stable serialized payload.
+/// Convert sparse per-window count maps into stable serialized count records.
 ///
 /// Parameters
 /// ----------
@@ -167,11 +167,11 @@ pub(crate) fn deserialize_selected_tile_counts(
 /// Returns
 /// -------
 /// - `Vec<TileWindowEndCounts>`:
-///   Stable, sorted payload ready for serialization
-pub fn build_tile_payload(
+///   Stable, sorted count records ready for serialization
+pub fn build_tile_count_records(
     counts_by_window: FxHashMap<u64, EndMotifCounts>,
 ) -> Vec<TileWindowEndCounts> {
-    let mut payload: Vec<TileWindowEndCounts> = counts_by_window
+    let mut count_records: Vec<TileWindowEndCounts> = counts_by_window
         .into_iter()
         .filter_map(|(original_idx, counts)| {
             let mut entries: Vec<TileEndMotifCountEntry> = counts
@@ -198,13 +198,13 @@ pub fn build_tile_payload(
         })
         .collect();
 
-    payload.sort_unstable_by_key(|window_counts| window_counts.original_idx);
-    payload
+    count_records.sort_unstable_by_key(|window_counts| window_counts.original_idx);
+    count_records
 }
 
-/// Convert selected per-window count maps into a stable serialized payload.
+/// Convert selected per-window count maps into stable serialized count records.
 ///
-/// Empty rows are omitted from the payload because the final writer already knows the full row
+/// Empty rows are omitted because the final writer already knows the full row
 /// count. Rows and target entries are sorted to keep temporary files deterministic across hash-map
 /// iteration orders.
 ///
@@ -216,11 +216,11 @@ pub fn build_tile_payload(
 /// Returns
 /// -------
 /// - `Vec<TileWindowSelectedEndCounts>`:
-///   Stable, sorted payload ready for serialization
-pub(crate) fn build_selected_tile_payload(
+///   Stable, sorted selected-count records ready for serialization
+pub(crate) fn build_selected_tile_count_records(
     counts_by_window: SelectedEndCountsByWindow,
 ) -> Vec<TileWindowSelectedEndCounts> {
-    let mut payload: Vec<TileWindowSelectedEndCounts> = counts_by_window
+    let mut count_records: Vec<TileWindowSelectedEndCounts> = counts_by_window
         .into_iter()
         .filter_map(|(original_idx, counts)| {
             let mut entries: Vec<TileSelectedEndMotifCountEntry> = counts
@@ -232,7 +232,7 @@ pub(crate) fn build_selected_tile_payload(
                 return None;
             }
 
-            // Stable order is useful for deterministic temporary payloads and tests
+            // Stable order is useful for deterministic temporary count files and tests
             entries.sort_unstable_by_key(|entry| entry.target_idx);
 
             Some(TileWindowSelectedEndCounts {
@@ -243,31 +243,31 @@ pub(crate) fn build_selected_tile_payload(
         .collect();
 
     // Stable row order also makes the final reduction independent of hash-map iteration order
-    payload.sort_unstable_by_key(|window_counts| window_counts.original_idx);
-    payload
+    count_records.sort_unstable_by_key(|window_counts| window_counts.original_idx);
+    count_records
 }
 
-/// Merge one serialized tile payload into the reduced sparse counts.
+/// Merge one tile's serialized count records into the reduced sparse counts.
 ///
-/// Tile payloads already carry global window ids, so merging is just a sparse
+/// Tile count records already carry global window ids, so merging is just a sparse
 /// sum over `(window, motif-key)` entries.
 ///
 /// Parameters
 /// ----------
 /// - `merged`:
 ///   Reduced sparse counts updated in place
-/// - `tile_payload`:
+/// - `tile_count_records`:
 ///   One tile's serialized sparse counts
 ///
 /// Returns
 /// -------
 /// - `Result<()>`:
 ///   `Ok(())` after all counts have been merged
-pub fn merge_tile_payload(
+pub fn merge_tile_count_records(
     merged: &mut EndCountsByWindow,
-    tile_payload: Vec<TileWindowEndCounts>,
+    tile_count_records: Vec<TileWindowEndCounts>,
 ) -> Result<()> {
-    for window_counts in tile_payload {
+    for window_counts in tile_count_records {
         for entry in window_counts.entries {
             if EndMotifCounts::should_store_weight(entry.value)? {
                 merged
@@ -281,28 +281,28 @@ pub fn merge_tile_payload(
     Ok(())
 }
 
-/// Merge one serialized selected tile payload into reduced selected counts.
+/// Merge one tile's serialized selected-count records into reduced selected counts.
 ///
-/// The selected payload already uses global row ids, so reduction is a sparse sum over
-/// `(row, target_idx)`. Weight validation is repeated here so corrupt or future temporary payloads
-/// cannot silently create invalid counts.
+/// The selected-count records already use global row ids, so reduction is a sparse sum over
+/// `(row, target_idx)`. Weight validation is repeated here so corrupt or future temporary count
+/// files cannot silently create invalid counts.
 ///
 /// Parameters
 /// ----------
 /// - `merged`:
 ///   Reduced sparse selected-target counts updated in place
-/// - `tile_payload`:
+/// - `tile_count_records`:
 ///   One tile's serialized selected-target counts
 ///
 /// Returns
 /// -------
 /// - `Result<()>`:
 ///   `Ok(())` after all valid weights have been merged
-pub(crate) fn merge_selected_tile_payload(
+pub(crate) fn merge_selected_tile_count_records(
     merged: &mut SelectedEndCountsByWindow,
-    tile_payload: Vec<TileWindowSelectedEndCounts>,
+    tile_count_records: Vec<TileWindowSelectedEndCounts>,
 ) -> Result<()> {
-    for window_counts in tile_payload {
+    for window_counts in tile_count_records {
         for entry in window_counts.entries {
             // Keep the same sparse-count rules as full motif counting
             if EndMotifCounts::should_store_weight(entry.value)? {

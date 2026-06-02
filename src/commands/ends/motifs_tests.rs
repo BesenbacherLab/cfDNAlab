@@ -116,7 +116,7 @@ fn count_fragment_in_window_zero_weight_does_not_create_sparse_window_or_flags()
     )
     .expect("counting should work");
 
-    // Assert: zero-weight motifs should not produce sparse payload entries or counted-end stats.
+    // Assert: zero-weight motifs should not produce sparse count entries or counted-end stats.
     assert_eq!(counted, CountedEndFlags::default());
     assert!(counts_by_window.is_empty());
 }

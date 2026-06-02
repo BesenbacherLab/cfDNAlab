@@ -172,7 +172,7 @@ pub(crate) fn postprocess_selected_end_motif_counts(
     }
 
     // Remap original motifs-file target indices to compact output column indices
-    let mut all_bins = vec![FxHashMap::default(); total_windows];
+    let mut indexed_bins = vec![FxHashMap::default(); total_windows];
     for (row_idx, raw_bin) in raw_bins.into_iter().enumerate() {
         for (target_idx, value) in raw_bin {
             let target_position = target_idx as usize;
@@ -186,11 +186,11 @@ pub(crate) fn postprocess_selected_end_motif_counts(
                         target_position
                     )
                 })?;
-            all_bins[row_idx].insert(output_index, value);
+            indexed_bins[row_idx].insert(output_index, value);
         }
     }
 
-    Ok((all_bins, motif_order))
+    Ok((indexed_bins, motif_order))
 }
 
 /// Parse motifs-file text into a selected motif lookup.

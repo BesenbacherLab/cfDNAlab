@@ -1,5 +1,5 @@
 // This module unifies BAM-based pairing and ready-made fragments under
-// a single iterator interface, split by fragment payload type so the wiring stays readable.
+// a single iterator interface, split by fragment record type so the wiring stays readable.
 //
 // Usage examples live in `core.rs`, where the shared `PairingAdapter` and counter plumbing live.
 

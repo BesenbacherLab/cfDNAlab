@@ -26,10 +26,10 @@ use crate::{
                 ensure_all_motifs_enumeration_size, ensure_dense_end_motif_output_size,
             },
             tiling::{
-                TileResult, build_selected_tile_payload, build_tile_payload,
+                TileResult, build_selected_tile_count_records, build_tile_count_records,
                 deserialize_selected_tile_counts, deserialize_tile_counts,
-                merge_selected_tile_payload, merge_tile_payload, serialize_selected_tile_counts,
-                serialize_tile_counts,
+                merge_selected_tile_count_records, merge_tile_count_records,
+                serialize_selected_tile_counts, serialize_tile_counts,
             },
             write::write_end_settings_json,
             zarr::{
@@ -400,7 +400,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
             // `find_overlapping_windows` reports chromosome-local indices. `process_tile` needs the
-            // chromosome-specific offset so it can emit globally stable window ids into tile payloads.
+            // chromosome-specific offset so it can write globally stable window ids in tile count records.
             let chr_window_idx_offset = *chr_offsets_for_threads.get(&tile.chr).unwrap_or(&0);
 
             let tile_result = process_tile(
@@ -494,11 +494,11 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     let temp_motif_output_path = match selected_motifs.as_ref() {
         None => {
             // Start from an all-empty output matrix shape, then fill only the windows that were
-            // actually observed in the reduced sparse payloads.
-            let mut all_bins = vec![FxHashMap::default(); total_windows as usize];
+            // actually observed in the reduced sparse tile counts.
+            let mut label_bins = vec![FxHashMap::default(); total_windows as usize];
             let mut reduced_counts: EndCountsByWindow = FxHashMap::default();
             for tile_result in &tile_results {
-                merge_tile_payload(
+                merge_tile_count_records(
                     &mut reduced_counts,
                     deserialize_tile_counts(&tile_result.counts_path)?,
                 )?;
@@ -526,20 +526,20 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
                 .collect::<Result<_>>()?;
 
             for (idx, decoded) in decoded_bins {
-                if idx >= all_bins.len() {
+                if idx >= label_bins.len() {
                     bail!(
                         "reduced window index {} is out of bounds for {} output windows",
                         idx,
-                        all_bins.len()
+                        label_bins.len()
                     );
                 }
-                all_bins[idx] = decoded;
+                label_bins[idx] = decoded;
             }
 
             // `all_motifs` switches the final output from "observed motifs only" to a dense fixed motif
             // universe. The dense size checks happen before we allocate or enumerate that full universe.
             if opt.all_motifs {
-                ensure_all_motifs_enumeration_size(opt.k_inside, opt.k_outside, all_bins.len())?;
+                ensure_all_motifs_enumeration_size(opt.k_inside, opt.k_outside, label_bins.len())?;
             }
             let motif_order = if opt.all_motifs {
                 build_all_end_motif_order(
@@ -548,11 +548,11 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
                     opt.collapse_complement,
                 )?
             } else {
-                collect_end_motif_order(&all_bins)
+                collect_end_motif_order(&label_bins)
             };
             let write_dense_output = opt.all_motifs;
             if write_dense_output {
-                ensure_dense_end_motif_output_size(all_bins.len(), motif_order.len())?;
+                ensure_dense_end_motif_output_size(label_bins.len(), motif_order.len())?;
             }
 
             let motif_columns: FxHashMap<&str, u32> = motif_order
@@ -566,7 +566,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
                     ))
                 })
                 .collect::<Result<_>>()?;
-            let indexed_bins: Vec<FxHashMap<u32, f64>> = all_bins
+            let indexed_bins: Vec<FxHashMap<u32, f64>> = label_bins
                 .into_iter()
                 .map(|bin| {
                     let mut indexed_bin = FxHashMap::default();
@@ -597,12 +597,12 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
         Some(lookup) => {
             let mut reduced_counts: SelectedEndCountsByWindow = FxHashMap::default();
             for tile_result in &tile_results {
-                merge_selected_tile_payload(
+                merge_selected_tile_count_records(
                     &mut reduced_counts,
                     deserialize_selected_tile_counts(&tile_result.counts_path)?,
                 )?;
             }
-            let (all_bins, motif_order) = postprocess_selected_end_motif_counts(
+            let (indexed_bins, motif_order) = postprocess_selected_end_motif_counts(
                 reduced_counts,
                 total_windows as usize,
                 lookup,
@@ -612,7 +612,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
             write_end_motif_zarr(
                 final_outputs.temp_dir(),
                 prefix,
-                &all_bins,
+                &indexed_bins,
                 &motif_order,
                 lookup.column_kind,
                 row_metadata,
@@ -734,7 +734,7 @@ fn record_counted_fragment_stats(counter: &mut EndsCounters, counted_end_flags: 
     }
 }
 
-/// Count all end motifs owned by one tile and write its sparse payload to disk.
+/// Count all end motifs owned by one tile and write its sparse count records to disk.
 ///
 /// This function does the tile-local heavy lifting for `ends`: it streams
 /// fragments from BAM, applies fragment-level filters and weights, assigns each
@@ -764,9 +764,9 @@ fn record_counted_fragment_stats(counter: &mut EndsCounters, counted_end_flags: 
 /// - `include_at_shifted_boundary_gc_length_warning_issued`:
 ///   Shared guard that allows at most one aligned-GC length warning per run
 /// - `temp_dir`:
-///   Temporary directory for tile payloads
+///   Temporary directory for tile count files
 /// - `counts_prefix`:
-///   Prefix used when naming serialized tile payloads
+///   Prefix used when naming serialized tile count files
 /// - `inside_spec`:
 ///   Shared codec spec for the inside half, or `None` when `k_inside = 0`
 /// - `outside_spec`:
@@ -896,12 +896,12 @@ fn process_tile(
     // uses `OverlappingWindow.idx` to index that same slice and recover the matching scaling
     // bins for a fragment.
     //
-    // That index comes from the overlap finder's BED-mode scan, not from the payload stored
+    // That index comes from the overlap finder's BED-mode scan, not from the index stored
     // inside each `IndexedInterval`. `find_overlapping_windows(...)` walks the supplied
     // interval slice and reports the matching slice position as `OverlappingWindow.idx`.
     //
     // This temporary vector therefore only needs valid interval coordinates. Its
-    // `IndexedInterval.idx` payload is not part of the lookup path, so each entry can carry
+    // `IndexedInterval.idx` value is not part of the lookup path, so each entry can carry
     // the same placeholder value without changing which scaling bin is selected later.
     let scaling_with_bin_idx: Vec<IndexedInterval<u64>> = scaling_chr
         .iter()
@@ -1252,11 +1252,11 @@ fn process_tile(
     counter.add_from_snapshot(iter.counters_snapshot());
 
     if selected_motifs.is_some() {
-        let payload = build_selected_tile_payload(selected_counts_by_window);
-        serialize_selected_tile_counts(&counts_path, &payload)?;
+        let count_records = build_selected_tile_count_records(selected_counts_by_window);
+        serialize_selected_tile_counts(&counts_path, &count_records)?;
     } else {
-        let payload = build_tile_payload(counts_by_window);
-        serialize_tile_counts(&counts_path, &payload)?;
+        let count_records = build_tile_count_records(counts_by_window);
+        serialize_tile_counts(&counts_path, &count_records)?;
     }
 
     Ok(Some(TileResult {

@@ -85,7 +85,7 @@ impl FromStr for CoverageWindowAction {
     }
 }
 
-/// Per-window payload
+/// Per-window coverage value
 #[derive(Debug, Clone)]
 pub enum WindowValue {
     /// Average coverage in the window
@@ -99,12 +99,12 @@ pub enum WindowValue {
 /// Result for one requested window.
 ///
 /// The struct keeps the original indexed interval so downstream writers and reducers can preserve
-/// the caller's window identity and ordering while attaching the computed payload.
+/// the caller's window identity and ordering while attaching the computed value.
 #[derive(Debug, Clone)]
 pub struct WindowResult {
     /// Original requested window together with its stable external index.
     pub window: IndexedInterval<u64>,
-    /// Computed payload for the window.
+    /// Computed value for the window.
     pub value: WindowValue,
     /// Number of blacklisted positions inside the window when that information is available.
     pub num_blacklisted_pos: Option<u32>,

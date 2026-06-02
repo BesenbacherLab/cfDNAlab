@@ -123,10 +123,10 @@ pub(crate) struct SparseProfilePartialFile {
     data: Vec<f32>,
 }
 
-/// Serialize a one-dimensional slice to an in-memory `.npy` payload.
+/// Serialize a one-dimensional slice to in-memory `.npy` bytes.
 ///
 /// NumPy `.npz` files are ZIP archives containing named `.npy` files. This helper creates each
-/// named array payload before `write_sparse_profile_partial_file_npz` adds it to the ZIP container.
+/// named array before `write_sparse_profile_partial_file_npz` adds it to the ZIP container.
 fn vec_to_npy<T: WritableElement>(values: &[T]) -> Result<Vec<u8>> {
     let view: ArrayView1<'_, T> = ArrayView1::from(values);
     let mut buffer = Vec::<u8>::new();

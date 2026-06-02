@@ -425,7 +425,7 @@ pub fn decode_full_motif(
 
 /// Serialized tile entry for one counted motif.
 ///
-/// This is the compact on-disk representation used while merging sparse tile payloads.
+/// This is the compact on-disk representation used while merging sparse tile count records.
 #[cfg_attr(not(test), doc(hidden))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TileEndMotifCountEntry {
@@ -459,7 +459,7 @@ impl From<&TileEndMotifCountEntry> for EncodedEndMotifKey {
 /// Serialized sparse counts for one output window in one tile.
 ///
 /// Each tile writes one of these per touched output window so reduction can merge the sparse
-/// payloads later without reconstructing dense matrices first.
+/// count records later without reconstructing dense matrices first.
 #[cfg_attr(not(test), doc(hidden))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TileWindowEndCounts {
