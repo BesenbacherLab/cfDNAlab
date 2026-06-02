@@ -435,7 +435,10 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     drop(chr_offsets_for_threads);
     drop(tile_window_spans_for_threads);
     drop(tile_window_spans);
+    drop(indexed_windows_map);
     drop(tiles);
+    drop(inside_counting_spec);
+    drop(outside_counting_spec);
     drop(scaling_map);
     drop(gc_corrector);
 
@@ -457,6 +460,8 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
             chr_offsets.as_ref(),
         )?
     };
+    drop(windows_map);
+
     let row_metadata = match &window_opt {
         DistributionWindowSpec::Global => EndMotifRowMetadata::Global,
         DistributionWindowSpec::GroupedBed(_) => {
