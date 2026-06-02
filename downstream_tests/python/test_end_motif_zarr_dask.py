@@ -75,10 +75,10 @@ def test_dask_reads_selected_motif_sparse_end_motif_coordinate_arrays(
 
     np.testing.assert_array_equal(
         sparse_shape.compute(),
-        np.array([3, 3], dtype=np.int32),
+        np.array([3, 2], dtype=np.int32),
     )
     np.testing.assert_array_equal(
         sparse_motif.compute(),
         np.array([1, 0, 1], dtype=np.int32),
     )
-    assert motif_ascii.shape == (3, 5)
+    assert motif_ascii.shape == (2, 5)

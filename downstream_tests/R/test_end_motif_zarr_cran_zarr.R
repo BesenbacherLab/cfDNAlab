@@ -40,12 +40,12 @@ selected_metadata <- jsonlite::fromJSON(file.path(selected_path, "zarr.json"), s
 selected_motifs <- decode_motif_ascii(read_cran_zarr_array(selected_root, "motif_ascii"))
 stopifnot(identical(selected_metadata$attributes$cfdnalab_schema_version, 2L))
 stopifnot(identical(selected_metadata$attributes$motif_axis_kind, "motif"))
-stopifnot(identical(selected_motifs, c("GT_AC", "AC_GT", "TT_TT")))
+stopifnot(identical(selected_motifs, c("GT_AC", "AC_GT")))
 stopifnot(identical(
   labels_from_array_attributes(selected_path, "chromosome", "chromosome_name"),
   c("chr1", "chr2")
 ))
-stopifnot(identical(as.integer(read_cran_zarr_array(selected_root, "sparse/shape")), c(3L, 3L)))
+stopifnot(identical(as.integer(read_cran_zarr_array(selected_root, "sparse/shape")), c(3L, 2L)))
 stopifnot(identical(as.integer(read_cran_zarr_array(selected_root, "sparse/row")), c(0L, 1L, 2L)))
 stopifnot(identical(as.integer(read_cran_zarr_array(selected_root, "sparse/motif")), c(1L, 0L, 1L)))
 stopifnot(isTRUE(all.equal(read_cran_zarr_array(selected_root, "sparse/count"), c(1, 1, 1))))

@@ -331,12 +331,12 @@ fn generate_end_motif_zarr_fixtures_with_cfdnalab() -> Result<()> {
     )?;
     let (selected_motifs, selected_counts) =
         read_sparse_end_counts(&sparse_windowed_selected_motifs_path)?;
-    assert_eq!(selected_motifs, vec!["GT_AC", "AC_GT", "TT_TT"]);
-    assert_eq!(selected_counts.shape(), &[3, 3]);
+    // Sparse motifs-file output keeps only observed motifs unless --all-motifs is set.
+    assert_eq!(selected_motifs, vec!["GT_AC", "AC_GT"]);
+    assert_eq!(selected_counts.shape(), &[3, 2]);
     assert_eq!(selected_counts[(0, 1)], 1.0);
     assert_eq!(selected_counts[(1, 0)], 1.0);
     assert_eq!(selected_counts[(2, 1)], 1.0);
-    assert_eq!(selected_counts.column(2).sum(), 0.0);
     assert_eq!(selected_counts.sum(), 3.0);
     let selected_motif_root_metadata: Value = serde_json::from_str(&std::fs::read_to_string(
         sparse_windowed_selected_motifs_path.join("zarr.json"),

@@ -92,19 +92,20 @@ test_that("R helper package reads sparse windowed selected motif-file end motifs
 
   expect_identical(storage_mode(selected), "sparse_coo")
   expect_identical(row_mode(selected), "bed")
-  expect_identical(motifs(selected)$motif, c("GT_AC", "AC_GT", "TT_TT"))
+  expect_identical(motifs(selected)$motif, c("GT_AC", "AC_GT"))
+  expect_false(has_motif(selected, "TT_TT"))
   expect_equal(
     as.matrix(sparse_counts_matrix(selected)),
-    matrix(c(0, 1, 0, 1, 0, 0, 0, 1, 0), nrow = 3, byrow = TRUE)
+    matrix(c(0, 1, 1, 0, 0, 1), nrow = 3, byrow = TRUE)
   )
   expect_equal(
     as.matrix(sparse_counts_matrix(selected, motifs = c("AC_GT", "GT_AC"))),
     matrix(c(1, 0, 0, 1, 1, 0), nrow = 3, byrow = TRUE)
   )
-
-  unused_dense <- end_motif_data_frame(selected, motifs = "TT_TT", densify = TRUE)
-  expect_equal(unused_dense$motif, c("TT_TT", "TT_TT", "TT_TT"))
-  expect_equal(unused_dense$count, c(0, 0, 0))
+  expect_error(
+    end_motif_data_frame(selected, motifs = "TT_TT", densify = TRUE),
+    "Unknown end-motif label"
+  )
 })
 
 test_that("R helper package reads sparse grouped end motifs", {

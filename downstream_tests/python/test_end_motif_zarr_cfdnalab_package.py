@@ -142,12 +142,12 @@ def test_cfdnalab_package_reads_sparse_windowed_selected_motif_file_end_motifs(
     assert end_motifs.motifs_metadata()["motif"].tolist() == [
         "GT_AC",
         "AC_GT",
-        "TT_TT",
     ]
+    assert not end_motifs.has_motif("TT_TT")
     np.testing.assert_allclose(
         end_motifs.dense_counts_array(allow_densify=True),
         np.array(
-            [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            [[0.0, 1.0], [1.0, 0.0], [0.0, 1.0]],
             dtype=np.float64,
         ),
     )
@@ -155,9 +155,8 @@ def test_cfdnalab_package_reads_sparse_windowed_selected_motif_file_end_motifs(
         end_motifs.sparse_counts_matrix(motifs=["AC_GT", "GT_AC"]).toarray(),
         np.array([[1.0, 0.0], [0.0, 1.0], [1.0, 0.0]], dtype=np.float64),
     )
-    unused_frame = end_motifs.data_frame(motifs="TT_TT", densify=True)
-    assert unused_frame["motif"].tolist() == ["TT_TT", "TT_TT", "TT_TT"]
-    assert unused_frame["count"].tolist() == [0.0, 0.0, 0.0]
+    with pytest.raises(ValueError, match="Unknown end-motif label"):
+        end_motifs.data_frame(motifs="TT_TT", densify=True)
 
 
 def test_cfdnalab_package_reads_sparse_grouped_end_motifs(

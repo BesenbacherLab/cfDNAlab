@@ -97,12 +97,12 @@ def test_python_zarr_reads_sparse_windowed_selected_motifs_end_motif_schema(
     assert store.attrs["cfdnalab_schema_version"] == 2
     assert store.attrs["row_mode"] == "bed"
     assert store.attrs["motif_axis_kind"] == "motif"
-    assert decode_motifs(store) == ["GT_AC", "AC_GT", "TT_TT"]
+    assert decode_motifs(store) == ["GT_AC", "AC_GT"]
     assert store["motif_index"].attrs["label_array"] == "motif_ascii"
     assert store["chromosome"].attrs["labels"] == ["chr1", "chr2"]
     np.testing.assert_array_equal(
         store["sparse/shape"][:],
-        np.array([3, 3], dtype=np.int32),
+        np.array([3, 2], dtype=np.int32),
     )
     np.testing.assert_array_equal(
         store["sparse/row"][:],

@@ -73,11 +73,11 @@ def test_xarray_reads_selected_end_motif_labels_and_sparse_coordinates(
     ]
 
     assert dataset.attrs["motif_axis_kind"] == "motif"
-    assert motif_labels == ["GT_AC", "AC_GT", "TT_TT"]
+    assert motif_labels == ["GT_AC", "AC_GT"]
     assert dataset["motif_ascii"].dims == ("motif", "motif_byte")
     np.testing.assert_array_equal(
         sparse["shape"].values,
-        np.array([3, 3], dtype=np.int32),
+        np.array([3, 2], dtype=np.int32),
     )
     np.testing.assert_array_equal(
         sparse["motif"].values,
