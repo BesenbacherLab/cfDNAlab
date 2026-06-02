@@ -154,38 +154,14 @@ pub struct SubspaceKmerSpec {
     width: Width,
     /// Sentinel used when a k-mer is not in the selected subspace
     sentinel_missing: u64,
-    /// Encoding strategy chosen from k and the selected k-mer set
-    encoding: SubspaceKmerEncoding,
+    /// Lookup table from normalized selected k-mer bytes to compact selected codes
+    selected_codes_by_kmer_bytes: SelectedCodesByKmerBytes,
 }
 
-/// Encoding strategy for selected k-mer subspaces.
-///
-/// Small enough k-mers reuse the existing radix-5 encoder and remap full-space codes to compact
-/// selected codes. Larger k-mers use byte-slice lookup, avoiding the full-space `u64` limit.
-#[derive(Clone, Debug)]
-enum SubspaceKmerEncoding {
-    Radix5 {
-        full_spec: KmerSpec,
-        selected_codes_by_radix_code: SelectedCodesByRadixCode,
-    },
-    Bytes {
-        selected_codes_by_kmer_bytes: SelectedCodesByKmerBytes,
-    },
-}
-
-/// Lookup table for radix-backed subspace encoding.
-///
-/// The key is the ordinary full-space radix-5 code produced by `KmerSpec`. The value is the compact
-/// selected-subspace code assigned from the first-seen unique normalized k-mer order. Missing keys
-/// mean the k-mer is valid DNA but not part of the selected subspace.
-#[derive(Clone, Debug)]
-struct SelectedCodesByRadixCode(FxHashMap<u64, u64>);
-
-/// Lookup table for byte-backed subspace encoding.
+/// Lookup table for selected-subspace encoding.
 ///
 /// The key is the normalized uppercase ACGT k-mer byte string. The value is the compact
-/// selected-subspace code assigned from the first-seen unique normalized k-mer order. This variant
-/// is used when k is too large for the full-space radix-5 `u64` representation.
+/// selected-subspace code assigned from the first-seen unique normalized k-mer order.
 #[derive(Clone, Debug)]
 struct SelectedCodesByKmerBytes(FxHashMap<Box<[u8]>, u64>);
 
@@ -203,31 +179,14 @@ impl SubspaceKmerSpec {
     /// not selected.
     #[inline]
     pub fn encode_kmer_bytes(&self, seq: &[u8]) -> u64 {
-        match &self.encoding {
-            SubspaceKmerEncoding::Radix5 {
-                full_spec,
-                selected_codes_by_radix_code,
-            } => {
-                let full_code = full_spec.encode_kmer_bytes(seq);
-                selected_codes_by_radix_code
-                    .0
-                    .get(&full_code)
-                    .copied()
-                    .unwrap_or(self.sentinel_missing)
-            }
-            SubspaceKmerEncoding::Bytes {
-                selected_codes_by_kmer_bytes,
-            } => {
-                let Some(normalized) = normalize_acgt_kmer(seq, self.k) else {
-                    return self.sentinel_missing;
-                };
-                selected_codes_by_kmer_bytes
-                    .0
-                    .get(normalized.as_ref())
-                    .copied()
-                    .unwrap_or(self.sentinel_missing)
-            }
-        }
+        let Some(normalized) = normalize_acgt_kmer(seq, self.k) else {
+            return self.sentinel_missing;
+        };
+        self.selected_codes_by_kmer_bytes
+            .0
+            .get(normalized.as_ref())
+            .copied()
+            .unwrap_or(self.sentinel_missing)
     }
 
     /// Build left-aligned selected codes for every reference position.
@@ -236,24 +195,7 @@ impl SubspaceKmerSpec {
     /// `sentinel_missing`. The packed dtype is chosen from the subspace size, not from the full
     /// k-mer universe.
     pub fn build_left_aligned_codes(&self, seq: &[u8]) -> KmerCodes {
-        let raw = match &self.encoding {
-            SubspaceKmerEncoding::Radix5 {
-                full_spec,
-                selected_codes_by_radix_code,
-            } => full_spec
-                .build_left_aligned_codes(seq)
-                .into_iter()
-                .map(|full_code| {
-                    selected_codes_by_radix_code
-                        .0
-                        .get(&full_code)
-                        .copied()
-                        .unwrap_or(self.sentinel_missing)
-                })
-                .collect(),
-            SubspaceKmerEncoding::Bytes { .. } => build_left_aligned_subspace_codes(self, seq),
-        };
-
+        let raw = build_left_aligned_subspace_codes(self, seq);
         pack_codes(raw, self.width)
     }
 }
@@ -293,9 +235,9 @@ pub fn build_kmer_specs(kmer_sizes: &[u8]) -> Result<FxHashMap<u8, KmerSpec>> {
 /// Build a selected-subspace k-mer spec.
 ///
 /// Selected codes are assigned in first-seen order after normalizing to uppercase ACGT and dropping
-/// duplicate k-mers. For k values that fit the existing radix-5 representation, this reuses
-/// `KmerSpec` internally. Larger k values fall back to byte-slice lookup while keeping the same
-/// public selected-code behavior.
+/// duplicate k-mers. Subspace encoding is byte-backed for every k, because the selected set can be
+/// smaller than the full radix-5 universe and can also include k values that full radix-5 cannot
+/// represent in `u64`.
 ///
 /// Parameters
 /// ----------
@@ -329,39 +271,16 @@ where
     }
 
     let (width, sentinel_missing) = choose_subspace_width(normalized_selected_kmers.len())?;
-    let full_spec = build_radix5_spec_if_supported(k)?;
-    let encoding = match full_spec {
-        Some(full_spec) => {
-            let mut selected_codes_by_radix_code = FxHashMap::default();
-            for (code_index, normalized) in normalized_selected_kmers.iter().enumerate() {
-                let full_code = full_spec.encode_kmer_bytes(normalized.as_ref());
-                selected_codes_by_radix_code.insert(full_code, code_index as u64);
-            }
-            SubspaceKmerEncoding::Radix5 {
-                full_spec,
-                selected_codes_by_radix_code: SelectedCodesByRadixCode(
-                    selected_codes_by_radix_code,
-                ),
-            }
-        }
-        None => {
-            let mut selected_codes_by_kmer_bytes = FxHashMap::default();
-            for (code_index, normalized) in normalized_selected_kmers.into_iter().enumerate() {
-                selected_codes_by_kmer_bytes.insert(normalized, code_index as u64);
-            }
-            SubspaceKmerEncoding::Bytes {
-                selected_codes_by_kmer_bytes: SelectedCodesByKmerBytes(
-                    selected_codes_by_kmer_bytes,
-                ),
-            }
-        }
-    };
+    let mut selected_codes_by_kmer_bytes = FxHashMap::default();
+    for (code_index, normalized) in normalized_selected_kmers.into_iter().enumerate() {
+        selected_codes_by_kmer_bytes.insert(normalized, code_index as u64);
+    }
 
     Ok(SubspaceKmerSpec {
         k,
         width,
         sentinel_missing,
-        encoding,
+        selected_codes_by_kmer_bytes: SelectedCodesByKmerBytes(selected_codes_by_kmer_bytes),
     })
 }
 
@@ -449,36 +368,6 @@ fn choose_subspace_width(n_selected: usize) -> Result<(Width, u64)> {
     }
 }
 
-/// Build a radix-5 spec when k fits the existing packed `u64` representation.
-fn build_radix5_spec_if_supported(k: usize) -> Result<Option<KmerSpec>> {
-    if !radix5_fits_u64_with_sentinels(k) {
-        return Ok(None);
-    }
-    let (width, sentinel_none, sentinel_n) =
-        choose_width(k).with_context(|| format!("calculating dtype for k={k}"))?;
-    Ok(Some(KmerSpec {
-        k,
-        width,
-        sentinel_none,
-        sentinel_n,
-    }))
-}
-
-/// Return whether radix-5 can store every real k-mer plus two sentinels in `u64`.
-fn radix5_fits_u64_with_sentinels(k: usize) -> bool {
-    let mut code_space = 1u128;
-    for _ in 0..k {
-        let Some(next_code_space) = code_space.checked_mul(5) else {
-            return false;
-        };
-        if next_code_space > u64::MAX as u128 - 1 {
-            return false;
-        }
-        code_space = next_code_space;
-    }
-    true
-}
-
 /// Normalize one exact selected k-mer to uppercase ACGT bytes.
 fn normalize_acgt_kmer(seq: &[u8], k: usize) -> Option<Box<[u8]>> {
     if seq.len() != k {
@@ -505,11 +394,68 @@ fn build_left_aligned_subspace_codes(spec: &SubspaceKmerSpec, seq: &[u8]) -> Vec
     }
 
     let mut out = Vec::with_capacity(chrom_len);
+    let mut normalized_scratch = Vec::with_capacity(spec.k);
     for start in 0..=chrom_len - spec.k {
-        out.push(spec.encode_kmer_bytes(&seq[start..start + spec.k]));
+        out.push(encode_selected_kmer_bytes_with_scratch(
+            &seq[start..start + spec.k],
+            spec.k,
+            &spec.selected_codes_by_kmer_bytes,
+            spec.sentinel_missing,
+            &mut normalized_scratch,
+        ));
     }
     out.extend(std::iter::repeat_n(spec.sentinel_missing, spec.k - 1));
     out
+}
+
+/// Encode one byte-backed selected k-mer without allocating per reference position.
+///
+/// This is a selected-subspace encoder, not a full DNA k-mer validator. A real code is returned
+/// only when the k-mer is present in `selected_codes_by_kmer_bytes`. `sentinel_missing` is returned
+/// for wrong length, non-ACGT bases, and valid ACGT k-mers that are not selected.
+///
+/// The common reference path is uppercase ACGT. It first probes the map directly with the input
+/// slice. If that misses and the slice is already uppercase, the k-mer cannot become selected by
+/// normalization, so the helper returns `sentinel_missing` without using the scratch buffer.
+fn encode_selected_kmer_bytes_with_scratch(
+    seq: &[u8],
+    k: usize,
+    selected_codes_by_kmer_bytes: &SelectedCodesByKmerBytes,
+    sentinel_missing: u64,
+    normalized_scratch: &mut Vec<u8>,
+) -> u64 {
+    if seq.len() != k {
+        return sentinel_missing;
+    }
+
+    if let Some(code) = selected_codes_by_kmer_bytes.0.get(seq).copied() {
+        return code;
+    }
+
+    let mut contains_lowercase_base = false;
+    for &base in seq {
+        match base {
+            b'A' | b'C' | b'G' | b'T' => {}
+            b'a' | b'c' | b'g' | b't' => contains_lowercase_base = true,
+            _ => return sentinel_missing,
+        }
+    }
+
+    // The direct lookup already missed. If the slice is uppercase ACGT, uppercasing cannot change
+    // the lookup key, so the k-mer is valid DNA but not selected.
+    if !contains_lowercase_base {
+        return sentinel_missing;
+    }
+
+    normalized_scratch.clear();
+    for &base in seq {
+        normalized_scratch.push(base.to_ascii_uppercase());
+    }
+    selected_codes_by_kmer_bytes
+        .0
+        .get(normalized_scratch.as_slice())
+        .copied()
+        .unwrap_or(sentinel_missing)
 }
 
 /// Pack promoted `u64` codes into the selected storage width.

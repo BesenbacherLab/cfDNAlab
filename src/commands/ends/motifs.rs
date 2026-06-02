@@ -28,9 +28,9 @@ use std::sync::Arc;
 /// Reference-backed motif resources for one tile.
 ///
 /// This groups the per-tile state needed to validate and encode end motifs:
-/// optional masked reference bases, optional radix-5 lookup tables for the
-/// inside and outside halves, and the metadata needed to translate absolute
-/// genomic motif starts into the preloaded tile-local reference slice.
+/// optional masked reference bases, optional encoded motif-half lookup tables,
+/// and the metadata needed to translate absolute genomic motif starts into the
+/// preloaded tile-local reference slice.
 pub(crate) struct TileMotifContext<'a> {
     /// Absolute genomic start of `reference_bases`
     reference_start: u64,
@@ -281,9 +281,10 @@ pub(crate) fn build_tile_motif_context<'a>(
 /// Precompute one tile-local reference-code vector for a single motif half.
 ///
 /// `EndMotifHalfSpec` owns the storage choice. Full-space radix-5 specs build packed radix-5
-/// arrays, while selected-subspace specs build compact arrays over the requested motif halves.
-/// Keeping that dispatch behind the spec prevents the tile code from rebuilding temporary spec maps
-/// and keeps same-k inside/outside sharing explicit at the call site.
+/// arrays, while selected-subspace specs build compact byte-backed arrays over the requested motif
+/// halves. The selected-subspace case is used by `ends --motifs-file` only for halves above the
+/// radix-5 limit. Keeping that dispatch behind the spec prevents the tile code from rebuilding
+/// temporary spec maps and keeps same-k inside/outside sharing explicit at the call site.
 ///
 /// Parameters
 /// ----------
@@ -343,59 +344,21 @@ pub(crate) fn count_fragment_in_window(
     source_inside: KmerSource,
     assign_by: WindowMotifAssigner,
 ) -> Result<CountedEndFlags> {
-    let mut counted_end_flags = CountedEndFlags::default();
-    if !EndMotifCounts::should_store_weight(weight)? {
-        return Ok(counted_end_flags);
-    }
-
-    if let Some(left_end) = fragment.left_end.as_ref() {
-        let count_left_end = match assign_by {
-            WindowMotifAssigner::Endpoint => {
-                window_interval.contains_point(left_end.boundary_pos as u64)
-            }
-            _ => true,
-        };
-        if count_left_end {
-            if let Some(key) =
-                maybe_encode_end_motif_key(left_end, EndSide::Left, motif_context, source_inside)?
-            {
-                counts_by_window
-                    .entry(original_idx)
-                    .or_default()
-                    .incr_weighted(key, weight);
-                counted_end_flags.left_counted = true;
-            }
-        }
-    }
-
-    if let Some(right_end) = fragment.right_end.as_ref() {
-        // Endpoint assignment uses the terminal base coordinate. For the right end,
-        // `boundary_pos` is the split point after that base, so the terminal base is
-        // `boundary_pos - 1`.
-        let right_endpoint_pos = right_end
-            .boundary_pos
-            .checked_sub(1)
-            .expect("right boundary must be > 0 for a valid half-open interval");
-        let count_right_end = match assign_by {
-            WindowMotifAssigner::Endpoint => {
-                window_interval.contains_point(right_endpoint_pos as u64)
-            }
-            _ => true,
-        };
-        if count_right_end {
-            if let Some(key) =
-                maybe_encode_end_motif_key(right_end, EndSide::Right, motif_context, source_inside)?
-            {
-                counts_by_window
-                    .entry(original_idx)
-                    .or_default()
-                    .incr_weighted(key, weight);
-                counted_end_flags.right_counted = true;
-            }
-        }
-    }
-
-    Ok(counted_end_flags)
+    count_encoded_fragment_ends_in_window(
+        window_interval,
+        fragment,
+        weight,
+        motif_context,
+        source_inside,
+        assign_by,
+        |_end_side, key, weight| {
+            counts_by_window
+                .entry(original_idx)
+                .or_default()
+                .incr_weighted(key, weight);
+            Ok(true)
+        },
+    )
 }
 
 /// Count selected end motifs from one fragment into one output window.
@@ -444,31 +407,59 @@ pub(crate) fn count_selected_fragment_in_window(
     source_inside: KmerSource,
     assign_by: WindowMotifAssigner,
 ) -> Result<CountedEndFlags> {
+    count_encoded_fragment_ends_in_window(
+        window_interval,
+        fragment,
+        weight,
+        motif_context,
+        source_inside,
+        assign_by,
+        |_end_side, key, weight| {
+            if let Some(target_idx) = selected_motifs.target_for(key) {
+                counts_by_window
+                    .entry(original_idx)
+                    .or_default()
+                    .entry(target_idx)
+                    .and_modify(|value| *value += weight)
+                    .or_insert(weight);
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        },
+    )
+}
+
+/// Count valid encoded fragment ends selected by the current output window.
+///
+/// This helper owns the shared end traversal semantics for ordinary and motifs-file counting:
+/// weight validation, endpoint-window filtering, right-end terminal-base coordinates, motif
+/// encoding, and `CountedEndFlags` updates. The caller supplies `record_encoded_end_count` to
+/// decide what to do with each valid encoded key.
+///
+/// `record_encoded_end_count` returns whether the end actually produced a count. Ordinary counting
+/// returns `true` for every valid key. Motifs-file counting returns `false` when the key is valid
+/// but not present in the selected motifs lookup.
+fn count_encoded_fragment_ends_in_window(
+    window_interval: Interval<u64>,
+    fragment: &FragmentWithEnds,
+    weight: f64,
+    motif_context: &TileMotifContext<'_>,
+    source_inside: KmerSource,
+    assign_by: WindowMotifAssigner,
+    mut record_encoded_end_count: impl FnMut(EndSide, EncodedEndMotifKey, f64) -> Result<bool>,
+) -> Result<CountedEndFlags> {
     let mut counted_end_flags = CountedEndFlags::default();
     if !EndMotifCounts::should_store_weight(weight)? {
         return Ok(counted_end_flags);
     }
 
     if let Some(left_end) = fragment.left_end.as_ref() {
-        // Endpoint mode decides per end, while other window modes decide at fragment level
-        let count_left_end = match assign_by {
-            WindowMotifAssigner::Endpoint => {
-                window_interval.contains_point(left_end.boundary_pos as u64)
-            }
-            _ => true,
-        };
-        if count_left_end {
+        if end_is_selected_by_window(left_end, EndSide::Left, window_interval, assign_by) {
             if let Some(key) =
                 maybe_encode_end_motif_key(left_end, EndSide::Left, motif_context, source_inside)?
             {
-                // Missing lookup entries are the expected fast skip path for unselected motifs
-                if let Some(target_idx) = selected_motifs.target_for(key) {
-                    counts_by_window
-                        .entry(original_idx)
-                        .or_default()
-                        .entry(target_idx)
-                        .and_modify(|value| *value += weight)
-                        .or_insert(weight);
+                if record_encoded_end_count(EndSide::Left, key, weight)? {
                     counted_end_flags.left_counted = true;
                 }
             }
@@ -476,31 +467,11 @@ pub(crate) fn count_selected_fragment_in_window(
     }
 
     if let Some(right_end) = fragment.right_end.as_ref() {
-        // Endpoint assignment uses the terminal base coordinate. For the right end,
-        // `boundary_pos` is the split point after that base, so the terminal base is
-        // `boundary_pos - 1`.
-        let right_endpoint_pos = right_end
-            .boundary_pos
-            .checked_sub(1)
-            .expect("right boundary must be > 0 for a valid half-open interval");
-        let count_right_end = match assign_by {
-            WindowMotifAssigner::Endpoint => {
-                window_interval.contains_point(right_endpoint_pos as u64)
-            }
-            _ => true,
-        };
-        if count_right_end {
+        if end_is_selected_by_window(right_end, EndSide::Right, window_interval, assign_by) {
             if let Some(key) =
                 maybe_encode_end_motif_key(right_end, EndSide::Right, motif_context, source_inside)?
             {
-                // The key includes `reverse_on_decode = true`, so right-end mappings stay explicit
-                if let Some(target_idx) = selected_motifs.target_for(key) {
-                    counts_by_window
-                        .entry(original_idx)
-                        .or_default()
-                        .entry(target_idx)
-                        .and_modify(|value| *value += weight)
-                        .or_insert(weight);
+                if record_encoded_end_count(EndSide::Right, key, weight)? {
                     counted_end_flags.right_counted = true;
                 }
             }
@@ -508,6 +479,32 @@ pub(crate) fn count_selected_fragment_in_window(
     }
 
     Ok(counted_end_flags)
+}
+
+/// Return whether this end should count in the current window.
+///
+/// Endpoint assignment is end-specific. The left end uses `boundary_pos`. The right end uses the
+/// terminal base at `boundary_pos - 1` because `boundary_pos` is the half-open split point after
+/// that base. Other assignment modes have already selected the window at fragment level.
+fn end_is_selected_by_window(
+    end: &ResolvedFragmentEnd,
+    end_side: EndSide,
+    window_interval: Interval<u64>,
+    assign_by: WindowMotifAssigner,
+) -> bool {
+    match assign_by {
+        WindowMotifAssigner::Endpoint => {
+            let endpoint_pos = match end_side {
+                EndSide::Left => end.boundary_pos,
+                EndSide::Right => end
+                    .boundary_pos
+                    .checked_sub(1)
+                    .expect("right boundary must be > 0 for a valid half-open interval"),
+            };
+            window_interval.contains_point(endpoint_pos as u64)
+        }
+        _ => true,
+    }
 }
 
 /// Encode one end motif if both halves are valid.

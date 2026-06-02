@@ -128,6 +128,13 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     if opt.k_inside == 0 && opt.k_outside == 0 {
         bail!("At least one of --k-inside or --k-outside must be > 0");
     }
+    if opt.k_inside > opt.fragment_lengths.max_fragment_length as usize {
+        bail!(
+            "`--k-inside` ({}) cannot exceed `--max-fragment-length` ({}). Inside motifs are defined from bases inside the selected fragment span, so increase `--max-fragment-length` or use a shorter inside motif.",
+            opt.k_inside,
+            opt.fragment_lengths.max_fragment_length
+        );
+    }
     let selected_motifs = match opt.motifs_file.as_deref() {
         None => None,
         Some(motifs_file) => {
@@ -350,10 +357,11 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
         (None, None)
     };
 
-    // Tile counting needs an encoder for each enabled motif half. Without a motifs file this is the
-    // full radix-5 codec. With a motifs file it is the parsed codec, which may be a compact
-    // selected subspace for large k. Cloning `EndMotifHalfSpec` only clones Arc handles to codec
-    // metadata, never per-tile reference-code arrays.
+    // Tile counting needs an encoder for each enabled motif half. Without a motifs file this is
+    // always the full radix-5 codec. With a motifs file, halves up to the radix-5 limit still use
+    // full radix-5 codes, while larger halves use byte-backed selected subspaces. Cloning
+    // `EndMotifHalfSpec` only clones Arc handles to codec metadata, never per-tile reference-code
+    // arrays.
     let (inside_counting_spec, outside_counting_spec) = match selected_motifs.as_ref() {
         Some(lookup) => (lookup.inside_spec.clone(), lookup.outside_spec.clone()),
         None => (
@@ -610,7 +618,12 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     final_outputs
         .record_temp_files_with_same_names_in([temp_motif_output_path], &opt.ioc.output_dir)?;
 
-    let temp_settings_path = write_end_settings_json(final_outputs.temp_dir(), prefix, opt)?;
+    let temp_settings_path = write_end_settings_json(
+        final_outputs.temp_dir(),
+        prefix,
+        opt,
+        selected_motifs.as_ref().map(|lookup| lookup.column_kind),
+    )?;
     let settings_file_name = temp_settings_path.file_name().with_context(|| {
         format!(
             "temporary output path has no filename: {}",

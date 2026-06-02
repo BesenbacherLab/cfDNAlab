@@ -97,13 +97,14 @@ pub(crate) type SelectedEndCountsByWindow = FxHashMap<u64, FxHashMap<u32, f64>>;
 /// Codec used for one inside or outside motif half during tile-local counting.
 ///
 /// Full motif output uses the radix-5 [`KmerSpec`] so sparse encoded keys can be decoded into motif
-/// strings during reduction. Motifs-file output can use [`SubspaceKmerSpec`] for k values that are
-/// too large for the full radix-5 universe, because output labels already come from the motifs file.
+/// strings during reduction. Motifs-file output also uses radix-5 for halves up to the full
+/// radix-5 limit. It switches to [`SubspaceKmerSpec`] only for larger halves, because output labels
+/// already come from the motifs file and the full motif universe cannot be represented.
 #[derive(Clone, Debug)]
 pub(crate) enum EndMotifHalfSpec {
     /// Full radix-5 k-mer space
     Radix5(Arc<KmerSpec>),
-    /// Compact selected-k-mer subspace
+    /// Byte-backed selected-k-mer subspace for motifs-file halves above the radix-5 limit
     Subspace(Arc<SubspaceKmerSpec>),
 }
 
@@ -113,12 +114,12 @@ impl EndMotifHalfSpec {
         EndMotifHalfSpec::Radix5(Arc::new(spec))
     }
 
-    /// Wrap a selected-subspace spec in the end-motif codec enum.
+    /// Wrap a byte-backed selected-subspace spec in the end-motif codec enum.
     pub(crate) fn from_subspace(spec: SubspaceKmerSpec) -> Self {
         EndMotifHalfSpec::Subspace(Arc::new(spec))
     }
 
-    /// Wrap a shared selected-subspace spec in the end-motif codec enum.
+    /// Wrap a shared byte-backed selected-subspace spec in the end-motif codec enum.
     pub(crate) fn from_shared_subspace(spec: Arc<SubspaceKmerSpec>) -> Self {
         EndMotifHalfSpec::Subspace(spec)
     }

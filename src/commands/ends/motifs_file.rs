@@ -521,9 +521,10 @@ fn build_selected_motif_half_specs(
     rows: &[ParsedMotifsFileRow],
 ) -> Result<(Option<EndMotifHalfSpec>, Option<EndMotifHalfSpec>)> {
     if k_inside > MAX_RADIX5_KMER_SIZE && k_inside == k_outside && k_inside > 0 {
-        // One selected subspace is enough when both halves have the same length. The full
-        // inside/outside pair is still checked by the encoded lookup, so sharing this half-code
-        // universe only broadens the cheap prefilter and avoids duplicate per-tile code arrays.
+        // One byte-backed selected subspace is enough when both large-k halves have the same
+        // length. The full inside/outside pair is still checked by the encoded lookup, so sharing
+        // this half-code universe only broadens the cheap prefilter and avoids duplicate per-tile
+        // code arrays.
         let mut selected_halves = Vec::with_capacity(rows.len() * 4);
         for row in rows {
             collect_selected_half_states(&mut selected_halves, &row.motif.inside);
@@ -559,6 +560,8 @@ fn build_optional_selected_motif_half_spec(
         return Ok(None);
     }
     if k <= MAX_RADIX5_KMER_SIZE {
+        // Small motifs-file halves keep the ordinary full radix-5 code space. Subspaces are only
+        // needed when the requested k cannot be represented by the full radix-5 codec.
         return build_optional_kmer_spec(k, label)
             .map(|spec| spec.map(EndMotifHalfSpec::from_radix5));
     }

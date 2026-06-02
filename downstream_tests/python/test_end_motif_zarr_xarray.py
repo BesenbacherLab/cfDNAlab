@@ -53,3 +53,33 @@ def test_xarray_builds_dataframe_from_dense_end_motif_counts(
             }
         ),
     )
+
+
+def test_xarray_reads_selected_end_motif_labels_and_sparse_coordinates(
+    sparse_windowed_selected_motifs_end_zarr_path: Path,
+) -> None:
+    dataset = xr.open_zarr(
+        str(sparse_windowed_selected_motifs_end_zarr_path),
+        consolidated=False,
+    )
+    sparse = xr.open_zarr(
+        str(sparse_windowed_selected_motifs_end_zarr_path),
+        group="sparse",
+        consolidated=False,
+    )
+    motif_labels = [
+        bytes(row).decode("ascii")
+        for row in dataset["motif_ascii"].values.astype(np.uint8)
+    ]
+
+    assert dataset.attrs["motif_axis_kind"] == "motif"
+    assert motif_labels == ["GT_AC", "AC_GT", "TT_TT"]
+    assert dataset["motif_ascii"].dims == ("motif", "motif_byte")
+    np.testing.assert_array_equal(
+        sparse["shape"].values,
+        np.array([3, 3], dtype=np.int32),
+    )
+    np.testing.assert_array_equal(
+        sparse["motif"].values,
+        np.array([1, 0, 1], dtype=np.int32),
+    )

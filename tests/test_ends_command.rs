@@ -2,7 +2,7 @@
 
 mod fixtures;
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 #[cfg(feature = "cmd_gc_bias")]
 use cfdnalab::commands::gc_bias::package::GCCorrectionPackage;
 use cfdnalab::commands::{
@@ -792,6 +792,14 @@ fn read_sparse_output(out_dir: &Path) -> Result<(Vec<String>, Array2<f64>)> {
     Ok((motifs, matrix))
 }
 
+fn read_motif_output(out_dir: &Path) -> Result<(Vec<String>, Array2<f64>)> {
+    match end_motif_storage_mode(out_dir)?.as_str() {
+        "dense" => read_dense_output(out_dir),
+        "sparse_coo" => read_sparse_output(out_dir),
+        storage_mode => bail!("unexpected end motif storage mode: {storage_mode}"),
+    }
+}
+
 fn read_sparse_group_output(out_dir: &Path) -> Result<(Vec<String>, Array2<f64>)> {
     let store_path = end_motifs_zarr_path(out_dir);
     let groups = read_motif_group_labels(&store_path)?;
@@ -1066,6 +1074,7 @@ fn parse_group_index_tsv(text: &str) -> Vec<(u64, String)> {
 fn expected_settings_json(
     k_inside: usize,
     k_outside: usize,
+    all_motifs: bool,
     source_inside: &str,
     clip_strategy: &str,
     window_assignment: &str,
@@ -1075,6 +1084,9 @@ fn expected_settings_json(
     let mut expected = Map::new();
     expected.insert("k_inside".to_string(), json!(k_inside));
     expected.insert("k_outside".to_string(), json!(k_outside));
+    expected.insert("all_motifs".to_string(), json!(all_motifs));
+    expected.insert("motifs_file".to_string(), Value::Null);
+    expected.insert("motifs_file_mode".to_string(), Value::Null);
     expected.insert("source_inside".to_string(), json!(source_inside));
     expected.insert("clip_strategy".to_string(), json!(clip_strategy));
     expected.insert("window_assignment".to_string(), json!(window_assignment));
@@ -3410,6 +3422,7 @@ fn sparse_output_is_the_default_when_all_motifs_is_disabled() -> Result<()> {
         expected_settings_json(
             1,
             0,
+            false,
             "reference",
             "aligned",
             "endpoint",
@@ -3422,7 +3435,7 @@ fn sparse_output_is_the_default_when_all_motifs_is_disabled() -> Result<()> {
 
 #[test]
 fn motifs_file_sparse_output_writes_selected_motifs_as_motif_ascii() -> Result<()> {
-    // Arrange: the reference-backed 10 bp fragment contributes `_A` at the left end and `_G` at
+    // Arrange: the reference-backed 10 bp fragment contributes `_G` at the left end and `_A` at
     // the right end. The motifs file puts `_G` first and includes an unobserved `_T`; sparse
     // selected output should keep observed selected motifs in file order and write them as motifs.
     let bam = simple_paired_fragment_bam("ends_motifs_file_sparse_motifs", 10, 10, 4)?;
@@ -3435,7 +3448,7 @@ fn motifs_file_sparse_output_writes_selected_motifs_as_motif_ascii() -> Result<(
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = false;
-    cfg.motifs_file = Some(motifs_file);
+    cfg.motifs_file = Some(motifs_file.clone());
     {
         let lengths = cfg.fragment_lengths_mut();
         lengths.min_fragment_length = 10;
@@ -3445,6 +3458,7 @@ fn motifs_file_sparse_output_writes_selected_motifs_as_motif_ascii() -> Result<(
     // Act
     run(&cfg)?;
     let (motifs, matrix) = read_sparse_output(out_dir.path())?;
+    let settings = parse_json(&read_text_file(&settings_path(out_dir.path()))?);
 
     // Assert
     let store_path = end_motifs_zarr_path(out_dir.path());
@@ -3460,6 +3474,12 @@ fn motifs_file_sparse_output_writes_selected_motifs_as_motif_ascii() -> Result<(
     assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 1.0);
     assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 1.0);
     assert_eq!(matrix.sum(), 2.0);
+    assert_eq!(settings["all_motifs"], json!(false));
+    assert_eq!(
+        settings["motifs_file"],
+        json!(motifs_file.to_string_lossy())
+    );
+    assert_eq!(settings["motifs_file_mode"], json!("ungrouped"));
     Ok(())
 }
 
@@ -3480,7 +3500,7 @@ fn grouped_motifs_file_dense_output_writes_group_labels_without_motif_ascii() ->
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
-    cfg.motifs_file = Some(motifs_file);
+    cfg.motifs_file = Some(motifs_file.clone());
     {
         let lengths = cfg.fragment_lengths_mut();
         lengths.min_fragment_length = 10;
@@ -3490,6 +3510,7 @@ fn grouped_motifs_file_dense_output_writes_group_labels_without_motif_ascii() ->
     // Act
     run(&cfg)?;
     let (groups, matrix) = read_dense_group_output(out_dir.path())?;
+    let settings = parse_json(&read_text_file(&settings_path(out_dir.path()))?);
 
     // Assert
     let store_path = end_motifs_zarr_path(out_dir.path());
@@ -3503,6 +3524,418 @@ fn grouped_motifs_file_dense_output_writes_group_labels_without_motif_ascii() ->
     assert_eq!(motif_count(&matrix, &groups, 0, "group-one"), 1.0);
     assert_eq!(motif_count(&matrix, &groups, 0, "unused_group"), 0.0);
     assert_eq!(matrix.sum(), 2.0);
+    assert_eq!(settings["all_motifs"], json!(true));
+    assert_eq!(
+        settings["motifs_file"],
+        json!(motifs_file.to_string_lossy())
+    );
+    assert_eq!(settings["motifs_file_mode"], json!("grouped"));
+    Ok(())
+}
+
+#[test]
+fn motifs_file_counts_match_unfiltered_selected_motifs_across_window_modes() -> Result<()> {
+    // Each window mode is run once with matching inside/outside k and once with different k.
+    // Those two shapes use different reference-code sharing paths internally.
+    let cases = [
+        MotifsFileBaselineComparisonCase {
+            name: "global_sparse_endpoint_same_k",
+            window_mode: MotifsFileBaselineWindowMode::Global,
+            assign_by: WindowMotifAssigner::Endpoint,
+            all_motifs: false,
+            expected_rows: 1,
+            k_inside: 2,
+            k_outside: 2,
+        },
+        MotifsFileBaselineComparisonCase {
+            name: "global_sparse_endpoint_different_k",
+            window_mode: MotifsFileBaselineWindowMode::Global,
+            assign_by: WindowMotifAssigner::Endpoint,
+            all_motifs: false,
+            expected_rows: 1,
+            k_inside: 2,
+            k_outside: 3,
+        },
+        MotifsFileBaselineComparisonCase {
+            name: "fixed_size_dense_any_same_k",
+            window_mode: MotifsFileBaselineWindowMode::FixedSize,
+            assign_by: WindowMotifAssigner::Any,
+            all_motifs: true,
+            expected_rows: 2,
+            k_inside: 2,
+            k_outside: 2,
+        },
+        MotifsFileBaselineComparisonCase {
+            name: "fixed_size_dense_any_different_k",
+            window_mode: MotifsFileBaselineWindowMode::FixedSize,
+            assign_by: WindowMotifAssigner::Any,
+            all_motifs: true,
+            expected_rows: 2,
+            k_inside: 2,
+            k_outside: 3,
+        },
+        MotifsFileBaselineComparisonCase {
+            name: "bed_sparse_count_overlap_same_k",
+            window_mode: MotifsFileBaselineWindowMode::Bed,
+            assign_by: WindowMotifAssigner::CountOverlap,
+            all_motifs: false,
+            expected_rows: 3,
+            k_inside: 2,
+            k_outside: 2,
+        },
+        MotifsFileBaselineComparisonCase {
+            name: "bed_sparse_count_overlap_different_k",
+            window_mode: MotifsFileBaselineWindowMode::Bed,
+            assign_by: WindowMotifAssigner::CountOverlap,
+            all_motifs: false,
+            expected_rows: 3,
+            k_inside: 2,
+            k_outside: 3,
+        },
+        MotifsFileBaselineComparisonCase {
+            name: "grouped_bed_dense_proportion_same_k",
+            window_mode: MotifsFileBaselineWindowMode::GroupedBed,
+            assign_by: WindowMotifAssigner::Proportion(0.5),
+            all_motifs: true,
+            expected_rows: 3,
+            k_inside: 2,
+            k_outside: 2,
+        },
+        MotifsFileBaselineComparisonCase {
+            name: "grouped_bed_dense_proportion_different_k",
+            window_mode: MotifsFileBaselineWindowMode::GroupedBed,
+            assign_by: WindowMotifAssigner::Proportion(0.5),
+            all_motifs: true,
+            expected_rows: 3,
+            k_inside: 2,
+            k_outside: 3,
+        },
+    ];
+
+    for case in cases {
+        assert_motifs_file_counts_match_unfiltered_selected_motifs(case)?;
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct MotifsFileBaselineComparisonCase {
+    name: &'static str,
+    window_mode: MotifsFileBaselineWindowMode,
+    assign_by: WindowMotifAssigner,
+    all_motifs: bool,
+    expected_rows: usize,
+    k_inside: usize,
+    k_outside: usize,
+}
+
+#[derive(Clone, Copy)]
+enum MotifsFileBaselineWindowMode {
+    Global,
+    FixedSize,
+    Bed,
+    GroupedBed,
+}
+
+fn assert_motifs_file_counts_match_unfiltered_selected_motifs(
+    case: MotifsFileBaselineComparisonCase,
+) -> Result<()> {
+    // Arrange:
+    // The same two-chromosome fixture is counted twice, first without a motifs file and then with
+    // a selected ungrouped motifs file. The motifs file keeps three observed motifs and one
+    // unobserved motif, while deliberately omitting one observed motif. For every output row, the
+    // selected columns must match the corresponding columns from the unfiltered run.
+    let fragment_length: usize = (2 * case.k_inside + 10).max(20);
+    let read_length = 10;
+    let padding = case.k_outside + 10;
+    let gap = fragment_length + 2 * case.k_outside + 20;
+
+    // Each fragment declares the motif expected at its left and right end. The reference sequence
+    // below is built from these declarations, so the test can derive motif labels for arbitrary
+    // k_inside/k_outside without changing the expected count structure.
+    let case_fragments = vec![
+        SelectedMotifGroupFragment {
+            tid: 0,
+            start: padding as i64,
+            left_motif: endpoint_motif(b'G', b'T'),
+            right_motif: endpoint_motif(b'A', b'C'),
+        },
+        SelectedMotifGroupFragment {
+            tid: 0,
+            start: (padding + gap) as i64,
+            left_motif: endpoint_motif(b'G', b'T'),
+            right_motif: endpoint_motif(b'C', b'A'),
+        },
+        SelectedMotifGroupFragment {
+            tid: 1,
+            start: padding as i64,
+            left_motif: endpoint_motif(b'A', b'C'),
+            right_motif: endpoint_motif(b'A', b'C'),
+        },
+        SelectedMotifGroupFragment {
+            tid: 1,
+            start: (padding + gap) as i64,
+            left_motif: endpoint_motif(b'T', b'G'),
+            right_motif: endpoint_motif(b'C', b'A'),
+        },
+        SelectedMotifGroupFragment {
+            tid: 1,
+            start: (padding + 2 * gap) as i64,
+            left_motif: endpoint_motif(b'G', b'T'),
+            right_motif: endpoint_motif(b'T', b'G'),
+        },
+    ];
+    let chrom_len = case_fragments
+        .iter()
+        .map(|fragment| fragment.start as usize + fragment_length + case.k_outside + 10)
+        .max()
+        .expect("fixture has fragments");
+
+    // The BAM contains ordinary fragments. The motif identity comes from the matching reference,
+    // which is important because this test compares the selected motifs-file path against the
+    // unfiltered reference-backed path rather than testing read-sequence decoding.
+    let bam_fragments: Vec<FragmentSpec> = case_fragments
+        .iter()
+        .map(|fragment| {
+            fragment_on_tid(
+                fragment.tid,
+                fragment.start,
+                fragment_length as i64,
+                read_length,
+            )
+        })
+        .collect();
+    let bam = bam_from_specs(
+        vec![
+            ("chr1".to_string(), chrom_len as u32),
+            ("chr2".to_string(), chrom_len as u32),
+        ],
+        bam_fragments,
+        Vec::new(),
+        &format!("ends_motifs_file_baseline_{}", case.name),
+    )?;
+
+    // The helper writes the outside bases before the fragment start and after the fragment end.
+    // For right ends it writes complement bases, because decoded right-end labels are oriented as
+    // reverse complements.
+    let reference = twobit_from_sequences(
+        &format!("ends_motifs_file_baseline_{}_reference", case.name),
+        vec![
+            (
+                "chr1".to_string(),
+                selected_motif_group_reference_sequence(
+                    chrom_len,
+                    case.k_inside,
+                    case.k_outside,
+                    fragment_length,
+                    case_fragments.iter().filter(|fragment| fragment.tid == 0),
+                ),
+            ),
+            (
+                "chr2".to_string(),
+                selected_motif_group_reference_sequence(
+                    chrom_len,
+                    case.k_inside,
+                    case.k_outside,
+                    fragment_length,
+                    case_fragments.iter().filter(|fragment| fragment.tid == 1),
+                ),
+            ),
+        ],
+    )?;
+
+    let gt_motif = repeated_motif_label(b'G', b'T', case.k_outside, case.k_inside);
+    let ac_motif = repeated_motif_label(b'A', b'C', case.k_outside, case.k_inside);
+    let tg_motif = repeated_motif_label(b'T', b'G', case.k_outside, case.k_inside);
+    let ca_motif = repeated_motif_label(b'C', b'A', case.k_outside, case.k_inside);
+    let aa_motif = repeated_motif_label(b'A', b'A', case.k_outside, case.k_inside);
+
+    // The selected motifs file includes three observed motifs and one unobserved motif. It omits
+    // CA on purpose, so the final row-sum check can prove that the selected run differs only by
+    // dropping an observed motif that was not requested.
+    let fixture_dir = TempDir::new()?;
+    let motifs_file = fixture_dir.path().join("selected_motifs.tsv");
+    std::fs::write(
+        &motifs_file,
+        format!("{gt_motif}\n{ac_motif}\n{tg_motif}\n{aa_motif}\n"),
+    )?;
+    let bed = fixture_dir.path().join("windows.bed");
+    let grouped_bed = fixture_dir.path().join("grouped_windows.bed");
+
+    // BED cases use full-chromosome rows for chr1 and chr2, plus an empty row. Full rows make the
+    // motif totals easy to compare across assignment modes, while the empty row catches accidental
+    // row loss in sparse selected output.
+    write_bed(
+        &bed,
+        &[
+            ("chr1", 0, chrom_len as u64, "chr1_full"),
+            ("chr2", 0, chrom_len as u64, "chr2_full"),
+            ("chr1", 1, 2, "empty"),
+        ],
+    )?;
+    write_bed(
+        &grouped_bed,
+        &[
+            ("chr2", 0, chrom_len as u64, "group_alpha"),
+            ("chr1", 0, chrom_len as u64, "group_beta"),
+            ("chr1", 1, 2, "group_empty"),
+        ],
+    )?;
+
+    let baseline_out_dir = TempDir::new()?;
+    let selected_out_dir = TempDir::new()?;
+
+    // The baseline and selected configs differ only by motifs_file. All other arguments stay the
+    // same, so mismatches below point at the motifs-file filtering path rather than the fixture.
+    let make_cfg = |output_dir: &Path, motifs_file: Option<PathBuf>| {
+        let mut cfg = EndsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: output_dir.to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1", "chr2"]),
+            case.k_inside,
+            case.k_outside,
+        );
+        cfg.output_prefix = "ends".to_string();
+        cfg.tile_size = 50;
+        cfg.min_mapq = 0;
+        cfg.require_proper_pair = false;
+        cfg.set_ref_2bit(Some(reference.path.clone()));
+        cfg.source_inside = KmerSource::Reference;
+        cfg.all_motifs = case.all_motifs;
+        cfg.motifs_file = motifs_file;
+        cfg.set_window_assignment(AssignMotifToWindowArgs {
+            assign_by: case.assign_by,
+        });
+        cfg.set_windows(match case.window_mode {
+            MotifsFileBaselineWindowMode::Global => DistributionWindowsArgs {
+                by_size: None,
+                by_bed: None,
+                by_grouped_bed: None,
+            },
+            MotifsFileBaselineWindowMode::FixedSize => DistributionWindowsArgs {
+                by_size: Some(chrom_len as u64),
+                by_bed: None,
+                by_grouped_bed: None,
+            },
+            MotifsFileBaselineWindowMode::Bed => DistributionWindowsArgs {
+                by_size: None,
+                by_bed: Some(bed.clone()),
+                by_grouped_bed: None,
+            },
+            MotifsFileBaselineWindowMode::GroupedBed => DistributionWindowsArgs {
+                by_size: None,
+                by_bed: None,
+                by_grouped_bed: Some(grouped_bed.clone()),
+            },
+        });
+        set_exact_fragment_length(&mut cfg, fragment_length as u32);
+        cfg
+    };
+    let baseline_cfg = make_cfg(baseline_out_dir.path(), None);
+    let selected_cfg = make_cfg(selected_out_dir.path(), Some(motifs_file));
+
+    // Act
+    run(&baseline_cfg)?;
+    run(&selected_cfg)?;
+    let (baseline_motifs, baseline_matrix) = read_motif_output(baseline_out_dir.path())?;
+    let (selected_motifs, selected_matrix) = read_motif_output(selected_out_dir.path())?;
+
+    // Assert
+    let expected_storage_mode = if case.all_motifs {
+        "dense"
+    } else {
+        "sparse_coo"
+    };
+    assert_eq!(
+        end_motif_storage_mode(baseline_out_dir.path())?,
+        expected_storage_mode,
+        "{}",
+        case.name
+    );
+    assert_eq!(
+        end_motif_storage_mode(selected_out_dir.path())?,
+        expected_storage_mode,
+        "{}",
+        case.name
+    );
+    assert_eq!(
+        end_motif_axis_kind(baseline_out_dir.path())?,
+        "motif",
+        "{}",
+        case.name
+    );
+    assert_eq!(
+        end_motif_axis_kind(selected_out_dir.path())?,
+        "motif",
+        "{}",
+        case.name
+    );
+    assert_eq!(baseline_matrix.nrows(), case.expected_rows, "{}", case.name);
+    assert_eq!(selected_matrix.nrows(), case.expected_rows, "{}", case.name);
+    assert!(
+        baseline_motifs.len() > selected_motifs.len(),
+        "{} baseline motifs {:?} selected motifs {:?}",
+        case.name,
+        baseline_motifs,
+        selected_motifs
+    );
+    assert!(
+        baseline_motifs.contains(&ca_motif),
+        "{} baseline motifs {:?}",
+        case.name,
+        baseline_motifs
+    );
+    assert!(
+        !selected_motifs.contains(&ca_motif),
+        "{} selected motifs {:?}",
+        case.name,
+        selected_motifs
+    );
+
+    // Sparse selected output drops the unobserved AA target. Dense all-motifs output keeps it as a
+    // zero-count column, matching the motifs-file order.
+    let expected_selected_motifs = if case.all_motifs {
+        vec![
+            gt_motif.clone(),
+            ac_motif.clone(),
+            tg_motif.clone(),
+            aa_motif.clone(),
+        ]
+    } else {
+        vec![gt_motif.clone(), ac_motif.clone(), tg_motif.clone()]
+    };
+    assert_eq!(selected_motifs, expected_selected_motifs, "{}", case.name);
+
+    // First compare every selected motif column against the unfiltered run. Then compare row sums:
+    // the only remaining unfiltered count should be the observed CA motif omitted from the file.
+    for row in 0..case.expected_rows {
+        for motif in &selected_motifs {
+            assert_eq!(
+                motif_count(&selected_matrix, &selected_motifs, row, motif),
+                motif_count(&baseline_matrix, &baseline_motifs, row, motif),
+                "{} row {row} motif {motif}",
+                case.name
+            );
+        }
+
+        let selected_sum = selected_matrix.row(row).sum();
+        let unselected_observed_sum =
+            motif_count(&baseline_matrix, &baseline_motifs, row, &ca_motif);
+        assert_eq!(
+            baseline_matrix.row(row).sum(),
+            selected_sum + unselected_observed_sum,
+            "{} row {row}",
+            case.name
+        );
+    }
+    assert!(
+        baseline_matrix.sum() > selected_matrix.sum(),
+        "{}",
+        case.name
+    );
     Ok(())
 }
 
@@ -4206,8 +4639,9 @@ fn motifs_file_counts_selected_60bp_motif_from_k30_inside_and_k30_outside() -> R
 }
 
 #[test]
-fn dense_all_motifs_output_still_uses_the_same_settings_sidecar() -> Result<()> {
-    // Arrange: the sidecar should describe motif semantics, not mirror obvious output format state.
+fn dense_all_motifs_output_records_all_motifs_in_settings_sidecar() -> Result<()> {
+    // Arrange: --all-motifs changes the count axis from observed-only to a dense fixed axis, so the
+    // sidecar should record it.
     let bam = simple_paired_fragment_bam("ends_dense_settings", 10, 10, 4)?;
     let reference = simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
@@ -4234,6 +4668,7 @@ fn dense_all_motifs_output_still_uses_the_same_settings_sidecar() -> Result<()> 
         expected_settings_json(
             1,
             0,
+            true,
             "reference",
             "aligned",
             "endpoint",
@@ -7236,6 +7671,7 @@ fn settings_json_keeps_the_runtime_fields_needed_to_interpret_output() -> Result
         expected_settings_json(
             1,
             0,
+            false,
             "read",
             "skip",
             "endpoint",
@@ -7279,7 +7715,16 @@ fn settings_json_formats_proportion_window_assignment_stably() -> Result<()> {
     // Assert: exact sidecar contract, not just substring presence.
     assert_eq!(
         parse_json(&settings),
-        expected_settings_json(1, 0, "read", "aligned", "proportion=0.125", "auto", "allow",)
+        expected_settings_json(
+            1,
+            0,
+            false,
+            "read",
+            "aligned",
+            "proportion=0.125",
+            "auto",
+            "allow",
+        )
     );
     Ok(())
 }
@@ -7304,6 +7749,41 @@ fn reference_backed_inside_bases_require_ref_2bit() -> Result<()> {
 
     // Assert
     assert!(err.to_string().contains("--ref-2bit"));
+    Ok(())
+}
+
+#[test]
+fn inside_k_cannot_exceed_max_fragment_length_for_any_inside_source() -> Result<()> {
+    // Arrange: every selected fragment is at most 10 bp long, so an 11 bp inside motif cannot be
+    // defined inside any counted fragment span.
+    let bam = simple_paired_fragment_bam("ends_inside_k_too_long", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+
+    for source_inside in [KmerSource::Read, KmerSource::Reference] {
+        let out_dir = TempDir::new()?;
+        let mut cfg = base_config(&bam.bam, out_dir.path(), 11, 0);
+        if matches!(source_inside, KmerSource::Reference) {
+            cfg.set_ref_2bit(Some(reference.path.clone()));
+        }
+        cfg.source_inside = source_inside;
+        cfg.all_motifs = false;
+        {
+            let lengths = cfg.fragment_lengths_mut();
+            lengths.min_fragment_length = 10;
+            lengths.max_fragment_length = 10;
+        }
+
+        // Act
+        let error = run(&cfg).expect_err("inside motif longer than selected fragments should fail");
+
+        // Assert
+        assert!(
+            error
+                .to_string()
+                .contains("`--k-inside` (11) cannot exceed `--max-fragment-length` (10)"),
+            "unexpected error for {source_inside:?}: {error}"
+        );
+    }
     Ok(())
 }
 
@@ -8492,6 +8972,7 @@ fn settings_json_ignores_fragment_length_bounds_but_keeps_motif_definition_field
         expected_settings_json(
             1,
             0,
+            false,
             "reference",
             "aligned",
             "endpoint",

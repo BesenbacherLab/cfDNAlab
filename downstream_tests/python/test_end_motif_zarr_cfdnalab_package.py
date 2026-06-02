@@ -129,6 +129,37 @@ def test_cfdnalab_package_reads_sparse_windowed_end_motifs(
     assert windows["blacklisted_fraction"].tolist() == [0.0, 0.0, 0.0]
 
 
+def test_cfdnalab_package_reads_sparse_windowed_selected_motif_file_end_motifs(
+    sparse_windowed_selected_motifs_end_zarr_path: Path,
+) -> None:
+    end_motifs = cfdnalab.read_end_motifs(
+        sparse_windowed_selected_motifs_end_zarr_path
+    )
+
+    assert isinstance(end_motifs, cfdnalab.WindowedEndMotifCounts)
+    assert end_motifs.storage_mode() == "sparse_coo"
+    assert end_motifs.row_mode() == "bed"
+    assert end_motifs.motifs_metadata()["motif"].tolist() == [
+        "GT_AC",
+        "AC_GT",
+        "TT_TT",
+    ]
+    np.testing.assert_allclose(
+        end_motifs.dense_counts_array(allow_densify=True),
+        np.array(
+            [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            dtype=np.float64,
+        ),
+    )
+    np.testing.assert_allclose(
+        end_motifs.sparse_counts_matrix(motifs=["AC_GT", "GT_AC"]).toarray(),
+        np.array([[1.0, 0.0], [0.0, 1.0], [1.0, 0.0]], dtype=np.float64),
+    )
+    unused_frame = end_motifs.data_frame(motifs="TT_TT", densify=True)
+    assert unused_frame["motif"].tolist() == ["TT_TT", "TT_TT", "TT_TT"]
+    assert unused_frame["count"].tolist() == [0.0, 0.0, 0.0]
+
+
 def test_cfdnalab_package_reads_sparse_grouped_end_motifs(
     sparse_grouped_end_zarr_path: Path,
 ) -> None:
@@ -265,3 +296,41 @@ def test_cfdnalab_package_reads_sparse_grouped_motif_group_end_motifs(
     assert gamma_frame["count"].tolist() == [0.0, 0.0]
     with pytest.raises(ValueError, match="Unknown end-motif label"):
         end_motifs.data_frame(motifs="_A")
+
+
+def test_cfdnalab_package_reads_sparse_grouped_wide_motif_group_end_motifs(
+    sparse_grouped_wide_motif_group_end_zarr_path: Path,
+) -> None:
+    end_motifs = cfdnalab.read_end_motifs(
+        sparse_grouped_wide_motif_group_end_zarr_path
+    )
+
+    assert isinstance(end_motifs, cfdnalab.GroupedEndMotifCounts)
+    assert end_motifs.storage_mode() == "sparse_coo"
+    assert end_motifs.row_mode() == "grouped_bed"
+    pd.testing.assert_frame_equal(
+        end_motifs.motifs_metadata(),
+        pd.DataFrame(
+            {
+                "motif_index": np.array([0, 1], dtype=np.int32),
+                "motif": np.array(["right-hit-wide", "left-hit-wide"], dtype=object),
+            }
+        ),
+    )
+    assert end_motifs.motif_idx("left-hit-wide") == 1
+    np.testing.assert_allclose(
+        end_motifs.dense_counts_array(allow_densify=True),
+        np.array([[1.0, 2.0], [1.0, 0.0], [0.0, 0.0]], dtype=np.float64),
+    )
+    np.testing.assert_allclose(
+        end_motifs.sparse_counts_matrix(
+            groups=["alpha", "beta"],
+            motifs=["left-hit-wide", "right-hit-wide"],
+        ).toarray(),
+        np.array([[0.0, 1.0], [2.0, 1.0]], dtype=np.float64),
+    )
+    beta_frame = end_motifs.data_frame(groups="beta", densify=True)
+    assert beta_frame["motif"].tolist() == ["right-hit-wide", "left-hit-wide"]
+    assert beta_frame["count"].tolist() == [1.0, 2.0]
+    with pytest.raises(ValueError, match="Unknown end-motif label"):
+        end_motifs.data_frame(motifs="GT_AC")

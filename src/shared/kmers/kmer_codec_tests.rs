@@ -20,15 +20,14 @@ fn acgt_kmer_from_index(mut code_index: usize, k: usize) -> Vec<u8> {
 }
 
 #[test]
-fn subspace_spec_reuses_radix_encoding_when_k_fits() -> Result<()> {
+fn subspace_spec_assigns_compact_selected_codes() -> Result<()> {
     // Arrange: two selected 2-mers should be represented by compact selected codes 0 and 1.
     let selected = vec![&b"AC"[..], &b"GT"[..]];
 
     // Act
     let spec = build_subspace_kmer_spec(2, &selected)?;
 
-    // Assert: small k reuses the existing radix-5 encoder and stores compact codes as u8.
-    assert!(matches!(spec.encoding, SubspaceKmerEncoding::Radix5 { .. }));
+    // Assert: selected-subspace codes are compact and stored as u8.
     assert_eq!(spec.sentinel_missing(), u8::MAX as u64);
     assert_eq!(spec.encode_kmer_bytes(b"AC"), 0);
     assert_eq!(spec.encode_kmer_bytes(b"gt"), 1);
@@ -48,7 +47,7 @@ fn subspace_spec_reuses_radix_encoding_when_k_fits() -> Result<()> {
 }
 
 #[test]
-fn subspace_spec_uses_byte_lookup_when_k_exceeds_radix_limit() -> Result<()> {
+fn subspace_spec_supports_k_above_the_radix_limit() -> Result<()> {
     // Arrange: 28-mers do not fit the existing radix-5 u64 representation.
     let first = b"ACGT".repeat(7);
     let lowercase_first: Vec<u8> = first
@@ -61,9 +60,8 @@ fn subspace_spec_uses_byte_lookup_when_k_exceeds_radix_limit() -> Result<()> {
     // Act
     let spec = build_subspace_kmer_spec(28, &selected)?;
 
-    // Assert: the selected-code contract is the same even though the backing lookup is byte-based,
-    // and the duplicate lowercase first k-mer does not shift the second unique code.
-    assert!(matches!(spec.encoding, SubspaceKmerEncoding::Bytes { .. }));
+    // Assert: the selected-code contract still holds above the radix-5 limit, and the duplicate
+    // lowercase first k-mer does not shift the second unique code.
     assert_eq!(spec.sentinel_missing(), u8::MAX as u64);
     assert_eq!(spec.encode_kmer_bytes(first.as_slice()), 0);
     assert_eq!(spec.encode_kmer_bytes(second.as_slice()), 1);
@@ -78,6 +76,13 @@ fn subspace_spec_uses_byte_lookup_when_k_exceeds_radix_limit() -> Result<()> {
     expected[0] = 0;
     assert!(matches!(codes, KmerCodes::U8(_)));
     assert_eq!(codes_as_u64(&codes), expected);
+
+    let lowercase_reference: Vec<u8> = reference
+        .iter()
+        .map(|base| base.to_ascii_lowercase())
+        .collect();
+    let lowercase_codes = spec.build_left_aligned_codes(&lowercase_reference);
+    assert_eq!(codes_as_u64(&lowercase_codes), expected);
 
     Ok(())
 }

@@ -17,7 +17,7 @@ def test_python_zarr_reads_dense_global_end_motif_schema(
     store = zarr.open_group(str(dense_global_end_zarr_path), mode="r", zarr_format=3)
 
     assert store.attrs["cfdnalab_schema"] == "end_motif_counts"
-    assert store.attrs["cfdnalab_schema_version"] == 1
+    assert store.attrs["cfdnalab_schema_version"] == 2
     assert store.attrs["storage_mode"] == "dense"
     assert store.attrs["row_mode"] == "global"
     assert store.attrs["primary_array"] == "counts"
@@ -38,7 +38,7 @@ def test_python_zarr_reads_sparse_windowed_end_motif_schema(
     store = zarr.open_group(str(sparse_windowed_end_zarr_path), mode="r", zarr_format=3)
 
     assert store.attrs["cfdnalab_schema"] == "end_motif_counts"
-    assert store.attrs["cfdnalab_schema_version"] == 1
+    assert store.attrs["cfdnalab_schema_version"] == 2
     assert store.attrs["storage_mode"] == "sparse_coo"
     assert store.attrs["row_mode"] == "bed"
     assert store.attrs["primary_array"] is None
@@ -85,13 +85,46 @@ def test_python_zarr_reads_sparse_windowed_end_motif_schema(
     )
 
 
+def test_python_zarr_reads_sparse_windowed_selected_motifs_end_motif_schema(
+    sparse_windowed_selected_motifs_end_zarr_path: Path,
+) -> None:
+    store = zarr.open_group(
+        str(sparse_windowed_selected_motifs_end_zarr_path),
+        mode="r",
+        zarr_format=3,
+    )
+
+    assert store.attrs["cfdnalab_schema_version"] == 2
+    assert store.attrs["row_mode"] == "bed"
+    assert store.attrs["motif_axis_kind"] == "motif"
+    assert decode_motifs(store) == ["GT_AC", "AC_GT", "TT_TT"]
+    assert store["motif_index"].attrs["label_array"] == "motif_ascii"
+    assert store["chromosome"].attrs["labels"] == ["chr1", "chr2"]
+    np.testing.assert_array_equal(
+        store["sparse/shape"][:],
+        np.array([3, 3], dtype=np.int32),
+    )
+    np.testing.assert_array_equal(
+        store["sparse/row"][:],
+        np.array([0, 1, 2], dtype=np.int32),
+    )
+    np.testing.assert_array_equal(
+        store["sparse/motif"][:],
+        np.array([1, 0, 1], dtype=np.int32),
+    )
+    np.testing.assert_allclose(
+        store["sparse/count"][:],
+        np.array([1.0, 1.0, 1.0], dtype=np.float64),
+    )
+
+
 def test_python_zarr_reads_sparse_grouped_end_motif_schema(
     sparse_grouped_end_zarr_path: Path,
 ) -> None:
     store = zarr.open_group(str(sparse_grouped_end_zarr_path), mode="r", zarr_format=3)
 
     assert store.attrs["cfdnalab_schema"] == "end_motif_counts"
-    assert store.attrs["cfdnalab_schema_version"] == 1
+    assert store.attrs["cfdnalab_schema_version"] == 2
     assert store.attrs["storage_mode"] == "sparse_coo"
     assert store.attrs["row_mode"] == "grouped_bed"
     assert store.attrs["primary_array"] is None
@@ -172,4 +205,39 @@ def test_python_zarr_reads_sparse_grouped_motif_group_end_motif_schema(
     np.testing.assert_allclose(
         store["sparse/count"][:],
         np.array([2.0, 1.0, 1.0], dtype=np.float64),
+    )
+
+
+def test_python_zarr_reads_sparse_grouped_wide_motif_group_end_motif_schema(
+    sparse_grouped_wide_motif_group_end_zarr_path: Path,
+) -> None:
+    store = zarr.open_group(
+        str(sparse_grouped_wide_motif_group_end_zarr_path),
+        mode="r",
+        zarr_format=3,
+    )
+
+    assert store.attrs["cfdnalab_schema_version"] == 2
+    assert store.attrs["row_mode"] == "grouped_bed"
+    assert store.attrs["motif_axis_kind"] == "motif_group"
+    assert "motif_ascii" not in store
+    assert store["motif_index"].attrs["labels"] == [
+        "right-hit-wide",
+        "left-hit-wide",
+    ]
+    np.testing.assert_array_equal(
+        store["sparse/shape"][:],
+        np.array([3, 2], dtype=np.int32),
+    )
+    np.testing.assert_array_equal(
+        store["sparse/row"][:],
+        np.array([0, 0, 1], dtype=np.int32),
+    )
+    np.testing.assert_array_equal(
+        store["sparse/motif"][:],
+        np.array([0, 1, 0], dtype=np.int32),
+    )
+    np.testing.assert_allclose(
+        store["sparse/count"][:],
+        np.array([1.0, 2.0, 1.0], dtype=np.float64),
     )

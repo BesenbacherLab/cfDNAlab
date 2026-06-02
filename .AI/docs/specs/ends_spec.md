@@ -14,6 +14,18 @@
 - Outside bases always come from the reference and require `--ref-2bit` when `k_outside > 0`.
 - `--collapse-complement` is experimental and hidden unless built with `ends_experimental`. It canonicalizes same-orientation complements after the full motif is joined.
 
+## Motifs File
+
+- `--motifs-file` restricts counting to listed public end motifs. It accepts either one column `motif` or two columns `motif<TAB>group`.
+- Motif rows are validated against the configured `k_inside` and `k_outside`. Labels are normalized to `<outside>_<inside>` even when a one-sided motif is written without `_`.
+- One-column files expose concrete motif labels as the output motif axis. Two-column files count directly into user-defined motif groups, and the output motif axis stores those group names.
+- File target order is first-seen file order. For grouped files, group order is first-seen group order.
+- The file path uses selected half-motif codecs. K values that fit radix-5 use the full radix-5 codec so sparse keys can still use the ordinary end-motif representation. Larger k values use byte-backed selected subspace lookup rather than enumerating the full motif universe.
+- Selected counting skips unlisted observed motifs before inserting sparse count entries.
+- Right-end lookup keeps the reverse-complemented encoded state distinct from left-end lookup. The file can therefore assign a motif and its reverse complement to different targets.
+- `--all-motifs` with `--motifs-file` keeps every file-defined target in the final axis, including unobserved motifs or groups. Without `--all-motifs`, unobserved file targets are dropped from sparse output.
+- `--motifs-file` cannot be combined with `--collapse-complement`. Use the group column to define any custom collapsing.
+
 ## Clipping
 
 - `skip` drops soft-clipped motifs at the affected end. This is the default.
@@ -36,6 +48,7 @@
 - Scope is `end` or `fragment`.
 - Operators are `>=`, `>`, `<=`, and `<`.
 - Repeated filters are conjunctive. End filters drop individual ends. Fragment filters drop the full fragment.
+- Inside motifs require `k_inside <= --max-fragment-length`, because inside bases are defined inside the selected fragment span.
 
 ## Blacklists
 
@@ -79,13 +92,13 @@
 - Default output is sparse COO inside the Zarr store under `sparse/{row,motif,count,shape,sparse_dimension}` and keeps only observed motifs.
 - Dense output with `--all-motifs` writes `counts[row, motif]` inside the same Zarr store and enumerates every possible motif label.
 - Dense output is guarded by `CFDNALAB_ENDS_MAX_DENSE_OUTPUT_BYTES`, default 5 GiB.
-- Motif labels are sorted deterministically. `motif_index[motif]` stores the numeric count-column coordinate, `motif_byte[motif_byte]` stores byte offsets, and `motif_ascii[motif, motif_byte]` stores fixed-width ASCII motif labels in count-column order.
+- Without `--motifs-file`, motif labels are sorted deterministically. With `--motifs-file`, output labels follow the final file-defined target order. `motif_index[motif]` stores the numeric count-column coordinate, `motif_byte[motif_byte]` stores byte offsets, and `motif_ascii[motif, motif_byte]` stores fixed-width ASCII motif labels in count-column order for concrete motif axes.
 - Schema version 2 stores declare `motif_axis_kind`. Downstream packages still expose the count-column axis through `motifs()` and motif selectors. When `motif_axis_kind` is `motif_group`, those motif labels are user-defined group names from the motifs file rather than concrete DNA motifs.
 - The numeric `row` coordinate stores row indices. Global output stores `row_label` as JSON labels on `row`.
 - Fixed-size and BED row metadata includes `chromosome`, `row_chromosome`, `row_start_bp`, `row_end_bp`, and `blacklisted_fraction`. Chromosome names are stored as JSON labels on `chromosome`, and `row_chromosome` indexes that chromosome axis.
 - Grouped-BED row metadata includes `group`, `eligible_windows`, and `blacklisted_fraction`. Group names are stored as JSON labels on `group`, and grouped rows require contiguous zero-based group indices matching count rows.
 - Sparse COO shape dimensions are described by `sparse/sparse_dimension`, whose JSON labels are `["row", "motif"]`.
-- Settings sidecar is `<prefix>.end_settings.json` and records motif lengths, inside source, clip strategy, window assignment, indel filter, effective indel filter, base-quality filters, and experimental complement collapse when enabled.
+- Settings sidecar is `<prefix>.end_settings.json` and records motif lengths, `--all-motifs`, motifs-file path and mode when used, inside source, clip strategy, window assignment, indel filter, effective indel filter, base-quality filters, and experimental complement collapse when enabled.
 
 ## Open Notes
 
