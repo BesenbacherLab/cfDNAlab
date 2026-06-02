@@ -155,7 +155,7 @@ def test_cfdnalab_package_reads_sparse_windowed_selected_motif_file_end_motifs(
         end_motifs.sparse_counts_matrix(motifs=["AC_GT", "GT_AC"]).toarray(),
         np.array([[1.0, 0.0], [0.0, 1.0], [1.0, 0.0]], dtype=np.float64),
     )
-    with pytest.raises(ValueError, match="Unknown end-motif label"):
+    with pytest.raises(KeyError, match="Unknown end-motif label"):
         end_motifs.data_frame(motifs="TT_TT", densify=True)
 
 
@@ -293,7 +293,7 @@ def test_cfdnalab_package_reads_sparse_grouped_motif_group_end_motifs(
     gamma_frame = end_motifs.data_frame(groups="gamma", densify=True)
     assert gamma_frame["motif"].tolist() == ["left-hit", "right-hit"]
     assert gamma_frame["count"].tolist() == [0.0, 0.0]
-    with pytest.raises(ValueError, match="Unknown end-motif label"):
+    with pytest.raises(KeyError, match="Unknown end-motif label"):
         end_motifs.data_frame(motifs="_A")
 
 
@@ -331,5 +331,5 @@ def test_cfdnalab_package_reads_sparse_grouped_wide_motif_group_end_motifs(
     beta_frame = end_motifs.data_frame(groups="beta", densify=True)
     assert beta_frame["motif"].tolist() == ["right-hit-wide", "left-hit-wide"]
     assert beta_frame["count"].tolist() == [1.0, 2.0]
-    with pytest.raises(ValueError, match="Unknown end-motif label"):
+    with pytest.raises(KeyError, match="Unknown end-motif label"):
         end_motifs.data_frame(motifs="GT_AC")
