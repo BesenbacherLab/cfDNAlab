@@ -159,3 +159,8 @@ fn reflect_index(i: isize, len: usize) -> usize {
         i as usize
     }
 }
+
+#[cfg(test)]
+mod tests {
+    include!("smoothing_tests.rs");
+}

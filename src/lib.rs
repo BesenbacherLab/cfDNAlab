@@ -4,6 +4,8 @@ pub mod command_run;
 pub(crate) mod commands;
 pub mod error;
 pub(crate) mod shared;
+#[cfg(feature = "testing")]
+pub mod testing;
 
 pub use command_run::{CommandRunResult, RunOptions};
 pub use error::{Error, Result};

@@ -1196,14 +1196,6 @@ pub fn read_length_counts_tsv<P: AsRef<Path>>(path: P) -> Result<Array2<f64>> {
     )?)
 }
 
-pub fn read_binary_zst(path: &Path) -> Result<Vec<u8>> {
-    let reader = File::open(path)?;
-    let mut decoder = ZstdDecoder::new(reader)?;
-    let mut buf = Vec::new();
-    decoder.read_to_end(&mut buf)?;
-    Ok(buf)
-}
-
 pub fn touch_file<P: AsRef<Path>>(path: P) -> Result<()> {
     OpenOptions::new().create(true).write(true).open(path)?;
     Ok(())
