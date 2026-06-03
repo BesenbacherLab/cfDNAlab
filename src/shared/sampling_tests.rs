@@ -1,9 +1,7 @@
 #[cfg(test)]
 mod tests_tile_samplers {
-    // MOVE-MODULE-LOCAL: direct private shared sampling helper tests.
-
+    use crate::shared::sampling::{sample_starts_in_core, sampling_density};
     use anyhow::Result;
-    use cfdnalab::shared::sampling::{sample_starts_in_core, sampling_density};
     use fxhash::FxHashMap;
     use rand::{SeedableRng, rngs::StdRng};
 

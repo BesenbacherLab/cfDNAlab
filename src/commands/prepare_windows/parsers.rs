@@ -363,3 +363,8 @@ pub(crate) fn parse_single_index(s: &str) -> Result<usize> {
         .with_context(|| format!("Expecting 0-based index, got '{}'", s))?;
     Ok(idx)
 }
+
+#[cfg(test)]
+mod tests {
+    include!("parsers_tests.rs");
+}

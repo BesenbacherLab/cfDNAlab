@@ -129,9 +129,9 @@ Before publishing the Rust CLI:
 
 ```bash
 cargo check
-cargo check --tests
+cargo check --tests --features testing
 cargo check --all-features
-cargo test
+cargo test --features testing
 cargo package --list
 cargo package
 cargo publish --dry-run

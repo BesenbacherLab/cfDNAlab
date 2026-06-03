@@ -45,8 +45,9 @@ pub use gc_packages::{
     write_unit_gc_correction_package, write_unit_gc_correction_package_for_range,
 };
 pub use output_readers::{
-    read_length_counts_text, read_length_counts_tsv, read_midpoint_zarr_counts,
-    read_midpoint_zarr_i32_1d, read_midpoint_zarr_u32_1d, read_zst_to_string, touch_file,
+    ReferenceGCPackageMetadata, ReferenceGCPackageOutput, read_length_counts_text,
+    read_length_counts_tsv, read_midpoint_zarr_counts, read_midpoint_zarr_i32_1d,
+    read_midpoint_zarr_u32_1d, read_reference_gc_package, read_zst_to_string, touch_file,
 };
 pub use reference::{
     RepeatingContigSpec, TempTwoBit, twobit_from_sequences, twobit_with_single_repeating_contig,

@@ -1,23 +1,273 @@
-#![cfg(feature = "cmd_prepare_windows")]
+mod tests_near_file {
+    use crate::commands::prepare_windows::{
+        config::{NearDirection, NearEdge},
+        near_file::{
+            NearChrom, NearDuplicatesPolicy, NearInterval, NearWindowSide, NearestDistance,
+            NearestResult, Strand, load_near_index, nearest_edge_distance,
+        },
+    };
+    use std::{fs::File, io::Write};
+    use tempfile::TempDir;
 
-// MOVE-MODULE-LOCAL: direct private prepare-windows near-file and label helper tests.
+    // TODO: Test strand: Strand::Minus and strand: Strand::Unknown!
+
+    fn near_interval(start: u32, end: u32, group_id: Option<u32>, strand: Strand) -> NearInterval {
+        NearInterval::from_coords(start, end, group_id, strand)
+            .expect("test near interval should be valid")
+    }
+
+    #[test]
+    fn load_near_index_parses_groups_no_strand() -> anyhow::Result<()> {
+        let dir = TempDir::new()?;
+        let path = dir.path().join("near.tsv");
+        let mut file = File::create(&path)?;
+        writeln!(file, "chr1\t0\t10\tSiteA")?;
+        writeln!(file, "chr1\t20\t30\tSiteB")?;
+        let index = load_near_index(
+            &path,
+            '\t',
+            false,
+            None,
+            Some(&[3]),
+            false,
+            NearDuplicatesPolicy::Error,
+        )?;
+        let chrom = index.per_chrom.get("chr1").expect("chrom");
+        assert_eq!(chrom.intervals.len(), 2);
+        assert_eq!(index.group_id_to_name.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn load_near_index_errors_on_overlap() -> anyhow::Result<()> {
+        let dir = TempDir::new()?;
+        let path = dir.path().join("near.tsv");
+        let mut file = File::create(&path)?;
+        writeln!(file, "chr1\t0\t10")?;
+        writeln!(file, "chr1\t5\t12")?;
+        let err = load_near_index(
+            &path,
+            '\t',
+            false,
+            None,
+            None,
+            false,
+            NearDuplicatesPolicy::Error,
+        )
+        .unwrap_err();
+        assert!(format!("{err}").contains("intervals overlap"));
+        Ok(())
+    }
+
+    #[test]
+    fn nearest_edge_distance_handles_overlap_and_sign() {
+        let mut chrom = NearChrom {
+            intervals: vec![near_interval(10, 20, Some(0), Strand::Plus)],
+            cursor: 0,
+        };
+        let overlap = nearest_edge_distance(
+            12,
+            18,
+            &mut chrom,
+            &NearEdge::Nearest,
+            &NearDirection::Both,
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            overlap,
+            NearestResult::Single(NearestDistance {
+                distance: 0,
+                group_id: Some(0),
+                window_side: NearWindowSide::Overlap,
+            })
+        );
+
+        let window_before = nearest_edge_distance(
+            0,
+            5,
+            &mut chrom,
+            &NearEdge::Nearest,
+            &NearDirection::Both,
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            window_before,
+            NearestResult::Single(NearestDistance {
+                distance: -5,
+                group_id: Some(0),
+                window_side: NearWindowSide::Upstream,
+            })
+        );
+
+        let window_after = nearest_edge_distance(
+            25,
+            30,
+            &mut chrom,
+            &NearEdge::Nearest,
+            &NearDirection::Both,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            window_after,
+            NearestResult::Single(NearestDistance {
+                distance: 5,
+                group_id: Some(0),
+                window_side: NearWindowSide::Downstream,
+            })
+        );
+    }
+
+    #[test]
+    fn nearest_edge_distance_zero_on_interval_boundary() {
+        let mut chrom = NearChrom {
+            intervals: vec![near_interval(10, 20, Some(0), Strand::Plus)],
+            cursor: 0,
+        };
+        let on_boundary = nearest_edge_distance(
+            20,
+            25,
+            &mut chrom,
+            &NearEdge::Nearest,
+            &NearDirection::Both,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            on_boundary,
+            NearestResult::Single(NearestDistance {
+                distance: 0,
+                group_id: Some(0),
+                window_side: NearWindowSide::Overlap,
+            })
+        );
+    }
+
+    #[test]
+    fn load_near_index_skips_header() -> anyhow::Result<()> {
+        let dir = TempDir::new()?;
+        let path = dir.path().join("near.tsv");
+        let mut file = File::create(&path)?;
+        writeln!(file, "chrom\tstart\tend")?;
+        writeln!(file, "chr1\t0\t5")?;
+        let index = load_near_index(
+            &path,
+            '\t',
+            true,
+            None,
+            None,
+            false,
+            NearDuplicatesPolicy::Error,
+        )?;
+        assert_eq!(index.per_chrom.get("chr1").unwrap().intervals.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn nearest_edge_distance_returns_none_without_intervals() {
+        let mut chrom = NearChrom {
+            intervals: vec![],
+            cursor: 0,
+        };
+        assert!(
+            nearest_edge_distance(
+                0,
+                5,
+                &mut chrom,
+                &NearEdge::Nearest,
+                &NearDirection::Both,
+                false
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn nearest_edge_distance_respects_left_edge_mode() {
+        let mut chrom = NearChrom {
+            intervals: vec![near_interval(10, 20, Some(1), Strand::Plus)],
+            cursor: 0,
+        };
+        let dist = nearest_edge_distance(
+            30,
+            35,
+            &mut chrom,
+            &NearEdge::Left,
+            &NearDirection::Both,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            dist,
+            NearestResult::Single(NearestDistance {
+                distance: 20,
+                group_id: Some(1),
+                window_side: NearWindowSide::Downstream,
+            })
+        );
+    }
+
+    #[test]
+    fn nearest_edge_distance_reports_ties_with_sides() {
+        let mut chrom = NearChrom {
+            intervals: vec![
+                near_interval(0, 5, Some(1), Strand::Plus),
+                near_interval(25, 30, Some(2), Strand::Plus),
+            ],
+            cursor: 0,
+        };
+
+        let result = nearest_edge_distance(
+            10,
+            20,
+            &mut chrom,
+            &NearEdge::Nearest,
+            &NearDirection::Both,
+            true,
+        )
+        .unwrap();
+        match result {
+            NearestResult::Tie(tie) => {
+                assert_eq!(
+                    tie.left,
+                    Some(NearestDistance {
+                        distance: 5,
+                        group_id: Some(1),
+                        window_side: NearWindowSide::Downstream,
+                    })
+                );
+                assert_eq!(
+                    tie.right,
+                    Some(NearestDistance {
+                        distance: -5,
+                        group_id: Some(2),
+                        window_side: NearWindowSide::Upstream,
+                    })
+                );
+            }
+            other => panic!("expected tie, got {other:?}"),
+        }
+    }
+}
 
 mod tests_prepare_windows_near {
-    use anyhow::Result;
-    use cfdnalab::commands::prepare_windows::chunk::apply_near_annotations;
-    use cfdnalab::commands::prepare_windows::config::{
+    use crate::commands::prepare_windows::chunk::apply_near_annotations;
+    use crate::commands::prepare_windows::config::{
         CoordinateSet, DistSign, NearDirection, NearEdge, NearTiePolicy, PrepareConfig,
     };
-    use cfdnalab::commands::prepare_windows::labels::{
+    use crate::commands::prepare_windows::labels::{
         LabelSchema, LabelTuple, build_tuple_compositions, render_label_for_key,
     };
-    use cfdnalab::commands::prepare_windows::near_file::NearDuplicatesPolicy;
-    use cfdnalab::commands::prepare_windows::near_file::{
+    use crate::commands::prepare_windows::near_file::NearDuplicatesPolicy;
+    use crate::commands::prepare_windows::near_file::{
         NearChrom, NearInterval, NearWindowSide, NearestDistance, NearestResult, Strand,
         nearest_edge_distance,
     };
-    use cfdnalab::commands::prepare_windows::parsers::parse_distance_bins;
-    use cfdnalab::commands::prepare_windows::prepare_windows::Window;
+    use crate::commands::prepare_windows::parsers::parse_distance_bins;
+    use crate::commands::prepare_windows::prepare_windows::Window;
+    use anyhow::Result;
     use std::io::Write;
     use std::sync::Arc;
     use tempfile::NamedTempFile;
@@ -46,8 +296,8 @@ mod tests_prepare_windows_near {
 
     fn make_near_index(
         intervals: Vec<NearInterval>,
-    ) -> cfdnalab::commands::prepare_windows::near_file::NearIndex {
-        let mut idx = cfdnalab::commands::prepare_windows::near_file::NearIndex::default();
+    ) -> crate::commands::prepare_windows::near_file::NearIndex {
+        let mut idx = crate::commands::prepare_windows::near_file::NearIndex::default();
         idx.per_chrom.insert(
             "chr1".to_string(),
             NearChrom {
@@ -207,7 +457,7 @@ mod tests_prepare_windows_near {
         // Arrange
         // Near interval exists downstream, but we only accept upstream; distance_max forces drop
         let interval = near_interval(100, 110, None, Strand::Plus);
-        let mut near_index = cfdnalab::commands::prepare_windows::near_file::NearIndex::default();
+        let mut near_index = crate::commands::prepare_windows::near_file::NearIndex::default();
         near_index.per_chrom.insert(
             "chr1".to_string(),
             NearChrom {
@@ -243,7 +493,7 @@ mod tests_prepare_windows_near {
             near_interval(0, 10, Some(0), Strand::Plus),
             near_interval(30, 40, Some(1), Strand::Plus),
         ];
-        let mut near_index = cfdnalab::commands::prepare_windows::near_file::NearIndex::default();
+        let mut near_index = crate::commands::prepare_windows::near_file::NearIndex::default();
         near_index.group_id_to_name = vec!["LEFT".to_string(), "RIGHT".to_string()];
         near_index.per_chrom.insert(
             "chr1".to_string(),
@@ -367,7 +617,7 @@ mod tests_prepare_windows_near {
         // Arrange
         // Resized window 15-35 is 5 bp from interval edge (10), original 20-30 would be 10 bp
         // distance_from=resized should pick bin based on 5 bp
-        let mut near_index = cfdnalab::commands::prepare_windows::near_file::NearIndex::default();
+        let mut near_index = crate::commands::prepare_windows::near_file::NearIndex::default();
         near_index.per_chrom.insert(
             "chr1".to_string(),
             NearChrom {
@@ -380,13 +630,11 @@ mod tests_prepare_windows_near {
         cfg.distance_from = CoordinateSet::Resized;
         cfg.distance_bins = Some(vec!["near:<7".to_string(), "far:>=7".to_string()]);
         cfg.flank = Some(vec![5, 5]); // resize via flank for test fixture consistency
-        cfg.oob = cfdnalab::commands::prepare_windows::config::OobPolicy::Allow;
+        cfg.oob = crate::commands::prepare_windows::config::OobPolicy::Allow;
         let bins = parse_distance_bins(cfg.distance_bins.as_ref().unwrap())?;
 
         let mut window = build_window("chr1", 20, 30, "A");
-        window
-            .set_resized_bounds(15, 35)
-            .expect("resized test window should stay valid");
+        window.set_resized_interval(crate::shared::interval::Interval::new(15, 35)?);
         let windows = vec![window]; // resized coordinates now differ from original
 
         // Act
@@ -411,7 +659,7 @@ mod tests_prepare_windows_near {
         // Arrange
         // Original window 20-30 is 10 bp from interval edge (10), resized 15-35 would be 5 bp
         // distance_from=original should pick bin based on 10 bp
-        let mut near_index = cfdnalab::commands::prepare_windows::near_file::NearIndex::default();
+        let mut near_index = crate::commands::prepare_windows::near_file::NearIndex::default();
         near_index.per_chrom.insert(
             "chr1".to_string(),
             NearChrom {
@@ -424,7 +672,7 @@ mod tests_prepare_windows_near {
         cfg.distance_from = CoordinateSet::Original;
         cfg.distance_bins = Some(vec!["near:<7".to_string(), "far:>=7".to_string()]);
         cfg.flank = Some(vec![5, 5]);
-        cfg.oob = cfdnalab::commands::prepare_windows::config::OobPolicy::Allow;
+        cfg.oob = crate::commands::prepare_windows::config::OobPolicy::Allow;
         let bins = parse_distance_bins(cfg.distance_bins.as_ref().unwrap())?;
 
         let windows = vec![build_window("chr1", 20, 30, "A")]; // resized to 15-35 but binning uses 20-30
@@ -453,14 +701,14 @@ mod tests_prepare_windows_near {
         let mut file = NamedTempFile::new()?;
         writeln!(file, "chr1\t0\t10\t")?;
 
-        let index = cfdnalab::commands::prepare_windows::near_file::load_near_index(
+        let index = crate::commands::prepare_windows::near_file::load_near_index(
             file.path(),
             '\t',
             false,
             None,
             Some(&[3]),
             false,
-            cfdnalab::commands::prepare_windows::near_file::NearDuplicatesPolicy::Error,
+            crate::commands::prepare_windows::near_file::NearDuplicatesPolicy::Error,
         )?;
 
         let windows = vec![build_window("chr1", 20, 22, "A")];
@@ -492,14 +740,14 @@ mod tests_prepare_windows_near {
         writeln!(file, "chr1\t10\t20\t+\tB")?;
 
         // Act
-        let index = cfdnalab::commands::prepare_windows::near_file::load_near_index(
+        let index = crate::commands::prepare_windows::near_file::load_near_index(
             file.path(),
             '\t',
             false,
             Some(3),
             Some(&[4]),
             true, // consider strand for upstream/downstream edge modes
-            cfdnalab::commands::prepare_windows::near_file::NearDuplicatesPolicy::Merge,
+            crate::commands::prepare_windows::near_file::NearDuplicatesPolicy::Merge,
         )?;
 
         // Assert
@@ -519,7 +767,7 @@ mod tests_prepare_windows_near {
         writeln!(file, "chr1\t10\t20\t+\tY")?;
 
         // Act
-        let index = cfdnalab::commands::prepare_windows::near_file::load_near_index(
+        let index = crate::commands::prepare_windows::near_file::load_near_index(
             file.path(),
             '\t',
             false,
@@ -546,7 +794,7 @@ mod tests_prepare_windows_near {
         writeln!(file, "chr1\t10\t20\t+\tY")?;
 
         // Act
-        let index = cfdnalab::commands::prepare_windows::near_file::load_near_index(
+        let index = crate::commands::prepare_windows::near_file::load_near_index(
             file.path(),
             '\t',
             false,
@@ -1048,7 +1296,7 @@ mod tests_prepare_windows_near {
     #[test]
     fn cross_chromosome_no_near_sets_none_labels() -> Result<()> {
         // Arrange: chr1 has intervals; chr2 lacks them. Chr2 windows should be labeled [NONE]/[NO-NEAR] with bins
-        let mut idx = cfdnalab::commands::prepare_windows::near_file::NearIndex::default();
+        let mut idx = crate::commands::prepare_windows::near_file::NearIndex::default();
         idx.per_chrom.insert(
             "chr1".to_string(),
             NearChrom {
@@ -1085,7 +1333,7 @@ mod tests_prepare_windows_near {
     #[test]
     fn chromosome_with_no_near_and_distance_max_drops_window() {
         // Arrange: chromosome missing from near index; distance_max should drop window
-        let idx = cfdnalab::commands::prepare_windows::near_file::NearIndex::default();
+        let idx = crate::commands::prepare_windows::near_file::NearIndex::default();
         let mut cfg = PrepareConfig::default();
         cfg.distance_max = Some(100);
         let windows = vec![build_window("chrMissing", 0, 10, "A")];

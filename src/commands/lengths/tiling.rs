@@ -208,3 +208,8 @@ pub(crate) fn reduce_partials_for_chr(
 
     Ok(counts_by_idx)
 }
+
+#[cfg(test)]
+mod tests {
+    include!("tiling_tests.rs");
+}

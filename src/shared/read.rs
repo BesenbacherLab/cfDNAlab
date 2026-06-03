@@ -212,3 +212,8 @@ pub(crate) fn parse_md_tag(md_tag: &str, offset: u32) -> (Vec<u32>, Vec<u32>) {
 
     (starts, ends)
 }
+
+#[cfg(test)]
+mod tests {
+    include!("read_tests.rs");
+}

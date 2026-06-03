@@ -853,3 +853,8 @@ fn filter_blacklisted_post_merge(
         _ => windows,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    include!("chunk_tests.rs");
+}

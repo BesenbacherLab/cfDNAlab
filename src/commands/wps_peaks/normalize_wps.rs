@@ -587,3 +587,8 @@ impl SlidingMedian {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    include!("normalize_wps_tests.rs");
+}

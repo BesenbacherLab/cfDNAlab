@@ -421,3 +421,8 @@ fn collect_supported_anchors(histogram: &[f64], support_mask: &[bool]) -> Vec<(u
         )
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    include!("interpolation_tests.rs");
+}

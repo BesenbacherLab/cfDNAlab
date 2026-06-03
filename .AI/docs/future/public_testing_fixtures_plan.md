@@ -25,6 +25,18 @@ cfdnalab = { version = "...", features = ["testing"] }
 
 The feature should not be enabled by default. It should expose documented fixture builders and testing utilities, not production command internals.
 
+Integration tests that import `cfdnalab::testing` are external users of the
+crate, so they must be gated with:
+
+```rust
+#![cfg(feature = "testing")]
+```
+
+Those tests run under `cargo test --features testing` or `cargo test
+--all-features`, not under plain `cargo test`. This keeps the testing API
+opt-in for downstream users while still allowing shared fixtures instead of
+duplicating `tests/fixtures` code.
+
 ## Scope
 
 The testing module may expose:
@@ -221,11 +233,12 @@ Recommended migration order:
 
 1. Add `testing` feature and introduce documented BAM, two-bit, BED, scaling, and output-reader builders under public names.
 2. Reimplement current named fixtures as private integration-test wrappers over the new public builders.
-3. Update integration tests to import stable builders from `cfdnalab::testing` where appropriate.
-4. Update module-local tests that need general fixtures to use `crate::testing` under `#[cfg(all(test, feature = "testing"))]` or a crate-local re-export if needed.
-5. Generalize and document GC package fixture helpers.
-6. Replace direct private loader usage in tests with module-local tests or explicit testing wrappers.
-7. Remove or keep private the old vague named wrappers once no test needs them.
+3. Add `#![cfg(feature = "testing")]` to integration test files that import `cfdnalab::testing`.
+4. Update integration tests to import stable builders from `cfdnalab::testing` where appropriate.
+5. Update module-local tests that need general fixtures to use `crate::testing` under `#[cfg(test)]`; the crate-local module can be compiled with `#[cfg(any(feature = "testing", test))]`.
+6. Generalize and document GC package fixture helpers.
+7. Replace direct private loader usage in tests with module-local tests or explicit testing wrappers.
+8. Remove or keep private the old vague named wrappers once no test needs them.
 
 ## Documentation Requirements
 
@@ -250,6 +263,7 @@ The module-level docs should say that `cfdnalab::testing` is for writing tests a
 
 - `cargo check --features testing` succeeds.
 - `cargo check --tests --features testing` succeeds after migrated tests are updated.
+- Every integration test file that imports `cfdnalab::testing` has `#![cfg(feature = "testing")]`.
 - Public testing helpers have module docs and per-helper docs for their fixture contract.
 - No production-private type is made public solely to satisfy integration tests.
 - Integration tests no longer depend on `tests/fixtures/mod.rs`.

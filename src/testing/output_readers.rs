@@ -5,16 +5,89 @@
 //! command internals. Use them when a test needs to compare numeric arrays or
 //! compressed text without duplicating Zarr and zstd boilerplate.
 
+use crate::shared::{constants::GC_CORRECTION_SCHEMA_VERSION, reference::ContigFootprintEntry};
 use anyhow::{Context, Result, ensure};
 use ndarray::{Array2, Array3};
+use serde_json::Value;
 use std::{
     fs::{File, OpenOptions},
     io::Read,
     path::Path,
     sync::Arc,
 };
-use zarrs::{array::Array, filesystem::FilesystemStore};
+use zarrs::{
+    array::{Array, ElementOwned},
+    filesystem::FilesystemStore,
+};
 use zstd::stream::read::Decoder as ZstdDecoder;
+
+/// Reference GC package written by `cfdna ref-gc-bias`.
+///
+/// Use this in tests that need to inspect the public reference-GC Zarr package
+/// produced by the command. The struct mirrors the stable artifact fields that
+/// downstream code can reasonably assert on: the numeric counts, the two
+/// support masks, the GC-percent width correction array, and the package
+/// metadata stored in Zarr attributes and coordinate arrays.
+///
+/// The arrays use the public package layout. Rows correspond to fragment
+/// lengths in the inclusive metadata range `min_fragment_length..=max_fragment_length`.
+/// Columns correspond to integer GC percent bins `0..=100`.
+#[derive(Clone, Debug)]
+pub struct ReferenceGCPackageOutput {
+    /// Reference fragment mass by fragment length and integer GC percent.
+    pub counts: Array2<f64>,
+    /// Theoretical support mask based on reachable GC-percent bins.
+    ///
+    /// This is read from the public Zarr array `support_mask_unobservables`.
+    /// A `true` value means the GC-percent bin is theoretically reachable for
+    /// that effective fragment length after end trimming.
+    pub unobservables_support_mask: Array2<bool>,
+    /// Empirical support mask based on observed reference counts.
+    ///
+    /// This is read from the public Zarr array `support_mask_outliers`. A
+    /// `true` value means the bin had enough empirical support to be treated as
+    /// usable before downstream correction.
+    pub outliers_support_mask: Array2<bool>,
+    /// Number of raw GC-count states represented by each integer GC-percent bin.
+    ///
+    /// Widths are useful when tests need to distinguish raw counts from the
+    /// width-corrected representation. Unreachable bins have width `0`.
+    pub gc_percent_widths: Array2<u16>,
+    /// Metadata read from root attributes and coordinate arrays.
+    pub metadata: ReferenceGCPackageMetadata,
+}
+
+/// Metadata stored with a reference GC package.
+///
+/// These fields are the parts of the public `ref-gc-bias` artifact contract
+/// that tests commonly need to check. They come from a mix of root attributes,
+/// coordinate arrays, and the JSON-encoded reference contig footprint array.
+///
+/// The fragment length range is inclusive. `chromosomes` preserves the order
+/// written by the command, which is also the order used by command-level
+/// selection. `reference_contig_footprint` is the serialized reference identity
+/// used by downstream GC correction compatibility checks.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReferenceGCPackageMetadata {
+    /// Minimum fragment length represented by the package.
+    pub min_fragment_length: usize,
+    /// Maximum fragment length represented by the package.
+    pub max_fragment_length: usize,
+    /// Number of bases trimmed from each fragment end before GC counting.
+    pub end_offset: u8,
+    /// Chromosomes included in the run, in package order.
+    pub chromosomes: Vec<String>,
+    /// Reference contig footprint serialized by the command.
+    pub reference_contig_footprint: Vec<ContigFootprintEntry>,
+    /// Whether interpolation was skipped when building the package.
+    pub skip_interpolation: bool,
+    /// Gaussian smoothing sigma recorded by the package.
+    pub smoothing_sigma: f64,
+    /// Gaussian smoothing radius recorded by the package.
+    pub smoothing_radius: u8,
+    /// Whether smoothing was skipped when building the package.
+    pub skip_smoothing: bool,
+}
 
 /// Read the `counts` array from a midpoint Zarr output.
 ///
@@ -88,6 +161,92 @@ pub fn read_midpoint_zarr_u32_1d<P: AsRef<Path>>(
     array
         .retrieve_array_subset(&array.subset_all())
         .with_context(|| format!("reading midpoint Zarr array {array_path}"))
+}
+
+/// Read a reference GC Zarr package written by `cfdna ref-gc-bias`.
+///
+/// Use this when a test needs to assert the contents of the public
+/// `<prefix>.ref_gc_package.zarr` or `ref_gc_package.zarr` artifact. The helper
+/// opens the Zarr store, verifies that the root metadata declares the reference
+/// GC package schema supported by this crate, and reads the full public arrays
+/// into memory.
+///
+/// The helper reads the artifact as an external file format. It does not call
+/// the crate-private production loader and it does not reuse command internals
+/// that are allowed to change during implementation cleanup. That makes it
+/// suitable for integration tests that are meant to stay in `tests/`.
+///
+/// Technical details
+/// -----------------
+/// - `counts`, `support_mask_unobservables`, `support_mask_outliers`, and
+///   `gc_percent_widths` must be rank-2 arrays.
+/// - The `length` coordinate must be present and non-empty. The first and last
+///   values define the inclusive fragment length range in the returned metadata.
+/// - Chromosome names are read from the `chromosome` array's `labels`
+///   attribute, using `chromosome_name` as the expected label field.
+/// - The reference footprint is decoded from `reference_contig_footprint_json`.
+/// - The helper validates schema name and schema version, but it deliberately
+///   does not duplicate every invariant checked by the production loader.
+///
+/// Parameters
+/// ----------
+/// - `package_path`:
+///     Path to the root directory of the reference GC Zarr package.
+///
+/// Returns
+/// -------
+/// - `ReferenceGCPackageOutput`:
+///     The package arrays and metadata needed for command-level artifact tests.
+pub fn read_reference_gc_package<P: AsRef<Path>>(
+    package_path: P,
+) -> Result<ReferenceGCPackageOutput> {
+    let package_path = package_path.as_ref();
+    let root_attributes = read_zarr_root_attributes(package_path)?;
+    ensure_reference_gc_schema(&root_attributes)?;
+
+    let store = Arc::new(
+        FilesystemStore::new(package_path)
+            .with_context(|| format!("opening Zarr store {}", package_path.display()))?,
+    );
+    let counts = read_zarr_array2::<f64>(store.clone(), "/counts")?;
+    let unobservables_support_mask =
+        read_zarr_array2::<bool>(store.clone(), "/support_mask_unobservables")?;
+    let outliers_support_mask = read_zarr_array2::<bool>(store.clone(), "/support_mask_outliers")?;
+    let gc_percent_widths = read_zarr_array2::<u16>(store.clone(), "/gc_percent_widths")?;
+    let lengths = read_zarr_array1::<i32>(store.clone(), "/length")?;
+    let reference_contig_footprint_json =
+        read_zarr_array1::<u8>(store, "/reference_contig_footprint_json")?;
+
+    ensure!(
+        !lengths.is_empty(),
+        "reference GC package length axis must not be empty"
+    );
+    let min_fragment_length = usize::try_from(lengths[0]).context("length must be non-negative")?;
+    let max_fragment_length =
+        usize::try_from(*lengths.last().expect("length axis checked non-empty"))
+            .context("length must be non-negative")?;
+    let chromosomes = read_zarr_labels(package_path, "chromosome", "chromosome_name")?;
+    let reference_contig_footprint: Vec<ContigFootprintEntry> =
+        serde_json::from_slice(&reference_contig_footprint_json)
+            .context("invalid reference_contig_footprint_json in reference GC package")?;
+
+    Ok(ReferenceGCPackageOutput {
+        counts,
+        unobservables_support_mask,
+        outliers_support_mask,
+        gc_percent_widths,
+        metadata: ReferenceGCPackageMetadata {
+            min_fragment_length,
+            max_fragment_length,
+            end_offset: read_u8_attr(&root_attributes, "end_offset")?,
+            chromosomes,
+            reference_contig_footprint,
+            skip_interpolation: read_bool_attr(&root_attributes, "skip_interpolation")?,
+            smoothing_sigma: read_f64_attr(&root_attributes, "smoothing_sigma")?,
+            smoothing_radius: read_u8_attr(&root_attributes, "smoothing_radius")?,
+            skip_smoothing: read_bool_attr(&root_attributes, "skip_smoothing")?,
+        },
+    })
 }
 
 /// Read a zstd-compressed UTF-8 text file into a string.
@@ -190,4 +349,118 @@ fn open_zarr_array(store_path: &Path, array_path: &str) -> Result<Array<Filesyst
             store_path.display()
         )
     })
+}
+
+fn read_zarr_root_attributes(package_path: &Path) -> Result<Value> {
+    let metadata: Value =
+        serde_json::from_str(&std::fs::read_to_string(package_path.join("zarr.json"))?)?;
+    metadata
+        .get("attributes")
+        .cloned()
+        .context("Zarr root metadata is missing attributes")
+}
+
+fn ensure_reference_gc_schema(root_attributes: &Value) -> Result<()> {
+    let schema = root_attributes
+        .get("cfdnalab_schema")
+        .and_then(Value::as_str);
+    ensure!(
+        schema == Some("reference_gc_package"),
+        "Reference GC package schema mismatch: file={schema:?}, expected=reference_gc_package"
+    );
+    let version = root_attributes
+        .get("cfdnalab_schema_version")
+        .and_then(Value::as_u64)
+        .context("Reference GC package is missing cfdnalab_schema_version")?;
+    ensure!(
+        version == u64::from(GC_CORRECTION_SCHEMA_VERSION),
+        "Reference GC package schema version mismatch: file={}, expected={}",
+        version,
+        GC_CORRECTION_SCHEMA_VERSION
+    );
+    Ok(())
+}
+
+fn read_zarr_array1<T>(store: Arc<FilesystemStore>, array_path: &str) -> Result<Vec<T>>
+where
+    T: ElementOwned,
+{
+    let array = Array::open(store, array_path)?;
+    array
+        .retrieve_array_subset(&array.subset_all())
+        .with_context(|| format!("reading Zarr array {array_path}"))
+}
+
+fn read_zarr_array2<T>(store: Arc<FilesystemStore>, array_path: &str) -> Result<Array2<T>>
+where
+    T: ElementOwned,
+{
+    let array = Array::open(store, array_path)?;
+    let shape = array.shape();
+    ensure!(
+        shape.len() == 2,
+        "{array_path} must be a rank-2 array, found rank {}",
+        shape.len()
+    );
+    let values: Vec<T> = array
+        .retrieve_array_subset(&array.subset_all())
+        .with_context(|| format!("reading Zarr array {array_path}"))?;
+    let rows = usize::try_from(shape[0]).context("array row count exceeds usize")?;
+    let cols = usize::try_from(shape[1]).context("array column count exceeds usize")?;
+    Ok(Array2::from_shape_vec((rows, cols), values)?)
+}
+
+fn read_zarr_labels(
+    package_path: &Path,
+    array_name: &str,
+    expected_field: &str,
+) -> Result<Vec<String>> {
+    let metadata: Value = serde_json::from_str(&std::fs::read_to_string(
+        package_path.join(array_name).join("zarr.json"),
+    )?)?;
+    let attributes = metadata
+        .get("attributes")
+        .context("Zarr array metadata is missing attributes")?;
+    ensure!(
+        attributes
+            .get("label_field")
+            .and_then(Value::as_str)
+            .is_some_and(|field| field == expected_field),
+        "{array_name} metadata must declare label_field = {expected_field}"
+    );
+    let labels = attributes
+        .get("labels")
+        .and_then(Value::as_array)
+        .with_context(|| format!("{array_name} metadata is missing labels"))?;
+    labels
+        .iter()
+        .map(|label| {
+            label
+                .as_str()
+                .map(str::to_string)
+                .with_context(|| format!("{array_name} label should be a string"))
+        })
+        .collect()
+}
+
+fn read_bool_attr(root_attributes: &Value, name: &str) -> Result<bool> {
+    root_attributes
+        .get(name)
+        .and_then(Value::as_bool)
+        .with_context(|| format!("Zarr root attribute {name} must be a bool"))
+}
+
+fn read_u8_attr(root_attributes: &Value, name: &str) -> Result<u8> {
+    let value = root_attributes
+        .get(name)
+        .and_then(Value::as_u64)
+        .with_context(|| format!("{name} in reference GC package must be an unsigned integer"))?;
+    u8::try_from(value).with_context(|| format!("{name} in reference GC package must fit in u8"))
+}
+
+fn read_f64_attr(root_attributes: &Value, name: &str) -> Result<f64> {
+    root_attributes
+        .get(name)
+        .and_then(Value::as_f64)
+        .with_context(|| format!("Zarr root attribute {name} must be a float"))
 }

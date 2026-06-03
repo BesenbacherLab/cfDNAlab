@@ -794,3 +794,8 @@ pub fn warn_on_scaling_ignore_gap_mismatch(
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    include!("scale_genome_tests.rs");
+}

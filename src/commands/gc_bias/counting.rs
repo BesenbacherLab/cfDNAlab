@@ -814,3 +814,8 @@ where
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    include!("counting_tests.rs");
+}

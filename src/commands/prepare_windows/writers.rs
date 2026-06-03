@@ -83,3 +83,8 @@ pub(crate) fn finalize_temp_writers(
     temp_writers.clear();
     Ok(entries)
 }
+
+#[cfg(test)]
+mod tests {
+    include!("writers_tests.rs");
+}

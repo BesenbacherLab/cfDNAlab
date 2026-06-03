@@ -134,3 +134,8 @@ pub(crate) fn merge_across_groups(
     }
     result
 }
+
+#[cfg(test)]
+mod tests {
+    include!("mergers_tests.rs");
+}

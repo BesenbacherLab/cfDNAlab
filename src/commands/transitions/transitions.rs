@@ -332,3 +332,8 @@ pub fn run_transitions(
         output_files,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    include!("transitions_tests.rs");
+}

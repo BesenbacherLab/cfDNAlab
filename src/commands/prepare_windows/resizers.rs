@@ -155,3 +155,8 @@ pub(crate) fn apply_size_transform(
         _ => unreachable!("OobPolicy::Allow already handled"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    include!("resizers_tests.rs");
+}

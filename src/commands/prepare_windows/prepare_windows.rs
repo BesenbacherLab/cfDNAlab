@@ -808,3 +808,8 @@ fn available_atomic_parts(cfg: &PrepareConfig) -> FxHashSet<AtomicLabelPart> {
     }
     parts
 }
+
+#[cfg(test)]
+mod tests {
+    include!("prepare_windows_tests.rs");
+}

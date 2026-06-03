@@ -1387,3 +1387,8 @@ fn write_output_line<W: Write>(
     writeln!(writer)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    include!("filters_tests.rs");
+}

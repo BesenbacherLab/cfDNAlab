@@ -198,3 +198,8 @@ pub(crate) fn build_theoretical_support_mask(
 
     mask
 }
+
+#[cfg(test)]
+mod tests {
+    include!("support_masking_tests.rs");
+}

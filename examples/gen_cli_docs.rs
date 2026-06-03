@@ -13,7 +13,7 @@
 #[cfg(all(feature = "cli", feature = "docs_gen"))]
 use anyhow::{Context, Result, bail};
 #[cfg(all(feature = "cli", feature = "docs_gen"))]
-use cfdnalab::cli_app::build_docs_command;
+use cfdnalab::build_docs_command;
 #[cfg(all(feature = "cli", feature = "docs_gen"))]
 use clap::Parser;
 #[cfg(all(feature = "cli", feature = "docs_gen"))]

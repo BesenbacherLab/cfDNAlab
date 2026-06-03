@@ -8,6 +8,12 @@ use crate::run_like_cli::{
     gc_bias::{GCConfig, OutlierMethodArg, OutlierScopeArg, run_gc_bias as run_gc_bias_command},
     ref_gc_bias::{RefGCBiasConfig, run_ref_gc_bias as run_ref_gc_bias_command},
 };
+use crate::testing::bam::paired_fragment as build_paired_fragment;
+use crate::testing::{
+    FragmentSpec, PairedFragmentSpec, TempBam, TempTwoBit, bam_from_fragments,
+    bam_from_fragments_with_record_indexed_names, single_contig_inward_pair_bam,
+    twobit_from_sequences, twobit_with_single_repeating_contig,
+};
 use crate::{
     commands::gc_bias::{
         binning::{BinnedAxis, bins_from_edges, compute_bin_edges},
@@ -30,12 +36,28 @@ use tempfile::{TempDir, tempdir};
 
 /* Helpers */
 
+const GC_COMMAND_F64_TOL: f64 = 1e-6;
+
 fn run_gc_bias(config: &GCConfig) -> Result<()> {
     run_gc_bias_command(config, RunOptions::new_quiet()).map(|_| ())
 }
 
 fn run_ref_gc_bias(config: &RefGCBiasConfig) -> Result<()> {
     run_ref_gc_bias_command(config, RunOptions::new_quiet()).map(|_| ())
+}
+
+fn paired_fragment(start: i64, fragment_length: i64, read_length: i64) -> FragmentSpec {
+    build_paired_fragment(&PairedFragmentSpec::new(
+        0,
+        start,
+        fragment_length,
+        read_length,
+    ))
+    .expect("paired fragment spec in GC-bias test fixture should be valid")
+}
+
+fn simple_reference_twobit() -> Result<TempTwoBit> {
+    twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)
 }
 
 fn assert_gc_command_close(actual: f64, expected: f64, context: &str) {
@@ -454,8 +476,8 @@ fn write_three_bin_reference_gc_package(
     )
 }
 
-fn make_two_length_outlier_fixture() -> Result<(fixtures::TwoBitFixture, fixtures::BamFixture)> {
-    let reference = fixtures::twobit_from_sequences(
+fn make_two_length_outlier_fixture() -> Result<(TempTwoBit, TempBam)> {
+    let reference = twobit_from_sequences(
         "gc_bias_two_length_outlier_reference",
         vec![(
             "chr1".to_string(),
@@ -476,31 +498,30 @@ fn make_two_length_outlier_fixture() -> Result<(fixtures::TwoBitFixture, fixture
     //   length 10 -> [1, 9] -> normalized to [0.2, 1.8]
     //   length 11 -> [5, 5] -> normalized to [1.0, 1.0]
     let mut fragments = Vec::new();
-    fragments.push(fixtures::paired_fragment(10, 10, 5));
+    fragments.push(paired_fragment(10, 10, 5));
     for start in [110_i64, 120, 130, 140, 150, 160, 170, 180, 190] {
-        fragments.push(fixtures::paired_fragment(start, 10, 5));
+        fragments.push(paired_fragment(start, 10, 5));
     }
     for start in [20_i64, 30, 40, 50, 60] {
-        fragments.push(fixtures::paired_fragment(start, 11, 5));
+        fragments.push(paired_fragment(start, 11, 5));
     }
     for start in [120_i64, 130, 140, 150, 160] {
-        fragments.push(fixtures::paired_fragment(start, 11, 5));
+        fragments.push(paired_fragment(start, 11, 5));
     }
 
     // Several length-10 and length-11 fragments deliberately share the same left start. Use
     // strict BAM identity here so those stacked molecules do not collapse onto one qname.
-    let bam = fixtures::bam_from_specs_strict_identity(
+    let bam = bam_from_fragments_with_record_indexed_names(
+        "gc_bias_two_length_outlier_bam",
         vec![("chr1".to_string(), 200)],
         fragments,
         Vec::new(),
-        "gc_bias_two_length_outlier_bam",
     )?;
     Ok((reference, bam))
 }
 
-fn make_two_length_low_mass_tail_fixture() -> Result<(fixtures::TwoBitFixture, fixtures::BamFixture)>
-{
-    let reference = fixtures::twobit_from_sequences(
+fn make_two_length_low_mass_tail_fixture() -> Result<(TempTwoBit, TempBam)> {
+    let reference = twobit_from_sequences(
         "gc_bias_two_length_low_mass_tail_reference",
         vec![(
             "chr1".to_string(),
@@ -527,26 +548,26 @@ fn make_two_length_low_mass_tail_fixture() -> Result<(fixtures::TwoBitFixture, f
     // That makes length 11 a clean "low-mass tail" row for testing greedy length binning by
     // percentage mass.
     let mut fragments = Vec::new();
-    fragments.push(fixtures::paired_fragment(10, 10, 5));
+    fragments.push(paired_fragment(10, 10, 5));
     for start in [110_i64, 120, 130, 140, 150, 160, 170, 180, 190] {
-        fragments.push(fixtures::paired_fragment(start, 10, 5));
+        fragments.push(paired_fragment(start, 10, 5));
     }
-    fragments.push(fixtures::paired_fragment(20, 11, 5));
-    fragments.push(fixtures::paired_fragment(120, 11, 5));
+    fragments.push(paired_fragment(20, 11, 5));
+    fragments.push(paired_fragment(120, 11, 5));
 
     // The low-mass tail fixture reuses start 120 across two distinct fragment lengths, so
     // each synthetic fragment needs its own qname.
-    let bam = fixtures::bam_from_specs_strict_identity(
+    let bam = bam_from_fragments_with_record_indexed_names(
+        "gc_bias_two_length_low_mass_tail_bam",
         vec![("chr1".to_string(), 200)],
         fragments,
         Vec::new(),
-        "gc_bias_two_length_low_mass_tail_bam",
     )?;
     Ok((reference, bam))
 }
 
-fn make_three_gc_bin_fixture() -> Result<(fixtures::TwoBitFixture, fixtures::BamFixture)> {
-    let reference = fixtures::twobit_from_sequences(
+fn make_three_gc_bin_fixture() -> Result<(TempTwoBit, TempBam)> {
+    let reference = twobit_from_sequences(
         "gc_bias_three_gc_bin_reference",
         vec![(
             "chr1".to_string(),
@@ -571,21 +592,21 @@ fn make_three_gc_bin_fixture() -> Result<(fixtures::TwoBitFixture, fixtures::Bam
     //   GC%=50  -> 5 fragments
     //   GC%=100 -> 9 fragments
     let mut fragments = Vec::new();
-    fragments.push(fixtures::paired_fragment(10, 10, 5));
+    fragments.push(paired_fragment(10, 10, 5));
     for _ in 0..5 {
-        fragments.push(fixtures::paired_fragment(40, 10, 5));
+        fragments.push(paired_fragment(40, 10, 5));
     }
     for _ in 0..9 {
-        fragments.push(fixtures::paired_fragment(100, 10, 5));
+        fragments.push(paired_fragment(100, 10, 5));
     }
 
     // This fixture intentionally stacks five fragments at GC%=50 and nine at GC%=100. Use
     // strict identity so repeated starts still represent repeated molecules.
-    let bam = fixtures::bam_from_specs_strict_identity(
+    let bam = bam_from_fragments_with_record_indexed_names(
+        "gc_bias_three_gc_bin_bam",
         vec![("chr1".to_string(), 160)],
         fragments,
         Vec::new(),
-        "gc_bias_three_gc_bin_bam",
     )?;
     Ok((reference, bam))
 }
@@ -1090,8 +1111,8 @@ fn save_intermediates_writes_expected_sequence_and_mean_scaled_average_counts() 
     // The strongest low-level coherence check in this branch is the first normalization step:
     // `normalized_avg_cfdna_counts` must equal `avg_cfdna_counts / supported_mean`, where the
     // mean is taken only over the reference outlier-support mask.
-    let bam = fixtures::simple_inward_bam()?;
-    let reference = fixtures::simple_reference_twobit()?;
+    let bam = single_contig_inward_pair_bam()?;
+    let reference = simple_reference_twobit()?;
     let ref_gc_dir = TempDir::new()?;
     write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 60, 0)?;
 
@@ -1251,7 +1272,7 @@ fn multi_chromosome_cross_tile_windows_match_hand_derived_counts_in_each_window_
     //   counted windows:
     //     GC% 0   -> 11 / 3
     //     GC% 100 -> 22 / 3
-    let reference = fixtures::twobit_from_sequences(
+    let reference = twobit_from_sequences(
         "gc_bias_multi_chr_cross_tile_reference",
         vec![
             ("chr1".to_string(), "A".repeat(100)),
@@ -1260,14 +1281,15 @@ fn multi_chromosome_cross_tile_windows_match_hand_derived_counts_in_each_window_
     )?;
 
     let fragment_on_chromosome = |tid: usize, start: i64| {
-        let mut fragment = fixtures::paired_fragment(start, 10, 5);
+        let mut fragment = paired_fragment(start, 10, 5);
         fragment.forward.tid = tid;
         fragment.reverse.tid = tid;
         fragment.forward.mate_tid = Some(tid);
         fragment.reverse.mate_tid = Some(tid);
         fragment
     };
-    let bam = fixtures::bam_from_specs(
+    let bam = bam_from_fragments(
+        "gc_bias_multi_chr_cross_tile_bam",
         vec![("chr1".to_string(), 100), ("chr2".to_string(), 200)],
         vec![
             fragment_on_chromosome(0, 10),
@@ -1275,7 +1297,6 @@ fn multi_chromosome_cross_tile_windows_match_hand_derived_counts_in_each_window_
             fragment_on_chromosome(1, 110),
         ],
         Vec::new(),
-        "gc_bias_multi_chr_cross_tile_bam",
     )?;
 
     let ref_gc_dir = TempDir::new()?;
@@ -1377,8 +1398,8 @@ fn multi_chromosome_cross_tile_windows_match_hand_derived_counts_in_each_window_
 
 #[test]
 fn gc_bias_run_rejects_reference_package_with_non_scalar_metadata_array() -> Result<()> {
-    let bam = fixtures::simple_inward_bam()?;
-    let reference = fixtures::simple_reference_twobit()?;
+    let bam = single_contig_inward_pair_bam()?;
+    let reference = simple_reference_twobit()?;
     let ref_gc_dir = TempDir::new()?;
     write_reference_gc_package_fixture(
         ref_gc_dir.path(),
@@ -1407,8 +1428,8 @@ fn gc_bias_run_rejects_reference_package_with_non_scalar_metadata_array() -> Res
 
 #[test]
 fn gc_bias_run_rejects_reference_package_with_schema_version_mismatch() -> Result<()> {
-    let bam = fixtures::simple_inward_bam()?;
-    let reference = fixtures::simple_reference_twobit()?;
+    let bam = single_contig_inward_pair_bam()?;
+    let reference = simple_reference_twobit()?;
     let ref_gc_dir = TempDir::new()?;
     write_reference_gc_package_fixture(
         ref_gc_dir.path(),
@@ -1436,8 +1457,8 @@ fn gc_bias_run_rejects_reference_package_with_schema_version_mismatch() -> Resul
 
 #[test]
 fn gc_bias_run_rejects_reference_package_with_different_chromosomes() -> Result<()> {
-    let bam = fixtures::simple_inward_bam()?;
-    let reference = fixtures::simple_reference_twobit()?;
+    let bam = single_contig_inward_pair_bam()?;
+    let reference = simple_reference_twobit()?;
     let ref_gc_dir = TempDir::new()?;
     write_reference_gc_package_fixture(
         ref_gc_dir.path(),
@@ -1472,8 +1493,8 @@ fn gc_bias_run_rejects_by_size_smaller_than_reference_max_fragment_length() -> R
     // - A fixed window size of 30 cannot preserve the fixed-size two-buffer counting invariant.
     // - The command should fail directly after loading the reference package, before creating
     //   the output directory.
-    let bam = fixtures::simple_inward_bam()?;
-    let reference = fixtures::simple_reference_twobit()?;
+    let bam = single_contig_inward_pair_bam()?;
+    let reference = simple_reference_twobit()?;
     let ref_gc_dir = TempDir::new()?;
     write_reference_gc_package_fixture(ref_gc_dir.path(), ReferencePackageFixture::default())?;
     let output_parent = TempDir::new()?;
@@ -1687,8 +1708,8 @@ fn rejects_reference_gc_package_with_too_short_effective_minimum_length() -> Res
 
 #[test]
 fn gc_bias_run_rejects_reference_package_with_incompatible_support_mask_shape() -> Result<()> {
-    let bam = fixtures::simple_inward_bam()?;
-    let reference = fixtures::simple_reference_twobit()?;
+    let bam = single_contig_inward_pair_bam()?;
+    let reference = simple_reference_twobit()?;
     let ref_gc_dir = TempDir::new()?;
     write_reference_gc_package_with_shape_mismatch(ref_gc_dir.path())?;
     let out_dir = TempDir::new()?;
@@ -2213,7 +2234,7 @@ fn hard_clamp_changes_real_command_correction_matrix_in_expected_way() -> Result
     //
     // This is the important contract: the hard clamp happens *before* the final re-centering,
     // so the written package can end up slightly outside the nominal clamp range afterwards.
-    let reference = fixtures::twobit_from_sequences(
+    let reference = twobit_from_sequences(
         "gc_bias_hard_clamp_reference",
         vec![(
             "chr1".to_string(),
@@ -2222,17 +2243,17 @@ fn hard_clamp_changes_real_command_correction_matrix_in_expected_way() -> Result
     )?;
 
     let mut fragments = Vec::new();
-    fragments.push(fixtures::paired_fragment(10, 10, 5));
+    fragments.push(paired_fragment(10, 10, 5));
     for _ in 0..999 {
-        fragments.push(fixtures::paired_fragment(120, 10, 5));
+        fragments.push(paired_fragment(120, 10, 5));
     }
     // The hard-clamp setup stacks 999 fragments at the same C-only start, so it must opt
     // into unique qnames to keep those molecules distinct in the paired-end parser.
-    let bam = fixtures::bam_from_specs_strict_identity(
+    let bam = bam_from_fragments_with_record_indexed_names(
+        "gc_bias_hard_clamp_bam",
         vec![("chr1".to_string(), 200)],
         fragments,
         Vec::new(),
-        "gc_bias_hard_clamp_bam",
     )?;
 
     let ref_gc_dir = TempDir::new()?;
@@ -2757,8 +2778,8 @@ fn gc_bias_transfers_reference_gc_package_footprint_to_correction_package() -> R
     // - `ref-gc-bias` writes the 2bit contig footprint into the reference package.
     // - `gc-bias` validates that footprint against its current `--ref-2bit`.
     // - The final GC correction package should carry forward that validated footprint exactly.
-    let reference = fixtures::simple_reference_twobit()?;
-    let bam = fixtures::simple_inward_bam()?;
+    let reference = simple_reference_twobit()?;
+    let bam = single_contig_inward_pair_bam()?;
     let ref_gc_dir = TempDir::new()?;
     write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 60, 0)?;
     let out_dir = TempDir::new()?;
@@ -2789,4 +2810,578 @@ fn gc_bias_transfers_reference_gc_package_footprint_to_correction_package() -> R
     );
 
     Ok(())
+}
+
+mod test_gc_tag_values {
+    #[cfg(feature = "cmd_gc_bias")]
+    use crate::commands::gc_bias::{
+        correct::GCCorrector, counting::build_gc_prefixes, package::GCCorrectionPackage,
+    };
+    use rust_htslib::bam::record::{Aux, Record};
+
+    use crate::shared::base::ZEROISH_F32_TOLERANCE;
+    #[cfg(feature = "cmd_gc_bias")]
+    use crate::shared::constants::GC_CORRECTION_SCHEMA_VERSION;
+    use crate::shared::gc_tag::{
+        ClassifiedGCTagWeight, GCTagValue, MIN_REASONABLE_GC_WEIGHT, combine_gc_tag_values,
+        read_gc_tag_from_record,
+    };
+    #[cfg(feature = "cmd_gc_bias")]
+    use crate::shared::interval::Interval;
+    #[cfg(feature = "cmd_gc_bias")]
+    use ndarray::array;
+
+    #[test]
+    fn gc_tag_values_follow_supported_range_and_zero_snap_rules() {
+        // Arrange: start with a sane weight
+        let mut rec_ok = Record::new();
+        rec_ok.push_aux(b"GC", Aux::Float(2.5)).expect("set GC tag");
+        let ok = read_gc_tag_from_record(&rec_ok, b"GC");
+
+        // Assert: valid weight passes through
+        assert_eq!(ok.weight, Some(2.5));
+        assert!(!ok.was_missing);
+        assert!(!ok.had_invalid);
+        assert!(!ok.was_out_of_range);
+
+        // Arrange: record carrying a wildly high weight that should be treated as invalid
+        let mut rec_high = Record::new();
+        rec_high
+            .push_aux(b"GC", Aux::Float(1.1e3))
+            .expect("set GC tag");
+        let high = read_gc_tag_from_record(&rec_high, b"GC");
+
+        // Assert: extreme values are rejected to avoid runaway coverage
+        assert!(high.weight.is_none());
+        assert!(high.had_invalid);
+        assert!(high.was_out_of_range);
+
+        // Arrange: meaningfully negative values are invalid, not zero-snapped.
+        let mut rec_neg = Record::new();
+        rec_neg
+            .push_aux(b"GC", Aux::Float(-3.0))
+            .expect("set GC tag");
+        let neg = read_gc_tag_from_record(&rec_neg, b"GC");
+        assert!(neg.weight.is_none());
+        assert!(neg.had_invalid);
+        assert!(neg.was_out_of_range);
+
+        // Arrange: NaN should be invalid but not counted as out-of-range
+        let mut rec_nan = Record::new();
+        rec_nan
+            .push_aux(b"GC", Aux::Float(f32::NAN))
+            .expect("set GC tag");
+        let nan = read_gc_tag_from_record(&rec_nan, b"GC");
+
+        assert!(nan.weight.is_none());
+        assert!(nan.had_invalid);
+        assert!(!nan.was_out_of_range);
+
+        // Arrange: tiny positive values near zero are snapped to zero.
+        let mut rec_tiny = Record::new();
+        rec_tiny
+            .push_aux(b"GC", Aux::Float(ZEROISH_F32_TOLERANCE))
+            .expect("set GC tag");
+        let tiny = read_gc_tag_from_record(&rec_tiny, b"GC");
+        assert_eq!(tiny.weight, Some(0.0));
+        assert!(!tiny.had_invalid);
+        assert!(!tiny.was_out_of_range);
+
+        // Arrange: the zero-snap window is symmetric around zero.
+        let mut rec_tiny_negative = Record::new();
+        rec_tiny_negative
+            .push_aux(b"GC", Aux::Float(-ZEROISH_F32_TOLERANCE))
+            .expect("set GC tag");
+        let tiny_negative = read_gc_tag_from_record(&rec_tiny_negative, b"GC");
+        assert_eq!(tiny_negative.weight, Some(0.0));
+        assert!(!tiny_negative.had_invalid);
+        assert!(!tiny_negative.was_out_of_range);
+
+        // Arrange: positive values below the minimum supported GC weight are invalid.
+        let mut rec_low = Record::new();
+        rec_low
+            .push_aux(b"GC", Aux::Float(MIN_REASONABLE_GC_WEIGHT / 10.0))
+            .expect("set GC tag");
+        let low = read_gc_tag_from_record(&rec_low, b"GC");
+        assert!(low.weight.is_none());
+        assert!(low.had_invalid);
+        assert!(low.was_out_of_range);
+    }
+
+    #[test]
+    fn gc_tag_values_just_below_minimum_supported_weight_are_invalid() {
+        // Arrange: choose the nearest representable f32 below the supported lower bound.
+        // This is a stronger boundary than "/10" because it proves the exact cutoff behavior.
+        let just_below_min = f32::from_bits(MIN_REASONABLE_GC_WEIGHT.to_bits() - 1);
+        let mut rec = Record::new();
+        rec.push_aux(b"GC", Aux::Float(just_below_min))
+            .expect("set GC tag");
+
+        // Act
+        let observed = read_gc_tag_from_record(&rec, b"GC");
+
+        // Assert: values below 1e-3 remain invalid even when they are only one f32 step lower.
+        assert!(observed.weight.is_none());
+        assert!(observed.had_invalid);
+        assert!(observed.was_out_of_range);
+    }
+
+    #[test]
+    fn missing_gc_tag_is_reported_separately() {
+        let rec = Record::new();
+        let missing = read_gc_tag_from_record(&rec, b"GC");
+        assert!(missing.weight.is_none());
+        assert!(missing.was_missing);
+        assert!(!missing.had_invalid);
+        assert!(!missing.was_out_of_range);
+    }
+
+    #[test]
+    fn combining_valid_weights_averages_before_final_range_check() {
+        let mut rec_a = Record::new();
+        rec_a.push_aux(b"GC", Aux::Float(2.0)).expect("set GC tag");
+        let mut rec_b = Record::new();
+        rec_b.push_aux(b"GC", Aux::Float(4.0)).expect("set GC tag");
+
+        let a = read_gc_tag_from_record(&rec_a, b"GC");
+        let b = read_gc_tag_from_record(&rec_b, b"GC");
+        let combined = combine_gc_tag_values(&a, &b);
+
+        assert_eq!(combined.weight, Some(3.0));
+        assert!(!combined.had_invalid);
+        assert!(!combined.was_out_of_range);
+    }
+
+    #[test]
+    fn combining_paired_tags_reuses_single_usable_mate_and_keeps_zero_precedence() {
+        let mut rec_zero = Record::new();
+        rec_zero
+            .push_aux(b"GC", Aux::Float(0.0))
+            .expect("set GC tag");
+        let mut rec_valid = Record::new();
+        rec_valid
+            .push_aux(b"GC", Aux::Float(4.0))
+            .expect("set GC tag");
+
+        let zero = read_gc_tag_from_record(&rec_zero, b"GC");
+        let valid = read_gc_tag_from_record(&rec_valid, b"GC");
+        let zero_combined = combine_gc_tag_values(&zero, &valid);
+        assert_eq!(zero_combined.weight, Some(0.0));
+        assert!(!zero_combined.had_invalid);
+
+        let missing = read_gc_tag_from_record(&Record::new(), b"GC");
+        let missing_combined = combine_gc_tag_values(&valid, &missing);
+        assert_eq!(missing_combined.weight, Some(4.0));
+        assert!(!missing_combined.was_missing);
+        assert!(!missing_combined.had_invalid);
+        assert!(!missing_combined.was_out_of_range);
+
+        let mut rec_low = Record::new();
+        rec_low
+            .push_aux(b"GC", Aux::Float(MIN_REASONABLE_GC_WEIGHT / 10.0))
+            .expect("set GC tag");
+        let low = read_gc_tag_from_record(&rec_low, b"GC");
+        let invalid_combined = combine_gc_tag_values(&valid, &low);
+        assert!(invalid_combined.weight.is_none());
+        assert!(invalid_combined.had_invalid);
+        assert!(invalid_combined.was_out_of_range);
+    }
+
+    #[test]
+    fn gc_tag_classify_exposes_one_explicit_state() {
+        assert_eq!(
+            GCTagValue {
+                weight: Some(2.5),
+                was_missing: false,
+                had_invalid: false,
+                was_out_of_range: false,
+            }
+            .classify()
+            .expect("valid classification"),
+            ClassifiedGCTagWeight::Usable(2.5)
+        );
+        assert_eq!(
+            GCTagValue::missing()
+                .classify()
+                .expect("missing classification"),
+            ClassifiedGCTagWeight::Missing
+        );
+        assert_eq!(
+            GCTagValue {
+                weight: None,
+                was_missing: false,
+                had_invalid: true,
+                was_out_of_range: true,
+            }
+            .classify()
+            .expect("invalid classification"),
+            ClassifiedGCTagWeight::Invalid { out_of_range: true }
+        );
+    }
+
+    #[test]
+    fn gc_tag_classify_rejects_inconsistent_internal_state() {
+        let err = GCTagValue {
+            weight: None,
+            was_missing: false,
+            had_invalid: false,
+            was_out_of_range: false,
+        }
+        .classify()
+        .expect_err("inconsistent state should error");
+
+        assert!(
+            err.to_string().contains("inconsistent GC tag state"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[cfg(feature = "cmd_gc_bias")]
+    #[test]
+    fn gc_file_weights_follow_the_same_sanity_rules() {
+        let prefixes = build_gc_prefixes(b"AAAAAAAAAA");
+        let interval = Interval::new(0_u64, 10_u64).expect("valid interval");
+        let scenarios = [
+            ("negative_below_snap_window_is_unusable", -3.0_f64, None),
+            (
+                "tiny_negative_becomes_zero",
+                -(ZEROISH_F32_TOLERANCE as f64),
+                Some(0.0_f64),
+            ),
+            (
+                "tiny_positive_becomes_zero",
+                ZEROISH_F32_TOLERANCE as f64,
+                Some(0.0_f64),
+            ),
+            (
+                "too_small_positive_is_unusable",
+                (MIN_REASONABLE_GC_WEIGHT / 10.0) as f64,
+                None,
+            ),
+            ("too_large_positive_is_unusable", 1.1e3_f64, None),
+        ];
+
+        for (name, weight, expected) in scenarios {
+            let package = GCCorrectionPackage {
+                version: GC_CORRECTION_SCHEMA_VERSION,
+                end_offset: 0,
+                length_edges: vec![10, 11],
+                gc_edges: vec![0, 101],
+                length_bin_frequencies: array![1.0_f64],
+                reference_contig_footprint: Vec::new(),
+                correction_matrix: array![[weight]],
+            };
+            let corrector = GCCorrector::from_package(&package).expect("build corrector");
+
+            let observed = corrector
+                .correct_fragment(interval, &prefixes)
+                .expect("correct fragment");
+            assert_eq!(observed, expected, "unexpected sanitized weight for {name}");
+        }
+    }
+
+    #[cfg(feature = "cmd_gc_bias")]
+    #[test]
+    fn gc_file_weights_just_below_minimum_supported_weight_are_invalid() {
+        // Arrange: use the nearest representable f64 below the exact f64 threshold used by the
+        // sanitizer so this checks the boundary itself, not just a clearly too-small value.
+        let just_below_min = f64::from_bits((MIN_REASONABLE_GC_WEIGHT as f64).to_bits() - 1);
+        let prefixes = build_gc_prefixes(b"AAAAAAAAAA");
+        let interval = Interval::new(0_u64, 10_u64).expect("valid interval");
+        let package = GCCorrectionPackage {
+            version: GC_CORRECTION_SCHEMA_VERSION,
+            end_offset: 0,
+            length_edges: vec![10, 11],
+            gc_edges: vec![0, 101],
+            length_bin_frequencies: array![1.0_f64],
+            reference_contig_footprint: Vec::new(),
+            correction_matrix: array![[just_below_min]],
+        };
+        let corrector = GCCorrector::from_package(&package).expect("build corrector");
+
+        // Act
+        let observed = corrector
+            .correct_fragment(interval, &prefixes)
+            .expect("correct fragment");
+
+        // Assert: the GC-file path rejects values that fall just below the accepted range.
+        assert_eq!(observed, None);
+    }
+}
+
+mod test_fragment_iterator_gc_tags {
+    use crate::{
+        shared::{
+            fragment::{
+                minimal_fragment::Fragment, segment_fragment::FragmentWithSegments,
+            },
+            fragment_iterators::{
+                fragments_from_bam, fragments_with_segments_from_bam,
+            },
+            gc_tag::GCTagValue,
+        },
+    };
+    #[cfg(feature = "cmd_ends")]
+    use crate::{
+        commands::ends::config_structs::{ClipStrategy, KmerSource},
+        shared::{
+            fragment::ends_fragment::FragmentWithEnds,
+            fragment_iterators::fragments_with_ends_from_bam,
+            indel_mode::IndelMotifFilterPolicy,
+        },
+    };
+    #[cfg(feature = "cmd_fragment_kmers")]
+    use crate::shared::{
+        fragment::segment_kmer_fragment::FragmentWithKmerSegments,
+        fragment_iterators::fragments_with_kmer_segments_from_bam,
+        indel_mode::IndelMode,
+    };
+    use anyhow::Result;
+    use rust_htslib::bam::record::{Aux, Cigar, CigarString, Record};
+
+    fn assert_valid_gc_tag(observed: GCTagValue, expected_weight: f32) {
+        assert_eq!(observed.weight, Some(expected_weight));
+        assert!(!observed.was_missing);
+        assert!(!observed.had_invalid);
+        assert!(!observed.was_out_of_range);
+    }
+
+    fn make_record(
+        qname: &[u8],
+        tid: i32,
+        pos: i64,
+        is_reverse: bool,
+        seq_len: usize,
+        gc_weight: f32,
+    ) -> Record {
+        let mut record = Record::new();
+        record.set_tid(tid);
+        record.set_pos(pos);
+        record.set_flags(if is_reverse { 0x11 } else { 0x1 });
+        record.set_mapq(60);
+
+        let cigar = CigarString(vec![Cigar::Match(seq_len as u32)]);
+        let seq = vec![b'A'; seq_len];
+        let qual = vec![30u8; seq_len];
+        record.set(qname, Some(&cigar), &seq, &qual);
+        record
+            .push_aux(b"GC", Aux::Float(gc_weight))
+            .expect("set GC tag");
+
+        record
+    }
+
+    fn first_fragment(iter: impl Iterator<Item = Result<Fragment>>) -> Fragment {
+        iter.into_iter()
+            .next()
+            .expect("one fragment")
+            .expect("valid fragment")
+    }
+
+    fn first_segment_fragment(
+        iter: impl Iterator<Item = Result<FragmentWithSegments>>,
+    ) -> FragmentWithSegments {
+        iter.into_iter()
+            .next()
+            .expect("one fragment")
+            .expect("valid fragment")
+    }
+
+    #[cfg(feature = "cmd_fragment_kmers")]
+    fn first_kmer_segment_fragment(
+        iter: impl Iterator<Item = Result<FragmentWithKmerSegments>>,
+    ) -> FragmentWithKmerSegments {
+        iter.into_iter()
+            .next()
+            .expect("one fragment")
+            .expect("valid fragment")
+    }
+
+    #[cfg(feature = "cmd_ends")]
+    fn first_end_fragment(
+        iter: impl Iterator<Item = Result<FragmentWithEnds>>,
+    ) -> FragmentWithEnds {
+        iter.into_iter()
+            .next()
+            .expect("one fragment")
+            .expect("valid fragment")
+    }
+
+    #[test]
+    fn basic_fragment_iterator_paired_uses_configured_gc_tag() {
+        // Arrange: two mates with GC weights 2 and 4 should average to 3 on the fragment.
+        let qname = b"pair_basic";
+        let forward = make_record(qname, 0, 100, false, 50, 2.0);
+        let reverse = make_record(qname, 0, 150, true, 50, 4.0);
+
+        // Act: build fragments through the same iterator used by basic-fragment commands.
+        let fragment = first_fragment(fragments_from_bam(
+            vec![Ok(forward), Ok(reverse)].into_iter(),
+            |_record| true,
+            Some(b"GC"),
+            |_fragment: &Fragment| true,
+            false,
+        ));
+
+        // Assert: the configured GC tag is preserved and combined at fragment level.
+        assert_valid_gc_tag(fragment.gc_tag, 3.0);
+    }
+
+    #[test]
+    fn basic_fragment_iterator_unpaired_uses_configured_gc_tag() {
+        // Arrange: a single read-as-fragment should keep its own GC-tag value.
+        let record = make_record(b"single_basic", 0, 100, false, 50, 2.5);
+
+        // Act
+        let fragment = first_fragment(fragments_from_bam(
+            vec![Ok(record)].into_iter(),
+            |_record| true,
+            Some(b"GC"),
+            |_fragment: &Fragment| true,
+            true,
+        ));
+
+        // Assert
+        assert_valid_gc_tag(fragment.gc_tag, 2.5);
+    }
+
+    #[test]
+    fn segment_fragment_iterator_paired_uses_configured_gc_tag() {
+        // Arrange
+        let qname = b"pair_segments";
+        let forward = make_record(qname, 0, 100, false, 50, 2.0);
+        let reverse = make_record(qname, 0, 150, true, 50, 4.0);
+
+        // Act
+        let fragment = first_segment_fragment(fragments_with_segments_from_bam(
+            vec![Ok(forward), Ok(reverse)].into_iter(),
+            |_record| true,
+            1,
+            true,
+            Some(b"GC"),
+            |_fragment: &FragmentWithSegments| true,
+            false,
+        ));
+
+        // Assert
+        assert_valid_gc_tag(fragment.gc_tag, 3.0);
+    }
+
+    #[test]
+    fn segment_fragment_iterator_unpaired_uses_configured_gc_tag() {
+        // Arrange
+        let record = make_record(b"single_segments", 0, 100, false, 50, 2.5);
+
+        // Act
+        let fragment = first_segment_fragment(fragments_with_segments_from_bam(
+            vec![Ok(record)].into_iter(),
+            |_record| true,
+            1,
+            true,
+            Some(b"GC"),
+            |_fragment: &FragmentWithSegments| true,
+            true,
+        ));
+
+        // Assert
+        assert_valid_gc_tag(fragment.gc_tag, 2.5);
+    }
+
+    #[cfg(feature = "cmd_fragment_kmers")]
+    #[test]
+    fn kmer_segment_iterator_paired_uses_configured_gc_tag() {
+        // Arrange
+        let qname = b"pair_kmers";
+        let forward = make_record(qname, 0, 100, false, 50, 2.0);
+        let reverse = make_record(qname, 0, 150, true, 50, 4.0);
+
+        // Act
+        let fragment = first_kmer_segment_fragment(fragments_with_kmer_segments_from_bam(
+            vec![Ok(forward), Ok(reverse)].into_iter(),
+            |_record| true,
+            IndelMode::Ignore,
+            true,
+            0,
+            Some(b"GC"),
+            |_fragment: &FragmentWithKmerSegments| true,
+            false,
+        ));
+
+        // Assert
+        assert_valid_gc_tag(fragment.gc_tag, 3.0);
+    }
+
+    #[cfg(feature = "cmd_fragment_kmers")]
+    #[test]
+    fn kmer_segment_iterator_unpaired_uses_configured_gc_tag() {
+        // Arrange
+        let record = make_record(b"single_kmers", 0, 100, false, 50, 2.5);
+
+        // Act
+        let fragment = first_kmer_segment_fragment(fragments_with_kmer_segments_from_bam(
+            vec![Ok(record)].into_iter(),
+            |_record| true,
+            IndelMode::Ignore,
+            true,
+            0,
+            Some(b"GC"),
+            |_fragment: &FragmentWithKmerSegments| true,
+            true,
+        ));
+
+        // Assert
+        assert_valid_gc_tag(fragment.gc_tag, 2.5);
+    }
+
+    #[cfg(feature = "cmd_ends")]
+    #[test]
+    fn ends_iterator_paired_uses_configured_gc_tag() {
+        // Arrange
+        let qname = b"pair_ends";
+        let forward = make_record(qname, 0, 100, false, 50, 2.0);
+        let reverse = make_record(qname, 0, 150, true, 50, 4.0);
+
+        // Act
+        let fragment = first_end_fragment(fragments_with_ends_from_bam(
+            vec![Ok(forward), Ok(reverse)].into_iter(),
+            |_record| true,
+            ClipStrategy::Aligned,
+            KmerSource::Read,
+            IndelMotifFilterPolicy::Auto,
+            4,
+            u32::MAX,
+            &[],
+            Some(b"GC"),
+            |_fragment: &FragmentWithEnds| true,
+            false,
+        ));
+
+        // Assert
+        assert_valid_gc_tag(fragment.gc_tag, 3.0);
+    }
+
+    #[cfg(feature = "cmd_ends")]
+    #[test]
+    fn ends_iterator_unpaired_uses_configured_gc_tag() {
+        // Arrange
+        let record = make_record(b"single_ends", 0, 100, false, 50, 2.5);
+
+        // Act
+        let fragment = first_end_fragment(fragments_with_ends_from_bam(
+            vec![Ok(record)].into_iter(),
+            |_record| true,
+            ClipStrategy::Aligned,
+            KmerSource::Read,
+            IndelMotifFilterPolicy::Auto,
+            4,
+            u32::MAX,
+            &[],
+            Some(b"GC"),
+            |_fragment: &FragmentWithEnds| true,
+            true,
+        ));
+
+        // Assert
+        assert_valid_gc_tag(fragment.gc_tag, 2.5);
+    }
 }

@@ -694,3 +694,8 @@ fn resolve_identical_edges_runs(
 
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    include!("near_file_tests.rs");
+}

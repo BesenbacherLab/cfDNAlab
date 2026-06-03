@@ -68,3 +68,8 @@ pub(crate) fn sample_starts_in_core<R: Rng + ?Sized>(
     starts.sort_unstable();
     starts
 }
+
+#[cfg(test)]
+mod tests {
+    include!("sampling_tests.rs");
+}

@@ -437,6 +437,73 @@ fn coverage_cv_overflow_label_is_derived_from_the_threshold_constant() {
 }
 
 #[test]
+fn write_bedgraph_runs_encodes_whole_positional_coverage_as_nonzero_runs() -> Result<()> {
+    // Arrange
+    // Tile-local coverage:
+    //   positions 100..102 => 0, omitted because keep_zero_runs=false
+    //   positions 102..104 => 1, one run
+    //   position  104..105 => 0, omitted
+    //   positions 105..108 => 2, one run
+    let coverage = [0.0_f32, 0.0, 1.0, 1.0, 0.0, 2.0, 2.0, 2.0];
+    let mut output = Vec::new();
+
+    // Act
+    write_bedgraph_runs(
+        "chr1",
+        &coverage,
+        None,
+        0,
+        coverage.len(),
+        100,
+        3,
+        false,
+        &mut output,
+    )?;
+
+    // Assert
+    assert_eq!(
+        String::from_utf8(output)?,
+        "chr1\t102\t104\t1\nchr1\t105\t108\t2\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn write_windowed_runs_skips_masked_positions_and_preserves_window_index() -> Result<()> {
+    // Arrange
+    // Window [8,13) has coverage at every base, but positions 9,10,11 are masked.
+    // Current positional output omits masked bases, so the unmasked bases become two runs:
+    // [8,9) and [12,13), both carrying the original window index.
+    let coverage = [1.0_f32; 13];
+    let mut mask = [0_u8; 13];
+    mask[9] = 1;
+    mask[10] = 1;
+    mask[11] = 1;
+    let mut output = Vec::new();
+
+    // Act
+    write_windowed_runs(
+        "chr1",
+        &coverage,
+        Some(&mask),
+        8,
+        13,
+        0,
+        Some(7),
+        3,
+        false,
+        &mut output,
+    )?;
+
+    // Assert
+    assert_eq!(
+        String::from_utf8(output)?,
+        "chr1\t8\t9\t1\t7\nchr1\t12\t13\t1\t7\n"
+    );
+    Ok(())
+}
+
+#[test]
 fn write_bedgraph_runs_returns_immediate_writer_errors() {
     // Arrange: a single non-zero run forces one bedGraph row write. The writer fails immediately
     // on `write`, while `flush` would succeed, so this catches swallowed callback errors.
