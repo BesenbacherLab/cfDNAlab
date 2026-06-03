@@ -1,3 +1,5 @@
+// MOVE-MODULE-LOCAL: direct private shared GC tag and gc-bias corrector helper tests.
+
 mod test_gc_tag_values {
     #[cfg(feature = "cmd_gc_bias")]
     use cfdnalab::commands::gc_bias::{

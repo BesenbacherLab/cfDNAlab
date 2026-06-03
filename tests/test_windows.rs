@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod tests_flattening {
+    // MOVE-MODULE-LOCAL: direct private shared BED/window helper tests.
+
     use cfdnalab::shared::bed::*;
     use cfdnalab::shared::interval::{IndexedInterval, ScoredInterval, Span};
 

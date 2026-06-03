@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod parse_md_tag_tests {
+    // MOVE-MODULE-LOCAL: direct private shared read helper tests.
+
     use cfdnalab::shared::read::parse_md_tag;
 
     fn check(md: &str, offset: u32, exp_starts: Vec<u32>, exp_ends: Vec<u32>, exp_total: u32) {

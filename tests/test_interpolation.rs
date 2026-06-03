@@ -1,5 +1,7 @@
 #![cfg(feature = "cmd_gc_bias")]
 
+// MOVE-MODULE-LOCAL: direct private gc-bias interpolation helper tests.
+
 use cfdnalab::commands::gc_bias::interpolation::{
     enforce_monotonic_segment, fill_unsupported_bins_with_polynomial,
     fill_zero_bins_with_polynomial,

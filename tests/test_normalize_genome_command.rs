@@ -1,6 +1,6 @@
 #![cfg(feature = "cmd_coverage_weights")]
 
-// normalization helper tests in this file should move with the striding module.
+// MOVE-MODULE-LOCAL: normalization helper tests in this file should move with the striding module.
 
 mod fixtures;
 

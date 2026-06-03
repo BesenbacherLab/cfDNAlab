@@ -1,5 +1,7 @@
 #![cfg(feature = "cmd_midpoints")]
 
+// MOVE-MODULE-LOCAL: direct private midpoint profile-counting helper tests.
+
 #[cfg(test)]
 mod tests {
     use anyhow::Result;

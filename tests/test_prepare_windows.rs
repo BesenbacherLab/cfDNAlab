@@ -975,6 +975,8 @@ mod tests_prepare_windows_pipeline {
 }
 
 mod tests_postprocess {
+    // MOVE-MODULE-LOCAL: direct private prepare-windows postprocess helper tests.
+
     use cfdnalab::commands::prepare_windows::{
         config::{CoordinateSet, DedupKeep, DistancePolicy, MergeScope},
         labels::LabelTuple,
@@ -1343,6 +1345,8 @@ mod tests_postprocess {
 }
 
 mod tests_mergers {
+    // MOVE-MODULE-LOCAL: direct private prepare-windows merger helper tests.
+
     use cfdnalab::commands::prepare_windows::{
         config::{CoordinateSet, MergeLabel, MergeScope},
         labels::LabelTuple,
@@ -1484,6 +1488,8 @@ mod tests_mergers {
 }
 
 mod tests_resizers {
+    // MOVE-MODULE-LOCAL: direct private prepare-windows resize helper tests.
+
     use cfdnalab::commands::prepare_windows::{
         config::{OobPolicy, PrepareConfig},
         resizers::apply_size_transform,
@@ -1598,6 +1604,8 @@ mod tests_resizers {
 }
 
 mod tests_parsers {
+    // MOVE-MODULE-LOCAL: direct private prepare-windows parser helper tests.
+
     use anyhow::Result;
     use cfdnalab::commands::prepare_windows::parsers::{
         parse_cols_indices, parse_distance_bins, parse_record_line, parse_score_filter,
@@ -1684,6 +1692,8 @@ mod tests_parsers {
 }
 
 mod tests_near_file {
+    // MOVE-MODULE-LOCAL: direct private prepare-windows near-file helper tests.
+
     use std::{fs::File, io::Write};
 
     use cfdnalab::commands::prepare_windows::{
@@ -1939,6 +1949,8 @@ mod tests_near_file {
 }
 
 mod tests_writers {
+    // MOVE-MODULE-LOCAL: direct private prepare-windows writer helper tests.
+
     use std::{fs, io::Read};
 
     use cfdnalab::commands::prepare_windows::{
@@ -2093,6 +2105,8 @@ mod tests_writers {
 }
 
 mod tests_chunk {
+    // MOVE-MODULE-LOCAL: direct private prepare-windows chunk helper tests.
+
     use cfdnalab::commands::prepare_windows::{
         chunk::{flush_chromosome, process_and_write_chunk},
         config::{DedupKeep, DistancePolicy, MergeLabel, MergeScope, PrepareConfig},
@@ -2387,6 +2401,8 @@ mod tests_chunk {
 
 #[cfg(unix)]
 mod tests_stdio {
+    // MOVE-MODULE-LOCAL: direct private prepare-windows stdio helper tests.
+
     use anyhow::{Result, anyhow};
     use cfdnalab::commands::prepare_windows::{
         config::{HeaderMode, OobPolicy, PrepareConfig},

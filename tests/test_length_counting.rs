@@ -1,5 +1,7 @@
 #![cfg(feature = "cmd_lengths")]
 
+// MOVE-MODULE-LOCAL: direct private shared fragment, overlap, midpoint, and scaling helper tests.
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;

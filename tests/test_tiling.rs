@@ -1,5 +1,7 @@
 #![cfg(all(feature = "cmd_fcoverage", feature = "cmd_midpoints"))]
 
+// MOVE-MODULE-LOCAL: direct private tiling and command fetch-helper tests.
+
 mod tests {
     use cfdnalab::Error;
     use cfdnalab::commands::fcoverage::tiling::adapt_fetch_to_extreme_windows;

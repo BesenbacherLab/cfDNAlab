@@ -10,17 +10,7 @@ mod tests_gc_bias {
     use tempfile::{TempDir, tempdir};
 
     use cfdnalab::RunOptions;
-    use cfdnalab::commands::gc_bias::{
-        binning::bins_from_edges,
-        counting::gc_percent_widths,
-        load_reference_bias::{ReferenceGCMetadata, load_reference_gc_data},
-    };
-    use cfdnalab::commands::ref_gc_bias::zarr::{
-        ReferenceGCZarrPackage, write_reference_gc_package_zarr,
-    };
-    use cfdnalab::constants::{
-        GC_CORRECTION_SCHEMA_VERSION, MIN_ACGT_BASES_FOR_GC_FRACTION,
-    };
+    use cfdnalab::constants::{GC_CORRECTION_SCHEMA_VERSION, MIN_ACGT_BASES_FOR_GC_FRACTION};
     use cfdnalab::gc_bias::{
         GCCorrectionPackage, GCCorrector, GCLengthRange, LengthAgnosticGCCorrector,
         MarginalizeLengthsWeightingScheme, load_gc_corrector, load_length_agnostic_gc_corrector,
@@ -152,53 +142,6 @@ mod tests_gc_bias {
                 ),
             }
         }
-        Ok(())
-    }
-
-    // KEEP-IN-TESTS: public API or command artifact behavior.
-    #[test]
-    fn rejects_correction_package_components_with_invalid_weights() -> Result<()> {
-        // Arrange: one length bin spanning 30..=31 and one GC bin spanning 0..=100.
-        // The package writer should reject invalid final correction weights before an NPZ can be
-        // written, and the error should identify the offending bin.
-        let length_bins = bins_from_edges(&[30, 31])?;
-        let gc_bins = bins_from_edges(&[0, 100])?;
-        let reference_metadata = ReferenceGCMetadata {
-            min_fragment_length: 30,
-            max_fragment_length: 31,
-            end_offset: 10,
-            chromosomes: vec!["chr1".to_string()],
-            reference_contig_footprint: Vec::new(),
-            skip_interpolation: false,
-            smoothing_sigma: 0.55,
-            smoothing_radius: 2,
-            skip_smoothing: true,
-        };
-
-        for invalid_weight in [f64::NAN, f64::INFINITY, -0.25] {
-            // Act
-            let error = GCCorrectionPackage::from_components(
-                GC_CORRECTION_SCHEMA_VERSION,
-                &length_bins,
-                &gc_bins,
-                array![[invalid_weight]],
-                array![1.0_f64],
-                &reference_metadata,
-            )
-            .expect_err("invalid correction weight should fail package construction");
-
-            // Assert
-            let message = error.to_string();
-            assert!(
-                message.contains("GC correction matrix contains invalid weight"),
-                "unexpected error message: {message}"
-            );
-            assert!(
-                message.contains("length bin 0 [30-31], GC bin 0 [0-100]"),
-                "unexpected error message: {message}"
-            );
-        }
-
         Ok(())
     }
 
@@ -1483,7 +1426,7 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
+    // MOVE-MODULE-LOCAL: uses a private hand-written reference GC package fixture.
     #[test]
     fn multi_chromosome_cross_tile_windows_match_hand_derived_counts_in_each_window_mode()
     -> Result<()> {
@@ -2334,112 +2277,6 @@ mod tests_gc_bias {
 
     // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
-    fn save_intermediates_writes_expected_sequence_and_mean_scaled_average_counts() -> Result<()> {
-        // Arrange:
-        // Use a single global window and a reference package that already disables smoothing and
-        // interpolation. In that configuration `gc-bias` should save exactly six intermediate
-        // arrays:
-        //   0 avg_cfdna_counts
-        //   1 normalized_avg_cfdna_counts
-        //   2 binned_ref_counts
-        //   3 binned_cfdna_counts
-        //   4 normalized_binned_cfdna_counts
-        //   5 normalized_binned_ref_counts
-        //
-        // The strongest low-level coherence check in this branch is the first normalization step:
-        // `normalized_avg_cfdna_counts` must equal `avg_cfdna_counts / supported_mean`, where the
-        // mean is taken only over the reference outlier-support mask.
-        let bam = fixtures::simple_inward_bam()?;
-        let reference = fixtures::simple_reference_twobit()?;
-        let ref_gc_dir = TempDir::new()?;
-        write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 60, 0)?;
-
-        let out_dir = TempDir::new()?;
-        let mut cfg =
-            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
-        cfg.set_windows(GCWindowsArgs {
-            by_size: None,
-            by_bed: None,
-            global: true,
-        });
-        cfg.set_save_intermediates(true);
-
-        // Act
-        run_gc_bias(&cfg)?;
-
-        // Assert:
-        // No interpolation/smoothing intermediates should exist for this reference package, so the
-        // numbering must stay dense across exactly six saved arrays.
-        let mut intermediate_files: Vec<String> = std::fs::read_dir(out_dir.path())?
-            .filter_map(|entry| entry.ok())
-            .filter_map(|entry| {
-                let name = entry.file_name().into_string().ok()?;
-                if name.starts_with("gc_bias.") && name.ends_with(".npy") {
-                    Some(name)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        intermediate_files.sort();
-        assert_eq!(
-            intermediate_files,
-            vec![
-                "gc_bias.avg_cfdna_counts.0.npy".to_string(),
-                "gc_bias.binned_cfdna_counts.3.npy".to_string(),
-                "gc_bias.binned_ref_counts.2.npy".to_string(),
-                "gc_bias.normalized_avg_cfdna_counts.1.npy".to_string(),
-                "gc_bias.normalized_binned_cfdna_counts.4.npy".to_string(),
-                "gc_bias.normalized_binned_ref_counts.5.npy".to_string(),
-            ]
-        );
-
-        let avg_counts: ndarray::Array2<f64> =
-            read_npy(out_dir.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
-        let normalized_avg: ndarray::Array2<f64> = read_npy(
-            out_dir
-                .path()
-                .join("gc_bias.normalized_avg_cfdna_counts.1.npy"),
-        )?;
-        let reference_data =
-            load_reference_gc_data(&ref_gc_dir.path().join("ref_gc_package.zarr"))?;
-
-        // The support mask defines exactly which cells contribute to the mean-scaling denominator.
-        let mut supported_sum = 0.0_f64;
-        let mut supported_count = 0usize;
-        for (value, supported) in avg_counts
-            .iter()
-            .zip(reference_data.outliers_support_mask.iter())
-        {
-            if *supported {
-                supported_sum += *value;
-                supported_count += 1;
-            }
-        }
-        assert!(
-            supported_count > 0,
-            "fixture must have supported reference bins"
-        );
-        let supported_mean = supported_sum / supported_count as f64;
-        assert!(
-            supported_mean > 0.0,
-            "supported mean must be positive for mean scaling"
-        );
-
-        for ((row_idx, col_idx), avg_value) in avg_counts.indexed_iter() {
-            let expected = *avg_value / supported_mean;
-            let actual = normalized_avg[(row_idx, col_idx)];
-            assert!(
-                (actual - expected).abs() < 1e-12,
-                "normalized avg mismatch at ({row_idx}, {col_idx}): expected {expected}, got {actual}"
-            );
-        }
-
-        Ok(())
-    }
-
-    // KEEP-IN-TESTS: public API or command artifact behavior.
-    #[test]
     fn save_intermediates_uses_output_prefixes_in_shared_output_directory() -> Result<()> {
         // Arrange:
         // Use one output directory for two runs with different prefixes. With this reference
@@ -2772,7 +2609,7 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
+    // MOVE-MODULE-LOCAL: uses private malformed reference GC package fixture helpers.
     #[test]
     fn gc_bias_run_rejects_reference_package_with_non_scalar_metadata_array() -> Result<()> {
         let bam = fixtures::simple_inward_bam()?;
@@ -2803,7 +2640,7 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
+    // MOVE-MODULE-LOCAL: uses private malformed reference GC package fixture helpers.
     #[test]
     fn gc_bias_run_rejects_reference_package_with_schema_version_mismatch() -> Result<()> {
         let bam = fixtures::simple_inward_bam()?;
@@ -2833,7 +2670,7 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
+    // MOVE-MODULE-LOCAL: uses private malformed reference GC package fixture helpers.
     #[test]
     fn gc_bias_run_rejects_reference_package_with_different_chromosomes() -> Result<()> {
         let bam = fixtures::simple_inward_bam()?;
@@ -2864,7 +2701,7 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
+    // MOVE-MODULE-LOCAL: uses private reference GC package fixture helpers.
     #[test]
     fn gc_bias_run_rejects_by_size_smaller_than_reference_max_fragment_length() -> Result<()> {
         // Human verification status: verified
@@ -2942,7 +2779,7 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
+    // REWRITE-PUBLIC-TEST: public command behavior, but currently uses a private reference package loader.
     #[test]
     fn gc_bias_transfers_reference_gc_package_footprint_to_correction_package() -> Result<()> {
         // Human verification status: verified
@@ -3456,6 +3293,7 @@ mod tests_gc_bias {
         Ok((reference, bam))
     }
 
+    // MOVE-MODULE-LOCAL: direct private reference GC package loader validation.
     #[test]
     fn loads_versioned_reference_gc_package() -> Result<()> {
         // Arrange: write a minimal reference package with the current schema version and scalar
@@ -3495,6 +3333,7 @@ mod tests_gc_bias {
         Ok(())
     }
 
+    // MOVE-MODULE-LOCAL: direct private reference GC package loader validation.
     #[test]
     fn rejects_reference_gc_package_with_non_scalar_metadata_array() -> Result<()> {
         // Arrange: `skip_smoothing` is written with two values. This should fail cleanly instead of
@@ -3520,6 +3359,7 @@ mod tests_gc_bias {
         Ok(())
     }
 
+    // MOVE-MODULE-LOCAL: direct private reference GC package loader validation.
     #[test]
     fn rejects_reference_gc_package_with_schema_version_mismatch() -> Result<()> {
         // Arrange: same package shape, but an incompatible version number.
@@ -3545,6 +3385,7 @@ mod tests_gc_bias {
         Ok(())
     }
 
+    // MOVE-MODULE-LOCAL: direct private reference GC package loader validation.
     #[test]
     fn rejects_reference_gc_package_with_row_count_mismatched_to_length_axis() -> Result<()> {
         // Arrange: the package has two count rows, but the Zarr length axis names three concrete
@@ -3565,6 +3406,7 @@ mod tests_gc_bias {
         Ok(())
     }
 
+    // MOVE-MODULE-LOCAL: direct private reference GC package loader validation.
     #[test]
     fn rejects_reference_gc_package_with_inverted_length_axis() -> Result<()> {
         // Arrange: `[31, 30]` cannot name an ordered inclusive set of length rows.
@@ -3585,6 +3427,7 @@ mod tests_gc_bias {
         Ok(())
     }
 
+    // MOVE-MODULE-LOCAL: direct private reference GC package loader validation.
     #[test]
     fn rejects_reference_gc_package_with_out_of_range_end_offset() -> Result<()> {
         // Arrange: the writer stores `end_offset` as u32, but the command metadata model uses u8.
@@ -3611,6 +3454,7 @@ mod tests_gc_bias {
         Ok(())
     }
 
+    // MOVE-MODULE-LOCAL: direct private reference GC package loader validation.
     #[test]
     fn rejects_reference_gc_package_with_too_short_effective_minimum_length() -> Result<()> {
         // Arrange: `min_fragment_length = 30` and `end_offset = 11` leaves only 8 bp after
@@ -3641,7 +3485,7 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
+    // MOVE-MODULE-LOCAL: uses private malformed reference GC package fixture helpers.
     #[test]
     fn gc_bias_run_rejects_reference_package_with_incompatible_support_mask_shape() -> Result<()> {
         let bam = fixtures::simple_inward_bam()?;
@@ -3669,7 +3513,7 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
+    // MOVE-MODULE-LOCAL: uses private hand-written reference GC package fixture helpers.
     #[test]
     fn quantile_outlier_method_changes_real_command_correction_matrix_in_expected_way() -> Result<()>
     {
@@ -3751,10 +3595,8 @@ mod tests_gc_bias {
         quantile_cfg.set_min_gc_bin_mass(1.0);
         quantile_cfg.set_num_extreme_gc_bins(0);
         quantile_cfg.set_num_short_length_bins(0);
-        quantile_cfg.outlier_method =
-            OutlierMethodArg::Quantile;
-        quantile_cfg.outlier_scope =
-            OutlierScopeArg::PerLength;
+        quantile_cfg.outlier_method = OutlierMethodArg::Quantile;
+        quantile_cfg.outlier_scope = OutlierScopeArg::PerLength;
         quantile_cfg.outlier_quantiles = vec![0.25, 0.75];
 
         // Act
@@ -3807,7 +3649,7 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
+    // MOVE-MODULE-LOCAL: uses private hand-written reference GC package fixture helpers.
     #[test]
     fn quantile_outlier_scope_global_differs_from_per_length_in_real_command() -> Result<()> {
         // Arrange:
@@ -3864,8 +3706,7 @@ mod tests_gc_bias {
         };
 
         let mut per_length_cfg = make_cfg(out_per_length.path());
-        per_length_cfg.outlier_scope =
-            OutlierScopeArg::PerLength;
+        per_length_cfg.outlier_scope = OutlierScopeArg::PerLength;
 
         let mut global_cfg = make_cfg(out_global.path());
         global_cfg.outlier_scope = OutlierScopeArg::Global;
@@ -3928,7 +3769,7 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
+    // MOVE-MODULE-LOCAL: uses private hand-written reference GC package fixture helpers.
     #[test]
     fn iqr_outlier_method_changes_real_command_correction_matrix_in_expected_way() -> Result<()> {
         // Arrange:
@@ -3996,7 +3837,7 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
+    // MOVE-MODULE-LOCAL: uses private hand-written reference GC package fixture helpers.
     #[test]
     fn stddev_outlier_method_changes_real_command_correction_matrix_in_expected_way() -> Result<()>
     {
@@ -4072,7 +3913,7 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
+    // MOVE-MODULE-LOCAL: uses private hand-written reference GC package fixture helpers.
     #[test]
     fn mad_outlier_method_changes_real_command_correction_matrix_in_expected_way() -> Result<()> {
         // Arrange:
@@ -4149,7 +3990,7 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
+    // MOVE-MODULE-LOCAL: uses private hand-written reference GC package fixture helpers.
     #[test]
     fn hard_clamp_changes_real_command_correction_matrix_in_expected_way() -> Result<()> {
         // Arrange:
@@ -4249,7 +4090,7 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
+    // MOVE-MODULE-LOCAL: uses private hand-written reference GC package fixture helpers.
     #[test]
     fn min_length_bin_width_merges_two_lengths_into_one_binned_correction_row() -> Result<()> {
         // Arrange:
@@ -4315,7 +4156,7 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
+    // MOVE-MODULE-LOCAL: uses private hand-written reference GC package fixture helpers.
     #[test]
     fn num_short_length_bins_neutralizes_the_shortest_length_row_in_real_command() -> Result<()> {
         // Arrange:
@@ -4413,7 +4254,7 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
+    // MOVE-MODULE-LOCAL: uses private hand-written reference GC package fixture helpers.
     #[test]
     fn num_extreme_gc_bins_neutralizes_a_two_bin_gc_axis_in_real_command() -> Result<()> {
         // Arrange:
@@ -4510,7 +4351,7 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
+    // MOVE-MODULE-LOCAL: uses private hand-written reference GC package fixture helpers.
     #[test]
     fn min_length_bin_mass_merges_a_sparse_tail_length_into_the_previous_bin() -> Result<()> {
         // Arrange:
@@ -4623,7 +4464,7 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
+    // MOVE-MODULE-LOCAL: uses private hand-written reference GC package fixture helpers.
     #[test]
     fn min_gc_bin_mass_greedily_merges_sparse_gc_tail_bins_in_real_command() -> Result<()> {
         // Arrange:

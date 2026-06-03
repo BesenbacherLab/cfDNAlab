@@ -1,5 +1,7 @@
 #![cfg(feature = "cmd_gc_bias")]
 
+// MOVE-MODULE-LOCAL: direct private gc-bias smoothing and binning helper tests.
+
 use fxhash::FxHashMap;
 use ndarray::{Array2, array};
 

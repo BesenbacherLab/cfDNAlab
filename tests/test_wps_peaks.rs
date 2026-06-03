@@ -1,6 +1,8 @@
 #![cfg(feature = "cmd_wps_peaks")]
 
 mod tests_wps_normalization {
+    // MOVE-MODULE-LOCAL: direct private WPS normalization helper tests.
+
     use cfdnalab::commands::wps_peaks::normalize_wps::{normalize_wps, smoothe_wps};
 
     fn approx_eq(a: f32, b: f32, eps: f32) -> bool {
@@ -108,6 +110,8 @@ mod tests_wps_normalization {
 }
 
 mod tests_normalization_helpers {
+    // MOVE-MODULE-LOCAL: direct private WPS normalization helper tests.
+
     use cfdnalab::commands::wps_peaks::normalize_wps::{
         SlidingMedian, build_left_edge_window, build_right_edge_window,
     };
@@ -164,6 +168,8 @@ mod tests_normalization_helpers {
 
 #[cfg(test)]
 mod tests_wps_peaks_helpers {
+    // MOVE-MODULE-LOCAL: direct private WPS peak-calling helper tests.
+
     use cfdnalab::commands::wps_peaks::call_peaks::*;
     use cfdnalab::commands::wps_peaks::window_peak_results::PeaksWindowAction;
     use cfdnalab::commands::wps_peaks::wps_peaks::*;
@@ -878,6 +884,8 @@ mod tests_wps_peaks_helpers {
 
 #[cfg(test)]
 mod tests_peak_signal_processing {
+    // MOVE-MODULE-LOCAL: direct private WPS peak signal-processing helper tests.
+
     use cfdnalab::commands::wps_peaks::call_peaks::PeakCall;
     use cfdnalab::commands::wps_peaks::wps_peaks::{
         PeakSignalProcessingOptions, compute_window_stats_contributions, peaks_from_wps_values,

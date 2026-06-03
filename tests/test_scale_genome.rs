@@ -28,7 +28,7 @@ mod tests_apply_scaling {
         }
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn scaling_mixed_bins_partial_overlap() {
         // Tile core [105, 125), len 20
@@ -53,7 +53,7 @@ mod tests_apply_scaling {
         assert_slice_eq_eps(&cov, &expected, 1e-6);
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn scaling_starts_exactly_at_bin_boundary() {
         // Tile core starts exactly at previous bin end
@@ -68,7 +68,7 @@ mod tests_apply_scaling {
         assert_slice_eq_eps(&cov, &expected, 1e-6);
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn scaling_zero_bin_covers_entire_tile() {
         // Entire tile lies in a zero-scaled bin
@@ -81,7 +81,7 @@ mod tests_apply_scaling {
         assert_slice_eq_eps(&cov, &expected, 1e-6);
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn scaling_noop_on_empty_inputs() {
         // No bins or empty coverage should be a no-op
@@ -100,7 +100,7 @@ mod tests_apply_scaling {
         assert_slice_eq_eps(&cov2, &[1.0, 2.0, 3.0], 1e-6);
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn scaling_non_overlapping_bins_on_both_sides_leave_varied_tile_unchanged() {
         // Tile [500, 510), with one scaling bin entirely left and one entirely right.
@@ -116,7 +116,7 @@ mod tests_apply_scaling {
         assert_slice_eq_eps(&cov, &expected, 1e-6);
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn scaling_multiple_bins_exact_edges() {
         // Tile aligns exactly to bin edges
@@ -143,7 +143,7 @@ mod tests_apply_scaling {
         assert_slice_eq_eps(&cov, &expected, 1e-6);
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn scaling_bins_entirely_left_of_tile_noop() {
         // All bins end before the tile starts -> no effect.
@@ -158,7 +158,7 @@ mod tests_apply_scaling {
         assert_slice_eq_eps(&cov, &expected, 1e-6);
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn scaling_bins_entirely_right_of_tile_noop() {
         // All bins start after the tile ends -> no effect.
@@ -173,7 +173,7 @@ mod tests_apply_scaling {
         assert_slice_eq_eps(&cov, &expected, 1e-6);
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn scaling_partial_left_overlap_only() {
         // Bin overlaps only the left edge of the tile
@@ -190,7 +190,7 @@ mod tests_apply_scaling {
         assert_slice_eq_eps(&cov, &expected, 1e-6);
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn scaling_partial_right_overlap_only() {
         // Bin overlaps only the right edge of the tile
@@ -207,7 +207,7 @@ mod tests_apply_scaling {
         assert_slice_eq_eps(&cov, &expected, 1e-6);
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn scaling_many_small_bins_inside_tile() {
         // Tile: [1000, 1010). Bins: per-base alternating 2.0 and 0.5.
@@ -249,7 +249,7 @@ mod tests_compute_window_scaling {
         ScalingBin::new(s, e, w).unwrap()
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn scaling_bin_constructor_rejects_non_finite_weight() {
         let err =
@@ -551,7 +551,7 @@ mod tests_compute_window_scaling {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn compute_per_window_scaling_over_fragment_uses_explicit_full_fragment_span_for_every_overlapping_window()
     -> anyhow::Result<()> {
@@ -625,7 +625,7 @@ mod tests_compute_window_scaling {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn compute_per_window_scaling_over_fragment_handles_boundary_and_multibin_edge_cases()
     -> anyhow::Result<()> {
@@ -725,7 +725,7 @@ mod tests_compute_window_scaling {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn compute_per_window_scaling_over_overlap_uses_each_window_overlap_span() -> anyhow::Result<()>
     {
@@ -959,7 +959,7 @@ mod tests_load_scaling_factors_tsv {
         Ok(file)
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn load_scaling_factors_tsv_defaults_to_unknown_when_metadata_is_absent() -> anyhow::Result<()>
     {
@@ -981,7 +981,7 @@ mod tests_load_scaling_factors_tsv {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn load_scaling_factors_tsv_reads_explicit_gc_mode_before_header() -> anyhow::Result<()> {
         // The file starts with one GC-mode line and one unrelated comment line, then a normal
@@ -1006,7 +1006,7 @@ mod tests_load_scaling_factors_tsv {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn load_scaling_factors_tsv_reads_ignore_gap_metadata_before_header() -> anyhow::Result<()> {
         // Coverage-based scaling files can record whether the source coverage omitted inter-mate
@@ -1027,7 +1027,7 @@ mod tests_load_scaling_factors_tsv {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn load_scaling_factors_tsv_rejects_invalid_ignore_gap_value() -> anyhow::Result<()> {
         // `ignore_gap` is boolean metadata. Values other than true/false should fail before row
@@ -1049,7 +1049,7 @@ mod tests_load_scaling_factors_tsv {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn load_scaling_factors_tsv_rejects_invalid_gc_mode_value() -> anyhow::Result<()> {
         // `gc_mode` is enumerated metadata, so any other value should fail before row parsing.
@@ -1069,7 +1069,7 @@ mod tests_load_scaling_factors_tsv {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn load_scaling_factors_tsv_rejects_duplicate_gc_mode_metadata() -> anyhow::Result<()> {
         // Metadata keys should be unambiguous. Two `gc_mode` lines before the header would let the
@@ -1091,7 +1091,7 @@ mod tests_load_scaling_factors_tsv {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn load_scaling_factors_tsv_rejects_blank_line_before_header() -> anyhow::Result<()> {
         // The format allows metadata comments before the header, but a blank line there is
@@ -1112,7 +1112,7 @@ mod tests_load_scaling_factors_tsv {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn load_scaling_factors_tsv_matches_header_case_insensitively() -> anyhow::Result<()> {
         // Column lookup should ignore case, so an uppercase header must still parse as the same
@@ -1131,7 +1131,7 @@ mod tests_load_scaling_factors_tsv {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn load_scaling_factors_tsv_rejects_missing_required_header_column() -> anyhow::Result<()> {
         // Omitting `scaling_factor` from the header must fail before any row parsing starts.
@@ -1150,7 +1150,7 @@ mod tests_load_scaling_factors_tsv {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn load_scaling_factors_tsv_rejects_short_data_row() -> anyhow::Result<()> {
         // A row missing the rightmost required field must fail with the line number and the
@@ -1169,7 +1169,7 @@ mod tests_load_scaling_factors_tsv {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn load_scaling_factors_tsv_rejects_invalid_interval() -> anyhow::Result<()> {
         // Row-level coordinate validation happens before chromosome-level contiguity checks, so a
@@ -1188,7 +1188,7 @@ mod tests_load_scaling_factors_tsv {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn load_scaling_factors_tsv_rejects_negative_scaling_factor() -> anyhow::Result<()> {
         // Scaling factors are multiplicative weights and must be finite and non-negative.
@@ -1208,7 +1208,7 @@ mod tests_load_scaling_factors_tsv {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn load_scaling_factors_tsv_sorts_requested_chromosome_bins_by_start() -> anyhow::Result<()> {
         // The loader promises sorted bins per chromosome, so an out-of-order but otherwise valid
@@ -1228,7 +1228,7 @@ mod tests_load_scaling_factors_tsv {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn load_scaling_factors_tsv_ignores_unrequested_chromosomes() -> anyhow::Result<()> {
         // Rows for other chromosomes should be filtered out before storage. Only the requested
@@ -1249,7 +1249,7 @@ mod tests_load_scaling_factors_tsv {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn load_scaling_factors_tsv_errors_when_requested_chromosome_has_no_bins() -> anyhow::Result<()>
     {
@@ -1271,7 +1271,7 @@ mod tests_load_scaling_factors_tsv {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn load_scaling_factors_tsv_errors_when_bins_do_not_start_at_zero() -> anyhow::Result<()> {
         // Full chromosome coverage must begin at 0, so a first bin [5,10) is invalid even if it
@@ -1292,7 +1292,7 @@ mod tests_load_scaling_factors_tsv {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn load_scaling_factors_tsv_errors_when_bins_have_a_gap() -> anyhow::Result<()> {
         // Contiguous half-open bins [0,5) and [6,10) leave one uncovered base at position 5, so
@@ -1313,7 +1313,7 @@ mod tests_load_scaling_factors_tsv {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn load_scaling_factors_tsv_errors_when_bins_overlap() -> anyhow::Result<()> {
         // Overlapping bins [0,6) and [5,10) break the same contiguity invariant from the other
@@ -1334,7 +1334,7 @@ mod tests_load_scaling_factors_tsv {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn load_scaling_factors_tsv_errors_when_bins_do_not_reach_contig_end() -> anyhow::Result<()> {
         // A single bin [0,8) on a 10 bp chromosome leaves the tail uncovered, so full-coverage
@@ -1354,7 +1354,7 @@ mod tests_load_scaling_factors_tsv {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn load_scaling_factors_tsv_errors_when_requested_contig_metadata_is_missing()
     -> anyhow::Result<()> {
@@ -1384,7 +1384,7 @@ mod tests_scaling_gc_compatibility {
     };
     use std::path::Path;
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn scaling_gc_compatibility_allows_unknown_scaling_gc_mode() -> anyhow::Result<()> {
         let path = Path::new("/tmp/example.scaling_factors.tsv");
@@ -1399,7 +1399,7 @@ mod tests_scaling_gc_compatibility {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn scaling_gc_compatibility_errors_when_uncorrected_scaling_meets_corrected_run() {
         // This mismatch is now a hard error:
@@ -1425,7 +1425,7 @@ mod tests_scaling_gc_compatibility {
         );
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn scaling_gc_compatibility_errors_when_corrected_scaling_meets_uncorrected_run() {
         // This is the opposite known mismatch:
@@ -1451,7 +1451,7 @@ mod tests_scaling_gc_compatibility {
         );
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn scaling_gc_compatibility_allows_corrected_file_scaling_with_corrected_tag_run()
     -> anyhow::Result<()> {
@@ -1468,7 +1468,7 @@ mod tests_scaling_gc_compatibility {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn scaling_gc_compatibility_allows_corrected_tag_scaling_with_corrected_file_run()
     -> anyhow::Result<()> {
@@ -1485,7 +1485,7 @@ mod tests_scaling_gc_compatibility {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public reusable scale-genome API behavior.
+    // REWRITE-PUBLIC-TEST: public scale-genome API behavior currently imports a private shared module.
     #[test]
     fn scaling_gc_compatibility_allows_uncorrected_scaling_with_uncorrected_run()
     -> anyhow::Result<()> {

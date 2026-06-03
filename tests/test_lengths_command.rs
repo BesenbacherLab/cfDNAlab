@@ -4901,6 +4901,7 @@ mod tests_lengths_command {
 }
 
 mod tests_lengths_tiling_reducer {
+    // MOVE-MODULE-LOCAL: direct private lengths tiling reducer tests.
 
     #![cfg(feature = "cmd_lengths")]
 
@@ -5366,6 +5367,7 @@ mod tests_lengths_tiling_reducer {
 }
 
 mod tests_lengths_tiling_helpers {
+    // MOVE-MODULE-LOCAL: direct private shared tiling and fetch helper tests.
 
     use cfdnalab::run_like_cli::common::WindowSpec;
     use cfdnalab::shared::bam::Contigs;

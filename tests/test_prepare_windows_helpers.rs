@@ -1,5 +1,7 @@
 #![cfg(feature = "cmd_prepare_windows")]
 
+// MOVE-MODULE-LOCAL: direct private prepare-windows helper tests.
+
 mod tests_prepare_windows_helpers {
     use anyhow::Result;
     use cfdnalab::commands::prepare_windows::chunk::apply_near_annotations;

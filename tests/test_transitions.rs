@@ -3,6 +3,7 @@
 mod fixtures;
 
 mod tests_transitions_frequency_calculations {
+    // MOVE-MODULE-LOCAL: direct private transition-frequency helper tests.
 
     use anyhow::Result;
     use cfdnalab::commands::transitions::transitions::compute_transition_frequencies;

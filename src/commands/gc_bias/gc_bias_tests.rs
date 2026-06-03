@@ -1,8 +1,10 @@
 use super::*;
+use crate::commands::ref_gc_bias::zarr::{ReferenceGCZarrPackage, write_reference_gc_package_zarr};
 use crate::{
     commands::gc_bias::{
         binning::{BinnedAxis, bins_from_edges, compute_bin_edges},
-        counting::{GCCounts, build_gc_prefixes},
+        counting::{GCCounts, build_gc_prefixes, gc_percent_widths},
+        load_reference_bias::{ReferenceGCMetadata, load_reference_gc_data},
         outliers::{
             OutlierAction, OutlierRule, OutlierScope, OutlierStats, apply_outliers_to_matrix,
             interpolated_quantile, outlier_bounds,
@@ -495,4 +497,153 @@ fn leaves_zero_rows_untouched_in_mean_scaling() {
     );
     assert!((scaled[(1, 0)] - 2.0 / 3.0).abs() < 1e-12);
     assert!((scaled[(1, 1)] - 4.0 / 3.0).abs() < 1e-12);
+}
+
+#[test]
+fn save_intermediates_writes_expected_sequence_and_mean_scaled_average_counts() -> Result<()> {
+    // Arrange:
+    // Use a single global window and a reference package that already disables smoothing and
+    // interpolation. In that configuration `gc-bias` should save exactly six intermediate
+    // arrays:
+    //   0 avg_cfdna_counts
+    //   1 normalized_avg_cfdna_counts
+    //   2 binned_ref_counts
+    //   3 binned_cfdna_counts
+    //   4 normalized_binned_cfdna_counts
+    //   5 normalized_binned_ref_counts
+    //
+    // The strongest low-level coherence check in this branch is the first normalization step:
+    // `normalized_avg_cfdna_counts` must equal `avg_cfdna_counts / supported_mean`, where the
+    // mean is taken only over the reference outlier-support mask.
+    let bam = fixtures::simple_inward_bam()?;
+    let reference = fixtures::simple_reference_twobit()?;
+    let ref_gc_dir = TempDir::new()?;
+    write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 60, 0)?;
+
+    let out_dir = TempDir::new()?;
+    let mut cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+    cfg.set_windows(GCWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        global: true,
+    });
+    cfg.set_save_intermediates(true);
+
+    // Act
+    run_gc_bias(&cfg)?;
+
+    // Assert:
+    // No interpolation/smoothing intermediates should exist for this reference package, so the
+    // numbering must stay dense across exactly six saved arrays.
+    let mut intermediate_files: Vec<String> = std::fs::read_dir(out_dir.path())?
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            if name.starts_with("gc_bias.") && name.ends_with(".npy") {
+                Some(name)
+            } else {
+                None
+            }
+        })
+        .collect();
+    intermediate_files.sort();
+    assert_eq!(
+        intermediate_files,
+        vec![
+            "gc_bias.avg_cfdna_counts.0.npy".to_string(),
+            "gc_bias.binned_cfdna_counts.3.npy".to_string(),
+            "gc_bias.binned_ref_counts.2.npy".to_string(),
+            "gc_bias.normalized_avg_cfdna_counts.1.npy".to_string(),
+            "gc_bias.normalized_binned_cfdna_counts.4.npy".to_string(),
+            "gc_bias.normalized_binned_ref_counts.5.npy".to_string(),
+        ]
+    );
+
+    let avg_counts: ndarray::Array2<f64> =
+        read_npy(out_dir.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
+    let normalized_avg: ndarray::Array2<f64> = read_npy(
+        out_dir
+            .path()
+            .join("gc_bias.normalized_avg_cfdna_counts.1.npy"),
+    )?;
+    let reference_data = load_reference_gc_data(&ref_gc_dir.path().join("ref_gc_package.zarr"))?;
+
+    // The support mask defines exactly which cells contribute to the mean-scaling denominator.
+    let mut supported_sum = 0.0_f64;
+    let mut supported_count = 0usize;
+    for (value, supported) in avg_counts
+        .iter()
+        .zip(reference_data.outliers_support_mask.iter())
+    {
+        if *supported {
+            supported_sum += *value;
+            supported_count += 1;
+        }
+    }
+    assert!(
+        supported_count > 0,
+        "fixture must have supported reference bins"
+    );
+    let supported_mean = supported_sum / supported_count as f64;
+    assert!(
+        supported_mean > 0.0,
+        "supported mean must be positive for mean scaling"
+    );
+
+    for ((row_idx, col_idx), avg_value) in avg_counts.indexed_iter() {
+        let expected = *avg_value / supported_mean;
+        let actual = normalized_avg[(row_idx, col_idx)];
+        assert!(
+            (actual - expected).abs() < 1e-12,
+            "normalized avg mismatch at ({row_idx}, {col_idx}): expected {expected}, got {actual}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn rejects_correction_package_components_with_invalid_weights() -> Result<()> {
+    // Arrange: one length bin spanning 30..=31 and one GC bin spanning 0..=100.
+    // The package writer should reject invalid final correction weights before an NPZ can be
+    // written, and the error should identify the offending bin.
+    let length_bins = bins_from_edges(&[30, 31])?;
+    let gc_bins = bins_from_edges(&[0, 100])?;
+    let reference_metadata = ReferenceGCMetadata {
+        min_fragment_length: 30,
+        max_fragment_length: 31,
+        end_offset: 10,
+        chromosomes: vec!["chr1".to_string()],
+        reference_contig_footprint: Vec::new(),
+        skip_interpolation: false,
+        smoothing_sigma: 0.55,
+        smoothing_radius: 2,
+        skip_smoothing: true,
+    };
+
+    for invalid_weight in [f64::NAN, f64::INFINITY, -0.25] {
+        // Act
+        let error = GCCorrectionPackage::from_components(
+            GC_CORRECTION_SCHEMA_VERSION,
+            &length_bins,
+            &gc_bins,
+            array![[invalid_weight]],
+            array![1.0_f64],
+            &reference_metadata,
+        )
+        .expect_err("invalid correction weight should fail package construction");
+
+        // Assert
+        let message = error.to_string();
+        assert!(
+            message.contains("GC correction matrix contains invalid weight"),
+            "unexpected error message: {message}"
+        );
+        assert!(
+            message.contains("length bin 0 [30-31], GC bin 0 [0-100]"),
+            "unexpected error message: {message}"
+        );
+    }
+
+    Ok(())
 }
