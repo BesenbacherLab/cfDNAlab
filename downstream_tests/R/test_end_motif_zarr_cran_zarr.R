@@ -33,6 +33,23 @@ stopifnot(identical(as.integer(read_cran_zarr_array(windowed_root, "sparse/row")
 stopifnot(identical(as.integer(read_cran_zarr_array(windowed_root, "sparse/motif")), c(1L, 0L, 1L)))
 stopifnot(isTRUE(all.equal(read_cran_zarr_array(windowed_root, "sparse/count"), c(1, 1, 1))))
 
+selected_path <- sparse_windowed_selected_motifs_end_zarr_path()
+selected_root <- zarr::open_zarr(selected_path, read_only = TRUE)
+selected_metadata <- jsonlite::fromJSON(file.path(selected_path, "zarr.json"), simplifyVector = FALSE)
+
+selected_motifs <- decode_motif_ascii(read_cran_zarr_array(selected_root, "motif_ascii"))
+stopifnot(identical(selected_metadata$attributes$cfdnalab_schema_version, 2L))
+stopifnot(identical(selected_metadata$attributes$motif_axis_kind, "motif"))
+stopifnot(identical(selected_motifs, c("GT_AC", "AC_GT")))
+stopifnot(identical(
+  labels_from_array_attributes(selected_path, "chromosome", "chromosome_name"),
+  c("chr1", "chr2")
+))
+stopifnot(identical(as.integer(read_cran_zarr_array(selected_root, "sparse/shape")), c(3L, 2L)))
+stopifnot(identical(as.integer(read_cran_zarr_array(selected_root, "sparse/row")), c(0L, 1L, 2L)))
+stopifnot(identical(as.integer(read_cran_zarr_array(selected_root, "sparse/motif")), c(1L, 0L, 1L)))
+stopifnot(isTRUE(all.equal(read_cran_zarr_array(selected_root, "sparse/count"), c(1, 1, 1))))
+
 grouped_path <- sparse_grouped_end_zarr_path()
 grouped_root <- zarr::open_zarr(grouped_path, read_only = TRUE)
 
@@ -53,3 +70,40 @@ stopifnot(identical(as.integer(read_cran_zarr_array(grouped_root, "sparse/shape"
 stopifnot(identical(as.integer(read_cran_zarr_array(grouped_root, "sparse/row")), c(0L, 0L, 1L)))
 stopifnot(identical(as.integer(read_cran_zarr_array(grouped_root, "sparse/motif")), c(0L, 1L, 0L)))
 stopifnot(isTRUE(all.equal(read_cran_zarr_array(grouped_root, "sparse/count"), c(1, 2, 1))))
+
+motif_grouped_path <- sparse_grouped_motif_group_end_zarr_path()
+motif_grouped_root <- zarr::open_zarr(motif_grouped_path, read_only = TRUE)
+motif_grouped_metadata <- jsonlite::fromJSON(file.path(motif_grouped_path, "zarr.json"), simplifyVector = FALSE)
+
+stopifnot(identical(motif_grouped_metadata$attributes$cfdnalab_schema_version, 2L))
+stopifnot(identical(motif_grouped_metadata$attributes$motif_axis_kind, "motif_group"))
+stopifnot(!dir.exists(file.path(motif_grouped_path, "motif_ascii")))
+stopifnot(identical(
+  labels_from_array_attributes(motif_grouped_path, "motif_index", "motif_group"),
+  c("left-hit", "right-hit")
+))
+stopifnot(identical(
+  labels_from_array_attributes(motif_grouped_path, "group", "group_name"),
+  c("beta", "alpha", "gamma")
+))
+stopifnot(identical(as.integer(read_cran_zarr_array(motif_grouped_root, "motif_index")), c(0L, 1L)))
+stopifnot(identical(as.integer(read_cran_zarr_array(motif_grouped_root, "sparse/shape")), c(3L, 2L)))
+stopifnot(identical(as.integer(read_cran_zarr_array(motif_grouped_root, "sparse/row")), c(0L, 0L, 1L)))
+stopifnot(identical(as.integer(read_cran_zarr_array(motif_grouped_root, "sparse/motif")), c(0L, 1L, 1L)))
+stopifnot(isTRUE(all.equal(read_cran_zarr_array(motif_grouped_root, "sparse/count"), c(2, 1, 1))))
+
+wide_motif_grouped_path <- sparse_grouped_wide_motif_group_end_zarr_path()
+wide_motif_grouped_root <- zarr::open_zarr(wide_motif_grouped_path, read_only = TRUE)
+wide_motif_grouped_metadata <- jsonlite::fromJSON(file.path(wide_motif_grouped_path, "zarr.json"), simplifyVector = FALSE)
+
+stopifnot(identical(wide_motif_grouped_metadata$attributes$cfdnalab_schema_version, 2L))
+stopifnot(identical(wide_motif_grouped_metadata$attributes$motif_axis_kind, "motif_group"))
+stopifnot(!dir.exists(file.path(wide_motif_grouped_path, "motif_ascii")))
+stopifnot(identical(
+  labels_from_array_attributes(wide_motif_grouped_path, "motif_index", "motif_group"),
+  c("right-hit-wide", "left-hit-wide")
+))
+stopifnot(identical(as.integer(read_cran_zarr_array(wide_motif_grouped_root, "sparse/shape")), c(3L, 2L)))
+stopifnot(identical(as.integer(read_cran_zarr_array(wide_motif_grouped_root, "sparse/row")), c(0L, 0L, 1L)))
+stopifnot(identical(as.integer(read_cran_zarr_array(wide_motif_grouped_root, "sparse/motif")), c(0L, 1L, 0L)))
+stopifnot(isTRUE(all.equal(read_cran_zarr_array(wide_motif_grouped_root, "sparse/count"), c(1, 2, 1))))

@@ -3,8 +3,10 @@ use crate::commands::ends::counting::{EncodedEndMotifKey, EndCountsByWindow};
 use fxhash::FxHashMap;
 use tempfile::TempDir;
 
-fn payload_signature(payload: &[TileWindowEndCounts]) -> Vec<(u64, Vec<(u64, u64, bool, f64)>)> {
-    payload
+fn count_record_signature(
+    count_records: &[TileWindowEndCounts],
+) -> Vec<(u64, Vec<(u64, u64, bool, f64)>)> {
+    count_records
         .iter()
         .map(|window| {
             (
@@ -27,7 +29,7 @@ fn payload_signature(payload: &[TileWindowEndCounts]) -> Vec<(u64, Vec<(u64, u64
 }
 
 #[test]
-fn build_tile_payload_sorts_windows_and_entries_deterministically() {
+fn build_tile_count_records_sorts_windows_and_entries_deterministically() {
     // Arrange: insert windows and motif keys in hash-map order so the output must rely on the
     // explicit sort rather than insertion order.
     let mut counts_by_window: FxHashMap<u64, EndMotifCounts> = FxHashMap::default();
@@ -69,11 +71,11 @@ fn build_tile_payload_sorts_windows_and_entries_deterministically() {
     );
 
     // Act
-    let payload = build_tile_payload(counts_by_window);
+    let count_records = build_tile_count_records(counts_by_window);
 
     // Assert
     assert_eq!(
-        payload_signature(&payload),
+        count_record_signature(&count_records),
         vec![
             (3, vec![(4, 4, false, 7.0)]),
             (9, vec![(2, 9, false, 1.0), (5, 1, true, 2.0)]),
@@ -82,9 +84,9 @@ fn build_tile_payload_sorts_windows_and_entries_deterministically() {
 }
 
 #[test]
-fn merge_tile_payload_merges_counts_by_window_and_key() {
+fn merge_tile_count_records_merges_counts_by_window_and_key() {
     // Arrange
-    let tile_payloads = [
+    let tile_count_records = [
         vec![TileWindowEndCounts {
             original_idx: 7,
             entries: vec![TileEndMotifCountEntry {
@@ -107,8 +109,9 @@ fn merge_tile_payload_merges_counts_by_window_and_key() {
     let mut reduced = EndCountsByWindow::default();
 
     // Act
-    for payload in tile_payloads {
-        merge_tile_payload(&mut reduced, payload).expect("payload merge should work");
+    for count_records in tile_count_records {
+        merge_tile_count_records(&mut reduced, count_records)
+            .expect("count record merge should work");
     }
 
     // Assert
@@ -122,9 +125,9 @@ fn merge_tile_payload_merges_counts_by_window_and_key() {
 }
 
 #[test]
-fn merge_tile_payload_merges_multiple_windows_without_cross_talk() {
-    // Arrange: each window should merge only with itself, even when payloads arrive interleaved.
-    let tile_payloads = [
+fn merge_tile_count_records_merges_multiple_windows_without_cross_talk() {
+    // Arrange: each window should merge only with itself, even when count records arrive interleaved.
+    let tile_count_records = [
         vec![
             TileWindowEndCounts {
                 original_idx: 7,
@@ -169,8 +172,9 @@ fn merge_tile_payload_merges_multiple_windows_without_cross_talk() {
     let mut reduced = EndCountsByWindow::default();
 
     // Act
-    for payload in tile_payloads {
-        merge_tile_payload(&mut reduced, payload).expect("payload merge should work");
+    for count_records in tile_count_records {
+        merge_tile_count_records(&mut reduced, count_records)
+            .expect("count record merge should work");
     }
 
     // Assert
@@ -205,11 +209,11 @@ fn merge_tile_payload_merges_multiple_windows_without_cross_talk() {
 }
 
 #[test]
-fn serialize_tile_counts_round_trips_the_sorted_payload() {
+fn serialize_tile_counts_round_trips_the_sorted_count_records() {
     // Arrange
     let out_dir = TempDir::new().expect("tempdir");
     let path = out_dir.path().join("tile.counts.bin");
-    let payload = vec![
+    let count_records = vec![
         TileWindowEndCounts {
             original_idx: 3,
             entries: vec![TileEndMotifCountEntry {
@@ -239,9 +243,12 @@ fn serialize_tile_counts_round_trips_the_sorted_payload() {
     ];
 
     // Act
-    serialize_tile_counts(&path, &payload).expect("serialisation should work");
+    serialize_tile_counts(&path, &count_records).expect("serialisation should work");
     let restored = deserialize_tile_counts(&path).expect("deserialisation should work");
 
     // Assert
-    assert_eq!(payload_signature(&restored), payload_signature(&payload));
+    assert_eq!(
+        count_record_signature(&restored),
+        count_record_signature(&count_records)
+    );
 }

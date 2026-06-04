@@ -29,7 +29,7 @@ fn temp_dir_guard_removes_non_empty_directory_on_drop() -> anyhow::Result<()> {
     let guarded_path = {
         let guard = TempDirGuard::new(base_dir.path(), "guard_drop")?;
         let guarded_path = guard.path().to_path_buf();
-        std::fs::write(guarded_path.join("tile.tmp"), b"temporary tile payload")?;
+        std::fs::write(guarded_path.join("tile.tmp"), b"temporary tile output")?;
         assert!(guarded_path.exists());
         guarded_path
     };
@@ -56,10 +56,7 @@ fn temp_dir_retry_cleanup_removes_nested_directory() -> anyhow::Result<()> {
     let base_dir = tempfile::TempDir::new()?;
     let temp_path = base_dir.path().join("tmp.cleanup_retry");
     std::fs::create_dir_all(temp_path.join("nested"))?;
-    std::fs::write(
-        temp_path.join("nested").join("tile.tmp"),
-        b"temporary tile payload",
-    )?;
+    std::fs::write(temp_path.join("nested").join("tile.tmp"), b"temporary tile output")?;
 
     let failures = cleanup_temp_dirs_with_retries(
         std::slice::from_ref(&temp_path),

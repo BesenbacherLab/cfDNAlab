@@ -243,7 +243,7 @@ pub(crate) fn merge_positional_tile_outputs_with_optional_scaling(
 /// Joins returned aligned fixed-size final outputs while preserving compressed frame boundaries.
 ///
 /// A compressed header frame is written first, followed by each returned tile frame in genomic
-/// order. The tile payloads are copied verbatim so the final file stays a valid zstd frame
+/// order. The tile output frames are copied verbatim so the final file stays a valid zstd frame
 /// concatenation and does not re-derive values that were already finalized during tile processing.
 ///
 /// Parameters

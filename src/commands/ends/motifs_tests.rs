@@ -4,17 +4,23 @@ use crate::shared::{
     fragment::ends_fragment::{FragmentWithEnds, ResolvedFragmentEnd},
     tiled_run::Tile,
 };
+use crate::commands::ends::counting::decode_end_motif_counts;
+use fxhash::FxHashMap;
 
 fn spec_for_k(k: u8) -> KmerSpec {
     let specs = build_kmer_specs(&[k]).expect("valid k-mer spec");
     specs[&k].clone()
 }
 
+fn half_spec_for_k(k: u8) -> EndMotifHalfSpec {
+    EndMotifHalfSpec::from_radix5(spec_for_k(k))
+}
+
 fn read_only_motif_context(k_inside: u8) -> TileMotifContext<'static> {
     TileMotifContext {
         reference_start: 0,
         reference_bases: None,
-        inside_spec: Some(spec_for_k(k_inside)),
+        inside_spec: Some(half_spec_for_k(k_inside)),
         outside_spec: None,
         inside_codes: None,
         outside_codes: None,
@@ -37,10 +43,12 @@ fn reference_motif_context_with_chrom_len(
     k_outside: Option<u8>,
     chrom_len: u64,
 ) -> TileMotifContext<'static> {
-    let inside_spec = k_inside.map(spec_for_k);
-    let outside_spec = k_outside.map(spec_for_k);
+    let inside_spec = k_inside.map(half_spec_for_k);
+    let outside_spec = k_outside.map(half_spec_for_k);
     let (inside_codes, outside_codes) = match (inside_spec.as_ref(), outside_spec.as_ref()) {
-        (Some(inside_spec), Some(outside_spec)) if inside_spec.k == outside_spec.k => {
+        (Some(inside_spec), Some(outside_spec))
+            if inside_spec.can_share_reference_codes_with(outside_spec) =>
+        {
             let shared_codes = build_precomputed_reference_codes(Some(inside_spec), seq);
             (shared_codes.clone(), shared_codes)
         }
@@ -107,7 +115,7 @@ fn count_fragment_in_window_zero_weight_does_not_create_sparse_window_or_flags()
     )
     .expect("counting should work");
 
-    // Assert: zero-weight motifs should not produce sparse payload entries or counted-end stats.
+    // Assert: zero-weight motifs should not produce sparse count entries or counted-end stats.
     assert_eq!(counted, CountedEndFlags::default());
     assert!(counts_by_window.is_empty());
 }
@@ -272,6 +280,235 @@ fn count_fragment_in_window_any_counts_both_ends_in_same_window() {
 }
 
 #[test]
+fn count_fragment_in_window_reference_source_decodes_directional_left_and_right_motifs() {
+    // Arrange: use a tiny reference where the left and right final motifs can be derived by hand.
+    //
+    // Reference positions:
+    // - left boundary 4:
+    //   - outside [2, 4) = "GT"
+    //   - inside  [4, 6) = "AC"
+    //   - left final label is therefore "GT_AC"
+    // - right boundary 10:
+    //   - inside storage  [8, 10) = "AA"
+    //   - outside storage [10, 12) = "CG"
+    //   - right storage order is inside||outside = "AACG"
+    //   - right final orientation is reverse-complement("AACG") = "CGTT"
+    //   - right final label is therefore "CG_TT"
+    let reference = b"CCGTACCCAACG";
+    let fragment = fragment_with_two_ends(4, b"", 10, b"");
+    let motif_context = reference_motif_context(reference, Some(2), Some(2));
+    let mut counts_by_window = EndCountsByWindow::default();
+
+    // Act
+    let counted = count_fragment_in_window(
+        &mut counts_by_window,
+        11,
+        Interval::new(4_u64, 10_u64).expect("valid window"),
+        &fragment,
+        1.0,
+        &motif_context,
+        KmerSource::Reference,
+        WindowMotifAssigner::Any,
+    )
+    .expect("reference-backed counting should work");
+
+    // Assert: this checks the reference offset lookup, the shared inside/outside code table,
+    // and the final right-end reverse-complement step together rather than as isolated helpers.
+    assert_eq!(
+        counted,
+        CountedEndFlags {
+            left_counted: true,
+            right_counted: true,
+        }
+    );
+    let encoded_counts = counts_by_window.get(&11).expect("window should be present");
+    let inside_spec = spec_for_k(2);
+    let outside_spec = spec_for_k(2);
+    let decoded_counts = decode_end_motif_counts(
+        encoded_counts,
+        Some(&inside_spec),
+        Some(&outside_spec),
+        false,
+    );
+
+    assert_eq!(decoded_counts.len(), 2);
+    assert_eq!(decoded_counts.get("GT_AC"), Some(&1.0));
+    assert_eq!(decoded_counts.get("CG_TT"), Some(&1.0));
+    assert_eq!(decoded_counts.get("AA_CG"), None);
+}
+
+#[test]
+fn count_fragment_in_window_reference_source_endpoint_decodes_only_right_terminal_motif() {
+    // Arrange: the same reference derivation as the previous test gives right final label "CG_TT".
+    // Endpoint mode should count only the end whose terminal base lies in the window. For the
+    // half-open fragment interval [4, 10), the right terminal base is 9, so [9, 10) selects only
+    // the right end and must not leak the left motif into the output.
+    let reference = b"CCGTACCCAACG";
+    let fragment = fragment_with_two_ends(4, b"", 10, b"");
+    let motif_context = reference_motif_context(reference, Some(2), Some(2));
+    let mut counts_by_window = EndCountsByWindow::default();
+
+    // Act
+    let counted = count_fragment_in_window(
+        &mut counts_by_window,
+        12,
+        Interval::new(9_u64, 10_u64).expect("valid window"),
+        &fragment,
+        2.5,
+        &motif_context,
+        KmerSource::Reference,
+        WindowMotifAssigner::Endpoint,
+    )
+    .expect("reference-backed endpoint counting should work");
+
+    // Assert
+    assert_eq!(
+        counted,
+        CountedEndFlags {
+            left_counted: false,
+            right_counted: true,
+        }
+    );
+    let encoded_counts = counts_by_window.get(&12).expect("window should be present");
+    let inside_spec = spec_for_k(2);
+    let outside_spec = spec_for_k(2);
+    let decoded_counts = decode_end_motif_counts(
+        encoded_counts,
+        Some(&inside_spec),
+        Some(&outside_spec),
+        false,
+    );
+
+    assert_eq!(decoded_counts.len(), 1);
+    assert_eq!(decoded_counts.get("CG_TT"), Some(&2.5));
+    assert_eq!(decoded_counts.get("GT_AC"), None);
+}
+
+#[test]
+fn count_selected_fragment_in_window_counts_only_lookup_hits() {
+    // Arrange: the selected lookup contains only the left-end motif key, so the valid right-end
+    // motif should be filtered out before it reaches the sparse selected count map.
+    let fragment = fragment_with_two_ends(10, b"AC", 20, b"GT");
+    let motif_context = read_only_motif_context(2);
+    let left_key = EncodedEndMotifKey {
+        inside_code: motif_context
+            .inside_spec
+            .as_ref()
+            .expect("inside spec")
+            .encode_kmer_bytes(b"AC"),
+        outside_code: 0,
+        reverse_on_decode: false,
+    };
+    let selected_motifs = SelectedEndMotifLookup {
+        labels: vec!["_AC".to_string()],
+        column_kind: crate::commands::ends::counting::EndMotifColumnKind::Motif,
+        inside_spec: None,
+        outside_spec: None,
+        lookup: FxHashMap::from_iter([(left_key, 0)]),
+    };
+    let mut counts_by_window = SelectedEndCountsByWindow::default();
+
+    // Act
+    let counted = count_selected_fragment_in_window(
+        &mut counts_by_window,
+        &selected_motifs,
+        8,
+        Interval::new(10_u64, 20_u64).expect("valid window"),
+        &fragment,
+        1.25,
+        &motif_context,
+        KmerSource::Read,
+        WindowMotifAssigner::Any,
+    )
+    .expect("selected counting should work");
+
+    // Assert
+    assert_eq!(
+        counted,
+        CountedEndFlags {
+            left_counted: true,
+            right_counted: false,
+        }
+    );
+    let counts = counts_by_window.get(&8).expect("window should be present");
+    assert_eq!(counts.len(), 1);
+    assert_eq!(counts.get(&0), Some(&1.25));
+}
+
+#[test]
+fn count_selected_fragment_in_window_reference_source_uses_reverse_state_for_targets() {
+    // Arrange: the reference-backed left and right motifs are the same hand-derived motifs used
+    // above, but this test checks selected target mapping instead of final string decoding.
+    //
+    // The right end is stored as inside "AA" plus outside "CG" with `reverse_on_decode = true`.
+    // A lookup entry with the same encoded halves but `reverse_on_decode = false` represents a
+    // different selected motif state and must not receive the right-end count.
+    let reference = b"CCGTACCCAACG";
+    let fragment = fragment_with_two_ends(4, b"", 10, b"");
+    let motif_context = reference_motif_context(reference, Some(2), Some(2));
+    let inside_spec = motif_context.inside_spec.as_ref().expect("inside spec");
+    let outside_spec = motif_context.outside_spec.as_ref().expect("outside spec");
+    let left_key = EncodedEndMotifKey {
+        inside_code: inside_spec.encode_kmer_bytes(b"AC"),
+        outside_code: outside_spec.encode_kmer_bytes(b"GT"),
+        reverse_on_decode: false,
+    };
+    let right_key = EncodedEndMotifKey {
+        inside_code: inside_spec.encode_kmer_bytes(b"AA"),
+        outside_code: outside_spec.encode_kmer_bytes(b"CG"),
+        reverse_on_decode: true,
+    };
+    let wrong_right_orientation_key = EncodedEndMotifKey {
+        reverse_on_decode: false,
+        ..right_key
+    };
+    let selected_motifs = SelectedEndMotifLookup {
+        labels: vec![
+            "left_group".to_string(),
+            "right_group".to_string(),
+            "wrong_right_orientation".to_string(),
+        ],
+        column_kind: crate::commands::ends::counting::EndMotifColumnKind::MotifGroup,
+        inside_spec: None,
+        outside_spec: None,
+        lookup: FxHashMap::from_iter([
+            (left_key, 0),
+            (right_key, 1),
+            (wrong_right_orientation_key, 2),
+        ]),
+    };
+    let mut counts_by_window = SelectedEndCountsByWindow::default();
+
+    // Act
+    let counted = count_selected_fragment_in_window(
+        &mut counts_by_window,
+        &selected_motifs,
+        13,
+        Interval::new(4_u64, 10_u64).expect("valid window"),
+        &fragment,
+        3.0,
+        &motif_context,
+        KmerSource::Reference,
+        WindowMotifAssigner::Any,
+    )
+    .expect("selected reference-backed counting should work");
+
+    // Assert
+    assert_eq!(
+        counted,
+        CountedEndFlags {
+            left_counted: true,
+            right_counted: true,
+        }
+    );
+    let counts = counts_by_window.get(&13).expect("window should be present");
+    assert_eq!(counts.len(), 2);
+    assert_eq!(counts.get(&0), Some(&3.0));
+    assert_eq!(counts.get(&1), Some(&3.0));
+    assert_eq!(counts.get(&2), None);
+}
+
+#[test]
 fn encode_inside_code_read_uses_the_resolved_read_bases_directly() {
     // Arrange: in read-backed mode, the inside code should come directly from `inside_bases`
     // rather than from genomic coordinates. So the expected answer is just the codec applied
@@ -302,7 +539,8 @@ fn validate_blacklist_for_read_inside_code_returns_masked_reference_code_for_rea
     // - left inside with `k=2` at boundary 2 reads genomic bases [2, 4)
     // - after masking [2, 3), that span starts with `N`
     // - any k-mer containing `N` must encode as `sentinel_n`
-    let inside_spec = spec_for_k(2);
+    let inside_radix_spec = spec_for_k(2);
+    let inside_spec = EndMotifHalfSpec::from_radix5(inside_radix_spec.clone());
     let mut reference_bases = b"ACGTAC".to_vec();
     let blacklist = [Interval::new(2_u64, 3_u64).expect("valid blacklist")];
     apply_blacklist_mask_to_seq(&mut reference_bases, &blacklist, 0);
@@ -333,14 +571,15 @@ fn validate_blacklist_for_read_inside_code_returns_masked_reference_code_for_rea
     .expect("blacklist validation should work");
 
     // Assert
-    assert_eq!(code, Some(inside_spec.sentinel_n()));
+    assert_eq!(code, Some(inside_radix_spec.sentinel_n()));
 }
 
 #[test]
 fn validate_blacklist_for_read_inside_code_ignores_clipped_only_prefix_in_include_at_aligned_boundary_mode() {
     // Arrange: the blacklist masks genomic position 1, but this left end only validates the
     // aligned-overlapping suffix at position 2. The clipped-only prefix must not trigger skipping.
-    let inside_spec = spec_for_k(2);
+    let inside_radix_spec = spec_for_k(2);
+    let inside_spec = EndMotifHalfSpec::from_radix5(inside_radix_spec);
     let mut reference_bases = b"ACGTAC".to_vec();
     let blacklist = [Interval::new(1_u64, 2_u64).expect("valid blacklist")];
     apply_blacklist_mask_to_seq(&mut reference_bases, &blacklist, 0);

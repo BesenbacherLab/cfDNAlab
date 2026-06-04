@@ -12,7 +12,7 @@ use crate::shared::{
 use anyhow::{Context, Result};
 use rust_htslib::bam::{self, Record, record::Aux};
 
-/// Per-record AUX payload.
+/// Per-record AUX tag data.
 #[derive(Debug, Default)]
 pub(crate) struct RecordTags {
     pub(crate) fragment_length: u32,
@@ -21,7 +21,7 @@ pub(crate) struct RecordTags {
     pub(crate) gc_weight: Option<f32>,
 }
 
-/// Shared tag payload for a pair of mate records.
+/// Shared tag data for a pair of mate records.
 pub(crate) type SharedTags = Arc<RecordTags>;
 
 /// A buffered BAM record with its sort keys.

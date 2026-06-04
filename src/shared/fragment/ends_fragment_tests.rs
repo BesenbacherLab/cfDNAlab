@@ -586,6 +586,75 @@ mod test_fragment_with_ends_1 {
     }
 
     #[test]
+    fn resolve_fragment_end_does_not_require_read_bases_for_reference_backed_inside_motifs() {
+        // Arrange: the read is only 10 bp long, but the requested inside motif is 30 bp. Read-backed
+        // inside motifs cannot be sliced from this read. Reference-backed inside motifs should still
+        // keep the end, because the inside bases will be loaded from the reference during motif
+        // encoding.
+        let read = base_read_info(&[40; 10]);
+        let k_inside = 30;
+
+        // Act
+        let read_backed_left = resolve_fragment_end(
+            &read,
+            FragmentEndSide::Left,
+            ClipStrategy::Aligned,
+            KmerSource::Read,
+            IndelMotifFilterPolicy::Auto,
+            k_inside,
+            0,
+        );
+        let reference_backed_left = resolve_fragment_end(
+            &read,
+            FragmentEndSide::Left,
+            ClipStrategy::Aligned,
+            KmerSource::Reference,
+            IndelMotifFilterPolicy::Auto,
+            k_inside,
+            0,
+        );
+        let reference_backed_right = resolve_fragment_end(
+            &read,
+            FragmentEndSide::Right,
+            ClipStrategy::Aligned,
+            KmerSource::Reference,
+            IndelMotifFilterPolicy::Auto,
+            k_inside,
+            0,
+        );
+
+        // Assert
+        assert!(matches!(
+            read_backed_left,
+            ResolvedEndOutcome::SkipEndDropAssignmentBoundary
+        ));
+
+        let ResolvedEndOutcome::KeepEnd {
+            assignment_boundary_pos,
+            end,
+        } = reference_backed_left
+        else {
+            panic!("reference-backed left end should be kept");
+        };
+        assert_eq!(assignment_boundary_pos, read.start());
+        assert_eq!(end.boundary_pos, read.start());
+        assert!(end.inside_bases.is_empty());
+        assert_eq!(end.inside_reference_validation_bp, k_inside);
+
+        let ResolvedEndOutcome::KeepEnd {
+            assignment_boundary_pos,
+            end,
+        } = reference_backed_right
+        else {
+            panic!("reference-backed right end should be kept");
+        };
+        assert_eq!(assignment_boundary_pos, read.end());
+        assert_eq!(end.boundary_pos, read.end());
+        assert!(end.inside_bases.is_empty());
+        assert_eq!(end.inside_reference_validation_bp, k_inside);
+    }
+
+    #[test]
     fn from_record_with_gc_tag_skips_loading_qualities_when_not_requested() {
         // Arrange: qualities of 255 denote missing QVs in BAM, but this should not matter when no
         // base-quality filter is active and the hot path intentionally avoids loading them.

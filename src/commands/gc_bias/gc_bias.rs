@@ -973,7 +973,7 @@ fn process_tile(
     // Initialize counters (default -> 0s)
     let mut counter = GCCounters::default();
 
-    // Reuse `WindowState` as the per-tile return payload. On this return path, only `counts`,
+    // Reuse `WindowState` as the per-tile return value. On this return path, only `counts`,
     // `weight`, and `crossing_file` are read later. The interval-like fields are not used, so
     // keep a trivial checked placeholder here
     let dummy_interval = Interval::new(0, 1)?;

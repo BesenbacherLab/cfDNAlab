@@ -266,7 +266,10 @@ fn generate_end_motif_zarr_fixtures_with_cfdnalab() -> Result<()> {
         &output_dir,
         "tiny_dense_global",
         &["chr1"],
+        1,
+        0,
         true,
+        None,
         None,
     )?;
     let (dense_motifs, dense_counts) = read_dense_end_counts(&dense_global_path)?;
@@ -292,12 +295,15 @@ fn generate_end_motif_zarr_fixtures_with_cfdnalab() -> Result<()> {
         &output_dir,
         "tiny_sparse_windowed",
         &["chr1", "chr2"],
+        1,
+        0,
         false,
         Some(DistributionWindowsArgs {
             by_size: None,
             by_bed: Some(sparse_window_bed),
             by_grouped_bed: None,
         }),
+        None,
     )?;
     let (window_motifs, window_counts) = read_sparse_end_counts(&sparse_window_path)?;
     assert_eq!(window_motifs, vec!["_A", "_G"]);
@@ -306,6 +312,46 @@ fn generate_end_motif_zarr_fixtures_with_cfdnalab() -> Result<()> {
     assert_eq!(window_counts[(1, 0)], 1.0);
     assert_eq!(window_counts[(2, 1)], 1.0);
     assert_eq!(window_counts.sum(), 3.0);
+
+    let selected_motifs_file = output_dir.join("tiny_ends_selected_motifs.tsv");
+    std::fs::write(&selected_motifs_file, "GT_AC\nAC_GT\nTT_TT\n")?;
+    let sparse_windowed_selected_motifs_path = run_end_fixture(
+        &bam.bam,
+        &reference.path,
+        &output_dir,
+        "tiny_sparse_windowed_selected_motifs",
+        &["chr1", "chr2"],
+        2,
+        2,
+        false,
+        Some(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: Some(output_dir.join("tiny_ends_windows.bed")),
+            by_grouped_bed: None,
+        }),
+        Some(selected_motifs_file),
+    )?;
+    let (selected_motifs, selected_counts) =
+        read_sparse_end_counts(&sparse_windowed_selected_motifs_path)?;
+    // Sparse motifs-file output keeps only observed motifs unless --all-motifs is set.
+    assert_eq!(selected_motifs, vec!["GT_AC", "AC_GT"]);
+    assert_eq!(selected_counts.shape(), &[3, 2]);
+    assert_eq!(selected_counts[(0, 1)], 1.0);
+    assert_eq!(selected_counts[(1, 0)], 1.0);
+    assert_eq!(selected_counts[(2, 1)], 1.0);
+    assert_eq!(selected_counts.sum(), 3.0);
+    let selected_motif_root_metadata: Value = serde_json::from_str(&std::fs::read_to_string(
+        sparse_windowed_selected_motifs_path.join("zarr.json"),
+    )?)?;
+    assert_eq!(
+        selected_motif_root_metadata["attributes"]["motif_axis_kind"],
+        serde_json::json!("motif")
+    );
+    assert!(
+        sparse_windowed_selected_motifs_path
+            .join("motif_ascii")
+            .is_dir()
+    );
 
     let sparse_grouped_bed = output_dir.join("tiny_ends_grouped.bed");
     write_bed4(
@@ -323,12 +369,15 @@ fn generate_end_motif_zarr_fixtures_with_cfdnalab() -> Result<()> {
         &output_dir,
         "tiny_sparse_grouped",
         &["chr1"],
+        1,
+        0,
         false,
         Some(DistributionWindowsArgs {
             by_size: None,
             by_bed: None,
-            by_grouped_bed: Some(sparse_grouped_bed),
+            by_grouped_bed: Some(sparse_grouped_bed.clone()),
         }),
+        None,
     )?;
     let (grouped_motifs, grouped_counts) = read_sparse_end_counts(&sparse_grouped_path)?;
     assert_eq!(grouped_motifs, vec!["_A", "_G"]);
@@ -344,6 +393,91 @@ fn generate_end_motif_zarr_fixtures_with_cfdnalab() -> Result<()> {
     assert_eq!(
         group_metadata["attributes"]["labels"],
         serde_json::json!(["beta", "alpha", "gamma"])
+    );
+
+    let motif_groups_file = output_dir.join("tiny_ends_motif_groups.tsv");
+    std::fs::write(
+        &motif_groups_file,
+        "G\tleft-hit\nA\tright-hit\nC\tunused-hit\n",
+    )?;
+    let sparse_grouped_motif_groups_path = run_end_fixture(
+        &bam.bam,
+        &reference.path,
+        &output_dir,
+        "tiny_sparse_grouped_motif_groups",
+        &["chr1"],
+        1,
+        0,
+        false,
+        Some(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            by_grouped_bed: Some(sparse_grouped_bed),
+        }),
+        Some(motif_groups_file),
+    )?;
+    let motif_group_labels = read_motif_group_labels(&sparse_grouped_motif_groups_path)?;
+    let motif_group_counts = read_sparse_count_matrix(&sparse_grouped_motif_groups_path)?;
+    assert_eq!(motif_group_labels, vec!["left-hit", "right-hit"]);
+    assert_eq!(motif_group_counts.shape(), &[3, 2]);
+    assert_eq!(motif_group_counts[(0, 0)], 2.0);
+    assert_eq!(motif_group_counts[(0, 1)], 1.0);
+    assert_eq!(motif_group_counts[(1, 0)], 0.0);
+    assert_eq!(motif_group_counts[(1, 1)], 1.0);
+    assert_eq!(motif_group_counts.row(2).sum(), 0.0);
+    assert_eq!(motif_group_counts.sum(), 4.0);
+    let motif_group_root_metadata: Value = serde_json::from_str(&std::fs::read_to_string(
+        sparse_grouped_motif_groups_path.join("zarr.json"),
+    )?)?;
+    assert_eq!(
+        motif_group_root_metadata["attributes"]["motif_axis_kind"],
+        serde_json::json!("motif_group")
+    );
+
+    let wide_motif_groups_file = output_dir.join("tiny_ends_wide_motif_groups.tsv");
+    std::fs::write(
+        &wide_motif_groups_file,
+        "GT_AC\tright-hit-wide\nAC_GT\tleft-hit-wide\nTT_TT\tunused-wide\n",
+    )?;
+    let sparse_grouped_wide_motif_groups_path = run_end_fixture(
+        &bam.bam,
+        &reference.path,
+        &output_dir,
+        "tiny_sparse_grouped_wide_motif_groups",
+        &["chr1"],
+        2,
+        2,
+        false,
+        Some(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            by_grouped_bed: Some(output_dir.join("tiny_ends_grouped.bed")),
+        }),
+        Some(wide_motif_groups_file),
+    )?;
+    let wide_motif_group_labels = read_motif_group_labels(&sparse_grouped_wide_motif_groups_path)?;
+    let wide_motif_group_counts = read_sparse_count_matrix(&sparse_grouped_wide_motif_groups_path)?;
+    assert_eq!(
+        wide_motif_group_labels,
+        vec!["right-hit-wide", "left-hit-wide"]
+    );
+    assert_eq!(wide_motif_group_counts.shape(), &[3, 2]);
+    assert_eq!(wide_motif_group_counts[(0, 0)], 1.0);
+    assert_eq!(wide_motif_group_counts[(0, 1)], 2.0);
+    assert_eq!(wide_motif_group_counts[(1, 0)], 1.0);
+    assert_eq!(wide_motif_group_counts.row(2).sum(), 0.0);
+    assert_eq!(wide_motif_group_counts.sum(), 4.0);
+    let wide_motif_group_root_metadata: Value = serde_json::from_str(&std::fs::read_to_string(
+        sparse_grouped_wide_motif_groups_path.join("zarr.json"),
+    )?)?;
+    assert_eq!(
+        wide_motif_group_root_metadata["attributes"]["motif_axis_kind"],
+        serde_json::json!("motif_group")
+    );
+    assert!(
+        !sparse_grouped_wide_motif_groups_path
+            .join("motif_ascii")
+            .exists()
     );
 
     Ok(())
@@ -551,8 +685,11 @@ fn run_end_fixture(
     output_dir: &Path,
     prefix: &str,
     chromosomes: &[&str],
+    k_inside: usize,
+    k_outside: usize,
     all_motifs: bool,
     windows: Option<DistributionWindowsArgs>,
+    motifs_file: Option<PathBuf>,
 ) -> Result<PathBuf> {
     let mut config = EndsConfig::new(
         IOCArgs {
@@ -569,13 +706,14 @@ fn run_end_fixture(
             ),
             chromosomes_file: None,
         },
-        1,
-        0,
+        k_inside,
+        k_outside,
     );
     config.output_prefix = prefix.to_string();
     config.set_ref_2bit(Some(reference_path.to_path_buf()));
     config.source_inside = KmerSource::Reference;
     config.all_motifs = all_motifs;
+    config.motifs_file = motifs_file;
     config.clip.clip_strategy = ClipStrategy::Aligned;
     config.set_min_mapq(0);
     config.set_tile_size(1_000_000);
@@ -613,6 +751,11 @@ fn read_dense_end_counts(store_path: &Path) -> Result<(Vec<String>, Array2<f64>)
 
 fn read_sparse_end_counts(store_path: &Path) -> Result<(Vec<String>, Array2<f64>)> {
     let motifs = read_motif_labels(store_path)?;
+    let matrix = read_sparse_count_matrix(store_path)?;
+    Ok((motifs, matrix))
+}
+
+fn read_sparse_count_matrix(store_path: &Path) -> Result<Array2<f64>> {
     let row: Vec<i32> = read_zarr_array(store_path, "/sparse/row")?;
     let motif: Vec<i32> = read_zarr_array(store_path, "/sparse/motif")?;
     let count: Vec<f64> = read_zarr_array(store_path, "/sparse/count")?;
@@ -626,7 +769,7 @@ fn read_sparse_end_counts(store_path: &Path) -> Result<(Vec<String>, Array2<f64>
         let motif = usize::try_from(motif).context("sparse motif index must be non-negative")?;
         matrix[(row, motif)] = count;
     }
-    Ok((motifs, matrix))
+    Ok(matrix)
 }
 
 fn read_motif_labels(store_path: &Path) -> Result<Vec<String>> {
@@ -642,6 +785,27 @@ fn read_motif_labels(store_path: &Path) -> Result<Vec<String>> {
         .chunks_exact(motif_width)
         .map(|bytes| {
             String::from_utf8(bytes.to_vec()).context("motif_ascii row must be valid UTF-8")
+        })
+        .collect()
+}
+
+fn read_motif_group_labels(store_path: &Path) -> Result<Vec<String>> {
+    let motif_metadata: Value = serde_json::from_str(&std::fs::read_to_string(
+        store_path.join("motif_index/zarr.json"),
+    )?)?;
+    assert_eq!(
+        motif_metadata["attributes"]["label_field"],
+        serde_json::json!("motif_group")
+    );
+    motif_metadata["attributes"]["labels"]
+        .as_array()
+        .context("motif_group labels must be a JSON array")?
+        .iter()
+        .map(|label| {
+            label
+                .as_str()
+                .map(ToString::to_string)
+                .context("motif_group label must be a string")
         })
         .collect()
 }

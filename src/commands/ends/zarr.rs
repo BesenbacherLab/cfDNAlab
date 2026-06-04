@@ -5,23 +5,26 @@
 //!
 //! - `counts[row, motif]` for dense output
 //! - `sparse/{row,motif,count,shape,sparse_dimension}` for sparse COO output
-//! - fixed-width motif labels and row metadata needed to interpret the counts without TSV sidecars
+//! - motif or motif-group labels and row metadata needed to interpret the counts without TSV sidecars
 //!
 //! The code below should only do work that is specific to this schema or to clearer validation.
 //! Low-level details such as writing `zarr.json`, applying zstd, V3 dimension names, and chunk
 //! serialization are delegated to `zarrs`.
 
-use crate::shared::{
-    bed::GroupedWindows,
-    blacklist::compute_blacklist_overlap,
-    interval::Interval,
-    io::dot_join,
-    windowing::WindowBinInfo,
-    zarr::{
-        ZARR_ASCII_FILL_VALUE, ZARR_FLOAT64_FILL_VALUE, ZARR_INT32_FILL_VALUE,
-        ZARR_INT64_FILL_VALUE, checked_i32, checked_i64, checked_index_axis, create_zarr_array,
-        create_zarr_store, validate_zarr_label, write_single_chunk_zarr_array,
-        write_zarr_group_metadata, write_zarr_root_metadata,
+use crate::{
+    commands::ends::counting::EndMotifColumnKind,
+    shared::{
+        bed::GroupedWindows,
+        blacklist::compute_blacklist_overlap,
+        interval::Interval,
+        io::dot_join,
+        windowing::WindowBinInfo,
+        zarr::{
+            ZARR_ASCII_FILL_VALUE, ZARR_FLOAT64_FILL_VALUE, ZARR_INT32_FILL_VALUE,
+            ZARR_INT64_FILL_VALUE, checked_i32, checked_i64, checked_index_axis, create_zarr_array,
+            create_zarr_store, validate_zarr_label, write_single_chunk_zarr_array,
+            write_zarr_group_metadata, write_zarr_root_metadata,
+        },
     },
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -34,7 +37,7 @@ use std::{
 };
 use zarrs::{array::data_type, filesystem::FilesystemStore};
 
-const CFDNALAB_END_MOTIF_SCHEMA_VERSION: u32 = 1;
+const CFDNALAB_END_MOTIF_SCHEMA_VERSION: u32 = 2;
 
 /// Soft target for dense count chunks.
 ///
@@ -42,39 +45,86 @@ const CFDNALAB_END_MOTIF_SCHEMA_VERSION: u32 = 1;
 const TARGET_DENSE_COUNT_CHUNK_CELLS: usize = 2_000_000;
 
 /// Row metadata for the public `row` axis.
+///
+/// End-motif counts always have a row axis, but the meaning of a row depends on the windowing mode.
+/// This enum carries the extra metadata needed to make that row axis self-describing in the Zarr
+/// store.
 pub(crate) enum EndMotifRowMetadata<'a> {
     /// One row covering all selected chromosomes.
     Global,
-    /// Ordinary genomic windows in the same row order as the count matrix.
+    /// Genomic window rows in the same row order as the count matrix.
     Windows {
+        /// Per-row chromosome, coordinate, and blacklist metadata
         bin_info: &'a [WindowBinInfo],
+        /// Whether these rows came from size windows or BED windows
         row_mode: EndWindowRowMode,
     },
     /// Grouped BED rows in the same row order as the count matrix.
     Groups(Vec<EndGroupSummary<'a>>),
 }
 
-/// Source of ordinary genomic count rows.
+/// Source of genomic window count rows.
+///
+/// This is written into root metadata as `row_mode`, so downstream readers can distinguish
+/// generated size windows from user-provided BED windows without inspecting coordinate spacing.
 pub(crate) enum EndWindowRowMode {
+    /// Generated fixed-size windows
     Size,
+    /// User-provided BED windows
     Bed,
 }
 
 /// One grouped-BED output row.
+///
+/// Grouped BED output aggregates many genomic windows into one count row. The summary keeps the
+/// public group label and enough metadata for downstream code to explain how much sequence
+/// contributed to that row.
 #[derive(Debug)]
 pub(crate) struct EndGroupSummary<'a> {
+    /// Zero-based group index, expected to match the count row index
     pub(crate) group_idx: u64,
+    /// Public group label from the grouped BED input
     pub(crate) group_name: &'a str,
+    /// Number of grouped BED windows contributing to the group
     pub(crate) eligible_windows: usize,
+    /// Length-weighted blacklist overlap across the group's windows
     pub(crate) blacklisted_fraction: f64,
 }
 
 /// Write dense or sparse end-motif counts as a self-contained Zarr V3 store.
+///
+/// `bins` are already keyed by numeric column indices. The labels and `column_kind` describe how
+/// those indices should be exposed to downstream readers. Concrete motif outputs use fixed-width
+/// ASCII motif labels, while motif-group outputs store group labels as JSON metadata on
+/// `motif_index`.
+///
+/// Parameters
+/// ----------
+/// - `output_dir`:
+///   Directory where the Zarr store should be created
+/// - `prefix`:
+///   Output filename prefix
+/// - `bins`:
+///   Sparse row maps keyed by final zero-based motif or motif-group column index
+/// - `column_labels`:
+///   Public labels for the column axis in final column order
+/// - `column_kind`:
+///   Meaning of `column_labels`
+/// - `row_metadata`:
+///   Metadata for the public row axis
+/// - `write_dense_output`:
+///   Whether to write `counts[row, motif]` instead of sparse COO arrays
+///
+/// Returns
+/// -------
+/// - `Result<PathBuf>`:
+///   Path to the completed temporary Zarr store
 pub(crate) fn write_end_motif_zarr(
     output_dir: &Path,
     prefix: &str,
-    bins: &[FxHashMap<String, f64>],
-    motifs: &[String],
+    bins: &[FxHashMap<u32, f64>],
+    column_labels: &[String],
+    column_kind: EndMotifColumnKind,
     row_metadata: EndMotifRowMetadata<'_>,
     write_dense_output: bool,
 ) -> Result<PathBuf> {
@@ -86,15 +136,15 @@ pub(crate) fn write_end_motif_zarr(
         "sparse_coo"
     };
     let row_mode = row_mode_name(&row_metadata);
-    write_root_metadata(store.clone(), storage_mode, row_mode)?;
-    write_motif_metadata(store.clone(), motifs)?;
+    write_root_metadata(store.clone(), storage_mode, row_mode, column_kind)?;
+    write_motif_metadata(store.clone(), column_labels, column_kind)?;
     write_row_metadata(store.clone(), row_metadata, bins.len())?;
 
     if write_dense_output {
-        let counts = stack_end_motif_counts(bins, motifs)?;
+        let counts = stack_end_motif_counts(bins, column_labels.len())?;
         write_dense_counts(store, counts.view())?;
     } else {
-        write_sparse_counts(store, bins, motifs)?;
+        write_sparse_counts(store, bins, column_labels.len())?;
     }
 
     Ok(store_path)
@@ -198,24 +248,35 @@ pub(crate) fn grouped_end_row_metadata<'a>(
     Ok(summaries)
 }
 
-/// Stack sparse per-window motif maps into a dense matrix with a fixed column order.
-pub(crate) fn stack_end_motif_counts(
-    bins: &[FxHashMap<String, f64>],
-    motifs: &[String],
-) -> Result<Array2<f64>> {
-    let mut counts = Array2::<f64>::zeros((bins.len(), motifs.len()));
-    let motif_columns: FxHashMap<&String, usize> = motifs
-        .iter()
-        .enumerate()
-        .map(|(column, motif)| (motif, column))
-        .collect();
+/// Stack sparse per-window motif maps into a dense matrix.
+///
+/// Sparse bins use numeric column ids rather than labels, so this function only has to validate
+/// bounds and place values. Label interpretation stays in the metadata writer.
+///
+/// Parameters
+/// ----------
+/// - `bins`:
+///   Sparse row maps keyed by final output column index
+/// - `n_columns`:
+///   Width of the final motif or motif-group axis
+///
+/// Returns
+/// -------
+/// - `Result<Array2<f64>>`:
+///   Dense row-major count matrix
+fn stack_end_motif_counts(bins: &[FxHashMap<u32, f64>], n_columns: usize) -> Result<Array2<f64>> {
+    let mut counts = Array2::<f64>::zeros((bins.len(), n_columns));
 
     for (row, bin) in bins.iter().enumerate() {
-        for (motif, &count) in bin {
-            let column = motif_columns
-                .get(motif)
-                .copied()
-                .with_context(|| format!("missing output column for end-motif label '{motif}'"))?;
+        for (&target_idx, &count) in bin {
+            // The parser and postprocessor should only produce valid final columns
+            let column = target_idx as usize;
+            ensure!(
+                column < n_columns,
+                "end-motif column index {} is out of bounds for {} columns",
+                column,
+                n_columns
+            );
             counts[(row, column)] = count;
         }
     }
@@ -243,12 +304,14 @@ fn write_root_metadata(
     store: Arc<FilesystemStore>,
     storage_mode: &str,
     row_mode: &str,
+    column_kind: EndMotifColumnKind,
 ) -> Result<()> {
     let mut attributes = json!({
         "cfdnalab_schema": "end_motif_counts",
         "cfdnalab_schema_version": CFDNALAB_END_MOTIF_SCHEMA_VERSION,
         "storage_mode": storage_mode,
         "row_mode": row_mode,
+        "motif_axis_kind": end_motif_column_kind_name(column_kind),
         "count_units": "weighted_end_motif_count",
         "primary_array": null,
         "primary_group": null,
@@ -263,12 +326,52 @@ fn write_root_metadata(
     write_zarr_root_metadata(store, "end-motif", attributes)
 }
 
+/// Return the schema string for the motif-axis kind.
+///
+/// This attribute tells downstream readers whether `motif_index` labels should be exposed as
+/// motifs or motif groups.
+fn end_motif_column_kind_name(column_kind: EndMotifColumnKind) -> &'static str {
+    match column_kind {
+        EndMotifColumnKind::Motif => "motif",
+        EndMotifColumnKind::MotifGroup => "motif_group",
+    }
+}
+
 /// Write motif-axis metadata.
 ///
-/// `motif_index` is the numeric count-column coordinate. The labels are stored as
-/// `motif_ascii[motif, motif_byte]`, one ASCII byte per character. End-motif labels are fixed-width
-/// for one run, so this avoids variable-length string support and avoids repeating labels in JSON.
-fn write_motif_metadata(store: Arc<FilesystemStore>, motifs: &[String]) -> Result<()> {
+/// `motif_index` is the numeric count-column coordinate. Ungrouped motif labels are stored as
+/// fixed-width ASCII bytes. Grouped motif-file outputs store group labels in JSON attributes.
+///
+/// Parameters
+/// ----------
+/// - `store`:
+///   Open Zarr store
+/// - `labels`:
+///   Final column labels in count-column order
+/// - `column_kind`:
+///   Whether labels are motifs or motif groups
+///
+/// Returns
+/// -------
+/// - `Result<()>`:
+///   `Ok(())` after the motif axis metadata has been written
+fn write_motif_metadata(
+    store: Arc<FilesystemStore>,
+    labels: &[String],
+    column_kind: EndMotifColumnKind,
+) -> Result<()> {
+    match column_kind {
+        EndMotifColumnKind::Motif => write_motif_label_metadata(store, labels),
+        EndMotifColumnKind::MotifGroup => write_motif_group_metadata(store, labels),
+    }
+}
+
+/// Write metadata for concrete motif columns.
+///
+/// Concrete motifs have one fixed byte width within a run, so they are stored as an ASCII matrix
+/// instead of a variable-length string array. This keeps the schema simple for readers that do not
+/// support string arrays well.
+fn write_motif_label_metadata(store: Arc<FilesystemStore>, motifs: &[String]) -> Result<()> {
     let motif_width = validated_motif_width(motifs)?;
     let motif_axis = checked_index_axis(motifs.len(), "motif")?;
     let motif_byte_axis = checked_index_axis(motif_width, "motif_byte")?;
@@ -308,6 +411,36 @@ fn write_motif_metadata(store: Arc<FilesystemStore>, motifs: &[String]) -> Resul
         json!({
             "long_name": "fixed-width ASCII motif labels",
             "description": "Decode each [motif, motif_byte] row as ASCII to recover the motif label.",
+        }),
+    )?;
+    Ok(())
+}
+
+/// Write metadata for grouped motifs-file columns.
+///
+/// Group labels can have different lengths, so they are written as JSON labels on `motif_index`
+/// rather than through `motif_ascii`. Downstream readers can branch on `motif_axis_kind` and expose
+/// these as motif-group labels without pretending they are DNA motifs.
+fn write_motif_group_metadata(store: Arc<FilesystemStore>, motif_groups: &[String]) -> Result<()> {
+    for motif_group in motif_groups {
+        // Group names are public labels and must be safe in JSON metadata and data frame columns
+        validate_zarr_label(motif_group, "motif_group")?;
+    }
+    let motif_axis = checked_index_axis(motif_groups.len(), "motif")?;
+    let motif_group_refs: Vec<&str> = motif_groups.iter().map(String::as_str).collect();
+
+    write_single_chunk_zarr_array(
+        store,
+        "motif_index",
+        &[motif_groups.len()],
+        &["motif"],
+        &motif_axis,
+        data_type::int32(),
+        ZARR_INT32_FILL_VALUE,
+        json!({
+            "long_name": "zero-based motif group column index",
+            "label_field": "motif_group",
+            "labels": motif_group_refs,
         }),
     )?;
     Ok(())
@@ -575,7 +708,7 @@ fn write_group_row_metadata(
 
 /// Write dense `counts[row, motif]`.
 ///
-/// The full logical array is handed to `zarrs::store_array_subset`; zarrs then handles chunk
+/// The full logical array is handed to `zarrs::store_array_subset`. zarrs then handles chunk
 /// splitting and boundary chunks. This avoids manual padding logic in the command writer.
 fn write_dense_counts(store: Arc<FilesystemStore>, counts: ArrayView2<'_, f64>) -> Result<()> {
     ensure!(
@@ -632,10 +765,70 @@ fn dense_count_chunk_shape(shape: [usize; 2]) -> Result<[usize; 2]> {
 /// The sparse group contains parallel `row`, `motif`, and `count` arrays plus a `shape` array. The
 /// entries are sorted by `(row, motif)` so downstream readers can reconstruct deterministic dense
 /// matrices or sparse objects.
+///
+/// Parameters
+/// ----------
+/// - `store`:
+///   Open Zarr store
+/// - `bins`:
+///   Sparse row maps keyed by final output column index
+/// - `n_columns`:
+///   Width of the final motif or motif-group axis
+///
+/// Returns
+/// -------
+/// - `Result<()>`:
+///   `Ok(())` after the sparse group has been written
 fn write_sparse_counts(
     store: Arc<FilesystemStore>,
-    bins: &[FxHashMap<String, f64>],
-    motifs: &[String],
+    bins: &[FxHashMap<u32, f64>],
+    n_columns: usize,
+) -> Result<()> {
+    let mut entries = Vec::new();
+    for (row, bin) in bins.iter().enumerate() {
+        let row_index = checked_i32(row, "row index")?;
+        for (&target_idx, &count) in bin {
+            // Bounds are checked here before entries are converted to i32 COO coordinates
+            let column = target_idx as usize;
+            ensure!(
+                column < n_columns,
+                "sparse end-motif column index {} is out of bounds for {} columns",
+                column,
+                n_columns
+            );
+            if count != 0.0 {
+                entries.push((row_index, checked_i32(target_idx, "motif index")?, count));
+            }
+        }
+    }
+    write_sparse_entries(store, bins.len(), n_columns, entries)
+}
+
+/// Write prevalidated COO entries to the sparse group.
+///
+/// This helper is deliberately label-agnostic. Its contract is only that the rows and columns are
+/// already numeric coordinates into the public axes written elsewhere in the store.
+///
+/// Parameters
+/// ----------
+/// - `store`:
+///   Open Zarr store
+/// - `n_rows`:
+///   Number of rows in the represented dense matrix
+/// - `n_motifs`:
+///   Number of motif-axis columns in the represented dense matrix
+/// - `entries`:
+///   Sparse COO entries as `(row, motif, count)`
+///
+/// Returns
+/// -------
+/// - `Result<()>`:
+///   `Ok(())` after all sparse arrays have been written
+fn write_sparse_entries(
+    store: Arc<FilesystemStore>,
+    n_rows: usize,
+    n_motifs: usize,
+    mut entries: Vec<(i32, i32, f64)>,
 ) -> Result<()> {
     write_zarr_group_metadata(
         store.clone(),
@@ -648,23 +841,7 @@ fn write_sparse_counts(
         }),
     )?;
 
-    let motif_columns: FxHashMap<&String, i32> = motifs
-        .iter()
-        .enumerate()
-        .map(|(column, motif)| Ok((motif, checked_i32(column, "motif index")?)))
-        .collect::<Result<_>>()?;
-    let mut entries = Vec::new();
-    for (row, bin) in bins.iter().enumerate() {
-        let row_index = checked_i32(row, "row index")?;
-        for (motif, &count) in bin {
-            let motif_index = motif_columns.get(motif).copied().with_context(|| {
-                format!("missing sparse output column for end-motif label '{motif}'")
-            })?;
-            if count != 0.0 {
-                entries.push((row_index, motif_index, count));
-            }
-        }
-    }
+    // Sorting creates deterministic arrays and lets us reject duplicate coordinates cheaply
     entries.sort_unstable_by(|left, right| (left.0, left.1).cmp(&(right.0, right.1)));
     for pair in entries.windows(2) {
         ensure!(
@@ -679,8 +856,8 @@ fn write_sparse_counts(
     let motif: Vec<i32> = entries.iter().map(|entry| entry.1).collect();
     let count: Vec<f64> = entries.iter().map(|entry| entry.2).collect();
     let shape = vec![
-        checked_i32(bins.len(), "sparse row count")?,
-        checked_i32(motifs.len(), "sparse motif count")?,
+        checked_i32(n_rows, "sparse row count")?,
+        checked_i32(n_motifs, "sparse motif count")?,
     ];
     let sparse_dimension = checked_index_axis(2, "sparse_dimension")?;
     let nnz = entries.len();

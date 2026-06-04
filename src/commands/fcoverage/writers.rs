@@ -266,10 +266,10 @@ fn derive_nonnegative_variance_coverage(
     Ok(raw_variance)
 }
 
-/// Write the shared summary-stat payload columns that follow the row identity columns.
+/// Write the shared summary-stat value columns that follow the row identity columns.
 ///
 /// BED/fixed-size rows and grouped rows differ only in their leading identity fields. The
-/// scientific payload after that is identical, so this helper keeps the formatting logic in one
+/// scientific value columns after that are identical, so this helper keeps the formatting logic in one
 /// place without hiding which writer owns which leading columns.
 fn write_summary_stats_fields<W: Write>(
     w: &mut W,

@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     commands::{
         cli_common::{ChromosomeArgs, IOCArgs},
-        ends::config_structs::BaseQualityFilter,
+        ends::{config_structs::BaseQualityFilter, counting::EndMotifColumnKind},
     },
     shared::indel_mode::IndelMotifFilterPolicy,
 };
@@ -42,6 +42,9 @@ fn expected_settings_json(
     let mut expected = Map::new();
     expected.insert("k_inside".to_string(), json!(k_inside));
     expected.insert("k_outside".to_string(), json!(k_outside));
+    expected.insert("all_motifs".to_string(), json!(false));
+    expected.insert("motifs_file".to_string(), Value::Null);
+    expected.insert("motifs_file_mode".to_string(), Value::Null);
     expected.insert("source_inside".to_string(), json!(source_inside));
     expected.insert("clip_strategy".to_string(), json!(clip_strategy));
     expected.insert("window_assignment".to_string(), json!(window_assignment));
@@ -60,6 +63,8 @@ fn write_end_settings_json_writes_the_minimal_interpretation_sidecar() {
     // Arrange: the minimal default config has
     // - k_inside: 1
     // - k_outside: 0
+    // - all_motifs: false
+    // - no motifs file
     // - inside source: read
     // - clip strategy: skip
     // - window assignment: endpoint
@@ -71,8 +76,8 @@ fn write_end_settings_json_writes_the_minimal_interpretation_sidecar() {
     let cfg = minimal_config(out_dir.path());
 
     // Act
-    let settings_path =
-        write_end_settings_json(out_dir.path(), "ends", &cfg).expect("settings json should write");
+    let settings_path = write_end_settings_json(out_dir.path(), "ends", &cfg, None)
+        .expect("settings json should write");
     assert_eq!(settings_path, out_dir.path().join("ends.end_settings.json"));
     let settings =
         std::fs::read_to_string(settings_path).expect("settings json should be readable");
@@ -93,7 +98,8 @@ fn write_end_settings_json_includes_non_default_indel_filter() {
     cfg.indel_filter = IndelMotifFilterPolicy::SkipAffectedFragment;
 
     // Act
-    write_end_settings_json(out_dir.path(), "ends", &cfg).expect("settings json should write");
+    write_end_settings_json(out_dir.path(), "ends", &cfg, None)
+        .expect("settings json should write");
     let settings = std::fs::read_to_string(out_dir.path().join("ends.end_settings.json"))
         .expect("settings json should be readable");
     let parsed = parse_json(&settings);
@@ -117,7 +123,8 @@ fn write_end_settings_json_resolves_auto_indel_filter_for_reference_inside_bases
     cfg.source_inside = KmerSource::Reference;
 
     // Act
-    write_end_settings_json(out_dir.path(), "ends", &cfg).expect("settings json should write");
+    write_end_settings_json(out_dir.path(), "ends", &cfg, None)
+        .expect("settings json should write");
     let settings = std::fs::read_to_string(out_dir.path().join("ends.end_settings.json"))
         .expect("settings json should be readable");
     let parsed = parse_json(&settings);
@@ -146,7 +153,8 @@ fn write_end_settings_json_includes_base_quality_filters_when_present() {
     ];
 
     // Act
-    write_end_settings_json(out_dir.path(), "ends", &cfg).expect("settings json should write");
+    write_end_settings_json(out_dir.path(), "ends", &cfg, None)
+        .expect("settings json should write");
     let settings = std::fs::read_to_string(out_dir.path().join("ends.end_settings.json"))
         .expect("settings json should be readable");
     let parsed = parse_json(&settings);
@@ -156,6 +164,37 @@ fn write_end_settings_json_includes_base_quality_filters_when_present() {
         parsed.get("bq_filters"),
         Some(&json!(["min in end >= 30", "max in fragment < 20"]))
     );
+}
+
+#[test]
+fn write_end_settings_json_includes_motifs_file_path_and_mode() {
+    // Arrange: motifs-file runs change the count-column meaning, so the sidecar should record both
+    // the source file path and whether the parsed file targeted motifs or motif groups.
+    let out_dir = TempDir::new().expect("tempdir");
+    let mut cfg = minimal_config(out_dir.path());
+    let motifs_file = out_dir.path().join("selected_groups.tsv");
+    cfg.motifs_file = Some(motifs_file.clone());
+    cfg.all_motifs = true;
+
+    // Act
+    write_end_settings_json(
+        out_dir.path(),
+        "ends",
+        &cfg,
+        Some(EndMotifColumnKind::MotifGroup),
+    )
+    .expect("settings json should write");
+    let settings = std::fs::read_to_string(out_dir.path().join("ends.end_settings.json"))
+        .expect("settings json should be readable");
+    let parsed = parse_json(&settings);
+
+    // Assert
+    assert_eq!(parsed.get("all_motifs"), Some(&json!(true)));
+    assert_eq!(
+        parsed.get("motifs_file"),
+        Some(&json!(motifs_file.to_string_lossy()))
+    );
+    assert_eq!(parsed.get("motifs_file_mode"), Some(&json!("grouped")));
 }
 
 #[test]

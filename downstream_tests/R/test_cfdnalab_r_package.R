@@ -35,7 +35,7 @@ test_that("R helper package reads midpoint profiles", {
 test_that("R helper package reads dense global end motifs", {
   dense_global <- read_end_motifs(dense_global_end_zarr_path())
 
-  expect_identical(schema_version(dense_global), 1L)
+  expect_identical(schema_version(dense_global), 2L)
   expect_identical(storage_mode(dense_global), "dense")
   expect_identical(row_mode(dense_global), "global")
   expect_identical(motifs(dense_global)$motif, c("_A", "_C", "_G", "_T"))
@@ -87,6 +87,27 @@ test_that("R helper package reads sparse windowed end motifs", {
   expect_equal(ordered_dense$count, c(0, 1, 1, 0))
 })
 
+test_that("R helper package reads sparse windowed selected motif-file end motifs", {
+  selected <- read_end_motifs(sparse_windowed_selected_motifs_end_zarr_path())
+
+  expect_identical(storage_mode(selected), "sparse_coo")
+  expect_identical(row_mode(selected), "bed")
+  expect_identical(motifs(selected)$motif, c("GT_AC", "AC_GT"))
+  expect_false(has_motif(selected, "TT_TT"))
+  expect_equal(
+    as.matrix(sparse_counts_matrix(selected)),
+    matrix(c(0, 1, 1, 0, 0, 1), nrow = 3, byrow = TRUE)
+  )
+  expect_equal(
+    as.matrix(sparse_counts_matrix(selected, motifs = c("AC_GT", "GT_AC"))),
+    matrix(c(1, 0, 0, 1, 1, 0), nrow = 3, byrow = TRUE)
+  )
+  expect_error(
+    end_motif_data_frame(selected, motifs = "TT_TT", densify = TRUE),
+    "Unknown end-motif label"
+  )
+})
+
 test_that("R helper package reads sparse grouped end motifs", {
   sparse_grouped <- read_end_motifs(sparse_grouped_end_zarr_path())
 
@@ -117,6 +138,100 @@ test_that("R helper package reads sparse grouped end motifs", {
   expect_equal(gamma_dense$group_name, c("gamma", "gamma"))
   expect_equal(gamma_dense$motif, c("_A", "_G"))
   expect_equal(gamma_dense$count, c(0, 0))
+})
+
+test_that("R helper package reads sparse grouped motif-group end motifs", {
+  motif_grouped <- read_end_motifs(sparse_grouped_motif_group_end_zarr_path())
+
+  expect_identical(schema_version(motif_grouped), 2L)
+  expect_identical(storage_mode(motif_grouped), "sparse_coo")
+  expect_identical(row_mode(motif_grouped), "grouped_bed")
+  expect_equal(
+    motifs(motif_grouped),
+    data.frame(
+      motif_idx = c(1L, 2L),
+      motif = c("left-hit", "right-hit"),
+      stringsAsFactors = FALSE
+    ),
+    ignore_attr = TRUE
+  )
+  expect_equal(motif_idx(motif_grouped, "right-hit"), 2L)
+  expect_true(has_motif(motif_grouped, "left-hit"))
+  expect_equal(
+    as.matrix(sparse_counts_matrix(motif_grouped)),
+    matrix(c(2, 1, 0, 1, 0, 0), nrow = 3, byrow = TRUE)
+  )
+  expect_equal(
+    as.matrix(sparse_counts_matrix(
+      motif_grouped,
+      groups = c("alpha", "beta"),
+      motifs = c("right-hit", "left-hit")
+    )),
+    matrix(c(1, 0, 1, 2), nrow = 2, byrow = TRUE)
+  )
+
+  rows <- end_motif_data_frame(motif_grouped)
+  expect_equal(names(rows), c(
+    "group_idx",
+    "group_name",
+    "eligible_windows",
+    "blacklisted_fraction",
+    "motif_idx",
+    "motif",
+    "count"
+  ))
+  expect_equal(rows$group_name, c("beta", "beta", "alpha"))
+  expect_equal(rows$motif_idx, c(1L, 2L, 2L))
+  expect_equal(rows$motif, c("left-hit", "right-hit", "right-hit"))
+  expect_equal(rows$count, c(2, 1, 1))
+
+  alpha_dense <- end_motif_data_frame(motif_grouped, groups = "alpha", densify = TRUE)
+  expect_equal(alpha_dense$motif, c("left-hit", "right-hit"))
+  expect_equal(alpha_dense$count, c(0, 1))
+  expect_error(
+    end_motif_data_frame(motif_grouped, motifs = "_A"),
+    "Unknown end-motif label",
+    fixed = TRUE
+  )
+})
+
+test_that("R helper package reads sparse grouped wide motif-group end motifs", {
+  motif_grouped <- read_end_motifs(sparse_grouped_wide_motif_group_end_zarr_path())
+
+  expect_identical(schema_version(motif_grouped), 2L)
+  expect_identical(storage_mode(motif_grouped), "sparse_coo")
+  expect_identical(row_mode(motif_grouped), "grouped_bed")
+  expect_equal(
+    motifs(motif_grouped),
+    data.frame(
+      motif_idx = c(1L, 2L),
+      motif = c("right-hit-wide", "left-hit-wide"),
+      stringsAsFactors = FALSE
+    ),
+    ignore_attr = TRUE
+  )
+  expect_equal(motif_idx(motif_grouped, "left-hit-wide"), 2L)
+  expect_equal(
+    as.matrix(sparse_counts_matrix(motif_grouped)),
+    matrix(c(1, 2, 1, 0, 0, 0), nrow = 3, byrow = TRUE)
+  )
+  expect_equal(
+    as.matrix(sparse_counts_matrix(
+      motif_grouped,
+      groups = c("alpha", "beta"),
+      motifs = c("left-hit-wide", "right-hit-wide")
+    )),
+    matrix(c(0, 1, 2, 1), nrow = 2, byrow = TRUE)
+  )
+
+  beta_dense <- end_motif_data_frame(motif_grouped, groups = "beta", densify = TRUE)
+  expect_equal(beta_dense$motif, c("right-hit-wide", "left-hit-wide"))
+  expect_equal(beta_dense$count, c(1, 2))
+  expect_error(
+    end_motif_data_frame(motif_grouped, motifs = "GT_AC"),
+    "Unknown end-motif label",
+    fixed = TRUE
+  )
 })
 
 test_that("R helper package reads global length counts", {

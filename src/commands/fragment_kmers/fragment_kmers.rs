@@ -398,10 +398,11 @@ fn execute_fragment_kmers(
             .push(tile_result);
     }
 
-    let mut payloads: Vec<Vec<TileWindowCounts>> = Vec::with_capacity(tile_results_by_chr.len());
+    let mut tile_count_batches: Vec<Vec<TileWindowCounts>> =
+        Vec::with_capacity(tile_results_by_chr.len());
     for chr in &chromosomes {
         if let Some(chr_tile_results) = tile_results_by_chr.remove(chr) {
-            payloads.push(reduce_chromosome_tile_results(chr_tile_results)?);
+            tile_count_batches.push(reduce_chromosome_tile_results(chr_tile_results)?);
         }
     }
     if !tile_results_by_chr.is_empty() {
@@ -417,7 +418,8 @@ fn execute_fragment_kmers(
         .context("number of windows exceeds addressable size")?;
 
     if opt.positional_counts {
-        let positional_bins = merge_tile_counts_positional(payloads, total_windows_usize)?;
+        let positional_bins =
+            merge_tile_counts_positional(tile_count_batches, total_windows_usize)?;
 
         let mut positional_decoded: Vec<FxHashMap<PositionDescriptor, DecodedCounts>> =
             Vec::with_capacity(positional_bins.len());
@@ -465,7 +467,7 @@ fn execute_fragment_kmers(
             &opt.shared_args.ioc.output_dir,
         )?;
     } else {
-        let all_bins = merge_tile_counts(payloads, total_windows_usize, &kmer_specs)?;
+        let all_bins = merge_tile_counts(tile_count_batches, total_windows_usize, &kmer_specs)?;
 
         // Prepare counts to get correct motifs (collapsed, N-filtered, etc.)
         let (prepared_counts, motifs_by_k) =
@@ -828,7 +830,7 @@ fn process_tile(
     // Get counters from iterator
     counter.add_from_snapshot(iter.counters_snapshot());
 
-    let mut payload: Vec<TileWindowCounts> = counts_by_window
+    let mut count_records: Vec<TileWindowCounts> = counts_by_window
         .into_iter()
         .filter_map(|(original_idx, hm)| {
             if hm.is_empty() {
@@ -844,9 +846,9 @@ fn process_tile(
             })
         })
         .collect();
-    payload.sort_unstable_by_key(|w| w.original_idx);
+    count_records.sort_unstable_by_key(|w| w.original_idx);
 
-    serialize_tile_counts(counts_path, &payload)?;
+    serialize_tile_counts(counts_path, &count_records)?;
 
     Ok(TileResult {
         chr: tile.chr.clone(),

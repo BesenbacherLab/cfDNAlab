@@ -2,13 +2,14 @@ use crate::{
     commands::ends::{
         config::EndsConfig,
         config_structs::{BaseQualityFilter, ClipStrategy, KmerSource, WindowMotifAssigner},
+        counting::EndMotifColumnKind,
     },
     shared::{
         indel_mode::IndelMotifFilterPolicy,
         io::{create_text_writer, dot_join},
     },
 };
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use std::{
     io::Write,
     path::{Path, PathBuf},
@@ -16,9 +17,9 @@ use std::{
 
 /// Write the small settings sidecar needed to interpret end-motif outputs.
 ///
-/// This records the motif-definition settings needed to interpret the motif
-/// labels, but intentionally leaves out output-format details that are already
-/// obvious from the files written next to it.
+/// This records the motif-definition and target-axis settings needed to
+/// interpret the count columns. The Zarr store remains the source of truth for
+/// storage mode, row metadata, and count arrays.
 ///
 /// Parameters
 /// ----------
@@ -28,6 +29,8 @@ use std::{
 ///   Optional output-file prefix
 /// - `opt`:
 ///   Full `ends` configuration used for the run
+/// - `motifs_file_column_kind`:
+///   Parsed motifs-file target mode when `--motifs-file` was used
 ///
 /// Returns
 /// -------
@@ -37,13 +40,27 @@ pub(crate) fn write_end_settings_json(
     output_dir: &Path,
     prefix: &str,
     opt: &EndsConfig,
+    motifs_file_column_kind: Option<EndMotifColumnKind>,
 ) -> Result<PathBuf> {
+    ensure!(
+        opt.motifs_file.is_some() == motifs_file_column_kind.is_some(),
+        "internal error: motifs-file settings require both the path and parsed motifs-file mode"
+    );
     let settings_path = output_dir.join(dot_join(&[prefix, "end_settings.json"]));
     let mut settings_writer = create_text_writer(&settings_path)
         .with_context(|| format!("create {}", settings_path.display()))?;
     let settings_entries: Vec<String> = [
         format!("  \"k_inside\": {}", opt.k_inside),
         format!("  \"k_outside\": {}", opt.k_outside),
+        format!("  \"all_motifs\": {}", opt.all_motifs),
+        format!(
+            "  \"motifs_file\": {}",
+            json_path_or_null(opt.motifs_file.as_deref())
+        ),
+        format!(
+            "  \"motifs_file_mode\": {}",
+            json_motifs_file_mode_or_null(motifs_file_column_kind)
+        ),
         format!(
             "  \"source_inside\": \"{}\"",
             kmer_source_name(opt.source_inside)
@@ -87,6 +104,23 @@ pub(crate) fn write_end_settings_json(
         .finish()
         .with_context(|| format!("finalize {}", settings_path.display()))?;
     Ok(settings_path)
+}
+
+fn json_path_or_null(path: Option<&Path>) -> String {
+    path.map(|path| json_string(&path.to_string_lossy()))
+        .unwrap_or_else(|| "null".to_string())
+}
+
+fn json_motifs_file_mode_or_null(column_kind: Option<EndMotifColumnKind>) -> &'static str {
+    match column_kind {
+        Some(EndMotifColumnKind::Motif) => "\"ungrouped\"",
+        Some(EndMotifColumnKind::MotifGroup) => "\"grouped\"",
+        None => "null",
+    }
+}
+
+fn json_string(value: &str) -> String {
+    serde_json::to_string(value).expect("JSON string serialization should not fail")
 }
 
 #[cfg_attr(not(feature = "ends_experimental"), allow(unused_variables))]

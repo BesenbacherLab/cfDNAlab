@@ -3,7 +3,7 @@
 \name{motifs.cfdnalab_end_motif_counts}
 \alias{motifs.cfdnalab_end_motif_counts}
 \alias{motifs}
-\title{Return end-motif metadata.}
+\title{Return end-motif column metadata.}
 \usage{
 \method{motifs}{cfdnalab_end_motif_counts}(x, ...)
 
@@ -15,8 +15,10 @@ motifs(x, ...)
 \item{...}{Reserved for future methods.}
 }
 \value{
-A data frame with one row per motif.
+A data frame with one row per motif-axis label.
 }
 \description{
-Return end-motif metadata.
+For ordinary end-motif stores, the \code{motif} column contains concrete motif
+labels. For grouped motifs-file output, the same column contains user-defined
+group names from the motif axis.
 }

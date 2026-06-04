@@ -40,7 +40,7 @@ pub(crate) struct ResolvedFragmentEnd {
     pub(crate) inside_reference_validation_bp: usize,
 }
 
-/// Fragment payload for the `ends` command.
+/// Fragment and end coordinates prepared for the `ends` command.
 #[derive(Debug, Clone)]
 pub(crate) struct FragmentWithEnds {
     /// Aligned fragment interval used for length and GC-related coordinate calculations.
@@ -488,6 +488,7 @@ fn resolve_fragment_end(
                 read,
                 end_side,
                 clip_strategy,
+                source_inside,
                 aligned_boundary_pos,
                 k_inside,
             ) {
@@ -518,6 +519,7 @@ fn resolve_fragment_end(
                 read,
                 end_side,
                 clip_strategy,
+                source_inside,
                 assignment_boundary_pos,
                 k_inside,
             ) {
@@ -531,16 +533,54 @@ fn resolve_fragment_end(
     }
 }
 
+/// Build the resolved fragment-end record after clip and indel policy has accepted the end.
+///
+/// The boundary has already been chosen by `resolve_fragment_end`. This helper only fills the
+/// per-end fields needed later by motif encoding:
+/// - `inside_bases` stores read-backed inside bases when `--source-inside read`
+/// - `inside_bases` is empty when `--source-inside reference`, because reference-backed encoding
+///   uses `boundary_pos` and the reference genome instead of read sequence
+/// - `inside_reference_validation_bp` records how many inside bases still map to reference
+///   coordinates, which is needed for blacklist validation in read-backed mode
+///
+/// Returning `None` means the requested read-backed inside slice cannot be represented from this
+/// read under the selected clip strategy. Reference-backed inside motifs do not fail for that
+/// reason, because their inside bases are read from the reference during motif encoding.
+///
+/// Parameters
+/// ----------
+/// - `read`:
+///   Per-read summary for the fragment end
+/// - `end_side`:
+///   Whether this is the left or right fragment end
+/// - `clip_strategy`:
+///   Clip handling strategy that determines read slicing and reference-addressable bases
+/// - `source_inside`:
+///   Whether inside bases are read-backed or reference-backed
+/// - `boundary_pos`:
+///   Already-resolved split point between inside and outside motif bases
+/// - `k_inside`:
+///   Number of inside bases requested for the motif
+///
+/// Returns
+/// -------
+/// - `Option<ResolvedFragmentEnd>`:
+///   Resolved fragment end for motif counting, or `None` when a read-backed inside slice does not
+///   fit
 fn build_resolved_end(
     read: &EndReadInfo,
     end_side: FragmentEndSide,
     clip_strategy: ClipStrategy,
+    source_inside: KmerSource,
     boundary_pos: u32,
     k_inside: usize,
 ) -> Option<ResolvedFragmentEnd> {
-    let inside_bases = match end_side {
-        FragmentEndSide::Left => extract_left_inside_bases(read, clip_strategy, k_inside)?,
-        FragmentEndSide::Right => extract_right_inside_bases(read, clip_strategy, k_inside)?,
+    let inside_bases = match source_inside {
+        KmerSource::Read => match end_side {
+            FragmentEndSide::Left => extract_left_inside_bases(read, clip_strategy, k_inside)?,
+            FragmentEndSide::Right => extract_right_inside_bases(read, clip_strategy, k_inside)?,
+        },
+        KmerSource::Reference => Vec::new(),
     };
     let inside_reference_validation_bp =
         inside_reference_validation_bp(read, end_side, clip_strategy, k_inside);

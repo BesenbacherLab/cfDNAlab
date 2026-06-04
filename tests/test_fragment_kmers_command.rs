@@ -1079,7 +1079,7 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
 //         let spec3 = &kmer_specs[&3];
 //         let code_aaa = code_for_motif(spec3, "AAA");
 
-//         let payload_a = vec![TileWindowCounts {
+//         let count_records_a = vec![TileWindowCounts {
 //             original_idx: 0,
 //             entries: vec![TileKmerCountEntry {
 //                 k: 3,
@@ -1090,7 +1090,7 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
 //             }],
 //         }];
 
-//         let payload_b = vec![TileWindowCounts {
+//         let count_records_b = vec![TileWindowCounts {
 //             original_idx: 0,
 //             entries: vec![TileKmerCountEntry {
 //                 k: 3,
@@ -1101,7 +1101,7 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
 //             }],
 //         }];
 
-//         let merged = merge_tile_counts(vec![payload_a, payload_b], 1, &kmer_specs)?;
+//         let merged = merge_tile_counts(vec![count_records_a, count_records_b], 1, &kmer_specs)?;
 //         assert_eq!(merged.len(), 1);
 //         let window_counts = merged[0].counts.get(&3).unwrap();
 //         let value = window_counts.get("AAA").copied().unwrap_or_default();
@@ -1116,7 +1116,7 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
 //         let code_aaa = code_for_motif(spec3, "AAA");
 //         let code_aac = code_for_motif(spec3, "AAC");
 
-//         let payload_1 = vec![
+//         let count_records_1 = vec![
 //             TileWindowCounts {
 //                 original_idx: 0,
 //                 entries: vec![TileKmerCountEntry {
@@ -1139,7 +1139,7 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
 //             },
 //         ];
 
-//         let payload_2 = vec![
+//         let count_records_2 = vec![
 //             TileWindowCounts {
 //                 original_idx: 0,
 //                 entries: vec![TileKmerCountEntry {
@@ -1162,7 +1162,7 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
 //             },
 //         ];
 
-//         let payload_3 = vec![
+//         let count_records_3 = vec![
 //             TileWindowCounts {
 //                 original_idx: 0,
 //                 entries: vec![TileKmerCountEntry {
@@ -1185,7 +1185,7 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
 //             },
 //         ];
 
-//         let merged = merge_tile_counts(vec![payload_1, payload_2, payload_3], 3, &kmer_specs)?;
+//         let merged = merge_tile_counts(vec![count_records_1, count_records_2, count_records_3], 3, &kmer_specs)?;
 //         assert_eq!(merged.len(), 3);
 
 //         let win0 = merged[0].counts.get(&3).unwrap();
@@ -1206,7 +1206,7 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
 //         let spec3 = &kmer_specs[&3];
 //         let code_aaa = code_for_motif(spec3, "AAA");
 
-//         let payload = vec![TileWindowCounts {
+//         let count_records = vec![TileWindowCounts {
 //             original_idx: 5,
 //             entries: vec![TileKmerCountEntry {
 //                 k: 3,
@@ -1217,7 +1217,7 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
 //             }],
 //         }];
 
-//         let result = merge_tile_counts(vec![payload], 2, &kmer_specs);
+//         let result = merge_tile_counts(vec![count_records], 2, &kmer_specs);
 //         assert!(result.is_err());
 //     }
 // }
