@@ -192,7 +192,8 @@ output files:
 
 ```bash
 # local or CI-equivalent
-cargo test --no-default-features --features cmd_midpoints,cmd_ends \
+cargo test --no-default-features \
+  --features cmd_midpoints,cmd_ends,cmd_lengths,testing \
   --test generate_downstream_zarr_fixtures \
   -- --ignored
 ```
