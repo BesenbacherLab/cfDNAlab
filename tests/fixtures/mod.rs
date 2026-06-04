@@ -1,9 +1,5 @@
 #![allow(dead_code)]
 
-// KEEP-IN-TESTS: bespoke fixture builders for integration tests that exercise public
-// command/API behavior. Generic BAM, two-bit, BED, scaling, GC-package, and output-reader
-// helpers live in `cfdnalab::testing`.
-
 use anyhow::Result;
 use cfdnalab::run_like_cli::common::{BaseSelectionArgs, FragmentPositionSelectionArgs};
 use cfdnalab::run_like_cli::common::{BasesFrom, MismatchBasesFrom, ReferenceFrame};

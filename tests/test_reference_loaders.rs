@@ -1,5 +1,3 @@
-// KEEP-IN-TESTS: public reusable reference-loading API behavior.
-
 use anyhow::{Result, anyhow};
 use cfdnalab::reference::{
     load_chrom_sizes, read_seq, read_seq_in_range, twobit_contig_lengths, twobit_contig_names,

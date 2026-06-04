@@ -1,7 +1,5 @@
 #![cfg(feature = "cmd_frag_to_bam")]
 
-// KEEP-IN-TESTS: all active tests in this file cover frag-to-bam command output, errors, or end-to-end round trips.
-
 mod fixtures;
 
 use anyhow::{Context, Result};

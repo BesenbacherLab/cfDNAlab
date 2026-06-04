@@ -924,7 +924,6 @@ mod tests_stdio {
         }
     }
 
-    // KEEP-IN-TESTS: prepare-windows command output or stdio behavior.
     #[test]
     fn run_supports_stdio() -> Result<()> {
         let mut cfg = PrepareConfig::default();

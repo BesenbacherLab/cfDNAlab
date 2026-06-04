@@ -461,7 +461,6 @@ mod tests_lengths_tiling_reducer {
 }
 
 mod tests_lengths_tiling_helpers {
-    // MOVE-MODULE-LOCAL: direct private shared tiling and fetch helper tests.
 
     use crate::run_like_cli::common::WindowSpec;
     use crate::shared::bam::Contigs;

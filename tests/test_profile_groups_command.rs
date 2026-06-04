@@ -1,7 +1,5 @@
 #![cfg(feature = "cmd_midpoints")]
 
-// KEEP-IN-TESTS: all active tests in this file cover midpoint/profile command output, errors, or artifacts.
-
 mod fixtures;
 
 use anyhow::Result;

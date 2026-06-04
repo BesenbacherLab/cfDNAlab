@@ -8,8 +8,6 @@
     feature = "cmd_ref_gc_bias"
 ))]
 
-// KEEP-IN-TESTS: cross-command artifact compatibility is end-to-end public behavior.
-
 mod fixtures;
 
 use anyhow::Result;

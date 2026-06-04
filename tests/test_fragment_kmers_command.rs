@@ -1,7 +1,5 @@
 #![cfg(feature = "cmd_fragment_kmers")]
 
-// KEEP-IN-TESTS: fragment-kmers command output and artifact behavior.
-
 mod fixtures;
 
 use anyhow::Result;

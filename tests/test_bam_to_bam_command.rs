@@ -1,7 +1,5 @@
 #![cfg(feature = "cmd_bam_to_bam")]
 
-// KEEP-IN-TESTS: all active tests in this file cover bam-to-bam command output, errors, or artifacts.
-
 mod fixtures;
 
 use std::{collections::HashMap, fs, path::Path};

@@ -81,7 +81,6 @@ mod transitions_command_tests {
         vec![make_fragment(0, 20), make_fragment(4, 24)]
     }
 
-    // KEEP-IN-TESTS: transitions command output behavior.
     #[test]
     fn run_transitions_produces_expected_frequencies() -> Result<()> {
         // Reference repeats "AACGAGTTACGA" so the motifs at successive offsets are predictable

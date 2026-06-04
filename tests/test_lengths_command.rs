@@ -278,7 +278,6 @@ mod tests_lengths_command {
         cfg
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn default_length_bins_preserve_per_bp_distribution_shape() -> Result<()> {
         // Arrange:
@@ -341,7 +340,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn wider_length_bins_collapse_multiple_lengths_into_one_column() -> Result<()> {
         // Arrange:
@@ -382,7 +380,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn length_bins_filter_at_final_exclusive_edge() -> Result<()> {
         // Arrange:
@@ -422,7 +419,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn counts_reference_lengths_global_window() -> Result<()> {
         let bam = single_contig_inward_pair_bam()?;
@@ -466,7 +462,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn counts_reference_lengths_size_single_window_misaligned_tiles() -> Result<()> {
         let bam = single_contig_inward_pair_bam()?;
@@ -515,7 +510,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn counts_reference_lengths_size_aligned_tiles_reduce_cross_tile_bins() -> Result<()> {
         let bam = bam_from_fragments(
@@ -575,7 +569,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn counts_reference_lengths_bed_single_window() -> Result<()> {
         let bam = single_contig_inward_pair_bam()?;
@@ -625,7 +618,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn bed_windowing_counts_a_right_halo_only_window_reached_by_an_owned_fragment() -> Result<()> {
         // Arrange:
@@ -678,7 +670,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn bed_windowing_does_not_count_a_window_starting_at_fragment_end() -> Result<()> {
         // Arrange:
@@ -734,7 +725,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn bed_windowing_must_not_shrink_fetch_to_unrelated_core_windows() -> Result<()> {
         // Arrange:
@@ -795,7 +785,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn bed_windowing_right_halo_only_count_is_tile_size_invariant() -> Result<()> {
         // Arrange:
@@ -853,7 +842,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn bed_windowing_mixed_core_and_right_halo_rows_are_tile_size_invariant() -> Result<()> {
         // Arrange:
@@ -917,7 +905,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn bed_windowing_right_boundary_zero_is_tile_size_invariant() -> Result<()> {
         // Arrange:
@@ -976,7 +963,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn global_by_size_and_bed_full_chromosome_windows_match_exactly() -> Result<()> {
         // Arrange:
@@ -1059,7 +1045,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn lengths_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero()
     -> Result<()> {
@@ -1156,7 +1141,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn counts_reference_lengths_global_window_across_three_chromosomes() -> Result<()> {
         let bam = three_chrom_length_fixture("lengths_three_chr_global")?;
@@ -1207,7 +1191,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn unpaired_single_read_matches_paired_fragment_length_count_for_same_span() -> Result<()> {
         // Arrange:
@@ -1268,7 +1251,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn counts_reference_lengths_size_single_window_across_three_chromosomes() -> Result<()> {
         let bam = three_chrom_length_fixture("lengths_three_chr_size")?;
@@ -1323,7 +1305,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn counts_reference_lengths_bed_single_window_across_three_chromosomes() -> Result<()> {
         let bam = three_chrom_length_fixture("lengths_three_chr_bed")?;
@@ -1386,7 +1367,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn by_size_and_bed_equivalent_full_chromosome_windows_match_across_three_chromosomes()
     -> Result<()> {
@@ -1460,7 +1440,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn counts_apply_scaling_factors() -> Result<()> {
         let bam = single_contig_inward_pair_bam()?;
@@ -1500,7 +1479,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn counts_are_zero_when_blacklisted() -> Result<()> {
         let bam = single_contig_inward_pair_bam()?;
@@ -1558,7 +1536,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn applies_gc_correction_weighting_modes() -> Result<()> {
         let bam = single_contig_inward_pair_bam()?;
@@ -1629,7 +1606,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn gc_length_trim_rare_removes_low_frequency_rows_before_equal_weighting() -> Result<()> {
         // Package rows:
@@ -1689,7 +1665,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn gc_length_range_controls_which_package_rows_are_marginalized() -> Result<()> {
         // Package rows:
@@ -1754,7 +1729,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_lengths()
     -> Result<()> {
@@ -1814,7 +1788,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn real_ref_gc_bias_then_gc_bias_package_changes_lengths_in_expected_direction() -> Result<()> {
         // Arrange:
@@ -1901,7 +1874,6 @@ mod tests_lengths_command {
     }
 
     #[cfg(feature = "cmd_coverage_weights")]
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn gc_file_and_scaling_tsv_weights_multiply_in_lengths() -> Result<()> {
         // Arrange:
@@ -2032,7 +2004,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range() -> Result<()>
     {
@@ -2091,7 +2062,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn gc_file_rejects_package_with_schema_version_mismatch() -> Result<()> {
         // Arrange:
@@ -2146,7 +2116,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn gc_requires_ref_2bit_errors() -> Result<()> {
         let bam = single_contig_inward_pair_bam()?;
@@ -2185,7 +2154,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn gc_drop_invalid_reports_end_offset_validation_error() -> Result<()> {
         let bam = single_contig_inward_pair_bam()?;
@@ -2230,7 +2198,6 @@ mod tests_lengths_command {
         fixtures::fragment_kmers_edge_bam()
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn indel_adjust_counts_adjusted_length_and_skip_drops() -> Result<()> {
         let bam = indel_bam_fixture()?;
@@ -2288,7 +2255,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn max_deletion_bases_filters_indel_adjusted_fragments_before_counting() -> Result<()> {
         // Reuse the indel fixture with one clean fragment, one insertion-bearing fragment,
@@ -2336,7 +2302,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn clip_adjust_counts_adjusted_length_and_clip_skip_drops() -> Result<()> {
         // One unpaired read-as-fragment with cigar 2S10M2S at pos 10.
@@ -2415,7 +2380,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn clip_adjust_count_overlap_uses_the_adjusted_assignment_interval() -> Result<()> {
         // One unpaired 2S10M2S fragment at pos 10.
@@ -2501,7 +2465,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn clip_adjust_bins_by_adjusted_length_but_scales_over_aligned_span() -> Result<()> {
         // One unpaired 2S10M2S fragment at pos 10.
@@ -2563,7 +2526,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn clip_adjust_midpoint_with_scaling_counts_window_reached_only_by_soft_clip_extension()
     -> Result<()> {
@@ -2643,7 +2605,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn clip_adjust_count_overlap_scaling_uses_the_nearest_aligned_base_for_clipped_only_windows()
     -> Result<()> {
@@ -2726,7 +2687,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn max_soft_clips_filters_lengths_fragments_before_counting_clip_adjusted_lengths() -> Result<()>
     {
@@ -2796,7 +2756,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn max_soft_clips_does_not_filter_when_clip_mode_is_aligned() -> Result<()> {
         // One unpaired 2S10M fragment at pos 10 with indel adjustment enabled.
@@ -2848,7 +2807,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn indel_adjust_bins_by_adjusted_length_but_scales_over_reference_span() -> Result<()> {
         let bam = indel_bam_fixture()?;
@@ -2900,7 +2858,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn indel_adjust_blacklist_uses_full_reference_span_not_only_adjusted_length() -> Result<()> {
         let bam = indel_bam_fixture()?;
@@ -2946,7 +2903,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn indel_adjust_blacklist_proportion_uses_reference_span_denominator() -> Result<()> {
         let bam = indel_bam_fixture()?;
@@ -3016,7 +2972,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn scaling_overlapping_bins_error() -> Result<()> {
         let bam = single_contig_inward_pair_bam()?;
@@ -3055,7 +3010,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn custom_output_prefix_is_used() -> Result<()> {
         let bam = single_contig_inward_pair_bam()?;
@@ -3155,7 +3109,6 @@ mod tests_lengths_command {
         bam_from_fragments("multi_chrom_simple", chroms, fragments, Vec::new())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn multi_chrom_size_counts_mass_conserved() -> Result<()> {
         let bam = multi_chrom_simple_bam()?;
@@ -3202,7 +3155,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn assignment_modes_produce_distinct_counts() -> Result<()> {
         let bam = single_contig_inward_pair_bam()?;
@@ -3264,7 +3216,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn midpoint_assignment_on_even_length_boundary_counts_exactly_one_adjacent_window() -> Result<()>
     {
@@ -3339,7 +3290,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn scaling_tsv_must_cover_requested_chromosome_end_in_lengths() -> Result<()> {
         // Arrange:
@@ -3390,7 +3340,6 @@ mod tests_lengths_command {
     }
 
     #[cfg(feature = "cmd_coverage_weights")]
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn coverage_weights_tsv_in_count_overlap_mode_uses_overlap_span_scaling() -> Result<()> {
         // Arrange:
@@ -3492,7 +3441,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn bed_windowed_runs_write_prefixed_bins_tsv_with_exact_blacklisted_fractions() -> Result<()> {
         // Arrange:
@@ -3554,7 +3502,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn grouped_bed_count_overlap_uses_first_group_occurrence_keeps_zero_rows_and_writes_group_metadata()
     -> Result<()> {
@@ -3656,7 +3603,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn grouped_bed_count_overlap_sums_same_group_window_weights_above_one() -> Result<()> {
         // Arrange:
@@ -3731,7 +3677,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn grouped_bed_group_index_omits_blacklisted_fraction_without_blacklist() -> Result<()> {
         // Arrange:
@@ -3788,7 +3733,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn grouped_bed_any_counts_same_group_intervals_separately() -> Result<()> {
         // Arrange:
@@ -3864,7 +3808,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn grouped_bed_any_aggregates_shared_groups_across_chromosomes_and_uses_prefixed_sidecars()
     -> Result<()> {
@@ -3947,7 +3890,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn grouped_bed_scaling_factors_aggregate_shared_groups_across_chromosomes() -> Result<()> {
         // Arrange:
@@ -4040,7 +3982,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn grouped_bed_any_aggregates_shared_groups_across_tiles_on_same_chromosome() -> Result<()> {
         // Arrange:
@@ -4142,7 +4083,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn grouped_bed_scaling_factors_weight_each_grouped_count() -> Result<()> {
         // Arrange:
@@ -4204,7 +4144,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn grouped_bed_blacklist_filtering_drops_matching_fragments_before_grouping() -> Result<()> {
         // Arrange:
@@ -4274,7 +4213,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn grouped_bed_gc_correction_weights_each_grouped_count() -> Result<()> {
         // Arrange:
@@ -4356,7 +4294,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -> Result<()> {
         // Arrange:
@@ -4440,7 +4377,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn gc_file_chromosome_end_window_keeps_clamped_fetch_halo() -> Result<()> {
         // Manual derivation:
@@ -4523,7 +4459,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn grouped_bed_assign_when_all_counts_each_containing_window_in_group() -> Result<()> {
         // Arrange:
@@ -4597,7 +4532,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn grouped_bed_keeps_zero_group_rows_when_only_filtered_fragments_would_match() -> Result<()> {
         // Arrange:
@@ -4660,7 +4594,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn grouped_bed_assign_when_midpoint_counts_exactly_one_adjacent_group_at_boundary() -> Result<()>
     {
@@ -4728,7 +4661,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn grouped_bed_assign_when_midpoint_counts_only_midpoint_group_not_endpoint_groups()
     -> Result<()> {
@@ -4797,7 +4729,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn grouped_bed_assign_when_proportion_counts_only_groups_meeting_threshold() -> Result<()> {
         // Arrange:
@@ -4871,7 +4802,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn grouped_bed_errors_when_group_name_column_is_missing() -> Result<()> {
         // Arrange:
@@ -4910,7 +4840,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn grouped_bed_errors_when_no_windows_survive_selected_chromosomes() -> Result<()> {
         // Arrange:

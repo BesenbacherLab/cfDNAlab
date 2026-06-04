@@ -1,7 +1,5 @@
 #![cfg(feature = "cmd_bam_to_frag")]
 
-// KEEP-IN-TESTS: all active tests in this file cover bam-to-frag command output, errors, or artifacts.
-
 mod fixtures;
 
 mod tests_bam_to_frag {

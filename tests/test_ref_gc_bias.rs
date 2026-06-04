@@ -172,7 +172,6 @@ fn ref_gc_bias_run_writes_expected_prefixed_package_metadata_and_shapes() -> Res
     Ok(())
 }
 
-// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn ref_gc_bias_run_counts_expected_two_bin_reference_distribution() -> Result<()> {
     // Arrange:
@@ -315,7 +314,6 @@ fn ref_gc_bias_run_counts_expected_two_bin_reference_distribution() -> Result<()
     Ok(())
 }
 
-// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn ref_gc_bias_run_blacklist_removes_exactly_the_overlapping_start_positions() -> Result<()> {
     // Arrange:
@@ -452,7 +450,6 @@ fn ref_gc_bias_run_blacklist_removes_exactly_the_overlapping_start_positions() -
     Ok(())
 }
 
-// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn ref_gc_bias_run_end_offset_counts_expected_trimmed_two_bin_distribution() -> Result<()> {
     // Arrange:
@@ -599,7 +596,6 @@ fn ref_gc_bias_run_end_offset_counts_expected_trimmed_two_bin_distribution() -> 
     Ok(())
 }
 
-// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn ref_gc_bias_run_blacklist_with_end_offset_drops_only_trimmed_overlaps() -> Result<()> {
     // Arrange:
@@ -736,7 +732,6 @@ fn ref_gc_bias_run_blacklist_with_end_offset_drops_only_trimmed_overlaps() -> Re
     Ok(())
 }
 
-// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn ref_gc_bias_run_smoothing_enabled_spreads_three_gc_anchors_by_known_kernel() -> Result<()> {
     // Arrange:
@@ -875,7 +870,6 @@ fn ref_gc_bias_run_smoothing_enabled_spreads_three_gc_anchors_by_known_kernel() 
     Ok(())
 }
 
-// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn ref_gc_bias_run_interpolation_enabled_fills_between_equal_supported_anchors() -> Result<()> {
     // Arrange:
@@ -969,7 +963,6 @@ fn ref_gc_bias_run_interpolation_enabled_fills_between_equal_supported_anchors()
     Ok(())
 }
 
-// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn overlapping_and_touching_bed_windows_match_explicitly_merged_ref_gc_bias_run() -> Result<()> {
     let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
@@ -1047,7 +1040,6 @@ fn overlapping_and_touching_bed_windows_match_explicitly_merged_ref_gc_bias_run(
     Ok(())
 }
 
-// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn overlapping_and_touching_bed_windows_with_blacklist_match_explicitly_merged_ref_gc_bias_run()
 -> Result<()> {
@@ -1134,7 +1126,6 @@ fn overlapping_and_touching_bed_windows_with_blacklist_match_explicitly_merged_r
     Ok(())
 }
 
-// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn full_chromosome_bed_window_matches_global_ref_gc_bias_run() -> Result<()> {
     // Arrange:
@@ -1209,7 +1200,6 @@ fn full_chromosome_bed_window_matches_global_ref_gc_bias_run() -> Result<()> {
     Ok(())
 }
 
-// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn full_chromosome_bed_window_with_blacklist_matches_global_ref_gc_bias_run() -> Result<()> {
     // Arrange:
@@ -1293,7 +1283,6 @@ fn full_chromosome_bed_window_with_blacklist_matches_global_ref_gc_bias_run() ->
     Ok(())
 }
 
-// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn multiple_blacklist_files_with_touching_intervals_match_single_merged_ref_gc_bias_run()
 -> Result<()> {
@@ -1382,7 +1371,6 @@ fn multiple_blacklist_files_with_touching_intervals_match_single_merged_ref_gc_b
     Ok(())
 }
 
-// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn rejects_n_positions_when_sampling_density_would_exceed_one() -> Result<()> {
     let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
@@ -1432,7 +1420,6 @@ fn rejects_n_positions_when_sampling_density_would_exceed_one() -> Result<()> {
     Ok(())
 }
 
-// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn fixed_seed_ref_gc_bias_is_invariant_to_thread_count() -> Result<()> {
     let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
@@ -1496,7 +1483,6 @@ fn fixed_seed_ref_gc_bias_is_invariant_to_thread_count() -> Result<()> {
     Ok(())
 }
 
-// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn fixed_seed_ref_gc_bias_with_blacklist_and_bed_is_invariant_to_thread_count() -> Result<()> {
     // Arrange:
@@ -1571,7 +1557,6 @@ fn fixed_seed_ref_gc_bias_with_blacklist_and_bed_is_invariant_to_thread_count() 
     Ok(())
 }
 
-// KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn fixed_seed_ref_gc_bias_is_deterministic_for_same_tile_size() -> Result<()> {
     let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;

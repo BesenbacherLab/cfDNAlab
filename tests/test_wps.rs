@@ -1,7 +1,5 @@
 #![cfg(feature = "cmd_wps")]
 
-// KEEP-IN-TESTS: WPS command output and artifact behavior.
-
 mod fixtures;
 
 use anyhow::{Context, Result, ensure};

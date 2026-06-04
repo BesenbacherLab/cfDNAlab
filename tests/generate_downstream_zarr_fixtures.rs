@@ -4,8 +4,6 @@
     feature = "cmd_lengths"
 ))]
 
-// KEEP-IN-TESTS: ignored integration tests generate downstream compatibility artifacts.
-
 mod fixtures;
 
 use anyhow::{Context, Result};

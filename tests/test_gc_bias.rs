@@ -51,7 +51,6 @@ mod tests_gc_bias {
         );
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn gc_bias_late_tile_bed_window_uses_nonzero_sequence_interval_origin() -> Result<()> {
         // Manual derivation:
@@ -147,7 +146,6 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn provides_expected_weights_after_roundtrip() -> Result<()> {
         // Arrange: a package whose edges start at non-zero values so offset logic is exercised.
@@ -199,7 +197,6 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn gc_correction_loaders_reject_reference_footprint_mismatch() -> Result<()> {
         // Human verification status: verified
@@ -253,7 +250,6 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn gc_correction_package_rejects_missing_path_before_opening() -> Result<()> {
         // Arrange: point the loader at a `.zarr` path that does not exist.
@@ -279,7 +275,6 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn gc_correction_package_rejects_regular_file_before_parsing() -> Result<()> {
         // Arrange: create a regular file with the wrong extension.
@@ -318,7 +313,6 @@ mod tests_gc_bias {
         }
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn length_agnostic_equal_weighting_means_rows() -> Result<()> {
         let package = make_length_agnostic_package();
@@ -347,7 +341,6 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn length_agnostic_frequency_weighting_uses_frequencies() -> Result<()> {
         let package = make_length_agnostic_package();
@@ -377,7 +370,6 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn length_agnostic_max_frequency_picks_most_frequent_row() -> Result<()> {
         let package = make_length_agnostic_package();
@@ -407,7 +399,6 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn length_agnostic_requested_range_uses_only_overlapping_length_rows() -> Result<()> {
         // The package has two length rows:
@@ -442,7 +433,6 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn length_agnostic_package_range_keeps_full_package_rows() -> Result<()> {
         // Even with requested range [30,30], package range selection should keep both
@@ -473,7 +463,6 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn length_agnostic_requested_range_collapses_multiple_selected_rows() -> Result<()> {
         // Manual derivation:
@@ -624,7 +613,6 @@ mod tests_gc_bias {
         cfg
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn gc_bias_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero()
     -> Result<()> {
@@ -734,7 +722,6 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn default_windows_match_explicit_by_size_and_differ_from_global() -> Result<()> {
         // Arrange:
@@ -887,7 +874,6 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn errors_when_blacklist_removes_all_usable_gc_support() -> Result<()> {
         // Arrange:
@@ -941,7 +927,6 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn correction_package_propagates_reference_end_offset_for_single_length() -> Result<()> {
         // Arrange:
@@ -994,7 +979,6 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn overlapping_and_touching_bed_windows_does_not_match_explicitly_merged_gc_bias_run()
     -> Result<()> {
@@ -1165,7 +1149,6 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn by_size_gc_bias_is_invariant_to_aligned_vs_misaligned_tile_sizes() -> Result<()> {
         // Arrange:
@@ -1294,7 +1277,6 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn multi_chromosome_by_size_gc_bias_accumulates_windows_across_chromosomes() -> Result<()> {
         // Arrange:
@@ -1436,7 +1418,6 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn empty_middle_tile_matches_single_tile_gc_bias_run() -> Result<()> {
         // Arrange:
@@ -1565,7 +1546,6 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn touching_bed_windows_match_by_size_counts_and_default_single_length_packages() -> Result<()>
     {
@@ -1697,7 +1677,6 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn real_ref_gc_bias_then_gc_bias_package_is_non_neutral_in_two_bin_case() -> Result<()> {
         // Arrange:
@@ -1863,7 +1842,6 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn real_ref_gc_bias_smoothing_metadata_drives_gc_bias_smoothed_avg_counts() -> Result<()> {
         // Arrange:
@@ -2001,7 +1979,6 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn real_ref_gc_bias_interpolation_metadata_drives_gc_bias_interpolated_counts() -> Result<()> {
         // Arrange:
@@ -2132,7 +2109,6 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn save_intermediates_uses_output_prefixes_in_shared_output_directory() -> Result<()> {
         // Arrange:
@@ -2213,7 +2189,6 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn min_window_acgt_pct_excludes_mostly_blacklisted_window_but_keeps_clean_window() -> Result<()>
     {
@@ -2361,7 +2336,6 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn multiple_blacklist_files_with_touching_intervals_match_single_merged_gc_bias_run()
     -> Result<()> {
@@ -2468,7 +2442,6 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: public API or command artifact behavior.
     #[test]
     fn gc_bias_run_rejects_reference_gc_package_from_different_reference_footprint() -> Result<()> {
         // Human verification status: verified

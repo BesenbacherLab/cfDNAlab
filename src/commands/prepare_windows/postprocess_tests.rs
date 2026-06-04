@@ -1,5 +1,4 @@
 mod tests_postprocess {
-    // MOVE-MODULE-LOCAL: direct private prepare-windows postprocess helper tests.
 
     use super::super::build_coverage_index;
     use crate::commands::prepare_windows::{

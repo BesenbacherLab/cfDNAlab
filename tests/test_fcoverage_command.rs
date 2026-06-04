@@ -1,7 +1,5 @@
 #![cfg(feature = "cmd_fcoverage")]
 
-// KEEP-IN-TESTS: all active tests in this file cover fcoverage command output, errors, or artifacts.
-
 mod fixtures;
 
 use anyhow::Result;

@@ -46,7 +46,6 @@ mod tests_wps_peaks_command {
         )
     }
 
-    // KEEP-IN-TESTS: wps-peaks command output or artifact behavior.
     #[test]
     fn run_emits_expected_peaks_and_stats_for_fixed_size_windows() -> Result<()> {
         let bam = long_inward_fragment_series_bam("wps_peaks_600bp_fragments")?;
@@ -185,7 +184,6 @@ mod tests_wps_peaks_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: wps-peaks command output or artifact behavior.
     #[test]
     fn global_mode_handles_three_chromosomes() -> Result<()> {
         let bam = empty_three_chrom_bam("wps_peaks_three_chr_global")?;
@@ -230,7 +228,6 @@ mod tests_wps_peaks_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: wps-peaks command output or artifact behavior.
     #[test]
     fn by_size_stats_handles_three_chromosomes() -> Result<()> {
         let bam = empty_three_chrom_bam("wps_peaks_three_chr_by_size")?;
@@ -288,7 +285,6 @@ mod tests_wps_peaks_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: wps-peaks command output or artifact behavior.
     #[test]
     fn by_bed_stats_handles_three_chromosomes() -> Result<()> {
         let bam = empty_three_chrom_bam("wps_peaks_three_chr_by_bed")?;
@@ -354,7 +350,6 @@ mod tests_wps_peaks_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: wps-peaks command output or artifact behavior.
     #[test]
     fn blacklist_near_boundary_removes_cross_tile_distance() -> Result<()> {
         let bam = long_inward_fragment_series_bam("wps_peaks_boundary_blacklist")?;

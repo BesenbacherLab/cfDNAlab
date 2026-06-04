@@ -5,7 +5,6 @@ mod tests_scaling_gc_compatibility {
     };
     use std::path::Path;
 
-    // MOVE-MODULE-LOCAL: direct private scale-genome GC compatibility helper behavior.
     #[test]
     fn scaling_gc_compatibility_allows_unknown_scaling_gc_mode() -> anyhow::Result<()> {
         let path = Path::new("/tmp/example.scaling_factors.tsv");
@@ -20,7 +19,6 @@ mod tests_scaling_gc_compatibility {
         Ok(())
     }
 
-    // MOVE-MODULE-LOCAL: direct private scale-genome GC compatibility helper behavior.
     #[test]
     fn scaling_gc_compatibility_errors_when_uncorrected_scaling_meets_corrected_run() {
         // This mismatch is now a hard error:
@@ -46,7 +44,6 @@ mod tests_scaling_gc_compatibility {
         );
     }
 
-    // MOVE-MODULE-LOCAL: direct private scale-genome GC compatibility helper behavior.
     #[test]
     fn scaling_gc_compatibility_errors_when_corrected_scaling_meets_uncorrected_run() {
         // This is the opposite known mismatch:
@@ -72,7 +69,6 @@ mod tests_scaling_gc_compatibility {
         );
     }
 
-    // MOVE-MODULE-LOCAL: direct private scale-genome GC compatibility helper behavior.
     #[test]
     fn scaling_gc_compatibility_allows_corrected_file_scaling_with_corrected_tag_run()
     -> anyhow::Result<()> {
@@ -89,7 +85,6 @@ mod tests_scaling_gc_compatibility {
         Ok(())
     }
 
-    // MOVE-MODULE-LOCAL: direct private scale-genome GC compatibility helper behavior.
     #[test]
     fn scaling_gc_compatibility_allows_corrected_tag_scaling_with_corrected_file_run()
     -> anyhow::Result<()> {
@@ -106,7 +101,6 @@ mod tests_scaling_gc_compatibility {
         Ok(())
     }
 
-    // MOVE-MODULE-LOCAL: direct private scale-genome GC compatibility helper behavior.
     #[test]
     fn scaling_gc_compatibility_allows_uncorrected_scaling_with_uncorrected_run()
     -> anyhow::Result<()> {
@@ -519,7 +513,6 @@ mod tests_normalize_command {
         )
     }
 
-    // KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
     #[test]
     fn coverage_scaling_written_with_expected_ranges() -> Result<()> {
         let bam = single_contig_inward_pair_bam()?;
@@ -571,7 +564,6 @@ mod tests_normalize_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
     #[test]
     fn coverage_weights_errors_clearly_when_filters_remove_all_smoothed_mass() -> Result<()> {
         // Arrange:
@@ -599,7 +591,6 @@ mod tests_normalize_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
     #[test]
     fn coverage_weights_ignore_gap_omits_inter_mate_gap_and_writes_metadata() -> Result<()> {
         let bam = paired_fragment_with_inter_mate_gap_bam("coverage_weights_ignore_gap")?;
@@ -633,7 +624,6 @@ mod tests_normalize_command {
     }
 
     #[cfg(feature = "cmd_fragment_count_weights")]
-    // KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
     #[test]
     fn fragment_count_scaling_written_with_expected_ranges() -> Result<()> {
         // Arrange: simple_inward_bam has chr1 length 200 and one fragment spanning [20,80).
@@ -665,7 +655,6 @@ mod tests_normalize_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
     #[test]
     fn given_simple_fragment_when_coverage_weights_run_then_output_bins_cover_chromosome_without_gaps()
     -> Result<()> {
@@ -716,7 +705,6 @@ mod tests_normalize_command {
     }
 
     #[cfg(feature = "cmd_fragment_count_weights")]
-    // KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
     #[test]
     fn fragment_count_weights_differs_from_coverage_weights_for_mixed_fragment_lengths()
     -> Result<()> {
@@ -858,7 +846,6 @@ mod tests_normalize_command {
     }
 
     #[cfg(feature = "cmd_fragment_count_weights")]
-    // KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
     #[test]
     fn scaling_weights_handle_multichrom_multitile_blacklist_and_short_final_bins() -> Result<()> {
         // Arrange
@@ -1188,7 +1175,6 @@ mod tests_normalize_command {
         );
     }
 
-    // KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
     #[test]
     fn given_simple_fragment_when_coverage_weights_run_then_scaling_values_match_hand_derivation()
     -> Result<()> {
@@ -1269,7 +1255,6 @@ mod tests_normalize_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
     #[test]
     fn given_unpaired_read_fragment_when_coverage_weights_run_then_scaling_matches_same_fragment_span()
     -> Result<()> {
@@ -1624,7 +1609,6 @@ mod tests_normalize_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
     #[test]
     fn multi_chromosome_scaling_uses_one_shared_global_mean() -> Result<()> {
         // Arrange:
@@ -1777,7 +1761,6 @@ mod tests_normalize_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
     #[test]
     fn coverage_weights_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero()
     -> Result<()> {
@@ -1992,7 +1975,6 @@ mod tests_normalize_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
     #[test]
     fn explicit_chromosome_order_controls_scaling_tsv_row_order() -> Result<()> {
         // Arrange:
@@ -2044,7 +2026,6 @@ mod tests_normalize_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
     #[test]
     fn chromosomes_all_uses_bam_header_order_for_scaling_tsv_rows() -> Result<()> {
         // Arrange:
@@ -2093,7 +2074,6 @@ mod tests_normalize_command {
         Ok(())
     }
 
-    // KEEP-IN-TESTS: scaling-weights command output or artifact behavior.
     #[test]
     fn blacklist_masking_treats_fully_masked_stride_as_missing_for_smoothing_and_scaling()
     -> Result<()> {

@@ -1,7 +1,5 @@
 #![cfg(feature = "cmd_ends")]
 
-// KEEP-IN-TESTS: ends command output and artifact behavior.
-
 mod fixtures;
 
 use anyhow::{Context, Result, ensure};
