@@ -8,15 +8,15 @@ use rust_htslib::bam::record::Record;
 
 /// Compact per-read info with extracted indel events.
 #[derive(Debug, Clone)]
-pub struct FragReadInfo {
-    pub tid: i32,
-    pub interval: Interval<u32>, // Aligned reference span [start: pos(), end: reference_end())
-    pub is_reverse: bool,
-    pub mapq: u8,
+pub(crate) struct FragReadInfo {
+    pub(crate) tid: i32,
+    pub(crate) interval: Interval<u32>, // Aligned reference span [start: pos(), end: reference_end())
+    pub(crate) is_reverse: bool,
+    pub(crate) mapq: u8,
     /// Aligned strand
-    pub strand: char,
+    pub(crate) strand: char,
     /// Whether this read is read1 (or `false` for read2).
-    pub is_read_1: bool,
+    pub(crate) is_read_1: bool,
 }
 
 impl TryFrom<&Record> for FragReadInfo {
@@ -38,12 +38,12 @@ impl TryFrom<&Record> for FragReadInfo {
 
 impl FragReadInfo {
     #[inline]
-    pub fn start(&self) -> u32 {
+    pub(crate) fn start(&self) -> u32 {
         self.interval.start()
     }
 
     #[inline]
-    pub fn end(&self) -> u32 {
+    pub(crate) fn end(&self) -> u32 {
         self.interval.end()
     }
 }
@@ -65,35 +65,34 @@ impl PairOrientable for FragReadInfo {
 
 /// Fragment with mapq and read1 strand.
 #[derive(Debug, Clone)]
-pub struct FragFileFragment {
-    pub tid: i32,
-    pub interval: Interval<u32>, // fragment span [forward.pos, reverse.reference_end)
-    pub min_mapq: u8,
-    pub read1_strand: char,
+pub(crate) struct FragFileFragment {
+    pub(crate) interval: Interval<u32>, // fragment span [forward.pos, reverse.reference_end)
+    pub(crate) min_mapq: u8,
+    pub(crate) read1_strand: char,
 }
 
 impl FragFileFragment {
     /// Inclusive fragment start on the reference.
     #[inline]
-    pub fn start(&self) -> u32 {
+    pub(crate) fn start(&self) -> u32 {
         self.interval.start()
     }
 
     /// Exclusive fragment end on the reference.
     #[inline]
-    pub fn end(&self) -> u32 {
+    pub(crate) fn end(&self) -> u32 {
         self.interval.end()
     }
 
     /// Reference-span fragment length (end - start).
     #[inline]
-    pub fn len(&self) -> u32 {
+    pub(crate) fn len(&self) -> u32 {
         self.interval.len()
     }
 }
 
 /// Build a `FragFileFragment` from two reads.
-pub fn collect_fragment_with_frag_file_info(
+pub(crate) fn collect_fragment_with_frag_file_info(
     a: &FragReadInfo,
     b: &FragReadInfo,
 ) -> Option<FragFileFragment> {
@@ -111,7 +110,6 @@ pub fn collect_fragment_with_frag_file_info(
     }
 
     Some(FragFileFragment {
-        tid: forward.tid,
         interval: Interval::new(forward.start(), reverse.end()).ok()?,
         min_mapq: forward.mapq.min(reverse.mapq),
         read1_strand: if forward.is_read_1 {
@@ -123,14 +121,18 @@ pub fn collect_fragment_with_frag_file_info(
 }
 
 /// Build a `FragFileFragment` from a single read (unpaired input).
-pub fn collect_fragment_with_frag_file_info_from_single_read(
+pub(crate) fn collect_fragment_with_frag_file_info_from_single_read(
     read: &FragReadInfo,
 ) -> Option<FragFileFragment> {
     Some(FragFileFragment {
-        tid: read.tid,
         interval: read.interval,
         min_mapq: read.mapq,
         // No read 1/2 so just the strand of the single read
         read1_strand: read.strand,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    include!("frag_file_fragment_tests.rs");
 }

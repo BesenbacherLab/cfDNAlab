@@ -39,7 +39,7 @@ struct Candidate {
 ///
 /// # Returns
 /// Deduplicated window vector.
-pub fn deduplicate_identical(
+pub(crate) fn deduplicate_identical(
     windows: Vec<Window>,
     policy: DedupKeep,
     use_score: bool,
@@ -128,7 +128,7 @@ pub fn deduplicate_identical(
 ///
 /// # Returns
 /// Spaced window vector.
-pub fn enforce_min_distance_within_group(
+pub(crate) fn enforce_min_distance_within_group(
     windows: Vec<Window>,
     min_distance_bp: Option<u32>,
     policy: DistancePolicy,
@@ -206,7 +206,7 @@ pub fn enforce_min_distance_within_group(
 /// -------
 /// - `out`:
 ///     `Ok(())` after updating `windows` in place.
-pub fn apply_cluster_labels(
+pub(crate) fn apply_cluster_labels(
     windows: &mut [Window],
     min_overlaps: u32,
     coord_set: CoordinateSet,
@@ -398,7 +398,7 @@ fn overlap_sum_with_segments(
 ///
 /// # Returns
 /// Tuple of `(safe_prefix, boundary_tail)`.
-pub fn partition_safe_and_tail(
+pub(crate) fn partition_safe_and_tail(
     windows: Vec<Window>,
     min_distance_bp: Option<u32>,
     merge_scope: MergeScope,

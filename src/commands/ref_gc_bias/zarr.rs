@@ -26,24 +26,24 @@ use zarrs::{array::data_type, filesystem::FilesystemStore};
 const REFERENCE_GC_SCHEMA: &str = "reference_gc_package";
 
 /// Inputs needed to write a reference GC Zarr package.
-pub struct ReferenceGCZarrPackage<'a> {
-    pub counts: &'a Array2<f64>,
-    pub support_unobservables: &'a Array2<bool>,
-    pub support_outliers: &'a Array2<bool>,
-    pub gc_percent_widths: &'a Array2<u16>,
-    pub length_min: usize,
-    pub length_max: usize,
-    pub end_offset: u8,
-    pub skip_interpolation: bool,
-    pub smoothing_radius: u8,
-    pub smoothing_sigma: f64,
-    pub skip_smoothing: bool,
-    pub chromosomes: &'a [String],
-    pub reference_contig_footprint: &'a [ContigFootprintEntry],
+pub(crate) struct ReferenceGCZarrPackage<'a> {
+    pub(crate) counts: &'a Array2<f64>,
+    pub(crate) support_unobservables: &'a Array2<bool>,
+    pub(crate) support_outliers: &'a Array2<bool>,
+    pub(crate) gc_percent_widths: &'a Array2<u16>,
+    pub(crate) length_min: usize,
+    pub(crate) length_max: usize,
+    pub(crate) end_offset: u8,
+    pub(crate) skip_interpolation: bool,
+    pub(crate) smoothing_radius: u8,
+    pub(crate) smoothing_sigma: f64,
+    pub(crate) skip_smoothing: bool,
+    pub(crate) chromosomes: &'a [String],
+    pub(crate) reference_contig_footprint: &'a [ContigFootprintEntry],
 }
 
 /// Write the public reference GC package as a Zarr V3 store.
-pub fn write_reference_gc_package_zarr(
+pub(crate) fn write_reference_gc_package_zarr(
     store_path: &Path,
     package: ReferenceGCZarrPackage<'_>,
 ) -> Result<()> {

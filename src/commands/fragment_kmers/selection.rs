@@ -3,7 +3,7 @@ use crate::commands::fragment_kmers::positions::{AllowedWindows, PositionSelecti
 use crate::shared::positioning::PositionOrientation;
 
 #[derive(Debug, Clone)]
-pub enum SelectionDecision {
+pub(crate) enum SelectionDecision {
     IncludeForward {
         start_offset_0: u64,
     },
@@ -14,7 +14,7 @@ pub enum SelectionDecision {
     SkipAdvance,
 }
 
-pub fn evaluate_selection(
+pub(crate) fn evaluate_selection(
     selection: PositionSelection,
     windows: &AllowedWindows,
     guard: Option<&NearestFrameGuard>,

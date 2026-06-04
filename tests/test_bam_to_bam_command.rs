@@ -5,45 +5,61 @@ mod fixtures;
 use std::{collections::HashMap, fs, path::Path};
 
 use anyhow::{Context, Result};
+use cfdnalab::RunOptions;
+use cfdnalab::gc_bias::GCCorrectionPackage;
 #[cfg(feature = "cmd_coverage_weights")]
-use cfdnalab::commands::coverage_weights::{
-    config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
+use cfdnalab::run_like_cli::coverage_weights::{
+    CoverageWeightsConfig, run_coverage_weights as run_coverage_weights_command,
 };
 #[cfg(feature = "cmd_fragment_count_weights")]
-use cfdnalab::commands::fragment_count_weights::{
-    config::FragmentCountWeightsConfig, fragment_count_weights::run as run_fragment_count_weights,
+use cfdnalab::run_like_cli::fragment_count_weights::{
+    FragmentCountWeightsConfig, run_fragment_count_weights as run_fragment_count_weights_command,
 };
-use cfdnalab::commands::{
-    bam_to_bam::{bam_to_bam::run_inner, config::BamToBamConfig},
-    cli_common::{ApplyGCArgFileOnly, ChromosomeArgs},
-    gc_bias::package::GCCorrectionPackage,
+use cfdnalab::run_like_cli::{
+    bam_to_bam::{BamToBamConfig, BamToBamRunResult, run_bam_to_bam},
+    common::{ApplyGCArgFileOnly, ChromosomeArgs},
 };
-use cfdnalab::shared::{
+use cfdnalab::testing::{
+    Cigar, FragmentSpec, PairedFragmentSpec, ReadSpec, TempBam, bam_from_fragments,
+    build_command_produced_gc_correction_package_from_reference_windows,
+    single_contig_inward_pair_bam, twobit_from_sequences, twobit_with_single_repeating_contig,
+};
+use cfdnalab::{
     constants::GC_CORRECTION_SCHEMA_VERSION,
     reference::{ContigFootprintEntry, twobit_contig_footprint},
-};
-use fixtures::{
-    FragmentSpec, ReadSpec, bam_from_specs, build_real_non_neutral_gc_package, paired_fragment,
-    simple_inward_bam, simple_reference_twobit, twobit_from_sequences,
 };
 use ndarray::array;
 use rust_htslib::bam::{self, Read, record::Aux};
 use tempfile::tempdir;
 
+fn run_bam_to_bam_for_test(cfg: &BamToBamConfig) -> Result<BamToBamRunResult> {
+    run_bam_to_bam(cfg, RunOptions::new_quiet())
+}
+
+#[cfg(feature = "cmd_coverage_weights")]
+fn run_coverage_weights(cfg: &CoverageWeightsConfig) -> Result<()> {
+    run_coverage_weights_command(cfg, RunOptions::new_quiet()).map(|_| ())
+}
+
+#[cfg(feature = "cmd_fragment_count_weights")]
+fn run_fragment_count_weights(cfg: &FragmentCountWeightsConfig) -> Result<()> {
+    run_fragment_count_weights_command(cfg, RunOptions::new_quiet()).map(|_| ())
+}
+
 #[test]
 fn filters_on_mapping_quality_and_fragment_membership() -> Result<()> {
-    let surviving = paired_fragment(50, 160, 40);
-    let mut low_mapq = paired_fragment(300, 160, 40);
+    let surviving = PairedFragmentSpec::new(0, 50, 160, 40).build()?;
+    let mut low_mapq = PairedFragmentSpec::new(0, 300, 160, 40).build()?;
     low_mapq.forward.mapq = 5;
     low_mapq.reverse.mapq = 30; // One read passes but the entire fragment is removed
 
     let orphan = orphan_read(500);
 
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "bam_to_bam_mapq",
         vec![("chr1".to_string(), 1000)],
         vec![surviving, low_mapq],
         vec![orphan],
-        "bam_to_bam_mapq",
     )?;
 
     let work = tempdir()?;
@@ -52,7 +68,7 @@ fn filters_on_mapping_quality_and_fragment_membership() -> Result<()> {
     let mut cfg = base_config(&bam.bam, &out_bam);
     cfg.min_mapq = 30;
 
-    run_inner(&cfg)?;
+    run_bam_to_bam_for_test(&cfg)?;
 
     let counts = read_qname_counts(&out_bam)?;
     assert_eq!(
@@ -77,14 +93,14 @@ fn filters_on_mapping_quality_and_fragment_membership() -> Result<()> {
 
 #[test]
 fn blacklisting_removes_fragment_when_single_mate_overlaps() -> Result<()> {
-    let safe = paired_fragment(10, 120, 40);
-    let with_blacklisted_mate = paired_fragment(200, 120, 40);
+    let safe = PairedFragmentSpec::new(0, 10, 120, 40).build()?;
+    let with_blacklisted_mate = PairedFragmentSpec::new(0, 200, 120, 40).build()?;
 
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "bam_to_bam_blacklist",
         vec![("chr1".to_string(), 1000)],
         vec![safe, with_blacklisted_mate],
         Vec::new(),
-        "bam_to_bam_blacklist",
     )?;
 
     let work = tempdir()?;
@@ -95,7 +111,7 @@ fn blacklisting_removes_fragment_when_single_mate_overlaps() -> Result<()> {
     let mut cfg = base_config(&bam.bam, &out_bam);
     cfg.blacklist = Some(vec![blacklist]);
 
-    run_inner(&cfg)?;
+    run_bam_to_bam_for_test(&cfg)?;
 
     let counts = read_qname_counts(&out_bam)?;
     assert_eq!(
@@ -114,14 +130,14 @@ fn blacklisting_removes_fragment_when_single_mate_overlaps() -> Result<()> {
 
 #[test]
 fn blacklisting_removes_fragment_when_gap_is_blacklisted() -> Result<()> {
-    let safe = paired_fragment(10, 160, 40);
-    let gap_hit = paired_fragment(300, 200, 40);
+    let safe = PairedFragmentSpec::new(0, 10, 160, 40).build()?;
+    let gap_hit = PairedFragmentSpec::new(0, 300, 200, 40).build()?;
 
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "bam_to_bam_blacklist_gap",
         vec![("chr1".to_string(), 1000)],
         vec![safe, gap_hit],
         Vec::new(),
-        "bam_to_bam_blacklist_gap",
     )?;
 
     let work = tempdir()?;
@@ -132,7 +148,7 @@ fn blacklisting_removes_fragment_when_gap_is_blacklisted() -> Result<()> {
     let mut cfg = base_config(&bam.bam, &out_bam);
     cfg.blacklist = Some(vec![blacklist]);
 
-    run_inner(&cfg)?;
+    run_bam_to_bam_for_test(&cfg)?;
 
     let counts = read_qname_counts(&out_bam)?;
     assert!(
@@ -158,13 +174,13 @@ fn by_bed_excludes_chromosomes_without_any_windows() -> Result<()> {
     // Then provide a BED file that only contains chr1 [0, 100).
     // In `bam-to-bam`, `--by-bed` is an inclusion filter on fragments overlapping declared BED
     // windows, so chr2 must emit no reads at all.
-    let chr1_fragment = paired_fragment(20, 60, 30);
-    let chr2_fragment = fragment_on_tid(paired_fragment(120, 60, 30), 1);
-    let bam = bam_from_specs(
+    let chr1_fragment = PairedFragmentSpec::new(0, 20, 60, 30).build()?;
+    let chr2_fragment = fragment_on_tid(PairedFragmentSpec::new(0, 120, 60, 30).build()?, 1);
+    let bam = bam_from_fragments(
+        "bam_to_bam_missing_chr_bed_windows",
         vec![("chr1".to_string(), 300), ("chr2".to_string(), 300)],
         vec![chr1_fragment, chr2_fragment],
         Vec::new(),
-        "bam_to_bam_missing_chr_bed_windows",
     )?;
 
     let work = tempdir()?;
@@ -186,8 +202,8 @@ fn by_bed_excludes_chromosomes_without_any_windows() -> Result<()> {
     cfg.by_bed = Some(bed);
 
     // Act
-    run_inner(&global_cfg)?;
-    run_inner(&cfg)?;
+    run_bam_to_bam_for_test(&global_cfg)?;
+    run_bam_to_bam_for_test(&cfg)?;
 
     // Assert:
     // First prove the fixture and output path really preserve both chromosomes in global mode.
@@ -220,14 +236,14 @@ fn default_min_mapq_matches_explicit_zero_and_differs_from_explicit_thirty() -> 
     // Because the command writes both mates of each kept fragment, the expected BAM row counts are:
     // - default / explicit 0: 2 records for qname `frag0_20`
     // - explicit 30:         0 records
-    let mut low_mapq = paired_fragment(20, 60, 20);
+    let mut low_mapq = PairedFragmentSpec::new(0, 20, 60, 20).build()?;
     low_mapq.forward.mapq = 20;
     low_mapq.reverse.mapq = 20;
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "bam_to_bam_default_min_mapq",
         vec![("chr1".to_string(), 200)],
         vec![low_mapq],
         Vec::new(),
-        "bam_to_bam_default_min_mapq",
     )?;
 
     let work = tempdir()?;
@@ -244,9 +260,9 @@ fn default_min_mapq_matches_explicit_zero_and_differs_from_explicit_thirty() -> 
     explicit_thirty_cfg.set_min_mapq(30);
 
     // Act
-    run_inner(&default_cfg)?;
-    run_inner(&explicit_zero_cfg)?;
-    run_inner(&explicit_thirty_cfg)?;
+    run_bam_to_bam_for_test(&default_cfg)?;
+    run_bam_to_bam_for_test(&explicit_zero_cfg)?;
+    run_bam_to_bam_for_test(&explicit_thirty_cfg)?;
 
     // Assert
     let default_counts = read_qname_counts(&default_out)?;
@@ -268,14 +284,14 @@ fn default_min_mapq_matches_explicit_zero_and_differs_from_explicit_thirty() -> 
 
 #[test]
 fn writes_explicit_chromosomes_in_bam_header_order() -> Result<()> {
-    let frag_chr2 = paired_fragment(10, 160, 40);
-    let frag_chr10 = fragment_on_tid(paired_fragment(20, 160, 40), 1);
+    let frag_chr2 = PairedFragmentSpec::new(0, 10, 160, 40).build()?;
+    let frag_chr10 = fragment_on_tid(PairedFragmentSpec::new(0, 20, 160, 40).build()?, 1);
     let chroms = vec![("chr2".to_string(), 500), ("chr10".to_string(), 500)];
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "chrom_sort",
         chroms,
         vec![frag_chr2, frag_chr10],
         Vec::new(),
-        "chrom_sort",
     )?;
 
     let work = tempdir()?;
@@ -286,7 +302,7 @@ fn writes_explicit_chromosomes_in_bam_header_order() -> Result<()> {
 
     let out_bam = work.path().join("header_order.bam");
     let cfg = BamToBamConfig::new(bam.bam.clone(), out_bam.clone(), chrom_args);
-    run_inner(&cfg)?;
+    run_bam_to_bam_for_test(&cfg)?;
 
     assert_eq!(
         read_record_chromosomes(&out_bam)?,
@@ -314,19 +330,19 @@ fn chromosomes_all_follows_bam_header_order() -> Result<()> {
     // We place one fragment on each chromosome so the record order reveals that behavior
     // directly. Each kept fragment writes two BAM records, so the expected chromosome sequence is:
     //   [chr2, chr2, chr10, chr10, chr1, chr1]
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "bam_to_bam_all_default_sort",
         vec![
             ("chr2".to_string(), 500),
             ("chr10".to_string(), 500),
             ("chr1".to_string(), 500),
         ],
         vec![
-            fragment_on_tid(paired_fragment(10, 120, 40), 0),
-            fragment_on_tid(paired_fragment(20, 120, 40), 1),
-            fragment_on_tid(paired_fragment(30, 120, 40), 2),
+            fragment_on_tid(PairedFragmentSpec::new(0, 10, 120, 40).build()?, 0),
+            fragment_on_tid(PairedFragmentSpec::new(0, 20, 120, 40).build()?, 1),
+            fragment_on_tid(PairedFragmentSpec::new(0, 30, 120, 40).build()?, 2),
         ],
         Vec::new(),
-        "bam_to_bam_all_default_sort",
     )?;
 
     let work = tempdir()?;
@@ -338,7 +354,7 @@ fn chromosomes_all_follows_bam_header_order() -> Result<()> {
     let cfg = BamToBamConfig::new(bam.bam.clone(), out_bam.clone(), chrom_args);
 
     // Act
-    run_inner(&cfg)?;
+    run_bam_to_bam_for_test(&cfg)?;
 
     // Assert
     assert_eq!(
@@ -364,19 +380,19 @@ fn writes_chromosomes_file_selection_in_bam_header_order() -> Result<()> {
     // The chromosome file deliberately lists chr1 before chr2, but the BAM header order is chr2,
     // chr10, chr1. The command should keep only the selected subset and write that subset in BAM
     // header order: chr2 first, then chr1. chr10 must not appear because it was not selected.
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "bam_to_bam_chromosome_file_header_order",
         vec![
             ("chr2".to_string(), 500),
             ("chr10".to_string(), 500),
             ("chr1".to_string(), 500),
         ],
         vec![
-            fragment_on_tid(paired_fragment(10, 120, 40), 0),
-            fragment_on_tid(paired_fragment(20, 120, 40), 1),
-            fragment_on_tid(paired_fragment(30, 120, 40), 2),
+            fragment_on_tid(PairedFragmentSpec::new(0, 10, 120, 40).build()?, 0),
+            fragment_on_tid(PairedFragmentSpec::new(0, 20, 120, 40).build()?, 1),
+            fragment_on_tid(PairedFragmentSpec::new(0, 30, 120, 40).build()?, 2),
         ],
         Vec::new(),
-        "bam_to_bam_chromosome_file_header_order",
     )?;
 
     let work = tempdir()?;
@@ -390,7 +406,7 @@ fn writes_chromosomes_file_selection_in_bam_header_order() -> Result<()> {
     let cfg = BamToBamConfig::new(bam.bam.clone(), out_bam.clone(), chrom_args);
 
     // Act
-    run_inner(&cfg)?;
+    run_bam_to_bam_for_test(&cfg)?;
 
     // Assert
     assert_eq!(
@@ -410,24 +426,24 @@ fn writes_chromosomes_file_selection_in_bam_header_order() -> Result<()> {
 
 #[test]
 fn windows_keep_fragment_when_single_read_is_inside() -> Result<()> {
-    let target = paired_fragment(20, 200, 40);
-    let outside = paired_fragment(400, 200, 40);
-    let bam = bam_from_specs(
+    let target = PairedFragmentSpec::new(0, 20, 200, 40).build()?;
+    let outside = PairedFragmentSpec::new(0, 400, 200, 40).build()?;
+    let bam = bam_from_fragments(
+        "window_single_read",
         vec![("chr1".to_string(), 1000)],
         vec![target, outside],
         Vec::new(),
-        "window_single_read",
     )?;
 
     let work = tempdir()?;
     let out_bam = work.path().join("window_single.bam");
     let bed = work.path().join("windows_single.bed");
-    write_bed(&bed, &[(0, 60)])?;
+    write_bed4(&bed, &[(0, 60)])?;
 
     let mut cfg = base_config(&bam.bam, &out_bam);
     cfg.by_bed = Some(bed);
 
-    run_inner(&cfg)?;
+    run_bam_to_bam_for_test(&cfg)?;
     let counts = read_qname_counts(&out_bam)?;
     assert!(
         counts.contains_key("frag0_20"),
@@ -443,24 +459,24 @@ fn windows_keep_fragment_when_single_read_is_inside() -> Result<()> {
 
 #[test]
 fn windows_count_overlap_spanning_gap_between_mates() -> Result<()> {
-    let target = paired_fragment(0, 200, 40);
-    let outside = paired_fragment(400, 200, 40);
-    let bam = bam_from_specs(
+    let target = PairedFragmentSpec::new(0, 0, 200, 40).build()?;
+    let outside = PairedFragmentSpec::new(0, 400, 200, 40).build()?;
+    let bam = bam_from_fragments(
+        "window_gap",
         vec![("chr1".to_string(), 1000)],
         vec![target, outside],
         Vec::new(),
-        "window_gap",
     )?;
 
     let work = tempdir()?;
     let out_bam = work.path().join("window_gap.bam");
     let bed = work.path().join("windows_gap.bed");
-    write_bed(&bed, &[(80, 90)])?;
+    write_bed4(&bed, &[(80, 90)])?;
 
     let mut cfg = base_config(&bam.bam, &out_bam);
     cfg.by_bed = Some(bed);
 
-    run_inner(&cfg)?;
+    run_bam_to_bam_for_test(&cfg)?;
     let counts = read_qname_counts(&out_bam)?;
     assert!(
         counts.contains_key("frag0_0"),
@@ -476,19 +492,19 @@ fn windows_count_overlap_spanning_gap_between_mates() -> Result<()> {
 
 #[test]
 fn global_mode_keeps_expected_fragments_across_three_chromosomes() -> Result<()> {
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "bam_to_bam_three_chr_global",
         vec![
             ("chr1".to_string(), 1_000),
             ("chr2".to_string(), 1_000),
             ("chr3".to_string(), 1_000),
         ],
         vec![
-            paired_fragment(10, 120, 40),
-            fragment_on_tid(paired_fragment(30, 120, 40), 1),
-            fragment_on_tid(paired_fragment(50, 120, 40), 2),
+            PairedFragmentSpec::new(0, 10, 120, 40).build()?,
+            fragment_on_tid(PairedFragmentSpec::new(0, 30, 120, 40).build()?, 1),
+            fragment_on_tid(PairedFragmentSpec::new(0, 50, 120, 40).build()?, 2),
         ],
         Vec::new(),
-        "bam_to_bam_three_chr_global",
     )?;
 
     let work = tempdir()?;
@@ -503,7 +519,7 @@ fn global_mode_keeps_expected_fragments_across_three_chromosomes() -> Result<()>
     };
     let cfg = BamToBamConfig::new(bam.bam.clone(), out_bam.clone(), chrom_args);
 
-    run_inner(&cfg)?;
+    run_bam_to_bam_for_test(&cfg)?;
 
     let counts = read_qname_counts(&out_bam)?;
     assert_eq!(
@@ -521,22 +537,22 @@ fn global_mode_keeps_expected_fragments_across_three_chromosomes() -> Result<()>
 
 #[test]
 fn bed_mode_filters_expected_fragments_across_three_chromosomes() -> Result<()> {
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "bam_to_bam_three_chr_bed",
         vec![
             ("chr1".to_string(), 1_000),
             ("chr2".to_string(), 1_000),
             ("chr3".to_string(), 1_000),
         ],
         vec![
-            paired_fragment(10, 120, 40),
-            fragment_on_tid(paired_fragment(30, 120, 40), 1),
-            fragment_on_tid(paired_fragment(50, 120, 40), 2),
-            paired_fragment(400, 120, 40),
-            fragment_on_tid(paired_fragment(420, 120, 40), 1),
-            fragment_on_tid(paired_fragment(440, 120, 40), 2),
+            PairedFragmentSpec::new(0, 10, 120, 40).build()?,
+            fragment_on_tid(PairedFragmentSpec::new(0, 30, 120, 40).build()?, 1),
+            fragment_on_tid(PairedFragmentSpec::new(0, 50, 120, 40).build()?, 2),
+            PairedFragmentSpec::new(0, 400, 120, 40).build()?,
+            fragment_on_tid(PairedFragmentSpec::new(0, 420, 120, 40).build()?, 1),
+            fragment_on_tid(PairedFragmentSpec::new(0, 440, 120, 40).build()?, 2),
         ],
         Vec::new(),
-        "bam_to_bam_three_chr_bed",
     )?;
 
     let work = tempdir()?;
@@ -555,7 +571,7 @@ fn bed_mode_filters_expected_fragments_across_three_chromosomes() -> Result<()> 
     let mut cfg = BamToBamConfig::new(bam.bam.clone(), out_bam.clone(), chrom_args);
     cfg.by_bed = Some(bed);
 
-    run_inner(&cfg)?;
+    run_bam_to_bam_for_test(&cfg)?;
 
     let counts = read_qname_counts(&out_bam)?;
     assert_eq!(
@@ -573,12 +589,12 @@ fn bed_mode_filters_expected_fragments_across_three_chromosomes() -> Result<()> 
 
 #[test]
 fn writes_coverage_weight_when_scaling_factors_provided() -> Result<()> {
-    let fragment = paired_fragment(0, 100, 40);
-    let bam = bam_from_specs(
+    let fragment = PairedFragmentSpec::new(0, 0, 100, 40).build()?;
+    let bam = bam_from_fragments(
+        "scaling_weights",
         vec![("chr1".to_string(), 500)],
         vec![fragment],
         Vec::new(),
-        "scaling_weights",
     )?;
 
     let work = tempdir()?;
@@ -589,7 +605,7 @@ fn writes_coverage_weight_when_scaling_factors_provided() -> Result<()> {
     let mut cfg = base_config(&bam.bam, &out_bam);
     cfg.set_coverage_scaling_factors(Some(scaling));
 
-    run_inner(&cfg)?;
+    run_bam_to_bam_for_test(&cfg)?;
     let weights = read_tag_values(&out_bam, b"cw")?;
     assert_eq!(
         weights,
@@ -608,12 +624,12 @@ fn writes_count_weight_when_count_scaling_factors_provided() -> Result<()> {
     // Expected:
     // - both mates receive nw = 0.5
     // - no cw tags are written when only count scaling is configured
-    let fragment = paired_fragment(0, 100, 40);
-    let bam = bam_from_specs(
+    let fragment = PairedFragmentSpec::new(0, 0, 100, 40).build()?;
+    let bam = bam_from_fragments(
+        "count_scaling_weights",
         vec![("chr1".to_string(), 500)],
         vec![fragment],
         Vec::new(),
-        "count_scaling_weights",
     )?;
 
     let work = tempdir()?;
@@ -625,7 +641,7 @@ fn writes_count_weight_when_count_scaling_factors_provided() -> Result<()> {
     cfg.set_count_scaling_factors(Some(scaling));
 
     // Act
-    run_inner(&cfg)?;
+    run_bam_to_bam_for_test(&cfg)?;
 
     // Assert
     assert_eq!(read_tag_values(&out_bam, b"nw")?, vec![0.5_f32, 0.5_f32]);
@@ -649,12 +665,12 @@ fn writes_coverage_and_fragment_count_scaling_to_separate_aux_tags() -> Result<(
     // - cw  = 2.0
     // - nw  = 0.5
     // - fl = 100
-    let fragment = paired_fragment(0, 100, 40);
-    let bam = bam_from_specs(
+    let fragment = PairedFragmentSpec::new(0, 0, 100, 40).build()?;
+    let bam = bam_from_fragments(
+        "dual_scaling_weights",
         vec![("chr1".to_string(), 500)],
         vec![fragment],
         Vec::new(),
-        "dual_scaling_weights",
     )?;
 
     let work = tempdir()?;
@@ -669,7 +685,7 @@ fn writes_coverage_and_fragment_count_scaling_to_separate_aux_tags() -> Result<(
     cfg.set_count_scaling_factors(Some(fragment_count_scaling));
 
     // Act
-    run_inner(&cfg)?;
+    run_bam_to_bam_for_test(&cfg)?;
 
     // Assert
     assert_eq!(read_tag_values(&out_bam, b"cw")?, vec![2.0_f32, 2.0_f32]);
@@ -687,7 +703,7 @@ fn paired_and_unpaired_fragment_modes_apply_same_full_fragment_scaling_for_same_
     // Arrange:
     // We represent the same physical fragment span [20, 80) in two different supported input
     // modes:
-    // - paired-end: the `simple_inward_bam()` fixture has one fragment with forward [20, 40) and
+    // - paired-end: the `single_contig_inward_pair_bam()` fixture has one fragment with forward [20, 40) and
     //   reverse [60, 80), so fragment span = [20, 80), length = 60
     // - unpaired `reads_are_fragments`: one single read with CIGAR 60M starting at 20, so the
     //   read span is also [20, 80), length = 60
@@ -704,16 +720,17 @@ fn paired_and_unpaired_fragment_modes_apply_same_full_fragment_scaling_for_same_
     // Therefore:
     // - paired mode must emit two records, each tagged with cw = 4/3 and fl = 60
     // - unpaired mode must emit one record tagged with cw = 4/3 and fl = 60
-    let paired_bam = simple_inward_bam()?;
-    let unpaired_bam = bam_from_specs(
+    let paired_bam = single_contig_inward_pair_bam()?;
+    let unpaired_bam = bam_from_fragments(
+        "bam_to_bam_unpaired_fragment_scaling",
         vec![("chr1".to_string(), 200)],
         Vec::new(),
         vec![ReadSpec {
             tid: 0,
             pos: 20,
-            cigar: vec![('M', 60)],
+            cigar: vec![Cigar::Match(60)],
             seq: vec![b'A'; 60],
-            qual: 30,
+            base_quality: 30,
             is_reverse: false,
             mapq: 40,
             flags: 0,
@@ -721,7 +738,6 @@ fn paired_and_unpaired_fragment_modes_apply_same_full_fragment_scaling_for_same_
             mate_pos: None,
             insert_size: 0,
         }],
-        "bam_to_bam_unpaired_fragment_scaling",
     )?;
     let work = tempdir()?;
     let paired_out = work.path().join("paired_scaled.bam");
@@ -755,8 +771,8 @@ chr1\t80\t200\t1.0\n",
     }
 
     // Act
-    run_inner(&paired_cfg)?;
-    run_inner(&unpaired_cfg)?;
+    run_bam_to_bam_for_test(&paired_cfg)?;
+    run_bam_to_bam_for_test(&unpaired_cfg)?;
 
     // Assert
     let paired_cov = read_tag_values(&paired_out, b"cw")?;
@@ -800,16 +816,17 @@ fn paired_and_unpaired_fragment_modes_apply_same_full_fragment_count_scaling_for
     // - paired mode writes nw = 4/3 on both mates
     // - unpaired mode writes nw = 4/3 on the single fragment record
     // - cw is absent in both runs
-    let paired_bam = simple_inward_bam()?;
-    let unpaired_bam = bam_from_specs(
+    let paired_bam = single_contig_inward_pair_bam()?;
+    let unpaired_bam = bam_from_fragments(
+        "bam_to_bam_unpaired_fragment_count_scaling",
         vec![("chr1".to_string(), 200)],
         Vec::new(),
         vec![ReadSpec {
             tid: 0,
             pos: 20,
-            cigar: vec![('M', 60)],
+            cigar: vec![Cigar::Match(60)],
             seq: vec![b'A'; 60],
-            qual: 30,
+            base_quality: 30,
             is_reverse: false,
             mapq: 40,
             flags: 0,
@@ -817,7 +834,6 @@ fn paired_and_unpaired_fragment_modes_apply_same_full_fragment_count_scaling_for
             mate_pos: None,
             insert_size: 0,
         }],
-        "bam_to_bam_unpaired_fragment_count_scaling",
     )?;
     let work = tempdir()?;
     let paired_out = work.path().join("paired_count_scaled.bam");
@@ -851,8 +867,8 @@ chr1\t80\t200\t1.0\n",
     }
 
     // Act
-    run_inner(&paired_cfg)?;
-    run_inner(&unpaired_cfg)?;
+    run_bam_to_bam_for_test(&paired_cfg)?;
+    run_bam_to_bam_for_test(&unpaired_cfg)?;
 
     // Assert
     let paired_cnt = read_tag_values(&paired_out, b"nw")?;
@@ -894,8 +910,8 @@ chr1\t80\t200\t1.0\n",
 
 #[test]
 fn gc_file_neutralize_invalid_writes_gc_tag_one_on_both_mates() -> Result<()> {
-    let bam = simple_inward_bam()?;
-    let ref_twobit = simple_reference_twobit()?;
+    let bam = single_contig_inward_pair_bam()?;
+    let ref_twobit = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let work = tempdir()?;
     let out_bam = work.path().join("gc_fallback.bam");
     let gc_path = work.path().join("gc_pkg.zarr");
@@ -921,7 +937,7 @@ fn gc_file_neutralize_invalid_writes_gc_tag_one_on_both_mates() -> Result<()> {
     // - With `neutralize_invalid_gc=true`, `bam-to-bam` keeps the fragment,
     //   `gc_failed_fragments` increments once per fragment,
     //   and both mates receive a `GC` AUX tag of 1.0.
-    let counters = run_inner(&cfg)?;
+    let counters = run_bam_to_bam_for_test(&cfg)?.counters;
 
     assert_eq!(counters.base.counted_fragments, 1);
     assert_eq!(counters.gc_failed_fragments, 1);
@@ -945,8 +961,8 @@ fn gc_file_neutralize_invalid_writes_gc_tag_one_on_both_mates() -> Result<()> {
 
 #[test]
 fn gc_file_default_behavior_skips_fragment_entirely() -> Result<()> {
-    let bam = simple_inward_bam()?;
-    let ref_twobit = simple_reference_twobit()?;
+    let bam = single_contig_inward_pair_bam()?;
+    let ref_twobit = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let work = tempdir()?;
     let out_bam = work.path().join("gc_drop_invalid.bam");
     let gc_path = work.path().join("gc_pkg.zarr");
@@ -973,7 +989,7 @@ fn gc_file_default_behavior_skips_fragment_entirely() -> Result<()> {
     // - with the default GC behavior, the command must skip the fragment instead of silently
     //   neutralizing it to weight 1.0
     // - therefore the output BAM must contain no records and no AUX tags at all
-    let counters = run_inner(&cfg)?;
+    let counters = run_bam_to_bam_for_test(&cfg)?.counters;
 
     assert_eq!(counters.gc_failed_fragments, 1);
     assert_eq!(counters.base.counted_fragments, 0);
@@ -995,8 +1011,8 @@ fn gc_file_default_behavior_skips_fragment_entirely() -> Result<()> {
 
 #[test]
 fn gc_file_and_scaling_factors_write_identical_gc_cov_and_flen_tags_on_both_mates() -> Result<()> {
-    let bam = simple_inward_bam()?;
-    let ref_twobit = simple_reference_twobit()?;
+    let bam = single_contig_inward_pair_bam()?;
+    let ref_twobit = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let work = tempdir()?;
     let out_bam = work.path().join("gc_and_cov.bam");
     let gc_path = work.path().join("gc_pkg.zarr");
@@ -1018,7 +1034,7 @@ fn gc_file_and_scaling_factors_write_identical_gc_cov_and_flen_tags_on_both_mate
     }
 
     // Manual expectations:
-    // - `simple_inward_bam()` contains one fragment spanning [20,80), so fl must be 60
+    // - `single_contig_inward_pair_bam()` contains one fragment spanning [20,80), so fl must be 60
     // - the whole-chrom scaling TSV sets factor 4/3 everywhere, so both mates must receive
     //   identical `cw = 4/3`
     // - the helper GC package has:
@@ -1029,7 +1045,7 @@ fn gc_file_and_scaling_factors_write_identical_gc_cov_and_flen_tags_on_both_mate
     //   the second GC bin and both mates must receive `GC = 10`
     // - because `bam-to-bam` tags per fragment, both output records must carry the same
     //   `GC`, `cw`, and `fl` values
-    let counters = run_inner(&cfg)?;
+    let counters = run_bam_to_bam_for_test(&cfg)?.counters;
 
     assert_eq!(counters.base.counted_fragments, 1);
     assert_eq!(read_tag_values(&out_bam, b"GC")?, vec![10.0_f32, 10.0_f32]);
@@ -1045,8 +1061,8 @@ fn gc_file_and_scaling_factors_write_identical_gc_cov_and_flen_tags_on_both_mate
 #[test]
 fn gc_file_and_count_scaling_factors_write_identical_gc_cnt_and_flen_tags_on_both_mates()
 -> Result<()> {
-    let bam = simple_inward_bam()?;
-    let ref_twobit = simple_reference_twobit()?;
+    let bam = single_contig_inward_pair_bam()?;
+    let ref_twobit = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let work = tempdir()?;
     let out_bam = work.path().join("gc_and_cnt.bam");
     let gc_path = work.path().join("gc_pkg.zarr");
@@ -1071,7 +1087,7 @@ fn gc_file_and_count_scaling_factors_write_identical_gc_cnt_and_flen_tags_on_bot
     // - same fragment and GC derivation as the matching coverage-based test
     // - both mates must receive GC = 10 and nw = 4/3
     // - cw stays absent when only count scaling is configured
-    let counters = run_inner(&cfg)?;
+    let counters = run_bam_to_bam_for_test(&cfg)?.counters;
 
     assert_eq!(counters.base.counted_fragments, 1);
     assert_eq!(read_tag_values(&out_bam, b"GC")?, vec![10.0_f32, 10.0_f32]);
@@ -1109,7 +1125,7 @@ fn real_fragment_count_weights_tsv_is_applied_per_fragment_in_bam_to_bam() -> Re
     fs::create_dir_all(&weights_out_dir)?;
 
     let mut weights_cfg = FragmentCountWeightsConfig::new(
-        cfdnalab::commands::cli_common::IOCArgs {
+        cfdnalab::run_like_cli::common::IOCArgs {
             bam: bam.bam.clone(),
             output_dir: weights_out_dir.clone(),
             n_threads: 2,
@@ -1143,7 +1159,7 @@ fn real_fragment_count_weights_tsv_is_applied_per_fragment_in_bam_to_bam() -> Re
     }
 
     // Act
-    run_inner(&cfg)?;
+    run_bam_to_bam_for_test(&cfg)?;
 
     // Assert
     let mut reader = bam::Reader::from_path(&out_bam)?;
@@ -1191,8 +1207,8 @@ fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range
     //
     // The converter validates the GC package before it starts chromosome iteration, so the
     // expected error is the shared compatibility failure from the GC loader.
-    let bam = simple_inward_bam()?;
-    let ref_twobit = simple_reference_twobit()?;
+    let bam = single_contig_inward_pair_bam()?;
+    let ref_twobit = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let work = tempdir()?;
     let out_bam = work.path().join("gc_range_error.bam");
     let gc_path = work.path().join("gc_pkg_short.zarr");
@@ -1220,7 +1236,7 @@ fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range
     }
 
     // Act
-    let err = run_inner(&cfg).expect_err("out-of-range GC package should fail");
+    let err = run_bam_to_bam_for_test(&cfg).expect_err("out-of-range GC package should fail");
 
     // Assert
     let msg = err.to_string();
@@ -1259,17 +1275,17 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_bam_to_bam_in_expected_directio
     let starts = [10_i64, 110, 120, 130, 140, 150, 160, 170, 180, 190];
     let fragments = starts
         .into_iter()
-        .map(|start| paired_fragment(start, 10, 5))
-        .collect();
-    let bam = bam_from_specs(
+        .map(|start| PairedFragmentSpec::new(0, start, 10, 5).build())
+        .collect::<Result<Vec<_>>>()?;
+    let bam = bam_from_fragments(
+        "bam_to_bam_real_non_neutral_bam",
         vec![("chr1".to_string(), 200)],
         fragments,
         Vec::new(),
-        "bam_to_bam_real_non_neutral_bam",
     )?;
     let work = tempdir()?;
     let out_bam = work.path().join("real_non_neutral_gc.bam");
-    let gc_path = build_real_non_neutral_gc_package(
+    let gc_path = build_command_produced_gc_correction_package_from_reference_windows(
         &bam.bam,
         &reference.path,
         work.path(),
@@ -1293,7 +1309,7 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_bam_to_bam_in_expected_directio
     }
 
     // Act
-    let counters = run_inner(&cfg)?;
+    let counters = run_bam_to_bam_for_test(&cfg)?.counters;
 
     // Assert
     assert_eq!(counters.base.counted_fragments, 10);
@@ -1319,15 +1335,15 @@ fn bed_blacklist_scaling_and_gc_together_keep_only_the_expected_tagged_fragment(
         "bam_to_bam_combined_filters_reference",
         vec![("chr1".to_string(), "ACGT".repeat(75))],
     )?;
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "bam_to_bam_combined_filters_bam",
         vec![("chr1".to_string(), 300)],
         vec![
-            paired_fragment(20, 60, 20),
-            paired_fragment(100, 60, 20),
-            paired_fragment(220, 60, 20),
+            PairedFragmentSpec::new(0, 20, 60, 20).build()?,
+            PairedFragmentSpec::new(0, 100, 60, 20).build()?,
+            PairedFragmentSpec::new(0, 220, 60, 20).build()?,
         ],
         Vec::new(),
-        "bam_to_bam_combined_filters_bam",
     )?;
     let work = tempdir()?;
     let out_bam = work.path().join("combined_filters.bam");
@@ -1337,7 +1353,7 @@ fn bed_blacklist_scaling_and_gc_together_keep_only_the_expected_tagged_fragment(
     let blacklist_path = work.path().join("blacklist.bed");
     build_gc_package(&gc_path, 0, twobit_contig_footprint(&reference.path)?)?;
     write_scaling_file(&scaling_path, "chr1", 300, 4.0_f32 / 3.0_f32)?;
-    write_bed(&bed_path, &[(0, 180)])?;
+    write_bed4(&bed_path, &[(0, 180)])?;
     fs::write(&blacklist_path, "chr1\t120\t130\n")?;
 
     let mut cfg = base_config(&bam.bam, &out_bam);
@@ -1363,7 +1379,7 @@ fn bed_blacklist_scaling_and_gc_together_keep_only_the_expected_tagged_fragment(
     //     GC%=50 -> `GC = 10`
     //     scaling factor is uniform -> `cw = 4/3`
     //     fragment length -> `fl = 60`
-    let counters = run_inner(&cfg)?;
+    let counters = run_bam_to_bam_for_test(&cfg)?.counters;
 
     assert_eq!(counters.base.counted_fragments, 1);
     assert_eq!(counters.blacklisted_fragments, 1);
@@ -1418,21 +1434,24 @@ fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_bam_t
     // It writes one tag set per emitted read, so the final BAM must contain:
     // - two chr1 reads with cw = 275/432 and fl = 60
     // - two chr2 reads with cw = 25/24   and fl = 20
-    let mut chr2_fragment = paired_fragment(20, 20, 10);
+    let mut chr2_fragment = PairedFragmentSpec::new(0, 20, 20, 10).build()?;
     chr2_fragment = fragment_on_tid(chr2_fragment, 1);
 
-    let bam = bam_from_specs(
-        vec![("chr1".to_string(), 200), ("chr2".to_string(), 200)],
-        vec![paired_fragment(20, 60, 20), chr2_fragment],
-        Vec::new(),
+    let bam = bam_from_fragments(
         "bam_to_bam_real_multi_chr_scaling",
+        vec![("chr1".to_string(), 200), ("chr2".to_string(), 200)],
+        vec![
+            PairedFragmentSpec::new(0, 20, 60, 20).build()?,
+            chr2_fragment,
+        ],
+        Vec::new(),
     )?;
     let work = tempdir()?;
 
     let weights_out_dir = work.path().join("weights_out");
     std::fs::create_dir_all(&weights_out_dir)?;
     let mut weights_cfg = CoverageWeightsConfig::new(
-        cfdnalab::commands::cli_common::IOCArgs {
+        cfdnalab::run_like_cli::common::IOCArgs {
             bam: bam.bam.clone(),
             output_dir: weights_out_dir.clone(),
             n_threads: 1,
@@ -1473,7 +1492,7 @@ fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_bam_t
     }
 
     // Act
-    let counters = run_inner(&cfg)?;
+    let counters = run_bam_to_bam_for_test(&cfg)?.counters;
 
     // Assert
     assert_eq!(counters.base.counted_fragments, 2);
@@ -1526,8 +1545,8 @@ fn gc_file_rejects_package_with_schema_version_mismatch() -> Result<()> {
     // Build the smallest valid GC correction package shape, but with an intentionally
     // incompatible schema version. `bam-to-bam` should reject it while loading the package,
     // before chromosome processing starts or any output BAM records are written.
-    let bam = simple_inward_bam()?;
-    let ref_twobit = simple_reference_twobit()?;
+    let bam = single_contig_inward_pair_bam()?;
+    let ref_twobit = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let work = tempdir()?;
     let out_bam = work.path().join("gc_bad_version.bam");
     let gc_path = work.path().join("gc_pkg_bad_version.zarr");
@@ -1550,7 +1569,7 @@ fn gc_file_rejects_package_with_schema_version_mismatch() -> Result<()> {
     cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
 
     // Act
-    let err = run_inner(&cfg).expect_err("schema version mismatch should fail");
+    let err = run_bam_to_bam_for_test(&cfg).expect_err("schema version mismatch should fail");
 
     // Assert
     let msg = err.to_string();
@@ -1565,13 +1584,13 @@ fn gc_file_rejects_package_with_schema_version_mismatch() -> Result<()> {
 #[test]
 fn scaling_tsv_must_cover_requested_chromosome_end_in_bam_to_bam() -> Result<()> {
     // Arrange:
-    // `simple_inward_bam()` uses chr1 length 200.
+    // `single_contig_inward_pair_bam()` uses chr1 length 200.
     // The shared scaling loader requires bins to cover the whole requested chromosome exactly.
     //
     // This TSV stops at 100:
     //   [0,100) factor 2.0
     // so the converter must reject it before chromosome processing begins.
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let work = tempdir()?;
     let out_bam = work.path().join("scaling_truncated.bam");
     let scaling_path = work.path().join("truncated_scaling.tsv");
@@ -1581,7 +1600,7 @@ fn scaling_tsv_must_cover_requested_chromosome_end_in_bam_to_bam() -> Result<()>
     cfg.set_coverage_scaling_factors(Some(scaling_path));
 
     // Act
-    let err = run_inner(&cfg).expect_err("truncated scaling TSV should fail");
+    let err = run_bam_to_bam_for_test(&cfg).expect_err("truncated scaling TSV should fail");
 
     // Assert:
     // `bam-to-bam` wraps the shared loader with `load scaling factors`, so inspect the full
@@ -1601,7 +1620,7 @@ fn count_scaling_tsv_must_cover_requested_chromosome_end_in_bam_to_bam() -> Resu
     // This mirrors the coverage-side truncated TSV regression, but through the separate
     // `--count-scaling-factors` loader path. The artifact contract is the same: bins must cover
     // the full requested chromosome even if the counted fragment lies entirely inside [0,100).
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let work = tempdir()?;
     let out_bam = work.path().join("count_scaling_truncated.bam");
     let scaling_path = work.path().join("truncated_count_scaling.tsv");
@@ -1611,7 +1630,7 @@ fn count_scaling_tsv_must_cover_requested_chromosome_end_in_bam_to_bam() -> Resu
     cfg.set_count_scaling_factors(Some(scaling_path));
 
     // Act
-    let err = run_inner(&cfg).expect_err("truncated count scaling TSV should fail");
+    let err = run_bam_to_bam_for_test(&cfg).expect_err("truncated count scaling TSV should fail");
 
     // Assert
     let msg = format!("{err:#}");
@@ -1629,8 +1648,8 @@ fn count_scaling_tsv_with_uncorrected_metadata_rejects_gc_corrected_bam_to_bam_r
     // The BAM run uses `--gc-file`, so the current run is explicitly GC-corrected.
     // A count-scaling TSV marked `gc_mode=uncorrected` is therefore a known mismatch and should
     // fail during scaling-map loading before any BAM records are written.
-    let bam = simple_inward_bam()?;
-    let ref_twobit = simple_reference_twobit()?;
+    let bam = single_contig_inward_pair_bam()?;
+    let ref_twobit = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let work = tempdir()?;
     let out_bam = work.path().join("count_scaling_gc_mismatch.bam");
     let scaling_path = work.path().join("uncorrected_count_scaling.tsv");
@@ -1650,7 +1669,7 @@ fn count_scaling_tsv_with_uncorrected_metadata_rejects_gc_corrected_bam_to_bam_r
     cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
 
     // Act
-    let err = run_inner(&cfg)
+    let err = run_bam_to_bam_for_test(&cfg)
         .expect_err("uncorrected count scaling must fail in a GC-corrected bam-to-bam run");
 
     // Assert
@@ -1679,9 +1698,9 @@ fn orphan_read(pos: i64) -> ReadSpec {
     ReadSpec {
         tid: 0,
         pos,
-        cigar: vec![('M', 40)],
+        cigar: vec![Cigar::Match(40)],
         seq: vec![b'G'; 40],
-        qual: 30,
+        base_quality: 30,
         is_reverse: false,
         mapq: 60,
         flags: 0,
@@ -1815,16 +1834,19 @@ fn fragment_on_tid(mut fragment: FragmentSpec, tid: usize) -> FragmentSpec {
 }
 
 #[cfg(feature = "cmd_fragment_count_weights")]
-fn mixed_length_fragment_bam(name: &str) -> Result<fixtures::BamFixture> {
-    bam_from_specs(
-        vec![("chr1".to_string(), 100)],
-        vec![paired_fragment(0, 20, 10), paired_fragment(20, 60, 10)],
-        Vec::new(),
+fn mixed_length_fragment_bam(name: &str) -> Result<TempBam> {
+    bam_from_fragments(
         name,
+        vec![("chr1".to_string(), 100)],
+        vec![
+            PairedFragmentSpec::new(0, 0, 20, 10).build()?,
+            PairedFragmentSpec::new(0, 20, 60, 10).build()?,
+        ],
+        Vec::new(),
     )
 }
 
-fn write_bed(path: &Path, windows: &[(u64, u64)]) -> Result<()> {
+fn write_bed4(path: &Path, windows: &[(u64, u64)]) -> Result<()> {
     let mut contents = String::new();
     for &(start, end) in windows {
         contents.push_str(&format!("chr1\t{}\t{}\n", start, end));

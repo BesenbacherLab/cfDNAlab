@@ -1,4 +1,5 @@
 use crate::{
+    command_run::{CommandRunResult, RunOptions},
     commands::{
         cli_common::*,
         counters::GCCounters,
@@ -57,16 +58,51 @@ use ndarray::{Array1, Array2, ArrayBase, Axis, Data, DataMut, Ix2, Zip};
 use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
-use std::{fs::create_dir_all, path::PathBuf, sync::Arc, time::Instant};
+use std::{
+    fs::create_dir_all,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Instant,
+};
 use tracing::{info, warn};
 
 const COMMAND_TARGET: &str = "gc-bias";
+
+/// Result from `gc-bias`.
+///
+/// The command writes a GC correction package. The result records the package path, final output
+/// files, and counters from the observed-fragment run.
+#[derive(Debug)]
+pub struct GCBiasRunResult {
+    /// Fragment counters collected while building the observed GC distribution.
+    pub counters: GCCounters,
+    /// Final GC correction package path.
+    pub correction_package_path: PathBuf,
+    /// Final output files produced by the command.
+    pub output_files: Vec<PathBuf>,
+}
+
+impl CommandRunResult for GCBiasRunResult {
+    type Counters = GCCounters;
+
+    fn counters(&self) -> &Self::Counters {
+        &self.counters
+    }
+
+    fn output_files(&self) -> &[PathBuf] {
+        &self.output_files
+    }
+
+    fn primary_output(&self) -> Option<&Path> {
+        Some(self.correction_package_path.as_path())
+    }
+}
 
 /// Get the GC count for a fragment after trimming ends.
 ///
 /// Returns `None` when the trimmed interval is empty, outside the loaded sequence,
 /// or lacks sufficient ACGT support.
-pub fn get_fragment_gc(
+pub(crate) fn get_fragment_gc(
     fragment_interval: Interval<u64>,
     sequence_interval: Interval<u64>,
     end_offset: u32,
@@ -124,7 +160,7 @@ fn fragment_assignment_interval(
     }
 }
 
-pub fn finalize_window_buffer(
+pub(crate) fn finalize_window_buffer(
     buf: &mut WindowState,
     gc_prefixes: &GCPrefixes,
     sequence_interval: Interval<u64>,
@@ -246,7 +282,32 @@ impl ReduceState {
     }
 }
 
-pub fn run(opt: &GCConfig) -> Result<()> {
+/// Run the `gc-bias` command.
+///
+/// This command combines an observed fragment GC distribution with a reference GC package and
+/// writes a correction package for later commands. It applies configured fragment filters,
+/// windowing, support masks, outlier handling, smoothing, and interpolation.
+///
+/// Reporting is controlled by `options`. `report_statistics` prints the final summary and
+/// `show_progress` controls progress bars. This command does not use status logs.
+///
+/// Parameters
+/// ----------
+/// - `opt`:
+///     Fully resolved configuration for the `gc-bias` command.
+/// - `options`:
+///     Reporting controls for statistics and progress bars.
+///
+/// Returns
+/// -------
+/// - `Ok(GCBiasRunResult)`:
+///     Counters and output paths for the completed run.
+///
+/// Errors
+/// ------
+/// Returns an error when the reference package is incompatible, the configuration is invalid, an
+/// input cannot be read, or the correction package cannot be written.
+pub fn run_gc_bias(opt: &GCConfig, options: RunOptions) -> Result<GCBiasRunResult> {
     let start_time = Instant::now();
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
@@ -319,7 +380,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     };
     let (tiles, windows_aligned_to_tiles) =
         build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp, align_bp)?;
-    let progress = ProgressFactory::new();
+    let progress = ProgressFactory::with_enabled(options.show_progress);
     let pb = Arc::new(progress.default_bar(tiles.len() as u64));
 
     let windows_lookup = windows_map.as_ref();
@@ -416,7 +477,11 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             |a, b| a.merge(b),
         )?;
 
-    pb.finish_with_message("| Finished counting");
+    if options.show_progress {
+        pb.finish_with_message("| Finished counting");
+    } else {
+        pb.finish_and_clear();
+    }
 
     // Release tile-level inputs before global aggregation
     drop(tile_window_spans_for_threads);
@@ -765,7 +830,10 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         .join(dot_join(&[prefix, "gc_bias_correction.zarr"]));
     let temp_correction_package_path = final_outputs.temp_path_for(&correction_package_path)?;
     correction_pkg.write_zarr(&temp_correction_package_path)?;
-    final_outputs.record(temp_correction_package_path, correction_package_path)?;
+    final_outputs.record(
+        temp_correction_package_path,
+        correction_package_path.clone(),
+    )?;
 
     // Plot the avg. gc-bias across lengths for quick QC
     #[cfg(feature = "plotters")]
@@ -820,19 +888,25 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         "Extreme GC-bias values clamped to [{:.1},{:.1}] before final scaling: {}",
         CORRECTION_CLAMP_RANGE.0, CORRECTION_CLAMP_RANGE.1, outlier_stats.hard_clamped
     ));
-    print_fragment_run_statistics(
-        &global_counter.base,
-        elapsed,
-        FragmentRunStatisticsOptions {
-            include_section_header: true,
-            notes: &[],
-            labels: DEFAULT_FRAGMENT_STATISTICS_LABELS,
-            blacklist_excluded_fragments: None,
-            gc: None,
-        },
-        extra_lines.iter().map(String::as_str),
-    );
-    Ok(())
+    if options.report_statistics {
+        print_fragment_run_statistics(
+            &global_counter.base,
+            elapsed,
+            FragmentRunStatisticsOptions {
+                include_section_header: true,
+                notes: &[],
+                labels: DEFAULT_FRAGMENT_STATISTICS_LABELS,
+                blacklist_excluded_fragments: None,
+                gc: None,
+            },
+            extra_lines.iter().map(String::as_str),
+        );
+    }
+    Ok(GCBiasRunResult {
+        counters: global_counter,
+        correction_package_path: correction_package_path.clone(),
+        output_files: vec![correction_package_path],
+    })
 }
 
 fn validate_reference_chromosomes(
@@ -1281,7 +1355,7 @@ fn process_tile(
     Ok((tile_output, counter))
 }
 
-pub fn process_window_in_place(
+pub(crate) fn process_window_in_place(
     gc_counts: &mut GCCounts,
     opt: &GCConfig,
     avg_window_span: f64,
@@ -1313,7 +1387,7 @@ pub fn process_window_in_place(
     Ok(true)
 }
 
-pub fn process_window(
+pub(crate) fn process_window(
     mut gc_counts: GCCounts,
     opt: &GCConfig,
     avg_window_span: f64,
@@ -1324,7 +1398,7 @@ pub fn process_window(
     Ok(None)
 }
 
-pub fn mean_scale_per_length_array<S, M>(
+pub(crate) fn mean_scale_per_length_array<S, M>(
     x: &ArrayBase<S, Ix2>,
     pseudo_count: f64,
     support_mask: Option<&ArrayBase<M, Ix2>>,
@@ -1382,7 +1456,7 @@ where
     out
 }
 
-pub fn interpolate_masked_corrections(
+pub(crate) fn interpolate_masked_corrections(
     matrix: &mut Array2<f64>,
     support_mask: &Array2<bool>,
 ) -> Result<()> {
@@ -1431,7 +1505,7 @@ pub fn interpolate_masked_corrections(
 // Overall scaling
 // Elements that are marked as `false` in the support mask are
 // still scaled but do not contribute to the mean
-pub fn mean_scale_array<S, M>(
+pub(crate) fn mean_scale_array<S, M>(
     x: &ArrayBase<S, Ix2>,
     support_mask: Option<&ArrayBase<M, Ix2>>,
 ) -> Option<Array2<f64>>
@@ -1546,4 +1620,9 @@ impl IntermediateFileSaver {
         }
         Ok(())
     }
+}
+
+#[cfg(test)]
+mod tests {
+    include!("gc_bias_tests.rs");
 }

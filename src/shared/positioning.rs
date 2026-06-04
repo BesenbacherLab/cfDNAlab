@@ -1,5 +1,6 @@
 #[cfg(feature = "cli")]
 use clap::ValueEnum;
+#[cfg(feature = "cmd_fragment_kmers")]
 use serde::{Deserialize, Serialize};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
@@ -10,6 +11,7 @@ use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 /// the positional selection code, visualization helpers, and the k-mer codec
 /// orientation logic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg(feature = "cmd_fragment_kmers")]
 pub enum PositionGroup {
     Left,
     Right,
@@ -22,11 +24,13 @@ pub enum PositionGroup {
 /// selections are reverse-oriented because they are interpreted from the right
 /// fragment end inward.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(feature = "cmd_fragment_kmers")]
 pub enum PositionOrientation {
     Forward,
     Reverse,
 }
 
+#[cfg(feature = "cmd_fragment_kmers")]
 impl PositionOrientation {
     /// Convert a position group into its natural orientation.
     ///

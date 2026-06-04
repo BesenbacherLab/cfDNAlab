@@ -10,7 +10,7 @@ use std::fmt;
 ///
 /// # Returns
 /// The rounded value.
-pub fn round_to(x: f64, decimals: i32) -> f64 {
+pub(crate) fn round_to(x: f64, decimals: i32) -> f64 {
     if decimals <= 0 {
         return x.round();
     }
@@ -29,7 +29,7 @@ pub fn round_to(x: f64, decimals: i32) -> f64 {
 ///
 /// # Returns
 /// The rounded value.
-pub fn round_to_with_precomputed_factor(x: f64, factor: f64) -> f64 {
+pub(crate) fn round_to_with_precomputed_factor(x: f64, factor: f64) -> f64 {
     if factor == 1.0 {
         return x.round();
     }
@@ -40,9 +40,9 @@ pub fn round_to_with_precomputed_factor(x: f64, factor: f64) -> f64 {
 ///
 /// The stored value and decimal precision are used to format coverage values compactly in hot
 /// loops.
-pub struct CompactNumber {
-    pub v: f64,
-    pub decimals: i32,
+pub(crate) struct CompactNumber {
+    pub(crate) v: f64,
+    pub(crate) decimals: i32,
 }
 
 impl fmt::Display for CompactNumber {

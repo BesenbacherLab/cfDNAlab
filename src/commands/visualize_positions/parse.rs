@@ -1,38 +1,6 @@
-use std::error::Error;
-use std::fmt;
-
 use anyhow::{Context, Result, anyhow};
 
-// const LINEAR_EXAMPLE: &str = "--positions 1..10";
-// const NEAREST_EXAMPLE: &str = "--positions ..half";
-// const MID_EXAMPLE: &str = "--positions -10..10";
-
-/// Error type used when the range grammar does not match expectations.
-#[derive(Debug)]
-pub struct RangeParseError {
-    message: String,
-}
-
-impl RangeParseError {
-    pub fn new(message: impl Into<String>, example: &'static str) -> Self {
-        let mut msg = message.into();
-        if !msg.contains("Example:") {
-            msg.push_str(" Example: ");
-            msg.push_str(example);
-        }
-        Self { message: msg }
-    }
-}
-
-impl fmt::Display for RangeParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.message)
-    }
-}
-
-impl Error for RangeParseError {}
-
-pub fn parse_lengths(list: Option<&str>, range: Option<&str>) -> Result<Vec<u32>> {
+pub(crate) fn parse_lengths(list: Option<&str>, range: Option<&str>) -> Result<Vec<u32>> {
     if let Some(list) = list {
         let mut lengths = Vec::new();
         for item in list.split(',') {

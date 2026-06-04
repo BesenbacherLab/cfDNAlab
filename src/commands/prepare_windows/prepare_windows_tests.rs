@@ -1,26 +1,24 @@
-#![cfg(feature = "cmd_prepare_windows")]
-
 mod tests_prepare_windows_helpers {
-    use anyhow::Result;
-    use cfdnalab::commands::prepare_windows::chunk::apply_near_annotations;
-    use cfdnalab::commands::prepare_windows::config::ComposeSpec;
-    use cfdnalab::commands::prepare_windows::config::MergeScope;
-    use cfdnalab::commands::prepare_windows::config::{CoordinateSet, PrepareConfig};
-    use cfdnalab::commands::prepare_windows::filters::{
+    use crate::commands::prepare_windows::chunk::apply_near_annotations;
+    use crate::commands::prepare_windows::config::ComposeSpec;
+    use crate::commands::prepare_windows::config::MergeScope;
+    use crate::commands::prepare_windows::config::{CoordinateSet, PrepareConfig};
+    use crate::commands::prepare_windows::filters::{
         MinPerKeyRuleState, MinPerWindowFilterData, collect_min_per_window_filter_data,
         normalize_min_per_rules, parse_exclude_rules, parse_min_per_rules, validate_available_keys,
         validate_compositions_available,
     };
-    use cfdnalab::commands::prepare_windows::labels::{
+    use crate::commands::prepare_windows::labels::{
         AtomicLabelPart, LabelKey, LabelSchema, LabelTuple, NO_NEAR_BIN_LABEL, NO_NEAR_LABEL,
         build_tuple_compositions,
     };
-    use cfdnalab::commands::prepare_windows::near_file::{
+    use crate::commands::prepare_windows::near_file::{
         NearDuplicatesPolicy, NearIndex, Strand, load_near_index,
     };
-    use cfdnalab::commands::prepare_windows::parsers::parse_distance_bins;
-    use cfdnalab::commands::prepare_windows::postprocess::partition_safe_and_tail;
-    use cfdnalab::commands::prepare_windows::prepare_windows::Window;
+    use crate::commands::prepare_windows::parsers::parse_distance_bins;
+    use crate::commands::prepare_windows::postprocess::partition_safe_and_tail;
+    use crate::commands::prepare_windows::prepare_windows::Window;
+    use anyhow::Result;
     use fxhash::FxHashSet;
     use std::io::Write;
     use std::sync::Arc;
@@ -834,6 +832,125 @@ mod tests_prepare_windows_helpers {
         assert_eq!(tuple.near_side.as_deref(), Some(NO_NEAR_LABEL));
         assert_eq!(tuple.near_name.as_deref(), Some(NO_NEAR_LABEL));
         assert_eq!(tuple.bin.as_deref(), Some(NO_NEAR_BIN_LABEL));
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+mod tests_stdio {
+
+    use crate::commands::prepare_windows::{
+        config::{HeaderMode, OobPolicy, PrepareConfig},
+        prepare_windows::{PrepareWindowsRunResult, RunOptions, run_prepare_windows},
+    };
+    use anyhow::{Result, anyhow};
+    use libc;
+    use std::{
+        fs,
+        io::Read,
+        os::fd::{FromRawFd, RawFd},
+        path::PathBuf,
+    };
+    use tempfile::NamedTempFile;
+
+    fn run_with_piped_stdio<F>(input: &str, f: F) -> Result<String>
+    where
+        F: FnOnce() -> Result<PrepareWindowsRunResult>,
+    {
+        unsafe {
+            let mut in_pipe: [RawFd; 2] = [0; 2];
+            let mut out_pipe: [RawFd; 2] = [0; 2];
+            if libc::pipe(in_pipe.as_mut_ptr()) == -1 {
+                return Err(anyhow!("pipe failed for stdin"));
+            }
+            if libc::pipe(out_pipe.as_mut_ptr()) == -1 {
+                return Err(anyhow!("pipe failed for stdout"));
+            }
+
+            // preload stdin pipe with input
+            let bytes = input.as_bytes();
+            let mut written = 0usize;
+            while written < bytes.len() {
+                let chunk = libc::write(
+                    in_pipe[1],
+                    bytes[written..].as_ptr() as *const _,
+                    (bytes.len() - written) as _,
+                );
+                if chunk <= 0 {
+                    return Err(anyhow!("write to stdin pipe failed"));
+                }
+                written += chunk as usize;
+            }
+            libc::close(in_pipe[1]);
+
+            let stdin_backup = libc::dup(libc::STDIN_FILENO);
+            if stdin_backup == -1 {
+                return Err(anyhow!("dup stdin failed"));
+            }
+            let stdout_backup = libc::dup(libc::STDOUT_FILENO);
+            if stdout_backup == -1 {
+                return Err(anyhow!("dup stdout failed"));
+            }
+
+            if libc::dup2(in_pipe[0], libc::STDIN_FILENO) == -1 {
+                return Err(anyhow!("dup2 stdin failed"));
+            }
+            libc::close(in_pipe[0]);
+
+            if libc::dup2(out_pipe[1], libc::STDOUT_FILENO) == -1 {
+                return Err(anyhow!("dup2 stdout failed"));
+            }
+            libc::close(out_pipe[1]);
+
+            let result = f();
+            libc::fflush(std::ptr::null_mut());
+
+            if libc::dup2(stdout_backup, libc::STDOUT_FILENO) == -1 {
+                return Err(anyhow!("restore stdout failed"));
+            }
+            libc::close(stdout_backup);
+
+            if libc::dup2(stdin_backup, libc::STDIN_FILENO) == -1 {
+                return Err(anyhow!("restore stdin failed"));
+            }
+            libc::close(stdin_backup);
+
+            let mut output_file = std::fs::File::from_raw_fd(out_pipe[0]);
+            let mut output = String::new();
+            output_file.read_to_string(&mut output)?;
+
+            result?;
+            Ok(output)
+        }
+    }
+
+    #[test]
+    fn run_supports_stdio() -> Result<()> {
+        let mut cfg = PrepareConfig::default();
+        cfg.input = PathBuf::from("-");
+        cfg.output = PathBuf::from("-");
+        cfg.header = HeaderMode::Absent;
+        cfg.oob = OobPolicy::Allow;
+        cfg.resize = Some(8);
+        let chrom_sizes = NamedTempFile::new()?;
+        fs::write(chrom_sizes.path(), "chr1\t1000\n")?;
+        cfg.chrom_sizes = Some(chrom_sizes.path().to_path_buf());
+
+        let input = "chr1\t0\t5\nchr1\t5\t10\n";
+        let output =
+            run_with_piped_stdio(input, || run_prepare_windows(&cfg, RunOptions::default()))?;
+        let lines: Vec<&str> = output
+            .lines()
+            .filter(|line| line.starts_with("chr"))
+            .collect();
+        // With OOB allow the first window underflows after resize and is dropped - only the second remains
+        let expected_left = vec!["chr1\t3\t11\t"];
+        let expected_right = vec!["chr1\t4\t12\t"];
+        assert!(
+            lines == expected_left || lines == expected_right,
+            "unexpected output: {:?}",
+            lines
+        );
         Ok(())
     }
 }

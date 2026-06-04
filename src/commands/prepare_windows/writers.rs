@@ -1,15 +1,9 @@
-use crate::commands::prepare_windows::{
-    config::PrepareConfig,
-    labels::{LabelKey, LabelSchema, build_tuple_compositions, render_label_for_key},
-    prepare_windows::Window,
-};
-use crate::shared::io::{TextWriter, create_text_writer, stdout_text_writer};
 use crate::shared::temp_chrom_names::temp_chrom_token;
 use anyhow::{Context, Result};
 use fxhash::FxHashMap;
 use std::{
     fs::File,
-    io::{BufRead, BufReader, BufWriter, Write},
+    io::{BufWriter, Write},
     path::{Path, PathBuf},
 };
 
@@ -22,65 +16,16 @@ use std::{
 /// temp directory. Callers borrow the writer when writing rows and later reuse the stored path
 /// during concatenation.
 #[derive(Debug)]
-pub struct ChromTempWriter {
+pub(crate) struct ChromTempWriter {
     path: PathBuf,
     writer: BufWriter<File>,
 }
 
 impl ChromTempWriter {
     #[inline]
-    pub fn writer(&mut self) -> &mut BufWriter<File> {
+    pub(crate) fn writer(&mut self) -> &mut BufWriter<File> {
         &mut self.writer
     }
-}
-
-/// Serialize finalized windows as minimal BED-like rows.
-///
-/// Windows without an assigned group become compact three-column BED rows, while
-/// grouped windows receive a fourth column so the metadata survives the write.
-///
-/// The function iterates the slice in order, writing either
-/// `chrom<sep>start<sep>end` or `chrom<sep>start<sep>end<sep>group`. The caller
-/// provides the separator (typically `\t`).
-///
-/// # Parameters
-/// - `writer`: destination implementing [`Write`].
-/// - `windows`: window slice to serialize.
-/// - `separator`: delimiter to place between columns.
-/// - `out_labels`: label keys to write after coordinates.
-/// - `label_schema`: resolved label compositions.
-///
-/// # Returns
-/// `Ok(())` on success or an error if writing fails.
-pub fn write_windows<W: Write>(
-    writer: &mut W,
-    windows: &[Window],
-    separator: char,
-    out_labels: &[LabelKey],
-    label_schema: &LabelSchema,
-) -> Result<()> {
-    for w in windows {
-        let tuple_compositions = if label_schema.compositions().is_empty() {
-            Vec::new()
-        } else {
-            build_tuple_compositions(&w.label_tuples, label_schema)
-        };
-        write!(
-            writer,
-            "{}{sep}{}{sep}{}",
-            w.chrom.as_ref(),
-            w.resized_start(),
-            w.resized_end(),
-            sep = separator
-        )?;
-        for key in out_labels {
-            let label =
-                render_label_for_key(&w.label_tuples, &tuple_compositions, key, label_schema);
-            write!(writer, "{sep}{}", label, sep = separator)?;
-        }
-        writeln!(writer)?;
-    }
-    Ok(())
 }
 
 /// Ensure a chromosome-specific temp writer exists and return it.
@@ -98,7 +43,7 @@ pub fn write_windows<W: Write>(
 ///
 /// # Returns
 /// Mutable reference to the `ChromTempWriter` for `chrom`.
-pub fn ensure_temp_writer_for_chrom<'a>(
+pub(crate) fn ensure_temp_writer_for_chrom<'a>(
     chrom: &str,
     temp_dir: &Path,
     temp_writers: &'a mut FxHashMap<String, ChromTempWriter>,
@@ -127,7 +72,7 @@ pub fn ensure_temp_writer_for_chrom<'a>(
 ///
 /// # Returns
 /// Vector of `(chromosome, path)` pairs ready for concatenation.
-pub fn finalize_temp_writers(
+pub(crate) fn finalize_temp_writers(
     temp_writers: &mut FxHashMap<String, ChromTempWriter>,
 ) -> Result<Vec<(String, PathBuf)>> {
     let mut entries: Vec<(String, PathBuf)> = Vec::with_capacity(temp_writers.len());
@@ -139,45 +84,7 @@ pub fn finalize_temp_writers(
     Ok(entries)
 }
 
-/// Concatenate temp outputs into the final writer.
-///
-/// Replays each chromosome's temp file back to back.
-///
-/// Output is buffered (stdout or file). Each temp file is streamed line by line,
-/// preserving columns exactly as they were written, and temp entries are processed
-/// in lexicographic chromosome order.
-///
-/// # Parameters
-/// - `cfg`: resolved configuration.
-/// - `temp_entries`: `(chromosome, temp_path)` pairs returned by
-///   [`finalize_temp_writers`].
-///
-/// # Returns
-/// `Ok(())` on success or an error if reading/writing fails.
-pub fn concatenate_temps(cfg: &PrepareConfig, temp_entries: &[(String, PathBuf)]) -> Result<()> {
-    let mut out: TextWriter = if cfg.output.as_os_str() == "-" {
-        stdout_text_writer()
-    } else {
-        create_text_writer(&cfg.output)?
-    };
-
-    // Concatenate in lexicographic chrom order by default
-    let mut entries: Vec<&(String, PathBuf)> = temp_entries.iter().collect();
-    entries.sort_by(|a, b| a.0.cmp(&b.0));
-
-    for (_chrom, path) in entries {
-        let file = File::open(path)?;
-        let reader = BufReader::with_capacity(1 << 20, file);
-
-        for line_res in reader.lines() {
-            let line = line_res?;
-            if line.is_empty() {
-                continue;
-            }
-            writeln!(out, "{}", line)?;
-        }
-    }
-
-    out.finish()?;
-    Ok(())
+#[cfg(test)]
+mod tests {
+    include!("writers_tests.rs");
 }

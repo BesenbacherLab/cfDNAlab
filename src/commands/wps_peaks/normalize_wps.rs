@@ -55,7 +55,7 @@ const SG_ORDER: usize = 2;
 /// -------
 /// - `Vec<f32>`:
 ///   Baseline-adjusted signal ready for peak detection.
-pub fn normalize_wps(
+pub(crate) fn normalize_wps(
     numerator: &[f32],
     baseline_reference: &[f32],
     mask: Option<&[u8]>,
@@ -171,7 +171,7 @@ pub fn normalize_wps(
 /// -------
 /// - `Vec<f32>`:
 ///   Smoothed values aligned to the input positions.
-pub fn smoothe_wps(wps_values: &[f32], mask: Option<&[u8]>) -> Vec<f32> {
+pub(crate) fn smoothe_wps(wps_values: &[f32], mask: Option<&[u8]>) -> Vec<f32> {
     let len = wps_values.len();
     if let Some(mask_slice) = mask {
         assert_eq!(
@@ -268,7 +268,7 @@ fn apply_snyder_smoothing(segment: &[f32], offset: usize, output: &mut [f32]) {
 }
 
 /// Construct a mirrored window for the left edge of a segment.
-pub fn build_left_edge_window(edge_slice: &[f32]) -> Vec<f32> {
+pub(crate) fn build_left_edge_window(edge_slice: &[f32]) -> Vec<f32> {
     debug_assert!(!edge_slice.is_empty());
     let needed = SG_WINDOW_SIZE.saturating_sub(edge_slice.len());
     let base = edge_slice[0];
@@ -288,7 +288,7 @@ pub fn build_left_edge_window(edge_slice: &[f32]) -> Vec<f32> {
 }
 
 /// Construct a mirrored window for the right edge of a segment.
-pub fn build_right_edge_window(edge_slice: &[f32]) -> Vec<f32> {
+pub(crate) fn build_right_edge_window(edge_slice: &[f32]) -> Vec<f32> {
     debug_assert!(!edge_slice.is_empty());
     let needed = SG_WINDOW_SIZE.saturating_sub(edge_slice.len());
     let base = edge_slice[edge_slice.len() - 1];
@@ -399,7 +399,7 @@ impl Ord for OrderedF32 {
 /// every step. Conceptually the window is split into two piles: the lower half
 /// (a max-heap) and the upper half (a min-heap). Each update keeps the piles
 /// balanced and drops stale entries just-in-time.
-pub struct SlidingMedian {
+pub(crate) struct SlidingMedian {
     lower: BinaryHeap<MedianHeapEntry>,
     upper: BinaryHeap<std::cmp::Reverse<MedianHeapEntry>>,
     active: Vec<bool>,
@@ -423,7 +423,7 @@ impl SlidingMedian {
     /// -------
     /// - `Self`:
     ///   Ready-to-use median structure with empty heaps.
-    pub fn new(capacity: usize) -> Self {
+    pub(crate) fn new(capacity: usize) -> Self {
         Self {
             lower: BinaryHeap::new(),
             upper: BinaryHeap::new(),
@@ -447,7 +447,7 @@ impl SlidingMedian {
     ///
     /// - `value`:
     ///   Measured WPS value to insert.
-    pub fn insert(&mut self, index: usize, value: f32) {
+    pub(crate) fn insert(&mut self, index: usize, value: f32) {
         let entry = MedianHeapEntry {
             value: OrderedF32(value),
             index,
@@ -476,7 +476,7 @@ impl SlidingMedian {
     /// ----------
     /// - `index`:
     ///   Sample index previously inserted via `insert`.
-    pub fn remove(&mut self, index: usize) {
+    pub(crate) fn remove(&mut self, index: usize) {
         if !self.active.get(index).copied().unwrap_or(false) {
             return;
         }
@@ -503,7 +503,7 @@ impl SlidingMedian {
     /// -------
     /// - `Option<f32>`:
     ///   `Some(median)` when at least one active value exists, otherwise `None`.
-    pub fn median(&mut self) -> Option<f32> {
+    pub(crate) fn median(&mut self) -> Option<f32> {
         self.rebalance();
         if self.lower_size + self.upper_size == 0 {
             return None;
@@ -525,7 +525,7 @@ impl SlidingMedian {
     /// -------
     /// - `usize`:
     ///   Count of values currently represented in the heaps.
-    pub fn count(&self) -> usize {
+    pub(crate) fn count(&self) -> usize {
         self.lower_size + self.upper_size
         // Both heaps exclude inactive entries from the size counters
     }
@@ -534,7 +534,7 @@ impl SlidingMedian {
     ///
     /// Moves entries between heaps until their sizes differ by at most one
     /// while discarding inactive entries.
-    pub fn rebalance(&mut self) {
+    pub(crate) fn rebalance(&mut self) {
         self.prune();
         while self.lower_size > self.upper_size + 1 {
             if let Some(entry) = self.lower.pop() {
@@ -570,7 +570,7 @@ impl SlidingMedian {
     ///
     /// Pops from each heap until the front entry belongs to
     /// an active index.
-    pub fn prune(&mut self) {
+    pub(crate) fn prune(&mut self) {
         while let Some(entry) = self.lower.peek() {
             if self.active[entry.index] {
                 break;
@@ -586,4 +586,9 @@ impl SlidingMedian {
             self.upper.pop();
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    include!("normalize_wps_tests.rs");
 }

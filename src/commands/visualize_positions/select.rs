@@ -12,7 +12,7 @@ use crate::shared::visualization::{AxisBounds, Track};
 
 /// How aggressively the visualization should clamp selections to read coverage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReadClamp {
+pub(crate) enum ReadClamp {
     /// Keep every position described by the frame.
     None,
     /// Keep only the positions covered by the frame's nearest read.
@@ -22,7 +22,7 @@ pub enum ReadClamp {
 }
 
 /// Build the set of tracks for a single fragment length.
-pub fn build_tracks_for_length(
+pub(crate) fn build_tracks_for_length(
     length: u32,
     position_selection_spec: &PositionalSelectionSpec,
     read_clamp: ReadClamp,
@@ -169,7 +169,7 @@ pub fn build_tracks_for_length(
 }
 
 /// Build helper tracks that illustrate the valid k-mer start bases for the requested kmer_sizes.
-pub fn build_kmer_start_overlays(
+pub(crate) fn build_kmer_start_overlays(
     position_selection_spec: &PositionalSelectionSpec,
     length: u32,
     base_tracks: &[Track],

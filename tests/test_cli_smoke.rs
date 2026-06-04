@@ -3,6 +3,10 @@
 mod fixtures;
 
 use anyhow::{Context, Result, bail};
+use cfdnalab::testing::{
+    Bed4Row, read_zst_to_string, single_contig_inward_pair_bam,
+    twobit_with_single_repeating_contig, write_bed4,
+};
 use serde_json::Value;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -186,7 +190,7 @@ fn lengths_cli_minimal_invocation_writes_output_files_with_expected_prefix() -> 
     // - <prefix>.length_counts.tsv.zst
     // - <prefix>.length_settings.json
     // We run a minimal binary invocation with a tiny deterministic BAM fixture.
-    let bam_fixture = fixtures::simple_inward_bam()?;
+    let bam_fixture = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let output_prefix = "cli_smoke_lengths";
 
@@ -257,7 +261,7 @@ fn coverage_weights_cli_minimal_invocation_writes_scaling_tsv() -> Result<()> {
     // Arrange: simple_inward_bam has chr1 length 200 and one fragment spanning [20,80).
     // With stride 20 this yields exactly 10 stride bins -> 13 TSV lines including two metadata
     // lines and one header line.
-    let bam_fixture = fixtures::simple_inward_bam()?;
+    let bam_fixture = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let output_prefix = "cli_smoke_covweights";
     let bam_path = path_text(&bam_fixture.bam);
@@ -326,7 +330,7 @@ fn fragment_count_weights_cli_minimal_invocation_writes_scaling_tsv() -> Result<
     // Arrange: simple_inward_bam has chr1 length 200 and one fragment spanning [20,80).
     // With stride 20 this yields exactly 10 stride bins -> 12 TSV lines including one metadata
     // line and one header line.
-    let bam_fixture = fixtures::simple_inward_bam()?;
+    let bam_fixture = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let output_prefix = "cli_smoke_fragcountweights";
     let bam_path = path_text(&bam_fixture.bam);
@@ -390,7 +394,7 @@ fn fragment_count_weights_cli_minimal_invocation_writes_scaling_tsv() -> Result<
 fn fcoverage_cli_minimal_invocation_writes_expected_positional_run() -> Result<()> {
     // Arrange: simple_inward_bam has one fragment spanning [20,80) on chr1.
     // In plain positional mode without correction, expected run is coverage 1 on [20,80).
-    let bam_fixture = fixtures::simple_inward_bam()?;
+    let bam_fixture = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let output_prefix = "cli_smoke_fcoverage";
     let bam_path = path_text(&bam_fixture.bam);
@@ -430,7 +434,7 @@ fn fcoverage_cli_minimal_invocation_writes_expected_positional_run() -> Result<(
         coverage_path.display()
     );
 
-    let coverage_text = fixtures::read_zst_to_string(&coverage_path)?;
+    let coverage_text = read_zst_to_string(&coverage_path)?;
     assert!(
         coverage_text.contains("chr1\t20\t80\t1"),
         "Expected a single-fragment positional run in output"
@@ -443,10 +447,10 @@ fn fcoverage_cli_minimal_invocation_writes_expected_positional_run() -> Result<(
 #[test]
 fn midpoints_cli_minimal_invocation_writes_profiles_and_group_index() -> Result<()> {
     // Arrange: one window in one group with one fragment length bin.
-    let bam_fixture = fixtures::simple_inward_bam()?;
+    let bam_fixture = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let intervals_path = out_dir.path().join("intervals.bed");
-    fixtures::write_bed(&intervals_path, &[("chr1", 20, 60, "groupA")])?;
+    write_bed4(&intervals_path, &[Bed4Row::new("chr1", 20, 60, "groupA")])?;
     let output_prefix = "cli_smoke_midpoints";
     let bam_path = path_text(&bam_fixture.bam);
     let out_path = path_text(out_dir.path());
@@ -506,7 +510,7 @@ fn midpoints_cli_minimal_invocation_writes_profiles_and_group_index() -> Result<
 #[test]
 fn bam_to_bam_cli_minimal_invocation_writes_output_bam() -> Result<()> {
     // Arrange
-    let bam_fixture = fixtures::simple_inward_bam()?;
+    let bam_fixture = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let out_bam = out_dir.path().join("smoke.bam");
     let bam_path = path_text(&bam_fixture.bam);
@@ -544,7 +548,7 @@ fn bam_to_bam_cli_minimal_invocation_writes_output_bam() -> Result<()> {
 #[test]
 fn bam_to_frag_cli_minimal_invocation_writes_frag_and_header_files() -> Result<()> {
     // Arrange
-    let bam_fixture = fixtures::simple_inward_bam()?;
+    let bam_fixture = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let output_prefix = "cli_smoke_fragments";
     let bam_path = path_text(&bam_fixture.bam);
@@ -637,7 +641,7 @@ fn ref_gc_bias_cli_minimal_invocation_writes_reference_package() -> Result<()> {
     // Arrange: Use tiny deterministic reference and conservative settings.
     // With `--output-prefix`, the command contract says the package should be written as
     // `<prefix>.ref_gc_package.zarr`.
-    let reference = fixtures::simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let output_prefix = "cli_smoke_ref_gc";
     let ref_path = path_text(&reference.path);
@@ -690,8 +694,8 @@ fn gc_bias_cli_minimal_invocation_writes_correction_package() -> Result<()> {
     // Arrange:
     // 1) Build reference package from tiny deterministic reference.
     // 2) Run gc-bias on tiny deterministic BAM against that reference package.
-    let bam_fixture = fixtures::simple_inward_bam()?;
-    let reference = fixtures::simple_reference_twobit()?;
+    let bam_fixture = single_contig_inward_pair_bam()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let ref_gc_dir = TempDir::new()?;
     let gc_out_dir = TempDir::new()?;
     let ref_gc_prefix = "cli_smoke_ref_gc";

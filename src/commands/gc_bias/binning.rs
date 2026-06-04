@@ -3,18 +3,18 @@ use fxhash::FxHashMap;
 use ndarray::{Array2, ArrayBase, ArrayView2, Axis, Data, Ix2};
 
 #[derive(Debug, Clone)]
-pub struct BinnedAxis {
-    pub index_to_bin: FxHashMap<usize, usize>,
-    pub bin_to_indices: FxHashMap<usize, Vec<usize>>,
-    pub num_bins: usize,
+pub(crate) struct BinnedAxis {
+    pub(crate) index_to_bin: FxHashMap<usize, usize>,
+    pub(crate) bin_to_indices: FxHashMap<usize, Vec<usize>>,
+    pub(crate) num_bins: usize,
 }
 
-pub enum CollapseAggregation {
+pub(crate) enum CollapseAggregation {
     Sum,
     Mean,
 }
 
-pub fn bin_greedily_by_mass<S>(
+pub(crate) fn bin_greedily_by_mass<S>(
     counts: &ArrayBase<S, Ix2>,
     axis: usize,
     min_mass_pct: f64,
@@ -90,7 +90,7 @@ where
     })
 }
 
-pub fn collapse_counts_by_bins<S>(
+pub(crate) fn collapse_counts_by_bins<S>(
     counts: &ArrayBase<S, Ix2>,
     axis: usize,
     bins: &BinnedAxis,
@@ -200,7 +200,11 @@ where
     }
 }
 
-pub fn compute_bin_edges(bins: &BinnedAxis, start_value: u32, max_value: u32) -> Result<Vec<u32>> {
+pub(crate) fn compute_bin_edges(
+    bins: &BinnedAxis,
+    start_value: u32,
+    max_value: u32,
+) -> Result<Vec<u32>> {
     ensure!(
         bins.num_bins > 0,
         "Bin definition must contain at least one bin"
@@ -222,7 +226,7 @@ pub fn compute_bin_edges(bins: &BinnedAxis, start_value: u32, max_value: u32) ->
     Ok(edges)
 }
 
-pub fn bins_from_edges(edges: &[u32]) -> Result<BinnedAxis> {
+pub(crate) fn bins_from_edges(edges: &[u32]) -> Result<BinnedAxis> {
     ensure!(
         edges.len() >= 2,
         "Bin edges must contain at least a start and end entry"

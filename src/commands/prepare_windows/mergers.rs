@@ -32,7 +32,7 @@ use crate::commands::prepare_windows::{
 /// -------
 /// - merged:
 ///     Merged windows with label tuples composed according to policy.
-pub fn merge_windows(
+pub(crate) fn merge_windows(
     windows: Vec<Window>,
     merge_scope: MergeScope,
     merge_gap_bp: Option<u32>,
@@ -52,7 +52,7 @@ pub fn merge_windows(
     }
 }
 
-pub fn merge_within_groups(
+pub(crate) fn merge_within_groups(
     mut windows: Vec<Window>,
     gap: u32,
     merge_label: MergeLabel,
@@ -91,7 +91,7 @@ pub fn merge_within_groups(
     result
 }
 
-pub fn merge_across_groups(
+pub(crate) fn merge_across_groups(
     mut windows: Vec<Window>,
     gap: u32,
     merge_label: MergeLabel,
@@ -133,4 +133,9 @@ pub fn merge_across_groups(
         result.push(current);
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    include!("mergers_tests.rs");
 }

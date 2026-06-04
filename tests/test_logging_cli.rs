@@ -3,6 +3,7 @@
 mod fixtures;
 
 use anyhow::{Context, Result, bail};
+use cfdnalab::testing::single_contig_inward_pair_bam;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -100,7 +101,7 @@ fn path_text(path: &Path) -> String {
 fn fcoverage_log_stdout_routes_normal_messages_to_stdout() -> Result<()> {
     // Arrange: use the minimal one-fragment fixture so the command completes quickly while still
     // reaching the banner, lifecycle logging, and final statistics block.
-    let bam_fixture = fixtures::simple_inward_bam()?;
+    let bam_fixture = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let bam_path = path_text(&bam_fixture.bam);
     let out_path = path_text(out_dir.path());
@@ -150,7 +151,7 @@ fn fcoverage_log_stdout_routes_normal_messages_to_stdout() -> Result<()> {
 fn fcoverage_log_quiet_suppresses_normal_cli_output() -> Result<()> {
     // Arrange: the same tiny fixture should produce no warnings, so quiet mode can be asserted as
     // fully silent in this non-TTY integration test.
-    let bam_fixture = fixtures::simple_inward_bam()?;
+    let bam_fixture = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let bam_path = path_text(&bam_fixture.bam);
     let out_path = path_text(out_dir.path());
@@ -200,7 +201,7 @@ fn fcoverage_log_quiet_suppresses_normal_cli_output() -> Result<()> {
 #[test]
 fn fcoverage_log_file_writes_to_auto_generated_log_under_output_dir() -> Result<()> {
     // Arrange: plain `--log file` should pick `<output_dir>/logs/` and use a generated file name.
-    let bam_fixture = fixtures::simple_inward_bam()?;
+    let bam_fixture = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let bam_path = path_text(&bam_fixture.bam);
     let out_path = path_text(out_dir.path());
@@ -282,7 +283,7 @@ fn coverage_weights_log_stdout_keeps_one_top_level_banner_and_shows_nested_fcove
 -> Result<()> {
     // Arrange: this command reuses internal fcoverage. The log output should show both command
     // phases, but only one top-level banner because only the binary owns that presentation.
-    let bam_fixture = fixtures::simple_inward_bam()?;
+    let bam_fixture = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let bam_path = path_text(&bam_fixture.bam);
     let out_path = path_text(out_dir.path());

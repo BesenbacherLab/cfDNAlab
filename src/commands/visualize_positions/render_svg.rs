@@ -25,7 +25,7 @@ fn svg_track_label(track: &Track, config: &VizConfig) -> String {
 }
 
 /// Render the visualization as an SVG string.
-pub fn render_svg(results: &[LengthVisualization], config: &VizConfig) -> String {
+pub(crate) fn render_svg(results: &[LengthVisualization], config: &VizConfig) -> String {
     let width = config.width as f64;
     let mut height_estimate = 20.0;
     let per_track_height = track_block_height(config);

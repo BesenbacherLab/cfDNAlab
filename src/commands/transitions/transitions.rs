@@ -1,6 +1,8 @@
 use crate::{
+    command_run::{CommandRunResult, RunOptions},
     commands::{
         cli_common::{ensure_output_dir, validate_output_prefix},
+        counters::FragmentKmersCounters,
         fragment_kmers::{config::*, fragment_kmers},
         run_statistics::{
             DEFAULT_FRAGMENT_STATISTICS_LABELS, FragmentRunStatisticsOptions, GCStatisticsSummary,
@@ -19,6 +21,7 @@ use ndarray::{Array3, Axis, s};
 use ndarray_npy::{read_npy, write_npy};
 use std::collections::hash_map::Entry;
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 /// Normalise positional k-mer counts into transition probabilities.
@@ -42,7 +45,7 @@ use std::time::Instant;
 /// -------
 /// - `freqs`:
 ///     Dense cube with identical shape where each motif entry stores its conditional probability.
-pub fn compute_transition_frequencies(
+pub(crate) fn compute_transition_frequencies(
     counts: &Array3<f64>,
     order: u8,
     motifs: &[String],
@@ -119,20 +122,63 @@ pub fn compute_transition_frequencies(
     Ok(freqs)
 }
 
-/// Execute the base transition probability counting pipeline end-to-end.
+/// Result from `transitions`.
 ///
-/// Wraps fragment-kmers and calculates frequencies.
+/// The command writes transition-frequency arrays derived from fragment k-mer counts. The result
+/// records all final output files and the counters from the underlying k-mer producer.
+#[derive(Debug)]
+pub struct TransitionsRunResult {
+    /// Fragment counters from the internal `fragment-kmers` run.
+    pub counters: FragmentKmersCounters,
+    /// Final output files produced by the command.
+    pub output_files: Vec<PathBuf>,
+}
+
+impl CommandRunResult for TransitionsRunResult {
+    type Counters = FragmentKmersCounters;
+
+    fn counters(&self) -> &Self::Counters {
+        &self.counters
+    }
+
+    fn output_files(&self) -> &[PathBuf] {
+        &self.output_files
+    }
+
+    fn primary_output(&self) -> Option<&Path> {
+        self.output_files.first().map(PathBuf::as_path)
+    }
+}
+
+/// Run the `transitions` command.
 ///
-/// Parameters:
-/// - `opt`: Fully resolved configuration for the `transitions` command.
+/// This command runs `fragment-kmers` as an internal producer, then normalizes positional k-mer
+/// counts into transition probabilities. The output arrays keep the same window and position axes
+/// as the source k-mer counts.
 ///
-/// Returns:
-/// - `Ok(())` when the counts and accompanying metadata files are written successfully.
+/// Reporting is controlled by `options.report_statistics`, which prints the final summary. The
+/// internal `fragment-kmers` producer is run without its own reporting side effects.
 ///
-/// Errors:
-/// - Propagates IO and parsing errors when reading inputs or writing results, aborting the run on
-///   the first failure.
-pub fn run(opt: &TransitionsConfig) -> Result<()> {
+/// Parameters
+/// ----------
+/// - `opt`:
+///     Fully resolved configuration for the `transitions` command.
+/// - `options`:
+///     Reporting control for the transition summary.
+///
+/// Returns
+/// -------
+/// - `Ok(TransitionsRunResult)`:
+///     Counters and output paths for the completed run.
+///
+/// Errors
+/// ------
+/// Returns an error when the internal k-mer run fails, a count array cannot be read, or transition
+/// outputs cannot be written.
+pub fn run_transitions(
+    opt: &TransitionsConfig,
+    options: RunOptions,
+) -> Result<TransitionsRunResult> {
     let start_time = Instant::now();
     opt.shared_args.fragment_lengths.validate()?;
 
@@ -165,12 +211,15 @@ pub fn run(opt: &TransitionsConfig) -> Result<()> {
     };
     fk_cfg.set_output_prefix(prefix.to_string());
 
-    let global_counter = fragment_kmers::run_inner_silent(&fk_cfg)?;
+    let fragment_kmers_result =
+        fragment_kmers::run_fragment_kmers(&fk_cfg, RunOptions::new_quiet())?;
+    let global_counter = fragment_kmers_result.counters;
 
     let counts_dir = fk_cfg.shared_args.ioc.output_dir.as_path();
     let final_dir = &opt.shared_args.ioc.output_dir;
     let prefix = opt.shared_args.output_prefix.trim();
     let groups = ["left", "right", "mid"];
+    let mut output_files = Vec::new();
 
     // Process each requested transition order
     for &order in &opt.orders {
@@ -203,7 +252,8 @@ pub fn run(opt: &TransitionsConfig) -> Result<()> {
             let temp_output_path = final_outputs.temp_path_for(&output_path)?;
             write_npy(&temp_output_path, &freqs)
                 .with_context(|| format!("writing {}", temp_output_path.display()))?;
-            final_outputs.record(temp_output_path, output_path)?;
+            final_outputs.record(temp_output_path, output_path.clone())?;
+            output_files.push(output_path);
 
             // Copy motif metadata so downstream tools share identical ordering
             let motif_dest =
@@ -211,7 +261,8 @@ pub fn run(opt: &TransitionsConfig) -> Result<()> {
             let temp_motif_dest = final_outputs.temp_path_for(&motif_dest)?;
             fs::copy(&motifs_path, &temp_motif_dest)
                 .with_context(|| format!("copying to {}", temp_motif_dest.display()))?;
-            final_outputs.record(temp_motif_dest, motif_dest)?;
+            final_outputs.record(temp_motif_dest, motif_dest.clone())?;
+            output_files.push(motif_dest);
 
             wrote_group = true;
         }
@@ -233,7 +284,8 @@ pub fn run(opt: &TransitionsConfig) -> Result<()> {
             let temp_positions_dest = final_outputs.temp_path_for(&positions_dest)?;
             fs::copy(&positions_src, &temp_positions_dest)
                 .with_context(|| format!("copying to {}", temp_positions_dest.display()))?;
-            final_outputs.record(temp_positions_dest, positions_dest)?;
+            final_outputs.record(temp_positions_dest, positions_dest.clone())?;
+            output_files.push(positions_dest);
         }
     }
 
@@ -245,33 +297,43 @@ pub fn run(opt: &TransitionsConfig) -> Result<()> {
         .context("remove transitions temp directory")?;
 
     let elapsed = start_time.elapsed();
-    print_fragment_run_statistics(
-        &global_counter.base,
-        elapsed,
-        FragmentRunStatisticsOptions {
-            include_section_header: true,
-            notes: &[TILE_DOUBLE_COUNT_NOTE],
-            labels: DEFAULT_FRAGMENT_STATISTICS_LABELS,
-            blacklist_excluded_fragments: Some(global_counter.blacklisted_fragments),
-            gc: (opt.shared_args.gc.gc_file.is_some() || opt.shared_args.gc.gc_tag.is_some())
-                .then_some(GCStatisticsSummary {
-                    neutralize_invalid_gc: opt.shared_args.gc.neutralize_invalid_gc,
-                    failed_fragments: global_counter.gc_failed_fragments,
-                    missing_tags: opt
-                        .shared_args
-                        .gc
-                        .gc_tag
-                        .is_some()
-                        .then_some(global_counter.gc_missing_tags),
-                    out_of_range_tags: opt
-                        .shared_args
-                        .gc
-                        .gc_tag
-                        .is_some()
-                        .then_some(global_counter.gc_out_of_range_tags),
-                }),
-        },
-        std::iter::empty::<&str>(),
-    );
-    Ok(())
+    if options.report_statistics {
+        print_fragment_run_statistics(
+            &global_counter.base,
+            elapsed,
+            FragmentRunStatisticsOptions {
+                include_section_header: true,
+                notes: &[TILE_DOUBLE_COUNT_NOTE],
+                labels: DEFAULT_FRAGMENT_STATISTICS_LABELS,
+                blacklist_excluded_fragments: Some(global_counter.blacklisted_fragments),
+                gc: (opt.shared_args.gc.gc_file.is_some() || opt.shared_args.gc.gc_tag.is_some())
+                    .then_some(GCStatisticsSummary {
+                        neutralize_invalid_gc: opt.shared_args.gc.neutralize_invalid_gc,
+                        failed_fragments: global_counter.gc_failed_fragments,
+                        missing_tags: opt
+                            .shared_args
+                            .gc
+                            .gc_tag
+                            .is_some()
+                            .then_some(global_counter.gc_missing_tags),
+                        out_of_range_tags: opt
+                            .shared_args
+                            .gc
+                            .gc_tag
+                            .is_some()
+                            .then_some(global_counter.gc_out_of_range_tags),
+                    }),
+            },
+            std::iter::empty::<&str>(),
+        );
+    }
+    Ok(TransitionsRunResult {
+        counters: global_counter,
+        output_files,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    include!("transitions_tests.rs");
 }

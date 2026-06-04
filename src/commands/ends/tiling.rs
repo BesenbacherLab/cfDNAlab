@@ -23,10 +23,9 @@ use std::{
 /// Each parallel tile writes its sparse counts to disk and returns one of these
 /// structs so the outer reducer can later merge the files and combine the
 /// command statistics.
-pub struct TileResult {
-    pub chr: String,
-    pub counts_path: PathBuf,
-    pub counter: EndsCounters,
+pub(crate) struct TileResult {
+    pub(crate) counts_path: PathBuf,
+    pub(crate) counter: EndsCounters,
 }
 
 /// Persist per-tile end-motif counts so they can be merged after parallel tile processing.
@@ -42,7 +41,10 @@ pub struct TileResult {
 /// -------
 /// - `Result<()>`:
 ///   `Ok(())` after the tile count records have been flushed to disk
-pub fn serialize_tile_counts(path: &Path, count_records: &[TileWindowEndCounts]) -> Result<()> {
+pub(crate) fn serialize_tile_counts(
+    path: &Path,
+    count_records: &[TileWindowEndCounts],
+) -> Result<()> {
     let file = File::create(path)
         .with_context(|| format!("creating tile counts file: {}", path.display()))?;
     let mut writer = BufWriter::with_capacity(512 * 1024, file);
@@ -67,7 +69,7 @@ pub fn serialize_tile_counts(path: &Path, count_records: &[TileWindowEndCounts])
 /// -------
 /// - `Result<Vec<TileWindowEndCounts>>`:
 ///   Decoded sparse tile count records
-pub fn deserialize_tile_counts(path: &Path) -> Result<Vec<TileWindowEndCounts>> {
+pub(crate) fn deserialize_tile_counts(path: &Path) -> Result<Vec<TileWindowEndCounts>> {
     let file = File::open(path)
         .with_context(|| format!("opening tile counts file: {}", path.display()))?;
     let mut reader = BufReader::with_capacity(512 * 1024, file);
@@ -168,7 +170,7 @@ pub(crate) fn deserialize_selected_tile_counts(
 /// -------
 /// - `Vec<TileWindowEndCounts>`:
 ///   Stable, sorted count records ready for serialization
-pub fn build_tile_count_records(
+pub(crate) fn build_tile_count_records(
     counts_by_window: FxHashMap<u64, EndMotifCounts>,
 ) -> Vec<TileWindowEndCounts> {
     let mut count_records: Vec<TileWindowEndCounts> = counts_by_window
@@ -263,7 +265,7 @@ pub(crate) fn build_selected_tile_count_records(
 /// -------
 /// - `Result<()>`:
 ///   `Ok(())` after all counts have been merged
-pub fn merge_tile_count_records(
+pub(crate) fn merge_tile_count_records(
     merged: &mut EndCountsByWindow,
     tile_count_records: Vec<TileWindowEndCounts>,
 ) -> Result<()> {

@@ -1,4 +1,5 @@
 use crate::{
+    command_run::{CommandRunResult, RunOptions},
     commands::{
         bam_to_frag::{
             concat::concat_frag_zst_to_gzip,
@@ -47,45 +48,94 @@ use std::{fs, io::Write, path::PathBuf, sync::Arc, time::Instant};
 use tracing::info;
 
 const COMMAND_TARGET: &str = "bam-to-frag";
-/// Execute the bam-to-frag conversion.
+
+/// Result from `bam-to-frag`.
 ///
-/// Parameters:
-/// - `opt`: Fully resolved configuration for the `bam-to-frag` command.
-///
-/// Returns:
-/// - `Ok(())` when the counts and accompanying metadata files are written successfully.
-///
-/// Errors:
-/// - Propagates IO and parsing errors when reading inputs or writing results, aborting the run on
-///   the first failure.
-pub fn run(opt: &BamToFragConfig) -> Result<()> {
-    let start_time = Instant::now();
-    let global_counter = run_inner(opt)?;
-    let elapsed = start_time.elapsed();
-    print_fragment_run_statistics(
-        &global_counter.base,
-        elapsed,
-        FragmentRunStatisticsOptions {
-            include_section_header: true,
-            notes: &[],
-            labels: FragmentStatisticsLabels {
-                counted_fragments: "Fragments included",
-                ..DEFAULT_FRAGMENT_STATISTICS_LABELS
-            },
-            blacklist_excluded_fragments: Some(global_counter.blacklisted_fragments),
-            gc: opt.gc.gc_file.is_some().then_some(GCStatisticsSummary {
-                neutralize_invalid_gc: opt.gc.neutralize_invalid_gc,
-                failed_fragments: global_counter.gc_failed_fragments,
-                missing_tags: None,
-                out_of_range_tags: None,
-            }),
-        },
-        std::iter::empty::<&str>(),
-    );
-    Ok(())
+/// The command writes a fragment table and a matching header file. The result also exposes the
+/// counters used for fragment filtering and output statistics.
+#[derive(Debug)]
+pub struct BamToFragRunResult {
+    /// Fragment and filtering counters collected during the run.
+    pub counters: BamToFragCounters,
+    /// Final fragment table path written by the command.
+    pub output_frag: PathBuf,
+    /// Header path that describes the fragment table columns.
+    pub output_header: PathBuf,
+    /// Final output files produced by the command.
+    pub output_files: Vec<PathBuf>,
 }
 
-pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
+impl CommandRunResult for BamToFragRunResult {
+    type Counters = BamToFragCounters;
+
+    fn counters(&self) -> &Self::Counters {
+        &self.counters
+    }
+
+    fn output_files(&self) -> &[PathBuf] {
+        &self.output_files
+    }
+
+    fn primary_output(&self) -> Option<&std::path::Path> {
+        Some(&self.output_frag)
+    }
+}
+
+/// Run the `bam-to-frag` command.
+///
+/// This is the programmatic entry point for converting BAM records into the fragment table format
+/// used by downstream cfDNAlab commands. It applies the configured fragment filters, optional GC
+/// correction, optional genomic scaling, and writes the table plus header artifacts.
+///
+/// Reporting is controlled by `options`. `report_statistics` prints the final summary,
+/// `show_progress` controls progress bars, and `log_statuses` controls status messages.
+///
+/// Parameters
+/// ----------
+/// - `opt`:
+///     Fully resolved configuration for the `bam-to-frag` command.
+/// - `options`:
+///     Reporting controls for statistics, progress bars, and status logs.
+///
+/// Returns
+/// -------
+/// - `Ok(BamToFragRunResult)`:
+///     Counters and output paths for the completed run.
+///
+/// Errors
+/// ------
+/// Returns an error when the configuration is invalid, an input cannot be read, or any output file
+/// cannot be written.
+pub fn run_bam_to_frag(opt: &BamToFragConfig, options: RunOptions) -> Result<BamToFragRunResult> {
+    let start_time = Instant::now();
+    let run_result = execute_bam_to_frag(opt, options)?;
+    let elapsed = start_time.elapsed();
+    if options.report_statistics {
+        print_fragment_run_statistics(
+            &run_result.counters.base,
+            elapsed,
+            FragmentRunStatisticsOptions {
+                include_section_header: true,
+                notes: &[],
+                labels: FragmentStatisticsLabels {
+                    counted_fragments: "Fragments included",
+                    ..DEFAULT_FRAGMENT_STATISTICS_LABELS
+                },
+                blacklist_excluded_fragments: Some(run_result.counters.blacklisted_fragments),
+                gc: opt.gc.gc_file.is_some().then_some(GCStatisticsSummary {
+                    neutralize_invalid_gc: opt.gc.neutralize_invalid_gc,
+                    failed_fragments: run_result.counters.gc_failed_fragments,
+                    missing_tags: None,
+                    out_of_range_tags: None,
+                }),
+            },
+            std::iter::empty::<&str>(),
+        );
+    }
+    Ok(run_result)
+}
+
+fn execute_bam_to_frag(opt: &BamToFragConfig, options: RunOptions) -> Result<BamToFragRunResult> {
     opt.fragment_lengths.validate()?;
     opt.gc.validate(opt.ref_2bit.as_deref())?;
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
@@ -102,7 +152,7 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
     ensure_output_dir(&opt.ioc.output_dir)?;
 
     // Load blacklist intervals if provided
-    if opt.blacklist.is_some() {
+    if opt.blacklist.is_some() && options.log_statuses {
         info!(target: COMMAND_TARGET, "Loading blacklists");
     }
     let blacklist_map = load_blacklist_map(
@@ -115,7 +165,9 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
-            info!(target: COMMAND_TARGET, "Loading window coordinates");
+            if options.log_statuses {
+                info!(target: COMMAND_TARGET, "Loading window coordinates");
+            }
             let windows = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
             ensure_plain_bed_windows_not_empty(&windows)?;
             Some(windows)
@@ -125,7 +177,7 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
 
     // Load genomic scaling factors
     let coverage_scale_genome = opt.coverage_scale_genome_args();
-    if coverage_scale_genome.scaling_factors.is_some() {
+    if coverage_scale_genome.scaling_factors.is_some() && options.log_statuses {
         info!(target: COMMAND_TARGET, "Loading coverage scaling factors");
     }
     let coverage_scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
@@ -136,7 +188,7 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
         None,
     )?;
     let count_scale_genome = opt.count_scale_genome_args();
-    if count_scale_genome.scaling_factors.is_some() {
+    if count_scale_genome.scaling_factors.is_some() && options.log_statuses {
         info!(target: COMMAND_TARGET, "Loading count-based scaling factors");
     }
     let count_scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
@@ -148,7 +200,7 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
     )?;
 
     // Load GC correction package if specified
-    if opt.gc.gc_file.is_some() {
+    if opt.gc.gc_file.is_some() && options.log_statuses {
         info!(target: COMMAND_TARGET, "Loading GC correction matrix");
     }
     let gc_corrector = load_gc_corrector(
@@ -170,13 +222,15 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
         .join(dot_join(&[prefix, "frag.header.tsv"]));
 
     // Create progress bar
-    let progress = ProgressFactory::new();
+    let progress = ProgressFactory::with_enabled(options.show_progress);
     let pb = Arc::new(progress.default_bar(chromosomes.len() as u64));
 
     // Configure global thread‐pool size
     init_global_pool(opt.ioc.n_threads)?;
 
-    info!(target: COMMAND_TARGET, "Converting per chromosome");
+    if options.log_statuses {
+        info!(target: COMMAND_TARGET, "Converting per chromosome");
+    }
 
     pb.set_position(0);
 
@@ -219,16 +273,20 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
     }
 
     // Concatenate chromosome-wise temp files
-    info!(
-        target: COMMAND_TARGET,
-        "Concatenating chromosome-wise frag files"
-    );
+    if options.log_statuses {
+        info!(
+            target: COMMAND_TARGET,
+            "Concatenating chromosome-wise frag files"
+        );
+    }
     let temp_output_file = final_outputs.temp_path_for(&output_file)?;
     concat_frag_zst_to_gzip(&chromosome_paths, &temp_output_file, false)?;
-    final_outputs.record(temp_output_file, output_file)?;
+    final_outputs.record(temp_output_file, output_file.clone())?;
 
     // Create text line
-    info!(target: COMMAND_TARGET, "Writing a header file");
+    if options.log_statuses {
+        info!(target: COMMAND_TARGET, "Writing a header file");
+    }
     let mut header = String::from("chromosome\tstart\tend\tmin_mapq\tread1_strand");
     for extra_column in [
         opt.gc.gc_file.is_some().then_some("gc_weight"),
@@ -255,13 +313,18 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
         )
     })?;
 
-    final_outputs.record(temp_output_header_file, output_header_file)?;
+    final_outputs.record(temp_output_header_file, output_header_file.clone())?;
 
     // Keep the final fragment file and header hidden while either write can still fail
     // Move both completed files into output_dir together after the data and header are ready
     final_outputs.move_into_place()?;
 
-    Ok(global_counter)
+    Ok(BamToFragRunResult {
+        counters: global_counter,
+        output_frag: output_file.clone(),
+        output_header: output_header_file.clone(),
+        output_files: vec![output_file, output_header_file],
+    })
 }
 
 fn process_chrom(

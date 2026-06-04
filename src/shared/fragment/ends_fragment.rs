@@ -20,7 +20,7 @@ use rust_htslib::bam::{
 
 /// One counted fragment end after clip handling has been resolved.
 #[derive(Debug, Clone)]
-pub struct ResolvedFragmentEnd {
+pub(crate) struct ResolvedFragmentEnd {
     /// Boundary chosen by the selected clip strategy.
     ///
     /// This is the split point between inside-fragment and outside-fragment motif bases. For a
@@ -28,96 +28,97 @@ pub struct ResolvedFragmentEnd {
     /// it is the exclusive end of that span, matching the half-open convention `[start, end)`.
     ///
     /// Code that needs the right end's terminal base must use `boundary_pos - 1`.
-    pub boundary_pos: u32,
+    pub(crate) boundary_pos: u32,
     /// First `k_inside` bases adjacent to this end in BAM/reference storage orientation.
-    pub inside_bases: Vec<u8>,
+    pub(crate) inside_bases: Vec<u8>,
     /// Number of leading inside bases that still have concrete reference positions next to
     /// `boundary_pos`.
     ///
     /// This matters for `IncludeAtAlignedBoundary`: the clipped-only prefix/suffix is kept in
     /// `inside_bases`, but those bases lie outside the aligned reference span and therefore cannot
     /// be blacklist-validated against genomic coordinates.
-    pub inside_reference_validation_bp: usize,
+    pub(crate) inside_reference_validation_bp: usize,
 }
 
 /// Fragment and end coordinates prepared for the `ends` command.
 #[derive(Debug, Clone)]
-pub struct FragmentWithEnds {
-    pub tid: i32,
+pub(crate) struct FragmentWithEnds {
     /// Aligned fragment interval used for length and GC-related coordinate calculations.
-    pub interval: Interval<u32>,
+    pub(crate) interval: Interval<u32>,
     /// Boundary-adjusted interval used for window assignment when clip strategy changes the ends.
-    pub assignment_interval: Interval<u32>,
-    pub gc_tag: GCTagValue,
-    pub left_end: Option<ResolvedFragmentEnd>,
-    pub right_end: Option<ResolvedFragmentEnd>,
+    pub(crate) assignment_interval: Interval<u32>,
+    pub(crate) gc_tag: GCTagValue,
+    pub(crate) left_end: Option<ResolvedFragmentEnd>,
+    pub(crate) right_end: Option<ResolvedFragmentEnd>,
 }
 
 impl FragmentWithEnds {
     #[inline]
-    pub fn start(&self) -> u32 {
+    pub(crate) fn start(&self) -> u32 {
         self.interval.start()
     }
 
     #[inline]
-    pub fn end(&self) -> u32 {
+    pub(crate) fn end(&self) -> u32 {
         self.interval.end()
     }
 
+    #[allow(dead_code)]
     #[inline]
-    pub fn len(&self) -> u32 {
+    pub(crate) fn len(&self) -> u32 {
         self.interval.len()
     }
 
     #[inline]
-    pub fn assignment_len(&self) -> u32 {
+    pub(crate) fn assignment_len(&self) -> u32 {
         self.assignment_interval.len()
     }
 
     #[inline]
-    pub fn assignment_start(&self) -> u32 {
+    pub(crate) fn assignment_start(&self) -> u32 {
         self.assignment_interval.start()
     }
 
+    #[allow(dead_code)]
     #[inline]
-    pub fn assignment_end(&self) -> u32 {
+    pub(crate) fn assignment_end(&self) -> u32 {
         self.assignment_interval.end()
     }
 }
 
 /// Compact per-read data needed to assemble `FragmentWithEnds`.
 #[derive(Debug, Clone)]
-pub struct EndReadInfo {
-    pub tid: i32,
-    pub interval: Interval<u32>,
-    pub is_reverse: bool,
-    pub left_soft_clip_bp: u32,
-    pub right_soft_clip_bp: u32,
-    pub left_motif_has_indels: bool,
-    pub right_motif_has_indels: bool,
-    pub has_hard_clip: bool,
-    pub seq: Vec<u8>,
-    pub qualities: Option<Vec<u8>>,
-    pub gc_tag: GCTagValue,
+pub(crate) struct EndReadInfo {
+    pub(crate) tid: i32,
+    pub(crate) interval: Interval<u32>,
+    pub(crate) is_reverse: bool,
+    pub(crate) left_soft_clip_bp: u32,
+    pub(crate) right_soft_clip_bp: u32,
+    pub(crate) left_motif_has_indels: bool,
+    pub(crate) right_motif_has_indels: bool,
+    pub(crate) has_hard_clip: bool,
+    pub(crate) seq: Vec<u8>,
+    pub(crate) qualities: Option<Vec<u8>>,
+    pub(crate) gc_tag: GCTagValue,
 }
 
 impl EndReadInfo {
     #[inline]
-    pub fn start(&self) -> u32 {
+    pub(crate) fn start(&self) -> u32 {
         self.interval.start()
     }
 
     #[inline]
-    pub fn end(&self) -> u32 {
+    pub(crate) fn end(&self) -> u32 {
         self.interval.end()
     }
 
     #[inline]
-    pub fn aligned_interval(&self) -> Interval<u32> {
+    pub(crate) fn aligned_interval(&self) -> Interval<u32> {
         self.interval
     }
 
-    pub fn from_record_with_gc_tag(
+    pub(crate) fn from_record_with_gc_tag(
         r: &Record,
         gc_tag: Option<&[u8]>,
         clip_strategy: ClipStrategy,
@@ -201,7 +202,7 @@ enum ResolvedEndOutcome {
 }
 
 /// Build a `FragmentWithEnds` from two per-read summaries.
-pub fn collect_fragment_with_ends(
+pub(crate) fn collect_fragment_with_ends(
     a: &EndReadInfo,
     b: &EndReadInfo,
     clip_strategy: ClipStrategy,
@@ -278,7 +279,6 @@ pub fn collect_fragment_with_ends(
         Interval::new(left_assignment_boundary_pos, right_assignment_boundary_pos).ok()?;
 
     Some(FragmentWithEnds {
-        tid: forward.tid,
         interval,
         assignment_interval,
         gc_tag,
@@ -288,7 +288,7 @@ pub fn collect_fragment_with_ends(
 }
 
 /// Build a `FragmentWithEnds` from one read in `--reads-are-fragments` mode.
-pub fn collect_fragment_with_ends_from_single_read(
+pub(crate) fn collect_fragment_with_ends_from_single_read(
     read: &EndReadInfo,
     clip_strategy: ClipStrategy,
     source_inside: KmerSource,
@@ -359,7 +359,6 @@ pub fn collect_fragment_with_ends_from_single_read(
         Interval::new(left_assignment_boundary_pos, right_assignment_boundary_pos).ok()?;
 
     Some(FragmentWithEnds {
-        tid: read.tid,
         interval,
         assignment_interval,
         gc_tag: read.gc_tag,

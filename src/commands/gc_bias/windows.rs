@@ -11,16 +11,16 @@ use fxhash::FxHashMap;
 use std::path::PathBuf;
 
 /// Summary of windowing configuration.
-pub struct WindowStats {
-    pub avg_span: f64,
-    pub total_windows: u64,
+pub(crate) struct WindowStats {
+    pub(crate) avg_span: f64,
+    pub(crate) total_windows: u64,
 }
 
 /// Compute window statistics without extra passes over the window set.
 ///
 /// Returns the mean span per window and the total number of windows for the
 /// configured mode (BED, fixed-size, or global).
-pub fn compute_window_stats(
+pub(crate) fn compute_window_stats(
     window_opt: &WindowSpec,
     windows_map: Option<&FxHashMap<String, Windows>>,
     contigs: &Contigs,
@@ -96,25 +96,25 @@ pub fn compute_window_stats(
 /// the tile core, the current counts, and bookkeeping used while windows are streamed, finalized,
 /// and optionally spilled for later reduction.
 #[derive(Clone, Debug)]
-pub struct WindowState {
+pub(crate) struct WindowState {
     // Stable window index in the current mode
-    pub idx: u64,
+    pub(crate) idx: u64,
     // Checked genomic interval represented by this state
-    pub interval: Interval<u64>,
+    pub(crate) interval: Interval<u64>,
     // Whether the interval lies fully inside the tile core
-    pub contained: bool,
+    pub(crate) contained: bool,
     // Counts accumulated for this interval
-    pub counts: GCCounts,
+    pub(crate) counts: GCCounts,
     // Whether any fragment has contributed counts to this state
-    pub has_counts: bool,
+    pub(crate) has_counts: bool,
     // Number of finalized contributions merged into this state
-    pub weight: usize,
+    pub(crate) weight: usize,
     // Optional path to spill data written for later reduction
-    pub crossing_file: Option<PathBuf>,
+    pub(crate) crossing_file: Option<PathBuf>,
 }
 
 impl WindowState {
-    pub fn new(
+    pub(crate) fn new(
         idx: u64,
         interval: Interval<u64>,
         contained: bool,
@@ -131,7 +131,7 @@ impl WindowState {
         })
     }
 
-    pub fn reset(
+    pub(crate) fn reset(
         &mut self,
         idx: u64,
         interval: Interval<u64>,
@@ -153,17 +153,17 @@ impl WindowState {
     }
 
     #[inline]
-    pub fn start(&self) -> u64 {
+    pub(crate) fn start(&self) -> u64 {
         self.interval.start()
     }
 
     #[inline]
-    pub fn end(&self) -> u64 {
+    pub(crate) fn end(&self) -> u64 {
         self.interval.end()
     }
 }
 
-pub fn fixed_size_window_interval(
+pub(crate) fn fixed_size_window_interval(
     idx: u64,
     window_bp: u64,
     chrom_len: u64,
@@ -181,7 +181,7 @@ pub fn fixed_size_window_interval(
 }
 
 #[inline]
-pub fn window_state_from_idx(
+pub(crate) fn window_state_from_idx(
     idx: u64,
     window_bp: u64,
     chrom_len: u64,
@@ -290,7 +290,7 @@ pub(crate) fn advance_fixed_size_streaming_buffers(
 /// -------
 /// - Updates `buf.counts.num_acgt_out_of` with `(acgt_in_window, length_used)`.
 /// - Returns an error when the observed interval does not overlap the available sequence.
-pub fn set_window_acgt_in_observed_interval(
+pub(crate) fn set_window_acgt_in_observed_interval(
     buf: &mut WindowState,
     gc_prefixes: &GCPrefixes,
     observed_interval: Interval<u64>,
@@ -331,15 +331,15 @@ pub fn set_window_acgt_in_observed_interval(
     Ok(())
 }
 
-pub fn overlap_length(a: Interval<u64>, b: Interval<u64>) -> u64 {
+pub(crate) fn overlap_length(a: Interval<u64>, b: Interval<u64>) -> u64 {
     a.intersection(b).map_or(0, |shared| shared.len())
 }
 
 #[derive(Debug)]
-pub struct PreparedTileWindows {
-    pub windows: Vec<WindowState>,
-    pub streaming_buffers: Option<(u64, WindowState, Option<WindowState>)>,
-    pub skip_tile: bool,
+pub(crate) struct PreparedTileWindows {
+    pub(crate) windows: Vec<WindowState>,
+    pub(crate) streaming_buffers: Option<(u64, WindowState, Option<WindowState>)>,
+    pub(crate) skip_tile: bool,
 }
 
 /// Prepares window buffers for a tile based on the configured window specification.
@@ -369,7 +369,7 @@ pub struct PreparedTileWindows {
 /// - `PreparedTileWindows`:
 ///     Contains the ready-to-use window buffers, any streaming pair, and a skip flag for empty BED
 ///     chromosomes.
-pub fn prepare_tile_windows(
+pub(crate) fn prepare_tile_windows(
     window_opt: &WindowSpec,
     windows_opt: Option<&[IndexedInterval<u64>]>,
     tile: &Tile,

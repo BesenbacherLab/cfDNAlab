@@ -41,7 +41,7 @@ const MAX_DENSE_END_MOTIF_OUTPUT_BYTES_ENV: &str = "CFDNALAB_ENDS_MAX_DENSE_OUTP
 /// -------
 /// - `Vec<String>`:
 ///   Sorted observed motif labels
-pub fn collect_end_motif_order(bins: &[FxHashMap<String, f64>]) -> Vec<String> {
+pub(crate) fn collect_end_motif_order(bins: &[FxHashMap<String, f64>]) -> Vec<String> {
     let mut motifs = std::collections::BTreeSet::new();
     for bin in bins {
         for motif in bin.keys() {
@@ -71,7 +71,7 @@ pub fn collect_end_motif_order(bins: &[FxHashMap<String, f64>]) -> Vec<String> {
 /// -------
 /// - `Result<Vec<String>>`:
 ///   Sorted dense motif universe for the current settings
-pub fn build_all_end_motif_order(
+pub(crate) fn build_all_end_motif_order(
     inside_spec: Option<&KmerSpec>,
     outside_spec: Option<&KmerSpec>,
     collapse_complement: bool,
@@ -147,7 +147,7 @@ fn all_half_motifs(spec: Option<&KmerSpec>) -> Result<Vec<String>> {
 /// -------
 /// - `Result<()>`:
 ///   `Ok(())` when the dense matrix stays within the configured size budget
-pub fn ensure_dense_end_motif_output_size(n_windows: usize, n_motifs: usize) -> Result<()> {
+pub(crate) fn ensure_dense_end_motif_output_size(n_windows: usize, n_motifs: usize) -> Result<()> {
     let max_dense_output_bytes = max_dense_end_motif_output_bytes()?;
     let n_values = (n_windows as u64)
         .checked_mul(n_motifs as u64)
@@ -212,7 +212,7 @@ fn max_dense_end_motif_output_bytes() -> Result<u64> {
 /// -------
 /// - `Result<()>`:
 ///   `Ok(())` when dense `--all-motifs` enumeration stays within the size budget
-pub fn ensure_all_motifs_enumeration_size(
+pub(crate) fn ensure_all_motifs_enumeration_size(
     k_inside: usize,
     k_outside: usize,
     n_windows: usize,

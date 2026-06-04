@@ -1,12 +1,9 @@
-#![cfg(feature = "cmd_gc_bias")]
-
-use fxhash::FxHashMap;
-use ndarray::{Array2, array};
-
-use cfdnalab::commands::gc_bias::{
+use crate::commands::gc_bias::{
     binning::{BinnedAxis, CollapseAggregation, collapse_counts_by_bins},
     smoothing::smoothe_counts_gaussian,
 };
+use fxhash::FxHashMap;
+use ndarray::{Array2, array};
 
 fn assert_matrix_close(actual: &Array2<f64>, expected: &Array2<f64>, tol: f64) {
     assert_eq!(actual.dim(), expected.dim(), "matrix dimensions differ");
@@ -330,7 +327,7 @@ mod collapse_bins_tests {
 
 mod binning_tests {
     use super::*;
-    use cfdnalab::commands::gc_bias::binning::bin_greedily_by_mass;
+    use crate::commands::gc_bias::binning::bin_greedily_by_mass;
 
     #[test]
     fn bins_all_mass_into_single_bin_when_threshold_is_high() {

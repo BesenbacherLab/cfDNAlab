@@ -1,6 +1,6 @@
-pub mod config;
-pub mod fcoverage;
-pub mod reducer;
-pub mod tiling;
-pub mod window_results;
-pub mod writers;
+pub(crate) mod config;
+pub(crate) mod fcoverage;
+pub(crate) mod reducer;
+pub(crate) mod tiling;
+pub(crate) mod window_results;
+pub(crate) mod writers;

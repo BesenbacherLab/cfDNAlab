@@ -1,34 +1,37 @@
-use crate::shared::{
-    base::{BASES, encode_base, rev_complement},
-    positioning::PositionGroup,
-};
+use crate::shared::base::{BASES, encode_base};
+#[cfg(feature = "cmd_fragment_kmers")]
+use crate::shared::{base::rev_complement, positioning::PositionGroup};
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::{FxHashMap, FxHashSet};
+#[cfg(feature = "cmd_fragment_kmers")]
 use serde::{Deserialize, Serialize};
 
 /// Largest k-mer length whose full radix-5 code space fits in `u64` with sentinel values.
-pub const MAX_RADIX5_KMER_SIZE: usize = 27;
+pub(crate) const MAX_RADIX5_KMER_SIZE: usize = 27;
 
 /// * `k`    – length
 /// * `code` – packed reference code in the narrowest type, promoted to u64
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Kmer {
-    pub k: u8,
-    pub code: u64,
-    pub orientation: KmerOrientation,
+#[cfg(feature = "cmd_fragment_kmers")]
+pub(crate) struct Kmer {
+    pub(crate) k: u8,
+    pub(crate) code: u64,
+    pub(crate) orientation: KmerOrientation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum KmerOrientation {
+#[cfg(feature = "cmd_fragment_kmers")]
+pub(crate) enum KmerOrientation {
     Forward,
     Reverse,
 }
 
+#[cfg(feature = "cmd_fragment_kmers")]
 impl KmerOrientation {
     /// Get KmerOrientation from a PositionGroup
     ///
     /// Left/Mid => forward, right => reverse
-    pub fn from_position_group(group: PositionGroup) -> KmerOrientation {
+    pub(crate) fn from_position_group(group: PositionGroup) -> KmerOrientation {
         match group {
             PositionGroup::Left | PositionGroup::Mid => KmerOrientation::Forward,
             PositionGroup::Right => KmerOrientation::Reverse,
@@ -39,10 +42,11 @@ impl KmerOrientation {
 // -----------------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------------
+#[cfg(feature = "cmd_fragment_kmers")]
 impl Kmer {
     /// User-readable string representation.
     /// Requires a `KmerSpec` table to know how to decode arbitrary k.
-    pub fn to_string(&self, specs: &FxHashMap<u8, KmerSpec>) -> String {
+    pub(crate) fn to_string(&self, specs: &FxHashMap<u8, KmerSpec>) -> String {
         let motif = specs[&self.k].decode_kmer(self.code);
         match self.orientation {
             KmerOrientation::Forward => motif,
@@ -54,7 +58,7 @@ impl Kmer {
 /// The narrowest integer width that can accommodate the code space for a k‑mer
 /// length, *plus* the two reserved sentinel values.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum Width {
+pub(crate) enum Width {
     U8,
     U16,
     U32,
@@ -63,7 +67,7 @@ pub enum Width {
 
 /// Per-position code vector stored in the tightest possible type.
 #[derive(Debug)]
-pub enum KmerCodes {
+pub(crate) enum KmerCodes {
     U8(Vec<u8>),
     U16(Vec<u16>),
     U32(Vec<u32>),
@@ -73,7 +77,7 @@ pub enum KmerCodes {
 impl KmerCodes {
     /// Return the code at position `idx` as `u64`.
     #[inline]
-    pub fn get(&self, idx: usize) -> u64 {
+    pub(crate) fn get(&self, idx: usize) -> u64 {
         match self {
             KmerCodes::U8(v) => v[idx] as u64,
             KmerCodes::U16(v) => v[idx] as u64,
@@ -85,9 +89,9 @@ impl KmerCodes {
 
 /// One fully‑specified encoder/decoder for a particular k.
 #[derive(Clone, Debug)]
-pub struct KmerSpec {
+pub(crate) struct KmerSpec {
     /// Window length
-    pub k: usize,
+    pub(crate) k: usize,
     /// Integer width used for storage
     width: Width,
     /// Code used when no full k‑mer is available (chromosome ends)
@@ -98,7 +102,7 @@ pub struct KmerSpec {
 
 impl KmerSpec {
     /// Build per‑position codes for the provided reference sequence.
-    pub fn build_left_aligned_codes(&self, seq: &[u8]) -> Vec<u64> {
+    pub(crate) fn build_left_aligned_codes(&self, seq: &[u8]) -> Vec<u64> {
         build_left_aligned_codes(seq, self.k, self.sentinel_none, self.sentinel_n)
     }
 
@@ -108,7 +112,7 @@ impl KmerSpec {
     /// - `sentinel_none` when `seq.len() != self.k`
     /// - `sentinel_n` when any base encodes as `N`
     /// - otherwise the radix-5 code for the provided bases
-    pub fn encode_kmer_bytes(&self, seq: &[u8]) -> u64 {
+    pub(crate) fn encode_kmer_bytes(&self, seq: &[u8]) -> u64 {
         if seq.len() != self.k {
             return self.sentinel_none;
         }
@@ -126,17 +130,17 @@ impl KmerSpec {
 
     /// Decode a single code back to its k‑mer string, returning all‑'N' if the
     /// code is one of the sentinels.
-    pub fn decode_kmer(&self, code: u64) -> String {
+    pub(crate) fn decode_kmer(&self, code: u64) -> String {
         decode_kmer(code, self.k, self.sentinel_none, self.sentinel_n)
     }
 
     /// Public accessor for the “no full k‑mer” sentinel.
-    pub fn sentinel_none(&self) -> u64 {
+    pub(crate) fn sentinel_none(&self) -> u64 {
         self.sentinel_none
     }
 
     /// Public accessor for the “contains N” sentinel.
-    pub fn sentinel_n(&self) -> u64 {
+    pub(crate) fn sentinel_n(&self) -> u64 {
         self.sentinel_n
     }
 }
@@ -147,9 +151,9 @@ impl KmerSpec {
 /// are compact indices into first-seen unique normalized k-mers. Unselected, malformed,
 /// N-containing, and out-of-bounds k-mers map to `sentinel_missing`.
 #[derive(Clone, Debug)]
-pub struct SubspaceKmerSpec {
+pub(crate) struct SubspaceKmerSpec {
     /// Window length
-    pub k: usize,
+    pub(crate) k: usize,
     /// Integer width used for precomputed selected-code arrays
     width: Width,
     /// Sentinel used when a k-mer is not in the selected subspace
@@ -168,7 +172,7 @@ struct SelectedCodesByKmerBytes(FxHashMap<Box<[u8]>, u64>);
 impl SubspaceKmerSpec {
     /// Return the selected-code sentinel.
     #[inline]
-    pub fn sentinel_missing(&self) -> u64 {
+    pub(crate) fn sentinel_missing(&self) -> u64 {
         self.sentinel_missing
     }
 
@@ -178,7 +182,7 @@ impl SubspaceKmerSpec {
     /// `sentinel_missing` when the input is not exactly length `k`, contains a non-ACGT base, or is
     /// not selected.
     #[inline]
-    pub fn encode_kmer_bytes(&self, seq: &[u8]) -> u64 {
+    pub(crate) fn encode_kmer_bytes(&self, seq: &[u8]) -> u64 {
         let Some(normalized) = normalize_acgt_kmer(seq, self.k) else {
             return self.sentinel_missing;
         };
@@ -194,7 +198,7 @@ impl SubspaceKmerSpec {
     /// The result has the same length as `seq`. Positions without a complete selected k-mer contain
     /// `sentinel_missing`. The packed dtype is chosen from the subspace size, not from the full
     /// k-mer universe.
-    pub fn build_left_aligned_codes(&self, seq: &[u8]) -> KmerCodes {
+    pub(crate) fn build_left_aligned_codes(&self, seq: &[u8]) -> KmerCodes {
         let raw = build_left_aligned_subspace_codes(self, seq);
         pack_codes(raw, self.width)
     }
@@ -203,7 +207,7 @@ impl SubspaceKmerSpec {
 /// Construct a `KmerSpec` for each k.
 ///
 /// * Duplicate sizes result in an error.
-pub fn build_kmer_specs(kmer_sizes: &[u8]) -> Result<FxHashMap<u8, KmerSpec>> {
+pub(crate) fn build_kmer_specs(kmer_sizes: &[u8]) -> Result<FxHashMap<u8, KmerSpec>> {
     let mut seen = FxHashSet::default();
     let mut specs = FxHashMap::default();
 
@@ -250,7 +254,10 @@ pub fn build_kmer_specs(kmer_sizes: &[u8]) -> Result<FxHashMap<u8, KmerSpec>> {
 /// -------
 /// - `Result<SubspaceKmerSpec>`:
 ///   A selected-subspace encoder with compact codes and an adaptive precompute dtype
-pub fn build_subspace_kmer_spec<T>(k: usize, selected_kmers: &[T]) -> Result<SubspaceKmerSpec>
+pub(crate) fn build_subspace_kmer_spec<T>(
+    k: usize,
+    selected_kmers: &[T],
+) -> Result<SubspaceKmerSpec>
 where
     T: AsRef<[u8]>,
 {
@@ -298,7 +305,8 @@ where
 /// let trinuc_codes = &codes_by_k[&3];
 /// let dinuc_codes  = &codes_by_k[&2];
 /// ```
-pub fn build_left_aligned_codes_per_k(
+#[cfg(feature = "cmd_fragment_kmers")]
+pub(crate) fn build_left_aligned_codes_per_k(
     seq: &[u8],
     specs: &FxHashMap<u8, KmerSpec>,
 ) -> FxHashMap<u8, KmerCodes> {
@@ -325,7 +333,7 @@ pub(crate) fn build_left_aligned_codes_for_spec(seq: &[u8], spec: &KmerSpec) -> 
 
 /// Decide which integer width is sufficient for the code space of this k.
 /// The top two codes of the chosen width are reserved as sentinels.
-pub fn choose_width(k: usize) -> Result<(Width, u64, u64)> {
+pub(crate) fn choose_width(k: usize) -> Result<(Width, u64, u64)> {
     // `u128` is used so that 5^k never overflows during width selection.
     // Even for k = 27 we have 5^k ≈ 7.4e18 < 2^128, so the calculation is safe.
     // The value is then compared to the MAX of each smaller integer type.

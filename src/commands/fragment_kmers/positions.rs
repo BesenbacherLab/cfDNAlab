@@ -9,7 +9,7 @@ use crate::shared::visualization::{AxisBounds, Track};
 /// The position specification tagged to allow frame-specific dispatch.
 /// Each variant has range and step size
 #[derive(Debug, Clone)]
-pub enum PositionsSpec {
+pub(crate) enum PositionsSpec {
     Linear(LinearRange),
     Nearest(NearestRange),
     Mid(MidRange),
@@ -17,7 +17,7 @@ pub enum PositionsSpec {
 
 /// Range grammar used with the `nearest` frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NearestRange {
+pub(crate) enum NearestRange {
     /// Entire folded axis.
     All,
     Closed {
@@ -38,7 +38,7 @@ pub enum NearestRange {
 
 /// Range grammar used with the `mid` frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MidRange {
+pub(crate) enum MidRange {
     /// Entire symmetric axis.
     All,
     Closed {
@@ -55,7 +55,7 @@ pub enum MidRange {
 
 /// Range grammar for frames that index strictly from one end.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LinearRange {
+pub(crate) enum LinearRange {
     /// Entire fragment axis.
     All,
     /// Closed inclusive range `A..B`.
@@ -75,10 +75,10 @@ pub enum LinearRange {
 /* Final windows */
 
 #[derive(Debug, Clone)]
-pub struct AllowedWindows {
+pub(crate) struct AllowedWindows {
     // Inclusive ranges in left-based coordinates
-    pub forward_starts: Vec<(u32, u32)>, // usable forward START indices
-    pub reverse_anchors: Vec<(u32, u32)>, // usable reverse ANCHOR indices
+    pub(crate) forward_starts: Vec<(u32, u32)>, // usable forward START indices
+    pub(crate) reverse_anchors: Vec<(u32, u32)>, // usable reverse ANCHOR indices
 }
 
 // Helpers to make/shrink runs (keep private)
@@ -137,7 +137,7 @@ fn shrink_reverse_runs(runs: Vec<(u32, u32)>, k: u8) -> Vec<(u32, u32)> {
 }
 
 #[inline]
-pub fn in_any_run(x: u64, runs: &[(u32, u32)]) -> bool {
+pub(crate) fn in_any_run(x: u64, runs: &[(u32, u32)]) -> bool {
     // Runs are few. Linear scan is fine
     runs.iter()
         .any(|&(s, e)| (s as u64) <= x && x <= (e as u64))
@@ -146,40 +146,40 @@ pub fn in_any_run(x: u64, runs: &[(u32, u32)]) -> bool {
 /* */
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PositionSelection {
+pub(crate) struct PositionSelection {
     offset: u32,
     group: PositionGroup,
 }
 
 impl PositionSelection {
     #[inline]
-    pub fn offset(&self) -> u32 {
+    pub(crate) fn offset(&self) -> u32 {
         self.offset
     }
 
     #[inline]
-    pub fn orientation(&self) -> PositionOrientation {
+    pub(crate) fn orientation(&self) -> PositionOrientation {
         PositionOrientation::from_position_group(self.group)
     }
 
     #[inline]
-    pub fn group(&self) -> PositionGroup {
+    pub(crate) fn group(&self) -> PositionGroup {
         self.group
     }
 }
 
 /// Cache of positional selections per fragment length.
-pub struct PositionSelectionCache {
-    pub min_length: u32,
-    pub offsets: FxHashMap<u8, Vec<Vec<PositionSelection>>>,
-    pub present_frames: FxHashSet<ReferenceFrame>,
-    pub main_frame: ReferenceFrame,
-    pub windows: FxHashMap<u8, Vec<AllowedWindows>>,
+pub(crate) struct PositionSelectionCache {
+    pub(crate) min_length: u32,
+    pub(crate) offsets: FxHashMap<u8, Vec<Vec<PositionSelection>>>,
+    pub(crate) present_frames: FxHashSet<ReferenceFrame>,
+    pub(crate) main_frame: ReferenceFrame,
+    pub(crate) windows: FxHashMap<u8, Vec<AllowedWindows>>,
 }
 
 impl PositionSelectionCache {
     /// Build a cache of selected offsets (0-based) for every fragment length in `[min_len, max_len]`.
-    pub fn new(
+    pub(crate) fn new(
         position_specs: Vec<PositionalSelectionSpec>,
         kmer_sizes: &[u8],
         min_len: u32,
@@ -287,7 +287,7 @@ impl PositionSelectionCache {
     }
 
     #[inline]
-    pub fn offsets(&self, length: u32, k: u8) -> Option<&[PositionSelection]> {
+    pub(crate) fn offsets(&self, length: u32, k: u8) -> Option<&[PositionSelection]> {
         if length < self.min_length {
             return None;
         }
@@ -297,7 +297,7 @@ impl PositionSelectionCache {
 
     /// Get *extreme* bounds. For window bounds, see `.windows()`.
     #[inline]
-    pub fn bounds(&self, length: u32, k: u8) -> Option<(u32, u32)> {
+    pub(crate) fn bounds(&self, length: u32, k: u8) -> Option<(u32, u32)> {
         let selections = self.offsets(length, k)?;
         if selections.is_empty() {
             None
@@ -309,7 +309,7 @@ impl PositionSelectionCache {
     }
 
     #[inline]
-    pub fn windows(&self, length: u32, k: u8) -> Option<&AllowedWindows> {
+    pub(crate) fn windows(&self, length: u32, k: u8) -> Option<&AllowedWindows> {
         if length < self.min_length {
             return None;
         }

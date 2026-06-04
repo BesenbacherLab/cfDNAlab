@@ -129,9 +129,9 @@ Before publishing the Rust CLI:
 
 ```bash
 cargo check
-cargo check --tests
+cargo check --tests --features testing
 cargo check --all-features
-cargo test
+cargo test --features testing
 cargo package --list
 cargo package
 cargo publish --dry-run
@@ -192,7 +192,8 @@ output files:
 
 ```bash
 # local or CI-equivalent
-cargo test --no-default-features --features cmd_midpoints,cmd_ends \
+cargo test --no-default-features \
+  --features cmd_midpoints,cmd_ends,cmd_lengths,testing \
   --test generate_downstream_zarr_fixtures \
   -- --ignored
 ```

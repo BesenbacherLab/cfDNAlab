@@ -14,31 +14,31 @@ use rust_htslib::bam::{self, Record, record::Aux};
 
 /// Per-record AUX tag data.
 #[derive(Debug, Default)]
-pub struct RecordTags {
-    pub fragment_length: u32,
-    pub coverage_weight: Option<f32>,
-    pub fragment_count_weight: Option<f32>,
-    pub gc_weight: Option<f32>,
+pub(crate) struct RecordTags {
+    pub(crate) fragment_length: u32,
+    pub(crate) coverage_weight: Option<f32>,
+    pub(crate) fragment_count_weight: Option<f32>,
+    pub(crate) gc_weight: Option<f32>,
 }
 
 /// Shared tag data for a pair of mate records.
-pub type SharedTags = Arc<RecordTags>;
+pub(crate) type SharedTags = Arc<RecordTags>;
 
 /// A buffered BAM record with its sort keys.
-pub struct RecordEntry {
-    pub interval: Interval<u32>,
-    pub record: Record,
-    pub tags: SharedTags,
+pub(crate) struct RecordEntry {
+    pub(crate) interval: Interval<u32>,
+    pub(crate) record: Record,
+    pub(crate) tags: SharedTags,
 }
 
 impl RecordEntry {
     #[inline]
-    pub fn start(&self) -> u32 {
+    pub(crate) fn start(&self) -> u32 {
         self.interval.start()
     }
 
     #[inline]
-    pub fn end(&self) -> u32 {
+    pub(crate) fn end(&self) -> u32 {
         self.interval.end()
     }
 }
@@ -97,7 +97,7 @@ impl RecordEntry {
 ///
 /// Example
 /// -------
-/// ```rust
+/// ```rust,ignore
 /// use cfdnalab::commands::bam_to_bam::sorted_writer::{
 ///     RecordEntry, RecordTags, RecordWriter, WindowSorter,
 /// };
@@ -132,7 +132,7 @@ impl RecordEntry {
 /// # }
 /// ```
 ///
-pub struct WindowSorter {
+pub(crate) struct WindowSorter {
     heap: BinaryHeap<Reverse<HeapEntry>>,
     max_window_bp: u32, // Look-back (max fragment length)
     max_seen_start: u32,
@@ -141,7 +141,7 @@ pub struct WindowSorter {
 
 impl WindowSorter {
     /// `max_window_bp`: the maximum fragment length bound.
-    pub fn new(max_window_bp: u32) -> Self {
+    pub(crate) fn new(max_window_bp: u32) -> Self {
         Self {
             heap: BinaryHeap::new(),
             max_window_bp,
@@ -151,7 +151,11 @@ impl WindowSorter {
     }
 
     /// Push a new entry and flush anything safely behind the window to `writer`.
-    pub fn push<W: RecordWriter>(&mut self, entry: RecordEntry, writer: &mut W) -> Result<()> {
+    pub(crate) fn push<W: RecordWriter>(
+        &mut self,
+        entry: RecordEntry,
+        writer: &mut W,
+    ) -> Result<()> {
         if entry.start() > self.max_seen_start {
             self.max_seen_start = entry.start();
         }
@@ -174,7 +178,7 @@ impl WindowSorter {
     }
 
     /// Flush all remaining entries in sorted order.
-    pub fn flush_all<W: RecordWriter>(&mut self, writer: &mut W) -> Result<()> {
+    pub(crate) fn flush_all<W: RecordWriter>(&mut self, writer: &mut W) -> Result<()> {
         // Remaining tail is at most `max_window_bp` wide in coordinates.
         let mut rest: Vec<HeapEntry> = self.heap.drain().map(|rev| rev.0).collect();
         rest.sort(); // Sort small tail to ensure total order
@@ -186,7 +190,7 @@ impl WindowSorter {
 }
 
 /// Writer abstraction for sorted BAM output.
-pub trait RecordWriter {
+pub(crate) trait RecordWriter {
     fn write_entry(&mut self, entry: RecordEntry) -> Result<()>;
 }
 

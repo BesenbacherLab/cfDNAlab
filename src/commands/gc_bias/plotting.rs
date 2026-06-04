@@ -40,7 +40,7 @@ const SELECTED_LENGTH_BIAS_STEP_BP: usize = 20;
 ///     Count grid on GC percent x fragment length used for unbinned histograms.
 /// - `binned_counts`:
 ///     Count grid collapsed to GC/length bins for the binned heatmap histograms.
-pub fn plot_gc_bias(
+pub(crate) fn plot_gc_bias(
     output_dir: &Path,
     prefix: &str,
     gc_bins: &BinnedAxis,

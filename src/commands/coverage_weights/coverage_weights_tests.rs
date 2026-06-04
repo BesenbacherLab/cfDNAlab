@@ -10,7 +10,8 @@ fn make_run_result(path: PathBuf) -> FCoverageRunResult {
     FCoverageRunResult {
         counters: crate::commands::counters::FCoverageCounters::default(),
         mean_normalization_length: None,
-        final_out_path: path,
+        final_out_path: path.clone(),
+        output_files: vec![path],
     }
 }
 

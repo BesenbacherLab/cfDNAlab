@@ -6,7 +6,7 @@ use crate::shared::visualization::Track;
 use super::model::{LengthVisualization, VizConfig};
 
 /// Render the visualization as ASCII art.
-pub fn render_ascii(results: &[LengthVisualization], config: &VizConfig) -> String {
+pub(crate) fn render_ascii(results: &[LengthVisualization], config: &VizConfig) -> String {
     let mut output = String::new();
     for (idx, viz) in results.iter().enumerate() {
         if idx > 0 {
@@ -168,7 +168,7 @@ fn build_ruler(width: usize) -> String {
     chars.into_iter().collect()
 }
 
-pub fn build_tick_lines(track: &Track, width: usize) -> (String, String) {
+pub(crate) fn build_tick_lines(track: &Track, width: usize) -> (String, String) {
     if width == 0 {
         return (String::new(), String::new());
     }
@@ -356,7 +356,7 @@ fn write_track_axis(
     }
 }
 
-pub fn value_to_column(value: f64, axis_start: f64, axis_end: f64, width: usize) -> usize {
+pub(crate) fn value_to_column(value: f64, axis_start: f64, axis_end: f64, width: usize) -> usize {
     if width == 0 {
         return 0;
     }

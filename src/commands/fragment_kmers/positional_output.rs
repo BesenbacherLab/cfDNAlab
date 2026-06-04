@@ -33,7 +33,7 @@ use zip::{ZipWriter, write::SimpleFileOptions};
 /// motifs = [line.strip() for line in open("PREFIX.k3_left_motifs.txt")]
 /// offsets = [int(line.strip()) for line in open("PREFIX.left_positions.txt")]
 /// ```
-pub fn write_positional_output(
+pub(crate) fn write_positional_output(
     positional_counts: &[FxHashMap<PositionDescriptor, DecodedCounts>],
     motifs_by_k: &FxHashMap<u8, Vec<String>>,
     kmer_specs: &FxHashMap<u8, KmerSpec>,

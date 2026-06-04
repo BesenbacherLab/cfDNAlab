@@ -43,9 +43,10 @@ use crate::{
 ///   to aligned BAM fetch narrowing. In that case the caller keeps the full aligned `tile.fetch`
 ///   band.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum BedFetchPolicy {
+pub(crate) enum BedFetchPolicy {
     CoreOverlap,
     CandidateWindowExtent,
+    #[allow(dead_code)]
     KeepTileFetch,
 }
 
@@ -79,7 +80,7 @@ pub enum BedFetchPolicy {
 /// -------
 /// - `Result<Option<Interval<u64>>>`:
 ///   Checked absolute fetch interval, or `None` when no windows apply
-pub fn fetch_span_for_tile(
+pub(crate) fn fetch_span_for_tile(
     tile: &Tile,
     tile_window_span: Option<&TileWindowSpan>,
     windows_chr: Option<&[IndexedInterval<u64>]>,
@@ -176,7 +177,7 @@ pub fn fetch_span_for_tile(
 ///
 /// This helper must derive the leftmost and rightmost bounds from windows that actually overlap
 /// the tile core, even when a wider cached candidate span is available.
-pub fn window_derived_fetch_extent_for_core_overlap(
+pub(crate) fn window_derived_fetch_extent_for_core_overlap(
     windows_chr: &[IndexedInterval<u64>],
     tile: &Tile,
     candidate_span: Option<&TileWindowSpan>,
@@ -215,7 +216,7 @@ pub fn window_derived_fetch_extent_for_core_overlap(
 ///
 /// This helper must derive the min/max directly from the candidate span and must not reapply a
 /// core-overlap filter.
-pub fn window_derived_fetch_extent_for_candidates(
+pub(crate) fn window_derived_fetch_extent_for_candidates(
     windows_chr: &[IndexedInterval<u64>],
     candidate_span: Option<&TileWindowSpan>,
 ) -> Result<Option<Interval<u64>>> {
@@ -258,7 +259,7 @@ pub fn window_derived_fetch_extent_for_candidates(
 /// - not performed here
 ///
 /// This is the generic "do not narrow fetch from BED windows" policy.
-pub fn full_tile_fetch_span(tile: &Tile, chrom_len: u64) -> Result<Option<Interval<u64>>> {
+pub(crate) fn full_tile_fetch_span(tile: &Tile, chrom_len: u64) -> Result<Option<Interval<u64>>> {
     let fetch_start = tile.fetch_start() as u64;
     let fetch_end = (tile.fetch_end().min(chrom_len as u32)) as u64;
     if fetch_start >= fetch_end {

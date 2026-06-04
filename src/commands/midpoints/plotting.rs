@@ -29,7 +29,7 @@ use crate::shared::plotters::{
 ///     Mapping from group index to user-readable name.
 /// - `counts`:
 ///     Midpoint counts shaped `(group, length_bin, position)`.
-pub fn plot_midpoint_profiles(
+pub(crate) fn plot_midpoint_profiles(
     prefix: &str,
     output_dir: &Path,
     plot_groups: &[usize],

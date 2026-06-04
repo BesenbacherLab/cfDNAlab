@@ -5,6 +5,7 @@ use std::{sync::Arc, time::Instant};
 use tracing::info;
 
 use crate::{
+    command_run::{CommandRunResult, RunOptions},
     commands::{
         bam_to_bam::{
             config::BamToBamConfig,
@@ -44,45 +45,96 @@ use crate::{
 
 const COMMAND_TARGET: &str = "bam-to-bam";
 
-/// Execute the bam-to-bam filtering.
+/// Result from `bam-to-bam`.
 ///
-/// Parameters:
-/// - `opt`: Fully resolved configuration for the `bam-to-bam` command.
-///
-/// Returns:
-/// - `Ok(())` when the counts and accompanying metadata files are written successfully.
-///
-/// Errors:
-/// - Propagates IO and parsing errors when reading inputs or writing results, aborting the run on
-///   the first failure.
-pub fn run(opt: &BamToBamConfig) -> Result<()> {
-    let start_time = Instant::now();
-    let global_counter = run_inner(opt)?;
-    let elapsed = start_time.elapsed();
-    print_fragment_run_statistics(
-        &global_counter.base,
-        elapsed,
-        FragmentRunStatisticsOptions {
-            include_section_header: true,
-            notes: &[],
-            labels: FragmentStatisticsLabels {
-                counted_fragments: "Fragments included",
-                ..DEFAULT_FRAGMENT_STATISTICS_LABELS
-            },
-            blacklist_excluded_fragments: Some(global_counter.blacklisted_fragments),
-            gc: opt.gc.gc_file.is_some().then_some(GCStatisticsSummary {
-                neutralize_invalid_gc: opt.gc.neutralize_invalid_gc,
-                failed_fragments: global_counter.gc_failed_fragments,
-                missing_tags: None,
-                out_of_range_tags: None,
-            }),
-        },
-        std::iter::empty::<&str>(),
-    );
-    Ok(())
+/// The command writes one filtered or annotated BAM file. The result keeps the fragment counters
+/// and the final output path together so library callers do not need to reconstruct file names
+/// from the configuration.
+#[derive(Debug)]
+pub struct BamToBamRunResult {
+    /// Fragment and filtering counters collected during the run.
+    pub counters: BamToBamCounters,
+    /// Final BAM path written by the command.
+    pub output_bam: std::path::PathBuf,
+    /// Final output files produced by the command.
+    pub output_files: Vec<std::path::PathBuf>,
 }
 
-pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToBamCounters> {
+impl CommandRunResult for BamToBamRunResult {
+    type Counters = BamToBamCounters;
+
+    fn counters(&self) -> &Self::Counters {
+        &self.counters
+    }
+
+    fn output_files(&self) -> &[std::path::PathBuf] {
+        &self.output_files
+    }
+
+    fn primary_output(&self) -> Option<&std::path::Path> {
+        Some(&self.output_bam)
+    }
+}
+
+/// Run the `bam-to-bam` command.
+///
+/// This is the programmatic entry point for the same filtering and annotation behavior exposed by
+/// the CLI. It reads a BAM, applies the configured fragment filters, optional GC correction,
+/// optional genomic scaling, and writes a new BAM.
+///
+/// Reporting is controlled by `options`. `report_statistics` prints the final summary,
+/// `show_progress` controls progress bars, and `log_statuses` controls status messages.
+///
+/// Parameters
+/// ----------
+/// - `opt`:
+///     Fully resolved configuration for the `bam-to-bam` command.
+/// - `options`:
+///     Reporting controls for statistics, progress bars, and status logs.
+///
+/// Returns
+/// -------
+/// - `Ok(BamToBamRunResult)`:
+///     Counters and output paths for the completed run.
+///
+/// Errors
+/// ------
+/// Returns an error when the configuration is invalid, an input cannot be read, or the output BAM
+/// cannot be written.
+pub fn run_bam_to_bam(opt: &BamToBamConfig, options: RunOptions) -> Result<BamToBamRunResult> {
+    let start_time = Instant::now();
+    let global_counter = execute_bam_to_bam(opt, options)?;
+    let elapsed = start_time.elapsed();
+    if options.report_statistics {
+        print_fragment_run_statistics(
+            &global_counter.base,
+            elapsed,
+            FragmentRunStatisticsOptions {
+                include_section_header: true,
+                notes: &[],
+                labels: FragmentStatisticsLabels {
+                    counted_fragments: "Fragments included",
+                    ..DEFAULT_FRAGMENT_STATISTICS_LABELS
+                },
+                blacklist_excluded_fragments: Some(global_counter.blacklisted_fragments),
+                gc: opt.gc.gc_file.is_some().then_some(GCStatisticsSummary {
+                    neutralize_invalid_gc: opt.gc.neutralize_invalid_gc,
+                    failed_fragments: global_counter.gc_failed_fragments,
+                    missing_tags: None,
+                    out_of_range_tags: None,
+                }),
+            },
+            std::iter::empty::<&str>(),
+        );
+    }
+    Ok(BamToBamRunResult {
+        counters: global_counter,
+        output_bam: opt.out_bam.clone(),
+        output_files: vec![opt.out_bam.clone()],
+    })
+}
+
+fn execute_bam_to_bam(opt: &BamToBamConfig, options: RunOptions) -> Result<BamToBamCounters> {
     opt.fragment_lengths.validate()?;
     opt.gc.validate(opt.ref_2bit.as_deref())?;
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
@@ -106,7 +158,7 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToBamCounters> {
     let mut final_outputs = FinalOutputFiles::new(temp_dir_guard.path())?;
 
     // Load blacklist intervals if provided
-    if opt.blacklist.is_some() {
+    if opt.blacklist.is_some() && options.log_statuses {
         info!(target: COMMAND_TARGET, "Loading blacklists");
     }
     let blacklist_map = load_blacklist_map(
@@ -119,7 +171,9 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToBamCounters> {
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
-            info!(target: COMMAND_TARGET, "Loading window coordinates");
+            if options.log_statuses {
+                info!(target: COMMAND_TARGET, "Loading window coordinates");
+            }
             let windows = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
             ensure_plain_bed_windows_not_empty(&windows)?;
             Some(windows)
@@ -129,7 +183,7 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToBamCounters> {
 
     // Load genomic scaling factors
     let coverage_scale_genome = opt.coverage_scale_genome_args();
-    if coverage_scale_genome.scaling_factors.is_some() {
+    if coverage_scale_genome.scaling_factors.is_some() && options.log_statuses {
         info!(target: COMMAND_TARGET, "Loading coverage scaling factors");
     }
     let coverage_scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
@@ -140,7 +194,7 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToBamCounters> {
         None,
     )?;
     let count_scale_genome = opt.count_scale_genome_args();
-    if count_scale_genome.scaling_factors.is_some() {
+    if count_scale_genome.scaling_factors.is_some() && options.log_statuses {
         info!(target: COMMAND_TARGET, "Loading count-based scaling factors");
     }
     let count_scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
@@ -152,7 +206,7 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToBamCounters> {
     )?;
 
     // Load GC correction package if specified
-    if opt.gc.gc_file.is_some() {
+    if opt.gc.gc_file.is_some() && options.log_statuses {
         info!(target: COMMAND_TARGET, "Loading GC correction matrix");
     }
     let gc_corrector = load_gc_corrector(
@@ -163,10 +217,12 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToBamCounters> {
     )?;
 
     // Create progress bar
-    let progress = ProgressFactory::new();
+    let progress = ProgressFactory::with_enabled(options.show_progress);
     let pb = Arc::new(progress.default_bar(chromosomes.len() as u64));
 
-    info!(target: COMMAND_TARGET, "Converting per chromosome");
+    if options.log_statuses {
+        info!(target: COMMAND_TARGET, "Converting per chromosome");
+    }
 
     pb.set_position(0);
 

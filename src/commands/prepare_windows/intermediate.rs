@@ -10,14 +10,18 @@ const PART_SEPARATOR: char = '|';
 
 /// Window representation stored in intermediate files for filtering passes.
 #[derive(Clone, Debug)]
-pub struct IntermediateWindow {
-    pub chrom: String,
-    pub interval: Interval<u32>,
-    pub label_tuples: Vec<LabelTuple>,
+pub(crate) struct IntermediateWindow {
+    pub(crate) chrom: String,
+    pub(crate) interval: Interval<u32>,
+    pub(crate) label_tuples: Vec<LabelTuple>,
 }
 
 impl IntermediateWindow {
-    pub fn new(chrom: String, interval: Interval<u32>, label_tuples: Vec<LabelTuple>) -> Self {
+    pub(crate) fn new(
+        chrom: String,
+        interval: Interval<u32>,
+        label_tuples: Vec<LabelTuple>,
+    ) -> Self {
         Self {
             chrom,
             interval,
@@ -25,7 +29,7 @@ impl IntermediateWindow {
         }
     }
 
-    pub fn from_coords(
+    pub(crate) fn from_coords(
         chrom: String,
         start: u32,
         end: u32,
@@ -35,18 +39,18 @@ impl IntermediateWindow {
     }
 
     #[inline]
-    pub fn start(&self) -> u32 {
+    pub(crate) fn start(&self) -> u32 {
         self.interval.start()
     }
 
     #[inline]
-    pub fn end(&self) -> u32 {
+    pub(crate) fn end(&self) -> u32 {
         self.interval.end()
     }
 }
 
 /// Write one intermediate window record.
-pub fn write_intermediate_window<W: Write>(
+pub(crate) fn write_intermediate_window<W: Write>(
     writer: &mut W,
     window: &IntermediateWindow,
     separator: char,
@@ -81,7 +85,7 @@ pub fn write_intermediate_window<W: Write>(
 /// Returns
 /// -------
 /// `Ok(())` on success or an error if writing fails.
-pub fn write_intermediate_windows<W: Write>(
+pub(crate) fn write_intermediate_windows<W: Write>(
     writer: &mut W,
     windows: &[Window],
     separator: char,
@@ -103,7 +107,7 @@ pub fn write_intermediate_windows<W: Write>(
 
 /// Parse a single intermediate line into a window.
 #[inline]
-pub fn parse_intermediate_line(line: &str, separator: char) -> Result<IntermediateWindow> {
+pub(crate) fn parse_intermediate_line(line: &str, separator: char) -> Result<IntermediateWindow> {
     let mut fields = line.splitn(4, separator);
     let chrom = fields
         .next()

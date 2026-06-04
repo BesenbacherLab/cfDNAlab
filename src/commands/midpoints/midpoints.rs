@@ -2,6 +2,7 @@ use crate::shared::bed::{GroupedBedStrandColumn, GroupedWindows, Strand};
 use crate::shared::gc_tag::ClassifiedGCTagWeight;
 use crate::shared::io::FinalOutputFiles;
 use crate::{
+    command_run::{CommandRunResult, RunOptions},
     commands::{
         cli_common::{
             ensure_output_dir, load_blacklist_map, load_scaling_map,
@@ -61,37 +62,67 @@ use tracing::{info, warn};
 const COMMAND_TARGET: &str = "midpoints";
 const DENSE_PROFILE_SIZE_WARNING_BYTES: usize = 50 * 1_000_000_000;
 
-/// Execute the grouped midpoint profiling pipeline end-to-end.
+/// Result from `midpoints`.
+///
+/// The command writes grouped midpoint profiles as Zarr plus sidecar metadata. The result records
+/// the main profile path, group index path, settings path, and run counters.
+#[derive(Debug)]
+pub struct MidpointsRunResult {
+    /// Fragment and filtering counters collected during the run.
+    pub counters: ProfileGroupsCounters,
+    /// Final midpoint profile Zarr path.
+    pub profiles_path: PathBuf,
+    /// Group-index TSV path for mapping group indices to names and metadata.
+    pub group_index_path: PathBuf,
+    /// Settings JSON written alongside the profiles.
+    pub settings_path: PathBuf,
+    /// Final output files produced by the command.
+    pub output_files: Vec<PathBuf>,
+}
+
+impl CommandRunResult for MidpointsRunResult {
+    type Counters = ProfileGroupsCounters;
+
+    fn counters(&self) -> &Self::Counters {
+        &self.counters
+    }
+
+    fn output_files(&self) -> &[PathBuf] {
+        &self.output_files
+    }
+
+    fn primary_output(&self) -> Option<&std::path::Path> {
+        Some(self.profiles_path.as_path())
+    }
+}
+
+/// Run the `midpoints` command.
 ///
 /// The command produces dense midpoint profiles for grouped BED intervals. Internally, tile
 /// workers count into sparse accumulators and write sparse `.npz` temporary files. After all tiles
 /// finish, those sparse partial files are merged into one dense `ProfileGroupsCounts` and written
 /// as the public `.midpoint_profiles.zarr` output with axes `(group, length_bin, position)`.
 ///
-/// Implementation details:
-///
-/// - Resolves chromosomes, loads grouped BED windows, and prepares optional blacklist and scaling
-///   data before spawning parallel tiles.
-/// - Streams fragments through per-tile accumulators, writing sparse temporary partial files that
-///   are merged into a final 3D array and companion group index.
-/// - Applies fragment length, blacklist, and scaling filters during aggregation so downstream tools
-///   can consume ready-to-use profiles.
+/// Reporting is controlled by `options`. `report_statistics` prints the final summary and
+/// `show_progress` controls progress bars. This command does not use status logs.
 ///
 /// Parameters
 /// ----------
 /// - `opt`:
 ///     Fully resolved configuration for the `midpoints` command.
+/// - `options`:
+///     Reporting controls for statistics and progress bars.
 ///
 /// Returns
 /// -------
-/// - `Ok(())`:
-///     The Zarr profile, settings JSON, and group-index files were written successfully.
+/// - `Ok(MidpointsRunResult)`:
+///     Counters and output paths for the completed run.
 ///
 /// Errors
 /// ------
-/// - Returns an error if any input cannot be read, the grouped BED is invalid, or writing the
-///   outputs fails.
-pub fn run(opt: &MidpointsConfig) -> Result<()> {
+/// Returns an error if any input cannot be read, the grouped BED is invalid, or writing the
+/// outputs fails.
+pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<MidpointsRunResult> {
     let start_time = Instant::now();
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
@@ -317,7 +348,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         .output_dir
         .join(dot_join(&[prefix, "midpoint_settings.json"]));
 
-    let progress = ProgressFactory::new();
+    let progress = ProgressFactory::with_enabled(options.show_progress);
     let pb = Arc::new(progress.default_bar(total_tiles as u64));
 
     // Configure global thread-pool size
@@ -377,7 +408,11 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         })
         .collect::<Result<_>>()?; // short-circuits on the first Err
 
-    pb.finish_with_message("| Finished counting");
+    if options.show_progress {
+        pb.finish_with_message("| Finished counting");
+    } else {
+        pb.finish_and_clear();
+    }
 
     // Initialize global counter for accumulation across tiles
     let mut global_counter = ProfileGroupsCounters::default();
@@ -428,7 +463,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         profile_layout,
     )
     .with_context(|| format!("writing final counts to {}", temp_counts_path.display()))?;
-    final_outputs.record(temp_counts_path, final_counts_path)?;
+    final_outputs.record(temp_counts_path, final_counts_path.clone())?;
 
     let temp_map_path = final_outputs.temp_path_for(&map_path)?;
     info!(
@@ -441,7 +476,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         &group_idx_to_name,
         &group_eligible_interval_counts,
     )?;
-    final_outputs.record(temp_map_path, map_path)?;
+    final_outputs.record(temp_map_path, map_path.clone())?;
 
     let temp_settings_path = final_outputs.temp_path_for(&settings_path)?;
     info!(
@@ -457,7 +492,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         interval_blacklist_margin,
         use_blacklist_prefilter,
     )?;
-    final_outputs.record(temp_settings_path, settings_path)?;
+    final_outputs.record(temp_settings_path, settings_path.clone())?;
 
     final_outputs.move_into_place()?;
 
@@ -502,34 +537,42 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         ));
     }
 
-    print_fragment_run_statistics(
-        &global_counter.base,
-        elapsed,
-        FragmentRunStatisticsOptions {
-            include_section_header: true,
-            notes: &[TILE_DOUBLE_COUNT_NOTE],
-            labels: DEFAULT_FRAGMENT_STATISTICS_LABELS,
-            blacklist_excluded_fragments: Some(global_counter.blacklisted_fragments),
-            gc: (opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some()).then_some(
-                GCStatisticsSummary {
-                    neutralize_invalid_gc: opt.gc.neutralize_invalid_gc,
-                    failed_fragments: global_counter.gc_failed_fragments,
-                    missing_tags: opt
-                        .gc
-                        .gc_tag
-                        .is_some()
-                        .then_some(global_counter.gc_missing_tags),
-                    out_of_range_tags: opt
-                        .gc
-                        .gc_tag
-                        .is_some()
-                        .then_some(global_counter.gc_out_of_range_tags),
-                },
-            ),
-        },
-        extra_statistics.iter().map(String::as_str),
-    );
-    Ok(())
+    if options.report_statistics {
+        print_fragment_run_statistics(
+            &global_counter.base,
+            elapsed,
+            FragmentRunStatisticsOptions {
+                include_section_header: true,
+                notes: &[TILE_DOUBLE_COUNT_NOTE],
+                labels: DEFAULT_FRAGMENT_STATISTICS_LABELS,
+                blacklist_excluded_fragments: Some(global_counter.blacklisted_fragments),
+                gc: (opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some()).then_some(
+                    GCStatisticsSummary {
+                        neutralize_invalid_gc: opt.gc.neutralize_invalid_gc,
+                        failed_fragments: global_counter.gc_failed_fragments,
+                        missing_tags: opt
+                            .gc
+                            .gc_tag
+                            .is_some()
+                            .then_some(global_counter.gc_missing_tags),
+                        out_of_range_tags: opt
+                            .gc
+                            .gc_tag
+                            .is_some()
+                            .then_some(global_counter.gc_out_of_range_tags),
+                    },
+                ),
+            },
+            extra_statistics.iter().map(String::as_str),
+        );
+    }
+    Ok(MidpointsRunResult {
+        counters: global_counter,
+        profiles_path: final_counts_path.clone(),
+        group_index_path: map_path.clone(),
+        settings_path: settings_path.clone(),
+        output_files: vec![final_counts_path, map_path, settings_path],
+    })
 }
 
 /// Count midpoint contributions for one genomic tile.
@@ -961,7 +1004,7 @@ fn process_tile(
 ///     `Some((sites, fetch_span))` when at least one midpoint site overlaps the tile and a
 ///     non-empty fetch interval remains after clamping. `None` when the tile has no overlapping
 ///     sites or the clamped fetch interval is empty.
-pub fn get_overlapping_sites_and_adapt_fetch_to_extremes(
+pub(crate) fn get_overlapping_sites_and_adapt_fetch_to_extremes(
     grouped_windows: &GroupedWindows,
     tile_span: Option<&TileWindowSpan>,
     tile: &Tile,

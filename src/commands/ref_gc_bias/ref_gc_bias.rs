@@ -25,6 +25,7 @@
 //! thus clipped to the core (for this ACGT base count only).
 
 use crate::{
+    command_run::{CommandRunResult, RunOptions},
     commands::{
         cli_common::*,
         gc_bias::{
@@ -63,12 +64,71 @@ use anyhow::{Context, Result, ensure};
 use fxhash::FxHashMap;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use rayon::prelude::*;
-use std::{sync::Arc, time::Instant};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Instant,
+};
 use tracing::info;
 
 const COMMAND_TARGET: &str = "ref-gc-bias";
 
-pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
+/// Result from `ref-gc-bias`.
+///
+/// The command writes a reference GC package that can be consumed by `gc-bias`. The result records
+/// the package path and final output file list.
+#[derive(Debug)]
+pub struct RefGCBiasRunResult {
+    /// Empty counter placeholder for the shared command result interface.
+    pub counters: (),
+    /// Final reference GC package path.
+    pub ref_gc_package_path: PathBuf,
+    /// Final output files produced by the command.
+    pub output_files: Vec<PathBuf>,
+}
+
+impl CommandRunResult for RefGCBiasRunResult {
+    type Counters = ();
+
+    fn counters(&self) -> &Self::Counters {
+        &self.counters
+    }
+
+    fn output_files(&self) -> &[PathBuf] {
+        &self.output_files
+    }
+
+    fn primary_output(&self) -> Option<&Path> {
+        Some(self.ref_gc_package_path.as_path())
+    }
+}
+
+/// Run the `ref-gc-bias` command.
+///
+/// This command samples valid fragment placements from a reference genome and writes the expected
+/// GC-by-length distribution. The resulting package is used by `gc-bias` to build correction
+/// weights from observed fragments.
+///
+/// Reporting is controlled by `options`. `show_progress` controls progress bars and
+/// `log_statuses` controls status messages. This command does not print a statistics summary.
+///
+/// Parameters
+/// ----------
+/// - `opt`:
+///     Fully resolved configuration for the `ref-gc-bias` command.
+/// - `options`:
+///     Reporting controls for progress bars and status logs.
+///
+/// Returns
+/// -------
+/// - `Ok(RefGCBiasRunResult)`:
+///     Output path information for the completed run.
+///
+/// Errors
+/// ------
+/// Returns an error when the configuration is invalid, the reference or BED input cannot be read,
+/// or the package cannot be written.
+pub fn run_ref_gc_bias(opt: &RefGCBiasConfig, options: RunOptions) -> Result<RefGCBiasRunResult> {
     let start_time = Instant::now();
     opt.fragment_lengths.validate()?;
     ensure!(
@@ -190,7 +250,7 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
     let (tiles, _) = build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp, None)?;
     // Derive per-tile seeds to keep sampling deterministic without storing all start positions
     let tile_seeds: Vec<u64> = (0..tiles.len()).map(|_| seed_rng.random()).collect();
-    let progress = ProgressFactory::new();
+    let progress = ProgressFactory::with_enabled(options.show_progress);
     let pb = Arc::new(progress.default_bar(tiles.len() as u64));
 
     let windows_lookup = windows_map.as_ref();
@@ -268,7 +328,11 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
             },
         )?;
 
-    pb.finish_with_message("| Finished counting");
+    if options.show_progress {
+        pb.finish_with_message("| Finished counting");
+    } else {
+        pb.finish_and_clear();
+    }
 
     // Release tile-level inputs before global aggregation
     drop(tile_window_spans_for_threads);
@@ -382,22 +446,28 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
         },
     )
     .context("Writing reference GC package failed")?;
-    final_outputs.record(temp_ref_gc_package_path, ref_gc_package_path)?;
+    final_outputs.record(temp_ref_gc_package_path, ref_gc_package_path.clone())?;
     final_outputs.move_into_place()?;
 
     let elapsed = start_time.elapsed();
-    info!(
-        target: COMMAND_TARGET,
-        "Windows covered {} total ACGT bases",
-        total_covered_acgt_positions
-    );
-    info!(
-        target: COMMAND_TARGET,
-        "Used {:.0} start positions at length {}",
-        used_start_positions, opt.fragment_lengths.min_fragment_length
-    );
-    info!(target: COMMAND_TARGET, "Elapsed time: {:.2?}", elapsed);
-    Ok(())
+    if options.log_statuses {
+        info!(
+            target: COMMAND_TARGET,
+            "Windows covered {} total ACGT bases",
+            total_covered_acgt_positions
+        );
+        info!(
+            target: COMMAND_TARGET,
+            "Used {:.0} start positions at length {}",
+            used_start_positions, opt.fragment_lengths.min_fragment_length
+        );
+        info!(target: COMMAND_TARGET, "Elapsed time: {:.2?}", elapsed);
+    }
+    Ok(RefGCBiasRunResult {
+        counters: (),
+        ref_gc_package_path: ref_gc_package_path.clone(),
+        output_files: vec![ref_gc_package_path],
+    })
 }
 
 fn process_tile(

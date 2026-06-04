@@ -122,7 +122,7 @@ impl NearAnnotation {
 ///
 /// # Returns
 /// `Ok(())` on success or an error if writing fails.
-pub fn process_and_write_chunk(
+pub(crate) fn process_and_write_chunk(
     chrom: &str,
     carryover_tail: &mut Vec<Window>,
     current_batch: &mut Vec<Window>,
@@ -464,7 +464,7 @@ fn prep_windows_debug_enabled() -> bool {
 ///
 /// # Returns
 /// `Ok(())` on success or an error if writing fails.
-pub fn flush_chromosome(
+pub(crate) fn flush_chromosome(
     chrom: &str,
     carryover_tail: &mut Vec<Window>,
     current_batch: &mut Vec<Window>,
@@ -616,7 +616,7 @@ fn ensure_sorted(
     }
 }
 
-pub fn apply_near_annotations(
+pub(crate) fn apply_near_annotations(
     windows: Vec<Window>,
     near_index: &mut Option<NearIndex>,
     cfg: &PrepareConfig,
@@ -852,4 +852,9 @@ fn filter_blacklisted_post_merge(
         }
         _ => windows,
     }
+}
+
+#[cfg(test)]
+mod tests {
+    include!("chunk_tests.rs");
 }

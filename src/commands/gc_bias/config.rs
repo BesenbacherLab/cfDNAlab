@@ -456,7 +456,7 @@ impl GCConfig {
         self.save_intermediates = save_intermediates;
     }
 
-    pub fn outlier_settings(&self) -> Result<(OutlierRule, OutlierAction, OutlierScope)> {
+    pub(crate) fn outlier_settings(&self) -> Result<(OutlierRule, OutlierAction, OutlierScope)> {
         let rule = match self.outlier_method {
             OutlierMethodArg::None => OutlierRule::None,
             OutlierMethodArg::Quantile => {

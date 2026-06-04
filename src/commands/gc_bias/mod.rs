@@ -1,21 +1,21 @@
-pub mod binning;
+pub(crate) mod binning;
 #[cfg(feature = "cmd_gc_bias")]
-pub mod config;
-pub mod correct;
-pub mod counting;
+pub(crate) mod config;
+pub(crate) mod correct;
+pub(crate) mod counting;
 #[cfg(feature = "cmd_gc_bias")]
-pub mod cross_tile_parts;
+pub(crate) mod cross_tile_parts;
 #[cfg(feature = "cmd_gc_bias")]
-pub mod gc_bias;
-pub mod interpolation;
-pub mod load_reference_bias;
-pub mod outliers;
-pub mod package;
+pub(crate) mod gc_bias;
+pub(crate) mod interpolation;
+pub(crate) mod load_reference_bias;
+pub(crate) mod outliers;
+pub(crate) mod package;
 #[cfg(all(feature = "cmd_gc_bias", feature = "plotters"))]
-pub mod plotting;
-pub mod smoothing;
-pub mod support_masking;
-pub mod windows;
+pub(crate) mod plotting;
+pub(crate) mod smoothing;
+pub(crate) mod support_masking;
+pub(crate) mod windows;
 
 // Constants
-pub const CORRECTION_CLAMP_RANGE: (f64, f64) = (0.1, 10.0);
+pub(crate) const CORRECTION_CLAMP_RANGE: (f64, f64) = (0.1, 10.0);

@@ -598,6 +598,9 @@
 // }
 
 // mod tests_visualize_positions_config {
+//     use cfdnalab::testing::{
+//         Bed4Row, Cigar, PairedFragmentSpec, ScalingFactorRow,
+//     };
 //     use crate::fixtures::{build_base_selection, single_position_selection};
 //     use cfdnalab::commands::visualize_positions::config::VisualizePositionsConfig;
 //     use cfdnalab::commands::visualize_positions::{
@@ -964,6 +967,9 @@
 //     use std::fs;
 //     use tempfile::tempdir;
 
+//     use cfdnalab::testing::{
+//         Bed4Row, Cigar, PairedFragmentSpec, ScalingFactorRow,
+//     };
 //     use crate::fixtures::{build_base_selection, single_position_selection};
 //     use cfdnalab::commands::visualize_positions::config::VisualizePositionsConfig;
 //     use cfdnalab::commands::visualize_positions::model::{

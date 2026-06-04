@@ -9,12 +9,12 @@ use ndarray::{Array3, ArrayView3, s};
 /// are removed before writing the final output. Binning always applies after smoothing and trimming.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ProfileLayout {
-    pub output_len: usize,
-    pub flanked_length: usize,
-    pub bin_size: u32,
-    pub smoothing_window: Option<u32>,
-    pub smoothing_flank: u32,
-    pub output_positions: usize,
+    pub(crate) output_len: usize,
+    pub(crate) flanked_length: usize,
+    pub(crate) bin_size: u32,
+    pub(crate) smoothing_window: Option<u32>,
+    pub(crate) smoothing_flank: u32,
+    pub(crate) output_positions: usize,
 }
 
 impl ProfileLayout {

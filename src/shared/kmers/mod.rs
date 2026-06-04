@@ -1,4 +1,6 @@
-pub mod kmer_codec;
-pub mod nearest_guard;
-pub mod process_counts;
-pub mod write;
+pub(crate) mod kmer_codec;
+#[cfg(feature = "cmd_fragment_kmers")]
+pub(crate) mod nearest_guard;
+pub(crate) mod process_counts;
+#[cfg(feature = "cmd_fragment_kmers")]
+pub(crate) mod write;

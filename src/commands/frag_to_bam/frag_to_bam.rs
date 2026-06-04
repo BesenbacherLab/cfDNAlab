@@ -1,4 +1,5 @@
 use crate::{
+    command_run::{CommandRunResult, RunOptions},
     commands::{
         cli_common::{ContigSource, ensure_output_dir, load_blacklist_map, validate_output_prefix},
         frag_to_bam::config::FragToBamConfig,
@@ -36,14 +37,44 @@ use tracing::warn;
 const COMMAND_TARGET: &str = "frag-to-bam";
 
 #[derive(Debug, Default)]
-struct FragToBamCounters {
-    lines: u64,
-    parsed_fragments: u64,
-    rejected_chromosome: u64,
-    rejected_length: u64,
-    rejected_mapq: u64,
-    rejected_blacklist: u64,
-    written: u64,
+pub struct FragToBamCounters {
+    pub lines: u64,
+    pub parsed_fragments: u64,
+    pub rejected_chromosome: u64,
+    pub rejected_length: u64,
+    pub rejected_mapq: u64,
+    pub rejected_blacklist: u64,
+    pub written: u64,
+}
+
+/// Result from `frag-to-bam`.
+///
+/// The command writes one BAM file reconstructed from a fragment table. The result reports the
+/// parsed-line counters and final output path.
+#[derive(Debug)]
+pub struct FragToBamRunResult {
+    /// Line parsing, filtering, and writing counters collected during the run.
+    pub counters: FragToBamCounters,
+    /// Final BAM path written by the command.
+    pub output_bam: PathBuf,
+    /// Final output files produced by the command.
+    pub output_files: Vec<PathBuf>,
+}
+
+impl CommandRunResult for FragToBamRunResult {
+    type Counters = FragToBamCounters;
+
+    fn counters(&self) -> &Self::Counters {
+        &self.counters
+    }
+
+    fn output_files(&self) -> &[PathBuf] {
+        &self.output_files
+    }
+
+    fn primary_output(&self) -> Option<&Path> {
+        Some(&self.output_bam)
+    }
 }
 
 #[derive(Debug)]
@@ -78,52 +109,71 @@ struct FragColumnLayout {
     skip_first_non_empty_line: bool,
 }
 
-/// Execute the frag-to-bam conversion.
+/// Run the `frag-to-bam` command.
 ///
-/// Parameters:
-/// - `opt`: Fully resolved configuration for the `frag-to-bam` command.
+/// This is the programmatic entry point for reconstructing BAM records from a fragment table. It
+/// parses the fragment rows, applies configured filters, and writes a coordinate-sortable BAM.
 ///
-/// Returns:
-/// - `Ok(())` when the BAM is written successfully.
+/// Reporting is controlled by `options.report_statistics`, which prints the final summary.
+/// This command does not use progress bars or status logs.
 ///
-/// Errors:
-/// - Propagates IO and parsing errors when reading inputs or writing results, aborting the run on
-///   the first failure.
-pub fn run(opt: &FragToBamConfig) -> Result<()> {
+/// Parameters
+/// ----------
+/// - `opt`:
+///     Fully resolved configuration for the `frag-to-bam` command.
+/// - `options`:
+///     Reporting control for the final summary.
+///
+/// Returns
+/// -------
+/// - `Ok(FragToBamRunResult)`:
+///     Counters and output paths for the completed run.
+///
+/// Errors
+/// ------
+/// Returns an error when the fragment table cannot be read, a row is malformed, or the output BAM
+/// cannot be written.
+pub fn run_frag_to_bam(opt: &FragToBamConfig, options: RunOptions) -> Result<FragToBamRunResult> {
     let start_time = Instant::now();
-    let (counters, output_path) = run_inner(opt)?;
+    let (counters, output_path) = execute_frag_to_bam(opt)?;
 
     let elapsed = start_time.elapsed();
-    cli_output::write_primary_line("");
-    cli_output::write_primary_line("Statistics");
-    cli_output::write_primary_line("----------");
-    cli_output::write_primary_line(&format!("  Input lines: {}", counters.lines));
-    cli_output::write_primary_line(&format!(
-        "  Parsed fragments: {}",
-        counters.parsed_fragments
-    ));
-    cli_output::write_primary_line(&format!(
-        "  Rejected (chromosome filter): {}",
-        counters.rejected_chromosome
-    ));
-    cli_output::write_primary_line(&format!(
-        "  Rejected (length): {}",
-        counters.rejected_length
-    ));
-    cli_output::write_primary_line(&format!("  Rejected (mapq): {}", counters.rejected_mapq));
-    cli_output::write_primary_line(&format!(
-        "  Rejected (blacklist): {}",
-        counters.rejected_blacklist
-    ));
-    cli_output::write_primary_line(&format!("  Written to BAM: {}", counters.written));
-    cli_output::write_primary_line("----------");
-    cli_output::write_primary_line(&format!("Output BAM: {}", output_path.display()));
-    cli_output::write_primary_line(&format!("Elapsed time: {:.2?}", elapsed));
+    if options.report_statistics {
+        cli_output::write_primary_line("");
+        cli_output::write_primary_line("Statistics");
+        cli_output::write_primary_line("----------");
+        cli_output::write_primary_line(&format!("  Input lines: {}", counters.lines));
+        cli_output::write_primary_line(&format!(
+            "  Parsed fragments: {}",
+            counters.parsed_fragments
+        ));
+        cli_output::write_primary_line(&format!(
+            "  Rejected (chromosome filter): {}",
+            counters.rejected_chromosome
+        ));
+        cli_output::write_primary_line(&format!(
+            "  Rejected (length): {}",
+            counters.rejected_length
+        ));
+        cli_output::write_primary_line(&format!("  Rejected (mapq): {}", counters.rejected_mapq));
+        cli_output::write_primary_line(&format!(
+            "  Rejected (blacklist): {}",
+            counters.rejected_blacklist
+        ));
+        cli_output::write_primary_line(&format!("  Written to BAM: {}", counters.written));
+        cli_output::write_primary_line("----------");
+        cli_output::write_primary_line(&format!("Output BAM: {}", output_path.display()));
+        cli_output::write_primary_line(&format!("Elapsed time: {:.2?}", elapsed));
+    }
 
-    Ok(())
+    Ok(FragToBamRunResult {
+        counters,
+        output_bam: output_path.clone(),
+        output_files: vec![output_path],
+    })
 }
 
-fn run_inner(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
+fn execute_frag_to_bam(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
     opt.fragment_lengths.validate()?;
     validate_output_prefix(opt.output_prefix.trim())?;
     ensure_output_dir(&opt.output_dir)?;

@@ -11,20 +11,22 @@ mod ends;
 mod frag_file;
 #[cfg(feature = "cmd_lengths")]
 mod indel_counts;
+#[cfg(feature = "cmd_fragment_kmers")]
 mod kmer_segments;
 mod segments;
 #[cfg(feature = "cmd_bam_to_bam")]
 mod with_records;
 
-pub use basic::*;
-pub use core::*;
+pub(crate) use basic::*;
+pub(crate) use core::*;
 #[cfg(feature = "cmd_ends")]
-pub use ends::*;
+pub(crate) use ends::*;
 #[cfg(feature = "cmd_bam_to_frag")]
-pub use frag_file::*;
+pub(crate) use frag_file::*;
 #[cfg(feature = "cmd_lengths")]
-pub use indel_counts::*;
-pub use kmer_segments::*;
-pub use segments::*;
+pub(crate) use indel_counts::*;
+#[cfg(feature = "cmd_fragment_kmers")]
+pub(crate) use kmer_segments::*;
+pub(crate) use segments::*;
 #[cfg(feature = "cmd_bam_to_bam")]
-pub use with_records::*;
+pub(crate) use with_records::*;

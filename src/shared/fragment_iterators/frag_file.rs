@@ -10,7 +10,7 @@ use super::{InputItem, Pairer, PairingAdapter};
 
 /* For frag files pairing */
 
-pub struct WithFragInfoPairer;
+pub(crate) struct WithFragInfoPairer;
 
 impl Pairer for WithFragInfoPairer {
     type Read = FragReadInfo;
@@ -21,13 +21,13 @@ impl Pairer for WithFragInfoPairer {
     }
 }
 
-pub fn fragments_with_frag_file_info_from_bam<RIter, PF>(
+pub(crate) fn fragments_with_frag_file_info_from_bam<RIter, PF>(
     records: RIter,
     include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
     fragment_filter: PF,
     unpaired: bool,
 ) -> PairingAdapter<
-    impl Iterator<Item = Result<InputItem<FragFileFragment>>>,
+    impl Iterator<Item = Result<InputItem>>,
     WithFragInfoPairer,
     FragReadInfo,
     FragFileFragment,
@@ -59,21 +59,4 @@ where
     }
 
     adapter
-}
-
-pub fn fragments_with_frag_file_info_from_iter<I, PF>(
-    frags: I,
-    fragment_filter: PF,
-) -> PairingAdapter<
-    impl Iterator<Item = Result<InputItem<FragFileFragment>>>,
-    WithFragInfoPairer,
-    FragReadInfo,
-    FragFileFragment,
->
-where
-    I: Iterator<Item = Result<FragFileFragment>>,
-    PF: Fn(&FragFileFragment) -> bool + Send + Sync + 'static,
-{
-    let mapped = frags.map(|res| res.map(InputItem::Fragment));
-    PairingAdapter::new(mapped, None::<WithFragInfoPairer>).with_fragment_filter(fragment_filter)
 }

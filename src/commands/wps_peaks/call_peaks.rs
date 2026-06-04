@@ -10,16 +10,16 @@ const MAX_GAP: u64 = 5;
 
 /// Detected peak with Snyder-style statistics.
 #[derive(Clone, Debug)]
-pub struct PeakCall {
-    pub chromosome: String,
-    pub interval: Interval<u64>,
-    pub peak_position: u64,
-    pub height: f32,
-    pub segment_id: u64,
+pub(crate) struct PeakCall {
+    pub(crate) chromosome: String,
+    pub(crate) interval: Interval<u64>,
+    pub(crate) peak_position: u64,
+    pub(crate) height: f32,
+    pub(crate) segment_id: u64,
 }
 
 impl PeakCall {
-    pub fn new(
+    pub(crate) fn new(
         chromosome: String,
         start: u64,
         end: u64,
@@ -46,16 +46,16 @@ impl PeakCall {
     }
 
     #[inline]
-    pub fn start(&self) -> u64 {
+    pub(crate) fn start(&self) -> u64 {
         self.interval.start()
     }
 
     #[inline]
-    pub fn end(&self) -> u64 {
+    pub(crate) fn end(&self) -> u64 {
         self.interval.end()
     }
 
-    pub fn clamp_to_bounds(&mut self, bounds: Interval<u64>) -> Result<()> {
+    pub(crate) fn clamp_to_bounds(&mut self, bounds: Interval<u64>) -> Result<()> {
         self.interval = self.interval.clip_to(bounds).ok_or_else(|| {
             anyhow!(
                 "Peak interval [{}, {}) did not overlap clamp bounds [{}, {})",
@@ -85,7 +85,7 @@ impl PeakCall {
 /// carry genomic coordinates (start inclusive, end exclusive) as well as the
 /// the position of the maximum height inside the peak region. The `min_peak_height`
 /// parameter controls the minimum residual height required to keep a peak.
-pub fn call_peaks(
+pub(crate) fn call_peaks(
     chr: &str,
     start_offset: u64,
     normalized_wps_values: &[f32],

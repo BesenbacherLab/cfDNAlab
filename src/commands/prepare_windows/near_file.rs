@@ -12,14 +12,14 @@ use std::{cmp::Ordering, io::BufRead, path::Path};
 ///
 /// The `group` is optional; it is used when composing output groups with distance bins.
 #[derive(Debug, Clone, Copy)]
-pub struct NearInterval {
-    pub interval: Interval<u32>,
-    pub group_id: Option<u32>,
-    pub strand: Strand,
+pub(crate) struct NearInterval {
+    pub(crate) interval: Interval<u32>,
+    pub(crate) group_id: Option<u32>,
+    pub(crate) strand: Strand,
 }
 
 impl NearInterval {
-    pub fn new(interval: Interval<u32>, group_id: Option<u32>, strand: Strand) -> Self {
+    pub(crate) fn new(interval: Interval<u32>, group_id: Option<u32>, strand: Strand) -> Self {
         Self {
             interval,
             group_id,
@@ -27,7 +27,7 @@ impl NearInterval {
         }
     }
 
-    pub fn from_coords(
+    pub(crate) fn from_coords(
         start: u32,
         end: u32,
         group_id: Option<u32>,
@@ -37,36 +37,36 @@ impl NearInterval {
     }
 
     #[inline]
-    pub fn start(&self) -> u32 {
+    pub(crate) fn start(&self) -> u32 {
         self.interval.start()
     }
 
     #[inline]
-    pub fn end(&self) -> u32 {
+    pub(crate) fn end(&self) -> u32 {
         self.interval.end()
     }
 }
 
 /// Per-chromosome near intervals, sorted and validated.
 #[derive(Debug, Default, Clone)]
-pub struct NearChrom {
-    pub intervals: Vec<NearInterval>,
-    pub cursor: usize,
+pub(crate) struct NearChrom {
+    pub(crate) intervals: Vec<NearInterval>,
+    pub(crate) cursor: usize,
 }
 
 /// Index holding near intervals per chromosome and a compact group-id interner.
 #[derive(Debug, Default, Clone)]
-pub struct NearIndex {
-    pub per_chrom: FxHashMap<String, NearChrom>,
-    pub group_name_to_id: FxHashMap<String, u32>,
-    pub group_id_to_name: Vec<String>,
-    pub warned_no_near: FxHashSet<String>,
-    pub warned_no_direction: FxHashSet<String>,
+pub(crate) struct NearIndex {
+    pub(crate) per_chrom: FxHashMap<String, NearChrom>,
+    pub(crate) group_name_to_id: FxHashMap<String, u32>,
+    pub(crate) group_id_to_name: Vec<String>,
+    pub(crate) warned_no_near: FxHashSet<String>,
+    pub(crate) warned_no_direction: FxHashSet<String>,
 }
 
 /// Where the window sits relative to the nearest interval.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NearWindowSide {
+pub(crate) enum NearWindowSide {
     Upstream,
     Downstream,
     Overlap,
@@ -74,28 +74,28 @@ pub enum NearWindowSide {
 
 /// Distance, group id, and window-relative side for a selected nearest interval.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct NearestDistance {
-    pub distance: i32,
-    pub group_id: Option<u32>,
-    pub window_side: NearWindowSide,
+pub(crate) struct NearestDistance {
+    pub(crate) distance: i32,
+    pub(crate) group_id: Option<u32>,
+    pub(crate) window_side: NearWindowSide,
 }
 
 /// Captures the left and right hits when a tie happens.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct NearTie {
-    pub left: Option<NearestDistance>,
-    pub right: Option<NearestDistance>,
+pub(crate) struct NearTie {
+    pub(crate) left: Option<NearestDistance>,
+    pub(crate) right: Option<NearestDistance>,
 }
 
 /// Result of the nearest-edge lookup: either one hit or a tie.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NearestResult {
+pub(crate) enum NearestResult {
     Single(NearestDistance),
     Tie(NearTie),
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub enum Strand {
+pub(crate) enum Strand {
     Plus,
     Minus,
     Unknown,
@@ -145,7 +145,7 @@ pub enum NearDuplicatesPolicy {
 /// -------
 /// - index:
 ///     Per-chromosome near intervals and a group interner.
-pub fn load_near_index(
+pub(crate) fn load_near_index(
     path: &Path,
     separator: char,
     has_header: bool,
@@ -348,7 +348,7 @@ pub fn load_near_index(
 /// -------
 /// - result:
 ///     Either a single nearest hit or a tie describing left/right hits.
-pub fn nearest_edge_distance(
+pub(crate) fn nearest_edge_distance(
     window_start: u32,
     window_end: u32,
     near_chrom: &mut NearChrom,
@@ -693,4 +693,9 @@ fn resolve_identical_edges_runs(
     }
 
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    include!("near_file_tests.rs");
 }

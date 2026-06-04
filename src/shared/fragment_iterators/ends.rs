@@ -15,13 +15,13 @@ use crate::{
 use super::{InputItem, Pairer, PairingAdapter};
 
 #[derive(Clone)]
-pub struct WithEndsPairer {
-    pub clip_strategy: ClipStrategy,
-    pub source_inside: KmerSource,
-    pub indel_filter: IndelMotifFilterPolicy,
-    pub k_inside: usize,
-    pub max_soft_clips: u32,
-    pub bq_filters: Vec<BaseQualityFilter>,
+pub(crate) struct WithEndsPairer {
+    pub(crate) clip_strategy: ClipStrategy,
+    pub(crate) source_inside: KmerSource,
+    pub(crate) indel_filter: IndelMotifFilterPolicy,
+    pub(crate) k_inside: usize,
+    pub(crate) max_soft_clips: u32,
+    pub(crate) bq_filters: Vec<BaseQualityFilter>,
 }
 
 impl Pairer for WithEndsPairer {
@@ -42,7 +42,7 @@ impl Pairer for WithEndsPairer {
     }
 }
 
-pub fn fragments_with_ends_from_bam<RIter, PF>(
+pub(crate) fn fragments_with_ends_from_bam<RIter, PF>(
     records: RIter,
     include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
     clip_strategy: ClipStrategy,
@@ -55,7 +55,7 @@ pub fn fragments_with_ends_from_bam<RIter, PF>(
     fragment_filter: PF,
     unpaired: bool,
 ) -> PairingAdapter<
-    impl Iterator<Item = Result<InputItem<FragmentWithEnds>>>,
+    impl Iterator<Item = Result<InputItem>>,
     WithEndsPairer,
     EndReadInfo,
     FragmentWithEnds,

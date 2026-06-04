@@ -18,9 +18,9 @@ use anyhow::{Result, ensure};
 /// - `HistogramSpec`:
 ///     Validated histogram ready for plotting.
 #[derive(Clone, Debug)]
-pub struct HistogramSpec {
-    pub edges: Vec<f64>,
-    pub counts: Vec<f64>,
+pub(crate) struct HistogramSpec {
+    pub(crate) edges: Vec<f64>,
+    pub(crate) counts: Vec<f64>,
 }
 
 impl HistogramSpec {
@@ -30,7 +30,7 @@ impl HistogramSpec {
     /// supply the exact interval boundaries. Validates that edge and count
     /// lengths agree, edges are strictly increasing, and counts are finite and
     /// non-negative.
-    pub fn from_binned(edges: Vec<f64>, counts: Vec<f64>) -> Result<Self> {
+    pub(crate) fn from_binned(edges: Vec<f64>, counts: Vec<f64>) -> Result<Self> {
         ensure!(
             edges.len() >= 2,
             "Histogram edges must contain at least two entries"
@@ -56,7 +56,8 @@ impl HistogramSpec {
     /// callers notice data quality problems instead of silently discarding
     /// input. Rarely used in this codebase because most callers operate on
     /// pre-summarized counts rather than raw observations.
-    pub fn from_data(data: &[f64], start: f64, end: f64, bin_width: f64) -> Result<Self> {
+    #[allow(dead_code)]
+    pub(crate) fn from_data(data: &[f64], start: f64, end: f64, bin_width: f64) -> Result<Self> {
         ensure!(bin_width > 0.0, "Histogram bin width must be positive");
         ensure!(end > start, "Histogram end must be greater than start");
 
@@ -97,7 +98,8 @@ impl HistogramSpec {
     }
 
     /// Total mass stored in the histogram.
-    pub fn total(&self) -> f64 {
+    #[allow(dead_code)]
+    pub(crate) fn total(&self) -> f64 {
         self.counts.iter().copied().sum()
     }
 
@@ -107,7 +109,8 @@ impl HistogramSpec {
     /// bins are uniform and contiguous. When `bin_width` is `None`, a unit
     /// width of 1.0 is used. Prefer this over `from_binned` when you only have
     /// counts and a uniform spacing, not arbitrary edges.
-    pub fn from_counts(counts: Vec<f64>, bin_width: Option<f64>) -> Result<Self> {
+    #[allow(dead_code)]
+    pub(crate) fn from_counts(counts: Vec<f64>, bin_width: Option<f64>) -> Result<Self> {
         ensure!(
             !counts.is_empty(),
             "Histogram counts must contain at least one entry"
@@ -119,7 +122,7 @@ impl HistogramSpec {
     }
 
     /// Maximum bin mass.
-    pub fn max(&self) -> f64 {
+    pub(crate) fn max(&self) -> f64 {
         self.counts.iter().copied().fold(0.0, |acc, v| acc.max(v))
     }
 }

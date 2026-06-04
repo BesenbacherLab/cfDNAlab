@@ -26,7 +26,7 @@ use zip::{ZipWriter, write::SimpleFileOptions};
 ///
 /// The matrix dimensions are **windows × motifs** with the same column order
 /// used across all windows of that k-mer size.
-pub fn write_decoded_counts_matrix(
+pub(crate) fn write_decoded_counts_matrix(
     prepared_windows: &[DecodedCounts],
     kmer_specs: &FxHashMap<u8, KmerSpec>,
     motifs_by_k: &FxHashMap<u8, Vec<String>>,
@@ -124,7 +124,7 @@ type Idx = u64; // 64-bit row and column indices
 /// with open("my_prefix_motifs.txt") as f:
 ///     motifs = [line.strip() for line in f]
 /// ```
-pub fn write_category_sparse(
+pub(crate) fn write_category_sparse(
     bins: &[FxHashMap<String, f64>],
     motifs: &[String],
     prefix: &str,
@@ -144,7 +144,7 @@ pub fn write_category_sparse(
 ///
 /// This is the same sparse COO data layout as [`write_category_sparse`], but it lets callers choose
 /// filenames instead of going through the shared `<prefix>_...` convention.
-pub fn write_category_sparse_with_paths(
+pub(crate) fn write_category_sparse_with_paths(
     bins: &[FxHashMap<String, f64>],
     motifs: &[String],
     counts_path: &Path,

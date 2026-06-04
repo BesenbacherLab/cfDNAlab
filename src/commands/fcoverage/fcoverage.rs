@@ -1,3 +1,4 @@
+use crate::command_run::{CommandRunResult, RunOptions};
 use crate::commands::fcoverage::config::FCoverageConfig;
 use crate::commands::fcoverage::reducer::TileAggregateTempFiles;
 use crate::commands::fcoverage::tiling::{
@@ -62,14 +63,37 @@ use tracing::{info, warn};
 
 const COMMAND_TARGET: &str = "fcoverage";
 
-/// Result of an internal `fcoverage` run.
+/// Result from `fcoverage`.
 ///
-/// This is used by other commands that reuse the tiled counting and final by-size
-/// reduction without wanting `fcoverage`'s outer statistics wrapper.
+/// The command can write positional, fixed-size, or BED-windowed coverage outputs. The result
+/// records the final primary path, all final output files, and the counters from tiled fragment
+/// processing.
+#[derive(Debug)]
 pub struct FCoverageRunResult {
+    /// Fragment and coverage counters collected during the run.
     pub counters: FCoverageCounters,
+    /// Mean fragment length used by restore-mean length normalization, when enabled.
     pub mean_normalization_length: Option<f64>,
+    /// Main coverage output path for the selected output mode.
     pub final_out_path: PathBuf,
+    /// Final output files produced by the command.
+    pub output_files: Vec<PathBuf>,
+}
+
+impl CommandRunResult for FCoverageRunResult {
+    type Counters = FCoverageCounters;
+
+    fn counters(&self) -> &Self::Counters {
+        &self.counters
+    }
+
+    fn output_files(&self) -> &[PathBuf] {
+        &self.output_files
+    }
+
+    fn primary_output(&self) -> Option<&std::path::Path> {
+        Some(&self.final_out_path)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -92,27 +116,35 @@ enum FCoverageTileTempOutput {
     SizeFinal(TileTempFile),
 }
 
-/// Execute the fragment coverage pipeline end-to-end.
+/// Run the `fcoverage` command.
 ///
-/// Implementation details:
-/// - Resolves chromosomes, prepares IO state, then iterates tiles in parallel using Rayon.
-/// - Collects per-tile coverage into temporary artefacts before merging them into the final
-///   positional or aggregated outputs.
-/// - Applies fragment length, blacklist, and optional scaling filters during iteration.
+/// This command computes fragment coverage over positions, fixed-size windows, or BED windows. It
+/// resolves inputs, processes tiles in parallel, merges temporary tile outputs, and writes the
+/// selected coverage artifact.
 ///
-/// Parameters:
-/// - `opt`: Fully resolved configuration for the `fcoverage` command.
+/// Reporting is controlled by `options`. `report_statistics` prints the final summary,
+/// `show_progress` controls progress bars, and `log_statuses` controls status messages.
 ///
-/// Returns:
-/// - `Ok(())` when positional and/or windowed outputs are written successfully.
+/// Parameters
+/// ----------
+/// - `opt`:
+///     Fully resolved configuration for the `fcoverage` command.
+/// - `options`:
+///     Reporting controls for statistics, progress bars, and status logs.
 ///
-/// Errors:
-/// - Returns an error if the BAM cannot be read, auxiliary files are invalid, or writing outputs
-///   fails at any stage.
-pub fn run(opt: &FCoverageConfig) -> Result<()> {
+/// Returns
+/// -------
+/// - `Ok(FCoverageRunResult)`:
+///     Counters, normalization metadata, and output paths for the completed run.
+///
+/// Errors
+/// ------
+/// Returns an error if the BAM cannot be read, auxiliary files are invalid, or writing outputs
+/// fails at any stage.
+pub fn run_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCoverageRunResult> {
     let start_time = Instant::now();
 
-    let run_result = run_inner(opt)?;
+    let run_result = execute_fcoverage(opt, options)?;
     let global_counter = run_result.counters;
 
     let elapsed = start_time.elapsed();
@@ -124,37 +156,39 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
         ));
     }
 
-    print_fragment_run_statistics(
-        &global_counter.base,
-        elapsed,
-        FragmentRunStatisticsOptions {
-            include_section_header: true,
-            notes: &[TILE_DOUBLE_COUNT_NOTE],
-            labels: DEFAULT_FRAGMENT_STATISTICS_LABELS,
-            blacklist_excluded_fragments: None,
-            gc: (opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some()).then_some(
-                GCStatisticsSummary {
-                    neutralize_invalid_gc: opt.gc.neutralize_invalid_gc,
-                    failed_fragments: global_counter.gc_failed_fragments,
-                    missing_tags: opt
-                        .gc
-                        .gc_tag
-                        .is_some()
-                        .then_some(global_counter.gc_missing_tags),
-                    out_of_range_tags: opt
-                        .gc
-                        .gc_tag
-                        .is_some()
-                        .then_some(global_counter.gc_out_of_range_tags),
-                },
-            ),
-        },
-        extra_statistics.iter().map(String::as_str),
-    );
-    Ok(())
+    if options.report_statistics {
+        print_fragment_run_statistics(
+            &global_counter.base,
+            elapsed,
+            FragmentRunStatisticsOptions {
+                include_section_header: true,
+                notes: &[TILE_DOUBLE_COUNT_NOTE],
+                labels: DEFAULT_FRAGMENT_STATISTICS_LABELS,
+                blacklist_excluded_fragments: None,
+                gc: (opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some()).then_some(
+                    GCStatisticsSummary {
+                        neutralize_invalid_gc: opt.gc.neutralize_invalid_gc,
+                        failed_fragments: global_counter.gc_failed_fragments,
+                        missing_tags: opt
+                            .gc
+                            .gc_tag
+                            .is_some()
+                            .then_some(global_counter.gc_missing_tags),
+                        out_of_range_tags: opt
+                            .gc
+                            .gc_tag
+                            .is_some()
+                            .then_some(global_counter.gc_out_of_range_tags),
+                    },
+                ),
+            },
+            extra_statistics.iter().map(String::as_str),
+        );
+    }
+    Ok(run_result)
 }
 
-pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
+fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCoverageRunResult> {
     opt.fragment_lengths.validate()?;
     opt.gc.validate(opt.ref_2bit.as_deref())?;
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
@@ -172,7 +206,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
     // Create output directory
     ensure_output_dir(&opt.ioc.output_dir)?;
 
-    if opt.blacklist.is_some() {
+    if opt.blacklist.is_some() && options.log_statuses {
         info!(target: COMMAND_TARGET, "Loading blacklists");
     }
     let blacklist_map = load_blacklist_map(opt.blacklist.as_ref(), 1, 0, &chromosomes)?;
@@ -231,7 +265,9 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
 
     match &window_opt {
         DistributionWindowSpec::Bed(bed) => {
-            info!(target: COMMAND_TARGET, "Loading window coordinates");
+            if options.log_statuses {
+                info!(target: COMMAND_TARGET, "Loading window coordinates");
+            }
             let wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
             ensure_plain_bed_windows_not_empty(&wds)?;
             if matches!(
@@ -239,7 +275,9 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                 CoverageWindowAction::OnlyIncludeThesePositionsUnique
             ) {
                 // Merge in-place to avoid double memory usage
-                info!(target: COMMAND_TARGET, "Merging overlapping/touching windows");
+                if options.log_statuses {
+                    info!(target: COMMAND_TARGET, "Merging overlapping/touching windows");
+                }
                 // Take ownership so we can remove entries by chromosome
                 let mut wds_owned = wds;
                 let mut flattened_windows =
@@ -261,7 +299,9 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
             }
         }
         DistributionWindowSpec::GroupedBed(bed) => {
-            info!(target: COMMAND_TARGET, "Loading grouped window coordinates");
+            if options.log_statuses {
+                info!(target: COMMAND_TARGET, "Loading grouped window coordinates");
+            }
             let (grouped_windows_by_chr, group_idx_to_name, _strand_detection) =
                 load_grouped_windows_from_bed(
                     bed,
@@ -289,7 +329,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
     }
 
     // Load genomic scaling factors
-    if opt.scale_genome.scaling_factors.is_some() {
+    if opt.scale_genome.scaling_factors.is_some() && options.log_statuses {
         info!(target: COMMAND_TARGET, "Loading scaling factors");
     }
     let scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
@@ -304,7 +344,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
     )?;
 
     // Load GC correction package if specified
-    if opt.gc.gc_file.is_some() {
+    if opt.gc.gc_file.is_some() && options.log_statuses {
         info!(target: COMMAND_TARGET, "Loading GC correction matrix");
     }
     let gc_corrector = load_gc_corrector(
@@ -423,7 +463,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
     let total_tiles = tiles.len();
 
     // Create progress bar
-    let progress = ProgressFactory::new();
+    let progress = ProgressFactory::with_enabled(options.show_progress);
     let pb = Arc::new(progress.default_bar(total_tiles as u64));
 
     // Configure global thread‐pool size
@@ -431,7 +471,9 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
 
     let mut global_counter = FCoverageCounters::default();
 
-    info!(target: COMMAND_TARGET, "Counting per tile");
+    if options.log_statuses {
+        info!(target: COMMAND_TARGET, "Counting per tile");
+    }
 
     pb.set_position(0);
 
@@ -661,7 +703,9 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
         );
     }
 
-    info!(target: COMMAND_TARGET, "Merging temporary tile files to final output");
+    if options.log_statuses {
+        info!(target: COMMAND_TARGET, "Merging temporary tile files to final output");
+    }
 
     // Merge temporary output files and
     // reduce windows present in multiple tiles
@@ -797,16 +841,19 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
 
     final_outputs.move_into_place()?;
 
-    info!(
-        target: COMMAND_TARGET,
-        "Saved output to: {}",
-        final_out_path.display()
-    );
+    if options.log_statuses {
+        info!(
+            target: COMMAND_TARGET,
+            "Saved output to: {}",
+            final_out_path.display()
+        );
+    }
 
     Ok(FCoverageRunResult {
         counters: global_counter,
         mean_normalization_length,
-        final_out_path,
+        final_out_path: final_out_path.clone(),
+        output_files: vec![final_out_path],
     })
 }
 
@@ -1620,8 +1667,8 @@ fn add_clipped_blacklist_to_cp(
 
 /// Adds a fragment's coverage contribution into the tile-local accumulator.
 ///
-/// Segmented fragments are processed segment by segment, while simple fragments are clipped once;
-/// in both cases the coordinates are translated into the tile's local frame before they are added.
+/// Segmented fragments are processed segment by segment, while simple fragments are clipped once.
+/// In both cases the coordinates are translated into the tile's local frame before they are added.
 /// The caller must provide a coverage array sized to the tile core.
 ///
 /// # Parameters
@@ -1636,7 +1683,7 @@ fn add_clipped_blacklist_to_cp(
 /// - `Ok(false)` if every segment falls outside the core after clipping.
 /// - An error when the coverage accumulator rejects the update.
 #[inline]
-pub fn add_fragment_clipped_to_core(
+pub(crate) fn add_fragment_clipped_to_core(
     cp: &mut Coverage,
     fragment: &FragmentWithSegments,
     weight: f64,

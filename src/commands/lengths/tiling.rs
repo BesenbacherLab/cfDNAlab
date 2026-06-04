@@ -17,7 +17,7 @@ use crate::{
 /// - `window_idx_chr` (u64): Zero-based window index within the current chromosome.
 /// - `counts` (f64): Matrix with one row per window and one column per
 ///   fragment length.
-pub fn write_partials_npz(
+pub(crate) fn write_partials_npz(
     temp_dir: &Path,
     prefix: &str,
     chr: &str,
@@ -79,7 +79,7 @@ pub fn write_partials_npz(
 }
 
 /// Write the list of crossing window indices as an NPY array.
-pub fn write_cross_npy(
+pub(crate) fn write_cross_npy(
     temp_dir: &Path,
     prefix: &str,
     chr: &str,
@@ -100,7 +100,7 @@ pub fn write_cross_npy(
 /// Reduce partial NPZ files and crossing NPY files for one chromosome into full-length counts.
 ///
 /// `n_windows` must equal the total number of window indices for the chromosome (scan order).
-pub fn reduce_partials_for_chr(
+pub(crate) fn reduce_partials_for_chr(
     chr: &str,
     partial_paths: &[PathBuf],
     cross_paths: &[PathBuf],
@@ -207,4 +207,9 @@ pub fn reduce_partials_for_chr(
     );
 
     Ok(counts_by_idx)
+}
+
+#[cfg(test)]
+mod tests {
+    include!("tiling_tests.rs");
 }

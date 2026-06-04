@@ -25,19 +25,19 @@ static TEMP_DIR_CTRL_C_REGISTRY: OnceLock<Mutex<Vec<PathBuf>>> = OnceLock::new()
 
 /// A processing tile for one chromosome
 #[derive(Debug, Clone)]
-pub struct Tile {
-    pub chr: String,
-    pub tid: i32,
-    pub index: u32, // 0-based index within chromosome
-    pub core: Interval<u32>,
-    pub fetch: Interval<u32>,
+pub(crate) struct Tile {
+    pub(crate) chr: String,
+    pub(crate) tid: i32,
+    pub(crate) index: u32, // 0-based index within chromosome
+    pub(crate) core: Interval<u32>,
+    pub(crate) fetch: Interval<u32>,
 }
 
 impl Tile {
     /// Create a tile from checked half-open core and fetch intervals.
     ///
     /// The fetch interval must fully cover the tile core.
-    pub fn new(
+    pub(crate) fn new(
         chr: String,
         tid: i32,
         index: u32,
@@ -61,7 +61,7 @@ impl Tile {
     /// This is a convenience constructor for call sites that still work with
     /// coordinates. It validates the bounds as intervals and then delegates to
     /// the typed constructor.
-    pub fn from_coords(
+    pub(crate) fn from_coords(
         chr: String,
         tid: i32,
         index: u32,
@@ -76,22 +76,22 @@ impl Tile {
     }
 
     #[inline]
-    pub fn core_start(&self) -> u32 {
+    pub(crate) fn core_start(&self) -> u32 {
         self.core.start()
     }
 
     #[inline]
-    pub fn core_end(&self) -> u32 {
+    pub(crate) fn core_end(&self) -> u32 {
         self.core.end()
     }
 
     #[inline]
-    pub fn fetch_start(&self) -> u32 {
+    pub(crate) fn fetch_start(&self) -> u32 {
         self.fetch.start()
     }
 
     #[inline]
-    pub fn fetch_end(&self) -> u32 {
+    pub(crate) fn fetch_end(&self) -> u32 {
         self.fetch.end()
     }
 
@@ -100,7 +100,7 @@ impl Tile {
     /// `Tile::tid` is stored as `i32` because it follows the tiling inputs, while
     /// rust-htslib returns BAM tids as `u32`. Keep the conversion and comparison
     /// together so callers cannot accidentally wrap negative tids with `as u32`.
-    pub fn ensure_matches_bam_tid(&self, bam_tid: u32) -> anyhow::Result<()> {
+    pub(crate) fn ensure_matches_bam_tid(&self, bam_tid: u32) -> anyhow::Result<()> {
         let tile_tid =
             u32::try_from(self.tid).context("tile tid is negative for BAM tid comparison")?;
         ensure!(
@@ -120,9 +120,9 @@ impl Tile {
 /// window slice whose starts fall before the tile core end. Windows that end before the tile core
 /// start are excluded when the span is constructed, so streaming from `first_idx` is safe.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct TileWindowSpan {
-    pub first_idx: usize,
-    pub last_idx_exclusive: usize,
+pub(crate) struct TileWindowSpan {
+    pub(crate) first_idx: usize,
+    pub(crate) last_idx_exclusive: usize,
 }
 
 impl TileWindowSpan {
@@ -134,7 +134,7 @@ impl TileWindowSpan {
     /// # Returns
     /// `true` when `first_idx == last_idx_exclusive`, otherwise `false`.
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.first_idx == self.last_idx_exclusive
     }
 }
@@ -154,7 +154,7 @@ impl TileWindowSpan {
 /// # Returns
 /// A vector the same length as `tiles` containing the optional `[first, last)` window index span
 /// for each tile.
-pub fn precompute_tile_window_spans<'a, F>(
+pub(crate) fn precompute_tile_window_spans<'a, F>(
     tiles: &[Tile],
     mut windows_for_chr: F,
     left_halo: u64,
@@ -233,7 +233,7 @@ where
 ///
 /// The underlying slice is filtered on-the-fly to skip windows whose span does not intersect the
 /// tile, so callers do not need to duplicate the overlap predicates.
-pub struct TileWindowsIter<'a> {
+pub(crate) struct TileWindowsIter<'a> {
     windows: &'a [IndexedInterval<u64>],
     next_idx: usize,
     end_idx: usize,
@@ -364,7 +364,7 @@ fn advance_window_span_bounds(
 /// # Returns
 /// A `TileWindowsIter` positioned to stream overlapping windows. Commands that need aligned
 /// sidecar data can use its crate-local source-index access on the returned iterator.
-pub fn overlapping_windows_for_tile<'a>(
+pub(crate) fn overlapping_windows_for_tile<'a>(
     windows: &'a [IndexedInterval<u64>],
     tile: &Tile,
     span: Option<&TileWindowSpan>,
@@ -386,75 +386,6 @@ pub fn overlapping_windows_for_tile<'a>(
     }
 }
 
-/// Return the cached candidate-window span for a core-overlap tile/window model.
-///
-/// Coordinate space:
-/// - consumes BED window coordinates
-/// - returns a BED-window index span
-///
-/// Fragment ownership rule:
-/// - none; this helper does not reason about fragment ownership
-///
-/// Counting or assignment interval assumption:
-/// - none; relevance is defined only by BED/core overlap
-///
-/// Aligned fetch narrowing:
-/// - not performed here
-///
-/// This helper answers only:
-/// - which BED windows overlap the tile core?
-///
-/// It is not valid for fragment-reach commands such as `lengths`, `ends`, or `gc_bias`.
-pub fn candidate_window_span_for_tile_core_overlap(
-    windows: &[IndexedInterval<u64>],
-    tile: &Tile,
-) -> Option<TileWindowSpan> {
-    let core_start = tile.core_start() as u64;
-    let core_end = tile.core_end() as u64;
-    let (first_idx, last_idx_exclusive) = span_bounds_without_cache(windows, core_start, core_end);
-    (first_idx < last_idx_exclusive).then_some(TileWindowSpan {
-        first_idx,
-        last_idx_exclusive,
-    })
-}
-
-/// Return the cached candidate-window span for a fragment-reach tile/window model.
-///
-/// Coordinate space:
-/// - consumes BED window coordinates
-/// - returns a BED-window index span
-///
-/// Fragment ownership rule:
-/// - fragment is owned iff its aligned start lies in the tile core
-///
-/// Counting or assignment interval assumption:
-/// - the caller must choose the left and right reach values that correspond to the command's
-///   actual counting or assignment interval
-///
-/// Aligned fetch narrowing:
-/// - not performed here
-///
-/// This helper answers only:
-/// - which BED windows could receive counts from tile-owned fragments under the supplied reach?
-///
-/// It is not valid for future commands that use a different ownership rule, such as "fragment end
-/// lies in the tile core", unless they define a separate helper or prove the same reach model.
-pub fn candidate_window_span_for_tile_fragment_reach(
-    windows: &[IndexedInterval<u64>],
-    tile: &Tile,
-    left_reach_bp: u64,
-    right_reach_bp: u64,
-) -> Option<TileWindowSpan> {
-    let left_bound = (tile.core_start() as u64).saturating_sub(left_reach_bp);
-    let right_bound = (tile.core_end() as u64).saturating_add(right_reach_bp);
-    let (first_idx, last_idx_exclusive) =
-        span_bounds_without_cache(windows, left_bound, right_bound);
-    (first_idx < last_idx_exclusive).then_some(TileWindowSpan {
-        first_idx,
-        last_idx_exclusive,
-    })
-}
-
 /// Tightens a tile's fetch bounds to the observed window span while respecting halos.
 ///
 /// The narrowed span subtracts the left/right halo from the minimum/maximum window edges and then
@@ -471,7 +402,7 @@ pub fn candidate_window_span_for_tile_fragment_reach(
 /// # Returns
 /// `Some(interval)` as absolute fetch limits when a non-empty span remains, otherwise `None`.
 #[inline]
-pub fn clamp_fetch_to_window_span(
+pub(crate) fn clamp_fetch_to_window_span(
     tile: &Tile,
     chrom_len: u64,
     window_span: Interval<u64>,
@@ -514,7 +445,7 @@ pub fn clamp_fetch_to_window_span(
 /// # Returns
 /// A tuple `(tiles, guaranteed_aligned)` where `tiles` contains every generated `Tile` and
 /// `guaranteed_aligned` flags whether cores were aligned to `align_bp`.
-pub fn build_tiles(
+pub(crate) fn build_tiles(
     chromosomes: &[String],
     contigs: &Contigs,
     tile_bp: u32,
@@ -590,7 +521,7 @@ pub fn build_tiles(
 }
 
 /// What the tile should write
-pub enum TileMode<'w> {
+pub(crate) enum TileMode<'w> {
     /// Whole positional coverage for the core,
     /// or windowed positional coverage without index (unique positions)
     Positional {
@@ -614,31 +545,6 @@ pub enum TileMode<'w> {
     },
 }
 
-/// Filters a chromosome's windows down to those that touch the tile core.
-///
-/// The iterator simply checks for half-open interval overlap between each window and the core
-/// bounds expressed as absolute coordinates.
-///
-/// # Parameters
-/// - `windows_chr`: Chromosome-specific windows `(start, end, idx)` in start order.
-/// - `core_start`: Inclusive tile core start in absolute bases.
-/// - `core_end`: Exclusive tile core end in absolute bases.
-///
-/// # Returns
-/// An iterator yielding references to the overlapping windows.
-#[inline]
-pub fn windows_overlapping_core(
-    windows_chr: &[IndexedInterval<u64>],
-    core_start: u32,
-    core_end: u32,
-) -> impl Iterator<Item = &IndexedInterval<u64>> {
-    let core_start_abs = core_start as u64;
-    let core_end_abs = core_end as u64;
-    windows_chr
-        .iter()
-        .filter(move |window| window.end() > core_start_abs && window.start() < core_end_abs)
-}
-
 /// Extracts the tile index suffix from a coverage filename.
 ///
 /// The search proceeds right-to-left and returns the first segment that contains only ASCII digits,
@@ -649,7 +555,7 @@ pub fn windows_overlapping_core(
 ///
 /// # Returns
 /// `Some(index)` when a numeric segment is found; otherwise `None`.
-pub fn parse_tile_index(file_name: &str) -> Option<u32> {
+pub(crate) fn parse_tile_index(file_name: &str) -> Option<u32> {
     for seg in file_name.rsplit('.') {
         if !seg.is_empty() && seg.chars().all(|c| c.is_ascii_digit()) {
             return seg.parse().ok();
@@ -686,7 +592,7 @@ fn random_suffix(n: usize) -> String {
 ///
 /// # Returns
 /// Path to the created temporary directory.
-pub fn make_temp_dir(base_out: &Path, prefix: &str) -> anyhow::Result<PathBuf> {
+pub(crate) fn make_temp_dir(base_out: &Path, prefix: &str) -> anyhow::Result<PathBuf> {
     // Try a few times just in case
     for _ in 0..8 {
         let suffix = random_suffix(10);
@@ -708,21 +614,21 @@ pub fn make_temp_dir(base_out: &Path, prefix: &str) -> anyhow::Result<PathBuf> {
 /// Commands keep this value in scope for as long as tile files may be needed. The directory is
 /// removed when the guard is dropped, so early returns clean up the same way as successful runs.
 /// Call `remove()` when cleanup failure should be reported on the normal success path.
-pub struct TempDirGuard {
+pub(crate) struct TempDirGuard {
     path: PathBuf,
     removed: bool,
 }
 
 impl TempDirGuard {
     /// Creates and guards a unique temporary directory inside `base_out`.
-    pub fn new(base_out: &Path, prefix: &str) -> anyhow::Result<Self> {
+    pub(crate) fn new(base_out: &Path, prefix: &str) -> anyhow::Result<Self> {
         install_temp_dir_ctrl_c_cleanup_handler();
         let path = make_temp_dir(base_out, prefix)?;
         Ok(Self::from_existing_path(path))
     }
 
     /// Guards an existing temporary directory path.
-    pub fn from_existing_path(path: PathBuf) -> Self {
+    pub(crate) fn from_existing_path(path: PathBuf) -> Self {
         install_temp_dir_ctrl_c_cleanup_handler();
         register_temp_dir_for_ctrl_c_cleanup(&path);
         Self {
@@ -732,12 +638,12 @@ impl TempDirGuard {
     }
 
     /// Returns the guarded temporary directory path.
-    pub fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         &self.path
     }
 
     /// Removes the guarded directory and disables drop-time cleanup after success.
-    pub fn remove(&mut self) -> anyhow::Result<()> {
+    pub(crate) fn remove(&mut self) -> anyhow::Result<()> {
         if self.removed {
             return Ok(());
         }
@@ -855,7 +761,7 @@ fn spawn_temp_dir_cleanup_helper(paths: &[PathBuf]) -> std::io::Result<()> {
 /// The normal CLI calls this before Clap parsing. The helper sleeps briefly so the interrupted
 /// parent process can exit and close tile-writer file handles, then removes the registered temp
 /// directories with bounded retries.
-pub fn run_temp_dir_cleanup_helper_if_requested() -> bool {
+pub(crate) fn run_temp_dir_cleanup_helper_if_requested() -> bool {
     let mut args = env::args_os();
     let _program = args.next();
     let Some(mode) = args.next() else {

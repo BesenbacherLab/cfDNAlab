@@ -1,3 +1,4 @@
+use crate::command_run::{CommandRunResult, RunOptions};
 use crate::commands::fcoverage::reducer::TileAggregateTempFiles;
 use crate::commands::fcoverage::tiling::{
     TileTempFile, TileTempFileKind, adapt_fetch_to_extreme_windows, finalize_value,
@@ -52,6 +53,36 @@ use tracing::info;
 
 const COMMAND_TARGET: &str = "wps";
 
+/// Result from `wps`.
+///
+/// The command writes positional or windowed protection scores. The result records the
+/// primary output path, all final output files, and the fragment counters from WPS calculation.
+#[derive(Debug)]
+pub struct WPSRunResult {
+    /// Fragment and filtering counters collected during the run.
+    pub counters: WPSCounters,
+    /// Main WPS output path.
+    pub output_path: PathBuf,
+    /// Final output files produced by the command.
+    pub output_files: Vec<PathBuf>,
+}
+
+impl CommandRunResult for WPSRunResult {
+    type Counters = WPSCounters;
+
+    fn counters(&self) -> &Self::Counters {
+        &self.counters
+    }
+
+    fn output_files(&self) -> &[PathBuf] {
+        &self.output_files
+    }
+
+    fn primary_output(&self) -> Option<&std::path::Path> {
+        Some(self.output_path.as_path())
+    }
+}
+
 #[derive(Debug, Clone)]
 struct WpsTileResult {
     counters: WPSCounters,
@@ -94,25 +125,32 @@ impl WpsTileTempOutput {
     }
 }
 
-/// Execute the windowed protection scores pipeline end-to-end.
+/// Run the `wps` command.
 ///
-/// Implementation details:
-/// - Resolves chromosomes, prepares IO state, then iterates tiles in parallel.
-/// - Collects per-tile scores into temporary artefacts before merging them into the final
-///   positional or aggregated outputs.
-/// - Applies fragment length, blacklist, and optional scaling filters during iteration.
-/// - Applies smoothing to calculated WPS values.
+/// This command computes windowed protection scores from fragment coverage. It resolves
+/// chromosomes, prepares optional windows, blacklists, and scaling data, processes tiles in
+/// parallel, applies smoothing, and writes positional or aggregated WPS outputs.
 ///
-/// Parameters:
-/// - `opt`: Fully resolved configuration for the `wps` command.
+/// Reporting is controlled by `options`. `report_statistics` prints the final summary and
+/// `show_progress` controls progress bars. This command does not use status logs.
 ///
-/// Returns:
-/// - `Ok(())` when positional and/or windowed outputs are written successfully.
+/// Parameters
+/// ----------
+/// - `opt`:
+///     Fully resolved configuration for the `wps` command.
+/// - `options`:
+///     Reporting controls for statistics and progress bars.
 ///
-/// Errors:
-/// - Returns an error if the BAM cannot be read, auxiliary files are invalid, or writing outputs
-///   fails at any stage.
-pub fn run(opt: &WPSConfig) -> Result<()> {
+/// Returns
+/// -------
+/// - `Ok(WPSRunResult)`:
+///     Counters and output paths for the completed run.
+///
+/// Errors
+/// ------
+/// Returns an error if the BAM cannot be read, auxiliary files are invalid, or writing outputs
+/// fails at any stage.
+pub fn run_wps(opt: &WPSConfig, options: RunOptions) -> Result<WPSRunResult> {
     let start_time = Instant::now();
     if opt.shared_args.unpaired.reads_are_fragments && opt.shared_args.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
@@ -350,7 +388,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
     let total_tiles = tiles.len();
 
     // Create progress bar
-    let progress = ProgressFactory::new();
+    let progress = ProgressFactory::with_enabled(options.show_progress);
     let pb = Arc::new(progress.default_bar(total_tiles as u64));
 
     // Configure global thread‐pool size
@@ -523,7 +561,11 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
         })
         .collect::<anyhow::Result<_>>()?;
 
-    pb.finish_with_message("| Finished counting");
+    if options.show_progress {
+        pb.finish_with_message("| Finished counting");
+    } else {
+        pb.finish_and_clear();
+    }
 
     // Collect counters and the temp paths returned by tile processing.
     let mut tile_temp_outputs = Vec::new();
@@ -668,35 +710,41 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
     );
 
     let elapsed = start_time.elapsed();
-    print_fragment_run_statistics(
-        &global_counter.base,
-        elapsed,
-        FragmentRunStatisticsOptions {
-            include_section_header: true,
-            notes: &[TILE_DOUBLE_COUNT_NOTE],
-            labels: DEFAULT_FRAGMENT_STATISTICS_LABELS,
-            blacklist_excluded_fragments: None,
-            gc: (opt.shared_args.gc.gc_file.is_some() || opt.shared_args.gc.gc_tag.is_some())
-                .then_some(GCStatisticsSummary {
-                    neutralize_invalid_gc: opt.shared_args.gc.neutralize_invalid_gc,
-                    failed_fragments: global_counter.gc_failed_fragments,
-                    missing_tags: opt
-                        .shared_args
-                        .gc
-                        .gc_tag
-                        .is_some()
-                        .then_some(global_counter.gc_missing_tags),
-                    out_of_range_tags: opt
-                        .shared_args
-                        .gc
-                        .gc_tag
-                        .is_some()
-                        .then_some(global_counter.gc_out_of_range_tags),
-                }),
-        },
-        std::iter::empty::<&str>(),
-    );
-    Ok(())
+    if options.report_statistics {
+        print_fragment_run_statistics(
+            &global_counter.base,
+            elapsed,
+            FragmentRunStatisticsOptions {
+                include_section_header: true,
+                notes: &[TILE_DOUBLE_COUNT_NOTE],
+                labels: DEFAULT_FRAGMENT_STATISTICS_LABELS,
+                blacklist_excluded_fragments: None,
+                gc: (opt.shared_args.gc.gc_file.is_some() || opt.shared_args.gc.gc_tag.is_some())
+                    .then_some(GCStatisticsSummary {
+                        neutralize_invalid_gc: opt.shared_args.gc.neutralize_invalid_gc,
+                        failed_fragments: global_counter.gc_failed_fragments,
+                        missing_tags: opt
+                            .shared_args
+                            .gc
+                            .gc_tag
+                            .is_some()
+                            .then_some(global_counter.gc_missing_tags),
+                        out_of_range_tags: opt
+                            .shared_args
+                            .gc
+                            .gc_tag
+                            .is_some()
+                            .then_some(global_counter.gc_out_of_range_tags),
+                    }),
+            },
+            std::iter::empty::<&str>(),
+        );
+    }
+    Ok(WPSRunResult {
+        counters: global_counter,
+        output_path: final_out_path.clone(),
+        output_files: vec![final_out_path],
+    })
 }
 
 fn wps_positional_tile_outputs(tile_outputs: &[WpsTileTempOutput]) -> Vec<TileTempFile> {

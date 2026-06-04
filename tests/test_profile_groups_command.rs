@@ -5,31 +5,35 @@ mod fixtures;
 use anyhow::Result;
 #[cfg(feature = "cli")]
 use anyhow::{Context, bail};
+use cfdnalab::RunOptions;
+use cfdnalab::gc_bias::GCCorrectionPackage;
 #[cfg(feature = "cmd_bam_to_bam")]
-use cfdnalab::commands::bam_to_bam::{
-    bam_to_bam::run_inner as run_bam_to_bam, config::BamToBamConfig,
+use cfdnalab::run_like_cli::bam_to_bam::{
+    BamToBamConfig, run_bam_to_bam as run_bam_to_bam_command,
 };
-use cfdnalab::commands::cli_common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, ScaleGenomeArgs};
+use cfdnalab::run_like_cli::common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, ScaleGenomeArgs};
 #[cfg(feature = "cmd_coverage_weights")]
-use cfdnalab::commands::coverage_weights::{
-    config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
+use cfdnalab::run_like_cli::coverage_weights::{
+    CoverageWeightsConfig, run_coverage_weights as run_coverage_weights_command,
 };
-use cfdnalab::commands::gc_bias::package::GCCorrectionPackage;
-use cfdnalab::commands::midpoints::config::MidpointsConfig;
-use cfdnalab::commands::midpoints::midpoints::run;
-use cfdnalab::commands::midpoints::smoothing::MidpointSmoothing;
-use cfdnalab::shared::{
+use cfdnalab::run_like_cli::midpoints::{
+    MidpointSmoothing, MidpointsConfig, run_midpoints as run_midpoints_command,
+};
+use cfdnalab::testing::{
+    Bed4Row, Cigar, FragmentSpec, ReadSpec, TempBam, bam_from_fragments,
+    bam_from_fragments_with_record_indexed_names,
+    build_command_produced_gc_correction_package_for_length,
+    build_command_produced_gc_correction_package_for_range,
+    build_command_produced_gc_correction_package_from_reference_windows, read_midpoint_zarr_counts,
+    read_midpoint_zarr_i32_1d, single_contig_inward_pair_bam, twobit_from_sequences,
+    twobit_with_single_repeating_contig, write_bed4, write_two_bin_gc_correction_package,
+};
+use cfdnalab::{
     blacklist::BlacklistStrategy,
     constants::GC_CORRECTION_SCHEMA_VERSION,
     reference::{ContigFootprintEntry, twobit_contig_footprint},
 };
-use fixtures::{
-    FragmentSpec, ReadSpec, bam_from_specs, bam_from_specs_strict_identity,
-    build_real_neutral_gc_package, build_real_neutral_gc_package_for_range,
-    build_real_non_neutral_gc_package, late_origin_gc_reference_sequence,
-    read_midpoint_zarr_counts, read_midpoint_zarr_i32_1d, simple_reference_twobit,
-    twobit_from_sequences, write_bed, write_two_bin_gc_package,
-};
+use fixtures::late_origin_gc_reference_sequence;
 use ndarray::Array3;
 use ndarray::array;
 use rust_htslib::bam::record::Aux;
@@ -44,6 +48,20 @@ use std::path::PathBuf;
 #[cfg(feature = "cli")]
 use std::process::Command;
 use tempfile::TempDir;
+
+fn run(cfg: &MidpointsConfig) -> Result<()> {
+    run_midpoints_command(cfg, RunOptions::new_quiet()).map(|_| ())
+}
+
+#[cfg(feature = "cmd_bam_to_bam")]
+fn run_bam_to_bam(cfg: &BamToBamConfig) -> Result<()> {
+    run_bam_to_bam_command(cfg, RunOptions::new_quiet()).map(|_| ())
+}
+
+#[cfg(feature = "cmd_coverage_weights")]
+fn run_coverage_weights(cfg: &CoverageWeightsConfig) -> Result<()> {
+    run_coverage_weights_command(cfg, RunOptions::new_quiet()).map(|_| ())
+}
 
 const MIDPOINT_F32_TOL: f32 = 1e-5;
 
@@ -93,9 +111,9 @@ fn paired_fragment_on_tid_with_mapq(
         forward: ReadSpec {
             tid,
             pos: start,
-            cigar: vec![('M', read_len as u32)],
+            cigar: vec![Cigar::Match(read_len as u32)],
             seq: vec![b'A'; read_len as usize],
-            qual: 40,
+            base_quality: 40,
             is_reverse: false,
             mapq,
             flags: FLAG_FIRST_MATE | FLAG_MATE_REVERSE | FLAG_PROPER_PAIR,
@@ -106,9 +124,9 @@ fn paired_fragment_on_tid_with_mapq(
         reverse: ReadSpec {
             tid,
             pos: reverse_start,
-            cigar: vec![('M', read_len as u32)],
+            cigar: vec![Cigar::Match(read_len as u32)],
             seq: vec![b'T'; read_len as usize],
-            qual: 40,
+            base_quality: 40,
             is_reverse: true,
             mapq,
             flags: FLAG_SECOND_MATE | FLAG_PROPER_PAIR,
@@ -119,20 +137,17 @@ fn paired_fragment_on_tid_with_mapq(
     }
 }
 
-fn single_read_fragment_bam(
-    name: &str,
-    fragment_start: i64,
-    fragment_len: u32,
-) -> Result<fixtures::BamFixture> {
-    bam_from_specs(
+fn single_read_fragment_bam(name: &str, fragment_start: i64, fragment_len: u32) -> Result<TempBam> {
+    bam_from_fragments(
+        name,
         vec![("chr1".to_string(), 200)],
         Vec::new(),
         vec![ReadSpec {
             tid: 0,
             pos: fragment_start,
-            cigar: vec![('M', fragment_len)],
+            cigar: vec![Cigar::Match(fragment_len)],
             seq: vec![b'A'; fragment_len as usize],
-            qual: 40,
+            base_quality: 40,
             is_reverse: false,
             mapq: 60,
             flags: 0,
@@ -140,7 +155,6 @@ fn single_read_fragment_bam(
             mate_pos: None,
             insert_size: 0,
         }],
-        name,
     )
 }
 
@@ -162,7 +176,7 @@ fn assert_midpoint_profile_row_matches(row: &[f32], expected_weight_at_pos5: f32
 }
 
 #[derive(Debug)]
-struct TaggedBamFixture {
+struct TaggedTempBam {
     _tempdir: TempDir,
     bam: PathBuf,
 }
@@ -181,7 +195,7 @@ fn bam_with_gc_tags(
     base_bam: &std::path::Path,
     name: &str,
     tags: &[Option<f32>],
-) -> Result<TaggedBamFixture> {
+) -> Result<TaggedTempBam> {
     let tempdir = TempDir::new()?;
     let bam_path = tempdir.path().join(format!("{name}.bam"));
 
@@ -200,7 +214,7 @@ fn bam_with_gc_tags(
     drop(writer);
     build_bai_for_test_bam(&bam_path)?;
 
-    Ok(TaggedBamFixture {
+    Ok(TaggedTempBam {
         _tempdir: tempdir,
         bam: bam_path,
     })
@@ -251,13 +265,14 @@ fn read_group_index_eligible_intervals(path: &std::path::Path) -> Result<HashMap
 #[derive(Debug)]
 struct MidpointsAxisContractFixture {
     _interval_dir: TempDir,
-    bam: fixtures::BamFixture,
+    bam: TempBam,
     intervals_path: PathBuf,
 }
 
 fn midpoint_axis_contract_fixture() -> Result<MidpointsAxisContractFixture> {
     let high_tile_offset = 1_000_000_i64;
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "midpoints_axis_contract",
         vec![
             ("chr1".to_string(), 1_100_000),
             ("chr2".to_string(), 1_100_000),
@@ -287,20 +302,19 @@ fn midpoint_axis_contract_fixture() -> Result<MidpointsAxisContractFixture> {
             paired_fragment_on_tid(1, 500_000, 21, 10),
         ],
         Vec::new(),
-        "midpoints_axis_contract",
     )?;
 
     let interval_dir = TempDir::new()?;
     let intervals_path = interval_dir.path().join("windows.bed");
-    write_bed(
+    write_bed4(
         &intervals_path,
         &[
-            ("chr1", 40, 80, "groupA"),
-            ("chr1", 300, 340, "groupC"),
-            ("chr1", 1_000_180, 1_000_220, "groupA"),
-            ("chr2", 20, 60, "groupB"),
-            ("chr2", 300, 340, "groupC"),
-            ("chr2", 1_000_060, 1_000_100, "groupB"),
+            Bed4Row::new("chr1", 40, 80, "groupA"),
+            Bed4Row::new("chr1", 300, 340, "groupC"),
+            Bed4Row::new("chr1", 1_000_180, 1_000_220, "groupA"),
+            Bed4Row::new("chr2", 20, 60, "groupB"),
+            Bed4Row::new("chr2", 300, 340, "groupC"),
+            Bed4Row::new("chr2", 1_000_060, 1_000_100, "groupB"),
         ],
     )?;
 
@@ -535,7 +549,8 @@ fn midpoints_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_
     };
     // All three fragments share the same start, so the strict fixture is required to keep them as
     // three distinct molecules instead of one reused qname.
-    let bam = bam_from_specs_strict_identity(
+    let bam = bam_from_fragments_with_record_indexed_names(
+        "midpoints_default_min_mapq",
         vec![("chr1".to_string(), 200)],
         vec![
             fragment_with_mapq(60),
@@ -543,11 +558,10 @@ fn midpoints_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_
             fragment_with_mapq(30),
         ],
         Vec::new(),
-        "midpoints_default_min_mapq",
     )?;
     let temp = TempDir::new()?;
     let intervals = temp.path().join("sites.bed");
-    write_bed(&intervals, &[("chr1", 45, 56, "groupA")])?;
+    write_bed4(&intervals, &[Bed4Row::new("chr1", 45, 56, "groupA")])?;
     let out_default = TempDir::new()?;
     let out_thirty = TempDir::new()?;
     let out_zero = TempDir::new()?;
@@ -616,17 +630,17 @@ fn unpaired_single_read_matches_paired_midpoint_profile_for_same_span() -> Resul
     //
     // Both representations must therefore produce the same 3D midpoint profile array with a
     // single count at [group=0, length_bin=0, position=5].
-    let paired_bam = bam_from_specs(
+    let paired_bam = bam_from_fragments(
+        "midpoints_paired_parity",
         vec![("chr1".to_string(), 200)],
         vec![paired_fragment_on_tid(0, 20, 61, 20)],
         Vec::new(),
-        "midpoints_paired_parity",
     )?;
     let unpaired_bam = single_read_fragment_bam("midpoints_unpaired_parity", 20, 61)?;
     let paired_out = TempDir::new()?;
     let unpaired_out = TempDir::new()?;
     let intervals = paired_out.path().join("sites.bed");
-    write_bed(&intervals, &[("chr1", 45, 56, "groupA")])?;
+    write_bed4(&intervals, &[Bed4Row::new("chr1", 45, 56, "groupA")])?;
 
     let make_cfg = |bam_path: &std::path::Path, out_dir: &std::path::Path, unpaired: bool| {
         let mut cfg = MidpointsConfig::new(
@@ -685,11 +699,11 @@ fn bed_sites_mixed_core_and_halo_rows_keep_only_the_core_midpoint_count_across_t
     for tile_size in tile_sizes {
         let temp = TempDir::new()?;
         let bed_path = temp.path().join(format!("sites_{tile_size}.bed"));
-        write_bed(
+        write_bed4(
             &bed_path,
             &[
-                ("chr1", 10, 11, "group_core"),
-                ("chr1", 22, 23, "group_halo"),
+                Bed4Row::new("chr1", 10, 11, "group_core"),
+                Bed4Row::new("chr1", 22, 23, "group_halo"),
             ],
         )?;
 
@@ -750,11 +764,11 @@ fn later_tile_site_keeps_midpoint_count_when_window_span_starts_after_zero() -> 
     for tile_size in tile_sizes {
         let temp = TempDir::new()?;
         let bed_path = temp.path().join(format!("sites_{tile_size}.bed"));
-        write_bed(
+        write_bed4(
             &bed_path,
             &[
-                ("chr1", 10, 11, "group_early"),
-                ("chr1", 42, 43, "group_late"),
+                Bed4Row::new("chr1", 10, 11, "group_early"),
+                Bed4Row::new("chr1", 42, 43, "group_late"),
             ],
         )?;
 
@@ -809,7 +823,7 @@ fn core_overlap_bed_site_is_kept_for_midpoints() -> Result<()> {
     let bam = single_read_fragment_bam("midpoints_core_site", 5, 11)?;
     let temp = TempDir::new()?;
     let bed_path = temp.path().join("sites.bed");
-    write_bed(&bed_path, &[("chr1", 10, 11, "group_core")])?;
+    write_bed4(&bed_path, &[Bed4Row::new("chr1", 10, 11, "group_core")])?;
 
     let mut cfg = MidpointsConfig::new(
         IOCArgs {
@@ -908,17 +922,20 @@ fn even_length_midpoint_tie_counts_exactly_one_of_two_adjacent_edge_windows() ->
     //   groupB -> [45,46)
     //
     // Exactly one of them must receive the count, never both and never neither.
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "midpoints_even_tie_two_edge_windows",
         vec![("chr1".to_string(), 100)],
         vec![paired_fragment_on_tid(0, 40, 10, 5)],
         Vec::new(),
-        "midpoints_even_tie_two_edge_windows",
     )?;
     let temp = TempDir::new()?;
     let bed_path = temp.path().join("windows.bed");
-    write_bed(
+    write_bed4(
         &bed_path,
-        &[("chr1", 44, 45, "groupA"), ("chr1", 45, 46, "groupB")],
+        &[
+            Bed4Row::new("chr1", 44, 45, "groupA"),
+            Bed4Row::new("chr1", 45, 46, "groupB"),
+        ],
     )?;
 
     let mut cfg = MidpointsConfig::new(
@@ -971,17 +988,17 @@ fn blacklist_midpoint_filtering_checks_both_centers_for_even_fragments() -> Resu
     // Now choose blacklist strategy `Midpoint`.
     // The shared blacklist helper is intentionally conservative for even-length fragments:
     // either central base can blacklist the fragment.
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "midpoints_blacklist_midpoint_central_base_contract",
         vec![("chr1".to_string(), 100)],
         vec![paired_fragment_on_tid(0, 40, 10, 5)],
         Vec::new(),
-        "midpoints_blacklist_midpoint_central_base_contract",
     )?;
     let temp = TempDir::new()?;
     let bed_path = temp.path().join("windows.bed");
     let left_center_blacklist_path = temp.path().join("blacklist_left_center.bed");
     let right_center_blacklist_path = temp.path().join("blacklist_right_center.bed");
-    write_bed(&bed_path, &[("chr1", 44, 46, "groupA")])?;
+    write_bed4(&bed_path, &[Bed4Row::new("chr1", 44, 46, "groupA")])?;
     std::fs::write(&left_center_blacklist_path, "chr1\t44\t45\n")?;
     std::fs::write(&right_center_blacklist_path, "chr1\t45\t46\n")?;
 
@@ -1003,7 +1020,7 @@ fn blacklist_midpoint_filtering_checks_both_centers_for_even_fragments() -> Resu
         cfg.set_require_proper_pair(false);
         cfg.set_scale_genome(ScaleGenomeArgs::default());
         cfg.blacklist = blacklist;
-        cfg.blacklist_strategy = cfdnalab::shared::blacklist::BlacklistStrategy::Midpoint;
+        cfg.blacklist_strategy = cfdnalab::blacklist::BlacklistStrategy::Midpoint;
         // This test targets fragment-level midpoint blacklist behavior. The interval prefilter
         // would correctly remove this tiny test window before the fragment filter runs
         cfg.set_keep_blacklisted_intervals(true);
@@ -1066,16 +1083,16 @@ fn keep_blacklisted_intervals_keeps_sites_but_still_filters_fragments() -> Resul
     // lies inside the interval-level safety margin. Setting `keep_blacklisted_intervals` proves
     // that the site remains available while fragment-level blacklist filtering still removes the
     // fragment contribution.
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "midpoints_keep_blacklisted_intervals_fragment_filter",
         vec![("chr1".to_string(), 200)],
         vec![paired_fragment_on_tid(0, 45, 11, 5)],
         Vec::new(),
-        "midpoints_keep_blacklisted_intervals_fragment_filter",
     )?;
     let temp = TempDir::new()?;
     let bed_path = temp.path().join("windows.bed");
     let blacklist_path = temp.path().join("blacklist.bed");
-    write_bed(&bed_path, &[("chr1", 50, 57, "groupA")])?;
+    write_bed4(&bed_path, &[Bed4Row::new("chr1", 50, 57, "groupA")])?;
     std::fs::write(&blacklist_path, "chr1\t45\t46\n")?;
 
     let mut cfg = MidpointsConfig::new(
@@ -1120,16 +1137,16 @@ fn midpoint_prefilter_fails_clearly_when_blacklist_drops_all_intervals() -> Resu
     // With length bin [11,12), the interval blacklist margin is ceil(11 / 2) = 6 bp.
     // The output interval [50,57) plus that margin is [44,63), which overlaps [45,46).
     // Because `keep_blacklisted_intervals` is false, the only interval is prefiltered away.
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "midpoints_all_intervals_dropped_by_blacklist",
         vec![("chr1".to_string(), 200)],
         vec![paired_fragment_on_tid(0, 45, 11, 5)],
         Vec::new(),
-        "midpoints_all_intervals_dropped_by_blacklist",
     )?;
     let temp = TempDir::new()?;
     let bed_path = temp.path().join("windows.bed");
     let blacklist_path = temp.path().join("blacklist.bed");
-    write_bed(&bed_path, &[("chr1", 50, 57, "groupA")])?;
+    write_bed4(&bed_path, &[Bed4Row::new("chr1", 50, 57, "groupA")])?;
     std::fs::write(&blacklist_path, "chr1\t45\t46\n")?;
 
     let mut cfg = MidpointsConfig::new(
@@ -1181,15 +1198,15 @@ fn midpoint_command_smooths_full_resolution_profile_before_final_binning() -> Re
             fragments.push(paired_fragment_on_tid(0, midpoint - 5, 11, 5));
         }
     }
-    let bam = bam_from_specs_strict_identity(
+    let bam = bam_from_fragments_with_record_indexed_names(
+        "midpoints_savgol_then_bin_command",
         vec![("chr1".to_string(), 200)],
         fragments,
         Vec::new(),
-        "midpoints_savgol_then_bin_command",
     )?;
     let temp = TempDir::new()?;
     let bed_path = temp.path().join("windows.bed");
-    write_bed(&bed_path, &[("chr1", 50, 57, "groupA")])?;
+    write_bed4(&bed_path, &[Bed4Row::new("chr1", 50, 57, "groupA")])?;
 
     let mut cfg = MidpointsConfig::new(
         IOCArgs {
@@ -1364,21 +1381,21 @@ fn group_index_counts_eligible_intervals_after_prefilter() -> Result<()> {
     //
     // The BAM contains no fragments. The expected counts therefore prove that `eligible_intervals`
     // describes the retained profile interval set, not observed coverage.
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "midpoints_group_index_eligible_intervals",
         vec![("chr1".to_string(), 200)],
         Vec::new(),
         Vec::new(),
-        "midpoints_group_index_eligible_intervals",
     )?;
     let temp = TempDir::new()?;
     let bed_path = temp.path().join("windows.bed");
     let blacklist_path = temp.path().join("blacklist.bed");
-    write_bed(
+    write_bed4(
         &bed_path,
         &[
-            ("chr1", 50, 57, "groupA"),
-            ("chr1", 80, 87, "groupB"),
-            ("chr1", 120, 127, "groupA"),
+            Bed4Row::new("chr1", 50, 57, "groupA"),
+            Bed4Row::new("chr1", 80, 87, "groupB"),
+            Bed4Row::new("chr1", 120, 127, "groupA"),
         ],
     )?;
     std::fs::write(&blacklist_path, "chr1\t44\t46\nchr1\t74\t75\n")?;
@@ -1541,7 +1558,8 @@ fn group_index_axis_matches_first_group_encounter_order_and_collapsed_counts() -
     // - groupB (axis 0): one count at position 5
     // - groupC (axis 1): one count at position 5
     // - groupA (axis 2): two counts at position 5
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "midpoints_group_axis_contract",
         vec![("chr1".to_string(), 200), ("chr2".to_string(), 200)],
         vec![
             paired_fragment_on_tid(0, 20, 61, 20),
@@ -1550,17 +1568,16 @@ fn group_index_axis_matches_first_group_encounter_order_and_collapsed_counts() -
             paired_fragment_on_tid(1, 80, 61, 20),
         ],
         Vec::new(),
-        "midpoints_group_axis_contract",
     )?;
     let temp = TempDir::new()?;
     let bed_path = temp.path().join("windows.bed");
-    write_bed(
+    write_bed4(
         &bed_path,
         &[
-            ("chr1", 45, 56, "groupB"),
-            ("chr1", 65, 76, "groupC"),
-            ("chr2", 85, 96, "groupA"),
-            ("chr2", 105, 116, "groupA"),
+            Bed4Row::new("chr1", 45, 56, "groupB"),
+            Bed4Row::new("chr1", 65, 76, "groupC"),
+            Bed4Row::new("chr2", 85, 96, "groupA"),
+            Bed4Row::new("chr2", 105, 116, "groupA"),
         ],
     )?;
 
@@ -1649,17 +1666,22 @@ fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_midpo
     // - after normalization and ratio, the produced correction is 1.0
     //
     // So the final midpoint profile must be exactly one count at position 5.
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "midpoints_real_gc_neutral",
         vec![("chr1".to_string(), 200)],
         vec![paired_fragment_on_tid(0, 20, 61, 20)],
         Vec::new(),
-        "midpoints_real_gc_neutral",
     )?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let temp = TempDir::new()?;
     let bed_path = temp.path().join("windows.bed");
-    write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
-    let gc_path = build_real_neutral_gc_package(&bam.bam, &reference.path, temp.path(), 61)?;
+    write_bed4(&bed_path, &[Bed4Row::new("chr1", 45, 56, "groupA")])?;
+    let gc_path = build_command_produced_gc_correction_package_for_length(
+        &bam.bam,
+        &reference.path,
+        temp.path(),
+        61,
+    )?;
 
     let mut cfg = MidpointsConfig::new(
         IOCArgs {
@@ -1716,11 +1738,11 @@ fn gc_file_late_tile_site_uses_reference_coordinates_after_fetch_narrowing() -> 
     // - The fragment [900,961) has deterministic midpoint 930, so it lands at position 5.
     // - The fragment interval [900,961) is all C, so it lands in the high-GC correction bin with
     //   weight 7.0. Using prefix-local origin 0 would see A-only sequence instead.
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "midpoints_late_tile_gc_origin",
         vec![("chr1".to_string(), 1_500)],
         vec![paired_fragment_on_tid(0, 900, 61, 20)],
         Vec::new(),
-        "midpoints_late_tile_gc_origin",
     )?;
     let reference = twobit_from_sequences(
         "midpoints_late_tile_gc_origin_ref",
@@ -1729,8 +1751,8 @@ fn gc_file_late_tile_site_uses_reference_coordinates_after_fetch_narrowing() -> 
     let temp = TempDir::new()?;
     let bed_path = temp.path().join("late_site.bed");
     let gc_path = temp.path().join("two_bin_gc_package.zarr");
-    write_bed(&bed_path, &[("chr1", 925, 936, "late")])?;
-    write_two_bin_gc_package(
+    write_bed4(&bed_path, &[Bed4Row::new("chr1", 925, 936, "late")])?;
+    write_two_bin_gc_correction_package(
         &gc_path,
         61,
         2.0,
@@ -1827,7 +1849,8 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_midpoints_in_expected_direction
     )?;
     // The producer deliberately stacks nine identical C-only fragments at one start. Use the
     // strict helper so those molecules keep distinct qnames in the BAM pairing layer.
-    let producer_bam = bam_from_specs_strict_identity(
+    let producer_bam = bam_from_fragments_with_record_indexed_names(
+        "midpoints_real_non_neutral_producer",
         vec![("chr1".to_string(), 201)],
         {
             let mut fragments = vec![paired_fragment_on_tid(0, 10, 61, 20)];
@@ -1837,19 +1860,18 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_midpoints_in_expected_direction
             fragments
         },
         Vec::new(),
-        "midpoints_real_non_neutral_producer",
     )?;
-    let consumer_bam = bam_from_specs(
+    let consumer_bam = bam_from_fragments(
+        "midpoints_real_non_neutral_consumer",
         vec![("chr1".to_string(), 201)],
         vec![
             paired_fragment_on_tid(0, 10, 61, 20),
             paired_fragment_on_tid(0, 110, 61, 20),
         ],
         Vec::new(),
-        "midpoints_real_non_neutral_consumer",
     )?;
     let temp = TempDir::new()?;
-    let gc_path = build_real_non_neutral_gc_package(
+    let gc_path = build_command_produced_gc_correction_package_from_reference_windows(
         &producer_bam.bam,
         &reference.path,
         temp.path(),
@@ -1863,9 +1885,12 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_midpoints_in_expected_direction
         141,
     )?;
     let bed_path = temp.path().join("windows.bed");
-    write_bed(
+    write_bed4(
         &bed_path,
-        &[("chr1", 35, 46, "groupA"), ("chr1", 135, 146, "groupC")],
+        &[
+            Bed4Row::new("chr1", 35, 46, "groupA"),
+            Bed4Row::new("chr1", 135, 146, "groupC"),
+        ],
     )?;
 
     let mut cfg = MidpointsConfig::new(
@@ -1925,16 +1950,16 @@ fn midpoints_rejects_gc_package_when_length_bins_are_outside_supported_range() -
     // We then hand-build the smallest valid GC package that only covers lengths 10..=60.
     // The shared GC loader should therefore reject the package before any per-tile counting:
     //   requested range [61,61] is outside package range [10,60].
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "midpoints_gc_length_range_mismatch",
         vec![("chr1".to_string(), 200)],
         vec![paired_fragment_on_tid(0, 20, 61, 20)],
         Vec::new(),
-        "midpoints_gc_length_range_mismatch",
     )?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let temp = TempDir::new()?;
     let bed_path = temp.path().join("windows.bed");
-    write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
+    write_bed4(&bed_path, &[Bed4Row::new("chr1", 45, 56, "groupA")])?;
     let gc_path = temp.path().join("too_short_gc_package.zarr");
     write_minimal_gc_package_excluding_length_61(
         &gc_path,
@@ -1983,11 +2008,11 @@ fn midpoints_rejects_gc_package_with_schema_version_mismatch() -> Result<()> {
     // Build the smallest valid GC correction package shape, but with an intentionally
     // incompatible schema version. `midpoints` should fail while loading the package, before
     // reading any GC weights or accumulating profile mass.
-    let bam = fixtures::simple_inward_bam()?;
-    let reference = simple_reference_twobit()?;
+    let bam = single_contig_inward_pair_bam()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let temp = TempDir::new()?;
     let bed_path = temp.path().join("windows.bed");
-    write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
+    write_bed4(&bed_path, &[Bed4Row::new("chr1", 45, 56, "groupA")])?;
     let gc_path = temp.path().join("gc_pkg_bad_version.zarr");
     let package = GCCorrectionPackage {
         version: GC_CORRECTION_SCHEMA_VERSION + 1,
@@ -2042,7 +2067,7 @@ fn coverage_weights_tsv_changes_midpoints_by_full_fragment_average_not_window_ov
 {
     // Arrange:
     // Producer BAM:
-    // - `simple_inward_bam()` has exactly one fragment [20, 80) on a 200 bp chromosome.
+    // - `single_contig_inward_pair_bam()` has exactly one fragment [20, 80) on a 200 bp chromosome.
     // - We run `coverage-weights` with `bin_size = stride = 20`.
     // - In that identity case, `avg_overlapping_pos_cov == avg_pos_cov` for every stride bin.
     // - The producer therefore writes per-bin scaling factors:
@@ -2071,19 +2096,19 @@ fn coverage_weights_tsv_changes_midpoints_by_full_fragment_average_not_window_ov
     //     (20*1 + 20*1 + 20*1 + 1*0) / 61 = 60 / 61.
     // - No GC weighting is applied, so the final midpoint profile mass must be exactly 60/61 at
     //   position 5.
-    let producer_bam = fixtures::simple_inward_bam()?;
-    let consumer_bam = bam_from_specs(
+    let producer_bam = single_contig_inward_pair_bam()?;
+    let consumer_bam = bam_from_fragments(
+        "midpoints_scaling_consumer",
         vec![("chr1".to_string(), 200)],
         vec![paired_fragment_on_tid(0, 20, 61, 20)],
         Vec::new(),
-        "midpoints_scaling_consumer",
     )?;
     let temp = TempDir::new()?;
     let weights_out_dir = temp.path().join("coverage_weights");
     std::fs::create_dir_all(&weights_out_dir)?;
     let scaling_cfg = make_simple_coverage_weights_config(&weights_out_dir, &producer_bam.bam);
     let bed_path = temp.path().join("windows.bed");
-    write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
+    write_bed4(&bed_path, &[Bed4Row::new("chr1", 45, 56, "groupA")])?;
 
     // Act
     run_coverage_weights(&scaling_cfg)?;
@@ -2191,34 +2216,34 @@ fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_midpo
     // - group_chr2: 0.75 at position 5
     // chr2 deliberately stacks two identical fragments at one start. Use strict identity so the
     // producer really contains three molecules and the derived scaling TSV is correct.
-    let producer_bam = bam_from_specs_strict_identity(
-        vec![("chr1".to_string(), 200), ("chr2".to_string(), 200)],
-        vec![
-            paired_fragment_on_tid(0, 20, 61, 20),
-            paired_fragment_on_tid(1, 20, 61, 20),
-            paired_fragment_on_tid(1, 20, 61, 20),
-        ],
-        Vec::new(),
+    let producer_bam = bam_from_fragments_with_record_indexed_names(
         "midpoints_multichrom_scaling_producer",
+        vec![("chr1".to_string(), 200), ("chr2".to_string(), 200)],
+        vec![
+            paired_fragment_on_tid(0, 20, 61, 20),
+            paired_fragment_on_tid(1, 20, 61, 20),
+            paired_fragment_on_tid(1, 20, 61, 20),
+        ],
+        Vec::new(),
     )?;
-    let consumer_bam = bam_from_specs(
+    let consumer_bam = bam_from_fragments(
+        "midpoints_multichrom_scaling_consumer",
         vec![("chr1".to_string(), 200), ("chr2".to_string(), 200)],
         vec![
             paired_fragment_on_tid(0, 20, 61, 20),
             paired_fragment_on_tid(1, 20, 61, 20),
         ],
         Vec::new(),
-        "midpoints_multichrom_scaling_consumer",
     )?;
     let temp = TempDir::new()?;
     let weights_out_dir = temp.path().join("coverage_weights");
     std::fs::create_dir_all(&weights_out_dir)?;
     let bed_path = temp.path().join("windows.bed");
-    write_bed(
+    write_bed4(
         &bed_path,
         &[
-            ("chr1", 45, 56, "group_chr1"),
-            ("chr2", 45, 56, "group_chr2"),
+            Bed4Row::new("chr1", 45, 56, "group_chr1"),
+            Bed4Row::new("chr2", 45, 56, "group_chr2"),
         ],
     )?;
 
@@ -2299,11 +2324,11 @@ fn gc_tag_pair_average_sets_midpoint_profile_weight() -> Result<()> {
     //     (2.0 + 4.0) / 2 = 3.0.
     // - No genomic scaling is applied, so the final midpoint profile must contain exactly 3.0 at
     //   position 5 and 0 elsewhere.
-    let base_bam = bam_from_specs(
+    let base_bam = bam_from_fragments(
+        "midpoints_gc_tag_base",
         vec![("chr1".to_string(), 200)],
         vec![paired_fragment_on_tid(0, 20, 61, 20)],
         Vec::new(),
-        "midpoints_gc_tag_base",
     )?;
     let tagged_bam = bam_with_gc_tags(
         &base_bam.bam,
@@ -2312,7 +2337,7 @@ fn gc_tag_pair_average_sets_midpoint_profile_weight() -> Result<()> {
     )?;
     let temp = TempDir::new()?;
     let bed_path = temp.path().join("windows.bed");
-    write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
+    write_bed4(&bed_path, &[Bed4Row::new("chr1", 45, 56, "groupA")])?;
 
     let mut cfg = MidpointsConfig::new(
         IOCArgs {
@@ -2360,7 +2385,7 @@ fn gc_tag_pair_average_sets_midpoint_profile_weight() -> Result<()> {
 fn gc_file_and_scaling_tsv_weights_multiply_in_midpoints() -> Result<()> {
     // Arrange:
     // Producer BAM:
-    // - `simple_inward_bam()` contains one fragment [20, 80) on chr1.
+    // - `single_contig_inward_pair_bam()` contains one fragment [20, 80) on chr1.
     // - Run `coverage-weights` with a neutral real GC package over its full configured
     //   fragment length range so the written scaling TSV is GC-compatible with the consumer
     //   command, but the numerical scaling profile stays unchanged.
@@ -2399,19 +2424,19 @@ fn gc_file_and_scaling_tsv_weights_multiply_in_midpoints() -> Result<()> {
     // - So the only non-zero output cell must be:
     //     3.0 * (60 / 61) = 180 / 61
     //   at group 0, length bin 0, position 5.
-    let producer_bam = fixtures::simple_inward_bam()?;
-    let consumer_bam = bam_from_specs(
+    let producer_bam = single_contig_inward_pair_bam()?;
+    let consumer_bam = bam_from_fragments(
+        "midpoints_gc_and_scaling_consumer",
         vec![("chr1".to_string(), 200)],
         vec![paired_fragment_on_tid(0, 20, 61, 20)],
         Vec::new(),
-        "midpoints_gc_and_scaling_consumer",
     )?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let temp = TempDir::new()?;
     let weights_out_dir = temp.path().join("coverage_weights");
     std::fs::create_dir_all(&weights_out_dir)?;
     let mut scaling_cfg = make_simple_coverage_weights_config(&weights_out_dir, &producer_bam.bam);
-    let weights_gc_path = build_real_neutral_gc_package_for_range(
+    let weights_gc_path = build_command_produced_gc_correction_package_for_range(
         &producer_bam.bam,
         &reference.path,
         temp.path(),
@@ -2421,7 +2446,7 @@ fn gc_file_and_scaling_tsv_weights_multiply_in_midpoints() -> Result<()> {
     let scaling_path = weights_out_dir.join("coverage.coverage.scaling_factors.tsv");
     let gc_path = temp.path().join("constant_gc_pkg.zarr");
     let bed_path = temp.path().join("windows.bed");
-    write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
+    write_bed4(&bed_path, &[Bed4Row::new("chr1", 45, 56, "groupA")])?;
 
     let package = GCCorrectionPackage {
         version: GC_CORRECTION_SCHEMA_VERSION,
@@ -2511,18 +2536,18 @@ fn bam_to_bam_gc_file_output_drives_midpoints_gc_tag_same_as_original_gc_file() 
     // - shape [1, 1, 11]
     // - exactly 3.0 at position 5
     // - total mass 3.0
-    let source_bam = bam_from_specs(
+    let source_bam = bam_from_fragments(
+        "midpoints_bam_to_bam_gc_source",
         vec![("chr1".to_string(), 200)],
         vec![paired_fragment_on_tid(0, 20, 61, 20)],
         Vec::new(),
-        "midpoints_bam_to_bam_gc_source",
     )?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let temp = TempDir::new()?;
     let tagged_out_bam = temp.path().join("tagged_gc.bam");
     let gc_path = temp.path().join("constant_gc_pkg.zarr");
     let bed_path = temp.path().join("windows.bed");
-    write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
+    write_bed4(&bed_path, &[Bed4Row::new("chr1", 45, 56, "groupA")])?;
 
     let package = GCCorrectionPackage {
         version: GC_CORRECTION_SCHEMA_VERSION,
@@ -2541,7 +2566,7 @@ fn bam_to_bam_gc_file_output_drives_midpoints_gc_tag_same_as_original_gc_file() 
         base_chromosomes(&["chr1"]),
     );
     bam_to_bam_cfg.min_mapq = 0;
-    bam_to_bam_cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
+    bam_to_bam_cfg.set_gc(cfdnalab::run_like_cli::common::ApplyGCArgFileOnly {
         gc_file: Some(gc_path.clone()),
         neutralize_invalid_gc: false,
     });
@@ -2626,7 +2651,7 @@ fn bam_to_bam_gc_file_output_drives_midpoints_gc_tag_same_as_original_gc_file() 
 #[test]
 fn scaling_tsv_must_cover_requested_chromosome_end_in_midpoints() -> Result<()> {
     // Arrange:
-    // `simple_inward_bam()` uses chr1 length 200.
+    // `single_contig_inward_pair_bam()` uses chr1 length 200.
     // `midpoints` loads scaling factors through the same shared TSV contract as the other
     // released consumers. A TSV that stops at 100 is malformed even if the counted fragment
     // and interval both lie inside that prefix.
@@ -2634,10 +2659,10 @@ fn scaling_tsv_must_cover_requested_chromosome_end_in_midpoints() -> Result<()> 
     // We use one interval [45,56) that would otherwise count the fixture fragment midpoint, so a
     // successful run would produce a single non-zero profile cell. The correct behavior here is to
     // fail before any counting because the scaling artifact does not cover the full chromosome.
-    let bam = fixtures::simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let temp = TempDir::new()?;
     let bed_path = temp.path().join("windows.bed");
-    write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
+    write_bed4(&bed_path, &[Bed4Row::new("chr1", 45, 56, "groupA")])?;
     let scaling_path = temp.path().join("truncated_scaling.tsv");
     std::fs::write(
         &scaling_path,
@@ -2681,7 +2706,8 @@ fn scaling_tsv_must_cover_requested_chromosome_end_in_midpoints() -> Result<()> 
 #[test]
 fn midpoint_fetch_narrowing_preserves_tile_halo_near_chromosome_end_on_three_chromosomes()
 -> Result<()> {
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "midpoints_chrom_end_halo_three_chr",
         vec![
             ("chr1".to_string(), 95),
             ("chr2".to_string(), 95),
@@ -2693,16 +2719,15 @@ fn midpoint_fetch_narrowing_preserves_tile_halo_near_chromosome_end_on_three_chr
             paired_fragment_on_tid(2, 84, 11, 3),
         ],
         Vec::new(),
-        "midpoints_chrom_end_halo_three_chr",
     )?;
     let temp = TempDir::new()?;
     let bed_path = temp.path().join("windows_three_chr_near_end.bed");
-    write_bed(
+    write_bed4(
         &bed_path,
         &[
-            ("chr1", 89, 95, "groupA"),
-            ("chr2", 89, 95, "groupB"),
-            ("chr3", 89, 95, "groupC"),
+            Bed4Row::new("chr1", 89, 95, "groupA"),
+            Bed4Row::new("chr2", 89, 95, "groupB"),
+            Bed4Row::new("chr3", 89, 95, "groupC"),
         ],
     )?;
 
@@ -2759,7 +2784,8 @@ fn midpoint_fetch_narrowing_preserves_tile_halo_near_chromosome_end_on_three_chr
 #[test]
 fn midpoint_fetch_narrowing_reads_all_eligible_fragments_near_chromosome_end_on_three_chromosomes()
 -> Result<()> {
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "midpoints_chrom_end_fetch_reads_all_eligible",
         vec![
             ("chr1".to_string(), 95),
             ("chr2".to_string(), 95),
@@ -2780,18 +2806,17 @@ fn midpoint_fetch_narrowing_reads_all_eligible_fragments_near_chromosome_end_on_
             paired_fragment_on_tid(2, 84, 11, 3),
         ],
         Vec::new(),
-        "midpoints_chrom_end_fetch_reads_all_eligible",
     )?;
     let temp = TempDir::new()?;
     let bed_path = temp
         .path()
         .join("windows_three_chr_fetch_read_coverage.bed");
-    write_bed(
+    write_bed4(
         &bed_path,
         &[
-            ("chr1", 85, 95, "groupA"),
-            ("chr2", 85, 95, "groupB"),
-            ("chr3", 85, 95, "groupC"),
+            Bed4Row::new("chr1", 85, 95, "groupA"),
+            Bed4Row::new("chr2", 85, 95, "groupB"),
+            Bed4Row::new("chr3", 85, 95, "groupC"),
         ],
     )?;
 

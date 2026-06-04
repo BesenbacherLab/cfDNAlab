@@ -11,7 +11,7 @@ The normal development loop should stay Rust-focused:
 
 ```text
 cargo check
-cargo check --tests
+cargo check --tests --features testing
 ```
 
 R packages, Python scientific stacks, and system libraries are a different
@@ -47,9 +47,9 @@ tests/
 ```
 
 `generate_downstream_zarr_fixtures.rs` creates small BAM/interval inputs, runs
-the real `cfdna midpoints`, `cfdna ends`, and `cfdna lengths` commands, and
-leaves the resulting fixtures under `downstream_tests/tmp`. This is required:
-the downstream suite exists to catch cfDNAlab output-schema drift, so the files
+the real midpoints, ends, and lengths command-style runners, and leaves the
+resulting fixtures under `downstream_tests/tmp`. This is required: the
+downstream suite exists to catch cfDNAlab output-schema drift, so the files
 consumed by Python and R must be written by cfDNAlab itself.
 
 The Python and R tests should fail when the cfDNAlab-generated fixture is
@@ -105,8 +105,8 @@ Zarr writer or output schema.
 
 The workflow jobs are:
 
-- Fixture generation: Rust ignored integration test that runs
-  `cfdna midpoints`, `cfdna ends`, and `cfdna lengths`
+- Fixture generation: Rust ignored integration test that runs the midpoints,
+  ends, and lengths command-style runners
 - Python: `zarr`, `xarray`, `dask.array`, and the `cfdnalab` Python helper
   package, plus direct pandas reads of compressed length-count TSVs
 - R: CRAN `zarr`, direct `data.table::fread()` reads of compressed

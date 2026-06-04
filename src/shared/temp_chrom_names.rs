@@ -2,7 +2,7 @@ use anyhow::{Result, bail};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-pub fn temp_chrom_token(index: usize) -> String {
+pub(crate) fn temp_chrom_token(index: usize) -> String {
     format!("chrom-{index:06}")
 }
 
@@ -12,13 +12,14 @@ pub fn temp_chrom_token(index: usize) -> String {
 /// identifiers out of intermediate filenames while preserving a reversible in-memory mapping for
 /// reducers that need to associate temp files back to their source contig.
 #[derive(Debug, Clone)]
-pub struct TempChromNameMap {
+pub(crate) struct TempChromNameMap {
     raw_to_token: HashMap<String, String>,
+    #[allow(dead_code)]
     token_to_raw: HashMap<String, String>,
 }
 
 impl TempChromNameMap {
-    pub fn from_contigs(contigs: &[String]) -> Result<Self> {
+    pub(crate) fn from_contigs(contigs: &[String]) -> Result<Self> {
         let mut raw_to_token = HashMap::with_capacity(contigs.len());
         let mut token_to_raw = HashMap::with_capacity(contigs.len());
 
@@ -40,21 +41,27 @@ impl TempChromNameMap {
         })
     }
 
-    pub fn token_for(&self, contig: &str) -> Result<&str> {
+    pub(crate) fn token_for(&self, contig: &str) -> Result<&str> {
         self.raw_to_token
             .get(contig)
             .map(String::as_str)
             .ok_or_else(|| anyhow::anyhow!("missing temp filename token for contig '{}'", contig))
     }
 
-    pub fn raw_for(&self, token: &str) -> Result<&str> {
+    #[allow(dead_code)]
+    pub(crate) fn raw_for(&self, token: &str) -> Result<&str> {
         self.token_to_raw
             .get(token)
             .map(String::as_str)
             .ok_or_else(|| anyhow::anyhow!("missing raw contig name for temp token '{}'", token))
     }
 
-    pub fn path_with_suffix(&self, temp_dir: &Path, contig: &str, suffix: &str) -> Result<PathBuf> {
+    pub(crate) fn path_with_suffix(
+        &self,
+        temp_dir: &Path,
+        contig: &str,
+        suffix: &str,
+    ) -> Result<PathBuf> {
         Ok(temp_dir.join(format!("{}.{}", self.token_for(contig)?, suffix)))
     }
 }

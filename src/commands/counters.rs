@@ -30,7 +30,7 @@ impl AddAssign for BaseCounters {
 
 impl BaseCounters {
     /// Add counts from snapshot
-    pub fn add_from_snapshot(&mut self, snap: FragmentCounterSnapshot) {
+    pub(crate) fn add_from_snapshot(&mut self, snap: FragmentCounterSnapshot) {
         self.total_reads += snap.incoming_reads;
         self.collected_fragments += snap.produced_fragments;
         self.accepted_forward += snap.accepted_forward_reads;
@@ -55,7 +55,8 @@ macro_rules! counter_struct {
         }
         impl $name {
             /// Add counts from snapshot
-            pub fn add_from_snapshot(&mut self, snap: FragmentCounterSnapshot) {
+            #[allow(dead_code)]
+            pub(crate) fn add_from_snapshot(&mut self, snap: FragmentCounterSnapshot) {
                 self.base.add_from_snapshot(snap);
             }
         }
@@ -75,7 +76,8 @@ macro_rules! counter_struct {
         }
         impl $name {
             /// Add counts from snapshot
-            pub fn add_from_snapshot(&mut self, snap: FragmentCounterSnapshot) {
+            #[allow(dead_code)]
+            pub(crate) fn add_from_snapshot(&mut self, snap: FragmentCounterSnapshot) {
                 self.base.add_from_snapshot(snap);
             }
         }

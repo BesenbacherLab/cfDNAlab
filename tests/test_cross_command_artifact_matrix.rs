@@ -11,27 +11,27 @@
 mod fixtures;
 
 use anyhow::Result;
-use cfdnalab::commands::{
-    bam_to_bam::{bam_to_bam::run_inner as run_bam_to_bam, config::BamToBamConfig},
-    cli_common::{
-        ApplyGCArgFileOnly, ApplyGCArgs, AssignToWindowArgs, ChromosomeArgs,
-        DistributionWindowsArgs, IOCArgs, ScaleGenomeArgs,
-    },
-    coverage_weights::{
-        config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
-    },
-    fcoverage::{config::FCoverageConfig, fcoverage::run as run_fcoverage},
-    lengths::{config::LengthsConfig, lengths::run as run_lengths},
-    midpoints::{
-        config::MidpointsConfig, midpoints::run as run_midpoints, smoothing::MidpointSmoothing,
-    },
+use cfdnalab::testing::{
+    Bed4Row, PairedFragmentSpec, TempBam, TempTwoBit, bam_from_fragments,
+    build_command_produced_gc_correction_package_for_length,
+    build_command_produced_gc_correction_package_for_range, read_length_counts_tsv,
+    read_midpoint_zarr_counts, read_zst_to_string, single_contig_inward_pair_bam,
+    twobit_with_single_repeating_contig, write_bed4,
 };
-use cfdnalab::shared::{indel_mode::IndelMode, io::dot_join};
-use fixtures::{
-    BamFixture, TwoBitFixture, bam_from_specs, build_real_neutral_gc_package,
-    build_real_neutral_gc_package_for_range, paired_fragment, read_length_counts_tsv,
-    read_midpoint_zarr_counts, read_zst_to_string, simple_inward_bam, simple_reference_twobit,
-    write_bed,
+use cfdnalab::{
+    RunOptions,
+    indel_mode::IndelMode,
+    run_like_cli::{
+        bam_to_bam::{BamToBamConfig, run_bam_to_bam},
+        common::{
+            ApplyGCArgFileOnly, ApplyGCArgs, AssignToWindowArgs, ChromosomeArgs,
+            DistributionWindowsArgs, IOCArgs, ScaleGenomeArgs,
+        },
+        coverage_weights::{CoverageWeightsConfig, run_coverage_weights},
+        fcoverage::{FCoverageConfig, run_fcoverage},
+        lengths::{LengthsConfig, run_lengths},
+        midpoints::{MidpointSmoothing, MidpointsConfig, run_midpoints},
+    },
 };
 use ndarray::{Array2, Array3};
 use rust_htslib::bam::{Read, Reader, record::Aux};
@@ -84,9 +84,9 @@ struct SharedRealArtifacts {
 
 #[derive(Debug)]
 struct SharedRealArtifactCache {
-    _producer_bam: BamFixture,
-    _consumer_bam_fixture: BamFixture,
-    _reference_fixture: TwoBitFixture,
+    _producer_bam: TempBam,
+    _consumer_bam_fixture: TempBam,
+    _reference_fixture: TempTwoBit,
     _fixture_root: TempDir,
     consumer_bam: PathBuf,
     reference_path: PathBuf,
@@ -99,18 +99,19 @@ fn shared_real_artifact_cache() -> Result<&'static SharedRealArtifactCache> {
     static CACHE: OnceLock<std::result::Result<SharedRealArtifactCache, String>> = OnceLock::new();
     let cache_result = CACHE.get_or_init(|| {
         (|| -> Result<SharedRealArtifactCache> {
-            let scaling_producer_bam = simple_inward_bam()?;
-            let consumer_bam = bam_from_specs(
-                vec![("chr1".to_string(), 200)],
-                vec![paired_fragment(20, 61, 20)],
-                Vec::new(),
+            let scaling_producer_bam = single_contig_inward_pair_bam()?;
+            let consumer_bam = bam_from_fragments(
                 "shared_real_artifacts_consumer",
+                vec![("chr1".to_string(), 200)],
+                vec![PairedFragmentSpec::new(0, 20, 61, 20).build()?],
+                Vec::new(),
             )?;
-            let reference = simple_reference_twobit()?;
+            let reference =
+                twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
             let fixture_root = TempDir::new()?;
             let weights_out_dir = fixture_root.path().join("coverage_weights");
             std::fs::create_dir_all(&weights_out_dir)?;
-            let scaling_gc_path = build_real_neutral_gc_package_for_range(
+            let scaling_gc_path = build_command_produced_gc_correction_package_for_range(
                 &scaling_producer_bam.bam,
                 &reference.path,
                 fixture_root.path(),
@@ -144,17 +145,17 @@ fn shared_real_artifact_cache() -> Result<&'static SharedRealArtifactCache> {
                 neutralize_invalid_gc: false,
             });
             scaling_cfg.set_ref_2bit(Some(reference.path.clone()));
-            run_coverage_weights(&scaling_cfg)?;
+            run_coverage_weights(&scaling_cfg, RunOptions::new_quiet())?;
 
             let scaling_path = weights_out_dir.join("coverage.coverage.scaling_factors.tsv");
-            let gc_path = build_real_neutral_gc_package(
+            let gc_path = build_command_produced_gc_correction_package_for_length(
                 &consumer_bam.bam,
                 &reference.path,
                 fixture_root.path(),
                 61,
             )?;
             let bed_path = fixture_root.path().join("windows.bed");
-            write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
+            write_bed4(&bed_path, &[Bed4Row::new("chr1", 45, 56, "groupA")])?;
 
             Ok(SharedRealArtifactCache {
                 _producer_bam: scaling_producer_bam,
@@ -266,7 +267,7 @@ fn bam_to_bam_consumes_shared_real_artifacts_with_expected_fragment_tags() -> Re
     }
 
     // Act
-    run_bam_to_bam(&cfg)?;
+    run_bam_to_bam(&cfg, RunOptions::new_quiet())?;
 
     // Assert
     let tags = read_bam_tags(&out_bam)?;
@@ -316,14 +317,10 @@ fn lengths_consumes_shared_real_artifacts_with_expected_weighted_count() -> Resu
     cfg.set_per_bp_length_bins(61, 61);
 
     // Act
-    run_lengths(&cfg)?;
+    let result = run_lengths(&cfg, RunOptions::new_quiet())?;
 
     // Assert
-    let counts_path = out_dir.join(dot_join(&[
-        cfg.output_prefix.trim(),
-        "length_counts.tsv.zst",
-    ]));
-    let arr: Array2<f64> = read_length_counts_tsv(&counts_path)?;
+    let arr: Array2<f64> = read_length_counts_tsv(&result.length_counts_path)?;
     assert_eq!(arr.dim(), (1, 1));
     assert_close_f64(
         arr[(0, 0)],
@@ -374,7 +371,7 @@ fn midpoints_consumes_shared_real_artifacts_with_expected_profile_mass() -> Resu
     cfg.set_ref_2bit(Some(artifacts.reference_path.clone()));
 
     // Act
-    run_midpoints(&cfg)?;
+    run_midpoints(&cfg, RunOptions::new_quiet())?;
 
     // Assert
     let counts_path = out_dir.join("sites.midpoint_profiles.zarr");
@@ -443,7 +440,7 @@ fn fcoverage_consumes_shared_real_artifacts_with_expected_per_base_profile() -> 
     }
 
     // Act
-    run_fcoverage(&cfg)?;
+    run_fcoverage(&cfg, RunOptions::new_quiet())?;
 
     // Assert
     let bedgraph_path = out_dir.join("testcov.fcoverage.per_position.bedgraph.zst");

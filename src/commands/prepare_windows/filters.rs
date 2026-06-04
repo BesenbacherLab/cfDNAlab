@@ -17,16 +17,16 @@ use std::path::{Path, PathBuf};
 
 /// Parsed `--exclude-labels` rule.
 #[derive(Clone, Debug)]
-pub struct ExcludeRule {
-    pub key: LabelKey,
-    pub term: String,
+pub(crate) struct ExcludeRule {
+    pub(crate) key: LabelKey,
+    pub(crate) term: String,
 }
 
 /// Parsed `--min-per` rule.
 #[derive(Clone, Debug)]
-pub struct MinPerRule {
-    pub key: LabelKey,
-    pub min_count: u64,
+pub(crate) struct MinPerRule {
+    pub(crate) key: LabelKey,
+    pub(crate) min_count: u64,
 }
 
 /// Parse `--exclude-labels` specs into resolved rules.
@@ -49,7 +49,7 @@ pub struct MinPerRule {
 /// -------
 /// - `rules`:
 ///     Parsed exclusion rules in the input order.
-pub fn parse_exclude_rules(
+pub(crate) fn parse_exclude_rules(
     specs: &[String],
     label_schema: &LabelSchema,
     available_parts: &FxHashSet<AtomicLabelPart>,
@@ -160,7 +160,7 @@ fn ensure_key_membership_available(
 /// Returns
 /// -------
 /// `Ok(())` when every composition only uses available parts.
-pub fn validate_compositions_available(
+pub(crate) fn validate_compositions_available(
     label_schema: &LabelSchema,
     available_parts: &FxHashSet<AtomicLabelPart>,
 ) -> Result<()> {
@@ -195,7 +195,7 @@ pub fn validate_compositions_available(
 /// Returns
 /// -------
 /// `Ok(())` when every key only uses available parts.
-pub fn validate_available_keys(
+pub(crate) fn validate_available_keys(
     keys: &[LabelKey],
     label_schema: &LabelSchema,
     available_parts: &FxHashSet<AtomicLabelPart>,
@@ -233,7 +233,7 @@ pub fn validate_available_keys(
 /// -------
 /// - `rules`:
 ///     Parsed minimum-per rules in the input order.
-pub fn parse_min_per_rules(
+pub(crate) fn parse_min_per_rules(
     specs: &[String],
     label_schema: &LabelSchema,
     available_parts: &FxHashSet<AtomicLabelPart>,
@@ -296,7 +296,7 @@ fn atomic_value_for_tuple(tuple: &LabelTuple, part: AtomicLabelPart) -> &str {
 /// Holds the running count for each observed value, plus the set of values
 /// that have already fallen below the minimum.
 #[derive(Clone, Debug)]
-pub struct MinPerKeyRuleState {
+pub(crate) struct MinPerKeyRuleState {
     key: LabelKey,
     min_count: u64,
     counts: FxHashMap<String, u64>,
@@ -317,7 +317,7 @@ impl MinPerKeyRuleState {
     /// -------
     /// - `state`:
     ///     Initialized state with empty counts and rejections.
-    pub fn new(key: LabelKey, min_count: u64) -> Self {
+    pub(crate) fn new(key: LabelKey, min_count: u64) -> Self {
         Self {
             key,
             min_count,
@@ -332,7 +332,8 @@ impl MinPerKeyRuleState {
     /// ----------
     /// - `value`:
     ///     Value to mark as rejected.
-    pub fn add_rejected_value(&mut self, value: &str) {
+    #[allow(dead_code)]
+    pub(crate) fn add_rejected_value(&mut self, value: &str) {
         // Store owned values so later lookups can use borrowed str
         self.rejected_values.insert(value.to_string());
     }
@@ -385,7 +386,7 @@ impl MinPerKeyRuleState {
 /// Returns
 /// -------
 /// `Ok(())` on success or an error if reading or writing fails.
-pub fn filter_and_write_output(
+pub(crate) fn filter_and_write_output(
     cfg: &PrepareConfig,
     temp_entries: &[(String, PathBuf)],
     label_schema: &LabelSchema,
@@ -620,7 +621,7 @@ fn filter_excluded_entries_and_count(
 /// - `normalized`:
 ///   De-duplicated rules with zero-minimum entries removed.
 ///   Membership-based duplicates keep the strictest minimum.
-pub fn normalize_min_per_rules(
+pub(crate) fn normalize_min_per_rules(
     rules: &[MinPerRule],
     label_schema: &LabelSchema,
 ) -> Vec<MinPerRule> {
@@ -992,10 +993,10 @@ fn filter_min_per_pass(
 ///
 /// Captures which tuples remain after applying rejection sets, plus the
 /// per-rule values before and after filtering for count updates.
-pub struct MinPerWindowFilterData {
-    pub values_before_filter: Vec<Vec<String>>,
-    pub values_after_filter: Vec<Vec<String>>,
-    pub kept_tuples: Vec<LabelTuple>,
+pub(crate) struct MinPerWindowFilterData {
+    pub(crate) values_before_filter: Vec<Vec<String>>,
+    pub(crate) values_after_filter: Vec<Vec<String>>,
+    pub(crate) kept_tuples: Vec<LabelTuple>,
 }
 
 /// Collect per-rule values and kept tuples for a single window.
@@ -1017,7 +1018,7 @@ pub struct MinPerWindowFilterData {
 /// -------
 /// - `data`:
 ///     Values before and after filtering, plus the kept tuples.
-pub fn collect_min_per_window_filter_data(
+pub(crate) fn collect_min_per_window_filter_data(
     label_tuples: &[LabelTuple],
     tuple_compositions: &[Vec<String>],
     rule_states: &[MinPerKeyRuleState],
@@ -1385,4 +1386,9 @@ fn write_output_line<W: Write>(
     }
     writeln!(writer)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    include!("filters_tests.rs");
 }

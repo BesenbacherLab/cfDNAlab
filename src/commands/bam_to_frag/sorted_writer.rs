@@ -6,19 +6,19 @@ use crate::shared::interval::Interval;
 
 /// A buffered fragment line with its sort keys.
 #[derive(Eq, PartialEq)]
-pub struct Entry {
-    pub interval: Interval<u32>,
-    pub line: String,
+pub(crate) struct Entry {
+    pub(crate) interval: Interval<u32>,
+    pub(crate) line: String,
 }
 
 impl Entry {
     #[inline]
-    pub fn start(&self) -> u32 {
+    pub(crate) fn start(&self) -> u32 {
         self.interval.start()
     }
 
     #[inline]
-    pub fn end(&self) -> u32 {
+    pub(crate) fn end(&self) -> u32 {
         self.interval.end()
     }
 }
@@ -89,7 +89,7 @@ impl PartialOrd for Entry {
 ///
 /// Example
 /// -------
-/// ```rust
+/// ```rust,ignore
 /// use cfdnalab::commands::bam_to_frag::sorted_writer::{Entry, WindowSorter};
 /// use anyhow::Result;
 /// use std::io::Cursor;
@@ -108,16 +108,15 @@ impl PartialOrd for Entry {
 /// # Ok(())
 /// # }
 /// ```
-
-pub struct WindowSorter {
-    pub heap: BinaryHeap<Reverse<Entry>>,
-    pub max_window_bp: u32, // Look-back (max fragment length)
-    pub max_seen_start: u32,
+pub(crate) struct WindowSorter {
+    pub(crate) heap: BinaryHeap<Reverse<Entry>>,
+    pub(crate) max_window_bp: u32, // Look-back (max fragment length)
+    pub(crate) max_seen_start: u32,
 }
 
 impl WindowSorter {
     /// `max_window_bp`: the maximum fragment length bound.
-    pub fn new(max_window_bp: u32) -> Self {
+    pub(crate) fn new(max_window_bp: u32) -> Self {
         Self {
             heap: BinaryHeap::new(),
             max_window_bp,
@@ -126,7 +125,7 @@ impl WindowSorter {
     }
 
     /// Push a new entry and flush anything safely behind the window to `w`.
-    pub fn push<W: Write>(&mut self, entry: Entry, w: &mut W) -> io::Result<()> {
+    pub(crate) fn push<W: Write>(&mut self, entry: Entry, w: &mut W) -> io::Result<()> {
         if entry.start() > self.max_seen_start {
             self.max_seen_start = entry.start();
         }
@@ -145,7 +144,7 @@ impl WindowSorter {
     }
 
     /// Flush all remaining entries in sorted order.
-    pub fn flush_all<W: Write>(&mut self, w: &mut W) -> io::Result<()> {
+    pub(crate) fn flush_all<W: Write>(&mut self, w: &mut W) -> io::Result<()> {
         // Remaining tail is at most `max_window_bp` wide in coordinates.
         let mut rest: Vec<Entry> = self.heap.drain().map(|rev| rev.0).collect();
         rest.sort(); // Sort small tail to ensure total order

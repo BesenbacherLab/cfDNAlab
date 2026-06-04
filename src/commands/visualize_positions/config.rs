@@ -146,7 +146,7 @@ pub struct VisualizePositionsConfig {
 }
 
 impl VisualizePositionsConfig {
-    pub fn build(&self) -> Result<VizConfig> {
+    pub(crate) fn build(&self) -> Result<VizConfig> {
         let position_specs = self.position_selection.clone().into_positional_specs()?;
 
         let fragment_lengths = if let Some(list) = &self.lengths {

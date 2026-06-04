@@ -2,97 +2,26 @@
 
 mod fixtures;
 
-mod tests_transitions_frequency_calculations {
-
-    use anyhow::Result;
-    use cfdnalab::commands::transitions::transitions::compute_transition_frequencies;
-    use ndarray::{array, s};
-
-    #[test]
-    fn computes_first_order_frequencies() -> Result<()> {
-        // Arrange
-        let counts = array![[[2.0, 1.0, 4.0, 3.0]]];
-        let motifs = vec![
-            "AA".to_string(),
-            "AC".to_string(),
-            "CA".to_string(),
-            "CC".to_string(),
-        ];
-
-        // Act
-        let freqs = compute_transition_frequencies(&counts, 1, &motifs)?;
-
-        // Assert
-        assert!((freqs[[0, 0, 0]] - (2.0 / 3.0)).abs() < 1e-9);
-        assert!((freqs[[0, 0, 1]] - (1.0 / 3.0)).abs() < 1e-9);
-        assert!((freqs[[0, 0, 2]] - (4.0 / 7.0)).abs() < 1e-9);
-        assert!((freqs[[0, 0, 3]] - (3.0 / 7.0)).abs() < 1e-9);
-        Ok(())
-    }
-
-    #[test]
-    fn computes_second_order_frequencies_with_multiple_positions() -> Result<()> {
-        // Arrange
-        let counts = array![
-            [[4.0, 6.0, 2.0, 0.0], [0.0, 0.0, 5.0, 5.0],],
-            [[1.0, 1.0, 0.0, 4.0], [0.0, 0.0, 0.0, 0.0],],
-        ];
-        let motifs = vec![
-            "AAT".to_string(),
-            "AAC".to_string(),
-            "CAT".to_string(),
-            "CAC".to_string(),
-        ];
-
-        // Act
-        let freqs = compute_transition_frequencies(&counts, 2, &motifs)?;
-
-        // Assert
-        assert!((freqs[[0, 0, 0]] - 0.4).abs() < 1e-9);
-        assert!((freqs[[0, 0, 1]] - 0.6).abs() < 1e-9);
-        assert!((freqs[[0, 0, 2]] - 1.0).abs() < 1e-9);
-        assert!((freqs[[0, 0, 3]] - 0.0).abs() < 1e-9);
-
-        assert!((freqs[[0, 1, 2]] - 0.5).abs() < 1e-9);
-        assert!((freqs[[0, 1, 3]] - 0.5).abs() < 1e-9);
-
-        assert!((freqs[[1, 0, 0]] - 0.5).abs() < 1e-9);
-        assert!((freqs[[1, 0, 1]] - 0.5).abs() < 1e-9);
-        assert!((freqs[[1, 0, 2]] - 0.0).abs() < 1e-9);
-        assert!((freqs[[1, 0, 3]] - 1.0).abs() < 1e-9);
-
-        assert!(freqs.slice(s![1, 1, ..]).iter().all(|v| v.abs() < 1e-9));
-        Ok(())
-    }
-
-    #[test]
-    fn errors_when_motif_axis_mismatches_counts() {
-        // Arrange
-        let counts = array![[[1.0, 2.0]]];
-        let motifs = vec!["AA".to_string()];
-
-        // Act
-        let result = compute_transition_frequencies(&counts, 1, &motifs);
-
-        // Assert
-        assert!(result.is_err());
-    }
-}
-
 mod transitions_command_tests {
-    use crate::fixtures::{
-        FragmentSpec, ReadSpec, bam_from_specs, single_position_selection, twobit_from_sequences,
-    };
+    use crate::fixtures::single_position_selection;
     use anyhow::{Context, Result};
-    use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs, Ref2BitRequiredArgs};
-    use cfdnalab::commands::transitions::config::TransitionsConfig;
-    use cfdnalab::commands::transitions::transitions::run as run_transitions;
-    use cfdnalab::shared::positioning::ReferenceFrame;
+    use cfdnalab::RunOptions;
+    use cfdnalab::run_like_cli::common::{
+        ChromosomeArgs, IOCArgs, Ref2BitRequiredArgs, ReferenceFrame,
+    };
+    use cfdnalab::run_like_cli::transitions::{TransitionsConfig, run_transitions};
+    use cfdnalab::testing::{
+        Cigar, FragmentSpec, ReadSpec, bam_from_fragments, twobit_from_sequences,
+    };
     use ndarray::{Array3, s};
     use ndarray_npy::read_npy;
     use std::collections::HashMap;
     use std::fs;
     use tempfile::TempDir;
+
+    fn run_transitions_quiet(cfg: &TransitionsConfig) -> Result<()> {
+        run_transitions(cfg, RunOptions::new_quiet()).map(|_| ())
+    }
 
     fn base_chromosomes(chrs: &[&str]) -> ChromosomeArgs {
         ChromosomeArgs {
@@ -123,9 +52,9 @@ mod transitions_command_tests {
                 forward: ReadSpec {
                     tid: 0,
                     pos: start,
-                    cigar: vec![('M', read_len)],
+                    cigar: vec![Cigar::Match(read_len)],
                     seq: vec![b'A'; read_len as usize],
-                    qual: 30,
+                    base_quality: 30,
                     is_reverse: false,
                     mapq: 60,
                     flags: FLAG_FIRST_MATE | FLAG_MATE_REVERSE | FLAG_PROPER_PAIR,
@@ -136,9 +65,9 @@ mod transitions_command_tests {
                 reverse: ReadSpec {
                     tid: 0,
                     pos: mate_start,
-                    cigar: vec![('M', read_len)],
+                    cigar: vec![Cigar::Match(read_len)],
                     seq: vec![b'T'; read_len as usize],
-                    qual: 30,
+                    base_quality: 30,
                     is_reverse: true,
                     mapq: 60,
                     flags: FLAG_SECOND_MATE | FLAG_PROPER_PAIR,
@@ -165,11 +94,11 @@ mod transitions_command_tests {
             vec![("chr1".to_string(), reference_seq.to_string())],
         )?;
         let chroms = vec![("chr1".to_string(), reference_seq.len() as u32)];
-        let bam = bam_from_specs(
+        let bam = bam_from_fragments(
+            "transitions_manual_bam",
             chroms,
             synthetic_fragments(),
             Vec::new(),
-            "transitions_manual_bam",
         )?;
         let out_dir = TempDir::new()?;
 
@@ -198,7 +127,7 @@ mod transitions_command_tests {
             lengths.max_fragment_length = 24;
         }
 
-        run_transitions(&cfg)?;
+        run_transitions_quiet(&cfg)?;
 
         let prefix = cfg.shared_args.output_prefix.trim();
         let freqs_path = out_dir.path().join(format!("{prefix}.k2_left_freqs.npy"));

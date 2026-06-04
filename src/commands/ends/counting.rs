@@ -13,10 +13,10 @@ use std::sync::Arc;
 /// collapsing and final orientation are defined on the full joined motif, not on each half
 /// independently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct EncodedEndMotifKey {
-    pub inside_code: u64,
-    pub outside_code: u64,
-    pub reverse_on_decode: bool,
+pub(crate) struct EncodedEndMotifKey {
+    pub(crate) inside_code: u64,
+    pub(crate) outside_code: u64,
+    pub(crate) reverse_on_decode: bool,
 }
 
 /// Sparse motif counts for one output window.
@@ -24,12 +24,12 @@ pub struct EncodedEndMotifKey {
 /// This keeps the hot path compact by counting encoded motif keys directly. Decoding to user-facing
 /// motif strings happens later during reduction and output writing.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct EndMotifCounts {
-    pub counts: FxHashMap<EncodedEndMotifKey, f64>,
+pub(crate) struct EndMotifCounts {
+    pub(crate) counts: FxHashMap<EncodedEndMotifKey, f64>,
 }
 
 /// Sparse motif counts for all windows touched by one tile.
-pub type EndCountsByWindow = FxHashMap<u64, EndMotifCounts>;
+pub(crate) type EndCountsByWindow = FxHashMap<u64, EndMotifCounts>;
 
 /// Meaning of the public `motif` axis in end-motif Zarr output.
 ///
@@ -194,36 +194,11 @@ impl EndMotifHalfSpec {
 }
 
 impl EndMotifCounts {
-    /// Create an empty sparse end-motif counter.
-    ///
-    /// This is the standard starting point for one window or one temporary merge target.
-    ///
-    /// Returns
-    /// -------
-    /// - `Self`:
-    ///   An empty count map
+    /// Create an empty sparse count map.
     #[inline]
-    pub fn new() -> Self {
+    #[allow(dead_code)]
+    pub(crate) fn new() -> Self {
         Self::default()
-    }
-
-    /// Create another empty counter with the same logical shape.
-    ///
-    /// This exists for consistency with other reducers in the codebase where a "zeroed like"
-    /// helper is convenient during accumulation.
-    ///
-    /// Parameters
-    /// ----------
-    /// - `self`:
-    ///   Existing sparse counts used only as a shape hint
-    ///
-    /// Returns
-    /// -------
-    /// - `Self`:
-    ///   A new empty count map
-    #[inline]
-    pub fn zeroed_like(&self) -> Self {
-        Self::new()
     }
 
     /// Add a single already-validated weighted motif observation to this window.
@@ -243,7 +218,7 @@ impl EndMotifCounts {
     /// - `()`:
     ///   The map is updated in place
     #[inline]
-    pub fn incr_weighted(&mut self, key: EncodedEndMotifKey, weight: f64) {
+    pub(crate) fn incr_weighted(&mut self, key: EncodedEndMotifKey, weight: f64) {
         *self.counts.entry(key).or_insert(0.0) += weight;
     }
 
@@ -259,46 +234,6 @@ impl EndMotifCounts {
             "sparse end motif weight {weight} is negative, this is not currently supported"
         );
         Ok(weight > ZEROISH_F64_TOLERANCE)
-    }
-
-    /// Merge another sparse window counter into this one.
-    ///
-    /// Parameters
-    /// ----------
-    /// - `other`:
-    ///   Counts to add into `self`
-    ///
-    /// Returns
-    /// -------
-    /// - `Result<()>`:
-    ///   `Ok(())` after all weights have been added
-    pub fn merge_from(&mut self, other: &Self) -> Result<()> {
-        for (key, value) in &other.counts {
-            *self.counts.entry(*key).or_insert(0.0) += *value;
-        }
-        Ok(())
-    }
-
-    /// Collapse several sparse window counters into one merged result.
-    ///
-    /// Parameters
-    /// ----------
-    /// - `iter`:
-    ///   Counts to merge
-    ///
-    /// Returns
-    /// -------
-    /// - `Result<Self>`:
-    ///   The merged sparse count map
-    pub fn collapse<'a, I>(iter: I) -> Result<Self>
-    where
-        I: IntoIterator<Item = &'a EndMotifCounts>,
-    {
-        let mut merged = EndMotifCounts::new();
-        for counts in iter {
-            merged.merge_from(counts)?;
-        }
-        Ok(merged)
     }
 }
 
@@ -322,7 +257,7 @@ impl EndMotifCounts {
 /// -------
 /// - `FxHashMap<String, f64>`:
 ///   Final motif labels mapped to their merged counts
-pub fn decode_end_motif_counts(
+pub(crate) fn decode_end_motif_counts(
     counts: &EndMotifCounts,
     inside_spec: Option<&KmerSpec>,
     outside_spec: Option<&KmerSpec>,
@@ -368,7 +303,7 @@ pub fn decode_end_motif_counts(
 /// -------
 /// - `String`:
 ///   Public motif label in `<outside>_<inside>` form
-pub fn format_end_motif_label(
+pub(crate) fn format_end_motif_label(
     full_motif: &str,
     inside_spec: Option<&KmerSpec>,
     outside_spec: Option<&KmerSpec>,
@@ -408,7 +343,7 @@ pub fn format_end_motif_label(
 /// -------
 /// - `String`:
 ///   Full biological motif sequence before optional complement collapse
-pub fn decode_full_motif(
+pub(crate) fn decode_full_motif(
     key: EncodedEndMotifKey,
     inside_spec: Option<&KmerSpec>,
     outside_spec: Option<&KmerSpec>,
@@ -428,11 +363,11 @@ pub fn decode_full_motif(
 /// This is the compact on-disk representation used while merging sparse tile count records.
 #[cfg_attr(not(test), doc(hidden))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TileEndMotifCountEntry {
-    pub inside_code: u64,
-    pub outside_code: u64,
-    pub reverse_on_decode: bool,
-    pub value: f64,
+pub(crate) struct TileEndMotifCountEntry {
+    pub(crate) inside_code: u64,
+    pub(crate) outside_code: u64,
+    pub(crate) reverse_on_decode: bool,
+    pub(crate) value: f64,
 }
 
 impl From<(EncodedEndMotifKey, f64)> for TileEndMotifCountEntry {
@@ -462,9 +397,9 @@ impl From<&TileEndMotifCountEntry> for EncodedEndMotifKey {
 /// count records later without reconstructing dense matrices first.
 #[cfg_attr(not(test), doc(hidden))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TileWindowEndCounts {
-    pub original_idx: u64,
-    pub entries: Vec<TileEndMotifCountEntry>,
+pub(crate) struct TileWindowEndCounts {
+    pub(crate) original_idx: u64,
+    pub(crate) entries: Vec<TileEndMotifCountEntry>,
 }
 
 #[cfg(test)]

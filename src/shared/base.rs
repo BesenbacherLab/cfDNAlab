@@ -1,18 +1,19 @@
 /// The 5 bases: `A, C, G, T, N`
-pub const BASES: [char; 5] = ['A', 'C', 'G', 'T', 'N'];
+pub(crate) const BASES: [char; 5] = ['A', 'C', 'G', 'T', 'N'];
 
 /// Shared zeroish tolerance for values that originate from `f32` arithmetic.
-pub const ZEROISH_F32_TOLERANCE: f32 = 2.0 * f32::EPSILON;
+pub(crate) const ZEROISH_F32_TOLERANCE: f32 = 2.0 * f32::EPSILON;
 
 /// Shared zeroish tolerance for values that originate from `f64` arithmetic.
-pub const ZEROISH_F64_TOLERANCE: f64 = 2.0 * f64::EPSILON;
+pub(crate) const ZEROISH_F64_TOLERANCE: f64 = 2.0 * f64::EPSILON;
 
 /// Clamp tiny finite `f32` values to exact zero using the shared `f32` tolerance.
 ///
 /// This keeps reported derived statistics stable when arithmetic leaves behind
 /// very small positive or negative roundoff residues.
 #[inline]
-pub fn clamp_close_to_zero_f32(value: f32) -> f32 {
+#[allow(dead_code)]
+pub(crate) fn clamp_close_to_zero_f32(value: f32) -> f32 {
     if value.is_finite() && value.abs() <= ZEROISH_F32_TOLERANCE {
         0.0
     } else {
@@ -24,7 +25,8 @@ pub fn clamp_close_to_zero_f32(value: f32) -> f32 {
 ///
 /// This is the right helper when the value itself originates from `f64` arithmetic.
 #[inline]
-pub fn clamp_close_to_zero_f64(value: f64) -> f64 {
+#[allow(dead_code)]
+pub(crate) fn clamp_close_to_zero_f64(value: f64) -> f64 {
     if value.is_finite() && value.abs() <= ZEROISH_F64_TOLERANCE {
         0.0
     } else {
@@ -37,7 +39,8 @@ pub fn clamp_close_to_zero_f64(value: f64) -> f64 {
 /// Use this when the reported `f64` value is derived from `f32`-originating coverage and should
 /// therefore keep the same zeroish threshold as the underlying coverage representation.
 #[inline]
-pub fn clamp_close_to_zero_f64_with_f32_threshold(value: f64) -> f64 {
+#[allow(dead_code)]
+pub(crate) fn clamp_close_to_zero_f64_with_f32_threshold(value: f64) -> f64 {
     if value.is_finite() && value.abs() <= ZEROISH_F32_TOLERANCE as f64 {
         0.0
     } else {
@@ -53,7 +56,7 @@ pub fn clamp_close_to_zero_f64_with_f32_threshold(value: f64) -> f64 {
 /// - T or t -> 3  
 /// - anything else -> 4
 #[inline(always)]
-pub fn encode_base(b: u8) -> u8 {
+pub(crate) fn encode_base(b: u8) -> u8 {
     LUT[b as usize]
 }
 
@@ -84,7 +87,7 @@ static LUT: [u8; 256] = {
 /// - N or n -> N  
 /// - anything else -> identity (return `b`)
 #[inline]
-pub fn complement(b: char) -> char {
+pub(crate) fn complement(b: char) -> char {
     match b {
         'A' | 'a' => 'T',
         'T' | 't' => 'A',
@@ -96,12 +99,12 @@ pub fn complement(b: char) -> char {
 }
 
 /// Reverse-complement of a plain sequence, e.g. "AC" -> "GT"
-pub fn rev_complement(seq: &str) -> String {
+pub(crate) fn rev_complement(seq: &str) -> String {
     seq.chars().rev().map(complement).collect()
 }
 
 /// Complement of a plain sequence, e.g. "AC" -> "TG"
-pub fn complement_seq(seq: &str) -> String {
+pub(crate) fn complement_seq(seq: &str) -> String {
     seq.chars().map(complement).collect()
 }
 
@@ -117,7 +120,7 @@ pub fn complement_seq(seq: &str) -> String {
 /// Otherwise, k-mers are compared against their complement,
 /// returning the lexicographically smaller of the two.
 #[inline]
-pub fn make_canonical(kmer: String, reverse: bool, odd_by_center: bool) -> String {
+pub(crate) fn make_canonical(kmer: String, reverse: bool, odd_by_center: bool) -> String {
     let len = kmer.len();
 
     if odd_by_center && len % 2 == 1 {

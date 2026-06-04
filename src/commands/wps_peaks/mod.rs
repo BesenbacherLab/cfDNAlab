@@ -1,5 +1,5 @@
-pub mod call_peaks;
-pub mod config;
-pub mod normalize_wps;
-pub mod window_peak_results;
-pub mod wps_peaks;
+pub(crate) mod call_peaks;
+pub(crate) mod config;
+pub(crate) mod normalize_wps;
+pub(crate) mod window_peak_results;
+pub(crate) mod wps_peaks;

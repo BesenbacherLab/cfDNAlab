@@ -1,13 +1,15 @@
 use crate::{
+    command_run::{CommandRunResult, RunOptions},
     commands::{
         cli_common::{ensure_output_dir, resolve_chromosomes_and_contigs, validate_output_prefix},
+        counters::FCoverageCounters,
         coverage_weights::scaling_weights_config::ScalingWeightsArgs,
         coverage_weights::striding::{
             StrideBin, fill_triangular_overlap, normalize_weighted_average_overlap_by_global_mean,
         },
         fcoverage::{
             config::{FCoverageConfig, LengthNormalizationMode},
-            fcoverage::{FCoverageRunResult, run_inner as fcoverage_run_inner},
+            fcoverage::{FCoverageRunResult, run_fcoverage},
             window_results::CoverageWindowAction,
         },
         run_statistics::{
@@ -32,6 +34,43 @@ use std::{
 use tracing::info;
 
 const FCOVERAGE_INTERMEDIATE_DECIMALS: u8 = 12;
+
+/// Result from a scaling-weights command.
+///
+/// This result is shared by `coverage-weights` and `fragment-count-weights`. Both commands run
+/// `fcoverage` internally, smooth stride-level signal, and write a scaling-factor TSV.
+#[derive(Debug)]
+pub struct ScalingWeightsRunResult {
+    /// Counters from the internal `fcoverage` run.
+    pub counters: FCoverageCounters,
+    /// Final scaling-factor TSV written by the command.
+    pub output_scaling_factors: std::path::PathBuf,
+    /// Result from the internal `fcoverage` producer run.
+    pub source_fcoverage: FCoverageRunResult,
+    /// Final output files produced by the command.
+    pub output_files: Vec<std::path::PathBuf>,
+}
+
+impl CommandRunResult for ScalingWeightsRunResult {
+    type Counters = FCoverageCounters;
+
+    fn counters(&self) -> &Self::Counters {
+        &self.counters
+    }
+
+    fn output_files(&self) -> &[std::path::PathBuf] {
+        &self.output_files
+    }
+
+    fn primary_output(&self) -> Option<&std::path::Path> {
+        Some(self.output_scaling_factors.as_path())
+    }
+}
+
+/// Result from `coverage-weights`.
+///
+/// This is the scaling-weights result specialized to average coverage.
+pub type CoverageWeightsRunResult = ScalingWeightsRunResult;
 
 #[derive(Clone, Copy)]
 pub(crate) enum ScalingWeightsCommand {
@@ -87,36 +126,41 @@ impl ScalingWeightsCommand {
     }
 }
 
-/// Calculates weights for genomic smoothing using large bins and a stride.
+/// Run the `coverage-weights` command.
 ///
-/// Technical details:
-/// - Reuses internal `fcoverage` by-size aggregates so fragment handling, GC correction,
-///   blacklisting, and tiling stay consistent with `fcoverage`.
-/// - Reads the resulting stride-bin values back from disk, smooths them with a triangular kernel,
-///   and writes the final scaling factors as TSV.
-/// - Tracks the internal `fcoverage` counters so the printed summary reflects the fragments
-///   that contributed to the scaling factors.
+/// This command estimates broad coverage structure and writes genomic scaling factors that can be
+/// reused by other commands. It runs `fcoverage` internally, reads stride-level coverage values,
+/// smooths them, and normalizes the smoothed signal to a global mean.
+///
+/// Reporting is controlled by `options`. `report_statistics` prints the final summary and
+/// `log_statuses` controls status messages. This command does not use progress bars.
 ///
 /// Parameters
 /// ----------
 /// - `opt`:
 ///     Fully resolved configuration for the `coverage-weights` command.
+/// - `options`:
+///     Reporting controls for statistics and status logs.
 ///
 /// Returns
 /// -------
-/// - `Ok(())`:
-///     Scaling factors were written successfully.
+/// - `Ok(CoverageWeightsRunResult)`:
+///     The scaling-factor path, internal `fcoverage` result, and counters.
 ///
 /// Errors
 /// ------
-/// - Returns an error if internal `fcoverage` fails, the intermediate TSV is malformed, or the
-///   final scaling output cannot be written.
-pub fn run(opt: &crate::commands::coverage_weights::config::CoverageWeightsConfig) -> Result<()> {
+/// Returns an error if internal `fcoverage` fails, the intermediate TSV is malformed, or the final
+/// scaling output cannot be written.
+pub fn run_coverage_weights(
+    opt: &crate::commands::coverage_weights::config::CoverageWeightsConfig,
+    options: RunOptions,
+) -> Result<CoverageWeightsRunResult> {
     run_with_fcoverage(
         &opt.shared,
         false,
         ScalingWeightsCommand::Coverage,
         Some(opt.ignore_gap),
+        options,
     )
 }
 
@@ -124,12 +168,36 @@ pub fn run(opt: &crate::commands::coverage_weights::config::CoverageWeightsConfi
 ///
 /// `fragment-count-weights` calls this with `normalize_by_length = true`
 /// and reads total unit fragment mass from the internal `fcoverage` output.
+///
+/// Parameters
+/// ----------
+/// - `opt`:
+///     Shared scaling-weight configuration.
+/// - `normalize_by_length`:
+///     Whether each fragment contributes unit mass across its span.
+/// - `command`:
+///     Command flavor used to select output naming, headers, and logging target.
+/// - `source_ignore_gap`:
+///     Optional `fcoverage` gap-handling override for the internal producer run.
+/// - `options`:
+///     Reporting controls for statistics and status logs.
+///
+/// Returns
+/// -------
+/// - `Ok(ScalingWeightsRunResult)`:
+///     The scaling-factor path, internal `fcoverage` result, and counters.
+///
+/// Errors
+/// ------
+/// Returns an error if the shared configuration is invalid, internal `fcoverage` fails, the
+/// intermediate TSV is malformed, or the final scaling output cannot be written.
 pub(crate) fn run_with_fcoverage(
     opt: &ScalingWeightsArgs,
     normalize_by_length: bool,
     command: ScalingWeightsCommand,
     source_ignore_gap: Option<bool>,
-) -> Result<()> {
+    options: RunOptions,
+) -> Result<ScalingWeightsRunResult> {
     let start_time = Instant::now();
     let (chromosomes, _contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
@@ -166,10 +234,21 @@ pub(crate) fn run_with_fcoverage(
         source_ignore_gap.unwrap_or(false),
     );
 
-    command.info("Calling internal fcoverage");
-    let fcoverage_result =
-        fcoverage_run_inner(&fcoverage_cfg).context("running internal fcoverage")?;
-    command.info("Reading internal fcoverage output");
+    if options.log_statuses {
+        command.info("Calling internal fcoverage");
+    }
+    let fcoverage_result = run_fcoverage(
+        &fcoverage_cfg,
+        RunOptions {
+            report_statistics: false,
+            show_progress: false,
+            log_statuses: options.log_statuses,
+        },
+    )
+    .context("running internal fcoverage")?;
+    if options.log_statuses {
+        command.info("Reading internal fcoverage output");
+    }
 
     let mut bins_by_chr = load_stride_bins_from_fcoverage_tsv(
         &fcoverage_result,
@@ -188,9 +267,13 @@ pub(crate) fn run_with_fcoverage(
     let mean_weighted_average_overlap =
         normalize_weighted_average_overlap_by_global_mean(&mut bins_by_chr, true, true)?;
 
-    command.info(&command.normalization_message(mean_weighted_average_overlap, opt.stride));
+    if options.log_statuses {
+        command.info(&command.normalization_message(mean_weighted_average_overlap, opt.stride));
+    }
 
-    command.info("Writing stride-bin coordinates and scaling factors to disk");
+    if options.log_statuses {
+        command.info("Writing stride-bin coordinates and scaling factors to disk");
+    }
     let file_name = dot_join(&[opt.output_prefix.as_str(), command.output_file_name()]);
     let final_output_path = opt.ioc.output_dir.join(&file_name);
     let temp_output_path = final_outputs.temp_path_for(&final_output_path)?;
@@ -240,38 +323,47 @@ pub(crate) fn run_with_fcoverage(
     drop(tsv_writer);
     final_outputs.record(temp_output_path, final_output_path.clone())?;
     final_outputs.move_into_place()?;
-    command.info(&format!("Saved output to: {}", final_output_path.display()));
+    if options.log_statuses {
+        command.info(&format!("Saved output to: {}", final_output_path.display()));
+    }
 
     let global_counter = fcoverage_result.counters;
     let elapsed = start_time.elapsed();
-    print_fragment_run_statistics(
-        &global_counter.base,
-        elapsed,
-        FragmentRunStatisticsOptions {
-            include_section_header: false,
-            notes: &[],
-            labels: DEFAULT_FRAGMENT_STATISTICS_LABELS,
-            blacklist_excluded_fragments: None,
-            gc: (opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some()).then_some(
-                GCStatisticsSummary {
-                    neutralize_invalid_gc: opt.gc.neutralize_invalid_gc,
-                    failed_fragments: global_counter.gc_failed_fragments,
-                    missing_tags: opt
-                        .gc
-                        .gc_tag
-                        .is_some()
-                        .then_some(global_counter.gc_missing_tags),
-                    out_of_range_tags: opt
-                        .gc
-                        .gc_tag
-                        .is_some()
-                        .then_some(global_counter.gc_out_of_range_tags),
-                },
-            ),
-        },
-        std::iter::empty::<&str>(),
-    );
-    Ok(())
+    if options.report_statistics {
+        print_fragment_run_statistics(
+            &global_counter.base,
+            elapsed,
+            FragmentRunStatisticsOptions {
+                include_section_header: false,
+                notes: &[],
+                labels: DEFAULT_FRAGMENT_STATISTICS_LABELS,
+                blacklist_excluded_fragments: None,
+                gc: (opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some()).then_some(
+                    GCStatisticsSummary {
+                        neutralize_invalid_gc: opt.gc.neutralize_invalid_gc,
+                        failed_fragments: global_counter.gc_failed_fragments,
+                        missing_tags: opt
+                            .gc
+                            .gc_tag
+                            .is_some()
+                            .then_some(global_counter.gc_missing_tags),
+                        out_of_range_tags: opt
+                            .gc
+                            .gc_tag
+                            .is_some()
+                            .then_some(global_counter.gc_out_of_range_tags),
+                    },
+                ),
+            },
+            std::iter::empty::<&str>(),
+        );
+    }
+    Ok(ScalingWeightsRunResult {
+        counters: global_counter,
+        output_scaling_factors: final_output_path.clone(),
+        source_fcoverage: fcoverage_result,
+        output_files: vec![final_output_path],
+    })
 }
 
 fn build_fcoverage_stride_config(

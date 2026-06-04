@@ -77,7 +77,6 @@ fn fragment_with_two_ends(
     right_inside: &[u8],
 ) -> FragmentWithEnds {
     FragmentWithEnds {
-        tid: 0,
         interval: Interval::new(left_boundary_pos, right_boundary_pos).expect("valid interval"),
         assignment_interval: Interval::new(left_boundary_pos, right_boundary_pos)
             .expect("valid assignment interval"),

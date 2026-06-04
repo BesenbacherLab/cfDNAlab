@@ -33,10 +33,10 @@ pub(crate) enum TileTempFileKind {
 /// index within chromosome.
 #[derive(Debug, Clone)]
 pub(crate) struct TileTempFile {
-    pub kind: TileTempFileKind,
-    pub chromosome: String,
-    pub tile_index: u32,
-    pub path: PathBuf,
+    pub(crate) kind: TileTempFileKind,
+    pub(crate) chromosome: String,
+    pub(crate) tile_index: u32,
+    pub(crate) path: PathBuf,
 }
 
 fn sorted_tile_outputs_for_chromosome<'a>(
@@ -321,7 +321,7 @@ pub(crate) fn concat_aligned_size_tile_final_outputs(
 ///
 /// # Returns
 /// Checked absolute fetch interval, or `None` when no fetch is needed.
-pub fn adapt_fetch_to_extreme_windows(
+pub(crate) fn adapt_fetch_to_extreme_windows(
     tile: &Tile,
     tile_span: Option<&TileWindowSpan>,
     mode: &TileMode<'_>,
@@ -397,7 +397,7 @@ pub fn adapt_fetch_to_extreme_windows(
 /// # Panics
 /// The caller must ensure the indices are within bounds of the prefix sum arrays.
 #[inline]
-pub fn coverage_sum_and_counts(
+pub(crate) fn coverage_sum_and_counts(
     local_start_idx: usize,
     local_end_idx: usize,
     masked: bool,
@@ -442,14 +442,14 @@ pub fn coverage_sum_and_counts(
 
 /// Prefix arrays used to derive summary statistics over coverage slices.
 #[derive(Debug, Clone)]
-pub struct CoverageSummaryPrefixes {
-    pub sum_of_squares_all: Vec<f64>,
-    pub sum_of_squares_unmasked: Option<Vec<f64>>,
-    pub nonzero_all: Vec<u64>,
-    pub nonzero_unmasked: Option<Vec<u64>>,
+pub(crate) struct CoverageSummaryPrefixes {
+    pub(crate) sum_of_squares_all: Vec<f64>,
+    pub(crate) sum_of_squares_unmasked: Option<Vec<f64>>,
+    pub(crate) nonzero_all: Vec<u64>,
+    pub(crate) nonzero_unmasked: Option<Vec<u64>>,
 }
 
-pub fn build_summary_prefixes(cp: &Coverage) -> Result<CoverageSummaryPrefixes> {
+pub(crate) fn build_summary_prefixes(cp: &Coverage) -> Result<CoverageSummaryPrefixes> {
     let coverage = cp.coverage().ok_or_else(|| {
         anyhow::anyhow!("coverage must remain available while building summary-stat prefixes")
     })?;
@@ -525,12 +525,12 @@ pub fn build_summary_prefixes(cp: &Coverage) -> Result<CoverageSummaryPrefixes> 
 
 /// Raw summary statistics over one tile-local slice.
 #[derive(Debug, Clone, Copy)]
-pub struct CoverageSummarySliceStats {
-    pub coverage_sum: f64,
-    pub eligible_positions: u64,
-    pub blacklisted_positions: u64,
-    pub nonzero_positions: u64,
-    pub coverage_sum_of_squares: f64,
+pub(crate) struct CoverageSummarySliceStats {
+    pub(crate) coverage_sum: f64,
+    pub(crate) eligible_positions: u64,
+    pub(crate) blacklisted_positions: u64,
+    pub(crate) nonzero_positions: u64,
+    pub(crate) coverage_sum_of_squares: f64,
 }
 
 /// Compute raw summary statistics over a tile-local range.
@@ -539,7 +539,7 @@ pub struct CoverageSummarySliceStats {
 /// nonzero bases so later reducers can derive variance, SD, coverage fraction, and grouped
 /// correlations without revisiting per-base coverage.
 #[inline]
-pub fn coverage_summary_and_counts(
+pub(crate) fn coverage_summary_and_counts(
     local_start_idx: usize,
     local_end_idx: usize,
     masked: bool,
@@ -606,7 +606,7 @@ pub fn coverage_summary_and_counts(
 /// # Returns
 /// The final window value after applying the requested action.
 #[inline]
-pub fn finalize_value(
+pub(crate) fn finalize_value(
     sum: f64,
     allowed_positions: u64,
     unmasked_span_bp: u64, // end-start when unmasked mode; ignored when masked mode
@@ -639,13 +639,13 @@ pub fn finalize_value(
 
 /// Absolute/local overlap between a requested interval and a tile core.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CoreClip {
+pub(crate) struct CoreClip {
     /// Inclusive start index in tile-core local coordinates.
-    pub local_start_idx: usize,
+    pub(crate) local_start_idx: usize,
     /// Exclusive end index in tile-core local coordinates.
-    pub local_end_idx: usize,
+    pub(crate) local_end_idx: usize,
     /// Absolute interval after clipping the requested interval to the tile core.
-    pub clipped_abs_interval: Interval<u64>,
+    pub(crate) clipped_abs_interval: Interval<u64>,
 }
 
 /// Clips an absolute interval to the tile core and converts the overlap to core-local indices.
@@ -660,7 +660,7 @@ pub struct CoreClip {
 /// # Returns
 /// Checked clipped overlap when the intervals intersect, otherwise `None`.
 #[inline]
-pub fn clip_interval_to_core_and_localize(
+pub(crate) fn clip_interval_to_core_and_localize(
     absolute_interval: Interval<u64>,
     core_interval: Interval<u64>,
 ) -> Result<Option<CoreClip>> {

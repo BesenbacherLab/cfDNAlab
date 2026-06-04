@@ -23,32 +23,32 @@ use std::{
 
 #[cfg_attr(not(test), doc(hidden))]
 #[derive(Debug, Serialize, Deserialize)]
-pub struct TileKmerCountEntry {
-    pub k: u8,
-    pub code: u64,
-    pub position: Option<i32>,
-    pub group: PositionGroup,
-    pub value: f64,
+pub(crate) struct TileKmerCountEntry {
+    pub(crate) k: u8,
+    pub(crate) code: u64,
+    pub(crate) position: Option<i32>,
+    pub(crate) group: PositionGroup,
+    pub(crate) value: f64,
 }
 
 #[cfg_attr(not(test), doc(hidden))]
 #[derive(Debug, Serialize, Deserialize)]
-pub struct TileWindowCounts {
-    pub original_idx: u64,
-    pub entries: Vec<TileKmerCountEntry>,
+pub(crate) struct TileWindowCounts {
+    pub(crate) original_idx: u64,
+    pub(crate) entries: Vec<TileKmerCountEntry>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CountKey {
-    pub k: u8,
-    pub code: u64,
-    pub position: Option<i32>,
-    pub group: PositionGroup,
+pub(crate) struct CountKey {
+    pub(crate) k: u8,
+    pub(crate) code: u64,
+    pub(crate) position: Option<i32>,
+    pub(crate) group: PositionGroup,
 }
 
 impl CountKey {
     #[inline]
-    pub fn as_kmer(self) -> Kmer {
+    pub(crate) fn as_kmer(self) -> Kmer {
         Kmer {
             k: self.k,
             code: self.code,
@@ -57,15 +57,15 @@ impl CountKey {
     }
 
     // Get orientation based on `group`
-    pub fn orientation(&self) -> KmerOrientation {
+    pub(crate) fn orientation(&self) -> KmerOrientation {
         KmerOrientation::from_position_group(self.group)
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PositionDescriptor {
-    pub group: PositionGroup,
-    pub offset: i32,
+pub(crate) struct PositionDescriptor {
+    pub(crate) group: PositionGroup,
+    pub(crate) offset: i32,
 }
 
 impl From<&TileKmerCountEntry> for CountKey {
@@ -92,7 +92,7 @@ impl From<(CountKey, f64)> for TileKmerCountEntry {
 }
 
 /// Persist per-tile k-mer counts so they can be merged after parallel tile processing.
-pub fn serialize_tile_counts(path: &Path, count_records: &[TileWindowCounts]) -> Result<()> {
+pub(crate) fn serialize_tile_counts(path: &Path, count_records: &[TileWindowCounts]) -> Result<()> {
     let file = File::create(path)
         .with_context(|| format!("creating tile counts file: {}", path.display()))?;
     let mut writer = BufWriter::with_capacity(512 * 1024, file);
@@ -107,7 +107,7 @@ pub fn serialize_tile_counts(path: &Path, count_records: &[TileWindowCounts]) ->
 }
 
 /// Load counts created by [`serialize_tile_counts`] during the reduction phase.
-pub fn deserialize_tile_counts(path: &Path) -> Result<Vec<TileWindowCounts>> {
+pub(crate) fn deserialize_tile_counts(path: &Path) -> Result<Vec<TileWindowCounts>> {
     let file = File::open(path)
         .with_context(|| format!("opening tile counts file: {}", path.display()))?;
     let mut reader = BufReader::with_capacity(512 * 1024, file);
@@ -116,15 +116,15 @@ pub fn deserialize_tile_counts(path: &Path) -> Result<Vec<TileWindowCounts>> {
 }
 
 /// Per-tile bookkeeping for intermediate count files and fragment counters.
-pub struct TileResult {
-    pub chr: String,
-    pub counts_path: Option<PathBuf>,
-    pub counter: FragmentKmersCounters,
+pub(crate) struct TileResult {
+    pub(crate) chr: String,
+    pub(crate) counts_path: Option<PathBuf>,
+    pub(crate) counter: FragmentKmersCounters,
 }
 
 /// Reduce per-tile count records into a dense vector aligned with the global window order.
 #[cfg_attr(not(test), doc(hidden))]
-pub fn merge_tile_counts<I>(
+pub(crate) fn merge_tile_counts<I>(
     tile_count_batches: I,
     total_windows: usize,
     kmer_specs: &FxHashMap<u8, KmerSpec>,
@@ -181,7 +181,7 @@ where
 }
 
 #[cfg_attr(not(test), doc(hidden))]
-pub fn merge_tile_counts_positional<I>(
+pub(crate) fn merge_tile_counts_positional<I>(
     tile_count_batches: I,
     total_windows: usize,
 ) -> Result<Vec<FxHashMap<PositionDescriptor, FxHashMap<Kmer, f64>>>>
@@ -238,7 +238,7 @@ where
     Ok(all_bins)
 }
 
-pub fn reduce_chromosome_tile_results(
+pub(crate) fn reduce_chromosome_tile_results(
     tile_results: Vec<TileResult>,
 ) -> Result<Vec<TileWindowCounts>> {
     let mut aggregated: FxHashMap<u64, FxHashMap<CountKey, f64>> = FxHashMap::default();

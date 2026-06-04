@@ -3,39 +3,41 @@
 mod fixtures;
 
 use anyhow::{Context, Result};
+use cfdnalab::RunOptions;
+use cfdnalab::blacklist::BlacklistStrategy;
+use cfdnalab::constants::GC_CORRECTION_SCHEMA_VERSION;
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
+use cfdnalab::gc_bias::GCCorrectionPackage;
+#[cfg(feature = "cmd_bam_to_frag")]
+use cfdnalab::reference::twobit_contig_footprint;
 #[cfg(all(feature = "cmd_bam_to_bam", feature = "cmd_bam_to_frag"))]
-use cfdnalab::commands::bam_to_bam::{
-    bam_to_bam::run_inner as run_bam_to_bam, config::BamToBamConfig,
+use cfdnalab::run_like_cli::bam_to_bam::{
+    BamToBamConfig, run_bam_to_bam as run_bam_to_bam_command,
 };
 #[cfg(feature = "cmd_bam_to_frag")]
-use cfdnalab::commands::bam_to_frag::{
-    bam_to_frag::run_inner as run_bam_to_frag, config::BamToFragConfig,
+use cfdnalab::run_like_cli::bam_to_frag::{
+    BamToFragConfig, run_bam_to_frag as run_bam_to_frag_command,
 };
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_lengths"))]
-use cfdnalab::commands::cli_common::AssignToWindowArgs;
-use cfdnalab::commands::cli_common::ChromosomeArgs;
+use cfdnalab::run_like_cli::common::AssignToWindowArgs;
+use cfdnalab::run_like_cli::common::ChromosomeArgs;
 #[cfg(feature = "cmd_bam_to_frag")]
-use cfdnalab::commands::cli_common::IOCArgs;
+use cfdnalab::run_like_cli::common::IOCArgs;
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
-use cfdnalab::commands::cli_common::{ApplyGCArgFileOnly, ApplyGCArgs};
+use cfdnalab::run_like_cli::common::{ApplyGCArgFileOnly, ApplyGCArgs};
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_fcoverage"))]
-use cfdnalab::commands::fcoverage::{config::FCoverageConfig, fcoverage::run as run_fcoverage};
-use cfdnalab::commands::frag_to_bam::{
-    config::FragToBamConfig, frag_to_bam::run as run_frag_to_bam,
+use cfdnalab::run_like_cli::fcoverage::{FCoverageConfig, run_fcoverage as run_fcoverage_command};
+use cfdnalab::run_like_cli::frag_to_bam::{
+    FragToBamConfig, run_frag_to_bam as run_frag_to_bam_command,
 };
-#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
-use cfdnalab::commands::gc_bias::package::GCCorrectionPackage;
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_lengths"))]
-use cfdnalab::commands::lengths::{config::LengthsConfig, lengths::run as run_lengths};
-#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
-use cfdnalab::commands::midpoints::{
-    config::MidpointsConfig, midpoints::run as run_midpoints, smoothing::MidpointSmoothing,
+use cfdnalab::run_like_cli::lengths::{
+    LengthsConfig, LengthsRunResult, run_lengths as run_lengths_command,
 };
-use cfdnalab::shared::blacklist::BlacklistStrategy;
-use cfdnalab::shared::constants::GC_CORRECTION_SCHEMA_VERSION;
-use cfdnalab::shared::io::dot_join;
-#[cfg(feature = "cmd_bam_to_frag")]
-use cfdnalab::shared::reference::twobit_contig_footprint;
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
+use cfdnalab::run_like_cli::midpoints::{
+    MidpointSmoothing, MidpointsConfig, run_midpoints as run_midpoints_command,
+};
 #[cfg(feature = "cmd_bam_to_frag")]
 use flate2::read::MultiGzDecoder;
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
@@ -52,17 +54,48 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_lengths"))]
-use fixtures::read_length_counts_tsv;
+use cfdnalab::testing::read_length_counts_tsv;
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
-use fixtures::read_midpoint_zarr_counts;
+use cfdnalab::testing::read_midpoint_zarr_counts;
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_fcoverage"))]
-use fixtures::read_zst_to_string;
+use cfdnalab::testing::read_zst_to_string;
 #[cfg(feature = "cmd_bam_to_frag")]
-use fixtures::{
-    FragmentSpec, ReadSpec, bam_from_specs, bam_from_specs_strict_identity,
-    build_real_non_neutral_gc_package, paired_fragment, simple_reference_twobit,
-    twobit_from_sequences,
+use cfdnalab::testing::{
+    Cigar, FragmentSpec, PairedFragmentSpec, ReadSpec, ScalingFactorRow, TempBam,
+    bam_from_fragments, bam_from_fragments_with_record_indexed_names,
+    build_command_produced_gc_correction_package_from_reference_windows,
+    single_contig_inward_pair_bam, twobit_from_sequences, twobit_with_single_repeating_contig,
+    write_scaling_factors_tsv,
 };
+
+fn run_frag_to_bam(config: &FragToBamConfig) -> Result<()> {
+    run_frag_to_bam_command(config, RunOptions::new_quiet()).map(|_| ())
+}
+
+#[cfg(feature = "cmd_bam_to_frag")]
+fn run_bam_to_frag(config: &BamToFragConfig) -> Result<()> {
+    run_bam_to_frag_command(config, RunOptions::new_quiet()).map(|_| ())
+}
+
+#[cfg(all(feature = "cmd_bam_to_bam", feature = "cmd_bam_to_frag"))]
+fn run_bam_to_bam(config: &BamToBamConfig) -> Result<()> {
+    run_bam_to_bam_command(config, RunOptions::new_quiet()).map(|_| ())
+}
+
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_fcoverage"))]
+fn run_fcoverage(config: &FCoverageConfig) -> Result<()> {
+    run_fcoverage_command(config, RunOptions::new_quiet()).map(|_| ())
+}
+
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_lengths"))]
+fn run_lengths(config: &LengthsConfig) -> Result<LengthsRunResult> {
+    run_lengths_command(config, RunOptions::new_quiet())
+}
+
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
+fn run_midpoints(config: &MidpointsConfig) -> Result<()> {
+    run_midpoints_command(config, RunOptions::new_quiet()).map(|_| ())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct BamRow {
@@ -150,15 +183,6 @@ fn read_group_index_map(path: &Path) -> Result<std::collections::HashMap<String,
     Ok(out)
 }
 
-fn write_scaling_tsv(path: &Path, rows: &[(&str, u64, u64, f32)]) -> Result<()> {
-    let mut content = String::from("chromosome\tstart\tend\tscaling_factor\n");
-    for (chromosome, start, end, factor) in rows {
-        content.push_str(&format!("{chromosome}\t{start}\t{end}\t{factor}\n"));
-    }
-    fs::write(path, content)?;
-    Ok(())
-}
-
 fn make_config(
     frag_path: PathBuf,
     output_dir: PathBuf,
@@ -179,7 +203,7 @@ fn make_config(
 }
 
 fn output_bam_path(output_dir: &Path, prefix: &str) -> PathBuf {
-    output_dir.join(dot_join(&[prefix, "fragments.bam"]))
+    output_dir.join(format!("{prefix}.fragments.bam"))
 }
 
 fn build_bai_for_test_bam(bam_path: &Path) -> Result<PathBuf> {
@@ -1988,8 +2012,8 @@ fn read_gzip_text(path: &Path) -> Result<String> {
     Ok(text)
 }
 #[cfg(feature = "cmd_bam_to_frag")]
-fn roundtrip_simple_inward_to_unpaired_bam() -> Result<(fixtures::BamFixture, TempDir, PathBuf)> {
-    let source_bam = fixtures::simple_inward_bam()?;
+fn roundtrip_simple_inward_to_unpaired_bam() -> Result<(TempBam, TempDir, PathBuf)> {
+    let source_bam = single_contig_inward_pair_bam()?;
     let bam_to_frag_output = TempDir::new()?;
     let frag_to_bam_output = TempDir::new()?;
     let chrom_sizes_path = frag_to_bam_output.path().join("chrom.sizes");
@@ -2042,12 +2066,12 @@ fn roundtrip_single_paired_fragment_to_unpaired_bam(
     fragment_start: i64,
     fragment_len: i64,
     read_len: i64,
-) -> Result<(fixtures::BamFixture, TempDir, PathBuf)> {
-    let source_bam = bam_from_specs(
-        vec![("chr1".to_string(), 200)],
-        vec![paired_fragment(fragment_start, fragment_len, read_len)],
-        Vec::new(),
+) -> Result<(TempBam, TempDir, PathBuf)> {
+    let source_bam = bam_from_fragments(
         name,
+        vec![("chr1".to_string(), 200)],
+        vec![PairedFragmentSpec::new(0, fragment_start, fragment_len, read_len).build()?],
+        Vec::new(),
     )?;
     let bam_to_frag_output = TempDir::new()?;
     let frag_to_bam_output = TempDir::new()?;
@@ -2127,9 +2151,9 @@ fn given_bam_to_frag_then_frag_to_bam_when_roundtrip_then_restores_all_available
         forward: ReadSpec {
             tid: 0,
             pos: 100,
-            cigar: vec![('M', 20)],
+            cigar: vec![Cigar::Match(20)],
             seq: vec![b'A'; 20],
-            qual: 30,
+            base_quality: 30,
             is_reverse: false,
             mapq: 55,
             flags: first_mate_flag | proper_pair_flag | mate_reverse_flag,
@@ -2140,9 +2164,9 @@ fn given_bam_to_frag_then_frag_to_bam_when_roundtrip_then_restores_all_available
         reverse: ReadSpec {
             tid: 0,
             pos: 160,
-            cigar: vec![('M', 20)],
+            cigar: vec![Cigar::Match(20)],
             seq: vec![b'T'; 20],
-            qual: 30,
+            base_quality: 30,
             is_reverse: true,
             mapq: 45,
             flags: second_mate_flag | proper_pair_flag,
@@ -2156,9 +2180,9 @@ fn given_bam_to_frag_then_frag_to_bam_when_roundtrip_then_restores_all_available
         forward: ReadSpec {
             tid: 1,
             pos: 200,
-            cigar: vec![('M', 20)],
+            cigar: vec![Cigar::Match(20)],
             seq: vec![b'C'; 20],
-            qual: 30,
+            base_quality: 30,
             is_reverse: false,
             mapq: 30,
             flags: second_mate_flag | proper_pair_flag | mate_reverse_flag,
@@ -2169,9 +2193,9 @@ fn given_bam_to_frag_then_frag_to_bam_when_roundtrip_then_restores_all_available
         reverse: ReadSpec {
             tid: 1,
             pos: 260,
-            cigar: vec![('M', 20)],
+            cigar: vec![Cigar::Match(20)],
             seq: vec![b'G'; 20],
-            qual: 30,
+            base_quality: 30,
             is_reverse: true,
             mapq: 35,
             flags: first_mate_flag | proper_pair_flag,
@@ -2181,11 +2205,11 @@ fn given_bam_to_frag_then_frag_to_bam_when_roundtrip_then_restores_all_available
         },
     };
 
-    let source_bam = bam_from_specs(
+    let source_bam = bam_from_fragments(
+        "frag_to_bam_roundtrip",
         vec![("chr1".to_string(), 500), ("chr2".to_string(), 500)],
         vec![fragment_a, fragment_b],
         Vec::new(),
-        "frag_to_bam_roundtrip",
     )?;
 
     let bam_to_frag_output = TempDir::new()?;
@@ -2301,17 +2325,11 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_then_roundtrip_match
     restored_cfg.set_per_bp_length_bins(10, 100);
 
     // Act
-    run_lengths(&original_cfg)?;
-    run_lengths(&restored_cfg)?;
+    let original_result = run_lengths(&original_cfg)?;
+    let restored_result = run_lengths(&restored_cfg)?;
 
-    let original_counts = read_length_counts_tsv(&original_out.path().join(dot_join(&[
-        original_cfg.output_prefix.trim(),
-        "length_counts.tsv.zst",
-    ])))?;
-    let restored_counts = read_length_counts_tsv(&restored_out.path().join(dot_join(&[
-        restored_cfg.output_prefix.trim(),
-        "length_counts.tsv.zst",
-    ])))?;
+    let original_counts = read_length_counts_tsv(&original_result.length_counts_path)?;
+    let restored_counts = read_length_counts_tsv(&restored_result.length_counts_path)?;
 
     // Assert:
     // One global window and lengths 10..=100 give shape (1, 91).
@@ -2341,7 +2359,7 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_then_roundtrip_match
 fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_with_blacklist_then_roundtrip_matches_original()
 -> Result<()> {
     // Arrange:
-    // `simple_inward_bam()` contains one fragment spanning [20, 80), length 60.
+    // `single_contig_inward_pair_bam()` contains one fragment spanning [20, 80), length 60.
     // We apply a blacklist interval [25, 35), which overlaps that fragment.
     //
     // `lengths` defaults to blacklist strategy `any`, so a fragment is excluded entirely as soon as
@@ -2389,18 +2407,12 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_with_blacklist_then_
     restored_cfg.set_per_bp_length_bins(10, 100);
 
     // Act
-    run_lengths(&original_cfg)?;
-    run_lengths(&restored_cfg)?;
+    let original_result = run_lengths(&original_cfg)?;
+    let restored_result = run_lengths(&restored_cfg)?;
 
     // Assert
-    let original_counts = read_length_counts_tsv(&original_out.path().join(dot_join(&[
-        original_cfg.output_prefix.trim(),
-        "length_counts.tsv.zst",
-    ])))?;
-    let restored_counts = read_length_counts_tsv(&restored_out.path().join(dot_join(&[
-        restored_cfg.output_prefix.trim(),
-        "length_counts.tsv.zst",
-    ])))?;
+    let original_counts = read_length_counts_tsv(&original_result.length_counts_path)?;
+    let restored_counts = read_length_counts_tsv(&restored_result.length_counts_path)?;
 
     assert_eq!(original_counts.dim(), (1, 91));
     assert_eq!(restored_counts.dim(), (1, 91));
@@ -2496,7 +2508,7 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_coverage_then_roundtrip_matc
 fn given_bam_to_frag_then_frag_to_bam_when_counting_coverage_with_blacklist_then_roundtrip_matches_original()
 -> Result<()> {
     // Arrange:
-    // `simple_inward_bam()` roundtrips to one unpaired fragment/read span [20, 80).
+    // `single_contig_inward_pair_bam()` roundtrips to one unpaired fragment/read span [20, 80).
     // We blacklist [25, 35), which lies inside that covered span.
     //
     // `fcoverage` masks blacklisted positions out of the positional output rather than dropping the
@@ -2579,7 +2591,7 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_coverage_with_blacklist_then
 fn bam_frag_bam_roundtrip_preserves_coverage_tags_for_same_span() -> Result<()> {
     // Arrange:
     // This test compares the same physical fragment represented in two different ways:
-    // - the original paired BAM from `simple_inward_bam()`
+    // - the original paired BAM from `single_contig_inward_pair_bam()`
     // - a restored unpaired BAM after BAM -> FRAG -> BAM roundtrip
     //
     // We test this because FRAG does not preserve pair structure, so the restored BAM will have
@@ -2608,12 +2620,12 @@ fn bam_frag_bam_roundtrip_preserves_coverage_tags_for_same_span() -> Result<()> 
     let original_out = work.path().join("original_tagged.bam");
     let restored_out = work.path().join("restored_tagged.bam");
     let scaling_path = work.path().join("piecewise_scaling.tsv");
-    write_scaling_tsv(
+    write_scaling_factors_tsv(
         &scaling_path,
         &[
-            ("chr1", 0, 40, 2.0),
-            ("chr1", 40, 80, 1.0),
-            ("chr1", 80, 200, 1.0),
+            ScalingFactorRow::new("chr1", 0, 40, 2.0),
+            ScalingFactorRow::new("chr1", 40, 80, 1.0),
+            ScalingFactorRow::new("chr1", 80, 200, 1.0),
         ],
     )?;
 
@@ -2701,12 +2713,12 @@ fn bam_frag_bam_roundtrip_preserves_count_tags_for_same_span() -> Result<()> {
     let original_out = work.path().join("original_count_tagged.bam");
     let restored_out = work.path().join("restored_count_tagged.bam");
     let scaling_path = work.path().join("piecewise_count_scaling.tsv");
-    write_scaling_tsv(
+    write_scaling_factors_tsv(
         &scaling_path,
         &[
-            ("chr1", 0, 40, 2.0),
-            ("chr1", 40, 80, 1.0),
-            ("chr1", 80, 200, 1.0),
+            ScalingFactorRow::new("chr1", 0, 40, 2.0),
+            ScalingFactorRow::new("chr1", 40, 80, 1.0),
+            ScalingFactorRow::new("chr1", 80, 200, 1.0),
         ],
     )?;
 
@@ -2881,13 +2893,13 @@ fn given_bam_to_frag_gc_weights_then_frag_to_bam_then_midpoints_gc_tag_matches_o
     // - shape [1, 1, 11]
     // - exactly 3.0 at position 5
     // - total mass 3.0
-    let source_bam = bam_from_specs(
-        vec![("chr1".to_string(), 200)],
-        vec![paired_fragment(20, 61, 20)],
-        Vec::new(),
+    let source_bam = bam_from_fragments(
         "frag_to_bam_gc_roundtrip_source",
+        vec![("chr1".to_string(), 200)],
+        vec![PairedFragmentSpec::new(0, 20, 61, 20).build()?],
+        Vec::new(),
     )?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let work = TempDir::new()?;
     let bam_to_frag_out = TempDir::new()?;
     let frag_to_bam_out = TempDir::new()?;
@@ -3068,30 +3080,33 @@ fn given_bam_to_frag_real_non_neutral_gc_then_frag_to_bam_then_midpoints_gc_tag_
     // The producer BAM stacks nine identical C-only fragments at one start. Give each fragment
     // a distinct qname here so the real GC package is built from ten molecules, not one pair
     // that gets aliased by the fixture writer.
-    let producer_bam = bam_from_specs_strict_identity(
+    let producer_bam = bam_from_fragments_with_record_indexed_names(
+        "frag_to_bam_real_non_neutral_producer",
         vec![("chr1".to_string(), 201)],
         {
-            let mut fragments = vec![paired_fragment(10, 61, 20)];
+            let mut fragments = vec![PairedFragmentSpec::new(0, 10, 61, 20).build()?];
             for _ in 0..9 {
-                fragments.push(paired_fragment(110, 61, 20));
+                fragments.push(PairedFragmentSpec::new(0, 110, 61, 20).build()?);
             }
             fragments
         },
         Vec::new(),
-        "frag_to_bam_real_non_neutral_producer",
     )?;
-    let source_bam = bam_from_specs(
-        vec![("chr1".to_string(), 201)],
-        vec![paired_fragment(10, 61, 20), paired_fragment(110, 61, 20)],
-        Vec::new(),
+    let source_bam = bam_from_fragments(
         "frag_to_bam_real_non_neutral_source",
+        vec![("chr1".to_string(), 201)],
+        vec![
+            PairedFragmentSpec::new(0, 10, 61, 20).build()?,
+            PairedFragmentSpec::new(0, 110, 61, 20).build()?,
+        ],
+        Vec::new(),
     )?;
     let work = TempDir::new()?;
     let bam_to_frag_out = TempDir::new()?;
     let frag_to_bam_out = TempDir::new()?;
     let original_midpoints_out = TempDir::new()?;
     let restored_midpoints_out = TempDir::new()?;
-    let gc_path = build_real_non_neutral_gc_package(
+    let gc_path = build_command_produced_gc_correction_package_from_reference_windows(
         &producer_bam.bam,
         &reference.path,
         work.path(),
@@ -3236,7 +3251,7 @@ fn given_bam_to_frag_real_non_neutral_gc_then_frag_to_bam_then_midpoints_gc_tag_
 fn given_bam_to_frag_with_real_gc_and_scaling_outputs_when_frag_to_bam_runs_then_companion_header_restores_both_aux_tags()
 -> Result<()> {
     // Arrange:
-    // `simple_inward_bam()` contains one paired fragment spanning [20, 80), length 60.
+    // `single_contig_inward_pair_bam()` contains one paired fragment spanning [20, 80), length 60.
     //
     // We generate the FRAG input with the real released producer `bam-to-frag` using:
     // - a constant GC package that assigns weight 3.0 to all 60 bp fragments
@@ -3251,8 +3266,8 @@ fn given_bam_to_frag_with_real_gc_and_scaling_outputs_when_frag_to_bam_runs_then
     //     GC   = 3.0
     //     cw  = 2.0
     //     fl absent (because `bam-to-frag` does not emit a `flen` column)
-    let source_bam = fixtures::simple_inward_bam()?;
-    let reference = simple_reference_twobit()?;
+    let source_bam = single_contig_inward_pair_bam()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let bam_to_frag_out = TempDir::new()?;
     let frag_to_bam_out = TempDir::new()?;
     let work = TempDir::new()?;
@@ -3260,7 +3275,7 @@ fn given_bam_to_frag_with_real_gc_and_scaling_outputs_when_frag_to_bam_runs_then
     let scaling_path = work.path().join("uniform_scaling.tsv");
     let chrom_sizes_path = frag_to_bam_out.path().join("chrom.sizes");
     write_chrom_sizes(&chrom_sizes_path, &[("chr1", 200)])?;
-    write_scaling_tsv(&scaling_path, &[("chr1", 0, 200, 2.0)])?;
+    write_scaling_factors_tsv(&scaling_path, &[ScalingFactorRow::new("chr1", 0, 200, 2.0)])?;
 
     let package = GCCorrectionPackage {
         version: GC_CORRECTION_SCHEMA_VERSION,
@@ -3340,7 +3355,7 @@ fn given_bam_to_frag_with_real_gc_and_scaling_outputs_when_frag_to_bam_runs_then
 fn given_bam_to_frag_with_count_scaling_output_when_frag_to_bam_runs_then_companion_header_restores_cnt_aux_tag()
 -> Result<()> {
     // Arrange:
-    // `simple_inward_bam()` contains one paired fragment spanning [20, 80), length 60.
+    // `single_contig_inward_pair_bam()` contains one paired fragment spanning [20, 80), length 60.
     //
     // We generate the FRAG input with the released producer `bam-to-frag` using only a
     // chromosome-wide count-scaling TSV with factor 0.5.
@@ -3351,14 +3366,14 @@ fn given_bam_to_frag_with_count_scaling_output_when_frag_to_bam_runs_then_compan
     // - `frag-to-bam` auto-detects that companion header and restores one unpaired BAM record
     //   with nw = 0.5
     // - GC, cw, and fl stay absent
-    let source_bam = fixtures::simple_inward_bam()?;
+    let source_bam = single_contig_inward_pair_bam()?;
     let bam_to_frag_out = TempDir::new()?;
     let frag_to_bam_out = TempDir::new()?;
     let work = TempDir::new()?;
     let scaling_path = work.path().join("uniform_count_scaling.tsv");
     let chrom_sizes_path = frag_to_bam_out.path().join("chrom.sizes");
     write_chrom_sizes(&chrom_sizes_path, &[("chr1", 200)])?;
-    write_scaling_tsv(&scaling_path, &[("chr1", 0, 200, 0.5)])?;
+    write_scaling_factors_tsv(&scaling_path, &[ScalingFactorRow::new("chr1", 0, 200, 0.5)])?;
 
     let mut bam_to_frag_cfg = BamToFragConfig::new(
         IOCArgs {

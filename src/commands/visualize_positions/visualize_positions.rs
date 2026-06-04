@@ -1,8 +1,8 @@
+use crate::command_run::{CommandRunResult, RunOptions};
 use crate::commands::cli_common::{
     ChromosomeArgs, FragmentPositionSelectionArgs, IOCArgs, Ref2BitRequiredArgs, WindowsArgs,
 };
 use crate::commands::fragment_kmers::config::FragmentKmersConfig;
-use crate::commands::fragment_kmers::fragment_kmers::run_inner_silent;
 use crate::commands::visualize_positions::config::VisualizePositionsConfig;
 use crate::commands::visualize_positions::model::{LengthVisualization, Style, VizConfig};
 use crate::commands::visualize_positions::select::ReadClamp;
@@ -24,8 +24,64 @@ use twobit::convert::{fasta::FastaReader, to_2bit};
 const CHROM_NAME: &str = "chr1";
 const FRAGMENT_GAP: u32 = 20;
 
-/// Execute the visualize-selected-region command.
-pub fn run(cfg: &VisualizePositionsConfig) -> Result<()> {
+/// Result from `visualize-positions`.
+///
+/// The command writes or prints a visualization for selected fragment positions. The result records
+/// the output path when one exists.
+#[derive(Debug)]
+pub struct VisualizePositionsRunResult {
+    /// Empty counter placeholder for the shared command result interface.
+    pub counters: (),
+    /// Output path when the visualization is written to a file.
+    pub output_path: Option<PathBuf>,
+    /// Final output files produced by the command.
+    pub output_files: Vec<PathBuf>,
+}
+
+impl CommandRunResult for VisualizePositionsRunResult {
+    type Counters = ();
+
+    fn counters(&self) -> &Self::Counters {
+        &self.counters
+    }
+
+    fn output_files(&self) -> &[PathBuf] {
+        &self.output_files
+    }
+
+    fn primary_output(&self) -> Option<&Path> {
+        self.output_path.as_deref()
+    }
+}
+
+/// Run the `visualize-positions` command.
+///
+/// This command builds a small reference and fragment fixture, computes selected positional k-mer
+/// tracks, and renders them as ASCII or SVG. It is intended for visual inspection of positional
+/// selection behavior rather than high-throughput analysis.
+///
+/// The current implementation does not use reporting options.
+///
+/// Parameters
+/// ----------
+/// - `cfg`:
+///     Fully resolved configuration for the `visualize-positions` command.
+/// - `_options`:
+///     Reserved reporting controls for consistency with other command runners.
+///
+/// Returns
+/// -------
+/// - `Ok(VisualizePositionsRunResult)`:
+///     Output path information for the completed run.
+///
+/// Errors
+/// ------
+/// Returns an error when the fixture cannot be created, k-mer counts cannot be computed, or the
+/// visualization cannot be written.
+pub fn run_visualize_positions(
+    cfg: &VisualizePositionsConfig,
+    _options: RunOptions,
+) -> Result<VisualizePositionsRunResult> {
     let viz_cfg = cfg.build()?;
 
     fs::create_dir_all(&cfg.work_dir)
@@ -48,7 +104,13 @@ pub fn run(cfg: &VisualizePositionsConfig) -> Result<()> {
             .context("writing visualization to stdout")?;
     }
 
-    Ok(())
+    let output_path = viz_cfg.output.clone();
+    let output_files = output_path.iter().cloned().collect();
+    Ok(VisualizePositionsRunResult {
+        counters: (),
+        output_path,
+        output_files,
+    })
 }
 
 fn compute_visualizations(
@@ -446,7 +508,11 @@ fn run_fragment_kmers(
     let mut windows_args = WindowsArgs::default();
     windows_args.by_bed = Some(inputs.bed.clone());
     cfg.set_windows(windows_args);
-    run_inner_silent(&cfg).context("running fragment-kmers for visualize-positions")?;
+    crate::commands::fragment_kmers::fragment_kmers::run_fragment_kmers(
+        &cfg,
+        RunOptions::new_quiet(),
+    )
+    .context("running fragment-kmers for visualize-positions")?;
     Ok(())
 }
 

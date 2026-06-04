@@ -3,16 +3,17 @@
 mod fixtures;
 
 use anyhow::{Context, Result, ensure};
-use cfdnalab::commands::cli_common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, WindowsArgs};
-use cfdnalab::commands::fcoverage::window_results::CoverageWindowAction;
-use cfdnalab::commands::wps::config::WPSConfig;
-use cfdnalab::commands::wps::wps::run as run_fn;
-use cfdnalab::shared::reference::twobit_contig_footprint;
-use fixtures::{
-    BamFixture, FragmentSpec, ReadSpec, bam_from_specs, late_origin_gc_reference_sequence,
-    long_fragment_bam, read_zst_to_string, twobit_from_sequences, write_bed,
-    write_two_bin_gc_package,
+use cfdnalab::RunOptions;
+use cfdnalab::reference::twobit_contig_footprint;
+use cfdnalab::run_like_cli::common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, WindowsArgs};
+use cfdnalab::run_like_cli::fcoverage::CoverageWindowAction;
+use cfdnalab::run_like_cli::wps::{WPSConfig, run_wps as run_fn};
+use cfdnalab::testing::{
+    Bed4Row, Cigar, FragmentSpec, ReadSpec, TempBam, bam_from_fragments,
+    long_inward_fragment_series_bam, read_zst_to_string, twobit_from_sequences, write_bed4,
+    write_two_bin_gc_correction_package,
 };
+use fixtures::late_origin_gc_reference_sequence;
 use std::cmp::max;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -25,6 +26,10 @@ const FLAG_FIRST_MATE: u16 = 0x40;
 const FLAG_SECOND_MATE: u16 = 0x80;
 const FLAG_PROPER_PAIR: u16 = 0x2;
 const FLAG_MATE_REVERSE: u16 = 0x20;
+
+fn run_wps_quiet(cfg: &WPSConfig) -> Result<()> {
+    run_fn(cfg, RunOptions::new_quiet()).map(|_| ())
+}
 const WPS_WINDOW_SIZE_BP: u32 = 120;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -54,9 +59,9 @@ fn fragment_spec(start: u32, end: u32) -> FragmentSpec {
     let forward = ReadSpec {
         tid: 0,
         pos: forward_pos,
-        cigar: vec![('M', read_len)],
+        cigar: vec![Cigar::Match(read_len)],
         seq: vec![b'A'; read_len as usize],
-        qual: 40,
+        base_quality: 40,
         is_reverse: false,
         mapq: 60,
         flags: FLAG_FIRST_MATE | FLAG_MATE_REVERSE | FLAG_PROPER_PAIR,
@@ -68,9 +73,9 @@ fn fragment_spec(start: u32, end: u32) -> FragmentSpec {
     let reverse = ReadSpec {
         tid: 0,
         pos: reverse_pos,
-        cigar: vec![('M', read_len)],
+        cigar: vec![Cigar::Match(read_len)],
         seq: vec![b'T'; read_len as usize],
-        qual: 40,
+        base_quality: 40,
         is_reverse: true,
         mapq: 60,
         flags: FLAG_SECOND_MATE | FLAG_PROPER_PAIR,
@@ -91,7 +96,7 @@ fn fragment_spec_on_tid(tid: usize, start: u32, end: u32) -> FragmentSpec {
     fragment
 }
 
-fn make_fixture(name: &str, fragments: &[(u32, u32)]) -> Result<BamFixture> {
+fn make_fixture(name: &str, fragments: &[(u32, u32)]) -> Result<TempBam> {
     let chrom_len = fragments
         .iter()
         .map(|(_, end)| end + 100)
@@ -101,22 +106,23 @@ fn make_fixture(name: &str, fragments: &[(u32, u32)]) -> Result<BamFixture> {
         .iter()
         .map(|(start, end)| fragment_spec(*start, *end))
         .collect();
-    bam_from_specs(
+    bam_from_fragments(
+        name,
         vec![("chr1".to_string(), chrom_len)],
         specs,
         Vec::new(),
-        name,
     )
 }
 
-fn make_three_chrom_fixture(name: &str, fragments: &[(u32, u32)]) -> Result<BamFixture> {
+fn make_three_chrom_fixture(name: &str, fragments: &[(u32, u32)]) -> Result<TempBam> {
     let chrom_len = 100u32;
     let specs: Vec<FragmentSpec> = fragments
         .iter()
         .enumerate()
         .map(|(tid, (start, end))| fragment_spec_on_tid(tid, *start, *end))
         .collect();
-    bam_from_specs(
+    bam_from_fragments(
+        name,
         vec![
             ("chr1".to_string(), chrom_len),
             ("chr2".to_string(), chrom_len),
@@ -124,7 +130,6 @@ fn make_three_chrom_fixture(name: &str, fragments: &[(u32, u32)]) -> Result<BamF
         ],
         specs,
         Vec::new(),
-        name,
     )
 }
 
@@ -167,7 +172,7 @@ fn run_wps(cfg: &WPSConfig) -> Result<Vec<WpsRun>> {
 }
 
 fn run_wps_with_chrom(cfg: &WPSConfig) -> Result<Vec<WpsRun>> {
-    run_fn(cfg)?;
+    run_wps_quiet(cfg)?;
     let prefix = cfg.shared_args.output_prefix.trim();
     let bedgraph_path = cfg
         .shared_args
@@ -235,8 +240,8 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("late_window.bed");
     let gc_path = out_dir.path().join("two_bin_gc_package.zarr");
-    write_bed(&bed_path, &[("chr1", 925, 936, "late")])?;
-    write_two_bin_gc_package(
+    write_bed4(&bed_path, &[Bed4Row::new("chr1", 925, 936, "late")])?;
+    write_two_bin_gc_correction_package(
         &gc_path,
         61,
         2.0,
@@ -409,7 +414,7 @@ fn empty_bam_emits_single_zero_run_per_chromosome() -> Result<()> {
     // Chromosomes long enough to admit two tiles each.
     let chrom_defs = vec![("chr1".to_string(), 400u32), ("chr2".to_string(), 400u32)];
     let tile_bp = 200u32;
-    let fixture = bam_from_specs(chrom_defs.clone(), Vec::new(), Vec::new(), "wps_empty")?;
+    let fixture = bam_from_fragments("wps_empty", chrom_defs.clone(), Vec::new(), Vec::new())?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = make_config(4, true, &fixture.bam, out_dir.path(), "empty_two_chr");
@@ -449,11 +454,11 @@ fn empty_bam_emits_single_zero_run_per_chromosome() -> Result<()> {
 #[test]
 fn empty_bam_without_keep_zero_runs_outputs_nothing() -> Result<()> {
     let chrom_defs = vec![("chr1".to_string(), 400u32), ("chr2".to_string(), 400u32)];
-    let fixture = bam_from_specs(
+    let fixture = bam_from_fragments(
+        "wps_empty_nozeros",
         chrom_defs.clone(),
         Vec::new(),
         Vec::new(),
-        "wps_empty_nozeros",
     )?;
     let out_dir = TempDir::new()?;
 
@@ -479,7 +484,7 @@ fn empty_bam_without_keep_zero_runs_outputs_nothing() -> Result<()> {
 
 #[test]
 fn long_fragment_fixture_produces_expected_wps_runs() -> Result<()> {
-    let fixture = long_fragment_bam("wps_long_fragment_fixture")?;
+    let fixture = long_inward_fragment_series_bam("wps_long_fragment_fixture")?;
     let out_dir = TempDir::new()?;
     let mut cfg = make_config(
         WPS_WINDOW_SIZE_BP,
@@ -579,7 +584,7 @@ fn by_size_total_handles_three_chromosomes() -> Result<()> {
     // - [12, 21) -> +9
     // - [21, 23) -> -2
     // Total WPS over the chromosome window [0, 100) is therefore 4.
-    run_fn(&cfg)?;
+    run_wps_quiet(&cfg)?;
 
     let output_path = out_dir.path().join("three_chr_by_size.wps.total.tsv.zst");
     let text = read_zst_to_string(&output_path)?;
@@ -599,11 +604,11 @@ fn by_size_total_handles_three_chromosomes() -> Result<()> {
 
 #[test]
 fn by_size_total_non_aligned_tiles_reduce_crossing_bins_by_logical_start() -> Result<()> {
-    let fixture = bam_from_specs(
+    let fixture = bam_from_fragments(
+        "wps_non_aligned_by_size_reduce",
         vec![("chr1".to_string(), 300u32)],
         Vec::new(),
         Vec::new(),
-        "wps_non_aligned_by_size_reduce",
     )?;
     let out_dir = TempDir::new()?;
     let mut cfg = make_config(
@@ -629,7 +634,7 @@ fn by_size_total_non_aligned_tiles_reduce_crossing_bins_by_logical_start() -> Re
     // - Empty BAM means total WPS is 0 in both bins.
     // - With window size 4, invalid centers are 0, 1, and 299 because the WPS window would extend
     //   past chromosome bounds. That gives blacklisted_positions 2 for [0,150) and 1 for [150,300).
-    run_fn(&cfg)?;
+    run_wps_quiet(&cfg)?;
 
     let output_path = out_dir.path().join("non_aligned_by_size.wps.total.tsv.zst");
     let text = read_zst_to_string(&output_path)?;
@@ -652,12 +657,12 @@ fn by_bed_total_handles_three_chromosomes() -> Result<()> {
         make_three_chrom_fixture("wps_three_chr_by_bed", &[(10, 22), (10, 22), (10, 22)])?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("three_chr_windows.bed");
-    write_bed(
+    write_bed4(
         &bed_path,
         &[
-            ("chr1", 0, 100, "chr1_window"),
-            ("chr2", 0, 100, "chr2_window"),
-            ("chr3", 0, 100, "chr3_window"),
+            Bed4Row::new("chr1", 0, 100, "chr1_window"),
+            Bed4Row::new("chr2", 0, 100, "chr2_window"),
+            Bed4Row::new("chr3", 0, 100, "chr3_window"),
         ],
     )?;
 
@@ -673,7 +678,7 @@ fn by_bed_total_handles_three_chromosomes() -> Result<()> {
     };
     cfg.per_window = Some(CoverageWindowAction::Total);
 
-    run_fn(&cfg)?;
+    run_wps_quiet(&cfg)?;
 
     let output_path = out_dir.path().join("three_chr_by_bed.wps.total.tsv.zst");
     let text = read_zst_to_string(&output_path)?;
@@ -693,18 +698,18 @@ fn by_bed_total_handles_three_chromosomes() -> Result<()> {
 
 #[test]
 fn by_bed_total_skips_chromosomes_without_windows_and_keeps_later_chromosomes() -> Result<()> {
-    let fixture = bam_from_specs(
+    let fixture = bam_from_fragments(
+        "wps_bed_skip_empty_chr",
         vec![("chr1".to_string(), 100), ("chr2".to_string(), 100)],
         vec![
             fragment_spec_on_tid(0, 10, 22),
             fragment_spec_on_tid(1, 10, 22),
         ],
         Vec::new(),
-        "wps_bed_skip_empty_chr",
     )?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("chr2_only_windows.bed");
-    write_bed(&bed_path, &[("chr2", 0, 100, "chr2_window")])?;
+    write_bed4(&bed_path, &[Bed4Row::new("chr2", 0, 100, "chr2_window")])?;
 
     let mut cfg = make_config(4, false, &fixture.bam, out_dir.path(), "chr2_only_by_bed");
     cfg.shared_args.chromosomes.chromosomes = Some(vec!["chr1".to_string(), "chr2".to_string()]);
@@ -718,7 +723,7 @@ fn by_bed_total_skips_chromosomes_without_windows_and_keeps_later_chromosomes() 
     // - chr1 has a fragment but no BED windows, so BED mode should skip that chromosome entirely.
     // - chr2 has one fragment [10, 22) and one BED window [0, 100). The single-fragment
     //   derivation used elsewhere in this file gives a total WPS sum of 4 over that whole window.
-    run_fn(&cfg)?;
+    run_wps_quiet(&cfg)?;
 
     let output_path = out_dir.path().join("chr2_only_by_bed.wps.total.tsv.zst");
     let text = read_zst_to_string(&output_path)?;

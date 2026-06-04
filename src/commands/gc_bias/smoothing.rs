@@ -21,7 +21,11 @@ use ndarray::Array2;
 /// -------
 /// - `Array2<f64>`:
 ///     Smoothed matrix with the same shape as `counts`.
-pub fn smoothe_counts_gaussian(counts: &Array2<f64>, sigma: f64, radius: usize) -> Array2<f64> {
+pub(crate) fn smoothe_counts_gaussian(
+    counts: &Array2<f64>,
+    sigma: f64,
+    radius: usize,
+) -> Array2<f64> {
     assert!(sigma > 0.0, "sigma must be positive");
     assert!(radius > 0, "radius must be > 0");
 
@@ -94,7 +98,7 @@ fn gaussian_kernel(radius: usize, sigma: f64) -> Vec<f64> {
 }
 
 /// Smooth a 1-D row in place with a clamped Gaussian kernel.
-pub fn smooth_row_in_place(row: &mut [f64], sigma: f64, radius: usize) -> Result<()> {
+pub(crate) fn smooth_row_in_place(row: &mut [f64], sigma: f64, radius: usize) -> Result<()> {
     ensure!(sigma > 0.0, "sigma must be positive");
     ensure!(radius > 0, "radius must be positive");
     if row.is_empty() {
@@ -120,7 +124,7 @@ pub fn smooth_row_in_place(row: &mut [f64], sigma: f64, radius: usize) -> Result
 }
 
 /// Slice the row for `length` from a flat counts buffer and smooth it in place.
-pub fn smooth_length_row_in_place(
+pub(crate) fn smooth_length_row_in_place(
     counts: &mut [f64],
     offsets: &[usize],
     length_min: usize,
@@ -154,4 +158,9 @@ fn reflect_index(i: isize, len: usize) -> usize {
     } else {
         i as usize
     }
+}
+
+#[cfg(test)]
+mod tests {
+    include!("smoothing_tests.rs");
 }
