@@ -305,6 +305,7 @@ where
 /// let trinuc_codes = &codes_by_k[&3];
 /// let dinuc_codes  = &codes_by_k[&2];
 /// ```
+#[cfg(feature = "cmd_fragment_kmers")]
 pub(crate) fn build_left_aligned_codes_per_k(
     seq: &[u8],
     specs: &FxHashMap<u8, KmerSpec>,

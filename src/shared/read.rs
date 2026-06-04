@@ -100,9 +100,12 @@ pub(crate) fn read_md_tag(rec: &Record) -> Option<String> {
 /// 5. At each new mismatch run, record the start position; on next number >0 or end, record the end position
 ///
 /// Returns empty vectors if no mismatches occur (purely numeric tag)
-#[expect(
-    dead_code,
-    reason = "kept for future mismatch-aware read and fragment filters"
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "kept for future mismatch-aware read and fragment filters"
+    )
 )]
 pub(crate) fn parse_md_tag(md_tag: &str, offset: u32) -> (Vec<u32>, Vec<u32>) {
     // These will hold the start and end positions of each mismatch run

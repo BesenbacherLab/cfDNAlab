@@ -42,6 +42,7 @@ pub mod scale_genome {
     };
 }
 
+#[cfg(feature = "cmd_gc_bias")]
 pub mod gc_bias {
     pub use crate::commands::gc_bias::correct::{
         GCCorrector, GCLengthRange, LengthAgnosticGCCorrector, MarginalizeLengthsWeightingScheme,

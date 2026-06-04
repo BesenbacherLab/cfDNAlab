@@ -44,7 +44,7 @@ jobs:
       - name: Generate downstream fixtures with cfDNAlab
         env:
           CFDNALAB_DOWNSTREAM_FIXTURE_DIR: downstream_tests/tmp
-        run: cargo test --no-default-features --features cmd_midpoints,cmd_ends,cmd_lengths --test generate_downstream_zarr_fixtures -- --ignored
+        run: cargo test --no-default-features --features cmd_midpoints,cmd_ends,cmd_lengths,testing --test generate_downstream_zarr_fixtures -- --ignored
 
       - name: Upload downstream fixtures
         uses: actions/upload-artifact@v4
