@@ -7,7 +7,7 @@ This is the changelog for the main CLI tool. You can find the changelog for the 
 
 <br />
 
-## Unreleased
+## cfDNAlab 0.3.0
 
 **BREAKING CHANGES**:
 
