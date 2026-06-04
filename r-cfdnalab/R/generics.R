@@ -101,12 +101,16 @@ length_bin_idx <- function(x, ...) {
   UseMethod("length_bin_idx")
 }
 
-#' Return end-motif metadata.
+#' Return end-motif column metadata.
+#'
+#' For ordinary end-motif stores, the `motif` column contains concrete motif
+#' labels. For grouped motifs-file output, the same column contains user-defined
+#' group names from the motif axis.
 #'
 #' @param x A cfDNAlab end-motif object.
 #' @param ... Reserved for future methods.
 #'
-#' @return A data frame with one row per motif.
+#' @return A data frame with one row per motif-axis label.
 #' @export
 motifs <- function(x, ...) {
   UseMethod("motifs")

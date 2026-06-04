@@ -55,3 +55,30 @@ def test_dask_reads_sparse_end_motif_coordinate_arrays(
         sparse_count.compute(),
         np.array([1.0, 1.0, 1.0], dtype=np.float64),
     )
+
+
+def test_dask_reads_selected_motif_sparse_end_motif_coordinate_arrays(
+    sparse_windowed_selected_motifs_end_zarr_path: Path,
+) -> None:
+    sparse_shape = da.from_zarr(
+        str(sparse_windowed_selected_motifs_end_zarr_path),
+        component="sparse/shape",
+    )
+    sparse_motif = da.from_zarr(
+        str(sparse_windowed_selected_motifs_end_zarr_path),
+        component="sparse/motif",
+    )
+    motif_ascii = da.from_zarr(
+        str(sparse_windowed_selected_motifs_end_zarr_path),
+        component="motif_ascii",
+    )
+
+    np.testing.assert_array_equal(
+        sparse_shape.compute(),
+        np.array([3, 2], dtype=np.int32),
+    )
+    np.testing.assert_array_equal(
+        sparse_motif.compute(),
+        np.array([1, 0, 1], dtype=np.int32),
+    )
+    assert motif_ascii.shape == (2, 5)

@@ -12,6 +12,11 @@ END_MOTIF_VALID_STORAGE_MODES <- c("dense", "sparse_coo")
 #' @noRd
 END_MOTIF_VALID_ROW_MODES <- c("global", "size", "bed", "grouped_bed")
 
+#' Supported end-motif column-axis kinds.
+#'
+#' @noRd
+END_MOTIF_VALID_AXIS_KINDS <- c("motif", "motif_group")
+
 #' Read cfDNAlab end-motif counts.
 #'
 #' Loads a `<prefix>.end_motifs.zarr` store created with the \code{cfdna ends}
@@ -47,22 +52,45 @@ read_end_motifs <- function(path) {
     END_MOTIF_VALID_ROW_MODES,
     "end-motif row mode"
   )
+  motif_axis_kind <- root_attributes$motif_axis_kind
+  if (is.null(motif_axis_kind)) {
+    if (!identical(as.integer(root_attributes$cfdnalab_schema_version), 1L)) {
+      stop("end-motif schema v2 stores must declare motif_axis_kind", call. = FALSE)
+    }
+    motif_axis_kind <- "motif"
+  }
+  motif_axis_kind <- cf_validate_allowed_string(
+    motif_axis_kind,
+    END_MOTIF_VALID_AXIS_KINDS,
+    "end-motif motif axis kind"
+  )
+
+  cf_reject_empty_end_motif_counts(path, storage_mode)
 
   store <- cf_open_zarr(path, "end-motif")
-  cf_required_arrays(store, cf_end_motif_required_arrays(storage_mode, row_mode), "End-motif")
+  cf_required_arrays(
+    store,
+    cf_end_motif_required_arrays(storage_mode, row_mode, motif_axis_kind),
+    "End-motif"
+  )
   cf_validate_dimension_names(path, "motif_index", "motif")
-  cf_validate_dimension_names(path, "motif_byte", "motif_byte")
-  cf_validate_dimension_names(path, "motif_ascii", c("motif", "motif_byte"))
   cf_validate_dimension_names(path, "row", "row")
 
   motif_axis <- cf_read_vector(store, "motif_index", "End-motif")
-  motif_byte <- cf_read_vector(store, "motif_byte", "End-motif")
   row <- cf_read_vector(store, "row", "End-motif")
-  motif_ascii <- cf_read_array(store, "motif_ascii", "End-motif")
-  motif <- cf_decode_motif_ascii(motif_ascii, length(motif_axis), length(motif_byte))
+  motif <- NULL
+  if (identical(motif_axis_kind, "motif")) {
+    cf_validate_dimension_names(path, "motif_byte", "motif_byte")
+    cf_validate_dimension_names(path, "motif_ascii", c("motif", "motif_byte"))
+    motif_byte <- cf_read_vector(store, "motif_byte", "End-motif")
+    motif_ascii <- cf_read_array(store, "motif_ascii", "End-motif")
+    motif <- cf_decode_motif_ascii(motif_ascii, length(motif_axis), length(motif_byte))
+    cf_validate_axis(motif_byte, "motif_byte")
+  } else {
+    motif <- cf_read_labels(path, "motif_index", "motif_group", length(motif_axis))
+  }
 
   cf_validate_axis(motif_axis, "motif_index")
-  cf_validate_axis(motif_byte, "motif_byte")
   cf_validate_axis(row, "row")
   if (identical(row_mode, "global") && length(row) != 1L) {
     stop("global end-motif stores must contain exactly one row", call. = FALSE)
@@ -131,6 +159,7 @@ read_end_motifs <- function(path) {
     root_attributes = root_attributes,
     storage_mode = storage_mode,
     row_mode = row_mode,
+    motif_axis_kind = motif_axis_kind,
     motif_idx0 = as.integer(motif_axis),
     motif = motif,
     row_idx0 = as.integer(row),
@@ -157,11 +186,15 @@ read_end_motifs <- function(path) {
 #'
 #' @param storage_mode End-motif storage mode.
 #' @param row_mode End-motif row mode.
+#' @param motif_axis_kind End-motif column-axis kind.
 #'
 #' @return Character vector of required array paths.
 #' @noRd
-cf_end_motif_required_arrays <- function(storage_mode, row_mode) {
-  required <- c("motif_index", "motif_byte", "motif_ascii", "row")
+cf_end_motif_required_arrays <- function(storage_mode, row_mode, motif_axis_kind) {
+  required <- c("motif_index", "row")
+  if (identical(motif_axis_kind, "motif")) {
+    required <- c(required, "motif_byte", "motif_ascii")
+  }
   if (identical(storage_mode, "dense")) {
     required <- c(required, "counts")
   } else {
@@ -187,6 +220,85 @@ cf_end_motif_required_arrays <- function(storage_mode, row_mode) {
     required <- c(required, "group", "eligible_windows", "blacklisted_fraction")
   }
   required
+}
+
+#' Reject sparse stores without count entries before opening the Zarr hierarchy.
+#'
+#' The CRAN `zarr` reader rejects zero-length array dimensions while opening a
+#' store. Sparse end-motif stores with no observed counts therefore need a
+#' schema-level error before `zarr::open_zarr()` constructs every array node.
+#'
+#' @param path Path to an end-motif Zarr store.
+#' @param storage_mode End-motif storage mode.
+#'
+#' @return Invisibly returns `TRUE` when count arrays are non-empty.
+#' @noRd
+cf_reject_empty_end_motif_counts <- function(path, storage_mode) {
+  motif_shape <- cf_zarr_array_metadata_shape(path, "motif_index")
+  if (!is.null(motif_shape) && length(motif_shape) >= 1L && motif_shape[[1L]] == 0L) {
+    cf_stop_no_end_motif_counts_available()
+  }
+
+  if (identical(storage_mode, "sparse_coo")) {
+    sparse_count_shape <- cf_zarr_array_metadata_shape(path, "sparse/count")
+    if (
+      !is.null(sparse_count_shape) &&
+        length(sparse_count_shape) >= 1L &&
+        sparse_count_shape[[1L]] == 0L
+    ) {
+      cf_stop_no_end_motif_counts_available()
+    }
+  }
+
+  invisible(TRUE)
+}
+
+#' Return the raw metadata shape for one Zarr array.
+#'
+#' Missing arrays are left to the normal required-array validation. This helper
+#' only exists to catch valid-but-empty sparse stores before `zarr::open_zarr()`
+#' raises a generic shape error.
+#'
+#' @param path Path to a Zarr store.
+#' @param array_name Slash-separated array path within the store.
+#'
+#' @return Integer shape vector, or `NULL` when the array metadata is absent.
+#' @noRd
+cf_zarr_array_metadata_shape <- function(path, array_name) {
+  metadata_path <- do.call(
+    file.path,
+    as.list(c(path, strsplit(array_name, "/", fixed = TRUE)[[1L]], "zarr.json"))
+  )
+  if (!file.exists(metadata_path)) {
+    return(NULL)
+  }
+
+  metadata <- cf_read_json_file(metadata_path)
+  shape <- unlist(metadata$shape, use.names = FALSE)
+  if (
+    !is.numeric(shape) ||
+      any(is.na(shape)) ||
+      any(!is.finite(shape)) ||
+      any(shape != floor(shape)) ||
+      any(shape > .Machine$integer.max) ||
+      any(shape < 0)
+  ) {
+    stop(array_name, " metadata shape must be a non-negative integer vector", call. = FALSE)
+  }
+  as.integer(shape)
+}
+
+#' Raise the public no-counts error for end-motif stores.
+#'
+#' @return Never returns.
+#' @noRd
+cf_stop_no_end_motif_counts_available <- function() {
+  stop(
+    "No end-motif counts are available in this store. ",
+    "If you expected motifs or groups from `--motifs-file` with zero counts to remain in the output, ",
+    "rerun `cfdna ends` with `--all-motifs`.",
+    call. = FALSE
+  )
 }
 
 #' Read end-motif row metadata.

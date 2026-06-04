@@ -22,11 +22,35 @@ sparse_windowed_end_zarr_path <- function() {
   )
 }
 
+sparse_windowed_selected_motifs_end_zarr_path <- function() {
+  fixture_path(
+    "CFDNALAB_ENDS_SPARSE_WINDOWED_SELECTED_MOTIFS_ZARR",
+    "tiny_sparse_windowed_selected_motifs.end_motifs.zarr",
+    "sparse windowed selected-motifs end-motif"
+  )
+}
+
 sparse_grouped_end_zarr_path <- function() {
   fixture_path(
     "CFDNALAB_ENDS_SPARSE_GROUPED_ZARR",
     "tiny_sparse_grouped.end_motifs.zarr",
     "sparse grouped end-motif"
+  )
+}
+
+sparse_grouped_motif_group_end_zarr_path <- function() {
+  fixture_path(
+    "CFDNALAB_ENDS_SPARSE_GROUPED_MOTIF_GROUP_ZARR",
+    "tiny_sparse_grouped_motif_groups.end_motifs.zarr",
+    "sparse grouped motif-group end-motif"
+  )
+}
+
+sparse_grouped_wide_motif_group_end_zarr_path <- function() {
+  fixture_path(
+    "CFDNALAB_ENDS_SPARSE_GROUPED_WIDE_MOTIF_GROUP_ZARR",
+    "tiny_sparse_grouped_wide_motif_groups.end_motifs.zarr",
+    "sparse grouped wide motif-group end-motif"
   )
 }
 

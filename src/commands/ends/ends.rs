@@ -10,19 +10,26 @@ use crate::{
         ends::{
             config::EndsConfig,
             config_structs::{ClipStrategy, KmerSource, WindowMotifAssigner},
-            counting::{EndCountsByWindow, decode_end_motif_counts},
+            counting::{
+                EndCountsByWindow, EndMotifColumnKind, EndMotifHalfSpec, SelectedEndCountsByWindow,
+                SelectedEndMotifLookup, decode_end_motif_counts,
+            },
             motifs::{
                 CountedEndFlags, build_optional_kmer_spec, build_tile_motif_context,
-                count_fragment_in_window, motif_extraction_ref_2bit_requirement_message,
-                motif_extraction_requires_reference, motif_reference_span_for_tile,
+                count_fragment_in_window, count_selected_fragment_in_window,
+                motif_extraction_ref_2bit_requirement_message, motif_extraction_requires_reference,
+                motif_reference_span_for_tile,
             },
+            motifs_file::{parse_selected_end_motifs_file, postprocess_selected_end_motif_counts},
             output::{
                 build_all_end_motif_order, collect_end_motif_order,
                 ensure_all_motifs_enumeration_size, ensure_dense_end_motif_output_size,
             },
             tiling::{
-                TileResult, build_tile_payload, deserialize_tile_counts, merge_tile_payload,
-                serialize_tile_counts,
+                TileResult, build_selected_tile_count_records, build_tile_count_records,
+                deserialize_selected_tile_counts, deserialize_tile_counts,
+                merge_selected_tile_count_records, merge_tile_count_records,
+                serialize_selected_tile_counts, serialize_tile_counts,
             },
             write::write_end_settings_json,
             zarr::{
@@ -120,6 +127,34 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     }
     if opt.k_inside == 0 && opt.k_outside == 0 {
         bail!("At least one of --k-inside or --k-outside must be > 0");
+    }
+    if opt.k_inside > opt.fragment_lengths.max_fragment_length as usize {
+        bail!(
+            "`--k-inside` ({}) cannot exceed `--max-fragment-length` ({}). Inside motifs are defined from bases inside the selected fragment span, so increase `--max-fragment-length` or use a shorter inside motif.",
+            opt.k_inside,
+            opt.fragment_lengths.max_fragment_length
+        );
+    }
+    let selected_motifs = match opt.motifs_file.as_deref() {
+        None => None,
+        Some(motifs_file) => {
+            ensure!(
+                !opt.collapse_complement,
+                "`--motifs-file` cannot be combined with `--collapse-complement`. Use the motifs file group column to define collapsed targets."
+            );
+            Some(parse_selected_end_motifs_file(
+                motifs_file,
+                opt.k_inside,
+                opt.k_outside,
+            )?)
+        }
+    };
+    if let Some(selected_motifs) = selected_motifs.as_ref() {
+        info!(
+            target: COMMAND_TARGET,
+            "Loaded {} selected end motif target(s)",
+            selected_motifs.labels.len()
+        );
     }
     if !opt.bq_filter.is_empty() {
         if opt.k_inside == 0 {
@@ -309,8 +344,37 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     let mut final_outputs = FinalOutputFiles::new(temp_dir)?;
 
     let counts_prefix = &dot_join(&[prefix, "counts"]);
-    let inside_spec = build_optional_kmer_spec(opt.k_inside, "inside")?;
-    let outside_spec = build_optional_kmer_spec(opt.k_outside, "outside")?;
+
+    // Final sparse output decodes observed radix-5 motif keys into strings. Motifs-file output
+    // uses public labels from the file, so these are intentionally `None` when `--motifs-file` is
+    // used.
+    let (inside_decode_spec, outside_decode_spec) = if selected_motifs.is_none() {
+        (
+            build_optional_kmer_spec(opt.k_inside, "inside")?,
+            build_optional_kmer_spec(opt.k_outside, "outside")?,
+        )
+    } else {
+        (None, None)
+    };
+
+    // Tile counting needs an encoder for each enabled motif half. Without a motifs file this is
+    // always the full radix-5 codec. With a motifs file, halves up to the radix-5 limit still use
+    // full radix-5 codes, while larger halves use byte-backed selected subspaces. Cloning
+    // `EndMotifHalfSpec` only clones Arc handles to codec metadata, never per-tile reference-code
+    // arrays.
+    let (inside_counting_spec, outside_counting_spec) = match selected_motifs.as_ref() {
+        Some(lookup) => (lookup.inside_spec.clone(), lookup.outside_spec.clone()),
+        None => (
+            inside_decode_spec
+                .as_ref()
+                .cloned()
+                .map(EndMotifHalfSpec::from_radix5),
+            outside_decode_spec
+                .as_ref()
+                .cloned()
+                .map(EndMotifHalfSpec::from_radix5),
+        ),
+    };
 
     info!(target: COMMAND_TARGET, "Counting per tile");
 
@@ -336,7 +400,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
             // `find_overlapping_windows` reports chromosome-local indices. `process_tile` needs the
-            // chromosome-specific offset so it can emit globally stable window ids into tile payloads.
+            // chromosome-specific offset so it can write globally stable window ids in tile count records.
             let chr_window_idx_offset = *chr_offsets_for_threads.get(&tile.chr).unwrap_or(&0);
 
             let tile_result = process_tile(
@@ -353,8 +417,9 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
                 temp_dir,
                 counts_prefix,
                 &temp_chrom_name_map,
-                inside_spec.as_ref(),
-                outside_spec.as_ref(),
+                inside_counting_spec.as_ref(),
+                outside_counting_spec.as_ref(),
+                selected_motifs.as_ref(),
             )?;
             pb.inc(1);
             Ok(tile_result)
@@ -370,7 +435,10 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     drop(chr_offsets_for_threads);
     drop(tile_window_spans_for_threads);
     drop(tile_window_spans);
+    drop(indexed_windows_map);
     drop(tiles);
+    drop(inside_counting_spec);
+    drop(outside_counting_spec);
     drop(scaling_map);
     drop(gc_corrector);
 
@@ -378,51 +446,6 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     let mut global_counter = EndsCounters::default();
     for tile_out in &tile_results {
         global_counter += tile_out.counter;
-    }
-
-    info!(target: COMMAND_TARGET, "Reducing temporary tile files");
-
-    // Start from an all-empty output matrix shape, then fill only the windows that were actually
-    // observed in the reduced sparse payloads.
-    let mut all_bins = vec![FxHashMap::default(); total_windows as usize];
-    let mut reduced_counts: EndCountsByWindow = FxHashMap::default();
-    for tile_result in &tile_results {
-        merge_tile_payload(
-            &mut reduced_counts,
-            deserialize_tile_counts(&tile_result.counts_path)?,
-        )?;
-    }
-
-    // Decode each populated window independently. This is an easy parallel boundary because the
-    // windows no longer interact after tile reduction; we only need a final serial pass to place
-    // each decoded map into its global output row.
-    let decoded_bins: Vec<(usize, FxHashMap<String, f64>)> = reduced_counts
-        .into_par_iter()
-        .map(
-            |(original_idx, counts)| -> Result<(usize, FxHashMap<String, f64>)> {
-                let decoded = decode_end_motif_counts(
-                    &counts,
-                    inside_spec.as_ref(),
-                    outside_spec.as_ref(),
-                    opt.collapse_complement,
-                );
-                let idx: usize = original_idx
-                    .try_into()
-                    .context("window index does not fit in usize")?;
-                Ok((idx, decoded))
-            },
-        )
-        .collect::<Result<_>>()?;
-
-    for (idx, decoded) in decoded_bins {
-        if idx >= all_bins.len() {
-            bail!(
-                "reduced window index {} is out of bounds for {} output windows",
-                idx,
-                all_bins.len()
-            );
-        }
-        all_bins[idx] = decoded;
     }
 
     let bin_info = if matches!(&window_opt, DistributionWindowSpec::GroupedBed(_)) {
@@ -437,24 +460,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
             chr_offsets.as_ref(),
         )?
     };
-    // `all_motifs` switches the final output from "observed motifs only" to a dense fixed motif
-    // universe. The dense size checks happen before we allocate or enumerate that full universe.
-    if opt.all_motifs {
-        ensure_all_motifs_enumeration_size(opt.k_inside, opt.k_outside, all_bins.len())?;
-    }
-    let motif_order = if opt.all_motifs {
-        build_all_end_motif_order(
-            inside_spec.as_ref(),
-            outside_spec.as_ref(),
-            opt.collapse_complement,
-        )?
-    } else {
-        collect_end_motif_order(&all_bins)
-    };
-    let write_dense_output = opt.all_motifs;
-    if write_dense_output {
-        ensure_dense_end_motif_output_size(all_bins.len(), motif_order.len())?;
-    }
+    drop(windows_map);
 
     let row_metadata = match &window_opt {
         DistributionWindowSpec::Global => EndMotifRowMetadata::Global,
@@ -484,18 +490,145 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
 
     // Write every final output to the temp directory before moving any of them into place
     // This keeps failed writes from leaving a mix of old and new final files
-    let temp_motif_output_path = write_end_motif_zarr(
-        final_outputs.temp_dir(),
-        prefix,
-        &all_bins,
-        &motif_order,
-        row_metadata,
-        write_dense_output,
-    )?;
+    info!(target: COMMAND_TARGET, "Reducing temporary tile files");
+    let temp_motif_output_path = match selected_motifs.as_ref() {
+        None => {
+            // Start from an all-empty output matrix shape, then fill only the windows that were
+            // actually observed in the reduced sparse tile counts.
+            let mut label_bins = vec![FxHashMap::default(); total_windows as usize];
+            let mut reduced_counts: EndCountsByWindow = FxHashMap::default();
+            for tile_result in &tile_results {
+                merge_tile_count_records(
+                    &mut reduced_counts,
+                    deserialize_tile_counts(&tile_result.counts_path)?,
+                )?;
+            }
+
+            // Decode each populated window independently. This is an easy parallel boundary because the
+            // windows no longer interact after tile reduction; we only need a final serial pass to place
+            // each decoded map into its global output row.
+            let decoded_bins: Vec<(usize, FxHashMap<String, f64>)> = reduced_counts
+                .into_par_iter()
+                .map(
+                    |(original_idx, counts)| -> Result<(usize, FxHashMap<String, f64>)> {
+                        let decoded = decode_end_motif_counts(
+                            &counts,
+                            inside_decode_spec.as_ref(),
+                            outside_decode_spec.as_ref(),
+                            opt.collapse_complement,
+                        );
+                        let idx: usize = original_idx
+                            .try_into()
+                            .context("window index does not fit in usize")?;
+                        Ok((idx, decoded))
+                    },
+                )
+                .collect::<Result<_>>()?;
+
+            for (idx, decoded) in decoded_bins {
+                if idx >= label_bins.len() {
+                    bail!(
+                        "reduced window index {} is out of bounds for {} output windows",
+                        idx,
+                        label_bins.len()
+                    );
+                }
+                label_bins[idx] = decoded;
+            }
+
+            // `all_motifs` switches the final output from "observed motifs only" to a dense fixed motif
+            // universe. The dense size checks happen before we allocate or enumerate that full universe.
+            if opt.all_motifs {
+                ensure_all_motifs_enumeration_size(opt.k_inside, opt.k_outside, label_bins.len())?;
+            }
+            let motif_order = if opt.all_motifs {
+                build_all_end_motif_order(
+                    inside_decode_spec.as_ref(),
+                    outside_decode_spec.as_ref(),
+                    opt.collapse_complement,
+                )?
+            } else {
+                collect_end_motif_order(&label_bins)
+            };
+            let write_dense_output = opt.all_motifs;
+            if write_dense_output {
+                ensure_dense_end_motif_output_size(label_bins.len(), motif_order.len())?;
+            }
+
+            let motif_columns: FxHashMap<&str, u32> = motif_order
+                .iter()
+                .enumerate()
+                .map(|(column_idx, motif)| {
+                    Ok((
+                        motif.as_str(),
+                        u32::try_from(column_idx)
+                            .context("end-motif output column index does not fit in u32")?,
+                    ))
+                })
+                .collect::<Result<_>>()?;
+            let indexed_bins: Vec<FxHashMap<u32, f64>> = label_bins
+                .into_iter()
+                .map(|bin| {
+                    let mut indexed_bin = FxHashMap::default();
+                    for (motif, count) in bin {
+                        let column_idx =
+                            motif_columns
+                                .get(motif.as_str())
+                                .copied()
+                                .with_context(|| {
+                                    format!("missing output column for end-motif label '{motif}'")
+                                })?;
+                        indexed_bin.insert(column_idx, count);
+                    }
+                    Ok(indexed_bin)
+                })
+                .collect::<Result<_>>()?;
+
+            write_end_motif_zarr(
+                final_outputs.temp_dir(),
+                prefix,
+                &indexed_bins,
+                &motif_order,
+                EndMotifColumnKind::Motif,
+                row_metadata,
+                write_dense_output,
+            )?
+        }
+        Some(lookup) => {
+            let mut reduced_counts: SelectedEndCountsByWindow = FxHashMap::default();
+            for tile_result in &tile_results {
+                merge_selected_tile_count_records(
+                    &mut reduced_counts,
+                    deserialize_selected_tile_counts(&tile_result.counts_path)?,
+                )?;
+            }
+            let (indexed_bins, motif_order) = postprocess_selected_end_motif_counts(
+                reduced_counts,
+                total_windows as usize,
+                lookup,
+                opt.all_motifs,
+            )?;
+
+            write_end_motif_zarr(
+                final_outputs.temp_dir(),
+                prefix,
+                &indexed_bins,
+                &motif_order,
+                lookup.column_kind,
+                row_metadata,
+                opt.all_motifs,
+            )?
+        }
+    };
     final_outputs
         .record_temp_files_with_same_names_in([temp_motif_output_path], &opt.ioc.output_dir)?;
 
-    let temp_settings_path = write_end_settings_json(final_outputs.temp_dir(), prefix, opt)?;
+    let temp_settings_path = write_end_settings_json(
+        final_outputs.temp_dir(),
+        prefix,
+        opt,
+        selected_motifs.as_ref().map(|lookup| lookup.column_kind),
+    )?;
     let settings_file_name = temp_settings_path.file_name().with_context(|| {
         format!(
             "temporary output path has no filename: {}",
@@ -601,7 +734,7 @@ fn record_counted_fragment_stats(counter: &mut EndsCounters, counted_end_flags: 
     }
 }
 
-/// Count all end motifs owned by one tile and write its sparse payload to disk.
+/// Count all end motifs owned by one tile and write its sparse count records to disk.
 ///
 /// This function does the tile-local heavy lifting for `ends`: it streams
 /// fragments from BAM, applies fragment-level filters and weights, assigns each
@@ -631,9 +764,9 @@ fn record_counted_fragment_stats(counter: &mut EndsCounters, counted_end_flags: 
 /// - `include_at_shifted_boundary_gc_length_warning_issued`:
 ///   Shared guard that allows at most one aligned-GC length warning per run
 /// - `temp_dir`:
-///   Temporary directory for tile payloads
+///   Temporary directory for tile count files
 /// - `counts_prefix`:
-///   Prefix used when naming serialized tile payloads
+///   Prefix used when naming serialized tile count files
 /// - `inside_spec`:
 ///   Shared codec spec for the inside half, or `None` when `k_inside = 0`
 /// - `outside_spec`:
@@ -657,8 +790,9 @@ fn process_tile(
     temp_dir: &Path,
     counts_prefix: &str,
     temp_chrom_name_map: &TempChromNameMap,
-    inside_spec: Option<&crate::shared::kmers::kmer_codec::KmerSpec>,
-    outside_spec: Option<&crate::shared::kmers::kmer_codec::KmerSpec>,
+    inside_spec: Option<&crate::commands::ends::counting::EndMotifHalfSpec>,
+    outside_spec: Option<&crate::commands::ends::counting::EndMotifHalfSpec>,
+    selected_motifs: Option<&SelectedEndMotifLookup>,
 ) -> Result<Option<TileResult>> {
     let fetch_window_opt = window_opt.as_fetch_window_spec();
     // One BAM reader per tile
@@ -741,6 +875,7 @@ fn process_tile(
         .context(format!("fetch {} {}-{}", &tile.chr, fetch_from, fetch_to))?;
 
     let mut counts_by_window: EndCountsByWindow = FxHashMap::default();
+    let mut selected_counts_by_window: SelectedEndCountsByWindow = FxHashMap::default();
 
     // Fraction of a fragment that must overlap with a window to consider that window as a
     // candidate. Endpoint mode still uses the fragment assignment interval here; the actual
@@ -761,12 +896,12 @@ fn process_tile(
     // uses `OverlappingWindow.idx` to index that same slice and recover the matching scaling
     // bins for a fragment.
     //
-    // That index comes from the overlap finder's BED-mode scan, not from the payload stored
+    // That index comes from the overlap finder's BED-mode scan, not from the index stored
     // inside each `IndexedInterval`. `find_overlapping_windows(...)` walks the supplied
     // interval slice and reports the matching slice position as `OverlappingWindow.idx`.
     //
     // This temporary vector therefore only needs valid interval coordinates. Its
-    // `IndexedInterval.idx` payload is not part of the lookup path, so each entry can carry
+    // `IndexedInterval.idx` value is not part of the lookup path, so each entry can carry
     // the same placeholder value without changing which scaling bin is selected later.
     let scaling_with_bin_idx: Vec<IndexedInterval<u64>> = scaling_chr
         .iter()
@@ -1049,16 +1184,30 @@ fn process_tile(
                 let count_weight = window_scaling.overlap_fraction_to_count
                     * window_scaling.scaling_weight
                     * gc_weight;
-                counted_end_flags.merge(count_fragment_in_window(
-                    &mut counts_by_window,
-                    original_idx,
-                    window_scaling.window_interval,
-                    &fragment,
-                    count_weight,
-                    &motif_context,
-                    opt.source_inside,
-                    opt.window_assignment.assign_by,
-                )?);
+                let counted = match selected_motifs {
+                    None => count_fragment_in_window(
+                        &mut counts_by_window,
+                        original_idx,
+                        window_scaling.window_interval,
+                        &fragment,
+                        count_weight,
+                        &motif_context,
+                        opt.source_inside,
+                        opt.window_assignment.assign_by,
+                    )?,
+                    Some(lookup) => count_selected_fragment_in_window(
+                        &mut selected_counts_by_window,
+                        lookup,
+                        original_idx,
+                        window_scaling.window_interval,
+                        &fragment,
+                        count_weight,
+                        &motif_context,
+                        opt.source_inside,
+                        opt.window_assignment.assign_by,
+                    )?,
+                };
+                counted_end_flags.merge(counted);
             }
         } else {
             // Without genomic scaling, each candidate window gets either weight 1.0 or the raw
@@ -1069,16 +1218,30 @@ fn process_tile(
                     WindowMotifAssigner::CountOverlap => overlapped_window.overlap_fraction,
                     _ => 1.0f64,
                 } * gc_weight;
-                counted_end_flags.merge(count_fragment_in_window(
-                    &mut counts_by_window,
-                    original_idx,
-                    overlapped_window.interval,
-                    &fragment,
-                    count_weight,
-                    &motif_context,
-                    opt.source_inside,
-                    opt.window_assignment.assign_by,
-                )?);
+                let counted = match selected_motifs {
+                    None => count_fragment_in_window(
+                        &mut counts_by_window,
+                        original_idx,
+                        overlapped_window.interval,
+                        &fragment,
+                        count_weight,
+                        &motif_context,
+                        opt.source_inside,
+                        opt.window_assignment.assign_by,
+                    )?,
+                    Some(lookup) => count_selected_fragment_in_window(
+                        &mut selected_counts_by_window,
+                        lookup,
+                        original_idx,
+                        overlapped_window.interval,
+                        &fragment,
+                        count_weight,
+                        &motif_context,
+                        opt.source_inside,
+                        opt.window_assignment.assign_by,
+                    )?,
+                };
+                counted_end_flags.merge(counted);
             }
         }
 
@@ -1088,8 +1251,13 @@ fn process_tile(
     // Get counters from iterator
     counter.add_from_snapshot(iter.counters_snapshot());
 
-    let payload = build_tile_payload(counts_by_window);
-    serialize_tile_counts(&counts_path, &payload)?;
+    if selected_motifs.is_some() {
+        let count_records = build_selected_tile_count_records(selected_counts_by_window);
+        serialize_selected_tile_counts(&counts_path, &count_records)?;
+    } else {
+        let count_records = build_tile_count_records(counts_by_window);
+        serialize_tile_counts(&counts_path, &count_records)?;
+    }
 
     Ok(Some(TileResult {
         chr: tile.chr.clone(),

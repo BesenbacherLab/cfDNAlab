@@ -91,9 +91,7 @@ fn apply_base_quality_filters_distinguishes_min_mean_and_max_for_end_filters() {
     let (kept_left_end, kept_right_end) = mean_result.expect("mean filter should keep the end");
     assert!(kept_right_end.is_none());
     let kept_left_end = kept_left_end.expect("left end should stay present");
-    let original_left_end = left_end
-        .clone()
-        .expect("fixture should contain a left end");
+    let original_left_end = left_end.clone().expect("fixture should contain a left end");
     assert_eq!(kept_left_end.boundary_pos, original_left_end.boundary_pos);
     assert_eq!(kept_left_end.inside_bases, original_left_end.inside_bases);
     assert_eq!(
@@ -196,7 +194,7 @@ fn fragment_scope_filters_run_before_end_scope_filters_remove_failing_ends() {
 
 #[test]
 fn apply_base_quality_filters_drop_the_fragment_when_fragment_scope_passes_but_both_end_filters_fail()
-{
+ {
     // Arrange: both ends have quality 20.
     //
     // Mental derivation:
@@ -294,9 +292,7 @@ fn fragment_scope_filters_distinguish_min_mean_and_max_for_k_inside_gt_one() {
         mean_result.expect("mean fragment filter should keep both ends");
     let kept_left_end = kept_left_end.expect("left end should stay present");
     let kept_right_end = kept_right_end.expect("right end should stay present");
-    let original_left_end = left_end
-        .clone()
-        .expect("fixture should contain a left end");
+    let original_left_end = left_end.clone().expect("fixture should contain a left end");
     let original_right_end = right_end
         .clone()
         .expect("fixture should contain a right end");
@@ -586,6 +582,75 @@ fn inside_slice_bounds_return_none_when_the_requested_inside_span_does_not_fit()
         ),
         None
     );
+}
+
+#[test]
+fn resolve_fragment_end_does_not_require_read_bases_for_reference_backed_inside_motifs() {
+    // Arrange: the read is only 10 bp long, but the requested inside motif is 30 bp. Read-backed
+    // inside motifs cannot be sliced from this read. Reference-backed inside motifs should still
+    // keep the end, because the inside bases will be loaded from the reference during motif
+    // encoding.
+    let read = base_read_info(&[40; 10]);
+    let k_inside = 30;
+
+    // Act
+    let read_backed_left = resolve_fragment_end(
+        &read,
+        FragmentEndSide::Left,
+        ClipStrategy::Aligned,
+        KmerSource::Read,
+        IndelMotifFilterPolicy::Auto,
+        k_inside,
+        0,
+    );
+    let reference_backed_left = resolve_fragment_end(
+        &read,
+        FragmentEndSide::Left,
+        ClipStrategy::Aligned,
+        KmerSource::Reference,
+        IndelMotifFilterPolicy::Auto,
+        k_inside,
+        0,
+    );
+    let reference_backed_right = resolve_fragment_end(
+        &read,
+        FragmentEndSide::Right,
+        ClipStrategy::Aligned,
+        KmerSource::Reference,
+        IndelMotifFilterPolicy::Auto,
+        k_inside,
+        0,
+    );
+
+    // Assert
+    assert!(matches!(
+        read_backed_left,
+        ResolvedEndOutcome::SkipEndDropAssignmentBoundary
+    ));
+
+    let ResolvedEndOutcome::KeepEnd {
+        assignment_boundary_pos,
+        end,
+    } = reference_backed_left
+    else {
+        panic!("reference-backed left end should be kept");
+    };
+    assert_eq!(assignment_boundary_pos, read.start());
+    assert_eq!(end.boundary_pos, read.start());
+    assert!(end.inside_bases.is_empty());
+    assert_eq!(end.inside_reference_validation_bp, k_inside);
+
+    let ResolvedEndOutcome::KeepEnd {
+        assignment_boundary_pos,
+        end,
+    } = reference_backed_right
+    else {
+        panic!("reference-backed right end should be kept");
+    };
+    assert_eq!(assignment_boundary_pos, read.end());
+    assert_eq!(end.boundary_pos, read.end());
+    assert!(end.inside_bases.is_empty());
+    assert_eq!(end.inside_reference_validation_bp, k_inside);
 }
 
 #[test]

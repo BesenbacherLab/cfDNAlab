@@ -142,7 +142,7 @@ pub fn write_category_sparse(
 
 /// Write SciPy-compatible COO matrix to explicit output paths.
 ///
-/// This is the same sparse COO payload as [`write_category_sparse`], but it lets callers choose
+/// This is the same sparse COO data layout as [`write_category_sparse`], but it lets callers choose
 /// filenames instead of going through the shared `<prefix>_...` convention.
 pub fn write_category_sparse_with_paths(
     bins: &[FxHashMap<String, f64>],

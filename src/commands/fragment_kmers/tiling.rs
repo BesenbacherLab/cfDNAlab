@@ -92,11 +92,11 @@ impl From<(CountKey, f64)> for TileKmerCountEntry {
 }
 
 /// Persist per-tile k-mer counts so they can be merged after parallel tile processing.
-pub fn serialize_tile_counts(path: &Path, payload: &[TileWindowCounts]) -> Result<()> {
+pub fn serialize_tile_counts(path: &Path, count_records: &[TileWindowCounts]) -> Result<()> {
     let file = File::create(path)
         .with_context(|| format!("creating tile counts file: {}", path.display()))?;
     let mut writer = BufWriter::with_capacity(512 * 1024, file);
-    encode_into_std_write(payload, &mut writer, standard())
+    encode_into_std_write(count_records, &mut writer, standard())
         .with_context(|| format!("serialising tile counts to {}", path.display()))?;
     writer.flush().with_context(|| {
         format!(
@@ -122,10 +122,10 @@ pub struct TileResult {
     pub counter: FragmentKmersCounters,
 }
 
-/// Reduce per-tile count payloads into a dense vector aligned with the global window order.
+/// Reduce per-tile count records into a dense vector aligned with the global window order.
 #[cfg_attr(not(test), doc(hidden))]
 pub fn merge_tile_counts<I>(
-    payloads: I,
+    tile_count_batches: I,
     total_windows: usize,
     kmer_specs: &FxHashMap<u8, KmerSpec>,
 ) -> Result<Vec<DecodedCounts>>
@@ -134,8 +134,8 @@ where
 {
     let mut aggregated_counts: FxHashMap<u64, FxHashMap<CountKey, f64>> = FxHashMap::default();
 
-    for payload in payloads {
-        for window_counts in payload {
+    for tile_count_records in tile_count_batches {
+        for window_counts in tile_count_records {
             let entry = aggregated_counts
                 .entry(window_counts.original_idx)
                 .or_default();
@@ -182,7 +182,7 @@ where
 
 #[cfg_attr(not(test), doc(hidden))]
 pub fn merge_tile_counts_positional<I>(
-    payloads: I,
+    tile_count_batches: I,
     total_windows: usize,
 ) -> Result<Vec<FxHashMap<PositionDescriptor, FxHashMap<Kmer, f64>>>>
 where
@@ -190,8 +190,8 @@ where
 {
     let mut aggregated_counts: FxHashMap<u64, FxHashMap<CountKey, f64>> = FxHashMap::default();
 
-    for payload in payloads {
-        for window_counts in payload {
+    for tile_count_records in tile_count_batches {
+        for window_counts in tile_count_records {
             let entry = aggregated_counts
                 .entry(window_counts.original_idx)
                 .or_default();
@@ -247,10 +247,10 @@ pub fn reduce_chromosome_tile_results(
         let Some(path) = tile_result.counts_path else {
             continue;
         };
-        let tile_payload = deserialize_tile_counts(&path)?;
+        let tile_count_records = deserialize_tile_counts(&path)?;
         let _ = fs::remove_file(&path);
 
-        for window_counts in tile_payload {
+        for window_counts in tile_count_records {
             let entry = aggregated.entry(window_counts.original_idx).or_default();
             for count in window_counts.entries {
                 let key = CountKey::from(&count);

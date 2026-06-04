@@ -34,11 +34,38 @@ def sparse_windowed_end_zarr_path() -> Path:
 
 
 @pytest.fixture(scope="session")
+def sparse_windowed_selected_motifs_end_zarr_path() -> Path:
+    return _fixture_path(
+        "CFDNALAB_ENDS_SPARSE_WINDOWED_SELECTED_MOTIFS_ZARR",
+        "tiny_sparse_windowed_selected_motifs.end_motifs.zarr",
+        "sparse windowed selected-motifs end-motif",
+    )
+
+
+@pytest.fixture(scope="session")
 def sparse_grouped_end_zarr_path() -> Path:
     return _fixture_path(
         "CFDNALAB_ENDS_SPARSE_GROUPED_ZARR",
         "tiny_sparse_grouped.end_motifs.zarr",
         "sparse grouped end-motif",
+    )
+
+
+@pytest.fixture(scope="session")
+def sparse_grouped_motif_group_end_zarr_path() -> Path:
+    return _fixture_path(
+        "CFDNALAB_ENDS_SPARSE_GROUPED_MOTIF_GROUP_ZARR",
+        "tiny_sparse_grouped_motif_groups.end_motifs.zarr",
+        "sparse grouped motif-group end-motif",
+    )
+
+
+@pytest.fixture(scope="session")
+def sparse_grouped_wide_motif_group_end_zarr_path() -> Path:
+    return _fixture_path(
+        "CFDNALAB_ENDS_SPARSE_GROUPED_WIDE_MOTIF_GROUP_ZARR",
+        "tiny_sparse_grouped_wide_motif_groups.end_motifs.zarr",
+        "sparse grouped wide motif-group end-motif",
     )
 
 

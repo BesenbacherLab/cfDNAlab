@@ -680,11 +680,11 @@ mod tests_window_results {
                 assert_eq!(results[0].original_idx(), 0);
                 match results[0].value {
                     WindowValue::Average(v) => assert!(deq_f32(v, 1.0, 1e-6)),
-                    _ => return Err(anyhow!("unexpected payload for Average")),
+                    _ => return Err(anyhow!("unexpected window value for Average")),
                 }
                 match results[1].value {
                     WindowValue::Average(v) => assert!(deq_f32(v, 1.0, 1e-6)),
-                    _ => return Err(anyhow!("unexpected payload for Average")),
+                    _ => return Err(anyhow!("unexpected window value for Average")),
                 }
             }
             _ => return Err(anyhow!("expected PerWindow output")),
@@ -708,11 +708,11 @@ mod tests_window_results {
                 assert_eq!(results.len(), 2);
                 match results[0].value {
                     WindowValue::Total(v) => assert!(deq_f64(v, 10.0, 1e-9)),
-                    _ => return Err(anyhow!("unexpected payload for Total")),
+                    _ => return Err(anyhow!("unexpected window value for Total")),
                 }
                 match results[1].value {
                     WindowValue::Total(v) => assert!(deq_f64(v, 10.0, 1e-9)),
-                    _ => return Err(anyhow!("unexpected payload for Total")),
+                    _ => return Err(anyhow!("unexpected window value for Total")),
                 }
             }
             _ => return Err(anyhow!("expected PerWindow output")),
@@ -749,7 +749,7 @@ mod tests_window_results {
                 assert_eq!(results.len(), 1);
                 let vals = match &results[0].value {
                     WindowValue::Positions(v) => v.clone(),
-                    _ => return Err(anyhow!("unexpected payload for Positions")),
+                    _ => return Err(anyhow!("unexpected window value for Positions")),
                 };
                 assert_eq!(vals.len(), 5);
 

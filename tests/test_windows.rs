@@ -148,7 +148,7 @@ mod tests_flattening {
     #[test]
     fn grouped_windows_sort_and_preserve_group_indices() {
         // Arrange:
-        // - Inputs are unsorted by start, but group indices are payload and must survive sorting.
+        // - Inputs are unsorted by start, but group indices are row data and must survive sorting.
         // - After sorting by start we expect [10,15) idx 3, [15,18) idx 5, [20,30) idx 7.
         // - Span is therefore min start 10 and max end 30.
         let grouped = GroupedWindows::from_tuples(&[(20, 30, 7), (10, 15, 3), (15, 18, 5)], None)
@@ -168,7 +168,7 @@ mod tests_flattening {
     fn grouped_windows_sort_and_preserve_optional_strands() {
         // Arrange:
         // - Inputs are unsorted by start.
-        // - Strand values are payload attached to rows, so they must move with their windows.
+        // - Strand values are row data, so they must move with their windows.
         // - After sorting by start, [10,15) keeps Forward, [15,18) keeps Unstranded,
         //   and [20,30) keeps Reverse.
         let grouped = GroupedWindows::new(
@@ -234,7 +234,7 @@ mod tests_flattening {
     fn scored_windows_sort_and_preserve_scores() {
         // Arrange:
         // - Sorting by start should reorder [20,30) and [10,15) into [10,15), [20,30).
-        // - Score and original index are payload, so they must stay attached to their intervals.
+        // - Score and original index are interval data, so they must stay attached to their intervals.
         // - Span is the overall covered range [10,30).
         let scored = ScoredWindows::from_tuples(&[(20, 30, 7, 1.5), (10, 15, 3, 2.5)])
             .expect("scored test windows should be valid");

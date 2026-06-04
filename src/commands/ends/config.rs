@@ -43,9 +43,12 @@ Counts (`<outside>_<inside>`): `AT_CG: 1`, `GA_TG: 1`
 "#,
     "\n",
     "## Output files\n\n",
-    "Writes a self-contained `.end_motifs.zarr` store. The store contains either dense ",
-    "`counts[row, motif]` when `--all-motifs` is enabled, or sparse COO arrays otherwise.\n\n",
-    "Motif labels are saved as `<outside>_<inside>`.\n\n",
+    "Writes a self-contained `.end_motifs.zarr` store. The store contains either a dense ",
+    "`counts[row, motif]` matrix when `--all-motifs` is enabled, or sparse COO arrays otherwise. ",
+    "The column axis contains counts for the motifs unless `--motifs-file` has a group column, in which ",
+    "case it contains counts for those motif groups.\n\n",
+    "Concrete motif labels are saved as `<outside>_<inside>`. When `--motifs-file` has a group column, ",
+    "the raw group names are saved instead.\n\n",
     "## GC correction\n\n",
     "Weight the contribution of each fragment based on their GC contents per fragment length.\n\n",
     "## Genomic smoothing (--scaling-factors)\n\n",
@@ -224,9 +227,27 @@ pub struct EndsConfig {
     )]
     pub collapse_complement: bool,
 
-    /// Include every possible motif in the output, even if its count is zero  [flag]
+    /// Include every possible motif in the output, even if its count is zero `[flag]`
+    ///
+    /// **NOTE**: When `--motifs-file` is specified, it defines the "possible" motifs.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Motifs"))]
     pub all_motifs: bool,
+
+    /// File with motifs to include `[path]`
+    ///
+    /// TSV-like file (tab-separated, no header) with one motif per line.
+    /// Add a second column with a group name to count multiple motifs together.
+    ///
+    /// A motif should be defined as `"<outside>_<inside>"` with each
+    /// side matching the number of characters to `--k-outside` and
+    /// `--k-inside`. When only one of those arguments is non-zero, the
+    /// "_" can be omitted.
+    ///
+    /// Specifying the allowed subset of motifs beforehand enables
+    /// counting of much larger k-mers (motif-lengths) without
+    /// exploding memory.
+    #[cfg_attr(feature = "cli", clap(long, value_parser, help_heading = "Motifs"))]
+    pub motifs_file: Option<PathBuf>,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub fragment_lengths: FragmentLengthArgs,
@@ -358,6 +379,7 @@ impl EndsConfig {
             },
             indel_filter: IndelMotifFilterPolicy::Auto,
             all_motifs: false,
+            motifs_file: None,
             collapse_complement: false,
             windows: DistributionWindowsArgs::default(),
             window_assignment: AssignMotifToWindowArgs::default(),

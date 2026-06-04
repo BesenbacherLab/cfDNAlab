@@ -6,7 +6,7 @@
 #' @noRd
 CFDNALAB_SCHEMA_VERSION_RANGES <- list(
   midpoint_profiles = c(min = 1L, max = 1L),
-  end_motif_counts = c(min = 1L, max = 1L)
+  end_motif_counts = c(min = 1L, max = 2L)
 )
 
 #' Validate a cfDNAlab Zarr store path.
@@ -943,7 +943,11 @@ cf_read_labels <- function(path, array_name, expected_field, expected_length) {
   if (is.null(attrs$labels)) {
     stop(array_name, " metadata is missing labels", call. = FALSE)
   }
-  labels <- unlist(attrs$labels, use.names = FALSE)
+  labels <- if (length(attrs$labels) == 0L) {
+    character()
+  } else {
+    unlist(attrs$labels, use.names = FALSE)
+  }
   if (!is.character(labels)) {
     stop(array_name, " labels must be character strings", call. = FALSE)
   }

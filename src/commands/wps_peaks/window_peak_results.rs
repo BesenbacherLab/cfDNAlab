@@ -35,7 +35,7 @@ pub struct PeakStats {
     pub median_distance: u32,
 }
 
-/// Per-window payload
+/// Per-window WPS peak value
 #[derive(Debug, Clone)]
 pub enum WindowPeaksValue {
     /// Average coverage in the window

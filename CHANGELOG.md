@@ -9,7 +9,9 @@ This is the changelog for the main CLI tool. You can find the changelog for the 
 
 ## Unreleased
 
+ - Adds `--motifs-file` to `cfdna ends` for pre-specifying the motifs to count. This allows counting larger motifs without exploding the memory.
  - In `cfdna lengths`, the `max_soft_clips` cap is only applied when `--clip-mode adjust`.
+ - In `cfdna ends`, fixes theoretical bug that wrongly filtered fragments when kmer-size was larger than read sequence but reference was used as source.
 
 <br />
 
