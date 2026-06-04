@@ -1,7 +1,7 @@
 Package: cfdnalab
 Type: Package
 Title: Load cfDNAlab Analysis Outputs in R
-Version: 0.2.0
+Version: 0.3.0
 Authors@R: c(
     person(given = "Ludvig Renbo",
            family = "Olsen",

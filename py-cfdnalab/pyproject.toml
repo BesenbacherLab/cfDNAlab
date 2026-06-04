@@ -1,6 +1,6 @@
 [project]
 name = "cfdnalab"
-version = "0.2.0"
+version = "0.3.0"
 description = "Python helpers for loading and interacting with cfDNAlab output files"
 authors = [{name = "Ludvig", email = "mail@ludvigolsen.dk"}]
 readme = "README.md"
