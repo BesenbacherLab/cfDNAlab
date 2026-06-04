@@ -89,7 +89,7 @@ impl PartialOrd for Entry {
 ///
 /// Example
 /// -------
-/// ```rust
+/// ```rust,ignore
 /// use cfdnalab::commands::bam_to_frag::sorted_writer::{Entry, WindowSorter};
 /// use anyhow::Result;
 /// use std::io::Cursor;

@@ -29,15 +29,20 @@ use cfdnalab::run_like_cli::fcoverage::{
     CoverageWindowAction, FCoverageConfig, FCoverageRunResult, LengthNormalizationMode,
     run_fcoverage as run_fcoverage_command,
 };
-use cfdnalab::run_like_cli::lengths::{LengthsConfig, run_lengths as run_lengths_command};
-use fixtures::{
-    BamFixture, FragmentSpec, LONG_FRAGMENT_LENGTH, LONG_FRAGMENT_STARTS, ReadSpec, bam_from_specs,
-    bam_from_specs_strict_identity, build_real_neutral_gc_package,
-    build_real_neutral_gc_package_for_range, build_real_non_neutral_gc_package,
-    late_origin_gc_reference_sequence, long_fragment_bam, paired_fragment, read_length_counts_tsv,
-    read_zst_to_string, simple_inward_bam, simple_reference_twobit, twobit_from_sequences,
-    write_bed, write_scaling_factors, write_two_bin_gc_package,
+use cfdnalab::run_like_cli::lengths::{
+    LengthsConfig, LengthsRunResult, run_lengths as run_lengths_command,
 };
+use cfdnalab::testing::{
+    Bed4Row, Cigar, FragmentSpec, PairedFragmentSpec, ReadSpec, ScalingFactorRow, TempBam,
+    bam_from_fragments, bam_from_fragments_with_record_indexed_names,
+    build_command_produced_gc_correction_package_for_length,
+    build_command_produced_gc_correction_package_for_range,
+    build_command_produced_gc_correction_package_from_reference_windows,
+    long_inward_fragment_series_bam, read_length_counts_tsv, read_zst_to_string,
+    single_contig_inward_pair_bam, twobit_from_sequences, twobit_with_single_repeating_contig,
+    write_bed4, write_scaling_factors_tsv, write_two_bin_gc_correction_package,
+};
+use fixtures::{LONG_FRAGMENT_LENGTH, LONG_FRAGMENT_STARTS, late_origin_gc_reference_sequence};
 use ndarray::array;
 use rust_htslib::bam::record::Aux;
 use rust_htslib::bam::{self, Read, Reader, Record};
@@ -58,12 +63,17 @@ fn run_coverage_weights(cfg: &CoverageWeightsConfig) -> Result<()> {
     run_coverage_weights_command(cfg, RunOptions::new_quiet()).map(|_| ())
 }
 
-fn run_lengths(cfg: &LengthsConfig) -> Result<()> {
-    run_lengths_command(cfg, RunOptions::new_quiet()).map(|_| ())
+fn run_lengths(cfg: &LengthsConfig) -> Result<LengthsRunResult> {
+    run_lengths_command(cfg, RunOptions::new_quiet())
 }
 
 fn dot_join(parts: &[&str]) -> String {
-    parts.join(".")
+    parts
+        .iter()
+        .copied()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(".")
 }
 
 fn collect_fragment_from_records_for_test(first: &Record, second: &Record) -> Option<Fragment> {
@@ -74,7 +84,7 @@ fn collect_fragment_from_records_for_test(first: &Record, second: &Record) -> Op
 }
 
 #[derive(Debug)]
-struct TaggedBamFixture {
+struct TaggedTempBam {
     _tempdir: TempDir,
     bam: PathBuf,
 }
@@ -165,17 +175,21 @@ fn set_restore_mean_length_normalization(cfg: &mut FCoverageConfig) {
     cfg.set_normalize_by_length_mode(LengthNormalizationMode::RestoreMean);
 }
 
-fn mixed_length_fragment_bam() -> Result<BamFixture> {
-    bam_from_specs(
-        vec![("chr1".to_string(), 200)],
-        vec![paired_fragment(20, 40, 20), paired_fragment(100, 80, 20)],
-        Vec::new(),
+fn mixed_length_fragment_bam() -> Result<TempBam> {
+    bam_from_fragments(
         "fcoverage_restore_mean_mixed_lengths",
+        vec![("chr1".to_string(), 200)],
+        vec![
+            PairedFragmentSpec::new(0, 20, 40, 20).build()?,
+            PairedFragmentSpec::new(0, 100, 80, 20).build()?,
+        ],
+        Vec::new(),
     )
 }
 
-fn mixed_length_three_chromosome_bam() -> Result<BamFixture> {
-    bam_from_specs(
+fn mixed_length_three_chromosome_bam() -> Result<TempBam> {
+    bam_from_fragments(
+        "fcoverage_restore_mean_three_chr",
         vec![
             ("chr1".to_string(), 200),
             ("chr2".to_string(), 200),
@@ -187,16 +201,15 @@ fn mixed_length_three_chromosome_bam() -> Result<BamFixture> {
             paired_fragment_on_tid(2, 40, 80, 20),
         ],
         Vec::new(),
-        "fcoverage_restore_mean_three_chr",
     )
 }
 
-fn empty_bam_fixture(name: &str) -> Result<BamFixture> {
-    bam_from_specs(
+fn empty_bam_fixture(name: &str) -> Result<TempBam> {
+    bam_from_fragments(
+        name,
         vec![("chr1".to_string(), 200)],
         Vec::new(),
         Vec::new(),
-        name,
     )
 }
 
@@ -328,25 +341,29 @@ fn grouped_rows_by_name(
     rows_by_name
 }
 
-fn overlapping_fragment_bam() -> Result<fixtures::BamFixture> {
-    bam_from_specs(
-        vec![("chr1".to_string(), 200)],
-        vec![paired_fragment(20, 60, 20), paired_fragment(30, 40, 20)],
-        Vec::new(),
+fn overlapping_fragment_bam() -> Result<TempBam> {
+    bam_from_fragments(
         "overlapping_fcoverage",
+        vec![("chr1".to_string(), 200)],
+        vec![
+            PairedFragmentSpec::new(0, 20, 60, 20).build()?,
+            PairedFragmentSpec::new(0, 30, 40, 20).build()?,
+        ],
+        Vec::new(),
     )
 }
 
-fn single_read_fragment_bam(name: &str) -> Result<BamFixture> {
-    bam_from_specs(
+fn single_read_fragment_bam(name: &str) -> Result<TempBam> {
+    bam_from_fragments(
+        name,
         vec![("chr1".to_string(), 200)],
         Vec::new(),
         vec![ReadSpec {
             tid: 0,
             pos: 20,
-            cigar: vec![('M', 60)],
+            cigar: vec![Cigar::Match(60)],
             seq: vec![b'A'; 60],
-            qual: 40,
+            base_quality: 40,
             is_reverse: false,
             mapq: 60,
             flags: 0,
@@ -354,7 +371,6 @@ fn single_read_fragment_bam(name: &str) -> Result<BamFixture> {
             mate_pos: None,
             insert_size: 0,
         }],
-        name,
     )
 }
 
@@ -362,16 +378,17 @@ fn single_read_fragment_bam_at(
     name: &str,
     fragment_start: i64,
     fragment_len: u32,
-) -> Result<BamFixture> {
-    bam_from_specs(
+) -> Result<TempBam> {
+    bam_from_fragments(
+        name,
         vec![("chr1".to_string(), 200)],
         Vec::new(),
         vec![ReadSpec {
             tid: 0,
             pos: fragment_start,
-            cigar: vec![('M', fragment_len)],
+            cigar: vec![Cigar::Match(fragment_len)],
             seq: vec![b'A'; fragment_len as usize],
-            qual: 40,
+            base_quality: 40,
             is_reverse: false,
             mapq: 60,
             flags: 0,
@@ -379,7 +396,6 @@ fn single_read_fragment_bam_at(
             mate_pos: None,
             insert_size: 0,
         }],
-        name,
     )
 }
 
@@ -393,7 +409,7 @@ fn build_bai_for_test_bam(bam_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn bam_with_gc_tags(base_bam: &Path, name: &str, tags: &[Option<f32>]) -> Result<TaggedBamFixture> {
+fn bam_with_gc_tags(base_bam: &Path, name: &str, tags: &[Option<f32>]) -> Result<TaggedTempBam> {
     let tempdir = TempDir::new()?;
     let bam_path = tempdir.path().join(format!("{name}.bam"));
 
@@ -412,7 +428,7 @@ fn bam_with_gc_tags(base_bam: &Path, name: &str, tags: &[Option<f32>]) -> Result
     drop(writer);
     build_bai_for_test_bam(&bam_path)?;
 
-    Ok(TaggedBamFixture {
+    Ok(TaggedTempBam {
         _tempdir: tempdir,
         bam: bam_path,
     })
@@ -479,9 +495,9 @@ fn paired_fragment_on_tid(
         forward: ReadSpec {
             tid,
             pos: start,
-            cigar: vec![('M', read_len as u32)],
+            cigar: vec![Cigar::Match(read_len as u32)],
             seq: vec![b'A'; read_len as usize],
-            qual: 40,
+            base_quality: 40,
             is_reverse: false,
             mapq: 60,
             flags: FLAG_FIRST_MATE | FLAG_MATE_REVERSE | FLAG_PROPER_PAIR,
@@ -492,9 +508,9 @@ fn paired_fragment_on_tid(
         reverse: ReadSpec {
             tid,
             pos: reverse_start,
-            cigar: vec![('M', read_len as u32)],
+            cigar: vec![Cigar::Match(read_len as u32)],
             seq: vec![b'T'; read_len as usize],
-            qual: 40,
+            base_quality: 40,
             is_reverse: true,
             mapq: 60,
             flags: FLAG_SECOND_MATE | FLAG_PROPER_PAIR,
@@ -507,7 +523,7 @@ fn paired_fragment_on_tid(
 
 #[test]
 fn per_position_outputs_basic_fragment() -> Result<()> {
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -560,7 +576,7 @@ fn per_position_outputs_basic_fragment() -> Result<()> {
 
 #[test]
 fn normalize_by_length_keeps_fractional_positional_output_without_other_weights() -> Result<()> {
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -591,7 +607,7 @@ fn normalize_by_length_keeps_fractional_positional_output_without_other_weights(
 
 #[test]
 fn normalize_by_length_by_size_total_counts_each_fragment_as_one() -> Result<()> {
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
 
     let mut windows = DistributionWindowsArgs::default();
@@ -631,13 +647,13 @@ fn normalize_by_length_by_size_total_counts_each_fragment_as_one() -> Result<()>
 
 #[test]
 fn normalize_by_length_and_gc_file_weights_multiply_per_position() -> Result<()> {
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "fcoverage_normalize_by_length_gc_file",
         vec![("chr1".to_string(), 200)],
         vec![paired_fragment_on_tid(0, 20, 61, 20)],
         Vec::new(),
-        "fcoverage_normalize_by_length_gc_file",
     )?;
-    let ref_twobit = simple_reference_twobit()?;
+    let ref_twobit = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let gc_path = out_dir.path().join("constant_gc_pkg.zarr");
     let package = GCCorrectionPackage {
@@ -710,11 +726,11 @@ fn gc_file_windowed_late_tile_uses_reference_coordinates_after_fetch_narrowing()
     //   bin with weight 7.0. Using prefix-local origin 0 would see A-only sequence instead.
     // - In unique-position mode, only the 11 covered bases inside [930,941) are written, each at
     //   coverage 7.0.
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "fcoverage_late_tile_gc_origin",
         vec![("chr1".to_string(), 1_500)],
         vec![paired_fragment_on_tid(0, 900, 61, 20)],
         Vec::new(),
-        "fcoverage_late_tile_gc_origin",
     )?;
     let reference = twobit_from_sequences(
         "fcoverage_late_tile_gc_origin_ref",
@@ -723,8 +739,8 @@ fn gc_file_windowed_late_tile_uses_reference_coordinates_after_fetch_narrowing()
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("late_window.bed");
     let gc_path = out_dir.path().join("two_bin_gc_package.zarr");
-    write_bed(&bed_path, &[("chr1", 930, 941, "late")])?;
-    write_two_bin_gc_package(
+    write_bed4(&bed_path, &[Bed4Row::new("chr1", 930, 941, "late")])?;
+    write_two_bin_gc_correction_package(
         &gc_path,
         61,
         2.0,
@@ -764,15 +780,16 @@ fn gc_file_windowed_late_tile_uses_reference_coordinates_after_fetch_narrowing()
 
 #[test]
 fn normalize_by_length_uses_counted_segment_length_for_gapped_fragments() -> Result<()> {
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "fcoverage_normalize_by_length_gapped_unpaired",
         vec![("chr1".to_string(), 200)],
         Vec::new(),
         vec![ReadSpec {
             tid: 0,
             pos: 20,
-            cigar: vec![('M', 20), ('D', 10), ('M', 20)],
+            cigar: vec![Cigar::Match(20), Cigar::Del(10), Cigar::Match(20)],
             seq: vec![b'A'; 40],
-            qual: 40,
+            base_quality: 40,
             is_reverse: false,
             mapq: 60,
             flags: 0,
@@ -780,7 +797,6 @@ fn normalize_by_length_uses_counted_segment_length_for_gapped_fragments() -> Res
             mate_pos: None,
             insert_size: 0,
         }],
-        "fcoverage_normalize_by_length_gapped_unpaired",
     )?;
     let out_dir = TempDir::new()?;
 
@@ -816,7 +832,7 @@ fn normalize_by_length_uses_counted_segment_length_for_gapped_fragments() -> Res
 
 #[test]
 fn normalize_by_length_ignore_gap_renormalizes_over_remaining_counted_span() -> Result<()> {
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
 
     let run_with_ignore_gap = |ignore_gap: bool| -> Result<String> {
         let out_dir = TempDir::new()?;
@@ -859,7 +875,7 @@ fn normalize_by_length_ignore_gap_renormalizes_over_remaining_counted_span() -> 
 
 #[test]
 fn normalize_by_length_matches_between_paired_and_unpaired_for_same_span() -> Result<()> {
-    let paired_bam = simple_inward_bam()?;
+    let paired_bam = single_contig_inward_pair_bam()?;
     let unpaired_bam = single_read_fragment_bam("fcoverage_normalize_by_length_unpaired_parity")?;
     let paired_out = TempDir::new()?;
     let unpaired_out = TempDir::new()?;
@@ -907,15 +923,16 @@ fn normalize_by_length_matches_between_paired_and_unpaired_for_same_span() -> Re
 
 #[test]
 fn normalize_by_length_uses_paired_counted_segments_when_ignore_gap_is_on() -> Result<()> {
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "fcoverage_normalize_by_length_paired_gapped_ignore_gap",
         vec![("chr1".to_string(), 200)],
         vec![FragmentSpec {
             forward: ReadSpec {
                 tid: 0,
                 pos: 20,
-                cigar: vec![('M', 20), ('D', 10), ('M', 20)],
+                cigar: vec![Cigar::Match(20), Cigar::Del(10), Cigar::Match(20)],
                 seq: vec![b'A'; 40],
-                qual: 40,
+                base_quality: 40,
                 is_reverse: false,
                 mapq: 60,
                 flags: 0x40 | 0x20 | 0x2,
@@ -926,9 +943,9 @@ fn normalize_by_length_uses_paired_counted_segments_when_ignore_gap_is_on() -> R
             reverse: ReadSpec {
                 tid: 0,
                 pos: 60,
-                cigar: vec![('M', 20)],
+                cigar: vec![Cigar::Match(20)],
                 seq: vec![b'T'; 20],
-                qual: 40,
+                base_quality: 40,
                 is_reverse: true,
                 mapq: 60,
                 flags: 0x80 | 0x2,
@@ -938,7 +955,6 @@ fn normalize_by_length_uses_paired_counted_segments_when_ignore_gap_is_on() -> R
             },
         }],
         Vec::new(),
-        "fcoverage_normalize_by_length_paired_gapped_ignore_gap",
     )?;
     let out_dir = TempDir::new()?;
 
@@ -976,15 +992,16 @@ fn normalize_by_length_uses_paired_counted_segments_when_ignore_gap_is_on() -> R
 
 #[test]
 fn normalize_by_length_uses_counted_segment_length_for_refskip_fragments() -> Result<()> {
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "fcoverage_normalize_by_length_refskip_unpaired",
         vec![("chr1".to_string(), 200)],
         Vec::new(),
         vec![ReadSpec {
             tid: 0,
             pos: 20,
-            cigar: vec![('M', 20), ('N', 10), ('M', 20)],
+            cigar: vec![Cigar::Match(20), Cigar::RefSkip(10), Cigar::Match(20)],
             seq: vec![b'A'; 40],
-            qual: 40,
+            base_quality: 40,
             is_reverse: false,
             mapq: 60,
             flags: 0,
@@ -992,7 +1009,6 @@ fn normalize_by_length_uses_counted_segment_length_for_refskip_fragments() -> Re
             mate_pos: None,
             insert_size: 0,
         }],
-        "fcoverage_normalize_by_length_refskip_unpaired",
     )?;
     let out_dir = TempDir::new()?;
 
@@ -1026,15 +1042,16 @@ fn normalize_by_length_uses_counted_segment_length_for_refskip_fragments() -> Re
 
 #[test]
 fn normalize_by_length_segmented_fragment_still_multiplies_gc_and_scaling() -> Result<()> {
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "fcoverage_normalize_by_length_gapped_with_gc_and_scaling",
         vec![("chr1".to_string(), 200)],
         Vec::new(),
         vec![ReadSpec {
             tid: 0,
             pos: 20,
-            cigar: vec![('M', 20), ('D', 10), ('M', 20)],
+            cigar: vec![Cigar::Match(20), Cigar::Del(10), Cigar::Match(20)],
             seq: vec![b'A'; 40],
-            qual: 40,
+            base_quality: 40,
             is_reverse: false,
             mapq: 60,
             flags: 0,
@@ -1042,9 +1059,8 @@ fn normalize_by_length_segmented_fragment_still_multiplies_gc_and_scaling() -> R
             mate_pos: None,
             insert_size: 0,
         }],
-        "fcoverage_normalize_by_length_gapped_with_gc_and_scaling",
     )?;
-    let ref_twobit = simple_reference_twobit()?;
+    let ref_twobit = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let gc_path = out_dir.path().join("constant_gc_pkg.zarr");
     let scaling_path = out_dir.path().join("scaling.tsv");
@@ -1058,7 +1074,7 @@ fn normalize_by_length_segmented_fragment_still_multiplies_gc_and_scaling() -> R
         correction_matrix: array![[2.0_f64]],
     };
     package.write_zarr(&gc_path)?;
-    write_scaling_factors(&scaling_path, &[("chr1", 0, 200, 5.0)])?;
+    write_scaling_factors_tsv(&scaling_path, &[ScalingFactorRow::new("chr1", 0, 200, 5.0)])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
     cfg.set_decimals(4);
@@ -1202,9 +1218,12 @@ fn restore_mean_unique_positions_windowed_output_scales_selected_runs() -> Resul
     let bam = mixed_length_fragment_bam()?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("restore_mean_unique_windows.bed");
-    write_bed(
+    write_bed4(
         &bed_path,
-        &[("chr1", 15, 50, "first"), ("chr1", 120, 190, "second")],
+        &[
+            Bed4Row::new("chr1", 15, 50, "first"),
+            Bed4Row::new("chr1", 120, 190, "second"),
+        ],
     )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -1242,12 +1261,12 @@ fn restore_mean_indexed_positions_keep_window_indices_and_scaled_values() -> Res
     let bam = mixed_length_fragment_bam()?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("restore_mean_indexed_windows.bed");
-    write_bed(
+    write_bed4(
         &bed_path,
         &[
-            ("chr1", 15, 50, "window_a"),
-            ("chr1", 40, 130, "window_b"),
-            ("chr1", 120, 190, "window_c"),
+            Bed4Row::new("chr1", 15, 50, "window_a"),
+            Bed4Row::new("chr1", 40, 130, "window_b"),
+            Bed4Row::new("chr1", 120, 190, "window_c"),
         ],
     )?;
 
@@ -1511,12 +1530,12 @@ fn restore_mean_by_bed_average_handles_three_chromosomes_with_global_window_indi
     let bam = mixed_length_three_chromosome_bam()?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("restore_mean_three_chr_windows.bed");
-    write_bed(
+    write_bed4(
         &bed_path,
         &[
-            ("chr1", 20, 60, "chr1_window"),
-            ("chr2", 0, 40, "chr2_window"),
-            ("chr3", 50, 100, "chr3_window"),
+            Bed4Row::new("chr1", 20, 60, "chr1_window"),
+            Bed4Row::new("chr2", 0, 40, "chr2_window"),
+            Bed4Row::new("chr3", 50, 100, "chr3_window"),
         ],
     )?;
 
@@ -1560,7 +1579,7 @@ fn restore_mean_by_bed_average_skips_chromosomes_without_windows_and_keeps_later
     let bam = mixed_length_three_chromosome_bam()?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("restore_mean_chr2_only.bed");
-    write_bed(&bed_path, &[("chr2", 0, 40, "chr2_window")])?;
+    write_bed4(&bed_path, &[Bed4Row::new("chr2", 0, 40, "chr2_window")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
     cfg.chromosomes = base_chromosomes(&["chr1", "chr2"]);
@@ -1639,14 +1658,14 @@ fn restore_mean_grouped_total_on_unique_bases_merges_same_group_overlaps_after_s
     let bam = mixed_length_fragment_bam()?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("restore_mean_grouped_unique_total.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
         &[
-            ("chr1", 20, 50, "beta"),
-            ("chr1", 40, 60, "beta"),
-            ("chr1", 100, 150, "beta"),
-            ("chr1", 140, 180, "beta"),
-            ("chr1", 0, 10, "gamma"),
+            Bed4Row::new("chr1", 20, 50, "beta"),
+            Bed4Row::new("chr1", 40, 60, "beta"),
+            Bed4Row::new("chr1", 100, 150, "beta"),
+            Bed4Row::new("chr1", 140, 180, "beta"),
+            Bed4Row::new("chr1", 0, 10, "gamma"),
         ],
     )?;
 
@@ -1700,14 +1719,14 @@ fn restore_mean_grouped_summary_stats_on_unique_bases_writes_scaled_rows() -> Re
     let grouped_bed = out_dir
         .path()
         .join("restore_mean_grouped_unique_summary.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
         &[
-            ("chr1", 20, 50, "beta"),
-            ("chr1", 40, 60, "beta"),
-            ("chr1", 100, 150, "beta"),
-            ("chr1", 140, 180, "beta"),
-            ("chr1", 0, 10, "gamma"),
+            Bed4Row::new("chr1", 20, 50, "beta"),
+            Bed4Row::new("chr1", 40, 60, "beta"),
+            Bed4Row::new("chr1", 100, 150, "beta"),
+            Bed4Row::new("chr1", 140, 180, "beta"),
+            Bed4Row::new("chr1", 0, 10, "gamma"),
         ],
     )?;
 
@@ -1767,12 +1786,12 @@ fn restore_mean_grouped_plain_summary_stats_writes_scaled_rows() -> Result<()> {
     let grouped_bed = out_dir
         .path()
         .join("restore_mean_grouped_plain_summary.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
         &[
-            ("chr1", 20, 50, "beta"),
-            ("chr1", 100, 160, "beta"),
-            ("chr1", 0, 10, "gamma"),
+            Bed4Row::new("chr1", 20, 50, "beta"),
+            Bed4Row::new("chr1", 100, 160, "beta"),
+            Bed4Row::new("chr1", 0, 10, "gamma"),
         ],
     )?;
 
@@ -1846,12 +1865,12 @@ fn restore_mean_grouped_plain_summary_stats_is_invariant_when_segments_cross_til
         let grouped_bed = out_dir.path().join(format!(
             "restore_mean_grouped_plain_summary_{tile_size}.bed"
         ));
-        write_bed(
+        write_bed4(
             &grouped_bed,
             &[
-                ("chr1", 20, 50, "beta"),
-                ("chr1", 100, 160, "beta"),
-                ("chr1", 0, 10, "gamma"),
+                Bed4Row::new("chr1", 20, 50, "beta"),
+                Bed4Row::new("chr1", 100, 160, "beta"),
+                Bed4Row::new("chr1", 0, 10, "gamma"),
             ],
         )?;
 
@@ -1891,15 +1910,16 @@ fn restore_mean_segmented_fragment_still_multiplies_gc_and_scaling() -> Result<(
     //     (1 / 40) * 2 * 5 = 0.25
     // - `restore-mean` multiplies by 40, giving:
     //     0.25 * 40 = 10
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "fcoverage_restore_mean_gapped_with_gc_and_scaling",
         vec![("chr1".to_string(), 200)],
         Vec::new(),
         vec![ReadSpec {
             tid: 0,
             pos: 20,
-            cigar: vec![('M', 20), ('D', 10), ('M', 20)],
+            cigar: vec![Cigar::Match(20), Cigar::Del(10), Cigar::Match(20)],
             seq: vec![b'A'; 40],
-            qual: 40,
+            base_quality: 40,
             is_reverse: false,
             mapq: 60,
             flags: 0,
@@ -1907,9 +1927,8 @@ fn restore_mean_segmented_fragment_still_multiplies_gc_and_scaling() -> Result<(
             mate_pos: None,
             insert_size: 0,
         }],
-        "fcoverage_restore_mean_gapped_with_gc_and_scaling",
     )?;
-    let ref_twobit = simple_reference_twobit()?;
+    let ref_twobit = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let gc_path = out_dir.path().join("restore_mean_gc_pkg.zarr");
     let scaling_path = out_dir.path().join("restore_mean_scaling.tsv");
@@ -1923,7 +1942,7 @@ fn restore_mean_segmented_fragment_still_multiplies_gc_and_scaling() -> Result<(
         correction_matrix: array![[2.0_f64]],
     };
     package.write_zarr(&gc_path)?;
-    write_scaling_factors(&scaling_path, &[("chr1", 0, 200, 5.0)])?;
+    write_scaling_factors_tsv(&scaling_path, &[ScalingFactorRow::new("chr1", 0, 200, 5.0)])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
     cfg.set_decimals(6);
@@ -2003,9 +2022,12 @@ fn restore_mean_blacklist_masks_positions_in_positional_output() -> Result<()> {
     let bam = mixed_length_fragment_bam()?;
     let out_dir = TempDir::new()?;
     let blacklist_path = out_dir.path().join("restore_mean_blacklist.bed");
-    write_bed(
+    write_bed4(
         &blacklist_path,
-        &[("chr1", 30, 35, "masked_a"), ("chr1", 130, 150, "masked_b")],
+        &[
+            Bed4Row::new("chr1", 30, 35, "masked_a"),
+            Bed4Row::new("chr1", 130, 150, "masked_b"),
+        ],
     )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -2073,12 +2095,12 @@ fn restore_mean_by_bed_total_is_invariant_when_windows_cross_tile_boundaries() -
         let bed_path = out_dir
             .path()
             .join(format!("restore_mean_bed_total_{tile_size}.bed"));
-        write_bed(
+        write_bed4(
             &bed_path,
             &[
-                ("chr1", 0, 40, "window_a"),
-                ("chr1", 20, 80, "window_b"),
-                ("chr1", 120, 170, "window_c"),
+                Bed4Row::new("chr1", 0, 40, "window_a"),
+                Bed4Row::new("chr1", 20, 80, "window_b"),
+                Bed4Row::new("chr1", 120, 170, "window_c"),
             ],
         )?;
 
@@ -2138,9 +2160,12 @@ fn restore_mean_by_bed_summary_stats_is_invariant_when_windows_cross_tiles() -> 
         let bed_path = out_dir
             .path()
             .join(format!("restore_mean_bed_summary_{tile_size}.bed"));
-        write_bed(
+        write_bed4(
             &bed_path,
-            &[("chr1", 0, 80, "window_a"), ("chr1", 100, 180, "window_b")],
+            &[
+                Bed4Row::new("chr1", 0, 80, "window_a"),
+                Bed4Row::new("chr1", 100, 180, "window_b"),
+            ],
         )?;
 
         let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -2195,9 +2220,12 @@ fn restore_mean_by_bed_total_keeps_coordinate_sorted_output_when_same_start_wind
     let bam = mixed_length_fragment_bam()?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("restore_mean_same_start_windows.bed");
-    write_bed(
+    write_bed4(
         &bed_path,
-        &[("chr1", 0, 100, "wide"), ("chr1", 0, 40, "narrow")],
+        &[
+            Bed4Row::new("chr1", 0, 100, "wide"),
+            Bed4Row::new("chr1", 0, 40, "narrow"),
+        ],
     )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -2235,20 +2263,20 @@ fn restore_mean_by_bed_total_halo_only_window_is_not_double_counted_across_tiles
     //   restored value is still 1 across the covered span.
     // - BED windows [5,10), [15,20), [20,25) each overlap 5 covered bases and must therefore
     //   each report total_coverage = 5 exactly once.
-    let bam = bam_from_specs(
-        vec![("chr1".to_string(), 40)],
-        vec![paired_fragment(5, 20, 10)],
-        Vec::new(),
+    let bam = bam_from_fragments(
         "fcoverage_restore_mean_halo_only",
+        vec![("chr1".to_string(), 40)],
+        vec![PairedFragmentSpec::new(0, 5, 20, 10).build()?],
+        Vec::new(),
     )?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("restore_mean_halo_only_windows.bed");
-    write_bed(
+    write_bed4(
         &bed_path,
         &[
-            ("chr1", 5, 10, "a"),
-            ("chr1", 15, 20, "b"),
-            ("chr1", 20, 25, "c"),
+            Bed4Row::new("chr1", 5, 10, "a"),
+            Bed4Row::new("chr1", 15, 20, "b"),
+            Bed4Row::new("chr1", 20, 25, "c"),
         ],
     )?;
 
@@ -2294,13 +2322,13 @@ fn restore_mean_grouped_bed_total_uses_site_weighted_group_semantics() -> Result
     let bam = mixed_length_fragment_bam()?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("restore_mean_grouped_plain_total.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
         &[
-            ("chr1", 20, 50, "beta"),
-            ("chr1", 20, 40, "alpha"),
-            ("chr1", 100, 160, "beta"),
-            ("chr1", 0, 10, "gamma"),
+            Bed4Row::new("chr1", 20, 50, "beta"),
+            Bed4Row::new("chr1", 20, 40, "alpha"),
+            Bed4Row::new("chr1", 100, 160, "beta"),
+            Bed4Row::new("chr1", 0, 10, "gamma"),
         ],
     )?;
 
@@ -2357,13 +2385,13 @@ fn restore_mean_grouped_bed_total_is_invariant_when_plain_group_segments_cross_t
         let grouped_bed = out_dir
             .path()
             .join(format!("restore_mean_grouped_plain_{tile_size}.bed"));
-        write_bed(
+        write_bed4(
             &grouped_bed,
             &[
-                ("chr1", 20, 50, "beta"),
-                ("chr1", 20, 40, "alpha"),
-                ("chr1", 100, 160, "beta"),
-                ("chr1", 0, 10, "gamma"),
+                Bed4Row::new("chr1", 20, 50, "beta"),
+                Bed4Row::new("chr1", 20, 40, "alpha"),
+                Bed4Row::new("chr1", 100, 160, "beta"),
+                Bed4Row::new("chr1", 0, 10, "gamma"),
             ],
         )?;
 
@@ -2403,9 +2431,12 @@ fn restore_mean_grouped_bed_ignores_groups_on_filtered_out_chromosomes() -> Resu
     let bam = mixed_length_three_chromosome_bam()?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("restore_mean_grouped_filtered_chr.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
-        &[("chr1", 0, 100, "alpha"), ("chr2", 0, 120, "beta")],
+        &[
+            Bed4Row::new("chr1", 0, 100, "alpha"),
+            Bed4Row::new("chr2", 0, 120, "beta"),
+        ],
     )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -2438,7 +2469,7 @@ fn restore_mean_grouped_bed_ignores_groups_on_filtered_out_chromosomes() -> Resu
 
 #[test]
 fn per_position_keep_zero_runs_toggles_zero_segments() -> Result<()> {
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
 
     let out_dir_without_zeros = TempDir::new()?;
     let mut cfg_without_zeros = base_config(&bam.bam, out_dir_without_zeros.path());
@@ -2483,7 +2514,7 @@ fn per_position_keep_zero_runs_toggles_zero_segments() -> Result<()> {
 
 #[test]
 fn ignore_gap_removes_inter_mate_gap_from_positional_output() -> Result<()> {
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -2510,17 +2541,17 @@ fn ignore_gap_removes_inter_mate_gap_from_positional_output() -> Result<()> {
 
 #[test]
 fn ignore_gap_keeps_scaling_and_blacklist_on_genomic_coordinates() -> Result<()> {
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let blacklist_path = out_dir.path().join("ignore_gap_blacklist.bed");
     let scaling_path = out_dir.path().join("ignore_gap_scaling.tsv");
-    write_bed(&blacklist_path, &[("chr1", 25, 35, "masked")])?;
-    write_scaling_factors(
+    write_bed4(&blacklist_path, &[Bed4Row::new("chr1", 25, 35, "masked")])?;
+    write_scaling_factors_tsv(
         &scaling_path,
         &[
-            ("chr1", 0, 30, 2.0_f32),
-            ("chr1", 30, 70, 3.0_f32),
-            ("chr1", 70, 200, 5.0_f32),
+            ScalingFactorRow::new("chr1", 0, 30, 2.0_f32),
+            ScalingFactorRow::new("chr1", 30, 70, 3.0_f32),
+            ScalingFactorRow::new("chr1", 70, 200, 5.0_f32),
         ],
     )?;
 
@@ -2567,15 +2598,15 @@ fn ignore_gap_keeps_scaling_and_blacklist_on_genomic_coordinates() -> Result<()>
 
 #[test]
 fn blacklist_inside_inter_mate_gap_only_matters_without_ignore_gap() -> Result<()> {
-    let bam = simple_inward_bam()?;
-    let blacklist_rows = [("chr1", 45, 55, "gap_mask")];
+    let bam = single_contig_inward_pair_bam()?;
+    let blacklist_rows = [Bed4Row::new("chr1", 45, 55, "gap_mask")];
 
     let run_with_ignore_gap = |ignore_gap: bool| -> Result<Vec<String>> {
         let out_dir = TempDir::new()?;
         let blacklist_path = out_dir
             .path()
             .join(format!("gap_blacklist_{ignore_gap}.bed"));
-        write_bed(&blacklist_path, &blacklist_rows)?;
+        write_bed4(&blacklist_path, &blacklist_rows)?;
 
         let mut cfg = base_config(&bam.bam, out_dir.path());
         cfg.set_decimals(0);
@@ -2641,14 +2672,14 @@ fn unpaired_single_read_matches_fragment_span_output() -> Result<()> {
 fn unpaired_single_read_matches_paired_fragment_output_for_same_span() -> Result<()> {
     // Arrange:
     // Compare two representations of the same physical fragment span [20, 80):
-    // - paired-end fixture `simple_inward_bam()`
+    // - paired-end fixture `single_contig_inward_pair_bam()`
     // - one unpaired read with aligned span [20, 80)
     //
     // In paired mode the fragment span is [forward.pos, reverse.reference_end).
     // In unpaired `reads_are_fragments` mode the fragment span is [read.pos, read.end).
     // So both inputs should yield the same positional coverage bedGraph:
     //   chr1  20  80  1
-    let paired_bam = simple_inward_bam()?;
+    let paired_bam = single_contig_inward_pair_bam()?;
     let unpaired_bam = single_read_fragment_bam("fcoverage_unpaired_parity")?;
     let paired_out = TempDir::new()?;
     let unpaired_out = TempDir::new()?;
@@ -2746,10 +2777,10 @@ fn unpaired_mode_rejects_require_proper_pair() -> Result<()> {
 
 #[test]
 fn blacklist_masks_positions_in_positional_output() -> Result<()> {
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let blacklist_path = out_dir.path().join("blacklist.bed");
-    write_bed(&blacklist_path, &[("chr1", 30, 35, "masked")])?;
+    write_bed4(&blacklist_path, &[Bed4Row::new("chr1", 30, 35, "masked")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
     cfg.set_decimals(0);
@@ -2772,10 +2803,10 @@ fn blacklist_masks_positions_in_positional_output() -> Result<()> {
 
 #[test]
 fn blacklist_masks_positions_in_positional_output_across_tile_boundary() -> Result<()> {
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let blacklist_path = out_dir.path().join("blacklist_cross_tile_positional.bed");
-    write_bed(&blacklist_path, &[("chr1", 30, 35, "masked")])?;
+    write_bed4(&blacklist_path, &[Bed4Row::new("chr1", 30, 35, "masked")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
     cfg.set_decimals(0);
@@ -2806,10 +2837,10 @@ fn blacklist_masks_positions_in_positional_output_across_tile_boundary() -> Resu
 
 #[test]
 fn blacklist_reduces_by_size_totals_and_reports_blacklisted_positions() -> Result<()> {
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let blacklist_path = out_dir.path().join("blacklist.bed");
-    write_bed(&blacklist_path, &[("chr1", 30, 35, "masked")])?;
+    write_bed4(&blacklist_path, &[Bed4Row::new("chr1", 30, 35, "masked")])?;
 
     let mut windows = DistributionWindowsArgs::default();
     windows.by_size = Some(40);
@@ -2860,12 +2891,15 @@ fn fcoverage_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_
     // - explicit `min_mapq = 30`: same as default
     // - explicit `min_mapq = 0`: A + B + C = 180
     let fragment_with_mapq = |start: i64, mapq: u8| -> FragmentSpec {
-        let mut fragment = fixtures::paired_fragment(start, 60, 20);
+        let mut fragment = PairedFragmentSpec::new(0, start, 60, 20)
+            .build()
+            .expect("valid paired-fragment fixture");
         fragment.forward.mapq = mapq;
         fragment.reverse.mapq = mapq;
         fragment
     };
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "fcoverage_default_min_mapq",
         vec![("chr1".to_string(), 200)],
         vec![
             fragment_with_mapq(20, 60),
@@ -2873,7 +2907,6 @@ fn fcoverage_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_
             fragment_with_mapq(120, 30),
         ],
         Vec::new(),
-        "fcoverage_default_min_mapq",
     )?;
     let out_default = TempDir::new()?;
     let out_thirty = TempDir::new()?;
@@ -2958,16 +2991,18 @@ fn fcoverage_and_lengths_agree_on_the_single_fragment_that_survives_mapq_filteri
     // - `lengths` should count exactly one fragment in the 60 bp bin
     // - `fcoverage` should write exactly one coverage run [20,80) with value 1
     let fragment_with_mapq = |start: i64, mapq: u8| -> FragmentSpec {
-        let mut fragment = fixtures::paired_fragment(start, 60, 20);
+        let mut fragment = PairedFragmentSpec::new(0, start, 60, 20)
+            .build()
+            .expect("valid paired-fragment fixture");
         fragment.forward.mapq = mapq;
         fragment.reverse.mapq = mapq;
         fragment
     };
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "fcoverage_lengths_mapq_parity",
         vec![("chr1".to_string(), 200)],
         vec![fragment_with_mapq(20, 60), fragment_with_mapq(100, 0)],
         Vec::new(),
-        "fcoverage_lengths_mapq_parity",
     )?;
 
     let lengths_out = TempDir::new()?;
@@ -2992,25 +3027,17 @@ fn fcoverage_and_lengths_agree_on_the_single_fragment_that_survives_mapq_filteri
     fcoverage_cfg.set_min_mapq(30);
 
     // Act
-    run_lengths(&lengths_cfg)?;
-    run(&fcoverage_cfg)?;
+    let lengths_result = run_lengths(&lengths_cfg)?;
+    let fcoverage_result = run(&fcoverage_cfg)?;
 
     // Assert
-    let lengths_path = lengths_out.path().join(dot_join(&[
-        lengths_cfg.output_prefix.trim(),
-        "length_counts.tsv.zst",
-    ]));
-    let lengths_arr = read_length_counts_tsv(&lengths_path)?;
+    let lengths_arr = read_length_counts_tsv(&lengths_result.length_counts_path)?;
     assert_eq!(lengths_arr.shape(), &[1, 191]);
     let len60_idx = 60 - 10;
     assert!((lengths_arr[(0, len60_idx)] - 1.0).abs() < 1e-6);
     assert!((lengths_arr.sum() - 1.0).abs() < 1e-6);
 
-    let fcoverage_text = read_zst_to_string(
-        &fcoverage_out
-            .path()
-            .join("testcov.fcoverage.per_position.bedgraph.zst"),
-    )?;
+    let fcoverage_text = read_zst_to_string(&fcoverage_result.final_out_path)?;
     let fcoverage_lines: Vec<_> = fcoverage_text.lines().collect();
     assert_eq!(fcoverage_lines, vec!["chr1\t20\t80\t1"]);
 
@@ -3019,14 +3046,14 @@ fn fcoverage_and_lengths_agree_on_the_single_fragment_that_survives_mapq_filteri
 
 #[test]
 fn blacklist_crossing_tile_boundary_keeps_same_by_size_output() -> Result<()> {
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let tile_sizes = [33_u32, 1_000_u32];
     let mut outputs = Vec::new();
 
     for tile_size in tile_sizes {
         let out_dir = TempDir::new()?;
         let blacklist_path = out_dir.path().join("blacklist_cross_tile.bed");
-        write_bed(&blacklist_path, &[("chr1", 30, 35, "masked")])?;
+        write_bed4(&blacklist_path, &[Bed4Row::new("chr1", 30, 35, "masked")])?;
 
         let mut windows = DistributionWindowsArgs::default();
         windows.by_size = Some(40);
@@ -3068,10 +3095,10 @@ fn blacklist_crossing_tile_boundary_keeps_same_by_size_output() -> Result<()> {
 
 #[test]
 fn blacklist_average_uses_only_unmasked_positions_in_denominator() -> Result<()> {
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let blacklist_path = out_dir.path().join("blacklist_average.bed");
-    write_bed(&blacklist_path, &[("chr1", 30, 35, "masked")])?;
+    write_bed4(&blacklist_path, &[Bed4Row::new("chr1", 30, 35, "masked")])?;
 
     let mut windows = DistributionWindowsArgs::default();
     windows.by_size = Some(40);
@@ -3117,10 +3144,13 @@ fn blacklist_average_writes_nan_when_window_has_no_eligible_positions() -> Resul
     // - No denominator exists for average coverage, so the scalar average must be undefined
     //   rather than true zero.
     // - Window [40,80) is unmasked and covered by the single fragment, so average = 1.
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let blacklist_path = out_dir.path().join("blacklist_average_nan.bed");
-    write_bed(&blacklist_path, &[("chr1", 0, 40, "fully_masked")])?;
+    write_bed4(
+        &blacklist_path,
+        &[Bed4Row::new("chr1", 0, 40, "fully_masked")],
+    )?;
 
     let mut windows = DistributionWindowsArgs::default();
     windows.by_size = Some(40);
@@ -3156,7 +3186,7 @@ fn blacklist_average_writes_nan_when_window_has_no_eligible_positions() -> Resul
 
 #[test]
 fn per_position_and_by_size_totals_conserve_total_covered_bases() -> Result<()> {
-    let bam = long_fragment_bam("fcoverage_conservation_fixture")?;
+    let bam = long_inward_fragment_series_bam("fcoverage_conservation_fixture")?;
     let expected_total_coverage =
         (LONG_FRAGMENT_STARTS.len() as u64) * (LONG_FRAGMENT_LENGTH as u64);
     let tile_sizes = [1_000_u32, 1_100, 1_500, 1_700, 2_300];
@@ -3260,7 +3290,7 @@ fn per_position_and_by_size_totals_conserve_total_covered_bases() -> Result<()> 
 #[test]
 fn global_positional_output_matches_single_full_chromosome_window_totals() -> Result<()> {
     // Arrange:
-    // `simple_inward_bam()` contains one fragment spanning [20, 80) on a 200 bp chromosome.
+    // `single_contig_inward_pair_bam()` contains one fragment spanning [20, 80) on a 200 bp chromosome.
     //
     // Compare three logically equivalent ways of describing "the whole chromosome":
     // - global positional output
@@ -3274,12 +3304,12 @@ fn global_positional_output_matches_single_full_chromosome_window_totals() -> Re
     //     (80 - 20) * 1 = 60
     // - The single full-chromosome by-size window must therefore report total_coverage = 60
     // - The single full-chromosome BED window must report the same total_coverage = 60
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let global_out = TempDir::new()?;
     let by_size_out = TempDir::new()?;
     let by_bed_out = TempDir::new()?;
     let bed_path = by_bed_out.path().join("whole_chr_window.bed");
-    write_bed(&bed_path, &[("chr1", 0, 200, "whole_chr")])?;
+    write_bed4(&bed_path, &[Bed4Row::new("chr1", 0, 200, "whole_chr")])?;
 
     let mut global_cfg = base_config(&bam.bam, global_out.path());
     global_cfg.set_decimals(0);
@@ -3345,7 +3375,7 @@ fn global_positional_output_matches_single_full_chromosome_window_totals() -> Re
 
 #[test]
 fn by_bed_total_is_invariant_when_windows_cross_tile_boundaries() -> Result<()> {
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let tile_sizes = [33_u32, 1_000_u32];
     let mut outputs = Vec::new();
 
@@ -3354,12 +3384,12 @@ fn by_bed_total_is_invariant_when_windows_cross_tile_boundaries() -> Result<()> 
         let bed_path = out_dir
             .path()
             .join(format!("aggregate_windows_{tile_size}.bed"));
-        write_bed(
+        write_bed4(
             &bed_path,
             &[
-                ("chr1", 0, 40, "window_a"),
-                ("chr1", 20, 80, "window_b"),
-                ("chr1", 70, 90, "window_c"),
+                Bed4Row::new("chr1", 0, 40, "window_a"),
+                Bed4Row::new("chr1", 20, 80, "window_b"),
+                Bed4Row::new("chr1", 70, 90, "window_c"),
             ],
         )?;
 
@@ -3413,11 +3443,11 @@ fn by_bed_total_mixed_core_and_downstream_windows_is_tile_size_invariant() -> Re
         let bed_path = out_dir
             .path()
             .join(format!("mixed_windows_{tile_size}.bed"));
-        write_bed(
+        write_bed4(
             &bed_path,
             &[
-                ("chr1", 10, 11, "core_row"),
-                ("chr1", 22, 23, "downstream_row"),
+                Bed4Row::new("chr1", 10, 11, "core_row"),
+                Bed4Row::new("chr1", 22, 23, "downstream_row"),
             ],
         )?;
 
@@ -3455,7 +3485,7 @@ fn by_bed_total_mixed_core_and_downstream_windows_is_tile_size_invariant() -> Re
 
 #[test]
 fn by_bed_total_handles_window_spanning_more_than_two_tiles() -> Result<()> {
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let tile_sizes = [30_u32, 1_000_u32];
     let mut outputs = Vec::new();
 
@@ -3464,7 +3494,7 @@ fn by_bed_total_handles_window_spanning_more_than_two_tiles() -> Result<()> {
         let bed_path = out_dir
             .path()
             .join(format!("aggregate_large_window_{tile_size}.bed"));
-        write_bed(&bed_path, &[("chr1", 0, 100, "wide_window")])?;
+        write_bed4(&bed_path, &[Bed4Row::new("chr1", 0, 100, "wide_window")])?;
 
         let mut windows = DistributionWindowsArgs::default();
         windows.by_bed = Some(bed_path);
@@ -3498,7 +3528,7 @@ fn by_bed_total_handles_window_spanning_more_than_two_tiles() -> Result<()> {
 
 #[test]
 fn by_size_total_counts_covered_bases_per_window() -> Result<()> {
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
 
     let mut windows = DistributionWindowsArgs::default();
@@ -3528,7 +3558,7 @@ fn by_size_total_counts_covered_bases_per_window() -> Result<()> {
 
 #[test]
 fn by_size_average_reduces_across_non_aligned_tiles() -> Result<()> {
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
 
     let mut windows = DistributionWindowsArgs::default();
@@ -3582,7 +3612,7 @@ fn by_size_total_keeps_full_bin_coordinates_when_bins_cross_tile_boundaries() ->
     //     [0, 40) -> total 20
     //     [40, 80) -> total 40
     //     remaining bins -> total 0
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
 
     let mut windows = DistributionWindowsArgs::default();
@@ -3617,8 +3647,8 @@ fn by_size_total_keeps_full_bin_coordinates_when_bins_cross_tile_boundaries() ->
 #[test]
 fn by_size_total_aligned_fast_path_matches_general_path_with_blacklist_scaling_and_gc() -> Result<()>
 {
-    let bam = simple_inward_bam()?;
-    let ref_twobit = simple_reference_twobit()?;
+    let bam = single_contig_inward_pair_bam()?;
+    let ref_twobit = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let tile_sizes = [40_u32, 55_u32];
     let mut outputs = Vec::new();
 
@@ -3633,10 +3663,13 @@ fn by_size_total_aligned_fast_path_matches_general_path_with_blacklist_scaling_a
         let gc_path = out_dir
             .path()
             .join(format!("fast_path_gc_{tile_size}.zarr"));
-        write_bed(&blacklist_path, &[("chr1", 30, 35, "masked")])?;
-        write_scaling_factors(
+        write_bed4(&blacklist_path, &[Bed4Row::new("chr1", 30, 35, "masked")])?;
+        write_scaling_factors_tsv(
             &scaling_path,
-            &[("chr1", 0, 50, 2.0_f32), ("chr1", 50, 200, 3.0_f32)],
+            &[
+                ScalingFactorRow::new("chr1", 0, 50, 2.0_f32),
+                ScalingFactorRow::new("chr1", 50, 200, 3.0_f32),
+            ],
         )?;
         build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
 
@@ -3697,15 +3730,15 @@ fn by_size_total_aligned_fast_path_matches_general_path_with_blacklist_scaling_a
 
 #[test]
 fn by_bed_average_matches_manual_window_means() -> Result<()> {
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("aggregate_windows.bed");
-    write_bed(
+    write_bed4(
         &bed_path,
         &[
-            ("chr1", 0, 40, "window_a"),
-            ("chr1", 20, 80, "window_b"),
-            ("chr1", 70, 90, "window_c"),
+            Bed4Row::new("chr1", 0, 40, "window_a"),
+            Bed4Row::new("chr1", 20, 80, "window_b"),
+            Bed4Row::new("chr1", 70, 90, "window_c"),
         ],
     )?;
 
@@ -3753,7 +3786,7 @@ fn by_bed_average_is_invariant_when_overlapping_windows_cross_tiles() -> Result<
     //   while `tile_size=1000` keeps them in one tile. The final BED-average output must be
     //   identical because averages are properties of the full windows, not the temporary tile
     //   decomposition.
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let tile_sizes = [33_u32, 1_000_u32];
     let mut outputs = Vec::new();
 
@@ -3762,13 +3795,13 @@ fn by_bed_average_is_invariant_when_overlapping_windows_cross_tiles() -> Result<
         let bed_path = out_dir
             .path()
             .join(format!("average_windows_{tile_size}.bed"));
-        write_bed(
+        write_bed4(
             &bed_path,
             &[
-                ("chr1", 0, 40, "window_a"),
-                ("chr1", 10, 95, "window_b"),
-                ("chr1", 20, 80, "window_c"),
-                ("chr1", 70, 90, "window_d"),
+                Bed4Row::new("chr1", 0, 40, "window_a"),
+                Bed4Row::new("chr1", 10, 95, "window_b"),
+                Bed4Row::new("chr1", 20, 80, "window_c"),
+                Bed4Row::new("chr1", 70, 90, "window_d"),
             ],
         )?;
 
@@ -3827,7 +3860,8 @@ fn by_bed_average_is_invariant_when_overlapping_windows_cross_tiles() -> Result<
 
 #[test]
 fn by_bed_average_handles_three_chromosomes_with_global_window_indices() -> Result<()> {
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "fcoverage_three_chr_bed_avg",
         vec![
             ("chr1".to_string(), 200),
             ("chr2".to_string(), 200),
@@ -3839,16 +3873,15 @@ fn by_bed_average_handles_three_chromosomes_with_global_window_indices() -> Resu
             paired_fragment_on_tid(2, 40, 50, 20),
         ],
         Vec::new(),
-        "fcoverage_three_chr_bed_avg",
     )?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("aggregate_windows_three_chr.bed");
-    write_bed(
+    write_bed4(
         &bed_path,
         &[
-            ("chr1", 0, 40, "chr1_window"),
-            ("chr2", 0, 40, "chr2_window"),
-            ("chr3", 50, 100, "chr3_window"),
+            Bed4Row::new("chr1", 0, 40, "chr1_window"),
+            Bed4Row::new("chr2", 0, 40, "chr2_window"),
+            Bed4Row::new("chr3", 50, 100, "chr3_window"),
         ],
     )?;
 
@@ -3889,18 +3922,18 @@ fn by_bed_average_handles_three_chromosomes_with_global_window_indices() -> Resu
 
 #[test]
 fn by_bed_average_skips_chromosomes_without_windows_and_keeps_later_chromosomes() -> Result<()> {
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "fcoverage_bed_average_skip_empty_chr",
         vec![("chr1".to_string(), 200), ("chr2".to_string(), 200)],
         vec![
             paired_fragment_on_tid(0, 20, 60, 20),
             paired_fragment_on_tid(1, 10, 40, 20),
         ],
         Vec::new(),
-        "fcoverage_bed_average_skip_empty_chr",
     )?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("aggregate_windows_chr2_only.bed");
-    write_bed(&bed_path, &[("chr2", 0, 40, "chr2_window")])?;
+    write_bed4(&bed_path, &[Bed4Row::new("chr2", 0, 40, "chr2_window")])?;
 
     let mut windows = DistributionWindowsArgs::default();
     windows.by_bed = Some(bed_path);
@@ -3933,7 +3966,8 @@ fn by_bed_average_skips_chromosomes_without_windows_and_keeps_later_chromosomes(
 
 #[test]
 fn per_position_handles_three_chromosomes_in_global_mode() -> Result<()> {
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "fcoverage_three_chr_global",
         vec![
             ("chr1".to_string(), 200),
             ("chr2".to_string(), 200),
@@ -3945,7 +3979,6 @@ fn per_position_handles_three_chromosomes_in_global_mode() -> Result<()> {
             paired_fragment_on_tid(2, 40, 50, 20),
         ],
         Vec::new(),
-        "fcoverage_three_chr_global",
     )?;
     let out_dir = TempDir::new()?;
 
@@ -3971,7 +4004,8 @@ fn per_position_handles_three_chromosomes_in_global_mode() -> Result<()> {
 
 #[test]
 fn by_size_total_handles_three_chromosomes() -> Result<()> {
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "fcoverage_three_chr_size",
         vec![
             ("chr1".to_string(), 200),
             ("chr2".to_string(), 200),
@@ -3983,7 +4017,6 @@ fn by_size_total_handles_three_chromosomes() -> Result<()> {
             paired_fragment_on_tid(2, 40, 50, 20),
         ],
         Vec::new(),
-        "fcoverage_three_chr_size",
     )?;
     let out_dir = TempDir::new()?;
 
@@ -4016,15 +4049,15 @@ fn by_size_total_handles_three_chromosomes() -> Result<()> {
 
 #[test]
 fn by_bed_total_matches_manual_window_sums() -> Result<()> {
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("aggregate_windows_total.bed");
-    write_bed(
+    write_bed4(
         &bed_path,
         &[
-            ("chr1", 0, 40, "window_a"),
-            ("chr1", 20, 80, "window_b"),
-            ("chr1", 70, 90, "window_c"),
+            Bed4Row::new("chr1", 0, 40, "window_a"),
+            Bed4Row::new("chr1", 20, 80, "window_b"),
+            Bed4Row::new("chr1", 70, 90, "window_c"),
         ],
     )?;
 
@@ -4061,15 +4094,15 @@ fn by_bed_total_matches_manual_window_sums() -> Result<()> {
 
 #[test]
 fn by_bed_unique_positions_merge_overlapping_windows() -> Result<()> {
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("windows.bed");
-    write_bed(
+    write_bed4(
         &bed_path,
         &[
-            ("chr1", 15, 30, "window_a"),
-            ("chr1", 25, 40, "window_b"),
-            ("chr1", 70, 90, "window_c"),
+            Bed4Row::new("chr1", 15, 30, "window_a"),
+            Bed4Row::new("chr1", 25, 40, "window_b"),
+            Bed4Row::new("chr1", 70, 90, "window_c"),
         ],
     )?;
 
@@ -4102,15 +4135,15 @@ fn by_bed_unique_positions_merge_overlapping_windows() -> Result<()> {
 
 #[test]
 fn by_bed_indexed_positions_keep_window_indices_and_overlap_duplicates() -> Result<()> {
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("windows.bed");
-    write_bed(
+    write_bed4(
         &bed_path,
         &[
-            ("chr1", 15, 30, "window_a"),
-            ("chr1", 25, 40, "window_b"),
-            ("chr1", 70, 90, "window_c"),
+            Bed4Row::new("chr1", 15, 30, "window_a"),
+            Bed4Row::new("chr1", 25, 40, "window_b"),
+            Bed4Row::new("chr1", 70, 90, "window_c"),
         ],
     )?;
 
@@ -4151,7 +4184,7 @@ fn by_bed_indexed_positions_keep_window_indices_and_overlap_duplicates() -> Resu
 
 #[test]
 fn by_size_rejects_positional_per_window_modes() -> Result<()> {
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
 
     for action in [
@@ -4186,7 +4219,7 @@ fn global_mode_rejects_total_per_window_choice() -> Result<()> {
     // - `--per-window total` therefore reads like a meaningful aggregation choice but would be
     //   ignored in global mode.
     // - The command should fail fast instead of accepting a silent no-op.
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -4206,12 +4239,15 @@ fn global_mode_rejects_total_per_window_choice() -> Result<()> {
 
 #[test]
 fn scaling_keeps_fractional_outputs_and_applies_rounding() -> Result<()> {
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let scaling_path = out_dir.path().join("scaling.tsv");
-    write_scaling_factors(
+    write_scaling_factors_tsv(
         &scaling_path,
-        &[("chr1", 0, 50, 1.24), ("chr1", 50, 200, 1.26)],
+        &[
+            ScalingFactorRow::new("chr1", 0, 50, 1.24),
+            ScalingFactorRow::new("chr1", 50, 200, 1.26),
+        ],
     )?;
 
     let mut scale_genome = ScaleGenomeArgs::default();
@@ -4243,7 +4279,7 @@ fn scaling_keeps_fractional_outputs_and_applies_rounding() -> Result<()> {
 #[test]
 fn scaling_tsv_must_cover_requested_chromosome_end_in_fcoverage() -> Result<()> {
     // Arrange:
-    // `simple_inward_bam()` uses chr1 length 200.
+    // `single_contig_inward_pair_bam()` uses chr1 length 200.
     // A valid scaling TSV must cover the chromosome contiguously from 0 up to that exact length.
     //
     // Here we intentionally stop at 100:
@@ -4251,10 +4287,10 @@ fn scaling_tsv_must_cover_requested_chromosome_end_in_fcoverage() -> Result<()> 
     // so the artifact is malformed for this chromosome even though the covered fragment itself
     // lies inside the provided span. The command should fail while loading the scaling artifact,
     // before any counting starts.
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let scaling_path = out_dir.path().join("truncated_scaling.tsv");
-    write_scaling_factors(&scaling_path, &[("chr1", 0, 100, 2.0)])?;
+    write_scaling_factors_tsv(&scaling_path, &[ScalingFactorRow::new("chr1", 0, 100, 2.0)])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
     let mut scale_genome = ScaleGenomeArgs::default();
@@ -4279,7 +4315,7 @@ fn scaling_tsv_must_cover_requested_chromosome_end_in_fcoverage() -> Result<()> 
 #[cfg(feature = "cmd_coverage_weights")]
 #[test]
 fn real_coverage_weights_tsv_changes_fcoverage_per_base_not_by_fragment_average() -> Result<()> {
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let weights_out_dir = out_dir.path().join("weights_out");
     std::fs::create_dir_all(&weights_out_dir)?;
@@ -4365,20 +4401,25 @@ fn real_ref_gc_bias_gc_bias_and_coverage_weights_chain_is_coherent_in_fcoverage(
     // Because the GC package is neutral, the final `fcoverage` output must match the
     // scaling-only expectation exactly. This makes the chain a strong release-spine check:
     // if any producer writes incompatible semantics, the downstream bedGraph changes.
-    let bam = simple_inward_bam()?;
-    let ref_twobit = simple_reference_twobit()?;
+    let bam = single_contig_inward_pair_bam()?;
+    let ref_twobit = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let weights_out_dir = out_dir.path().join("weights_out");
     std::fs::create_dir_all(&weights_out_dir)?;
     let mut weights_cfg = make_simple_coverage_weights_config(&weights_out_dir, &bam.bam);
-    let weights_gc_path = build_real_neutral_gc_package_for_range(
+    let weights_gc_path = build_command_produced_gc_correction_package_for_range(
         &bam.bam,
         &ref_twobit.path,
         out_dir.path(),
         10,
         200,
     )?;
-    let gc_path = build_real_neutral_gc_package(&bam.bam, &ref_twobit.path, out_dir.path(), 60)?;
+    let gc_path = build_command_produced_gc_correction_package_for_length(
+        &bam.bam,
+        &ref_twobit.path,
+        out_dir.path(),
+        60,
+    )?;
 
     weights_cfg.set_gc(ApplyGCArgs {
         gc_file: Some(weights_gc_path),
@@ -4465,17 +4506,17 @@ fn near_zero_scaling_tsv_stays_finite_and_correct_in_fcoverage() -> Result<()> {
     //
     // The important downstream contract is that the huge factor remains finite and is emitted as a
     // normal numeric run rather than collapsing to zero, NaN, or inf during counting/output.
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let scaling_path = out_dir.path().join("near_zero_scaling.tsv");
-    write_scaling_factors(
+    write_scaling_factors_tsv(
         &scaling_path,
         &[
-            ("chr1", 0, 20, 0.0_f32),
-            ("chr1", 20, 40, 5000.5_f32),
-            ("chr1", 40, 60, 0.50005_f32),
-            ("chr1", 60, 80, 0.50005_f32),
-            ("chr1", 80, 200, 0.0_f32),
+            ScalingFactorRow::new("chr1", 0, 20, 0.0_f32),
+            ScalingFactorRow::new("chr1", 20, 40, 5000.5_f32),
+            ScalingFactorRow::new("chr1", 40, 60, 0.50005_f32),
+            ScalingFactorRow::new("chr1", 60, 80, 0.50005_f32),
+            ScalingFactorRow::new("chr1", 80, 200, 0.0_f32),
         ],
     )?;
 
@@ -4567,24 +4608,24 @@ fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_fcove
     // - chr2  [80,81): 183/16
     // chr2 deliberately stacks two identical fragments at one start. Use strict identity so the
     // producer really contains three molecules and the derived scaling TSV is correct.
-    let producer_bam = bam_from_specs_strict_identity(
-        vec![("chr1".to_string(), 200), ("chr2".to_string(), 200)],
-        vec![
-            paired_fragment_on_tid(0, 20, 61, 20),
-            paired_fragment_on_tid(1, 20, 61, 20),
-            paired_fragment_on_tid(1, 20, 61, 20),
-        ],
-        Vec::new(),
+    let producer_bam = bam_from_fragments_with_record_indexed_names(
         "fcoverage_multichrom_scaling_producer",
+        vec![("chr1".to_string(), 200), ("chr2".to_string(), 200)],
+        vec![
+            paired_fragment_on_tid(0, 20, 61, 20),
+            paired_fragment_on_tid(1, 20, 61, 20),
+            paired_fragment_on_tid(1, 20, 61, 20),
+        ],
+        Vec::new(),
     )?;
-    let consumer_bam = bam_from_specs(
+    let consumer_bam = bam_from_fragments(
+        "fcoverage_multichrom_scaling_consumer",
         vec![("chr1".to_string(), 200), ("chr2".to_string(), 200)],
         vec![
             paired_fragment_on_tid(0, 20, 61, 20),
             paired_fragment_on_tid(1, 20, 61, 20),
         ],
         Vec::new(),
-        "fcoverage_multichrom_scaling_consumer",
     )?;
     let temp = TempDir::new()?;
     let weights_out_dir = temp.path().join("coverage_weights");
@@ -4744,7 +4785,7 @@ fn normalize_by_length_and_gc_tag_weights_multiply_per_position() -> Result<()> 
 
 #[test]
 fn gc_tag_averages_valid_mate_weights_in_paired_mode() -> Result<()> {
-    let base_bam = simple_inward_bam()?;
+    let base_bam = single_contig_inward_pair_bam()?;
     let tagged_bam = bam_with_gc_tags(
         &base_bam.bam,
         "fcoverage_gc_tag_paired_avg",
@@ -4782,7 +4823,7 @@ fn gc_tag_averages_valid_mate_weights_in_paired_mode() -> Result<()> {
 #[test]
 fn bam_to_bam_gc_file_output_drives_fcoverage_gc_tag_same_as_original_gc_file() -> Result<()> {
     // Arrange:
-    // `simple_inward_bam()` contains one paired fragment spanning [20, 80), length 60.
+    // `single_contig_inward_pair_bam()` contains one paired fragment spanning [20, 80), length 60.
     // We build the smallest GC package that assigns a constant weight 3.0 to every 60 bp
     // fragment:
     // - length_edges = [60, 61]
@@ -4795,8 +4836,8 @@ fn bam_to_bam_gc_file_output_drives_fcoverage_gc_tag_same_as_original_gc_file() 
     //
     // The only fragment covers [20, 80), so both workflows must yield the same positional output:
     //   chr1  20  80  3
-    let bam = simple_inward_bam()?;
-    let reference = simple_reference_twobit()?;
+    let bam = single_contig_inward_pair_bam()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let temp = TempDir::new()?;
     let tagged_bam_path = temp.path().join("tagged_gc.bam");
     let gc_path = temp.path().join("constant_gc_pkg.zarr");
@@ -4921,7 +4962,7 @@ fn gc_tag_paired_edge_cases_follow_fragment_combination_rules() -> Result<()> {
         expected_counted_fragments,
     ) in scenarios
     {
-        let base_bam = simple_inward_bam()?;
+        let base_bam = single_contig_inward_pair_bam()?;
         let tagged_bam =
             bam_with_gc_tags(&base_bam.bam, &format!("fcoverage_gc_tag_{name}"), tags)?;
         let out_dir = TempDir::new()?;
@@ -5040,10 +5081,10 @@ fn gc_tag_missing_or_invalid_values_skip_by_default_or_neutralize() -> Result<()
 
 #[test]
 fn gc_file_requires_ref_2bit() -> Result<()> {
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let gc_path = out_dir.path().join("gc_pkg.zarr");
-    let ref_twobit = simple_reference_twobit()?;
+    let ref_twobit = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -5062,8 +5103,8 @@ fn gc_file_requires_ref_2bit() -> Result<()> {
 
 #[test]
 fn gc_file_weights_positional_output_from_reference_package() -> Result<()> {
-    let bam = simple_inward_bam()?;
-    let ref_twobit = simple_reference_twobit()?;
+    let bam = single_contig_inward_pair_bam()?;
+    let ref_twobit = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let gc_path = out_dir.path().join("gc_pkg.zarr");
     build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
@@ -5096,13 +5137,13 @@ fn gc_file_weights_positional_output_from_reference_package() -> Result<()> {
 #[test]
 fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range() -> Result<()> {
     // Arrange:
-    // `simple_inward_bam()` contains one fragment of length 60.
+    // `single_contig_inward_pair_bam()` contains one fragment of length 60.
     // Give `fcoverage` a GC package that only covers fragment lengths 10..=59:
     //   length_edges = [10, 59]
     // With command fragment length bounds set to exactly [60, 60], the consumer must reject the
     // package before any coverage counting starts.
-    let bam = simple_inward_bam()?;
-    let ref_twobit = simple_reference_twobit()?;
+    let bam = single_contig_inward_pair_bam()?;
+    let ref_twobit = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let gc_path = out_dir.path().join("gc_pkg_short.zarr");
     let package = GCCorrectionPackage {
@@ -5148,8 +5189,8 @@ fn gc_file_rejects_package_with_schema_version_mismatch() -> Result<()> {
     // Build the smallest possible syntactically valid GC correction package, but make the schema
     // version intentionally incompatible. The command should fail while loading the package, before
     // any reference lookup or coverage counting begins.
-    let bam = simple_inward_bam()?;
-    let ref_twobit = simple_reference_twobit()?;
+    let bam = single_contig_inward_pair_bam()?;
+    let ref_twobit = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let gc_path = out_dir.path().join("gc_pkg_bad_version.zarr");
     let package = GCCorrectionPackage {
@@ -5187,10 +5228,15 @@ fn gc_file_rejects_package_with_schema_version_mismatch() -> Result<()> {
 #[test]
 fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_fcoverage() -> Result<()>
 {
-    let bam = simple_inward_bam()?;
-    let ref_twobit = simple_reference_twobit()?;
+    let bam = single_contig_inward_pair_bam()?;
+    let ref_twobit = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
-    let gc_path = build_real_neutral_gc_package(&bam.bam, &ref_twobit.path, out_dir.path(), 60)?;
+    let gc_path = build_command_produced_gc_correction_package_for_length(
+        &bam.bam,
+        &ref_twobit.path,
+        out_dir.path(),
+        60,
+    )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
     cfg.set_decimals(0);
@@ -5260,7 +5306,7 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_fcoverage_in_expected_direction
     // The nine C fragments are disjoint 10 bp runs, so the final bedGraph should be:
     // - chr1 10 20 5
     // - chr1 110 200 5/9
-    let reference = fixtures::twobit_from_sequences(
+    let reference = twobit_from_sequences(
         "fcoverage_real_non_neutral_reference",
         vec![(
             "chr1".to_string(),
@@ -5270,13 +5316,13 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_fcoverage_in_expected_direction
     let starts = [10_i64, 110, 120, 130, 140, 150, 160, 170, 180, 190];
     let fragments = starts
         .into_iter()
-        .map(|start| paired_fragment(start, 10, 5))
-        .collect();
-    let bam = bam_from_specs(
+        .map(|start| PairedFragmentSpec::new(0, start, 10, 5).build())
+        .collect::<Result<Vec<_>>>()?;
+    let bam = bam_from_fragments(
+        "fcoverage_real_non_neutral_bam",
         vec![("chr1".to_string(), 200)],
         fragments,
         Vec::new(),
-        "fcoverage_real_non_neutral_bam",
     )?;
 
     let out_dir = TempDir::new()?;
@@ -5285,7 +5331,7 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_fcoverage_in_expected_direction
     // Sampling all valid starts plus BED windows `[0,91)` and `[100,191)` still makes the
     // reference-side masses exactly balanced between the pure-A and pure-C bins under the
     // `ref-gc-bias` fit rule.
-    let gc_path = build_real_non_neutral_gc_package(
+    let gc_path = build_command_produced_gc_correction_package_from_reference_windows(
         &bam.bam,
         &reference.path,
         out_dir.path(),
@@ -5343,8 +5389,8 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_fcoverage_in_expected_direction
 
 #[test]
 fn gc_file_invalid_weights_skip_by_default_or_neutralize() -> Result<()> {
-    let bam = simple_inward_bam()?;
-    let ref_twobit = simple_reference_twobit()?;
+    let bam = single_contig_inward_pair_bam()?;
+    let ref_twobit = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let scenarios = [
         ("skipped_by_default", false, Vec::<&str>::new()),
         ("neutralized", true, vec!["chr1\t20\t80\t1"]),
@@ -5396,9 +5442,12 @@ fn unique_positions_split_one_merged_window_into_multiple_runs() -> Result<()> {
     let bam = overlapping_fragment_bam()?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("windows_multi_run.bed");
-    write_bed(
+    write_bed4(
         &bed_path,
-        &[("chr1", 15, 45, "window_a"), ("chr1", 45, 85, "window_b")],
+        &[
+            Bed4Row::new("chr1", 15, 45, "window_a"),
+            Bed4Row::new("chr1", 45, 85, "window_b"),
+        ],
     )?;
 
     let mut windows = DistributionWindowsArgs::default();
@@ -5439,9 +5488,12 @@ fn indexed_positions_repeat_window_index_for_each_run_and_duplicate_overlap() ->
     let bam = overlapping_fragment_bam()?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("windows_multi_run_indexed.bed");
-    write_bed(
+    write_bed4(
         &bed_path,
-        &[("chr1", 15, 75, "window_a"), ("chr1", 25, 85, "window_b")],
+        &[
+            Bed4Row::new("chr1", 15, 75, "window_a"),
+            Bed4Row::new("chr1", 25, 85, "window_b"),
+        ],
     )?;
 
     let mut windows = DistributionWindowsArgs::default();
@@ -5527,12 +5579,12 @@ fn by_bed_total_halo_only_window_is_not_double_counted_across_tiles() -> Result<
     let bam = single_read_fragment_bam_at("fcoverage_core_overlap_guard", 5, 20)?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("core_overlap_guard.bed");
-    write_bed(
+    write_bed4(
         &bed_path,
         &[
-            ("chr1", 5, 10, "window_a"),
-            ("chr1", 15, 20, "window_b"),
-            ("chr1", 20, 25, "window_c"),
+            Bed4Row::new("chr1", 5, 10, "window_a"),
+            Bed4Row::new("chr1", 15, 20, "window_b"),
+            Bed4Row::new("chr1", 20, 25, "window_c"),
         ],
     )?;
 
@@ -5590,12 +5642,12 @@ fn by_bed_average_halo_only_window_is_counted_once_regardless_of_tile_size() -> 
         let bed_path = out_dir
             .path()
             .join(format!("core_overlap_tsi_{tile_size}.bed"));
-        write_bed(
+        write_bed4(
             &bed_path,
             &[
-                ("chr1", 5, 10, "window_a"),
-                ("chr1", 15, 20, "window_b"),
-                ("chr1", 20, 25, "window_c"),
+                Bed4Row::new("chr1", 5, 10, "window_a"),
+                Bed4Row::new("chr1", 15, 20, "window_b"),
+                Bed4Row::new("chr1", 20, 25, "window_c"),
             ],
         )?;
 
@@ -5657,16 +5709,16 @@ fn grouped_bed_total_uses_site_weighted_group_semantics() -> Result<()> {
     //     total_coverage = 30 + 40 = 70
     // - Group `alpha` has [20, 40), so total_coverage = 20.
     // - Group `gamma` has [0, 10), outside the fragment, so total_coverage = 0.
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_site_weighted.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
         &[
-            ("chr1", 20, 50, "beta"),
-            ("chr1", 20, 40, "alpha"),
-            ("chr1", 40, 80, "beta"),
-            ("chr1", 0, 10, "gamma"),
+            Bed4Row::new("chr1", 20, 50, "beta"),
+            Bed4Row::new("chr1", 20, 40, "alpha"),
+            Bed4Row::new("chr1", 40, 80, "beta"),
+            Bed4Row::new("chr1", 0, 10, "gamma"),
         ],
     )?;
 
@@ -5736,7 +5788,7 @@ fn grouped_bed_total_is_invariant_when_plain_group_segments_cross_tiles() -> Res
     // - `tile_size=33` forces the segment rows for `beta`, `alpha`, and `delta` through the
     //   cross-tile BED-basic reducer, while `tile_size=1000` keeps them in one tile. The final
     //   grouped totals and stable group-index sidecar must still be identical.
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let tile_sizes = [33_u32, 1_000_u32];
     let mut outputs = Vec::new();
     let mut sidecars = Vec::new();
@@ -5746,14 +5798,14 @@ fn grouped_bed_total_is_invariant_when_plain_group_segments_cross_tiles() -> Res
         let grouped_bed = out_dir
             .path()
             .join(format!("grouped_plain_total_{tile_size}.bed"));
-        write_bed(
+        write_bed4(
             &grouped_bed,
             &[
-                ("chr1", 20, 50, "beta"),
-                ("chr1", 20, 40, "alpha"),
-                ("chr1", 40, 80, "beta"),
-                ("chr1", 0, 60, "delta"),
-                ("chr1", 0, 10, "gamma"),
+                Bed4Row::new("chr1", 20, 50, "beta"),
+                Bed4Row::new("chr1", 20, 40, "alpha"),
+                Bed4Row::new("chr1", 40, 80, "beta"),
+                Bed4Row::new("chr1", 0, 60, "delta"),
+                Bed4Row::new("chr1", 0, 10, "gamma"),
             ],
         )?;
 
@@ -5828,10 +5880,10 @@ fn grouped_bed_errors_when_chromosome_filter_excludes_every_group() -> Result<()
     // - The grouped BED contains one valid grouped row on `chr2`.
     // - Chromosome filtering removes that row before grouping, leaving no selected grouped
     //   windows. The command should fail directly instead of writing header-only outputs.
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_all_rows_filtered.bed");
-    write_bed(&grouped_bed, &[("chr2", 0, 100, "filtered")])?;
+    write_bed4(&grouped_bed, &[Bed4Row::new("chr2", 0, 100, "filtered")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
     cfg.set_decimals(0);
@@ -5871,20 +5923,23 @@ fn grouped_bed_ignores_groups_on_filtered_out_chromosomes() -> Result<()> {
     //     sidecar contains only `alpha`
     //     output contains only one grouped row
     //     `alpha` has span_positions = eligible_positions = 100 and total_coverage = 60
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "grouped_filtered_chromosomes",
         vec![("chr1".to_string(), 200), ("chr2".to_string(), 200)],
         vec![
             paired_fragment_on_tid(0, 20, 60, 20),
             paired_fragment_on_tid(1, 40, 60, 20),
         ],
         Vec::new(),
-        "grouped_filtered_chromosomes",
     )?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_filtered_chromosomes.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
-        &[("chr1", 0, 100, "alpha"), ("chr2", 0, 120, "beta")],
+        &[
+            Bed4Row::new("chr1", 0, 100, "alpha"),
+            Bed4Row::new("chr2", 0, 120, "beta"),
+        ],
     )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -5931,15 +5986,15 @@ fn grouped_bed_total_on_unique_bases_merges_same_group_overlaps() -> Result<()> 
     //     span_positions = 60
     //     total_coverage = 60
     // - `gamma` stays a zero row.
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_unique_bases.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
         &[
-            ("chr1", 20, 50, "beta"),
-            ("chr1", 40, 80, "beta"),
-            ("chr1", 0, 10, "gamma"),
+            Bed4Row::new("chr1", 20, 50, "beta"),
+            Bed4Row::new("chr1", 40, 80, "beta"),
+            Bed4Row::new("chr1", 0, 10, "gamma"),
         ],
     )?;
 
@@ -5990,15 +6045,15 @@ fn grouped_bed_average_on_unique_bases_merges_same_group_overlaps() -> Result<()
     // - `gamma` covers [0, 20) with no fragment support, so:
     //     span_positions = eligible_positions = 20
     //     average_coverage = 0
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_unique_bases_avg.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
         &[
-            ("chr1", 20, 50, "beta"),
-            ("chr1", 40, 80, "beta"),
-            ("chr1", 0, 20, "gamma"),
+            Bed4Row::new("chr1", 20, 50, "beta"),
+            Bed4Row::new("chr1", 40, 80, "beta"),
+            Bed4Row::new("chr1", 0, 20, "gamma"),
         ],
     )?;
 
@@ -6054,22 +6109,22 @@ fn grouped_bed_total_with_blacklist_uses_site_weighted_group_semantics() -> Resu
     // - Group `alpha` is [20, 40), fully outside the blacklist:
     //     span_positions = eligible_positions = total_coverage = 20
     // - Group `gamma` is [0, 10), so it stays a zero row with no blacklisted positions.
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_site_weighted_blacklist.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
         &[
-            ("chr1", 20, 50, "beta"),
-            ("chr1", 20, 40, "alpha"),
-            ("chr1", 40, 80, "beta"),
-            ("chr1", 0, 10, "gamma"),
+            Bed4Row::new("chr1", 20, 50, "beta"),
+            Bed4Row::new("chr1", 20, 40, "alpha"),
+            Bed4Row::new("chr1", 40, 80, "beta"),
+            Bed4Row::new("chr1", 0, 10, "gamma"),
         ],
     )?;
     let blacklist_bed = out_dir
         .path()
         .join("grouped_site_weighted_blacklist_mask.bed");
-    write_bed(&blacklist_bed, &[("chr1", 45, 55, "masked")])?;
+    write_bed4(&blacklist_bed, &[Bed4Row::new("chr1", 45, 55, "masked")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
     cfg.set_decimals(0);
@@ -6123,23 +6178,23 @@ fn grouped_bed_total_on_unique_bases_with_blacklist_merges_same_group_overlap_on
     //     eligible_positions = 50
     //     total_coverage = 50
     // - Group `gamma` is [0, 10), so it remains a zero row.
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir
         .path()
         .join("grouped_unique_bases_blacklist_total.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
         &[
-            ("chr1", 20, 50, "beta"),
-            ("chr1", 40, 80, "beta"),
-            ("chr1", 0, 10, "gamma"),
+            Bed4Row::new("chr1", 20, 50, "beta"),
+            Bed4Row::new("chr1", 40, 80, "beta"),
+            Bed4Row::new("chr1", 0, 10, "gamma"),
         ],
     )?;
     let blacklist_bed = out_dir
         .path()
         .join("grouped_unique_bases_blacklist_total_mask.bed");
-    write_bed(&blacklist_bed, &[("chr1", 45, 55, "masked")])?;
+    write_bed4(&blacklist_bed, &[Bed4Row::new("chr1", 45, 55, "masked")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
     cfg.set_decimals(0);
@@ -6196,23 +6251,23 @@ fn grouped_bed_average_on_unique_bases_with_blacklist_uses_only_eligible_positio
     //     eligible_positions = 35
     //     covered eligible bases are [20, 30) and [35, 40), so total_coverage = 15
     //     average_coverage = 15 / 35 = 3 / 7
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir
         .path()
         .join("grouped_unique_bases_blacklist_avg.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
         &[
-            ("chr1", 20, 50, "beta"),
-            ("chr1", 40, 80, "beta"),
-            ("chr1", 0, 40, "delta"),
+            Bed4Row::new("chr1", 20, 50, "beta"),
+            Bed4Row::new("chr1", 40, 80, "beta"),
+            Bed4Row::new("chr1", 0, 40, "delta"),
         ],
     )?;
     let blacklist_bed = out_dir
         .path()
         .join("grouped_unique_bases_blacklist_average_mask.bed");
-    write_bed(&blacklist_bed, &[("chr1", 30, 35, "masked")])?;
+    write_bed4(&blacklist_bed, &[Bed4Row::new("chr1", 30, 35, "masked")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
     cfg.set_decimals(6);
@@ -6264,14 +6319,17 @@ fn grouped_bed_average_writes_nan_when_group_has_no_eligible_positions() -> Resu
     //     span_positions = blacklisted_positions = 30
     //     eligible_positions = 0
     //     average_coverage = NaN because no denominator exists
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_average_fully_masked.bed");
-    write_bed(&grouped_bed, &[("chr1", 20, 50, "masked")])?;
+    write_bed4(&grouped_bed, &[Bed4Row::new("chr1", 20, 50, "masked")])?;
     let blacklist_bed = out_dir
         .path()
         .join("grouped_average_fully_masked_blacklist.bed");
-    write_bed(&blacklist_bed, &[("chr1", 20, 50, "fully_masked")])?;
+    write_bed4(
+        &blacklist_bed,
+        &[Bed4Row::new("chr1", 20, 50, "fully_masked")],
+    )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
     cfg.set_decimals(3);
@@ -6312,19 +6370,25 @@ fn grouped_bed_average_on_unique_bases_writes_nan_when_group_has_no_eligible_pos
     //     span_positions = blacklisted_positions = 60
     //     eligible_positions = 0
     //     average_coverage = NaN because no denominator exists
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir
         .path()
         .join("grouped_unique_bases_average_fully_masked.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
-        &[("chr1", 20, 50, "masked"), ("chr1", 40, 80, "masked")],
+        &[
+            Bed4Row::new("chr1", 20, 50, "masked"),
+            Bed4Row::new("chr1", 40, 80, "masked"),
+        ],
     )?;
     let blacklist_bed = out_dir
         .path()
         .join("grouped_unique_bases_average_fully_masked_blacklist.bed");
-    write_bed(&blacklist_bed, &[("chr1", 20, 80, "fully_masked")])?;
+    write_bed4(
+        &blacklist_bed,
+        &[Bed4Row::new("chr1", 20, 80, "fully_masked")],
+    )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
     cfg.set_decimals(3);
@@ -6381,23 +6445,23 @@ fn grouped_summary_stats_on_unique_bases_with_blacklist_excludes_masked_position
     //     sd = sqrt(12 / 49) = sqrt(12) / 7
     //     cv = (sqrt(12) / 7) / (3 / 7) = sqrt(12) / 3
     //     covered_fraction = 15 / 35 = 3 / 7
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir
         .path()
         .join("grouped_unique_bases_blacklist_summary.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
         &[
-            ("chr1", 20, 50, "beta"),
-            ("chr1", 40, 80, "beta"),
-            ("chr1", 0, 40, "delta"),
+            Bed4Row::new("chr1", 20, 50, "beta"),
+            Bed4Row::new("chr1", 40, 80, "beta"),
+            Bed4Row::new("chr1", 0, 40, "delta"),
         ],
     )?;
     let blacklist_bed = out_dir
         .path()
         .join("grouped_unique_bases_blacklist_summary_mask.bed");
-    write_bed(&blacklist_bed, &[("chr1", 30, 35, "masked")])?;
+    write_bed4(&blacklist_bed, &[Bed4Row::new("chr1", 30, 35, "masked")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
     cfg.set_decimals(6);
@@ -6496,7 +6560,7 @@ fn grouped_summary_stats_with_blacklist_is_invariant_when_plain_group_segments_c
     // - `tile_size=33` forces the group segments above to cross tile boundaries, while
     //   `tile_size=1000` keeps them inside one tile. The final grouped summary-stats output
     //   must still match exactly
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let tile_sizes = [33_u32, 1_000_u32];
     let mut outputs = Vec::new();
     let mut sidecars = Vec::new();
@@ -6506,19 +6570,19 @@ fn grouped_summary_stats_with_blacklist_is_invariant_when_plain_group_segments_c
         let grouped_bed = out_dir
             .path()
             .join(format!("grouped_plain_summary_blacklist_{tile_size}.bed"));
-        write_bed(
+        write_bed4(
             &grouped_bed,
             &[
-                ("chr1", 20, 50, "beta"),
-                ("chr1", 40, 80, "beta"),
-                ("chr1", 0, 60, "delta"),
-                ("chr1", 0, 10, "gamma"),
+                Bed4Row::new("chr1", 20, 50, "beta"),
+                Bed4Row::new("chr1", 40, 80, "beta"),
+                Bed4Row::new("chr1", 0, 60, "delta"),
+                Bed4Row::new("chr1", 0, 10, "gamma"),
             ],
         )?;
         let blacklist_bed = out_dir.path().join(format!(
             "grouped_plain_summary_blacklist_mask_{tile_size}.bed"
         ));
-        write_bed(&blacklist_bed, &[("chr1", 45, 55, "masked")])?;
+        write_bed4(&blacklist_bed, &[Bed4Row::new("chr1", 45, 55, "masked")])?;
 
         let mut cfg = base_config(&bam.bam, out_dir.path());
         cfg.set_tile_size(tile_size);
@@ -6628,7 +6692,7 @@ fn by_size_summary_stats_writes_expected_raw_and_derived_values() -> Result<()> 
     //     sd = sqrt(0.21)
     //     cv = sd / 0.3
     //     covered_fraction = 60 / 200 = 0.3
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -6713,7 +6777,7 @@ fn by_size_summary_stats_is_invariant_when_windows_cross_tile_boundaries() -> Re
     //     cv = NaN because the mean is exactly zero
     // - `tile_size=33` forces cross-tile reduction for several windows, while `tile_size=1000`
     //   keeps the whole chromosome in one tile. The final summary-stats output must still match
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let tile_sizes = [33_u32, 1_000_u32];
     let mut outputs = Vec::new();
 
@@ -6832,7 +6896,10 @@ fn by_bed_summary_stats_derives_variance_from_overlapping_fragments() -> Result<
     let bam = overlapping_fragment_bam()?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("overlapping_summary_window.bed");
-    write_bed(&bed_path, &[("chr1", 0, 100, "variance_window")])?;
+    write_bed4(
+        &bed_path,
+        &[Bed4Row::new("chr1", 0, 100, "variance_window")],
+    )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
     cfg.set_decimals(6);
@@ -6916,12 +6983,12 @@ fn by_bed_summary_stats_is_invariant_when_overlapping_windows_cross_tiles() -> R
         let bed_path = out_dir
             .path()
             .join(format!("overlap_summary_{tile_size}.bed"));
-        write_bed(
+        write_bed4(
             &bed_path,
             &[
-                ("chr1", 0, 100, "window_a"),
-                ("chr1", 20, 80, "window_b"),
-                ("chr1", 30, 70, "window_c"),
+                Bed4Row::new("chr1", 0, 100, "window_a"),
+                Bed4Row::new("chr1", 20, 80, "window_b"),
+                Bed4Row::new("chr1", 30, 70, "window_c"),
             ],
         )?;
 
@@ -7022,12 +7089,15 @@ fn by_bed_total_keeps_coordinate_sorted_output_when_same_start_windows_cross_til
     // - With `tile_size=33`, both windows cross tile boundaries. This test pins that reduction
     //   still succeeds and that final output stays in coordinate order rather than original BED
     //   line order
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("same_start_reverse_bed_order.bed");
-    write_bed(
+    write_bed4(
         &bed_path,
-        &[("chr1", 0, 100, "wide"), ("chr1", 0, 40, "narrow")],
+        &[
+            Bed4Row::new("chr1", 0, 100, "wide"),
+            Bed4Row::new("chr1", 0, 40, "narrow"),
+        ],
     )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -7074,15 +7144,15 @@ fn grouped_summary_stats_on_unique_bases_writes_expected_rows() -> Result<()> {
     //     mean = variance = sd = 0
     //     cv = NaN because mean is zero
     //     covered_fraction = 0
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_summary_unique.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
         &[
-            ("chr1", 20, 50, "beta"),
-            ("chr1", 40, 80, "beta"),
-            ("chr1", 0, 10, "gamma"),
+            Bed4Row::new("chr1", 20, 50, "beta"),
+            Bed4Row::new("chr1", 40, 80, "beta"),
+            Bed4Row::new("chr1", 0, 10, "gamma"),
         ],
     )?;
 
@@ -7163,15 +7233,15 @@ fn grouped_summary_stats_with_global_row_treats_global_as_ordinary_site_weighted
     //     mean = 60 / 200 = 0.3
     // - `global` is just another site-weighted grouped row here. It does not trigger any extra
     //   `fcoverage`-level correlation output.
-    let bam = simple_inward_bam()?;
+    let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_summary_sites_with_global.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
         &[
-            ("chr1", 20, 50, "beta"),
-            ("chr1", 40, 80, "beta"),
-            ("chr1", 0, 200, "global"),
+            Bed4Row::new("chr1", 20, 50, "beta"),
+            Bed4Row::new("chr1", 40, 80, "beta"),
+            Bed4Row::new("chr1", 0, 200, "global"),
         ],
     )?;
 
@@ -7275,7 +7345,7 @@ fn grouped_summary_stats_on_unique_bases_supports_downstream_pearson_with_gc_sca
     // downstream from the written `global` and `open` rows and checks that this matches the
     // ordinary direct positional formula over an explicit 600-position coverage vector and a 0/1
     // mask vector for the `open` row.
-    let reference = fixtures::twobit_from_sequences(
+    let reference = twobit_from_sequences(
         "fcoverage_grouped_summary_three_chr_reference",
         vec![
             ("chr1".to_string(), "ACGT".repeat(50)),
@@ -7283,7 +7353,8 @@ fn grouped_summary_stats_on_unique_bases_supports_downstream_pearson_with_gc_sca
             ("chr3".to_string(), "ACGT".repeat(50)),
         ],
     )?;
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "fcoverage_grouped_summary_three_chr",
         vec![
             ("chr1".to_string(), 200),
             ("chr2".to_string(), 200),
@@ -7295,30 +7366,29 @@ fn grouped_summary_stats_on_unique_bases_supports_downstream_pearson_with_gc_sca
             paired_fragment_on_tid(2, 20, 60, 20),
         ],
         Vec::new(),
-        "fcoverage_grouped_summary_three_chr",
     )?;
     let out_dir = TempDir::new()?;
     let gc_path = out_dir.path().join("three_chr_gc_pkg.zarr");
     build_gc_package(&gc_path, 0, twobit_contig_footprint(&reference.path)?)?;
     let scaling_path = out_dir.path().join("three_chr_scaling.tsv");
-    write_scaling_factors(
+    write_scaling_factors_tsv(
         &scaling_path,
         &[
-            ("chr1", 0, 200, 1.0),
-            ("chr2", 0, 200, 2.0),
-            ("chr3", 0, 200, 3.0),
+            ScalingFactorRow::new("chr1", 0, 200, 1.0),
+            ScalingFactorRow::new("chr2", 0, 200, 2.0),
+            ScalingFactorRow::new("chr3", 0, 200, 3.0),
         ],
     )?;
     let grouped_bed = out_dir.path().join("grouped_summary_three_chr.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
         &[
-            ("chr1", 20, 50, "open"),
-            ("chr2", 20, 50, "open"),
-            ("chr3", 20, 50, "open"),
-            ("chr1", 0, 200, "global"),
-            ("chr2", 0, 200, "global"),
-            ("chr3", 0, 200, "global"),
+            Bed4Row::new("chr1", 20, 50, "open"),
+            Bed4Row::new("chr2", 20, 50, "open"),
+            Bed4Row::new("chr3", 20, 50, "open"),
+            Bed4Row::new("chr1", 0, 200, "global"),
+            Bed4Row::new("chr2", 0, 200, "global"),
+            Bed4Row::new("chr3", 0, 200, "global"),
         ],
     )?;
 

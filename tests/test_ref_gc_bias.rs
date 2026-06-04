@@ -9,8 +9,7 @@ use cfdnalab::{
         ref_gc_bias::{RefGCBiasConfig, RefGCWindowsArgs, run_ref_gc_bias},
     },
     testing::{
-        TempTwoBit, read_reference_gc_package, twobit_from_sequences,
-        twobit_with_single_repeating_contig,
+        read_reference_gc_package, twobit_from_sequences, twobit_with_single_repeating_contig,
     },
 };
 use ndarray::Array2;
@@ -33,13 +32,9 @@ fn load_ref_gc_package_arrays(
     ))
 }
 
-fn simple_reference_twobit() -> Result<TempTwoBit> {
-    twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)
-}
-
 #[test]
 fn ref_gc_bias_run_writes_expected_prefixed_package_metadata_and_shapes() -> Result<()> {
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let output_prefix = "unit_ref_gc";
 
@@ -977,7 +972,7 @@ fn ref_gc_bias_run_interpolation_enabled_fills_between_equal_supported_anchors()
 // KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn overlapping_and_touching_bed_windows_match_explicitly_merged_ref_gc_bias_run() -> Result<()> {
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let split_out_dir = TempDir::new()?;
     let merged_out_dir = TempDir::new()?;
     let bed_split = split_out_dir.path().join("split_windows.bed");
@@ -1068,7 +1063,7 @@ fn overlapping_and_touching_bed_windows_with_blacklist_match_explicitly_merged_r
     // Then we apply the same blacklist [30, 50) to both runs. Because flattening happens before
     // counting and the blacklist is identical, the final written reference package must match
     // exactly.
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let split_out_dir = TempDir::new()?;
     let merged_out_dir = TempDir::new()?;
     let bed_dir = TempDir::new()?;
@@ -1150,7 +1145,7 @@ fn full_chromosome_bed_window_matches_global_ref_gc_bias_run() -> Result<()> {
     // With a fixed seed, identical length range, and identical blacklist settings, the full
     // written reference package must match exactly: counts, both support masks, and GC-percent
     // widths.
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let global_out_dir = TempDir::new()?;
     let bed_out_dir = TempDir::new()?;
     let bed_path = bed_out_dir.path().join("whole_chr.bed");
@@ -1230,7 +1225,7 @@ fn full_chromosome_bed_window_with_blacklist_matches_global_ref_gc_bias_run() ->
     // Because both runs see the same chromosome span, the same fixed seed, the same fragment
     // lengths, and the same blacklisted bases, the written package must match exactly:
     // counts, both support masks, and GC-percent widths.
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let global_out_dir = TempDir::new()?;
     let bed_out_dir = TempDir::new()?;
     let bed_dir = TempDir::new()?;
@@ -1316,7 +1311,7 @@ fn multiple_blacklist_files_with_touching_intervals_match_single_merged_ref_gc_b
     //
     // With a fixed seed and otherwise identical config, the full written reference package must
     // match exactly: counts, both support masks, and GC-percent widths.
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let split_out_dir = TempDir::new()?;
     let merged_out_dir = TempDir::new()?;
     let blacklist_dir = TempDir::new()?;
@@ -1390,7 +1385,7 @@ fn multiple_blacklist_files_with_touching_intervals_match_single_merged_ref_gc_b
 // KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn rejects_n_positions_when_sampling_density_would_exceed_one() -> Result<()> {
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
 
     let cfg = RefGCBiasConfig {
@@ -1400,7 +1395,7 @@ fn rejects_n_positions_when_sampling_density_would_exceed_one() -> Result<()> {
         output_dir: out_dir.path().to_path_buf(),
         output_prefix: String::new(),
         n_threads: 1,
-        // `simple_reference_twobit()` uses chr1 length 256.
+        // `twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)` uses chr1 length 256.
         // With max fragment length 60, the number of valid starts is:
         //   256 - 60 + 1 = 197.
         // Asking for 198 positions therefore gives:
@@ -1440,7 +1435,7 @@ fn rejects_n_positions_when_sampling_density_would_exceed_one() -> Result<()> {
 // KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn fixed_seed_ref_gc_bias_is_invariant_to_thread_count() -> Result<()> {
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let single_thread_out = TempDir::new()?;
     let two_thread_out = TempDir::new()?;
 
@@ -1512,7 +1507,7 @@ fn fixed_seed_ref_gc_bias_with_blacklist_and_bed_is_invariant_to_thread_count() 
     //
     // We force a multi-tile execution on the 256 bp fixture chromosome by using tile_size = 80,
     // then compare `n_threads = 1` and `n_threads = 2` with all other inputs identical.
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let single_thread_out = TempDir::new()?;
     let two_thread_out = TempDir::new()?;
     let bed_dir = TempDir::new()?;
@@ -1579,7 +1574,7 @@ fn fixed_seed_ref_gc_bias_with_blacklist_and_bed_is_invariant_to_thread_count() 
 // KEEP-IN-TESTS: ref-gc-bias command output or artifact behavior.
 #[test]
 fn fixed_seed_ref_gc_bias_is_deterministic_for_same_tile_size() -> Result<()> {
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let first_out = TempDir::new()?;
     let second_out = TempDir::new()?;
 

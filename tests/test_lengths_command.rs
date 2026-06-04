@@ -22,21 +22,24 @@ mod tests_lengths_command {
     use cfdnalab::run_like_cli::coverage_weights::{
         CoverageWeightsConfig, run_coverage_weights as run_coverage_weights_command,
     };
-    use cfdnalab::run_like_cli::lengths::{LengthsConfig, run_lengths};
-    use fixtures::{
-        BamFixture, FragmentSpec, ReadSpec, bam_from_specs, build_real_neutral_gc_package,
-        build_real_neutral_gc_package_for_range, build_real_non_neutral_gc_package,
-        late_origin_gc_reference_sequence, read_length_counts_text, read_length_counts_tsv,
-        simple_inward_bam, simple_reference_twobit, twobit_from_sequences, write_bed,
-        write_scaling_factors, write_two_bin_gc_package,
+    use cfdnalab::run_like_cli::lengths::{LengthsConfig, LengthsRunResult, run_lengths};
+    use cfdnalab::testing::{
+        Bed4Row, Cigar, FragmentSpec, PairedFragmentSpec, ReadSpec, ScalingFactorRow, TempBam,
+        bam_from_fragments, build_command_produced_gc_correction_package_for_length,
+        build_command_produced_gc_correction_package_for_range,
+        build_command_produced_gc_correction_package_from_reference_windows,
+        read_length_counts_text, read_length_counts_tsv, single_contig_inward_pair_bam,
+        twobit_from_sequences, twobit_with_single_repeating_contig, write_bed4,
+        write_scaling_factors_tsv, write_two_bin_gc_correction_package,
     };
+    use fixtures::late_origin_gc_reference_sequence;
     use ndarray::Array2;
     use ndarray::array;
     use serde_json::Value;
     use tempfile::TempDir;
 
-    fn run(cfg: &LengthsConfig) -> Result<()> {
-        run_lengths(cfg, RunOptions::new_quiet()).map(|_| ())
+    fn run(cfg: &LengthsConfig) -> Result<LengthsRunResult> {
+        run_lengths(cfg, RunOptions::new_quiet())
     }
 
     #[cfg(feature = "cmd_coverage_weights")]
@@ -45,7 +48,12 @@ mod tests_lengths_command {
     }
 
     fn dot_join(parts: &[&str]) -> String {
-        parts.join(".")
+        parts
+            .iter()
+            .copied()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join(".")
     }
 
     const HIGH_PRECISION_COUNT_DECIMALS: u8 = 12;
@@ -166,7 +174,9 @@ mod tests_lengths_command {
     }
 
     fn fragment_on_tid(tid: usize, start: i64, fragment_len: i64, read_len: i64) -> FragmentSpec {
-        let mut fragment = fixtures::paired_fragment(start, fragment_len, read_len);
+        let mut fragment = PairedFragmentSpec::new(0, start, fragment_len, read_len)
+            .build()
+            .expect("valid paired-fragment fixture");
         fragment.forward.tid = tid;
         fragment.reverse.tid = tid;
         fragment.forward.mate_tid = Some(tid);
@@ -178,16 +188,17 @@ mod tests_lengths_command {
         name: &str,
         fragment_start: i64,
         fragment_len: u32,
-    ) -> Result<BamFixture> {
-        bam_from_specs(
+    ) -> Result<TempBam> {
+        bam_from_fragments(
+            name,
             vec![("chr1".to_string(), 200)],
             Vec::new(),
             vec![ReadSpec {
                 tid: 0,
                 pos: fragment_start,
-                cigar: vec![('M', fragment_len)],
+                cigar: vec![Cigar::Match(fragment_len)],
                 seq: vec![b'A'; fragment_len as usize],
-                qual: 40,
+                base_quality: 40,
                 is_reverse: false,
                 mapq: 60,
                 flags: 0,
@@ -195,17 +206,17 @@ mod tests_lengths_command {
                 mate_pos: None,
                 insert_size: 0,
             }],
-            name,
         )
     }
 
     fn single_read_fragment_bam_with_cigar(
         name: &str,
         fragment_start: i64,
-        cigar: Vec<(char, u32)>,
+        cigar: Vec<Cigar>,
         seq: Vec<u8>,
-    ) -> Result<BamFixture> {
-        bam_from_specs(
+    ) -> Result<TempBam> {
+        bam_from_fragments(
+            name,
             vec![("chr1".to_string(), 200)],
             Vec::new(),
             vec![ReadSpec {
@@ -213,7 +224,7 @@ mod tests_lengths_command {
                 pos: fragment_start,
                 cigar,
                 seq,
-                qual: 40,
+                base_quality: 40,
                 is_reverse: false,
                 mapq: 60,
                 flags: 0,
@@ -221,12 +232,12 @@ mod tests_lengths_command {
                 mate_pos: None,
                 insert_size: 0,
             }],
-            name,
         )
     }
 
-    fn three_chrom_length_fixture(name: &str) -> Result<BamFixture> {
-        bam_from_specs(
+    fn three_chrom_length_fixture(name: &str) -> Result<TempBam> {
+        bam_from_fragments(
+            name,
             vec![
                 ("chr1".to_string(), 200),
                 ("chr2".to_string(), 200),
@@ -238,7 +249,6 @@ mod tests_lengths_command {
                 fragment_on_tid(2, 40, 100, 20),
             ],
             Vec::new(),
-            name,
         )
     }
 
@@ -274,7 +284,7 @@ mod tests_lengths_command {
         // Arrange:
         // The default `--length-bins 30:1001:1` creates one column for each integer
         // length from 30 through 1000. The simple fixture has one length-60 fragment.
-        let bam = simple_inward_bam()?;
+        let bam = single_contig_inward_pair_bam()?;
         let out_dir = TempDir::new()?;
 
         let mut cfg = LengthsConfig::new(
@@ -336,14 +346,14 @@ mod tests_lengths_command {
     fn wider_length_bins_collapse_multiple_lengths_into_one_column() -> Result<()> {
         // Arrange:
         // Two fragments have different exact lengths but both fall in [30,40).
-        let bam = bam_from_specs(
+        let bam = bam_from_fragments(
+            "lengths_wider_bins_collapse",
             vec![("chr1".to_string(), 200)],
             vec![
-                fixtures::paired_fragment(20, 35, 10),
-                fixtures::paired_fragment(80, 39, 10),
+                PairedFragmentSpec::new(0, 20, 35, 10).build()?,
+                PairedFragmentSpec::new(0, 80, 39, 10).build()?,
             ],
             Vec::new(),
-            "lengths_wider_bins_collapse",
         )?;
         let out_dir = TempDir::new()?;
 
@@ -377,14 +387,14 @@ mod tests_lengths_command {
     fn length_bins_filter_at_final_exclusive_edge() -> Result<()> {
         // Arrange:
         // [10,20) includes length 19 and excludes length 20.
-        let bam = bam_from_specs(
+        let bam = bam_from_fragments(
+            "lengths_final_exclusive_edge",
             vec![("chr1".to_string(), 200)],
             vec![
-                fixtures::paired_fragment(20, 19, 10),
-                fixtures::paired_fragment(80, 20, 10),
+                PairedFragmentSpec::new(0, 20, 19, 10).build()?,
+                PairedFragmentSpec::new(0, 80, 20, 10).build()?,
             ],
             Vec::new(),
-            "lengths_final_exclusive_edge",
         )?;
         let out_dir = TempDir::new()?;
 
@@ -415,7 +425,7 @@ mod tests_lengths_command {
     // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn counts_reference_lengths_global_window() -> Result<()> {
-        let bam = simple_inward_bam()?;
+        let bam = single_contig_inward_pair_bam()?;
         let out_dir = TempDir::new()?;
 
         let mut cfg = LengthsConfig::new(
@@ -459,7 +469,7 @@ mod tests_lengths_command {
     // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn counts_reference_lengths_size_single_window_misaligned_tiles() -> Result<()> {
-        let bam = simple_inward_bam()?;
+        let bam = single_contig_inward_pair_bam()?;
         let out_dir = TempDir::new()?;
 
         let mut cfg = LengthsConfig::new(
@@ -508,11 +518,11 @@ mod tests_lengths_command {
     // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn counts_reference_lengths_size_aligned_tiles_reduce_cross_tile_bins() -> Result<()> {
-        let bam = bam_from_specs(
-            vec![("chr1".to_string(), 200)],
-            vec![fixtures::paired_fragment(95, 40, 20)],
-            Vec::new(),
+        let bam = bam_from_fragments(
             "lengths_size_aligned_cross_tile",
+            vec![("chr1".to_string(), 200)],
+            vec![PairedFragmentSpec::new(0, 95, 40, 20).build()?],
+            Vec::new(),
         )?;
         let out_dir = TempDir::new()?;
 
@@ -568,11 +578,11 @@ mod tests_lengths_command {
     // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn counts_reference_lengths_bed_single_window() -> Result<()> {
-        let bam = simple_inward_bam()?;
+        let bam = single_contig_inward_pair_bam()?;
         let out_dir = TempDir::new()?;
 
         let bed_path = out_dir.path().join("windows.bed");
-        fixtures::write_bed(&bed_path, &[("chr1", 0, 200, "w0")])?;
+        write_bed4(&bed_path, &[Bed4Row::new("chr1", 0, 200, "w0")])?;
 
         let mut cfg = LengthsConfig::new(
             IOCArgs {
@@ -626,7 +636,7 @@ mod tests_lengths_command {
         let bam = single_read_fragment_bam("lengths_right_halo_only_bed", 19, 10)?;
         let out_dir = TempDir::new()?;
         let bed_path = out_dir.path().join("right_halo_only.bed");
-        write_bed(&bed_path, &[("chr1", 28, 29, "halo_only")])?;
+        write_bed4(&bed_path, &[Bed4Row::new("chr1", 28, 29, "halo_only")])?;
 
         let mut cfg = LengthsConfig::new(
             IOCArgs {
@@ -679,7 +689,10 @@ mod tests_lengths_command {
         let bam = single_read_fragment_bam("lengths_right_boundary_open", 19, 10)?;
         let out_dir = TempDir::new()?;
         let bed_path = out_dir.path().join("right_boundary_open.bed");
-        write_bed(&bed_path, &[("chr1", 29, 30, "touches_end_only")])?;
+        write_bed4(
+            &bed_path,
+            &[Bed4Row::new("chr1", 29, 30, "touches_end_only")],
+        )?;
 
         let mut cfg = LengthsConfig::new(
             IOCArgs {
@@ -733,11 +746,11 @@ mod tests_lengths_command {
         let bam = single_read_fragment_bam("lengths_right_halo_with_core_window", 19, 10)?;
         let out_dir = TempDir::new()?;
         let bed_path = out_dir.path().join("mixed_windows.bed");
-        write_bed(
+        write_bed4(
             &bed_path,
             &[
-                ("chr1", 10, 11, "core_only"),
-                ("chr1", 28, 29, "halo_target"),
+                Bed4Row::new("chr1", 10, 11, "core_only"),
+                Bed4Row::new("chr1", 28, 29, "halo_target"),
             ],
         )?;
 
@@ -798,7 +811,7 @@ mod tests_lengths_command {
         for tile_size in tile_sizes {
             let out_dir = TempDir::new()?;
             let bed_path = out_dir.path().join(format!("right_halo_{tile_size}.bed"));
-            write_bed(&bed_path, &[("chr1", 28, 29, "halo_only")])?;
+            write_bed4(&bed_path, &[Bed4Row::new("chr1", 28, 29, "halo_only")])?;
 
             let mut cfg = LengthsConfig::new(
                 IOCArgs {
@@ -855,11 +868,11 @@ mod tests_lengths_command {
         for tile_size in tile_sizes {
             let out_dir = TempDir::new()?;
             let bed_path = out_dir.path().join(format!("mixed_{tile_size}.bed"));
-            write_bed(
+            write_bed4(
                 &bed_path,
                 &[
-                    ("chr1", 10, 11, "core_only"),
-                    ("chr1", 28, 29, "halo_target"),
+                    Bed4Row::new("chr1", 10, 11, "core_only"),
+                    Bed4Row::new("chr1", 28, 29, "halo_target"),
                 ],
             )?;
 
@@ -918,7 +931,10 @@ mod tests_lengths_command {
         for tile_size in tile_sizes {
             let out_dir = TempDir::new()?;
             let bed_path = out_dir.path().join(format!("boundary_{tile_size}.bed"));
-            write_bed(&bed_path, &[("chr1", 29, 30, "touches_end_only")])?;
+            write_bed4(
+                &bed_path,
+                &[Bed4Row::new("chr1", 29, 30, "touches_end_only")],
+            )?;
 
             let mut cfg = LengthsConfig::new(
                 IOCArgs {
@@ -964,7 +980,7 @@ mod tests_lengths_command {
     #[test]
     fn global_by_size_and_bed_full_chromosome_windows_match_exactly() -> Result<()> {
         // Arrange:
-        // `simple_inward_bam()` contains one fragment spanning [20, 80), length 60, on a single
+        // `single_contig_inward_pair_bam()` contains one fragment spanning [20, 80), length 60, on a single
         // 200 bp chromosome.
         //
         // Compare three logically equivalent window specifications:
@@ -980,12 +996,12 @@ mod tests_lengths_command {
         //
         // The stronger contract is exact equality of the full arrays, not just equality of the
         // occupied bin.
-        let bam = simple_inward_bam()?;
+        let bam = single_contig_inward_pair_bam()?;
         let global_out = TempDir::new()?;
         let by_size_out = TempDir::new()?;
         let by_bed_out = TempDir::new()?;
         let bed_path = by_bed_out.path().join("whole_chr_window.bed");
-        fixtures::write_bed(&bed_path, &[("chr1", 0, 200, "whole_chr")])?;
+        write_bed4(&bed_path, &[Bed4Row::new("chr1", 0, 200, "whole_chr")])?;
 
         let make_cfg = |out_dir: &std::path::Path, windows: DistributionWindowsArgs| {
             let mut cfg = LengthsConfig::new(
@@ -1024,19 +1040,14 @@ mod tests_lengths_command {
         );
 
         // Act
-        run(&global_cfg)?;
-        run(&by_size_cfg)?;
-        run(&by_bed_cfg)?;
+        let global_result = run(&global_cfg)?;
+        let by_size_result = run(&by_size_cfg)?;
+        let by_bed_result = run(&by_bed_cfg)?;
 
         // Assert
-        let read_counts = |dir: &TempDir| -> Result<Array2<f64>> {
-            let npy_path = dir.path().join(dot_join(&["", "length_counts.tsv.zst"]));
-            read_length_counts_tsv(&npy_path).map_err(Into::into)
-        };
-
-        let global_arr = read_counts(&global_out)?;
-        let by_size_arr = read_counts(&by_size_out)?;
-        let by_bed_arr = read_counts(&by_bed_out)?;
+        let global_arr = read_length_counts_tsv(&global_result.length_counts_path)?;
+        let by_size_arr = read_length_counts_tsv(&by_size_result.length_counts_path)?;
+        let by_bed_arr = read_length_counts_tsv(&by_bed_result.length_counts_path)?;
 
         let len60_idx = 60 - 10;
         assert_eq!(global_arr.shape(), &[1, 191]);
@@ -1063,14 +1074,16 @@ mod tests_lengths_command {
         // - default `min_mapq = 30`: lengths 60 and 80 count once each
         // - explicit `min_mapq = 30`: identical to default
         // - explicit `min_mapq = 0`: lengths 60, 70, and 80 count once each
-        let fragment_with_mapq =
-            |start: i64, fragment_len: i64, mapq: u8| -> fixtures::FragmentSpec {
-                let mut fragment = fixtures::paired_fragment(start, fragment_len, 20);
-                fragment.forward.mapq = mapq;
-                fragment.reverse.mapq = mapq;
-                fragment
-            };
-        let bam = bam_from_specs(
+        let fragment_with_mapq = |start: i64, fragment_len: i64, mapq: u8| -> FragmentSpec {
+            let mut fragment = PairedFragmentSpec::new(0, start, fragment_len, 20)
+                .build()
+                .expect("valid paired-fragment fixture");
+            fragment.forward.mapq = mapq;
+            fragment.reverse.mapq = mapq;
+            fragment
+        };
+        let bam = bam_from_fragments(
+            "lengths_default_min_mapq",
             vec![("chr1".to_string(), 300)],
             vec![
                 fragment_with_mapq(20, 60, 60),
@@ -1078,7 +1091,6 @@ mod tests_lengths_command {
                 fragment_with_mapq(180, 80, 30),
             ],
             Vec::new(),
-            "lengths_default_min_mapq",
         )?;
         let out_default = TempDir::new()?;
         let out_thirty = TempDir::new()?;
@@ -1200,7 +1212,7 @@ mod tests_lengths_command {
     fn unpaired_single_read_matches_paired_fragment_length_count_for_same_span() -> Result<()> {
         // Arrange:
         // Compare two representations of the same physical fragment span [20, 80):
-        // - paired-end fixture `simple_inward_bam()`
+        // - paired-end fixture `single_contig_inward_pair_bam()`
         // - one unpaired read with aligned span [20, 80)
         //
         // In both commands:
@@ -1209,7 +1221,7 @@ mod tests_lengths_command {
         //
         // So both inputs represent one fragment of length 60 and must produce the same global
         // length distribution: one count in length bin 60, zero elsewhere.
-        let paired_bam = simple_inward_bam()?;
+        let paired_bam = single_contig_inward_pair_bam()?;
         let unpaired_bam = single_read_fragment_bam("lengths_unpaired_single_read", 20, 60)?;
         let paired_out = TempDir::new()?;
         let unpaired_out = TempDir::new()?;
@@ -1239,20 +1251,13 @@ mod tests_lengths_command {
         let unpaired_cfg = make_cfg(&unpaired_bam.bam, unpaired_out.path(), true);
 
         // Act
-        run(&paired_cfg)?;
-        run(&unpaired_cfg)?;
+        let paired_result = run(&paired_cfg)?;
+        let unpaired_result = run(&unpaired_cfg)?;
 
         // Assert
-        let paired_arr: Array2<f64> = read_length_counts_tsv(
-            paired_out
-                .path()
-                .join(dot_join(&["", "length_counts.tsv.zst"])),
-        )?;
-        let unpaired_arr: Array2<f64> = read_length_counts_tsv(
-            unpaired_out
-                .path()
-                .join(dot_join(&["", "length_counts.tsv.zst"])),
-        )?;
+        let paired_arr: Array2<f64> = read_length_counts_tsv(&paired_result.length_counts_path)?;
+        let unpaired_arr: Array2<f64> =
+            read_length_counts_tsv(&unpaired_result.length_counts_path)?;
 
         let len60_idx = 60 - 10;
         assert_eq!(paired_arr, unpaired_arr);
@@ -1324,12 +1329,12 @@ mod tests_lengths_command {
         let bam = three_chrom_length_fixture("lengths_three_chr_bed")?;
         let out_dir = TempDir::new()?;
         let bed_path = out_dir.path().join("windows_three_chr.bed");
-        fixtures::write_bed(
+        write_bed4(
             &bed_path,
             &[
-                ("chr1", 0, 200, "chr1_window"),
-                ("chr2", 0, 200, "chr2_window"),
-                ("chr3", 0, 200, "chr3_window"),
+                Bed4Row::new("chr1", 0, 200, "chr1_window"),
+                Bed4Row::new("chr2", 0, 200, "chr2_window"),
+                Bed4Row::new("chr3", 0, 200, "chr3_window"),
             ],
         )?;
 
@@ -1395,12 +1400,12 @@ mod tests_lengths_command {
         let by_size_out = TempDir::new()?;
         let bed_out = TempDir::new()?;
         let bed_path = bed_out.path().join("windows_three_chr_full.bed");
-        fixtures::write_bed(
+        write_bed4(
             &bed_path,
             &[
-                ("chr1", 0, 200, "chr1_window"),
-                ("chr2", 0, 200, "chr2_window"),
-                ("chr3", 0, 200, "chr3_window"),
+                Bed4Row::new("chr1", 0, 200, "chr1_window"),
+                Bed4Row::new("chr2", 0, 200, "chr2_window"),
+                Bed4Row::new("chr3", 0, 200, "chr3_window"),
             ],
         )?;
 
@@ -1441,17 +1446,12 @@ mod tests_lengths_command {
         );
 
         // Act
-        run(&by_size_cfg)?;
-        run(&bed_cfg)?;
+        let by_size_result = run(&by_size_cfg)?;
+        let bed_result = run(&bed_cfg)?;
 
         // Assert
-        let read_counts = |dir: &std::path::Path| -> Result<Array2<f64>> {
-            Ok(read_length_counts_tsv(
-                dir.join(dot_join(&["", "length_counts.tsv.zst"])),
-            )?)
-        };
-        let by_size_arr = read_counts(by_size_out.path())?;
-        let bed_arr = read_counts(bed_out.path())?;
+        let by_size_arr = read_length_counts_tsv(&by_size_result.length_counts_path)?;
+        let bed_arr = read_length_counts_tsv(&bed_result.length_counts_path)?;
 
         assert_eq!(by_size_arr.shape(), &[3, 111]);
         assert_eq!(bed_arr.shape(), &[3, 111]);
@@ -1463,11 +1463,11 @@ mod tests_lengths_command {
     // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn counts_apply_scaling_factors() -> Result<()> {
-        let bam = simple_inward_bam()?;
+        let bam = single_contig_inward_pair_bam()?;
         let out_dir = TempDir::new()?;
 
         let scaling_path = out_dir.path().join("scaling.tsv");
-        fixtures::write_scaling_factors(&scaling_path, &[("chr1", 0, 200, 2.0)])?;
+        write_scaling_factors_tsv(&scaling_path, &[ScalingFactorRow::new("chr1", 0, 200, 2.0)])?;
 
         let mut cfg = LengthsConfig::new(
             IOCArgs {
@@ -1503,11 +1503,11 @@ mod tests_lengths_command {
     // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn counts_are_zero_when_blacklisted() -> Result<()> {
-        let bam = simple_inward_bam()?;
+        let bam = single_contig_inward_pair_bam()?;
         let out_dir = TempDir::new()?;
 
         let blacklist_path = out_dir.path().join("blacklist.bed");
-        fixtures::write_bed(&blacklist_path, &[("chr1", 0, 200, "bl")])?;
+        write_bed4(&blacklist_path, &[Bed4Row::new("chr1", 0, 200, "bl")])?;
 
         let mut cfg = LengthsConfig::new(
             IOCArgs {
@@ -1561,8 +1561,9 @@ mod tests_lengths_command {
     // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn applies_gc_correction_weighting_modes() -> Result<()> {
-        let bam = simple_inward_bam()?;
-        let ref_twobit = simple_reference_twobit()?;
+        let bam = single_contig_inward_pair_bam()?;
+        let ref_twobit =
+            twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
         let gc_dir = TempDir::new()?;
         let gc_path = gc_dir.path().join("gc_pkg.zarr");
         build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
@@ -1642,8 +1643,9 @@ mod tests_lengths_command {
         //
         // The simple fixture contains one 60 bp fragment with GC%=50, so the
         // output cell for length 60 should be 1 fragment * correction 10 = 10.
-        let bam = simple_inward_bam()?;
-        let ref_twobit = simple_reference_twobit()?;
+        let bam = single_contig_inward_pair_bam()?;
+        let ref_twobit =
+            twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
         let gc_dir = TempDir::new()?;
         let gc_path = gc_dir.path().join("gc_pkg_trim_rare.zarr");
         build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
@@ -1697,8 +1699,9 @@ mod tests_lengths_command {
         // The simple fixture has one 60 bp fragment with GC%=50.
         // With requested range [60,60], default `requested` selection uses only the second row.
         // With `package`, equal weighting uses both rows: (1 + 10) / 2 = 5.5.
-        let bam = simple_inward_bam()?;
-        let ref_twobit = simple_reference_twobit()?;
+        let bam = single_contig_inward_pair_bam()?;
+        let ref_twobit =
+            twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
         let gc_dir = TempDir::new()?;
         let gc_path = gc_dir.path().join("gc_pkg_range.zarr");
         build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
@@ -1755,11 +1758,16 @@ mod tests_lengths_command {
     #[test]
     fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_lengths()
     -> Result<()> {
-        let bam = simple_inward_bam()?;
-        let ref_twobit = simple_reference_twobit()?;
+        let bam = single_contig_inward_pair_bam()?;
+        let ref_twobit =
+            twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
         let out_dir = TempDir::new()?;
-        let gc_path =
-            build_real_neutral_gc_package(&bam.bam, &ref_twobit.path, out_dir.path(), 60)?;
+        let gc_path = build_command_produced_gc_correction_package_for_length(
+            &bam.bam,
+            &ref_twobit.path,
+            out_dir.path(),
+            60,
+        )?;
 
         let mut cfg = LengthsConfig::new(
             IOCArgs {
@@ -1821,7 +1829,7 @@ mod tests_lengths_command {
         // `lengths` counts fragment mass by length after applying GC weight. All ten fragments
         // have the same length 10, so the only occupied output cell must be:
         //   1 * 5.0 + 9 * (5/9) = 10.0
-        let reference = fixtures::twobit_from_sequences(
+        let reference = twobit_from_sequences(
             "lengths_real_non_neutral_reference",
             vec![(
                 "chr1".to_string(),
@@ -1831,16 +1839,16 @@ mod tests_lengths_command {
         let starts = [10_i64, 110, 120, 130, 140, 150, 160, 170, 180, 190];
         let fragments = starts
             .into_iter()
-            .map(|start| fixtures::paired_fragment(start, 10, 5))
-            .collect();
-        let bam = bam_from_specs(
+            .map(|start| PairedFragmentSpec::new(0, start, 10, 5).build())
+            .collect::<Result<Vec<_>>>()?;
+        let bam = bam_from_fragments(
+            "lengths_real_non_neutral_bam",
             vec![("chr1".to_string(), 200)],
             fragments,
             Vec::new(),
-            "lengths_real_non_neutral_bam",
         )?;
         let out_dir = TempDir::new()?;
-        let gc_path = build_real_non_neutral_gc_package(
+        let gc_path = build_command_produced_gc_correction_package_from_reference_windows(
             &bam.bam,
             &reference.path,
             out_dir.path(),
@@ -1898,7 +1906,7 @@ mod tests_lengths_command {
     fn gc_file_and_scaling_tsv_weights_multiply_in_lengths() -> Result<()> {
         // Arrange:
         // Producer BAM:
-        // - `simple_inward_bam()` contains one fragment [20, 80) on chr1.
+        // - `single_contig_inward_pair_bam()` contains one fragment [20, 80) on chr1.
         // - Run `coverage-weights` with a neutral real GC package over its full configured
         //   fragment length range so the written scaling TSV is GC-compatible with the consumer
         //   command, but the numerical scaling profile stays unchanged.
@@ -1934,20 +1942,21 @@ mod tests_lengths_command {
         //   length bin.
         // - The only occupied cell must therefore be:
         //     3.0 * (60 / 61) = 180 / 61.
-        let producer_bam = simple_inward_bam()?;
-        let consumer_bam = bam_from_specs(
+        let producer_bam = single_contig_inward_pair_bam()?;
+        let consumer_bam = bam_from_fragments(
+            "lengths_gc_and_scaling_consumer",
             vec![("chr1".to_string(), 200)],
             vec![fragment_on_tid(0, 20, 61, 20)],
             Vec::new(),
-            "lengths_gc_and_scaling_consumer",
         )?;
-        let ref_twobit = simple_reference_twobit()?;
+        let ref_twobit =
+            twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
         let out_dir = TempDir::new()?;
         let weights_out_dir = out_dir.path().join("coverage_weights");
         std::fs::create_dir_all(&weights_out_dir)?;
         let mut scaling_cfg =
             make_simple_coverage_weights_config(&weights_out_dir, &producer_bam.bam);
-        let weights_gc_path = build_real_neutral_gc_package_for_range(
+        let weights_gc_path = build_command_produced_gc_correction_package_for_range(
             &producer_bam.bam,
             &ref_twobit.path,
             out_dir.path(),
@@ -2028,13 +2037,14 @@ mod tests_lengths_command {
     fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range() -> Result<()>
     {
         // Arrange:
-        // `simple_inward_bam()` contains one fragment of length 60.
+        // `single_contig_inward_pair_bam()` contains one fragment of length 60.
         // Give `lengths` a GC package that only covers fragment lengths 10..=59:
         //   length_edges = [10, 59]
         // Restrict the command to [60, 60] so the shared GC loader must reject the package before
         // any reference lookup or length counting begins.
-        let bam = simple_inward_bam()?;
-        let ref_twobit = simple_reference_twobit()?;
+        let bam = single_contig_inward_pair_bam()?;
+        let ref_twobit =
+            twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
         let out_dir = TempDir::new()?;
         let gc_path = out_dir.path().join("gc_pkg_short.zarr");
         let package = GCCorrectionPackage {
@@ -2088,8 +2098,9 @@ mod tests_lengths_command {
         // Build a minimal GC correction package with an intentionally incompatible schema version.
         // `lengths` should fail while loading the package, before any reference lookup or length
         // counting begins.
-        let bam = simple_inward_bam()?;
-        let ref_twobit = simple_reference_twobit()?;
+        let bam = single_contig_inward_pair_bam()?;
+        let ref_twobit =
+            twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
         let out_dir = TempDir::new()?;
         let gc_path = out_dir.path().join("gc_pkg_bad_version.zarr");
         let package = GCCorrectionPackage {
@@ -2138,10 +2149,11 @@ mod tests_lengths_command {
     // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn gc_requires_ref_2bit_errors() -> Result<()> {
-        let bam = simple_inward_bam()?;
+        let bam = single_contig_inward_pair_bam()?;
         let gc_dir = TempDir::new()?;
         let gc_path = gc_dir.path().join("gc_pkg.zarr");
-        let ref_twobit = simple_reference_twobit()?;
+        let ref_twobit =
+            twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
         build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
 
         let mut cfg = LengthsConfig::new(
@@ -2176,8 +2188,9 @@ mod tests_lengths_command {
     // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn gc_drop_invalid_reports_end_offset_validation_error() -> Result<()> {
-        let bam = simple_inward_bam()?;
-        let ref_twobit = simple_reference_twobit()?;
+        let bam = single_contig_inward_pair_bam()?;
+        let ref_twobit =
+            twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
         let gc_dir = TempDir::new()?;
         let gc_path = gc_dir.path().join("gc_pkg.zarr");
         // Choose large end_offset so offset_start >= offset_end, causing GC weight failure
@@ -2212,7 +2225,7 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    fn indel_bam_fixture() -> Result<BamFixture> {
+    fn indel_bam_fixture() -> Result<TempBam> {
         // Reuse edge-case fixture with one clean fragment, one insertion, one deletion.
         fixtures::fragment_kmers_edge_bam()
     }
@@ -2335,7 +2348,7 @@ mod tests_lengths_command {
         let bam = single_read_fragment_bam_with_cigar(
             "lengths_clip_modes_counting",
             10,
-            vec![('S', 2), ('M', 10), ('S', 2)],
+            vec![Cigar::SoftClip(2), Cigar::Match(10), Cigar::SoftClip(2)],
             b"TTAAAAAAAAAAAA".to_vec(),
         )?;
 
@@ -2420,7 +2433,7 @@ mod tests_lengths_command {
         let bam = single_read_fragment_bam_with_cigar(
             "lengths_clip_adjust_overlap",
             10,
-            vec![('S', 2), ('M', 10), ('S', 2)],
+            vec![Cigar::SoftClip(2), Cigar::Match(10), Cigar::SoftClip(2)],
             b"TTAAAAAAAAAAAA".to_vec(),
         )?;
 
@@ -2501,17 +2514,17 @@ mod tests_lengths_command {
         let bam = single_read_fragment_bam_with_cigar(
             "lengths_clip_adjust_scaling",
             10,
-            vec![('S', 2), ('M', 10), ('S', 2)],
+            vec![Cigar::SoftClip(2), Cigar::Match(10), Cigar::SoftClip(2)],
             b"TTAAAAAAAAAAAA".to_vec(),
         )?;
         let out_dir = TempDir::new()?;
         let scaling_path = out_dir.path().join("clip_adjust_scaling.tsv");
-        write_scaling_factors(
+        write_scaling_factors_tsv(
             &scaling_path,
             &[
-                ("chr1", 0, 10, 1.0_f32),
-                ("chr1", 10, 20, 3.0_f32),
-                ("chr1", 20, 200, 1.0_f32),
+                ScalingFactorRow::new("chr1", 0, 10, 1.0_f32),
+                ScalingFactorRow::new("chr1", 10, 20, 3.0_f32),
+                ScalingFactorRow::new("chr1", 20, 200, 1.0_f32),
             ],
         )?;
 
@@ -2567,20 +2580,23 @@ mod tests_lengths_command {
         let bam = single_read_fragment_bam_with_cigar(
             "lengths_clip_adjust_scaled_midpoint_left_of_aligned_span",
             20,
-            vec![('S', 20), ('M', 10)],
+            vec![Cigar::SoftClip(20), Cigar::Match(10)],
             b"TAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_vec(),
         )?;
         let out_dir = TempDir::new()?;
         let windows_bed = out_dir.path().join("windows.bed");
         let scaling_path = out_dir.path().join("scaling.tsv");
-        write_bed(&windows_bed, &[("chr1", 14, 16, "raw_midpoint_only")])?;
-        write_scaling_factors(
+        write_bed4(
+            &windows_bed,
+            &[Bed4Row::new("chr1", 14, 16, "raw_midpoint_only")],
+        )?;
+        write_scaling_factors_tsv(
             &scaling_path,
             &[
-                ("chr1", 0, 20, 100.0),
-                ("chr1", 20, 21, 2.0),
-                ("chr1", 21, 30, 1.0),
-                ("chr1", 30, 200, 100.0),
+                ScalingFactorRow::new("chr1", 0, 20, 100.0),
+                ScalingFactorRow::new("chr1", 20, 21, 2.0),
+                ScalingFactorRow::new("chr1", 21, 30, 1.0),
+                ScalingFactorRow::new("chr1", 30, 200, 100.0),
             ],
         )?;
 
@@ -2646,26 +2662,26 @@ mod tests_lengths_command {
         let bam = single_read_fragment_bam_with_cigar(
             "lengths_clip_adjust_scaling_nearest_base",
             10,
-            vec![('S', 2), ('M', 10), ('S', 2)],
+            vec![Cigar::SoftClip(2), Cigar::Match(10), Cigar::SoftClip(2)],
             b"TTAAAAAAAAAAAA".to_vec(),
         )?;
         let out_dir = TempDir::new()?;
         let bed_path = out_dir.path().join("clip_adjust_scaling_windows.bed");
         let scaling_path = out_dir.path().join("clip_adjust_scaling.tsv");
-        write_bed(
+        write_bed4(
             &bed_path,
             &[
-                ("chr1", 0, 10, "left"),
-                ("chr1", 10, 20, "middle"),
-                ("chr1", 20, 30, "right"),
+                Bed4Row::new("chr1", 0, 10, "left"),
+                Bed4Row::new("chr1", 10, 20, "middle"),
+                Bed4Row::new("chr1", 20, 30, "right"),
             ],
         )?;
-        write_scaling_factors(
+        write_scaling_factors_tsv(
             &scaling_path,
             &[
-                ("chr1", 0, 10, 11.0_f32),
-                ("chr1", 10, 20, 3.0_f32),
-                ("chr1", 20, 200, 13.0_f32),
+                ScalingFactorRow::new("chr1", 0, 10, 11.0_f32),
+                ScalingFactorRow::new("chr1", 10, 20, 3.0_f32),
+                ScalingFactorRow::new("chr1", 20, 200, 13.0_f32),
             ],
         )?;
 
@@ -2723,7 +2739,7 @@ mod tests_lengths_command {
         let bam = single_read_fragment_bam_with_cigar(
             "lengths_max_soft_clips",
             10,
-            vec![('S', 2), ('M', 10)],
+            vec![Cigar::SoftClip(2), Cigar::Match(10)],
             b"TTAAAAAAAAAT".to_vec(),
         )?;
 
@@ -2792,7 +2808,7 @@ mod tests_lengths_command {
         let bam = single_read_fragment_bam_with_cigar(
             "lengths_max_soft_clips_aligned",
             10,
-            vec![('S', 2), ('M', 10)],
+            vec![Cigar::SoftClip(2), Cigar::Match(10)],
             b"TTAAAAAAAAAT".to_vec(),
         )?;
         let out_dir = TempDir::new()?;
@@ -2838,9 +2854,12 @@ mod tests_lengths_command {
         let bam = indel_bam_fixture()?;
         let out_dir = TempDir::new()?;
         let scaling_path = out_dir.path().join("indel_adjust_scaling.tsv");
-        write_scaling_factors(
+        write_scaling_factors_tsv(
             &scaling_path,
-            &[("chr1", 0, 10, 1.0_f32), ("chr1", 10, 40, 3.0_f32)],
+            &[
+                ScalingFactorRow::new("chr1", 0, 10, 1.0_f32),
+                ScalingFactorRow::new("chr1", 10, 40, 3.0_f32),
+            ],
         )?;
 
         let mut cfg = LengthsConfig::new(
@@ -2887,7 +2906,10 @@ mod tests_lengths_command {
         let bam = indel_bam_fixture()?;
         let out_dir = TempDir::new()?;
         let blacklist_path = out_dir.path().join("indel_adjust_blacklist.bed");
-        fixtures::write_bed(&blacklist_path, &[("chr1", 19, 20, "deleted_base")])?;
+        write_bed4(
+            &blacklist_path,
+            &[Bed4Row::new("chr1", 19, 20, "deleted_base")],
+        )?;
 
         let mut cfg = LengthsConfig::new(
             IOCArgs {
@@ -2930,7 +2952,10 @@ mod tests_lengths_command {
         let bam = indel_bam_fixture()?;
         let out_dir = TempDir::new()?;
         let blacklist_path = out_dir.path().join("indel_adjust_blacklist_proportion.bed");
-        fixtures::write_bed(&blacklist_path, &[("chr1", 19, 20, "deleted_base")])?;
+        write_bed4(
+            &blacklist_path,
+            &[Bed4Row::new("chr1", 19, 20, "deleted_base")],
+        )?;
 
         let mut base_cfg = LengthsConfig::new(
             IOCArgs {
@@ -2994,14 +3019,17 @@ mod tests_lengths_command {
     // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn scaling_overlapping_bins_error() -> Result<()> {
-        let bam = simple_inward_bam()?;
+        let bam = single_contig_inward_pair_bam()?;
         let out_dir = TempDir::new()?;
 
         let scaling_path = out_dir.path().join("scaling.tsv");
         // Overlapping bins: 0-150 and 100-200 on chr1 (chr len 200)
-        write_scaling_factors(
+        write_scaling_factors_tsv(
             &scaling_path,
-            &[("chr1", 0, 150, 1.0_f32), ("chr1", 100, 200, 1.0_f32)],
+            &[
+                ScalingFactorRow::new("chr1", 0, 150, 1.0_f32),
+                ScalingFactorRow::new("chr1", 100, 200, 1.0_f32),
+            ],
         )?;
 
         let mut cfg = LengthsConfig::new(
@@ -3030,7 +3058,7 @@ mod tests_lengths_command {
     // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn custom_output_prefix_is_used() -> Result<()> {
-        let bam = simple_inward_bam()?;
+        let bam = single_contig_inward_pair_bam()?;
         let out_dir = TempDir::new()?;
 
         let mut cfg = LengthsConfig::new(
@@ -3061,7 +3089,7 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    fn multi_chrom_simple_bam() -> Result<BamFixture> {
+    fn multi_chrom_simple_bam() -> Result<TempBam> {
         // Different contig lengths and fragment lengths to catch duplicated chr handling
         let chroms = vec![("chr1".to_string(), 140u32), ("chr2".to_string(), 200u32)];
 
@@ -3069,9 +3097,9 @@ mod tests_lengths_command {
             forward: ReadSpec {
                 tid: 0,
                 pos: 20,
-                cigar: vec![('M', 20)],
+                cigar: vec![Cigar::Match(20)],
                 seq: vec![b'A'; 20],
-                qual: 35,
+                base_quality: 35,
                 is_reverse: false,
                 mapq: 60,
                 flags: 0x1 | 0x2 | 0x40 | 0x20,
@@ -3082,9 +3110,9 @@ mod tests_lengths_command {
             reverse: ReadSpec {
                 tid: 0,
                 pos: 60,
-                cigar: vec![('M', 20)],
+                cigar: vec![Cigar::Match(20)],
                 seq: vec![b'T'; 20],
-                qual: 35,
+                base_quality: 35,
                 is_reverse: true,
                 mapq: 60,
                 flags: 0x1 | 0x2 | 0x80,
@@ -3098,9 +3126,9 @@ mod tests_lengths_command {
             forward: ReadSpec {
                 tid: 1,
                 pos: 40,
-                cigar: vec![('M', 20)],
+                cigar: vec![Cigar::Match(20)],
                 seq: vec![b'C'; 20],
-                qual: 35,
+                base_quality: 35,
                 is_reverse: false,
                 mapq: 60,
                 flags: 0x1 | 0x2 | 0x40 | 0x20,
@@ -3111,9 +3139,9 @@ mod tests_lengths_command {
             reverse: ReadSpec {
                 tid: 1,
                 pos: 100,
-                cigar: vec![('M', 20)],
+                cigar: vec![Cigar::Match(20)],
                 seq: vec![b'G'; 20],
-                qual: 35,
+                base_quality: 35,
                 is_reverse: true,
                 mapq: 60,
                 flags: 0x1 | 0x2 | 0x80,
@@ -3124,7 +3152,7 @@ mod tests_lengths_command {
         };
 
         let fragments = vec![paired_chr1, paired_chr2];
-        bam_from_specs(chroms, fragments, Vec::new(), "multi_chrom_simple")
+        bam_from_fragments("multi_chrom_simple", chroms, fragments, Vec::new())
     }
 
     // KEEP-IN-TESTS: lengths command output or artifact behavior.
@@ -3177,7 +3205,7 @@ mod tests_lengths_command {
     // KEEP-IN-TESTS: lengths command output or artifact behavior.
     #[test]
     fn assignment_modes_produce_distinct_counts() -> Result<()> {
-        let bam = simple_inward_bam()?;
+        let bam = single_contig_inward_pair_bam()?;
         let window_bp = 40u64;
         let len_idx = 60 - 10;
 
@@ -3251,17 +3279,20 @@ mod tests_lengths_command {
         // With `assign_by=midpoint`, exactly one of those windows must receive the fragment. This
         // locks in the released contract near the midpoint seam without pretending the random tie
         // chooses one side deterministically.
-        let bam = bam_from_specs(
-            vec![("chr1".to_string(), 100)],
-            vec![fixtures::paired_fragment(40, 10, 5)],
-            Vec::new(),
+        let bam = bam_from_fragments(
             "lengths_even_midpoint_boundary",
+            vec![("chr1".to_string(), 100)],
+            vec![PairedFragmentSpec::new(0, 40, 10, 5).build()?],
+            Vec::new(),
         )?;
         let out_dir = TempDir::new()?;
         let bed_path = out_dir.path().join("windows.bed");
-        write_bed(
+        write_bed4(
             &bed_path,
-            &[("chr1", 0, 45, "window0"), ("chr1", 45, 90, "window1")],
+            &[
+                Bed4Row::new("chr1", 0, 45, "window0"),
+                Bed4Row::new("chr1", 45, 90, "window1"),
+            ],
         )?;
 
         let mut cfg = LengthsConfig::new(
@@ -3312,17 +3343,20 @@ mod tests_lengths_command {
     #[test]
     fn scaling_tsv_must_cover_requested_chromosome_end_in_lengths() -> Result<()> {
         // Arrange:
-        // `simple_inward_bam()` uses chr1 length 200.
+        // `single_contig_inward_pair_bam()` uses chr1 length 200.
         // A valid scaling TSV must cover every requested chromosome contiguously from 0 up to
         // the exact chromosome length. Here we intentionally stop at 100:
         //   [0,100) factor 2.0
         //
         // The fragment itself lies inside that span, but the artifact is still malformed for the
         // requested chromosome and should be rejected before any counting starts.
-        let bam = simple_inward_bam()?;
+        let bam = single_contig_inward_pair_bam()?;
         let out_dir = TempDir::new()?;
         let scaling_path = out_dir.path().join("truncated_scaling.tsv");
-        write_scaling_factors(&scaling_path, &[("chr1", 0, 100, 2.0_f32)])?;
+        write_scaling_factors_tsv(
+            &scaling_path,
+            &[ScalingFactorRow::new("chr1", 0, 100, 2.0_f32)],
+        )?;
 
         let mut cfg = LengthsConfig::new(
             IOCArgs {
@@ -3361,7 +3395,7 @@ mod tests_lengths_command {
     fn coverage_weights_tsv_in_count_overlap_mode_uses_overlap_span_scaling() -> Result<()> {
         // Arrange:
         // Producer BAM:
-        // - `simple_inward_bam()` has one fragment [20, 80).
+        // - `single_contig_inward_pair_bam()` has one fragment [20, 80).
         // - Run `coverage-weights` with `bin_size = stride = 20`, so the overlap kernel is the
         //   identity and the written scaling factors are:
         //     [0,20):  0
@@ -3391,19 +3425,19 @@ mod tests_lengths_command {
         // would instead observe:
         //     (11 / 61) * (60 / 61),
         // because the fragment spends 60 bp in factor-1 bins and 1 bp in a factor-0 bin.
-        let producer_bam = simple_inward_bam()?;
-        let consumer_bam = bam_from_specs(
+        let producer_bam = single_contig_inward_pair_bam()?;
+        let consumer_bam = bam_from_fragments(
+            "lengths_scaling_consumer",
             vec![("chr1".to_string(), 200)],
             vec![fragment_on_tid(0, 20, 61, 20)],
             Vec::new(),
-            "lengths_scaling_consumer",
         )?;
         let out_dir = TempDir::new()?;
         let weights_out_dir = out_dir.path().join("coverage_weights");
         std::fs::create_dir_all(&weights_out_dir)?;
         let scaling_cfg = make_simple_coverage_weights_config(&weights_out_dir, &producer_bam.bam);
         let bed_path = out_dir.path().join("windows.bed");
-        write_bed(&bed_path, &[("chr1", 45, 56, "w0")])?;
+        write_bed4(&bed_path, &[Bed4Row::new("chr1", 45, 56, "w0")])?;
 
         // Act
         run_coverage_weights(&scaling_cfg)?;
@@ -3462,21 +3496,24 @@ mod tests_lengths_command {
     #[test]
     fn bed_windowed_runs_write_prefixed_bins_tsv_with_exact_blacklisted_fractions() -> Result<()> {
         // Arrange:
-        // - `simple_inward_bam()` gives one 60 bp fragment on chr1 spanning [20,80).
+        // - `single_contig_inward_pair_bam()` gives one 60 bp fragment on chr1 spanning [20,80).
         // - The two BED windows are [10,20) and [20,30).
         // - The blacklist interval [15,20) overlaps only the first window for 5 of its 10 bases.
         // - Therefore the persisted window metadata must be:
         //     chr1  10  20  0.5
         //     chr1  20  30  0
-        let bam = simple_inward_bam()?;
+        let bam = single_contig_inward_pair_bam()?;
         let out_dir = TempDir::new()?;
         let windows_bed = out_dir.path().join("windows.bed");
         let blacklist_bed = out_dir.path().join("blacklist.bed");
-        write_bed(
+        write_bed4(
             &windows_bed,
-            &[("chr1", 10, 20, "left"), ("chr1", 20, 30, "right")],
+            &[
+                Bed4Row::new("chr1", 10, 20, "left"),
+                Bed4Row::new("chr1", 20, 30, "right"),
+            ],
         )?;
-        write_bed(&blacklist_bed, &[("chr1", 15, 20, "masked")])?;
+        write_bed4(&blacklist_bed, &[Bed4Row::new("chr1", 15, 20, "masked")])?;
 
         let mut cfg = LengthsConfig::new(
             IOCArgs {
@@ -3541,20 +3578,20 @@ mod tests_lengths_command {
         let out_dir = TempDir::new()?;
         let grouped_bed = out_dir.path().join("grouped_windows.bed");
         let blacklist_bed = out_dir.path().join("blacklist.bed");
-        write_bed(
+        write_bed4(
             &grouped_bed,
             &[
-                ("chr1", 10, 15, "beta"),
-                ("chr1", 40, 50, "beta"),
-                ("chr1", 15, 20, "alpha"),
-                ("chr1", 30, 35, "gamma"),
+                Bed4Row::new("chr1", 10, 15, "beta"),
+                Bed4Row::new("chr1", 40, 50, "beta"),
+                Bed4Row::new("chr1", 15, 20, "alpha"),
+                Bed4Row::new("chr1", 30, 35, "gamma"),
             ],
         )?;
-        write_bed(
+        write_bed4(
             &blacklist_bed,
             &[
-                ("chr1", 45, 50, "masked_beta"),
-                ("chr1", 30, 35, "masked_gamma"),
+                Bed4Row::new("chr1", 45, 50, "masked_beta"),
+                Bed4Row::new("chr1", 30, 35, "masked_gamma"),
             ],
         )?;
 
@@ -3638,13 +3675,13 @@ mod tests_lengths_command {
         let bam = single_read_fragment_bam("lengths_grouped_count_overlap_above_one", 10, 10)?;
         let out_dir = TempDir::new()?;
         let grouped_bed = out_dir.path().join("grouped_windows_overlap_mass.bed");
-        write_bed(
+        write_bed4(
             &grouped_bed,
             &[
-                ("chr1", 10, 15, "beta"),
-                ("chr1", 12, 18, "beta"),
-                ("chr1", 15, 20, "alpha"),
-                ("chr1", 30, 35, "gamma"),
+                Bed4Row::new("chr1", 10, 15, "beta"),
+                Bed4Row::new("chr1", 12, 18, "beta"),
+                Bed4Row::new("chr1", 15, 20, "alpha"),
+                Bed4Row::new("chr1", 30, 35, "gamma"),
             ],
         )?;
 
@@ -3706,9 +3743,12 @@ mod tests_lengths_command {
         let bam = single_read_fragment_bam("lengths_grouped_group_index_no_blacklist", 10, 10)?;
         let out_dir = TempDir::new()?;
         let grouped_bed = out_dir.path().join("grouped_windows_no_blacklist.bed");
-        write_bed(
+        write_bed4(
             &grouped_bed,
-            &[("chr1", 10, 20, "beta"), ("chr1", 30, 40, "gamma")],
+            &[
+                Bed4Row::new("chr1", 10, 20, "beta"),
+                Bed4Row::new("chr1", 30, 40, "gamma"),
+            ],
         )?;
 
         let mut cfg = LengthsConfig::new(
@@ -3768,13 +3808,13 @@ mod tests_lengths_command {
         let bam = single_read_fragment_bam("lengths_grouped_any", 10, 10)?;
         let out_dir = TempDir::new()?;
         let grouped_bed = out_dir.path().join("grouped_windows_any.bed");
-        write_bed(
+        write_bed4(
             &grouped_bed,
             &[
-                ("chr1", 10, 15, "beta"),
-                ("chr1", 12, 18, "beta"),
-                ("chr1", 15, 20, "alpha"),
-                ("chr1", 30, 35, "gamma"),
+                Bed4Row::new("chr1", 10, 15, "beta"),
+                Bed4Row::new("chr1", 12, 18, "beta"),
+                Bed4Row::new("chr1", 15, 20, "alpha"),
+                Bed4Row::new("chr1", 30, 35, "gamma"),
             ],
         )?;
 
@@ -3842,13 +3882,13 @@ mod tests_lengths_command {
         let bam = three_chrom_length_fixture("lengths_grouped_three_chr")?;
         let out_dir = TempDir::new()?;
         let grouped_bed = out_dir.path().join("grouped_three_chr.bed");
-        write_bed(
+        write_bed4(
             &grouped_bed,
             &[
-                ("chr2", 0, 200, "beta"),
-                ("chr1", 0, 200, "alpha"),
-                ("chr3", 0, 200, "beta"),
-                ("chr1", 150, 160, "gamma"),
+                Bed4Row::new("chr2", 0, 200, "beta"),
+                Bed4Row::new("chr1", 0, 200, "alpha"),
+                Bed4Row::new("chr3", 0, 200, "beta"),
+                Bed4Row::new("chr1", 150, 160, "gamma"),
             ],
         )?;
 
@@ -3930,21 +3970,21 @@ mod tests_lengths_command {
         let out_dir = TempDir::new()?;
         let grouped_bed = out_dir.path().join("grouped_three_chr_scaling.bed");
         let scaling_path = out_dir.path().join("grouped_three_chr_scaling.tsv");
-        write_bed(
+        write_bed4(
             &grouped_bed,
             &[
-                ("chr2", 0, 200, "beta"),
-                ("chr1", 0, 200, "alpha"),
-                ("chr3", 0, 200, "beta"),
-                ("chr1", 150, 160, "gamma"),
+                Bed4Row::new("chr2", 0, 200, "beta"),
+                Bed4Row::new("chr1", 0, 200, "alpha"),
+                Bed4Row::new("chr3", 0, 200, "beta"),
+                Bed4Row::new("chr1", 150, 160, "gamma"),
             ],
         )?;
-        write_scaling_factors(
+        write_scaling_factors_tsv(
             &scaling_path,
             &[
-                ("chr1", 0, 200, 1.5),
-                ("chr2", 0, 200, 2.0),
-                ("chr3", 0, 200, 3.0),
+                ScalingFactorRow::new("chr1", 0, 200, 1.5),
+                ScalingFactorRow::new("chr2", 0, 200, 2.0),
+                ScalingFactorRow::new("chr3", 0, 200, 3.0),
             ],
         )?;
 
@@ -4016,16 +4056,17 @@ mod tests_lengths_command {
         //   window, so grouped output must aggregate to:
         //     beta  -> 2.0 in the lone length-10 column
         //     gamma -> 0.0
-        let bam = bam_from_specs(
+        let bam = bam_from_fragments(
+            "lengths_grouped_same_chr_tiles",
             vec![("chr1".to_string(), 200)],
             Vec::new(),
             vec![
                 ReadSpec {
                     tid: 0,
                     pos: 10,
-                    cigar: vec![('M', 10)],
+                    cigar: vec![Cigar::Match(10)],
                     seq: vec![b'A'; 10],
-                    qual: 40,
+                    base_quality: 40,
                     is_reverse: false,
                     mapq: 60,
                     flags: 0,
@@ -4036,9 +4077,9 @@ mod tests_lengths_command {
                 ReadSpec {
                     tid: 0,
                     pos: 60,
-                    cigar: vec![('M', 10)],
+                    cigar: vec![Cigar::Match(10)],
                     seq: vec![b'A'; 10],
-                    qual: 40,
+                    base_quality: 40,
                     is_reverse: false,
                     mapq: 60,
                     flags: 0,
@@ -4047,16 +4088,15 @@ mod tests_lengths_command {
                     insert_size: 0,
                 },
             ],
-            "lengths_grouped_same_chr_tiles",
         )?;
         let out_dir = TempDir::new()?;
         let grouped_bed = out_dir.path().join("grouped_same_chr_tiles.bed");
-        write_bed(
+        write_bed4(
             &grouped_bed,
             &[
-                ("chr1", 10, 20, "beta"),
-                ("chr1", 60, 70, "beta"),
-                ("chr1", 120, 130, "gamma"),
+                Bed4Row::new("chr1", 10, 20, "beta"),
+                Bed4Row::new("chr1", 60, 70, "beta"),
+                Bed4Row::new("chr1", 120, 130, "gamma"),
             ],
         )?;
 
@@ -4113,11 +4153,14 @@ mod tests_lengths_command {
         let out_dir = TempDir::new()?;
         let grouped_bed = out_dir.path().join("grouped_scaling.bed");
         let scaling_path = out_dir.path().join("grouped_scaling.tsv");
-        write_bed(
+        write_bed4(
             &grouped_bed,
-            &[("chr1", 10, 20, "beta"), ("chr1", 30, 40, "gamma")],
+            &[
+                Bed4Row::new("chr1", 10, 20, "beta"),
+                Bed4Row::new("chr1", 30, 40, "gamma"),
+            ],
         )?;
-        write_scaling_factors(&scaling_path, &[("chr1", 0, 200, 2.0)])?;
+        write_scaling_factors_tsv(&scaling_path, &[ScalingFactorRow::new("chr1", 0, 200, 2.0)])?;
 
         let mut cfg = LengthsConfig::new(
             IOCArgs {
@@ -4176,11 +4219,17 @@ mod tests_lengths_command {
         let out_dir = TempDir::new()?;
         let grouped_bed = out_dir.path().join("grouped_blacklist.bed");
         let blacklist_bed = out_dir.path().join("grouped_blacklist_mask.bed");
-        write_bed(
+        write_bed4(
             &grouped_bed,
-            &[("chr1", 10, 20, "beta"), ("chr1", 30, 40, "gamma")],
+            &[
+                Bed4Row::new("chr1", 10, 20, "beta"),
+                Bed4Row::new("chr1", 30, 40, "gamma"),
+            ],
         )?;
-        write_bed(&blacklist_bed, &[("chr1", 15, 16, "masked_beta")])?;
+        write_bed4(
+            &blacklist_bed,
+            &[Bed4Row::new("chr1", 15, 16, "masked_beta")],
+        )?;
 
         let mut cfg = LengthsConfig::new(
             IOCArgs {
@@ -4237,7 +4286,8 @@ mod tests_lengths_command {
         // - grouped windows keep `beta` as the counted row and preserve `gamma` as an explicit
         //   zero row
         let bam = single_read_fragment_bam("lengths_grouped_gc", 10, 10)?;
-        let reference = simple_reference_twobit()?;
+        let reference =
+            twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
         let out_dir = TempDir::new()?;
         let grouped_bed = out_dir.path().join("grouped_gc.bed");
         let gc_path = out_dir.path().join("grouped_gc_package.zarr");
@@ -4251,9 +4301,12 @@ mod tests_lengths_command {
             correction_matrix: array![[3.0_f64, 1.0_f64], [1.0_f64, 1.0_f64]],
         };
         package.write_zarr(&gc_path)?;
-        write_bed(
+        write_bed4(
             &grouped_bed,
-            &[("chr1", 10, 20, "beta"), ("chr1", 30, 40, "gamma")],
+            &[
+                Bed4Row::new("chr1", 10, 20, "beta"),
+                Bed4Row::new("chr1", 30, 40, "gamma"),
+            ],
         )?;
 
         let mut cfg = LengthsConfig::new(
@@ -4313,15 +4366,16 @@ mod tests_lengths_command {
         // - The one 61 bp unpaired fragment overlaps the window.
         // - Its reference interval [900,961) is all C, so it lands in the high-GC correction bin
         //   with weight 7.0. Using prefix-local origin 0 would see A-only sequence instead.
-        let bam = bam_from_specs(
+        let bam = bam_from_fragments(
+            "lengths_late_tile_gc_origin",
             vec![("chr1".to_string(), 1_500)],
             Vec::new(),
             vec![ReadSpec {
                 tid: 0,
                 pos: 900,
-                cigar: vec![('M', 61)],
+                cigar: vec![Cigar::Match(61)],
                 seq: vec![b'A'; 61],
-                qual: 40,
+                base_quality: 40,
                 is_reverse: false,
                 mapq: 60,
                 flags: 0,
@@ -4329,7 +4383,6 @@ mod tests_lengths_command {
                 mate_pos: None,
                 insert_size: 0,
             }],
-            "lengths_late_tile_gc_origin",
         )?;
         let reference = twobit_from_sequences(
             "lengths_late_tile_gc_origin_ref",
@@ -4338,8 +4391,8 @@ mod tests_lengths_command {
         let out_dir = TempDir::new()?;
         let bed_path = out_dir.path().join("late_window.bed");
         let gc_path = out_dir.path().join("two_bin_gc_package.zarr");
-        write_bed(&bed_path, &[("chr1", 930, 941, "late")])?;
-        write_two_bin_gc_package(
+        write_bed4(&bed_path, &[Bed4Row::new("chr1", 930, 941, "late")])?;
+        write_two_bin_gc_correction_package(
             &gc_path,
             61,
             2.0,
@@ -4398,15 +4451,16 @@ mod tests_lengths_command {
         //   full 61 bp fragment needed for GC correction.
         // - The reference interval [961,1022) is all A in `late_origin_gc_reference_sequence()`,
         //   so the fragment lands in the low-GC bin with weight 2.0.
-        let bam = bam_from_specs(
+        let bam = bam_from_fragments(
+            "lengths_chrom_end_gc_fetch_halo",
             vec![("chr1".to_string(), 1_022)],
             Vec::new(),
             vec![ReadSpec {
                 tid: 0,
                 pos: 961,
-                cigar: vec![('M', 61)],
+                cigar: vec![Cigar::Match(61)],
                 seq: vec![b'A'; 61],
-                qual: 40,
+                base_quality: 40,
                 is_reverse: false,
                 mapq: 60,
                 flags: 0,
@@ -4414,7 +4468,6 @@ mod tests_lengths_command {
                 mate_pos: None,
                 insert_size: 0,
             }],
-            "lengths_chrom_end_gc_fetch_halo",
         )?;
         let reference = twobit_from_sequences(
             "lengths_chrom_end_gc_fetch_halo_ref",
@@ -4423,8 +4476,8 @@ mod tests_lengths_command {
         let out_dir = TempDir::new()?;
         let bed_path = out_dir.path().join("right_end_window.bed");
         let gc_path = out_dir.path().join("two_bin_gc_package.zarr");
-        write_bed(&bed_path, &[("chr1", 1010, 1022, "right_end")])?;
-        write_two_bin_gc_package(
+        write_bed4(&bed_path, &[Bed4Row::new("chr1", 1010, 1022, "right_end")])?;
+        write_two_bin_gc_correction_package(
             &gc_path,
             61,
             2.0,
@@ -4488,13 +4541,13 @@ mod tests_lengths_command {
         let bam = single_read_fragment_bam("lengths_grouped_all", 10, 10)?;
         let out_dir = TempDir::new()?;
         let grouped_bed = out_dir.path().join("grouped_all.bed");
-        write_bed(
+        write_bed4(
             &grouped_bed,
             &[
-                ("chr1", 10, 20, "beta"),
-                ("chr1", 0, 20, "beta"),
-                ("chr1", 10, 19, "alpha"),
-                ("chr1", 30, 40, "gamma"),
+                Bed4Row::new("chr1", 10, 20, "beta"),
+                Bed4Row::new("chr1", 0, 20, "beta"),
+                Bed4Row::new("chr1", 10, 19, "alpha"),
+                Bed4Row::new("chr1", 30, 40, "gamma"),
             ],
         )?;
 
@@ -4554,12 +4607,12 @@ mod tests_lengths_command {
         let bam = three_chrom_length_fixture("lengths_grouped_filtered_zero_rows")?;
         let out_dir = TempDir::new()?;
         let grouped_bed = out_dir.path().join("grouped_filtered_zero_rows.bed");
-        write_bed(
+        write_bed4(
             &grouped_bed,
             &[
-                ("chr1", 0, 200, "alpha"),
-                ("chr2", 0, 200, "beta"),
-                ("chr3", 0, 200, "gamma"),
+                Bed4Row::new("chr1", 0, 200, "alpha"),
+                Bed4Row::new("chr2", 0, 200, "beta"),
+                Bed4Row::new("chr3", 0, 200, "gamma"),
             ],
         )?;
 
@@ -4621,13 +4674,13 @@ mod tests_lengths_command {
         let bam = single_read_fragment_bam("lengths_grouped_midpoint_boundary", 40, 10)?;
         let out_dir = TempDir::new()?;
         let grouped_bed = out_dir.path().join("grouped_midpoint_boundary.bed");
-        write_bed(
+        write_bed4(
             &grouped_bed,
             &[
-                ("chr1", 40, 41, "left_endpoint"),
-                ("chr1", 44, 45, "alpha"),
-                ("chr1", 45, 46, "beta"),
-                ("chr1", 49, 50, "right_endpoint"),
+                Bed4Row::new("chr1", 40, 41, "left_endpoint"),
+                Bed4Row::new("chr1", 44, 45, "alpha"),
+                Bed4Row::new("chr1", 45, 46, "beta"),
+                Bed4Row::new("chr1", 49, 50, "right_endpoint"),
             ],
         )?;
 
@@ -4686,13 +4739,13 @@ mod tests_lengths_command {
         let bam = single_read_fragment_bam("lengths_grouped_midpoint_only_mid", 10, 10)?;
         let out_dir = TempDir::new()?;
         let grouped_bed = out_dir.path().join("grouped_midpoint_only_mid.bed");
-        write_bed(
+        write_bed4(
             &grouped_bed,
             &[
-                ("chr1", 10, 11, "left_endpoint"),
-                ("chr1", 14, 16, "mid"),
-                ("chr1", 19, 20, "right_endpoint"),
-                ("chr1", 30, 31, "gamma"),
+                Bed4Row::new("chr1", 10, 11, "left_endpoint"),
+                Bed4Row::new("chr1", 14, 16, "mid"),
+                Bed4Row::new("chr1", 19, 20, "right_endpoint"),
+                Bed4Row::new("chr1", 30, 31, "gamma"),
             ],
         )?;
 
@@ -4762,13 +4815,13 @@ mod tests_lengths_command {
         let bam = single_read_fragment_bam("lengths_grouped_proportion", 10, 10)?;
         let out_dir = TempDir::new()?;
         let grouped_bed = out_dir.path().join("grouped_proportion.bed");
-        write_bed(
+        write_bed4(
             &grouped_bed,
             &[
-                ("chr1", 10, 15, "beta"),
-                ("chr1", 15, 20, "beta"),
-                ("chr1", 10, 14, "alpha"),
-                ("chr1", 30, 40, "gamma"),
+                Bed4Row::new("chr1", 10, 15, "beta"),
+                Bed4Row::new("chr1", 15, 20, "beta"),
+                Bed4Row::new("chr1", 10, 14, "alpha"),
+                Bed4Row::new("chr1", 30, 40, "gamma"),
             ],
         )?;
 
@@ -4866,7 +4919,7 @@ mod tests_lengths_command {
         let bam = single_read_fragment_bam("lengths_grouped_empty_after_filtering", 10, 10)?;
         let out_dir = TempDir::new()?;
         let grouped_bed = out_dir.path().join("grouped_wrong_chr.bed");
-        write_bed(&grouped_bed, &[("chr2", 10, 20, "beta")])?;
+        write_bed4(&grouped_bed, &[Bed4Row::new("chr2", 10, 20, "beta")])?;
 
         let mut cfg = LengthsConfig::new(
             IOCArgs {

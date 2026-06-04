@@ -237,8 +237,15 @@ pub(crate) fn run_with_fcoverage(
     if options.log_statuses {
         command.info("Calling internal fcoverage");
     }
-    let fcoverage_result = run_fcoverage(&fcoverage_cfg, RunOptions::new_quiet())
-        .context("running internal fcoverage")?;
+    let fcoverage_result = run_fcoverage(
+        &fcoverage_cfg,
+        RunOptions {
+            report_statistics: false,
+            show_progress: false,
+            log_statuses: options.log_statuses,
+        },
+    )
+    .context("running internal fcoverage")?;
     if options.log_statuses {
         command.info("Reading internal fcoverage output");
     }

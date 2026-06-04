@@ -19,9 +19,10 @@ use cfdnalab::run_like_cli::{
     lengths::{LengthsConfig, run_lengths},
     midpoints::{MidpointSmoothing, MidpointsConfig, run_midpoints},
 };
-use fixtures::{
-    bam_from_specs_strict_identity, paired_fragment, read_length_counts_text,
-    read_midpoint_zarr_counts, read_midpoint_zarr_i32_1d, twobit_from_sequences, write_bed,
+use cfdnalab::testing::{
+    Bed4Row, PairedFragmentSpec, bam_from_fragments_with_record_indexed_names,
+    read_length_counts_text, read_midpoint_zarr_counts, read_midpoint_zarr_i32_1d,
+    twobit_from_sequences, write_bed4,
 };
 use ndarray::{Array2, arr3};
 use serde_json::Value;
@@ -43,7 +44,8 @@ fn generate_midpoint_zarr_fixture_with_cfdnalab() -> Result<()> {
         .unwrap_or_else(|| PathBuf::from("downstream_tests/tmp"));
     std::fs::create_dir_all(&output_dir)?;
 
-    let bam = bam_from_specs_strict_identity(
+    let bam = bam_from_fragments_with_record_indexed_names(
+        "downstream_midpoint_fixture",
         vec![("chr1".to_string(), 300)],
         // The midpoint set intentionally creates distinct nonzero values across
         // group, length, and position axes. With --bin-size 2 each raw midpoint
@@ -51,61 +53,60 @@ fn generate_midpoint_zarr_fixture_with_cfdnalab() -> Result<()> {
         // asymmetric values that catch axis swaps and broad downstream assertions.
         vec![
             // LYL1, length bin [30, 50)
-            paired_fragment(26, 41, 20),
-            paired_fragment(26, 41, 20),
-            paired_fragment(28, 41, 20),
+            PairedFragmentSpec::new(0, 26, 41, 20).build()?,
+            PairedFragmentSpec::new(0, 26, 41, 20).build()?,
+            PairedFragmentSpec::new(0, 28, 41, 20).build()?,
             // LYL1, length bin [50, 70)
-            paired_fragment(95, 61, 20),
-            paired_fragment(95, 61, 20),
-            paired_fragment(95, 61, 20),
-            paired_fragment(97, 61, 20),
+            PairedFragmentSpec::new(0, 95, 61, 20).build()?,
+            PairedFragmentSpec::new(0, 95, 61, 20).build()?,
+            PairedFragmentSpec::new(0, 95, 61, 20).build()?,
+            PairedFragmentSpec::new(0, 97, 61, 20).build()?,
             // LYL1, length bin [70, 100)
-            paired_fragment(89, 81, 20),
-            paired_fragment(89, 81, 20),
-            paired_fragment(89, 81, 20),
-            paired_fragment(89, 81, 20),
+            PairedFragmentSpec::new(0, 89, 81, 20).build()?,
+            PairedFragmentSpec::new(0, 89, 81, 20).build()?,
+            PairedFragmentSpec::new(0, 89, 81, 20).build()?,
+            PairedFragmentSpec::new(0, 89, 81, 20).build()?,
             // beta-site, length bin [30, 50)
-            paired_fragment(141, 41, 20),
-            paired_fragment(143, 41, 20),
-            paired_fragment(143, 41, 20),
+            PairedFragmentSpec::new(0, 141, 41, 20).build()?,
+            PairedFragmentSpec::new(0, 143, 41, 20).build()?,
+            PairedFragmentSpec::new(0, 143, 41, 20).build()?,
             // beta-site, length bin [50, 70)
-            paired_fragment(25, 61, 20),
-            paired_fragment(25, 61, 20),
-            paired_fragment(25, 61, 20),
-            paired_fragment(29, 61, 20),
+            PairedFragmentSpec::new(0, 25, 61, 20).build()?,
+            PairedFragmentSpec::new(0, 25, 61, 20).build()?,
+            PairedFragmentSpec::new(0, 25, 61, 20).build()?,
+            PairedFragmentSpec::new(0, 29, 61, 20).build()?,
             // beta-site, length bin [70, 100)
-            paired_fragment(123, 81, 20),
-            paired_fragment(127, 81, 20),
-            paired_fragment(127, 81, 20),
+            PairedFragmentSpec::new(0, 123, 81, 20).build()?,
+            PairedFragmentSpec::new(0, 127, 81, 20).build()?,
+            PairedFragmentSpec::new(0, 127, 81, 20).build()?,
             // gamma_long, length bin [30, 50)
-            paired_fragment(55, 41, 20),
-            paired_fragment(55, 41, 20),
-            paired_fragment(55, 41, 20),
-            paired_fragment(55, 41, 20),
-            paired_fragment(55, 41, 20),
+            PairedFragmentSpec::new(0, 55, 41, 20).build()?,
+            PairedFragmentSpec::new(0, 55, 41, 20).build()?,
+            PairedFragmentSpec::new(0, 55, 41, 20).build()?,
+            PairedFragmentSpec::new(0, 55, 41, 20).build()?,
+            PairedFragmentSpec::new(0, 55, 41, 20).build()?,
             // gamma_long, length bin [50, 70)
-            paired_fragment(41, 61, 20),
-            paired_fragment(47, 61, 20),
-            paired_fragment(47, 61, 20),
-            paired_fragment(47, 61, 20),
+            PairedFragmentSpec::new(0, 41, 61, 20).build()?,
+            PairedFragmentSpec::new(0, 47, 61, 20).build()?,
+            PairedFragmentSpec::new(0, 47, 61, 20).build()?,
+            PairedFragmentSpec::new(0, 47, 61, 20).build()?,
             // gamma_long, length bin [70, 100)
-            paired_fragment(35, 81, 20),
-            paired_fragment(39, 81, 20),
-            paired_fragment(39, 81, 20),
+            PairedFragmentSpec::new(0, 35, 81, 20).build()?,
+            PairedFragmentSpec::new(0, 39, 81, 20).build()?,
+            PairedFragmentSpec::new(0, 39, 81, 20).build()?,
         ],
         Vec::new(),
-        "downstream_midpoint_fixture",
     )?;
     let intervals = output_dir.join("tiny.midpoint_intervals.bed");
-    write_bed(
+    write_bed4(
         &intervals,
         &[
-            ("chr1", 45, 55, "LYL1"),
-            ("chr1", 120, 130, "LYL1"),
-            ("chr1", 50, 60, "beta-site"),
-            ("chr1", 160, 170, "beta-site"),
-            ("chr1", 70, 80, "gamma_long"),
-            ("chr1", 200, 210, "gamma_long"),
+            Bed4Row::new("chr1", 45, 55, "LYL1"),
+            Bed4Row::new("chr1", 120, 130, "LYL1"),
+            Bed4Row::new("chr1", 50, 60, "beta-site"),
+            Bed4Row::new("chr1", 160, 170, "beta-site"),
+            Bed4Row::new("chr1", 70, 80, "gamma_long"),
+            Bed4Row::new("chr1", 200, 210, "gamma_long"),
         ],
     )?;
 
@@ -238,17 +239,20 @@ fn generate_end_motif_zarr_fixtures_with_cfdnalab() -> Result<()> {
         .unwrap_or_else(|| PathBuf::from("downstream_tests/tmp"));
     std::fs::create_dir_all(&output_dir)?;
 
-    let mut chr2_fragment = paired_fragment(10, 10, 4);
+    let mut chr2_fragment = PairedFragmentSpec::new(0, 10, 10, 4).build()?;
     chr2_fragment.forward.tid = 1;
     chr2_fragment.forward.mate_tid = Some(1);
     chr2_fragment.reverse.tid = 1;
     chr2_fragment.reverse.mate_tid = Some(1);
 
-    let bam = bam_from_specs_strict_identity(
-        vec![("chr1".to_string(), 256), ("chr2".to_string(), 256)],
-        vec![paired_fragment(10, 10, 4), chr2_fragment],
-        Vec::new(),
+    let bam = bam_from_fragments_with_record_indexed_names(
         "downstream_end_motif_fixture",
+        vec![("chr1".to_string(), 256), ("chr2".to_string(), 256)],
+        vec![
+            PairedFragmentSpec::new(0, 10, 10, 4).build()?,
+            chr2_fragment,
+        ],
+        Vec::new(),
     )?;
     let reference = twobit_from_sequences(
         "downstream_end_reference",
@@ -276,12 +280,12 @@ fn generate_end_motif_zarr_fixtures_with_cfdnalab() -> Result<()> {
     assert_eq!(dense_counts[(0, 3)], 0.0);
 
     let sparse_window_bed = output_dir.join("tiny_ends_windows.bed");
-    write_bed(
+    write_bed4(
         &sparse_window_bed,
         &[
-            ("chr1", 10, 11, "left"),
-            ("chr1", 19, 20, "right"),
-            ("chr2", 10, 11, "chr2_left"),
+            Bed4Row::new("chr1", 10, 11, "left"),
+            Bed4Row::new("chr1", 19, 20, "right"),
+            Bed4Row::new("chr2", 10, 11, "chr2_left"),
         ],
     )?;
     let sparse_window_path = run_end_fixture(
@@ -306,13 +310,13 @@ fn generate_end_motif_zarr_fixtures_with_cfdnalab() -> Result<()> {
     assert_eq!(window_counts.sum(), 3.0);
 
     let sparse_grouped_bed = output_dir.join("tiny_ends_grouped.bed");
-    write_bed(
+    write_bed4(
         &sparse_grouped_bed,
         &[
-            ("chr1", 10, 11, "beta"),
-            ("chr1", 19, 20, "alpha"),
-            ("chr1", 10, 20, "beta"),
-            ("chr1", 30, 31, "gamma"),
+            Bed4Row::new("chr1", 10, 11, "beta"),
+            Bed4Row::new("chr1", 19, 20, "alpha"),
+            Bed4Row::new("chr1", 10, 20, "beta"),
+            Bed4Row::new("chr1", 30, 31, "gamma"),
         ],
     )?;
     let sparse_grouped_path = run_end_fixture(
@@ -358,50 +362,50 @@ fn generate_length_count_tsv_fixtures_with_cfdnalab() -> Result<()> {
         .unwrap_or_else(|| PathBuf::from("downstream_tests/tmp"));
     std::fs::create_dir_all(&output_dir)?;
 
-    let bam = bam_from_specs_strict_identity(
+    let bam = bam_from_fragments_with_record_indexed_names(
+        "downstream_length_fixture",
         vec![("chr1".to_string(), 500)],
         vec![
-            paired_fragment(10, 35, 20),
-            paired_fragment(50, 45, 20),
-            paired_fragment(120, 61, 20),
-            paired_fragment(130, 65, 20),
-            paired_fragment(215, 81, 20),
-            paired_fragment(320, 35, 20),
+            PairedFragmentSpec::new(0, 10, 35, 20).build()?,
+            PairedFragmentSpec::new(0, 50, 45, 20).build()?,
+            PairedFragmentSpec::new(0, 120, 61, 20).build()?,
+            PairedFragmentSpec::new(0, 130, 65, 20).build()?,
+            PairedFragmentSpec::new(0, 215, 81, 20).build()?,
+            PairedFragmentSpec::new(0, 320, 35, 20).build()?,
         ],
         Vec::new(),
-        "downstream_length_fixture",
     )?;
 
     let window_bed = output_dir.join("tiny_lengths_windows.bed");
-    write_bed(
+    write_bed4(
         &window_bed,
         &[
-            ("chr1", 0, 100, "left"),
-            ("chr1", 100, 200, "middle"),
-            ("chr1", 200, 300, "right"),
-            ("chr1", 300, 360, "tail"),
+            Bed4Row::new("chr1", 0, 100, "left"),
+            Bed4Row::new("chr1", 100, 200, "middle"),
+            Bed4Row::new("chr1", 200, 300, "right"),
+            Bed4Row::new("chr1", 300, 360, "tail"),
         ],
     )?;
     let grouped_bed = output_dir.join("tiny_lengths_grouped.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
         &[
-            ("chr1", 0, 100, "beta"),
-            ("chr1", 100, 200, "alpha"),
-            ("chr1", 200, 300, "beta"),
-            ("chr1", 300, 360, "gamma"),
-            ("chr1", 360, 390, "zero"),
+            Bed4Row::new("chr1", 0, 100, "beta"),
+            Bed4Row::new("chr1", 100, 200, "alpha"),
+            Bed4Row::new("chr1", 200, 300, "beta"),
+            Bed4Row::new("chr1", 300, 360, "gamma"),
+            Bed4Row::new("chr1", 360, 390, "zero"),
         ],
     )?;
     let blacklist_bed = output_dir.join("tiny_lengths_blacklist.bed");
-    write_bed(
+    write_bed4(
         &blacklist_bed,
         &[
-            ("chr1", 96, 100, "mask_left"),
-            ("chr1", 100, 105, "mask_middle"),
-            ("chr1", 200, 210, "mask_right"),
-            ("chr1", 300, 315, "mask_tail"),
-            ("chr1", 360, 370, "mask_zero"),
+            Bed4Row::new("chr1", 96, 100, "mask_left"),
+            Bed4Row::new("chr1", 100, 105, "mask_middle"),
+            Bed4Row::new("chr1", 200, 210, "mask_right"),
+            Bed4Row::new("chr1", 300, 315, "mask_tail"),
+            Bed4Row::new("chr1", 360, 370, "mask_zero"),
         ],
     )?;
 

@@ -5,7 +5,7 @@ use std::ops::Sub;
 
 /// A checked half-open interval `[start, end)`.
 ///
-/// Use this for the geometric part of domain structs that carry genomic spans.
+/// Use this for the coordinate span of domain structs that carry genomic spans.
 /// This type only represents non-empty intervals, so construction requires
 /// `end > start`. For ordered bounds that may be empty, use `Span<T>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -87,7 +87,7 @@ where
     /// Example
     /// -------
     /// ```rust
-    /// use cfdnalab::shared::interval::Interval;
+    /// use cfdnalab::interval::Interval;
     ///
     /// let intervals = Interval::from_tuples(&[(5_u64, 10_u64), (10, 20)])?;
     ///
@@ -721,7 +721,7 @@ where
     /// Example
     /// -------
     /// ```rust
-    /// use cfdnalab::shared::interval::IndexedInterval;
+    /// use cfdnalab::interval::IndexedInterval;
     ///
     /// let windows = IndexedInterval::from_tuples(&[(5_u64, 10_u64, 0_u64), (10, 20, 1)])?;
     ///
@@ -807,7 +807,7 @@ where
     /// Example
     /// -------
     /// ```rust
-    /// use cfdnalab::shared::interval::Interval;
+    /// use cfdnalab::interval::Interval;
     ///
     /// let intervals: cfdnalab::Result<Vec<_>> = vec![(5_u64, 6_u64), (10, 20)]
     ///     .into_iter()
@@ -847,7 +847,7 @@ where
     /// Example
     /// -------
     /// ```rust
-    /// use cfdnalab::shared::interval::IndexedInterval;
+    /// use cfdnalab::interval::IndexedInterval;
     ///
     /// let windows: cfdnalab::Result<Vec<_>> = vec![(5_u64, 6_u64, 10_u64), (10, 20, 11)]
     ///     .into_iter()

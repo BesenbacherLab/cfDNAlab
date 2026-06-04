@@ -438,6 +438,7 @@ mod tests_normalize_command {
     fn single_read_fragment_bam(name: &str) -> Result<TempBam> {
         single_read_bam_with_qualities(
             name,
+            Some(200),
             20,
             vec![Cigar::Match(60)],
             &vec![b'A'; 60],

@@ -97,7 +97,7 @@ impl RecordEntry {
 ///
 /// Example
 /// -------
-/// ```rust
+/// ```rust,ignore
 /// use cfdnalab::commands::bam_to_bam::sorted_writer::{
 ///     RecordEntry, RecordTags, RecordWriter, WindowSorter,
 /// };

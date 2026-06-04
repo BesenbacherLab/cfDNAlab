@@ -11,10 +11,12 @@ use cfdnalab::run_like_cli::common::{
     ApplyGCArgs, ChromosomeArgs, IOCArgs, Ref2BitRequiredArgs, WindowsArgs,
 };
 use cfdnalab::run_like_cli::fragment_kmers::{FragmentKmersConfig, run_fragment_kmers};
-use fixtures::{
-    ReadSpec, bam_from_specs, late_origin_gc_reference_sequence, simple_inward_bam,
-    simple_reference_twobit, twobit_from_sequences, write_bed, write_two_bin_gc_package,
+use cfdnalab::testing::{
+    Bed4Row, Cigar, ReadSpec, bam_from_fragments, single_contig_inward_pair_bam,
+    twobit_from_sequences, twobit_with_single_repeating_contig, write_bed4,
+    write_two_bin_gc_correction_package,
 };
+use fixtures::late_origin_gc_reference_sequence;
 use ndarray::Array2;
 use ndarray_npy::read_npy;
 use tempfile::TempDir;
@@ -33,21 +35,24 @@ fn base_chromosomes(chrs: &[&str]) -> ChromosomeArgs {
 #[test]
 fn bed_windowed_runs_write_prefixed_bins_tsv_with_exact_blacklisted_fractions() -> Result<()> {
     // Arrange:
-    // - `simple_inward_bam()` gives one 60 bp fragment on chr1 spanning [20,80).
+    // - `single_contig_inward_pair_bam()` gives one 60 bp fragment on chr1 spanning [20,80).
     // - The two BED windows are [10,20) and [20,30).
     // - The blacklist interval [15,20) overlaps only the first window for 5 of its 10 bases.
     // - With a non-empty output prefix, the bins metadata should follow the same prefixed filename
     //   contract as the primary count outputs.
-    let bam = simple_inward_bam()?;
-    let reference = simple_reference_twobit()?;
+    let bam = single_contig_inward_pair_bam()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
     let blacklist_bed = out_dir.path().join("blacklist.bed");
-    write_bed(
+    write_bed4(
         &windows_bed,
-        &[("chr1", 10, 20, "left"), ("chr1", 20, 30, "right")],
+        &[
+            Bed4Row::new("chr1", 10, 20, "left"),
+            Bed4Row::new("chr1", 20, 30, "right"),
+        ],
     )?;
-    write_bed(&blacklist_bed, &[("chr1", 15, 20, "masked")])?;
+    write_bed4(&blacklist_bed, &[Bed4Row::new("chr1", 15, 20, "masked")])?;
 
     let mut cfg = FragmentKmersConfig::new(
         IOCArgs {
@@ -102,15 +107,16 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
     // - The correct fragment interval [900,961) is all C, so it lands in the high-GC correction
     //   bin with weight 7.0. Using prefix-local origin 0 would see A-only sequence instead.
     // - With k=1 over the selected reference span, the 61 selected bases are all C.
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "fragment_kmers_late_tile_gc_origin",
         vec![("chr1".to_string(), 1_500)],
         Vec::new(),
         vec![ReadSpec {
             tid: 0,
             pos: 900,
-            cigar: vec![('M', 61)],
+            cigar: vec![Cigar::Match(61)],
             seq: vec![b'A'; 61],
-            qual: 40,
+            base_quality: 40,
             is_reverse: false,
             mapq: 60,
             flags: 0,
@@ -118,7 +124,6 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
             mate_pos: None,
             insert_size: 0,
         }],
-        "fragment_kmers_late_tile_gc_origin",
     )?;
     let reference = twobit_from_sequences(
         "fragment_kmers_late_tile_gc_origin_ref",
@@ -127,8 +132,8 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("late_window.bed");
     let gc_path = out_dir.path().join("two_bin_gc_package.zarr");
-    write_bed(&bed_path, &[("chr1", 900, 961, "late")])?;
-    write_two_bin_gc_package(
+    write_bed4(&bed_path, &[Bed4Row::new("chr1", 900, 961, "late")])?;
+    write_two_bin_gc_correction_package(
         &gc_path,
         61,
         2.0,
@@ -196,10 +201,11 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
 //     use std::collections::HashMap;
 //     use std::path::Path;
 
+//     use cfdnalab::testing::{
+//         Bed4Row, Cigar, ReadSpec, bam_from_fragments, //         single_contig_inward_pair_bam, twobit_from_sequences, //         twobit_with_single_repeating_contig, write_bed4, write_scaling_factors_tsv, //,
+//     };
 //     use crate::fixtures::{
-//         FragmentSpec, ReadSpec, bam_from_specs, fragment_kmers_edge_bam,
-//         fragment_kmers_edge_reference, simple_inward_bam, simple_reference_twobit,
-//         single_position_selection, twobit_from_sequences, write_bed, write_scaling_factors,
+//         fragment_kmers_edge_bam, fragment_kmers_edge_reference, single_position_selection,
 //     };
 //     use anyhow::{Context, Result, bail};
 //     use cfdnalab::commands::cli_common::{
@@ -226,10 +232,10 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
 //     pub(crate) fn build_revcomp_assets(
 //         left: &str,
 //     ) -> Result<(
-//         crate::fixtures::TwoBitFixture,
-//         crate::fixtures::BamFixture,
-//         crate::fixtures::TwoBitFixture,
-//         crate::fixtures::BamFixture,
+//         crate::TempTwoBit,
+//         crate::TempBam,
+//         crate::TempTwoBit,
+//         crate::TempBam,
 //         u32,
 //         u32,
 //     )> {
@@ -252,7 +258,7 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
 //         );
 
 //         let left_fragment = make_fragment_pair(0, 0, read_len_left);
-//         let left_bam = bam_from_specs(
+//         let left_bam = bam_from_fragments(
 //             vec![("chr1".to_string(), left_len)],
 //             vec![left_fragment],
 //             Vec::new(),
@@ -261,7 +267,7 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
 
 //         let read_len_combined = left_len;
 //         let combined_fragments = vec![make_fragment_pair(0, 0, read_len_combined)];
-//         let combined_bam = bam_from_specs(
+//         let combined_bam = bam_from_fragments(
 //             vec![("chr1".to_string(), left_len * 2)],
 //             combined_fragments,
 //             Vec::new(),
@@ -302,9 +308,9 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
 //             forward: ReadSpec {
 //                 tid,
 //                 pos: start,
-//                 cigar: vec![('M', read_len)],
+//                 cigar: vec![Cigar::Match(read_len)],
 //                 seq: vec![b'A'; read_len as usize],
-//                 qual: 40,
+//                 base_quality: 40,
 //                 is_reverse: false,
 //                 mapq: 60,
 //                 flags: FLAG_FIRST_MATE | FLAG_MATE_REVERSE | FLAG_PROPER_PAIR,
@@ -315,9 +321,9 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
 //             reverse: ReadSpec {
 //                 tid,
 //                 pos: start + read_len as i64,
-//                 cigar: vec![('M', read_len)],
+//                 cigar: vec![Cigar::Match(read_len)],
 //                 seq: vec![b'T'; read_len as usize],
-//                 qual: 40,
+//                 base_quality: 40,
 //                 is_reverse: true,
 //                 mapq: 60,
 //                 flags: FLAG_SECOND_MATE | FLAG_PROPER_PAIR,
@@ -405,8 +411,8 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
 
 //     #[test]
 //     fn counts_dinucleotides_in_global_window() -> Result<()> {
-//         let bam = crate::fixtures::simple_inward_bam()?;
-//         let reference = crate::fixtures::simple_reference_twobit()?;
+//         let bam = crate::single_contig_inward_pair_bam()?;
+//         let reference = crate::twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
 //         let out_dir = TempDir::new()?;
 
 //         let mut cfg = FragmentKmersConfig::new(
@@ -475,8 +481,8 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
 
 //     #[test]
 //     fn positional_counts_restricts_starts() -> Result<()> {
-//         let bam = simple_inward_bam()?;
-//         let reference = simple_reference_twobit()?;
+//         let bam = single_contig_inward_pair_bam()?;
+//         let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
 //         let out_dir = TempDir::new()?;
 
 //         let mut cfg = FragmentKmersConfig::new(
@@ -548,8 +554,8 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
 
 //     #[test]
 //     fn canonical_trimers_collapse_matches_manual_counts() -> Result<()> {
-//         let bam = simple_inward_bam()?;
-//         let reference = simple_reference_twobit()?;
+//         let bam = single_contig_inward_pair_bam()?;
+//         let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
 //         let out_dir = TempDir::new()?;
 
 //         let mut cfg = FragmentKmersConfig::new(
@@ -837,18 +843,18 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
 //         println!("Next setup");
 
 //         let blacklist_path = out_dir.path().join("mask.bed");
-//         write_bed(
+//         write_bed4(
 //             &blacklist_path,
-//             &[("chr1", 9, 11, "mask"), ("chr1", 22, 23, "mask")],
+//             &[Bed4Row::new("chr1", 9, 11, "mask"), Bed4Row::new("chr1", 22, 23, "mask")],
 //         )?;
 //         let scaling_path = out_dir.path().join("scaling.tsv");
-//         write_scaling_factors(
+//         write_scaling_factors_tsv(
 //             &scaling_path,
 //             &[
-//                 ("chr1", 0, 6, 1.0),
-//                 ("chr1", 6, 8, 0.0),
-//                 ("chr1", 8, 20, 1.5),
-//                 ("chr1", 20, 40, 0.5),
+//                 ScalingFactorRow::new("chr1", 0, 6, 1.0),
+//                 ScalingFactorRow::new("chr1", 6, 8, 0.0),
+//                 ScalingFactorRow::new("chr1", 8, 20, 1.5),
+//                 ScalingFactorRow::new("chr1", 20, 40, 0.5),
 //             ],
 //         )?;
 
@@ -995,18 +1001,18 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
 //         // Blacklist + scaling scenario
 
 //         let blacklist_path = out_dir.path().join("mask.bed");
-//         write_bed(
+//         write_bed4(
 //             &blacklist_path,
-//             &[("chr1", 9, 11, "mask"), ("chr1", 22, 23, "mask")],
+//             &[Bed4Row::new("chr1", 9, 11, "mask"), Bed4Row::new("chr1", 22, 23, "mask")],
 //         )?;
 //         let scaling_path = out_dir.path().join("scaling.tsv");
-//         write_scaling_factors(
+//         write_scaling_factors_tsv(
 //             &scaling_path,
 //             &[
-//                 ("chr1", 0, 6, 1.0),
-//                 ("chr1", 6, 8, 0.0), // also N-masked
-//                 ("chr1", 8, 20, 1.5),
-//                 ("chr1", 20, 40, 0.5),
+//                 ScalingFactorRow::new("chr1", 0, 6, 1.0),
+//                 ScalingFactorRow::new("chr1", 6, 8, 0.0), // also N-masked
+//                 ScalingFactorRow::new("chr1", 8, 20, 1.5),
+//                 ScalingFactorRow::new("chr1", 20, 40, 0.5),
 //             ],
 //         )?;
 
@@ -1589,7 +1595,10 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
 //     }
 // }
 // mod revcomp_tests {
-//     use crate::fixtures::{simple_inward_bam, simple_reference_twobit, single_position_selection};
+//     use cfdnalab::testing::{
+//         Bed4Row, Cigar, //         single_contig_inward_pair_bam, twobit_with_single_repeating_contig, //,
+//     };
+//     use crate::fixtures::single_position_selection;
 //     use crate::tests_fragment_kmer_command::{
 //         assert_count_map_matches, base_chromosomes, build_revcomp_assets, load_counts_from_output,
 //         load_positional_group_counts, manual_kmer_counts, manual_offset_counts,
@@ -1857,8 +1866,8 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
 //         use rust_htslib::bam::{Read, Reader};
 //         use std::collections::{HashMap, HashSet};
 
-//         let bam = simple_inward_bam()?;
-//         let reference = simple_reference_twobit()?;
+//         let bam = single_contig_inward_pair_bam()?;
+//         let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
 
 //         let positional_dir = TempDir::new()?;
 //         let counts_dir = TempDir::new()?;

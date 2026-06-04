@@ -809,11 +809,17 @@ pub fn bam_with_indel_and_softclip_reads() -> Result<TempBam> {
 /// - flags: 0
 ///
 /// The sequence length must match both the quality length and the
-/// query-consuming CIGAR length. The contig length is
-/// `max(pos + reference_consuming_cigar_length + 100, 256)`, so deletions and
-/// reference skips are included when sizing `chr1`.
+/// query-consuming CIGAR length.
+///
+/// Pass `Some(chr1_length)` when the surrounding test depends on the exact
+/// chromosome extent, for example when deriving fixed-size output bins. The
+/// supplied length must be positive and must contain the read's full
+/// reference-consuming span. Pass `None` to derive a permissive contig length
+/// as `max(pos + reference_consuming_cigar_length + 100, 256)`. Deletions and
+/// reference skips are included in the reference-consuming length.
 pub fn single_read_bam_with_qualities(
     name: &str,
+    chr1_length: Option<u32>,
     pos: i64,
     cigar_ops: Vec<Cigar>,
     seq: &[u8],
@@ -838,10 +844,21 @@ pub fn single_read_bam_with_qualities(
         seq.len()
     );
     let reference_len: u32 = cigar_ops.iter().map(cigar_reference_len).sum();
-    let chrom_len = (pos as u32)
-        .saturating_add(reference_len)
-        .saturating_add(100)
-        .max(256);
+    let pos_u32 = u32::try_from(pos).context("read position exceeds u32 coordinate range")?;
+    let minimum_chr1_length = pos_u32
+        .checked_add(reference_len)
+        .context("read reference end exceeds u32 coordinate range")?;
+    let chrom_len = match chr1_length {
+        Some(length) => {
+            ensure!(length > 0, "chr1 length must be positive, got {length}");
+            ensure!(
+                length >= minimum_chr1_length,
+                "chr1 length ({length}) must contain read reference span ending at {minimum_chr1_length}"
+            );
+            length
+        }
+        None => minimum_chr1_length.saturating_add(100).max(256),
+    };
     let tempdir = TempDir::new()?;
     let bam_path = tempdir.path().join(format!("{name}.bam"));
 

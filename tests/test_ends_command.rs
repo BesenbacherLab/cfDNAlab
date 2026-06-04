@@ -18,15 +18,17 @@ use cfdnalab::run_like_cli::{
         WindowMotifAssigner, run_ends,
     },
 };
+use cfdnalab::testing::{
+    Bed4Row, Cigar, FragmentSpec, PairedFragmentSpec, ReadSpec, ScalingFactorRow, TempBam,
+    TempTwoBit, bam_from_fragments, single_read_bam_with_qualities, twobit_from_sequences,
+    twobit_with_single_repeating_contig, write_bed4, write_scaling_factors_tsv,
+    write_two_bin_gc_correction_package,
+};
 use cfdnalab::{
     constants::{DEFAULT_MAX_SOFT_CLIPS, GC_CORRECTION_SCHEMA_VERSION},
     reference::twobit_contig_footprint,
 };
-use fixtures::{
-    BamFixture, FragmentSpec, ReadSpec, bam_from_specs, late_origin_gc_reference_sequence,
-    paired_fragment, simple_reference_twobit, single_read_bam_with_qualities,
-    twobit_from_sequences, write_bed, write_scaling_factors, write_two_bin_gc_package,
-};
+use fixtures::late_origin_gc_reference_sequence;
 use ndarray::Array2;
 #[cfg(feature = "cmd_gc_bias")]
 use ndarray::array;
@@ -112,16 +114,16 @@ fn end_scope_bq_filter_drops_only_the_failing_end() -> Result<()> {
     // - left read base `A` contributes `_A`
     // - right read base `G` contributes `_C` after right-end reverse complementation
     // - `min in end >= 30` keeps the left end and drops the right end
-    let mut fragment = paired_fragment(10, 10, 4);
+    let mut fragment = PairedFragmentSpec::new(0, 10, 10, 4).build()?;
     fragment.forward.seq = b"AAAA".to_vec();
-    fragment.forward.qual = 40;
+    fragment.forward.base_quality = 40;
     fragment.reverse.seq = b"GGGG".to_vec();
-    fragment.reverse.qual = 10;
-    let bam = bam_from_specs(
+    fragment.reverse.base_quality = 10;
+    let bam = bam_from_fragments(
+        "ends_bq_end_filter",
         vec![("chr1".to_string(), 256)],
         vec![fragment],
         Vec::new(),
-        "ends_bq_end_filter",
     )?;
     let baseline_out_dir = TempDir::new()?;
     let mut baseline_cfg = base_config(&bam.bam, baseline_out_dir.path(), 1, 0);
@@ -160,16 +162,16 @@ fn end_scope_bq_filter_drops_only_the_failing_end() -> Result<()> {
 #[test]
 fn fragment_scope_bq_filter_drops_the_full_fragment_when_it_fails() -> Result<()> {
     // Arrange: the fragment mean across both kept end qualities is (40 + 10) / 2 = 25.
-    let mut fragment = paired_fragment(10, 10, 4);
+    let mut fragment = PairedFragmentSpec::new(0, 10, 10, 4).build()?;
     fragment.forward.seq = b"AAAA".to_vec();
-    fragment.forward.qual = 40;
+    fragment.forward.base_quality = 40;
     fragment.reverse.seq = b"GGGG".to_vec();
-    fragment.reverse.qual = 10;
-    let bam = bam_from_specs(
+    fragment.reverse.base_quality = 10;
+    let bam = bam_from_fragments(
+        "ends_bq_fragment_filter",
         vec![("chr1".to_string(), 256)],
         vec![fragment],
         Vec::new(),
-        "ends_bq_fragment_filter",
     )?;
     let baseline_out_dir = TempDir::new()?;
     let mut baseline_cfg = base_config(&bam.bam, baseline_out_dir.path(), 1, 0);
@@ -207,16 +209,16 @@ fn fragment_scope_bq_filters_apply_before_end_scope_filters_remove_one_end() -> 
     // - `min in end >= 30` would keep only the left end
     // - `mean in fragment >= 30` fails on the raw candidate fragment
     // - so the fragment must contribute nothing
-    let mut fragment = paired_fragment(10, 10, 4);
+    let mut fragment = PairedFragmentSpec::new(0, 10, 10, 4).build()?;
     fragment.forward.seq = b"AAAA".to_vec();
-    fragment.forward.qual = 40;
+    fragment.forward.base_quality = 40;
     fragment.reverse.seq = b"GGGG".to_vec();
-    fragment.reverse.qual = 10;
-    let bam = bam_from_specs(
+    fragment.reverse.base_quality = 10;
+    let bam = bam_from_fragments(
+        "ends_bq_filter_order",
         vec![("chr1".to_string(), 256)],
         vec![fragment],
         Vec::new(),
-        "ends_bq_filter_order",
     )?;
     let baseline_out_dir = TempDir::new()?;
     let mut baseline_cfg = base_config(&bam.bam, baseline_out_dir.path(), 1, 0);
@@ -254,16 +256,16 @@ fn fragment_scope_bq_filter_can_pass_while_end_scope_filter_drops_one_end() -> R
     // - fragment mean is (40 + 20) / 2 = 30, so `mean in fragment >= 30` passes
     // - `min in end >= 30` still drops the right end
     // - only the left `_A` motif should remain
-    let mut fragment = paired_fragment(10, 10, 4);
+    let mut fragment = PairedFragmentSpec::new(0, 10, 10, 4).build()?;
     fragment.forward.seq = b"AAAA".to_vec();
-    fragment.forward.qual = 40;
+    fragment.forward.base_quality = 40;
     fragment.reverse.seq = b"GGGG".to_vec();
-    fragment.reverse.qual = 20;
-    let bam = bam_from_specs(
+    fragment.reverse.base_quality = 20;
+    let bam = bam_from_fragments(
+        "ends_bq_fragment_passes_end_drops_one",
         vec![("chr1".to_string(), 256)],
         vec![fragment],
         Vec::new(),
-        "ends_bq_fragment_passes_end_drops_one",
     )?;
     let baseline_out_dir = TempDir::new()?;
     let mut baseline_cfg = base_config(&bam.bam, baseline_out_dir.path(), 1, 0);
@@ -311,16 +313,16 @@ fn fragment_scope_bq_filter_can_pass_while_end_scope_filters_drop_both_ends() ->
     // - fragment mean is (20 + 20) / 2 = 20, so `mean in fragment >= 20` passes
     // - `min in end >= 30` fails on both ends
     // - once both ends are removed, the fragment must contribute nothing
-    let mut fragment = paired_fragment(10, 10, 4);
+    let mut fragment = PairedFragmentSpec::new(0, 10, 10, 4).build()?;
     fragment.forward.seq = b"AAAA".to_vec();
-    fragment.forward.qual = 20;
+    fragment.forward.base_quality = 20;
     fragment.reverse.seq = b"GGGG".to_vec();
-    fragment.reverse.qual = 20;
-    let bam = bam_from_specs(
+    fragment.reverse.base_quality = 20;
+    let bam = bam_from_fragments(
+        "ends_bq_fragment_passes_both_ends_fail",
         vec![("chr1".to_string(), 256)],
         vec![fragment],
         Vec::new(),
-        "ends_bq_fragment_passes_both_ends_fail",
     )?;
     let baseline_out_dir = TempDir::new()?;
     let mut baseline_cfg = base_config(&bam.bam, baseline_out_dir.path(), 1, 0);
@@ -361,8 +363,9 @@ fn reads_are_fragments_supports_combined_end_and_fragment_bq_filters() -> Result
     // - the first base is `A`, so only `_A` remains after filtering
     let bam = single_read_bam_with_qualities(
         "ends_unpaired_bq_filters",
+        None,
         10,
-        vec![('M', 10)],
+        vec![Cigar::Match(10)],
         b"AAAAAAAAAG",
         &[40, 30, 30, 30, 30, 30, 30, 30, 30, 10],
     )?;
@@ -406,8 +409,9 @@ fn reads_are_fragments_drop_the_fragment_when_fragment_filter_passes_but_both_en
     // - after both ends are removed, there is nothing left to count
     let bam = single_read_bam_with_qualities(
         "ends_unpaired_bq_fragment_passes_both_ends_fail",
+        None,
         10,
-        vec![('M', 10)],
+        vec![Cigar::Match(10)],
         b"AAAAAAAAAA",
         &[20, 30, 30, 30, 30, 30, 30, 30, 30, 20],
     )?;
@@ -448,8 +452,9 @@ fn aligned_bq_filter_uses_aligned_inside_qualities_for_k_inside_gt_one() -> Resu
     // - if aligned slicing is implemented correctly, neither end is counted
     let bam = single_read_bam_with_qualities(
         "ends_aligned_bq_k3",
+        None,
         10,
-        vec![('S', 2), ('M', 10), ('S', 2)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10), Cigar::SoftClip(2)],
         b"TTAAAAAAAAAAAA",
         &[40, 35, 30, 10, 10, 10, 10, 10, 10, 10, 10, 30, 35, 40],
     )?;
@@ -488,8 +493,9 @@ fn include_at_aligned_boundary_bq_filter_uses_raw_inside_qualities_for_k_inside_
     // - if include-at-aligned-boundary slicing regresses back to aligned slices, the count would drop to zero
     let bam = single_read_bam_with_qualities(
         "ends_include_at_aligned_boundary_bq_k3",
+        None,
         10,
-        vec![('S', 2), ('M', 10), ('S', 2)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10), Cigar::SoftClip(2)],
         b"TTAAAAAAAAAAAA",
         &[40, 35, 30, 10, 10, 10, 10, 10, 10, 10, 10, 30, 35, 40],
     )?;
@@ -524,8 +530,9 @@ fn include_at_shifted_boundary_bq_filter_uses_raw_inside_qualities_for_k_inside_
     // keeps the shifted fragment length of 14 bp.
     let bam = single_read_bam_with_qualities(
         "ends_include_at_shifted_boundary_bq_k3",
+        None,
         10,
-        vec![('S', 2), ('M', 10), ('S', 2)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10), Cigar::SoftClip(2)],
         b"TTAAAAAAAAAAAA",
         &[40, 35, 30, 10, 10, 10, 10, 10, 10, 10, 10, 30, 35, 40],
     )?;
@@ -557,7 +564,7 @@ fn include_at_shifted_boundary_bq_filter_uses_raw_inside_qualities_for_k_inside_
 fn bq_filter_rejects_reference_backed_inside_bases_with_descriptive_error() -> Result<()> {
     // Arrange
     let bam = simple_paired_fragment_bam("ends_bq_reference_source_error", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -598,8 +605,9 @@ fn bq_filter_rejects_missing_base_qualities_with_descriptive_error() -> Result<(
     // Arrange: BAM uses 255 placeholders to mean missing qualities.
     let bam = single_read_bam_with_qualities(
         "ends_bq_missing_qualities_error",
+        None,
         10,
-        vec![('M', 10)],
+        vec![Cigar::Match(10)],
         b"AAAAAAAAAA",
         &[255; 10],
     )?;
@@ -654,22 +662,18 @@ fn simple_paired_fragment_bam(
     start: i64,
     fragment_len: i64,
     read_len: i64,
-) -> Result<BamFixture> {
-    bam_from_specs(
-        vec![("chr1".to_string(), 256)],
-        vec![paired_fragment(start, fragment_len, read_len)],
-        Vec::new(),
+) -> Result<TempBam> {
+    bam_from_fragments(
         name,
+        vec![("chr1".to_string(), 256)],
+        vec![PairedFragmentSpec::new(0, start, fragment_len, read_len).build()?],
+        Vec::new(),
     )
 }
 
-fn single_read_bam(
-    name: &str,
-    pos: i64,
-    cigar: Vec<(char, u32)>,
-    seq: &[u8],
-) -> Result<BamFixture> {
-    bam_from_specs(
+fn single_read_bam(name: &str, pos: i64, cigar: Vec<Cigar>, seq: &[u8]) -> Result<TempBam> {
+    bam_from_fragments(
+        name,
         vec![("chr1".to_string(), 256)],
         Vec::new(),
         vec![ReadSpec {
@@ -677,7 +681,7 @@ fn single_read_bam(
             pos,
             cigar,
             seq: seq.to_vec(),
-            qual: 40,
+            base_quality: 40,
             is_reverse: false,
             mapq: 60,
             flags: 0,
@@ -685,25 +689,22 @@ fn single_read_bam(
             mate_pos: None,
             insert_size: 0,
         }],
-        name,
     )
 }
 
-fn custom_paired_fragment_bam(
-    name: &str,
-    forward: ReadSpec,
-    reverse: ReadSpec,
-) -> Result<BamFixture> {
-    bam_from_specs(
+fn custom_paired_fragment_bam(name: &str, forward: ReadSpec, reverse: ReadSpec) -> Result<TempBam> {
+    bam_from_fragments(
+        name,
         vec![("chr1".to_string(), 256)],
         vec![FragmentSpec { forward, reverse }],
         Vec::new(),
-        name,
     )
 }
 
 fn fragment_on_tid(tid: usize, start: i64, fragment_len: i64, read_len: i64) -> FragmentSpec {
-    let mut fragment = paired_fragment(start, fragment_len, read_len);
+    let mut fragment = PairedFragmentSpec::new(0, start, fragment_len, read_len)
+        .build()
+        .expect("valid paired-fragment fixture");
     fragment.forward.tid = tid;
     fragment.reverse.tid = tid;
     fragment.forward.mate_tid = Some(tid);
@@ -711,13 +712,13 @@ fn fragment_on_tid(tid: usize, start: i64, fragment_len: i64, read_len: i64) -> 
     fragment
 }
 
-fn single_read_on_tid(tid: usize, pos: i64, cigar: Vec<(char, u32)>, seq: &[u8]) -> ReadSpec {
+fn single_read_on_tid(tid: usize, pos: i64, cigar: Vec<Cigar>, seq: &[u8]) -> ReadSpec {
     ReadSpec {
         tid,
         pos,
         cigar,
         seq: seq.to_vec(),
-        qual: 40,
+        base_quality: 40,
         is_reverse: false,
         mapq: 60,
         flags: 0,
@@ -727,8 +728,9 @@ fn single_read_on_tid(tid: usize, pos: i64, cigar: Vec<(char, u32)>, seq: &[u8])
     }
 }
 
-fn three_chrom_reference_end_fixture(name: &str) -> Result<(BamFixture, fixtures::TwoBitFixture)> {
-    let bam = bam_from_specs(
+fn three_chrom_reference_end_fixture(name: &str) -> Result<(TempBam, TempTwoBit)> {
+    let bam = bam_from_fragments(
+        name,
         vec![
             ("chr1".to_string(), 200),
             ("chr2".to_string(), 200),
@@ -740,7 +742,6 @@ fn three_chrom_reference_end_fixture(name: &str) -> Result<(BamFixture, fixtures
             fragment_on_tid(2, 40, 100, 20),
         ],
         Vec::new(),
-        name,
     )?;
 
     // Mental derivation for k_inside=1, k_outside=0, source_inside=reference:
@@ -1044,10 +1045,10 @@ fn blacklist_any_skips_a_fragment_before_any_end_motifs_are_counted() -> Result<
     // Arrange: fragment [10,20) overlaps the blacklist at [15,16), so blacklist_strategy=Any
     // should exclude the fragment before either end motif is counted.
     let bam = simple_paired_fragment_bam("ends_blacklist_fragment", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let blacklist_bed = out_dir.path().join("blacklist.bed");
-    write_bed(&blacklist_bed, &[("chr1", 15, 16, "blk")])?;
+    write_bed4(&blacklist_bed, &[Bed4Row::new("chr1", 15, 16, "blk")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -1078,10 +1079,10 @@ fn blacklist_masking_skips_only_the_reference_backed_end_motif_that_overlaps_a_b
     // Blacklisting [10,11) masks only the left inside base. Using blacklist_strategy=All keeps
     // the fragment itself, so only the left endpoint motif should disappear.
     let bam = simple_paired_fragment_bam("ends_blacklist_reference_end", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let blacklist_bed = out_dir.path().join("blacklist.bed");
-    write_bed(&blacklist_bed, &[("chr1", 10, 11, "blk")])?;
+    write_bed4(&blacklist_bed, &[Bed4Row::new("chr1", 10, 11, "blk")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -1124,10 +1125,10 @@ fn cli_statistics_count_one_fragment_and_one_motif_when_only_one_end_survives() 
     //   * 1 fragment with one or more counted motifs
     //   * 1 distinct counted end motif across those fragments
     let bam = simple_paired_fragment_bam("ends_cli_stats_one_end", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let blacklist_bed = out_dir.path().join("blacklist.bed");
-    write_bed(&blacklist_bed, &[("chr1", 10, 11, "blk")])?;
+    write_bed4(&blacklist_bed, &[Bed4Row::new("chr1", 10, 11, "blk")])?;
     let binary = cfdna_binary_path()?;
 
     // Act
@@ -1208,19 +1209,24 @@ fn cli_statistics_only_count_reads_from_tiles_with_relevant_windows() -> Result<
     //   * 2 observed reads in processed tiles
     //   * 1 fragment with counted motifs
     //   * 2 distinct counted end motifs
-    let fragment_a = paired_fragment(10, 10, 4);
-    let fragment_b = paired_fragment(1_500_000, 10, 4);
-    let bam = bam_from_specs(
+    let fragment_a = PairedFragmentSpec::new(0, 10, 10, 4).build()?;
+    let fragment_b = PairedFragmentSpec::new(0, 1_500_000, 10, 4).build()?;
+    let bam = bam_from_fragments(
+        "ends_cli_stats_skipped_tile",
         vec![("chr1".to_string(), 2_000_100)],
         vec![fragment_a, fragment_b],
         Vec::new(),
-        "ends_cli_stats_skipped_tile",
     )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(
+    write_bed4(
         &windows_bed,
-        &[("chr1", 1_500_000, 1_500_010, "processed_tile_window")],
+        &[Bed4Row::new(
+            "chr1",
+            1_500_000,
+            1_500_010,
+            "processed_tile_window",
+        )],
     )?;
     let binary = cfdna_binary_path()?;
 
@@ -1296,7 +1302,7 @@ fn cli_source_inside_reference_writes_the_expected_dense_reference_backed_counts
     //   - right inside from reverse read `TTTT` -> reverse-complement "_A"
     //   - wrong dense counts if the CLI ignored `--source-inside reference`: `_A = 2`, `_G = 0`
     let bam = simple_paired_fragment_bam("ends_cli_reference_source", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let binary = cfdna_binary_path()?;
 
@@ -1368,13 +1374,13 @@ fn blacklist_masking_still_skips_read_backed_inside_motifs_using_genomic_referen
     let bam = single_read_bam(
         "ends_blacklist_read_end",
         10,
-        vec![('M', 10)],
+        vec![Cigar::Match(10)],
         b"ACGAACGAAA",
     )?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let blacklist_bed = out_dir.path().join("blacklist.bed");
-    write_bed(&blacklist_bed, &[("chr1", 10, 11, "blk")])?;
+    write_bed4(&blacklist_bed, &[Bed4Row::new("chr1", 10, 11, "blk")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -1430,11 +1436,14 @@ fn blacklist_masking_skips_outside_bases_independently_of_inside_source() -> Res
     // surviving label would have count 2. After masking [10,11), the left end must disappear and
     // the surviving right-end label must have count exactly 1 in both modes.
     let bam = simple_paired_fragment_bam("ends_blacklist_outside_source_independent", 11, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir_read = TempDir::new()?;
     let out_dir_reference = TempDir::new()?;
     let blacklist_bed = out_dir_read.path().join("blacklist.bed");
-    write_bed(&blacklist_bed, &[("chr1", 10, 11, "mask_left_outside")])?;
+    write_bed4(
+        &blacklist_bed,
+        &[Bed4Row::new("chr1", 10, 11, "mask_left_outside")],
+    )?;
 
     let run_with_source =
         |output_dir: &Path, source_inside: KmerSource| -> Result<(Vec<String>, Array2<f64>)> {
@@ -1475,7 +1484,7 @@ fn scaling_factors_weight_each_counted_end_motif() -> Result<()> {
     // Arrange: one chromosome-wide scaling factor of 2.0 should double both endpoint counts for
     // fragment [10,20), whose reference-backed motifs are "_G" on the left and "_A" on the right.
     let bam = simple_paired_fragment_bam("ends_scaling", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let scaling_path = out_dir.path().join("scaling.tsv");
     std::fs::write(
@@ -1512,7 +1521,7 @@ fn gc_file_weights_each_counted_end_motif_by_the_fragment_gc_correction() -> Res
     // The package below assigns weight 3.0 to length bin [10,11) and GC bin [0,51), so both
     // endpoint motifs should each be counted with weight 3.0.
     let bam = simple_paired_fragment_bam("ends_gc_weight", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let gc_path = out_dir.path().join("gc_package.zarr");
     let package = GCCorrectionPackage {
@@ -1564,11 +1573,11 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
     //   weight 7.0. Using prefix-local origin 0 would see A-only sequence instead.
     // - Reference-backed endpoint motifs are `_C` on the left and `_G` on the right, so the two
     //   weighted endpoint motifs sum to 14.0.
-    let bam = bam_from_specs(
-        vec![("chr1".to_string(), 1_500)],
-        vec![paired_fragment(900, 61, 20)],
-        Vec::new(),
+    let bam = bam_from_fragments(
         "ends_late_tile_gc_origin",
+        vec![("chr1".to_string(), 1_500)],
+        vec![PairedFragmentSpec::new(0, 900, 61, 20).build()?],
+        Vec::new(),
     )?;
     let reference = twobit_from_sequences(
         "ends_late_tile_gc_origin_ref",
@@ -1577,8 +1586,8 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("late_window.bed");
     let gc_path = out_dir.path().join("two_bin_gc_package.zarr");
-    write_bed(&bed_path, &[("chr1", 900, 961, "late")])?;
-    write_two_bin_gc_package(
+    write_bed4(&bed_path, &[Bed4Row::new("chr1", 900, 961, "late")])?;
+    write_two_bin_gc_correction_package(
         &gc_path,
         61,
         2.0,
@@ -1639,34 +1648,34 @@ fn include_at_shifted_boundary_gc_file_warns_once_and_counts_aligned_length_fail
                 reads.push(single_read_on_tid(
                     tid,
                     tile_start + offset,
-                    vec![('M', 30)],
+                    vec![Cigar::Match(30)],
                     &full_length_seq,
                 ));
             }
             reads.push(single_read_on_tid(
                 tid,
                 tile_start + 40,
-                vec![('S', 1), ('M', 28), ('S', 1)],
+                vec![Cigar::SoftClip(1), Cigar::Match(28), Cigar::SoftClip(1)],
                 &clipped_seq,
             ));
             for offset in [60, 65] {
                 reads.push(single_read_on_tid(
                     tid,
                     tile_start + offset,
-                    vec![('M', 30)],
+                    vec![Cigar::Match(30)],
                     &full_length_seq,
                 ));
             }
         }
     }
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "ends_include_at_shifted_boundary_gc_length_warning",
         vec![
             ("chr1".to_string(), 3_000_000),
             ("chr2".to_string(), 3_000_000),
         ],
         Vec::new(),
         reads,
-        "ends_include_at_shifted_boundary_gc_length_warning",
     )?;
     let reference = twobit_from_sequences(
         "ends_include_at_shifted_boundary_gc_length_warning_ref",
@@ -1677,11 +1686,11 @@ fn include_at_shifted_boundary_gc_file_warns_once_and_counts_aligned_length_fail
     )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(
+    write_bed4(
         &windows_bed,
         &[
-            ("chr1", 0, 3_000_000, "chr1"),
-            ("chr2", 0, 3_000_000, "chr2"),
+            Bed4Row::new("chr1", 0, 3_000_000, "chr1"),
+            Bed4Row::new("chr2", 0, 3_000_000, "chr2"),
         ],
     )?;
 
@@ -1870,39 +1879,39 @@ fn blacklist_gc_and_scaling_weights_combine_to_the_exact_expected_endpoint_count
         "ends_blacklist_gc_scaling_reference",
         vec![("chr1".to_string(), chromosome_sequence)],
     )?;
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "ends_blacklist_gc_scaling",
         vec![("chr1".to_string(), 120)],
         vec![
-            paired_fragment(10, 10, 4),
-            paired_fragment(40, 10, 4),
-            paired_fragment(70, 10, 4),
-            paired_fragment(100, 10, 4),
+            PairedFragmentSpec::new(0, 10, 10, 4).build()?,
+            PairedFragmentSpec::new(0, 40, 10, 4).build()?,
+            PairedFragmentSpec::new(0, 70, 10, 4).build()?,
+            PairedFragmentSpec::new(0, 100, 10, 4).build()?,
         ],
         Vec::new(),
-        "ends_blacklist_gc_scaling",
     )?;
     let out_dir = TempDir::new()?;
 
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(
+    write_bed4(
         &windows_bed,
         &[
-            ("chr1", 10, 11, "f1_left"),
-            ("chr1", 19, 20, "f1_right"),
-            ("chr1", 40, 41, "f2_left_masked"),
-            ("chr1", 49, 50, "f2_right"),
-            ("chr1", 70, 71, "f3_left"),
-            ("chr1", 79, 80, "f3_right"),
-            ("chr1", 100, 101, "f4_left_blacklisted"),
+            Bed4Row::new("chr1", 10, 11, "f1_left"),
+            Bed4Row::new("chr1", 19, 20, "f1_right"),
+            Bed4Row::new("chr1", 40, 41, "f2_left_masked"),
+            Bed4Row::new("chr1", 49, 50, "f2_right"),
+            Bed4Row::new("chr1", 70, 71, "f3_left"),
+            Bed4Row::new("chr1", 79, 80, "f3_right"),
+            Bed4Row::new("chr1", 100, 101, "f4_left_blacklisted"),
         ],
     )?;
 
     let blacklist_bed = out_dir.path().join("blacklist.bed");
-    write_bed(
+    write_bed4(
         &blacklist_bed,
         &[
-            ("chr1", 40, 41, "mask_f2_left"),
-            ("chr1", 100, 110, "drop_f4"),
+            Bed4Row::new("chr1", 40, 41, "mask_f2_left"),
+            Bed4Row::new("chr1", 100, 110, "drop_f4"),
         ],
     )?;
 
@@ -2088,9 +2097,9 @@ fn auto_indel_filter_keeps_indel_affected_read_backed_end_motifs() -> Result<()>
     let forward = ReadSpec {
         tid: 0,
         pos: 100,
-        cigar: vec![('M', 2), ('I', 1), ('M', 5)],
+        cigar: vec![Cigar::Match(2), Cigar::Ins(1), Cigar::Match(5)],
         seq: b"ACGTACGT".to_vec(),
-        qual: 40,
+        base_quality: 40,
         is_reverse: false,
         mapq: 60,
         flags: 0x40 | 0x20 | 0x2,
@@ -2101,9 +2110,9 @@ fn auto_indel_filter_keeps_indel_affected_read_backed_end_motifs() -> Result<()>
     let reverse = ReadSpec {
         tid: 0,
         pos: 110,
-        cigar: vec![('M', 6)],
+        cigar: vec![Cigar::Match(6)],
         seq: b"AACCGG".to_vec(),
-        qual: 40,
+        base_quality: 40,
         is_reverse: true,
         mapq: 60,
         flags: 0x80 | 0x2,
@@ -2150,9 +2159,9 @@ fn auto_indel_filter_skips_indel_affected_reference_backed_end_motifs() -> Resul
     let forward = ReadSpec {
         tid: 0,
         pos: 100,
-        cigar: vec![('M', 2), ('I', 1), ('M', 5)],
+        cigar: vec![Cigar::Match(2), Cigar::Ins(1), Cigar::Match(5)],
         seq: b"ACGTACGT".to_vec(),
-        qual: 40,
+        base_quality: 40,
         is_reverse: false,
         mapq: 60,
         flags: 0x40 | 0x20 | 0x2,
@@ -2163,9 +2172,9 @@ fn auto_indel_filter_skips_indel_affected_reference_backed_end_motifs() -> Resul
     let reverse = ReadSpec {
         tid: 0,
         pos: 110,
-        cigar: vec![('M', 6)],
+        cigar: vec![Cigar::Match(6)],
         seq: b"AACCGG".to_vec(),
-        qual: 40,
+        base_quality: 40,
         is_reverse: true,
         mapq: 60,
         flags: 0x80 | 0x2,
@@ -2225,9 +2234,9 @@ fn skip_affected_fragment_drops_the_whole_fragment_when_any_end_motif_is_indel_a
     let forward = ReadSpec {
         tid: 0,
         pos: 100,
-        cigar: vec![('M', 2), ('I', 1), ('M', 5)],
+        cigar: vec![Cigar::Match(2), Cigar::Ins(1), Cigar::Match(5)],
         seq: b"ACGTACGT".to_vec(),
-        qual: 40,
+        base_quality: 40,
         is_reverse: false,
         mapq: 60,
         flags: 0x40 | 0x20 | 0x2,
@@ -2238,9 +2247,9 @@ fn skip_affected_fragment_drops_the_whole_fragment_when_any_end_motif_is_indel_a
     let reverse = ReadSpec {
         tid: 0,
         pos: 110,
-        cigar: vec![('M', 6)],
+        cigar: vec![Cigar::Match(6)],
         seq: b"AACCGG".to_vec(),
-        qual: 40,
+        base_quality: 40,
         is_reverse: true,
         mapq: 60,
         flags: 0x80 | 0x2,
@@ -2249,7 +2258,7 @@ fn skip_affected_fragment_drops_the_whole_fragment_when_any_end_motif_is_indel_a
         insert_size: -16,
     };
     let bam = custom_paired_fragment_bam("ends_skip_affected_fragment", forward, reverse)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 4, 0);
@@ -2284,13 +2293,13 @@ fn outside_reference_lookup_uses_preloaded_tile_reference_when_the_motif_extends
     let bam = single_read_bam(
         "ends_exact_reference_fallback",
         20,
-        vec![('M', 10)],
+        vec![Cigar::Match(10)],
         b"AAAAAAAAAA",
     )?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(&windows_bed, &[("chr1", 20, 21, "left")])?;
+    write_bed4(&windows_bed, &[Bed4Row::new("chr1", 20, 21, "left")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 0, 11);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -2330,12 +2339,15 @@ fn endpoint_assigns_left_and_right_end_motifs_to_separate_windows() -> Result<()
     // - left terminal base:  seq[10] = G  -> label "_G"
     // - right terminal base: seq[19] = T  -> oriented right-end label "_A"
     let bam = simple_paired_fragment_bam("ends_endpoint_split", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(
+    write_bed4(
         &windows_bed,
-        &[("chr1", 10, 11, "left"), ("chr1", 19, 20, "right")],
+        &[
+            Bed4Row::new("chr1", 10, 11, "left"),
+            Bed4Row::new("chr1", 19, 20, "right"),
+        ],
     )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -2381,15 +2393,18 @@ fn scaled_endpoint_assignment_uses_each_selected_window_interval() -> Result<()>
     // - row 0 [10,11) counts only the left endpoint at weight 2.0
     // - row 1 [19,20) counts only the right endpoint at weight 2.0
     let bam = simple_paired_fragment_bam("ends_scaled_endpoint_split", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
     let scaling_path = out_dir.path().join("scaling.tsv");
-    write_bed(
+    write_bed4(
         &windows_bed,
-        &[("chr1", 10, 11, "left"), ("chr1", 19, 20, "right")],
+        &[
+            Bed4Row::new("chr1", 10, 11, "left"),
+            Bed4Row::new("chr1", 19, 20, "right"),
+        ],
     )?;
-    write_scaling_factors(&scaling_path, &[("chr1", 0, 256, 2.0)])?;
+    write_scaling_factors_tsv(&scaling_path, &[ScalingFactorRow::new("chr1", 0, 256, 2.0)])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -2428,10 +2443,10 @@ fn midpoint_assigns_both_end_motifs_to_the_midpoint_window() -> Result<()> {
     // Arrange: fragment [10,20) has even midpoint 14 or 15, both inside [14,16).
     // So midpoint assignment should count both end motifs in that one window.
     let bam = simple_paired_fragment_bam("ends_midpoint", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(&windows_bed, &[("chr1", 14, 16, "mid")])?;
+    write_bed4(&windows_bed, &[Bed4Row::new("chr1", 14, 16, "mid")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -2468,10 +2483,10 @@ fn count_overlap_weights_both_end_motifs_by_the_fragment_overlap_fraction() -> R
     // Arrange: fragment [10,20) overlaps window [10,15) by 5 of 10 bp, so each end motif should
     // contribute 0.5 under count-overlap weighting.
     let bam = simple_paired_fragment_bam("ends_count_overlap", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(&windows_bed, &[("chr1", 10, 15, "half")])?;
+    write_bed4(&windows_bed, &[Bed4Row::new("chr1", 10, 15, "half")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -2509,7 +2524,7 @@ fn cross_tile_fragment_is_counted_once_per_window_when_it_reaches_into_the_next_
     // The fragment starts in the first tile core, so it should still be counted in both
     // overlapping windows [0,20) and [20,40), but only once overall after tile reduction.
     let bam = simple_paired_fragment_bam("ends_cross_tile_once", 15, 20, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -2550,10 +2565,10 @@ fn cross_tile_fragment_is_counted_once_per_window_when_it_reaches_into_the_next_
 fn all_requires_the_full_fragment_to_overlap_the_window() -> Result<()> {
     // Arrange: fragment [10,20) does not fully overlap [10,19), so "all" should count nothing.
     let bam = simple_paired_fragment_bam("ends_all", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(&windows_bed, &[("chr1", 10, 19, "almost")])?;
+    write_bed4(&windows_bed, &[Bed4Row::new("chr1", 10, 19, "almost")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -2587,10 +2602,10 @@ fn all_requires_the_full_fragment_to_overlap_the_window() -> Result<()> {
 fn all_assignment_counts_the_fragment_when_the_window_fully_contains_it() -> Result<()> {
     // Arrange: fragment [10,20) is fully contained in [10,20), so `all` should accept it.
     let bam = simple_paired_fragment_bam("ends_all_accept", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(&windows_bed, &[("chr1", 10, 20, "full")])?;
+    write_bed4(&windows_bed, &[Bed4Row::new("chr1", 10, 20, "full")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -2627,10 +2642,10 @@ fn all_assignment_counts_the_fragment_when_the_window_fully_contains_it() -> Res
 fn proportion_assignment_counts_the_fragment_when_the_requested_fraction_is_met() -> Result<()> {
     // Arrange: fragment [10,20) overlaps [10,15) by 5/10 bp, so proportion=0.5 should accept it.
     let bam = simple_paired_fragment_bam("ends_proportion", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(&windows_bed, &[("chr1", 10, 15, "half")])?;
+    write_bed4(&windows_bed, &[Bed4Row::new("chr1", 10, 15, "half")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -2666,10 +2681,10 @@ fn proportion_assignment_rejects_the_fragment_when_the_requested_fraction_is_not
 {
     // Arrange: fragment [10,20) overlaps [10,14) by 4/10 bp, so proportion=0.5 should reject it.
     let bam = simple_paired_fragment_bam("ends_proportion_reject", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(&windows_bed, &[("chr1", 10, 14, "short")])?;
+    write_bed4(&windows_bed, &[Bed4Row::new("chr1", 10, 14, "short")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -2704,10 +2719,10 @@ fn any_assignment_counts_both_end_motifs_when_any_fragment_base_overlaps() -> Re
     // Arrange: fragment [10,20) overlaps [19,20) by exactly one base, which should still count
     // both end motifs under "any".
     let bam = simple_paired_fragment_bam("ends_any", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(&windows_bed, &[("chr1", 19, 20, "one_bp")])?;
+    write_bed4(&windows_bed, &[Bed4Row::new("chr1", 19, 20, "one_bp")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -2743,10 +2758,10 @@ fn endpoint_counts_both_end_motifs_when_one_window_contains_both_terminal_bases(
     // Arrange: one window covering the full fragment contains both endpoint bases, so endpoint
     // assignment should place both motifs in the same row.
     let bam = simple_paired_fragment_bam("ends_endpoint_same_window", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(&windows_bed, &[("chr1", 10, 20, "full")])?;
+    write_bed4(&windows_bed, &[Bed4Row::new("chr1", 10, 20, "full")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -2785,7 +2800,7 @@ fn collapse_complement_merges_complement_equivalent_single_base_end_motifs() -> 
     // - right terminal base seq[20] = A -> oriented right-end also "_T"
     // With complement collapsing enabled, both should map to canonical "_A".
     let bam = simple_paired_fragment_bam("ends_collapse", 11, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -2817,10 +2832,10 @@ fn dense_all_motifs_output_enumerates_the_full_combined_1_plus_1_universe_withou
     // reference base. The observed motif is "C_G", but dense output must still write the full
     // combined 1+1 universe.
     let bam = simple_paired_fragment_bam("ends_dense_combined_no_collapse", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(&windows_bed, &[("chr1", 10, 11, "left")])?;
+    write_bed4(&windows_bed, &[Bed4Row::new("chr1", 10, 11, "left")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 1);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -2876,16 +2891,17 @@ fn dense_all_motifs_output_enumerates_the_full_collapsed_combined_1_plus_1_unive
             ),
         )],
     )?;
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "ends_dense_collapsed_1_plus_1",
         vec![("chr1".to_string(), 256)],
         Vec::new(),
         vec![
             ReadSpec {
                 tid: 0,
                 pos: 10,
-                cigar: vec![('M', 10)],
+                cigar: vec![Cigar::Match(10)],
                 seq: b"AAAAAAAAAA".to_vec(),
-                qual: 40,
+                base_quality: 40,
                 is_reverse: false,
                 mapq: 60,
                 flags: 0,
@@ -2896,9 +2912,9 @@ fn dense_all_motifs_output_enumerates_the_full_collapsed_combined_1_plus_1_unive
             ReadSpec {
                 tid: 0,
                 pos: 20,
-                cigar: vec![('M', 10)],
+                cigar: vec![Cigar::Match(10)],
                 seq: b"CCCCCCCCCC".to_vec(),
-                qual: 40,
+                base_quality: 40,
                 is_reverse: false,
                 mapq: 60,
                 flags: 0,
@@ -2907,13 +2923,15 @@ fn dense_all_motifs_output_enumerates_the_full_collapsed_combined_1_plus_1_unive
                 insert_size: 0,
             },
         ],
-        "ends_dense_collapsed_1_plus_1",
     )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(
+    write_bed4(
         &windows_bed,
-        &[("chr1", 10, 11, "left_a"), ("chr1", 20, 21, "left_b")],
+        &[
+            Bed4Row::new("chr1", 10, 11, "left_a"),
+            Bed4Row::new("chr1", 20, 21, "left_b"),
+        ],
     )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 1);
@@ -2971,12 +2989,12 @@ fn dense_all_motifs_output_enumerates_the_full_combined_2_plus_2_universe_withou
     let bam = single_read_bam(
         "ends_dense_combined_2_plus_2",
         10,
-        vec![('M', 10)],
+        vec![Cigar::Match(10)],
         b"AAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(&windows_bed, &[("chr1", 10, 11, "left")])?;
+    write_bed4(&windows_bed, &[Bed4Row::new("chr1", 10, 11, "left")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 2, 2);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -3035,16 +3053,17 @@ fn dense_all_motifs_output_enumerates_the_full_collapsed_combined_2_plus_2_unive
             ),
         )],
     )?;
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "ends_dense_collapsed_2_plus_2",
         vec![("chr1".to_string(), 256)],
         Vec::new(),
         vec![
             ReadSpec {
                 tid: 0,
                 pos: 10,
-                cigar: vec![('M', 10)],
+                cigar: vec![Cigar::Match(10)],
                 seq: b"AAAAAAAAAA".to_vec(),
-                qual: 40,
+                base_quality: 40,
                 is_reverse: false,
                 mapq: 60,
                 flags: 0,
@@ -3055,9 +3074,9 @@ fn dense_all_motifs_output_enumerates_the_full_collapsed_combined_2_plus_2_unive
             ReadSpec {
                 tid: 0,
                 pos: 20,
-                cigar: vec![('M', 10)],
+                cigar: vec![Cigar::Match(10)],
                 seq: b"CCCCCCCCCC".to_vec(),
-                qual: 40,
+                base_quality: 40,
                 is_reverse: false,
                 mapq: 60,
                 flags: 0,
@@ -3066,13 +3085,15 @@ fn dense_all_motifs_output_enumerates_the_full_collapsed_combined_2_plus_2_unive
                 insert_size: 0,
             },
         ],
-        "ends_dense_collapsed_2_plus_2",
     )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(
+    write_bed4(
         &windows_bed,
-        &[("chr1", 10, 11, "left_a"), ("chr1", 20, 21, "left_b")],
+        &[
+            Bed4Row::new("chr1", 10, 11, "left_a"),
+            Bed4Row::new("chr1", 20, 21, "left_b"),
+        ],
     )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 2, 2);
@@ -3154,16 +3175,17 @@ fn collapse_complement_preserves_outside_inside_order_for_odd_length_end_motifs(
             ),
         )],
     )?;
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "ends_odd_length_complement",
         vec![("chr1".to_string(), 256)],
         Vec::new(),
         vec![
             ReadSpec {
                 tid: 0,
                 pos: 10,
-                cigar: vec![('M', 10)],
+                cigar: vec![Cigar::Match(10)],
                 seq: b"AAAAAAAAAA".to_vec(),
-                qual: 40,
+                base_quality: 40,
                 is_reverse: false,
                 mapq: 60,
                 flags: 0,
@@ -3174,9 +3196,9 @@ fn collapse_complement_preserves_outside_inside_order_for_odd_length_end_motifs(
             ReadSpec {
                 tid: 0,
                 pos: 30,
-                cigar: vec![('M', 10)],
+                cigar: vec![Cigar::Match(10)],
                 seq: b"CCCCCCCCCC".to_vec(),
-                qual: 40,
+                base_quality: 40,
                 is_reverse: false,
                 mapq: 60,
                 flags: 0,
@@ -3185,7 +3207,6 @@ fn collapse_complement_preserves_outside_inside_order_for_odd_length_end_motifs(
                 insert_size: 0,
             },
         ],
-        "ends_odd_length_complement",
     )?;
     let out_dir = TempDir::new()?;
 
@@ -3259,16 +3280,17 @@ fn collapse_complement_preserves_outside_inside_order_for_multi_base_2_plus_2_en
             ),
         )],
     )?;
-    let bam = bam_from_specs(
+    let bam = bam_from_fragments(
+        "ends_2_plus_2_complement",
         vec![("chr1".to_string(), 256)],
         Vec::new(),
         vec![
             ReadSpec {
                 tid: 0,
                 pos: 10,
-                cigar: vec![('M', 10)],
+                cigar: vec![Cigar::Match(10)],
                 seq: b"AAAAAAAAAA".to_vec(),
-                qual: 40,
+                base_quality: 40,
                 is_reverse: false,
                 mapq: 60,
                 flags: 0,
@@ -3279,9 +3301,9 @@ fn collapse_complement_preserves_outside_inside_order_for_multi_base_2_plus_2_en
             ReadSpec {
                 tid: 0,
                 pos: 30,
-                cigar: vec![('M', 10)],
+                cigar: vec![Cigar::Match(10)],
                 seq: b"CCCCCCCCCC".to_vec(),
-                qual: 40,
+                base_quality: 40,
                 is_reverse: false,
                 mapq: 60,
                 flags: 0,
@@ -3290,7 +3312,6 @@ fn collapse_complement_preserves_outside_inside_order_for_multi_base_2_plus_2_en
                 insert_size: 0,
             },
         ],
-        "ends_2_plus_2_complement",
     )?;
     let out_dir = TempDir::new()?;
 
@@ -3325,7 +3346,7 @@ fn collapse_complement_preserves_outside_inside_order_for_multi_base_2_plus_2_en
 fn sparse_output_is_the_default_when_all_motifs_is_disabled() -> Result<()> {
     // Arrange: one fragment with two observed motifs should produce a sparse 1x2 matrix by default.
     let bam = simple_paired_fragment_bam("ends_sparse_default", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -3369,7 +3390,7 @@ fn sparse_output_is_the_default_when_all_motifs_is_disabled() -> Result<()> {
 fn dense_all_motifs_output_still_uses_the_same_settings_sidecar() -> Result<()> {
     // Arrange: the sidecar should describe motif semantics, not mirror obvious output format state.
     let bam = simple_paired_fragment_bam("ends_dense_settings", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -3546,11 +3567,11 @@ fn bed_windowing_preserves_bed_row_order_and_skips_selected_chromosomes_without_
     let (bam, reference) = three_chrom_reference_end_fixture("ends_three_chr_by_bed_sparse")?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows_three_chr.bed");
-    write_bed(
+    write_bed4(
         &windows_bed,
         &[
-            ("chr3", 0, 200, "chr3_window"),
-            ("chr1", 0, 200, "chr1_window"),
+            Bed4Row::new("chr3", 0, 200, "chr3_window"),
+            Bed4Row::new("chr1", 0, 200, "chr1_window"),
         ],
     )?;
 
@@ -3624,12 +3645,12 @@ fn by_size_and_bed_equivalent_full_chromosome_windows_match_across_three_chromos
     let by_size_out = TempDir::new()?;
     let bed_out = TempDir::new()?;
     let windows_bed = bed_out.path().join("windows_three_chr_full.bed");
-    write_bed(
+    write_bed4(
         &windows_bed,
         &[
-            ("chr1", 0, 200, "chr1_window"),
-            ("chr2", 0, 200, "chr2_window"),
-            ("chr3", 0, 200, "chr3_window"),
+            Bed4Row::new("chr1", 0, 200, "chr1_window"),
+            Bed4Row::new("chr2", 0, 200, "chr2_window"),
+            Bed4Row::new("chr3", 0, 200, "chr3_window"),
         ],
     )?;
 
@@ -3698,7 +3719,7 @@ fn by_size_and_bed_equivalent_full_chromosome_windows_match_across_three_chromos
 fn global_mode_counts_both_end_motifs_in_one_output_row() -> Result<()> {
     // Arrange: with no windows configured, the command should produce one global output row.
     let bam = simple_paired_fragment_bam("ends_global", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -3729,7 +3750,7 @@ fn all_motifs_dense_output_includes_zero_count_columns_for_unobserved_motifs() -
     // Arrange: the one-fragment case only observes _A and _G, so _C and _T must still be present
     // as explicit zero columns under all-motifs output.
     let bam = simple_paired_fragment_bam("ends_zero_columns", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -3758,7 +3779,7 @@ fn all_motifs_dense_output_includes_zero_count_columns_for_unobserved_motifs() -
 fn all_motifs_dense_output_enumerates_outside_only_labels_when_k_inside_is_zero() -> Result<()> {
     // Arrange: outside-only motifs should still have a fixed dense column universe.
     let bam = simple_paired_fragment_bam("ends_outside_only_dense", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 0, 1);
@@ -3794,7 +3815,7 @@ fn reference_backed_inside_and_outside_bases_are_combined_into_the_expected_labe
     // - right-end storage order is `GTA`, which reverse-complements to `TAC`
     //   -> right label = `T_AC`
     let bam = simple_paired_fragment_bam("ends_combined_inside_outside_reference", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 2, 1);
@@ -3844,7 +3865,7 @@ fn config_docstring_visualization_example_counts_the_expected_motifs_with_and_wi
     let bam = single_read_bam(
         "ends_config_docstring_visualization",
         2,
-        vec![('M', 11)],
+        vec![Cigar::Match(11)],
         b"AAAAAAAAAAA",
     )?;
 
@@ -3918,14 +3939,17 @@ fn include_at_shifted_boundary_endpoint_assignment_uses_the_shifted_assignment_b
     let bam = single_read_bam(
         "ends_include_at_shifted_boundary",
         10,
-        vec![('S', 2), ('M', 10), ('S', 2)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10), Cigar::SoftClip(2)],
         b"TTAAAAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(
+    write_bed4(
         &windows_bed,
-        &[("chr1", 8, 9, "left_raw"), ("chr1", 21, 22, "right_raw")],
+        &[
+            Bed4Row::new("chr1", 8, 9, "left_raw"),
+            Bed4Row::new("chr1", 21, 22, "right_raw"),
+        ],
     )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -3975,12 +3999,12 @@ fn include_at_shifted_boundary_endpoint_assignment_keeps_a_left_window_that_only
     let bam = single_read_bam(
         "ends_raw_left_of_tile_core",
         10,
-        vec![('S', 2), ('M', 10), ('S', 2)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10), Cigar::SoftClip(2)],
         b"TTAAAAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(&windows_bed, &[("chr1", 8, 9, "left_raw_only")])?;
+    write_bed4(&windows_bed, &[Bed4Row::new("chr1", 8, 9, "left_raw_only")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_unpaired(UnpairedArgs {
@@ -4033,26 +4057,26 @@ fn scaled_include_at_shifted_boundary_endpoint_counts_windows_reached_only_by_ra
     let bam = single_read_bam(
         "ends_scaled_raw_left_of_aligned_span",
         10,
-        vec![('S', 2), ('M', 10), ('S', 2)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10), Cigar::SoftClip(2)],
         b"TTAAAAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
     let scaling_path = out_dir.path().join("scaling.tsv");
-    write_bed(
+    write_bed4(
         &windows_bed,
         &[
-            ("chr1", 8, 9, "left_raw_only"),
-            ("chr1", 21, 22, "right_raw_only"),
+            Bed4Row::new("chr1", 8, 9, "left_raw_only"),
+            Bed4Row::new("chr1", 21, 22, "right_raw_only"),
         ],
     )?;
-    write_scaling_factors(
+    write_scaling_factors_tsv(
         &scaling_path,
         &[
-            ("chr1", 0, 10, 100.0),
-            ("chr1", 10, 11, 2.0),
-            ("chr1", 11, 20, 1.0),
-            ("chr1", 20, 256, 100.0),
+            ScalingFactorRow::new("chr1", 0, 10, 100.0),
+            ScalingFactorRow::new("chr1", 10, 11, 2.0),
+            ScalingFactorRow::new("chr1", 11, 20, 1.0),
+            ScalingFactorRow::new("chr1", 20, 256, 100.0),
         ],
     )?;
 
@@ -4110,20 +4134,23 @@ fn scaled_include_at_shifted_boundary_midpoint_counts_window_reached_only_by_raw
     let bam = single_read_bam(
         "ends_scaled_raw_midpoint_left_of_aligned_span",
         20,
-        vec![('S', 20), ('M', 10)],
+        vec![Cigar::SoftClip(20), Cigar::Match(10)],
         b"TAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
     let scaling_path = out_dir.path().join("scaling.tsv");
-    write_bed(&windows_bed, &[("chr1", 14, 16, "raw_midpoint_only")])?;
-    write_scaling_factors(
+    write_bed4(
+        &windows_bed,
+        &[Bed4Row::new("chr1", 14, 16, "raw_midpoint_only")],
+    )?;
+    write_scaling_factors_tsv(
         &scaling_path,
         &[
-            ("chr1", 0, 20, 100.0),
-            ("chr1", 20, 21, 2.0),
-            ("chr1", 21, 30, 1.0),
-            ("chr1", 30, 256, 100.0),
+            ScalingFactorRow::new("chr1", 0, 20, 100.0),
+            ScalingFactorRow::new("chr1", 20, 21, 2.0),
+            ScalingFactorRow::new("chr1", 21, 30, 1.0),
+            ScalingFactorRow::new("chr1", 30, 256, 100.0),
         ],
     )?;
 
@@ -4177,20 +4204,20 @@ fn scaled_include_at_shifted_boundary_count_overlap_uses_nearest_aligned_base_fo
     let bam = single_read_bam(
         "ends_scaled_raw_count_overlap_left_nearest",
         10,
-        vec![('S', 2), ('M', 10), ('S', 2)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10), Cigar::SoftClip(2)],
         b"TTAAAAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
     let scaling_path = out_dir.path().join("scaling.tsv");
-    write_bed(&windows_bed, &[("chr1", 8, 9, "left_raw_only")])?;
-    write_scaling_factors(
+    write_bed4(&windows_bed, &[Bed4Row::new("chr1", 8, 9, "left_raw_only")])?;
+    write_scaling_factors_tsv(
         &scaling_path,
         &[
-            ("chr1", 0, 10, 100.0),
-            ("chr1", 10, 11, 2.0),
-            ("chr1", 11, 20, 1.0),
-            ("chr1", 20, 256, 100.0),
+            ScalingFactorRow::new("chr1", 0, 10, 100.0),
+            ScalingFactorRow::new("chr1", 10, 11, 2.0),
+            ScalingFactorRow::new("chr1", 11, 20, 1.0),
+            ScalingFactorRow::new("chr1", 20, 256, 100.0),
         ],
     )?;
 
@@ -4245,30 +4272,30 @@ fn scaled_include_at_shifted_boundary_count_overlap_uses_reference_scaling_for_l
     let bam = single_read_bam(
         "ends_scaled_raw_count_overlap_left_aligned_right",
         10,
-        vec![('S', 2), ('M', 10), ('S', 2)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10), Cigar::SoftClip(2)],
         b"TTAAAAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
     let scaling_path = out_dir.path().join("scaling.tsv");
-    write_bed(
+    write_bed4(
         &windows_bed,
         &[
-            ("chr1", 8, 9, "left_raw_only"),
-            ("chr1", 14, 16, "aligned_overlap"),
-            ("chr1", 21, 22, "right_raw_only"),
+            Bed4Row::new("chr1", 8, 9, "left_raw_only"),
+            Bed4Row::new("chr1", 14, 16, "aligned_overlap"),
+            Bed4Row::new("chr1", 21, 22, "right_raw_only"),
         ],
     )?;
-    write_scaling_factors(
+    write_scaling_factors_tsv(
         &scaling_path,
         &[
-            ("chr1", 0, 10, 100.0),
-            ("chr1", 10, 11, 2.0),
-            ("chr1", 11, 14, 1.0),
-            ("chr1", 14, 16, 5.0),
-            ("chr1", 16, 19, 1.0),
-            ("chr1", 19, 20, 7.0),
-            ("chr1", 20, 256, 100.0),
+            ScalingFactorRow::new("chr1", 0, 10, 100.0),
+            ScalingFactorRow::new("chr1", 10, 11, 2.0),
+            ScalingFactorRow::new("chr1", 11, 14, 1.0),
+            ScalingFactorRow::new("chr1", 14, 16, 5.0),
+            ScalingFactorRow::new("chr1", 16, 19, 1.0),
+            ScalingFactorRow::new("chr1", 19, 20, 7.0),
+            ScalingFactorRow::new("chr1", 20, 256, 100.0),
         ],
     )?;
 
@@ -4324,7 +4351,7 @@ fn include_at_shifted_boundary_endpoint_left_only_window_is_tile_size_invariant(
     let bam = single_read_bam(
         "ends_raw_left_only_tile_invariance",
         10,
-        vec![('S', 2), ('M', 10), ('S', 2)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10), Cigar::SoftClip(2)],
         b"TTAAAAAAAAAAAA",
     )?;
     let tile_sizes = [10_u32, 1_000_u32];
@@ -4333,7 +4360,7 @@ fn include_at_shifted_boundary_endpoint_left_only_window_is_tile_size_invariant(
     for tile_size in tile_sizes {
         let out_dir = TempDir::new()?;
         let windows_bed = out_dir.path().join(format!("windows_{tile_size}.bed"));
-        write_bed(&windows_bed, &[("chr1", 8, 9, "left_raw_only")])?;
+        write_bed4(&windows_bed, &[Bed4Row::new("chr1", 8, 9, "left_raw_only")])?;
 
         let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
         cfg.set_unpaired(UnpairedArgs {
@@ -4376,12 +4403,15 @@ fn include_at_shifted_boundary_endpoint_assignment_does_not_count_a_window_endin
     let bam = single_read_bam(
         "ends_raw_left_boundary_open",
         10,
-        vec![('S', 2), ('M', 10), ('S', 2)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10), Cigar::SoftClip(2)],
         b"TTAAAAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(&windows_bed, &[("chr1", 7, 8, "touches_left_only")])?;
+    write_bed4(
+        &windows_bed,
+        &[Bed4Row::new("chr1", 7, 8, "touches_left_only")],
+    )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_unpaired(UnpairedArgs {
@@ -4422,14 +4452,17 @@ fn aligned_endpoint_assignment_ignores_include_at_shifted_boundary_positions() -
     let bam = single_read_bam(
         "ends_aligned_not_raw",
         10,
-        vec![('S', 2), ('M', 10), ('S', 2)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10), Cigar::SoftClip(2)],
         b"TTAAAAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(
+    write_bed4(
         &windows_bed,
-        &[("chr1", 8, 9, "raw_left"), ("chr1", 21, 22, "raw_right")],
+        &[
+            Bed4Row::new("chr1", 8, 9, "raw_left"),
+            Bed4Row::new("chr1", 21, 22, "raw_right"),
+        ],
     )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -4473,16 +4506,16 @@ fn include_at_aligned_boundary_endpoint_assignment_uses_aligned_positions_with_r
     let bam = single_read_bam(
         "ends_include_at_aligned_boundary_endpoint",
         10,
-        vec![('S', 2), ('M', 10), ('S', 2)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10), Cigar::SoftClip(2)],
         b"TTAAAAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(
+    write_bed4(
         &windows_bed,
         &[
-            ("chr1", 10, 11, "left_aligned"),
-            ("chr1", 19, 20, "right_aligned"),
+            Bed4Row::new("chr1", 10, 11, "left_aligned"),
+            Bed4Row::new("chr1", 19, 20, "right_aligned"),
         ],
     )?;
 
@@ -4528,16 +4561,16 @@ fn include_at_aligned_boundary_endpoint_assignment_does_not_count_windows_at_shi
     let bam = single_read_bam(
         "ends_include_at_aligned_boundary_not_shifted",
         10,
-        vec![('S', 2), ('M', 10), ('S', 2)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10), Cigar::SoftClip(2)],
         b"TTAAAAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(
+    write_bed4(
         &windows_bed,
         &[
-            ("chr1", 8, 9, "shifted_left"),
-            ("chr1", 21, 22, "shifted_right"),
+            Bed4Row::new("chr1", 8, 9, "shifted_left"),
+            Bed4Row::new("chr1", 21, 22, "shifted_right"),
         ],
     )?;
 
@@ -4582,7 +4615,7 @@ fn include_at_aligned_boundary_endpoint_left_only_window_outside_aligned_reach_i
     let bam = single_read_bam(
         "ends_include_at_aligned_boundary_left_only_tile_invariance",
         10,
-        vec![('S', 2), ('M', 10), ('S', 2)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10), Cigar::SoftClip(2)],
         b"TTAAAAAAAAAAAA",
     )?;
     let tile_sizes = [10_u32, 1_000_u32];
@@ -4591,7 +4624,10 @@ fn include_at_aligned_boundary_endpoint_left_only_window_outside_aligned_reach_i
     for tile_size in tile_sizes {
         let out_dir = TempDir::new()?;
         let windows_bed = out_dir.path().join(format!("windows_{tile_size}.bed"));
-        write_bed(&windows_bed, &[("chr1", 8, 9, "shifted_left_only")])?;
+        write_bed4(
+            &windows_bed,
+            &[Bed4Row::new("chr1", 8, 9, "shifted_left_only")],
+        )?;
 
         let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
         cfg.set_unpaired(UnpairedArgs {
@@ -4635,12 +4671,15 @@ fn include_at_aligned_boundary_endpoint_assignment_keeps_an_aligned_right_halo_w
     let bam = single_read_bam(
         "ends_include_at_aligned_boundary_right_halo",
         19,
-        vec![('M', 10), ('S', 10)],
+        vec![Cigar::Match(10), Cigar::SoftClip(10)],
         b"AAAAAAAAAAAAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(&windows_bed, &[("chr1", 28, 29, "right_aligned_only")])?;
+    write_bed4(
+        &windows_bed,
+        &[Bed4Row::new("chr1", 28, 29, "right_aligned_only")],
+    )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_unpaired(UnpairedArgs {
@@ -4683,12 +4722,15 @@ fn include_at_aligned_boundary_endpoint_assignment_does_not_count_a_far_right_wi
     let bam = single_read_bam(
         "ends_include_at_aligned_boundary_far_right_window",
         10,
-        vec![('M', 10), ('S', 10)],
+        vec![Cigar::Match(10), Cigar::SoftClip(10)],
         b"AAAAAAAAAAAAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(&windows_bed, &[("chr1", 29, 30, "far_right_only")])?;
+    write_bed4(
+        &windows_bed,
+        &[Bed4Row::new("chr1", 29, 30, "far_right_only")],
+    )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_unpaired(UnpairedArgs {
@@ -4732,12 +4774,15 @@ fn aligned_endpoint_assignment_keeps_a_right_halo_only_window_reached_by_an_owne
     let bam = single_read_bam(
         "ends_aligned_right_halo",
         19,
-        vec![('M', 10)],
+        vec![Cigar::Match(10)],
         b"AAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(&windows_bed, &[("chr1", 28, 29, "right_halo_only")])?;
+    write_bed4(
+        &windows_bed,
+        &[Bed4Row::new("chr1", 28, 29, "right_halo_only")],
+    )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_unpaired(UnpairedArgs {
@@ -4780,16 +4825,16 @@ fn aligned_endpoint_assignment_mixed_core_and_right_halo_rows_count_only_the_tru
     let bam = single_read_bam(
         "ends_aligned_mixed_core_and_halo",
         19,
-        vec![('M', 10)],
+        vec![Cigar::Match(10)],
         b"AAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(
+    write_bed4(
         &windows_bed,
         &[
-            ("chr1", 10, 11, "core_only"),
-            ("chr1", 28, 29, "right_halo_only"),
+            Bed4Row::new("chr1", 10, 11, "core_only"),
+            Bed4Row::new("chr1", 28, 29, "right_halo_only"),
         ],
     )?;
 
@@ -4829,10 +4874,18 @@ fn aligned_endpoint_assignment_mixed_core_and_right_halo_rows_count_only_the_tru
 fn skip_endpoint_assignment_keeps_a_right_halo_only_window_when_no_end_is_soft_clipped()
 -> Result<()> {
     // Arrange: in skip mode an unclipped fragment should match aligned endpoint assignment.
-    let bam = single_read_bam("ends_skip_right_halo", 19, vec![('M', 10)], b"AAAAAAAAAA")?;
+    let bam = single_read_bam(
+        "ends_skip_right_halo",
+        19,
+        vec![Cigar::Match(10)],
+        b"AAAAAAAAAA",
+    )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(&windows_bed, &[("chr1", 28, 29, "right_halo_only")])?;
+    write_bed4(
+        &windows_bed,
+        &[Bed4Row::new("chr1", 28, 29, "right_halo_only")],
+    )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_unpaired(UnpairedArgs {
@@ -4873,7 +4926,7 @@ fn fragment_length_filters_use_the_adjusted_assignment_length_in_include_at_shif
     let bam = single_read_bam(
         "ends_adjusted_length_filter",
         10,
-        vec![('S', 2), ('M', 10), ('S', 2)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10), Cigar::SoftClip(2)],
         b"TTAAAAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
@@ -4909,7 +4962,7 @@ fn fragment_length_filters_use_the_aligned_assignment_length_in_include_at_align
     let bam = single_read_bam(
         "ends_include_at_aligned_boundary_length_filter",
         10,
-        vec![('S', 2), ('M', 10), ('S', 2)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10), Cigar::SoftClip(2)],
         b"TTAAAAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
@@ -4945,7 +4998,7 @@ fn skip_clipping_skips_only_the_clipped_end_and_keeps_the_unclipped_end() -> Res
     let bam = single_read_bam(
         "ends_skip_clipped_end",
         10,
-        vec![('S', 2), ('M', 10)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10)],
         b"TTAAAAAAAAAT",
     )?;
     let out_dir = TempDir::new()?;
@@ -4979,7 +5032,7 @@ fn skip_clipping_skips_the_fragment_when_both_ends_are_soft_clipped() -> Result<
     let bam = single_read_bam(
         "ends_skip_both_clipped",
         10,
-        vec![('S', 2), ('M', 10), ('S', 2)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10), Cigar::SoftClip(2)],
         b"TTAAAAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
@@ -5014,7 +5067,7 @@ fn max_soft_clips_skips_only_the_over_clipped_end() -> Result<()> {
     let bam = single_read_bam(
         "ends_max_soft_clips",
         10,
-        vec![('S', 2), ('M', 10)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10)],
         b"TTAAAAAAAAAT",
     )?;
     let out_dir = TempDir::new()?;
@@ -5052,13 +5105,16 @@ fn include_at_shifted_boundary_fragment_blacklist_uses_the_shifted_assignment_in
     let bam = single_read_bam(
         "ends_include_at_shifted_boundary_blacklist_assignment_interval",
         10,
-        vec![('S', 2), ('M', 10)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10)],
         b"TTAAAAAAAAAT",
     )?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let blacklist_bed = out_dir.path().join("blacklist.bed");
-    write_bed(&blacklist_bed, &[("chr1", 8, 9, "shifted_extension")])?;
+    write_bed4(
+        &blacklist_bed,
+        &[Bed4Row::new("chr1", 8, 9, "shifted_extension")],
+    )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -5096,15 +5152,21 @@ fn include_at_aligned_boundary_blacklist_validation_ignores_inside_bases_without
     let bam = single_read_bam(
         "ends_include_at_aligned_boundary_blacklist_clipped_prefix",
         10,
-        vec![('S', 2), ('M', 10)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10)],
         b"TTAAAAAAAAAT",
     )?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let blacklist_bed = out_dir.path().join("blacklist.bed");
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(&blacklist_bed, &[("chr1", 8, 10, "clipped_prefix_only")])?;
-    write_bed(&windows_bed, &[("chr1", 10, 11, "left_endpoint")])?;
+    write_bed4(
+        &blacklist_bed,
+        &[Bed4Row::new("chr1", 8, 10, "clipped_prefix_only")],
+    )?;
+    write_bed4(
+        &windows_bed,
+        &[Bed4Row::new("chr1", 10, 11, "left_endpoint")],
+    )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 2, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -5147,10 +5209,10 @@ fn include_at_aligned_boundary_forbids_reference_inside_source() -> Result<()> {
     let bam = single_read_bam(
         "ends_include_at_aligned_boundary_reference_forbidden",
         10,
-        vec![('S', 2), ('M', 10)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10)],
         b"TTAAAAAAAAAT",
     )?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -5179,7 +5241,7 @@ fn max_soft_clips_keeps_a_include_at_shifted_boundary_end_when_the_clip_count_eq
     let bam = single_read_bam(
         "ends_max_soft_clips_equal",
         10,
-        vec![('S', 2), ('M', 10)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10)],
         b"TTAAAAAAAAAT",
     )?;
     let out_dir = TempDir::new()?;
@@ -5216,7 +5278,7 @@ fn max_soft_clips_skips_the_fragment_when_both_ends_exceed_the_threshold() -> Re
     let bam = single_read_bam(
         "ends_max_soft_clips_both",
         10,
-        vec![('S', 2), ('M', 10), ('S', 2)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10), Cigar::SoftClip(2)],
         b"TTAAAAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
@@ -5251,7 +5313,7 @@ fn hard_clipped_fragments_are_discarded_entirely() -> Result<()> {
     let bam = single_read_bam(
         "ends_hard_clip",
         10,
-        vec![('H', 2), ('M', 10)],
+        vec![Cigar::HardClip(2), Cigar::Match(10)],
         b"AAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
@@ -5285,10 +5347,10 @@ fn motif_labels_use_outside_inside_order_when_outside_bases_are_present() -> Res
     // - inside base at left boundary:      seq[10] = G
     // So the final user-facing label should be "C_G".
     let bam = simple_paired_fragment_bam("ends_label_order", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(&windows_bed, &[("chr1", 10, 11, "left")])?;
+    write_bed4(&windows_bed, &[Bed4Row::new("chr1", 10, 11, "left")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 1);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -5337,10 +5399,15 @@ fn right_end_motif_labels_use_outside_inside_order_when_outside_bases_are_presen
             format!("{}{}{}", "T".repeat(13), "TG", "T".repeat(241)),
         )],
     )?;
-    let bam = single_read_bam("ends_right_label_order", 4, vec![('M', 10)], b"AAAAAAAAAA")?;
+    let bam = single_read_bam(
+        "ends_right_label_order",
+        4,
+        vec![Cigar::Match(10)],
+        b"AAAAAAAAAA",
+    )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(&windows_bed, &[("chr1", 13, 14, "right")])?;
+    write_bed4(&windows_bed, &[Bed4Row::new("chr1", 13, 14, "right")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 1);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -5380,10 +5447,10 @@ fn outside_only_motifs_are_labeled_with_an_empty_inside_half() -> Result<()> {
     // The base immediately outside the left boundary of [10,20) is seq[9] = C, so the label must
     // be "C_".
     let bam = simple_paired_fragment_bam("ends_outside_only", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(&windows_bed, &[("chr1", 10, 11, "left")])?;
+    write_bed4(&windows_bed, &[Bed4Row::new("chr1", 10, 11, "left")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 0, 1);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -5419,12 +5486,15 @@ fn left_edge_missing_outside_context_drops_the_left_endpoint_motif() -> Result<(
     // Arrange: fragment [0,10) has no reference base outside the left boundary, so with
     // k_outside=1 the left endpoint motif should decode to a sentinel and be dropped.
     let bam = simple_paired_fragment_bam("ends_left_edge_sentinel", 0, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(
+    write_bed4(
         &windows_bed,
-        &[("chr1", 0, 1, "left"), ("chr1", 9, 10, "right")],
+        &[
+            Bed4Row::new("chr1", 0, 1, "left"),
+            Bed4Row::new("chr1", 9, 10, "right"),
+        ],
     )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 1);
@@ -5460,12 +5530,15 @@ fn right_edge_missing_outside_context_drops_the_right_endpoint_motif() -> Result
     // Arrange: fragment [246,256) ends at the chromosome boundary, so with k_outside=1 the right
     // endpoint has no outside reference context and should be dropped.
     let bam = simple_paired_fragment_bam("ends_right_edge_sentinel", 246, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(
+    write_bed4(
         &windows_bed,
-        &[("chr1", 246, 247, "left"), ("chr1", 255, 256, "right")],
+        &[
+            Bed4Row::new("chr1", 246, 247, "left"),
+            Bed4Row::new("chr1", 255, 256, "right"),
+        ],
     )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 1);
@@ -5507,13 +5580,13 @@ fn include_at_shifted_boundary_shifting_still_applies_when_only_outside_bases_ar
     let bam = single_read_bam(
         "ends_raw_outside_only",
         10,
-        vec![('S', 2), ('M', 10), ('S', 2)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10), Cigar::SoftClip(2)],
         b"TTAAAAAAAAAAAA",
     )?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(&windows_bed, &[("chr1", 8, 9, "left_raw")])?;
+    write_bed4(&windows_bed, &[Bed4Row::new("chr1", 8, 9, "left_raw")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 0, 1);
     cfg.set_unpaired(UnpairedArgs {
@@ -5558,13 +5631,16 @@ fn include_at_aligned_boundary_outside_only_motifs_use_the_aligned_boundary() ->
     let bam = single_read_bam(
         "ends_include_at_aligned_boundary_outside_only",
         10,
-        vec![('S', 2), ('M', 10), ('S', 2)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10), Cigar::SoftClip(2)],
         b"TTAAAAAAAAAAAA",
     )?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(&windows_bed, &[("chr1", 10, 11, "left_aligned")])?;
+    write_bed4(
+        &windows_bed,
+        &[Bed4Row::new("chr1", 10, 11, "left_aligned")],
+    )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 0, 1);
     cfg.set_unpaired(UnpairedArgs {
@@ -5613,12 +5689,15 @@ fn include_at_shifted_boundary_endpoint_assignment_keeps_a_far_right_window_beyo
     let bam = single_read_bam(
         "ends_raw_far_right_window",
         10,
-        vec![('M', 10), ('S', 10)],
+        vec![Cigar::Match(10), Cigar::SoftClip(10)],
         b"AAAAAAAAAAAAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(&windows_bed, &[("chr1", 29, 30, "right_raw_only")])?;
+    write_bed4(
+        &windows_bed,
+        &[Bed4Row::new("chr1", 29, 30, "right_raw_only")],
+    )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_unpaired(UnpairedArgs {
@@ -5663,7 +5742,7 @@ fn include_at_shifted_boundary_endpoint_far_right_only_window_is_tile_size_invar
     let bam = single_read_bam(
         "ends_raw_far_right_tile_invariance",
         10,
-        vec![('M', 10), ('S', 10)],
+        vec![Cigar::Match(10), Cigar::SoftClip(10)],
         b"AAAAAAAAAAAAAAAAAAAA",
     )?;
     let tile_sizes = [10_u32, 1_000_u32];
@@ -5672,7 +5751,10 @@ fn include_at_shifted_boundary_endpoint_far_right_only_window_is_tile_size_invar
     for tile_size in tile_sizes {
         let out_dir = TempDir::new()?;
         let windows_bed = out_dir.path().join(format!("windows_{tile_size}.bed"));
-        write_bed(&windows_bed, &[("chr1", 29, 30, "right_raw_only")])?;
+        write_bed4(
+            &windows_bed,
+            &[Bed4Row::new("chr1", 29, 30, "right_raw_only")],
+        )?;
 
         let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
         cfg.set_unpaired(UnpairedArgs {
@@ -5716,7 +5798,7 @@ fn include_at_aligned_boundary_endpoint_far_right_only_window_is_tile_size_invar
     let bam = single_read_bam(
         "ends_include_at_aligned_boundary_far_right_tile_invariance",
         10,
-        vec![('M', 10), ('S', 10)],
+        vec![Cigar::Match(10), Cigar::SoftClip(10)],
         b"AAAAAAAAAAAAAAAAAAAA",
     )?;
     let tile_sizes = [10_u32, 1_000_u32];
@@ -5725,7 +5807,10 @@ fn include_at_aligned_boundary_endpoint_far_right_only_window_is_tile_size_invar
     for tile_size in tile_sizes {
         let out_dir = TempDir::new()?;
         let windows_bed = out_dir.path().join(format!("windows_{tile_size}.bed"));
-        write_bed(&windows_bed, &[("chr1", 29, 30, "far_right_only")])?;
+        write_bed4(
+            &windows_bed,
+            &[Bed4Row::new("chr1", 29, 30, "far_right_only")],
+        )?;
 
         let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
         cfg.set_unpaired(UnpairedArgs {
@@ -5768,12 +5853,15 @@ fn include_at_shifted_boundary_endpoint_assignment_does_not_count_a_window_start
     let bam = single_read_bam(
         "ends_raw_right_boundary_open",
         10,
-        vec![('M', 10), ('S', 10)],
+        vec![Cigar::Match(10), Cigar::SoftClip(10)],
         b"AAAAAAAAAAAAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(&windows_bed, &[("chr1", 30, 31, "touches_right_only")])?;
+    write_bed4(
+        &windows_bed,
+        &[Bed4Row::new("chr1", 30, 31, "touches_right_only")],
+    )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_unpaired(UnpairedArgs {
@@ -5821,16 +5909,16 @@ fn include_at_shifted_boundary_endpoint_assignment_must_not_shrink_fetch_to_unre
     let bam = single_read_bam(
         "ends_raw_far_right_with_core_window",
         19,
-        vec![('M', 10), ('S', 10)],
+        vec![Cigar::Match(10), Cigar::SoftClip(10)],
         b"AAAAAAAAAAAAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(
+    write_bed4(
         &windows_bed,
         &[
-            ("chr1", 10, 11, "core_only"),
-            ("chr1", 38, 39, "right_raw_only"),
+            Bed4Row::new("chr1", 10, 11, "core_only"),
+            Bed4Row::new("chr1", 38, 39, "right_raw_only"),
         ],
     )?;
 
@@ -5879,7 +5967,7 @@ fn include_at_shifted_boundary_endpoint_mixed_core_and_far_right_rows_are_tile_s
     let bam = single_read_bam(
         "ends_raw_mixed_tile_invariance",
         19,
-        vec![('M', 10), ('S', 10)],
+        vec![Cigar::Match(10), Cigar::SoftClip(10)],
         b"AAAAAAAAAAAAAAAAAAAA",
     )?;
     let tile_sizes = [10_u32, 1_000_u32];
@@ -5888,11 +5976,11 @@ fn include_at_shifted_boundary_endpoint_mixed_core_and_far_right_rows_are_tile_s
     for tile_size in tile_sizes {
         let out_dir = TempDir::new()?;
         let windows_bed = out_dir.path().join(format!("windows_{tile_size}.bed"));
-        write_bed(
+        write_bed4(
             &windows_bed,
             &[
-                ("chr1", 10, 11, "core_only"),
-                ("chr1", 38, 39, "right_raw_only"),
+                Bed4Row::new("chr1", 10, 11, "core_only"),
+                Bed4Row::new("chr1", 38, 39, "right_raw_only"),
             ],
         )?;
 
@@ -5939,7 +6027,7 @@ fn include_at_aligned_boundary_endpoint_mixed_core_and_far_right_rows_are_tile_s
     let bam = single_read_bam(
         "ends_include_at_aligned_boundary_mixed_tile_invariance",
         19,
-        vec![('M', 10), ('S', 10)],
+        vec![Cigar::Match(10), Cigar::SoftClip(10)],
         b"AAAAAAAAAAAAAAAAAAAA",
     )?;
     let tile_sizes = [10_u32, 1_000_u32];
@@ -5948,11 +6036,11 @@ fn include_at_aligned_boundary_endpoint_mixed_core_and_far_right_rows_are_tile_s
     for tile_size in tile_sizes {
         let out_dir = TempDir::new()?;
         let windows_bed = out_dir.path().join(format!("windows_{tile_size}.bed"));
-        write_bed(
+        write_bed4(
             &windows_bed,
             &[
-                ("chr1", 10, 11, "core_only"),
-                ("chr1", 38, 39, "far_right_only"),
+                Bed4Row::new("chr1", 10, 11, "core_only"),
+                Bed4Row::new("chr1", 38, 39, "far_right_only"),
             ],
         )?;
 
@@ -6001,7 +6089,7 @@ fn include_at_shifted_boundary_endpoint_by_size_counts_the_previous_bin_reached_
     let bam = single_read_bam(
         "ends_raw_by_size_left_previous_bin",
         10,
-        vec![('S', 2), ('M', 10)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10)],
         b"TTAAAAAAAAAT",
     )?;
     let out_dir = TempDir::new()?;
@@ -6047,7 +6135,7 @@ fn include_at_aligned_boundary_endpoint_by_size_keeps_both_ends_in_the_aligned_b
     let bam = single_read_bam(
         "ends_include_at_aligned_boundary_by_size_left",
         10,
-        vec![('S', 2), ('M', 10)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10)],
         b"TTAAAAAAAAAT",
     )?;
     let out_dir = TempDir::new()?;
@@ -6094,7 +6182,7 @@ fn include_at_shifted_boundary_endpoint_by_size_counts_the_next_bin_reached_by_r
     let bam = single_read_bam(
         "ends_raw_by_size_right_next_bin",
         10,
-        vec![('M', 10), ('S', 10)],
+        vec![Cigar::Match(10), Cigar::SoftClip(10)],
         b"AAAAAAAAAAAAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
@@ -6140,7 +6228,7 @@ fn include_at_aligned_boundary_endpoint_by_size_keeps_both_ends_in_the_aligned_b
     let bam = single_read_bam(
         "ends_include_at_aligned_boundary_by_size_right",
         10,
-        vec![('M', 10), ('S', 10)],
+        vec![Cigar::Match(10), Cigar::SoftClip(10)],
         b"AAAAAAAAAAAAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
@@ -6186,13 +6274,13 @@ fn include_at_shifted_boundary_endpoint_by_size_keeps_exact_half_open_boundary_b
     let left_bam = single_read_bam(
         "ends_raw_by_size_left_boundary_open",
         10,
-        vec![('S', 2), ('M', 10)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10)],
         b"TTAAAAAAAAAT",
     )?;
     let right_bam = single_read_bam(
         "ends_raw_by_size_right_boundary_open",
         10,
-        vec![('M', 10), ('S', 10)],
+        vec![Cigar::Match(10), Cigar::SoftClip(10)],
         b"AAAAAAAAAAAAAAAAAAAA",
     )?;
     let left_out = TempDir::new()?;
@@ -6244,7 +6332,7 @@ fn include_at_shifted_boundary_endpoint_by_size_output_is_tile_size_invariant() 
     let bam = single_read_bam(
         "ends_raw_by_size_tile_invariance",
         10,
-        vec![('M', 10), ('S', 10)],
+        vec![Cigar::Match(10), Cigar::SoftClip(10)],
         b"AAAAAAAAAAAAAAAAAAAA",
     )?;
     let tile_sizes = [10_u32, 1_000_u32];
@@ -6293,7 +6381,7 @@ fn include_at_aligned_boundary_endpoint_by_size_output_is_tile_size_invariant() 
     let bam = single_read_bam(
         "ends_include_at_aligned_boundary_by_size_tile_invariance",
         10,
-        vec![('M', 10), ('S', 10)],
+        vec![Cigar::Match(10), Cigar::SoftClip(10)],
         b"AAAAAAAAAAAAAAAAAAAA",
     )?;
     let tile_sizes = [10_u32, 1_000_u32];
@@ -6364,7 +6452,7 @@ fn settings_json_keeps_the_runtime_fields_needed_to_interpret_output() -> Result
     let bam = single_read_bam(
         "ends_settings_semantics",
         10,
-        vec![('S', 2), ('M', 10)],
+        vec![Cigar::SoftClip(2), Cigar::Match(10)],
         b"TTAAAAAAAAAT",
     )?;
     let out_dir = TempDir::new()?;
@@ -6412,7 +6500,7 @@ fn settings_json_formats_proportion_window_assignment_stably() -> Result<()> {
     let bam = single_read_bam(
         "ends_settings_proportion_precision",
         10,
-        vec![('M', 10)],
+        vec![Cigar::Match(10)],
         b"AAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
@@ -6495,7 +6583,7 @@ fn scaling_factors_must_cover_every_counted_fragment() -> Result<()> {
     // Arrange: fragment [10,20) is counted, but the scaling file only covers [0,10), so there
     // is no overlapping scaling bin at all for that fragment.
     let bam = simple_paired_fragment_bam("ends_scaling_gap", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let scaling_path = out_dir.path().join("scaling.tsv");
     std::fs::write(
@@ -6529,12 +6617,15 @@ fn scaling_factors_must_cover_every_counted_fragment() -> Result<()> {
 fn windowed_runs_write_bins_tsv_with_the_selected_windows() -> Result<()> {
     // Arrange: in BED-windowed mode the command should persist the selected windows as TSV.
     let bam = simple_paired_fragment_bam("ends_bins_tsv", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(
+    write_bed4(
         &windows_bed,
-        &[("chr1", 10, 11, "left"), ("chr1", 19, 20, "right")],
+        &[
+            Bed4Row::new("chr1", 10, 11, "left"),
+            Bed4Row::new("chr1", 19, 20, "right"),
+        ],
     )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -6591,20 +6682,23 @@ fn grouped_bed_endpoint_outputs_group_rows_in_first_occurrence_order_and_writes_
     //     alpha -> 0
     //     gamma -> 1
     let bam = simple_paired_fragment_bam("ends_grouped_endpoint_metadata", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_windows.bed");
     let blacklist_bed = out_dir.path().join("blacklist.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
         &[
-            ("chr1", 10, 11, "beta"),
-            ("chr1", 19, 20, "alpha"),
-            ("chr1", 10, 20, "beta"),
-            ("chr1", 30, 31, "gamma"),
+            Bed4Row::new("chr1", 10, 11, "beta"),
+            Bed4Row::new("chr1", 19, 20, "alpha"),
+            Bed4Row::new("chr1", 10, 20, "beta"),
+            Bed4Row::new("chr1", 30, 31, "gamma"),
         ],
     )?;
-    write_bed(&blacklist_bed, &[("chr1", 30, 31, "masked_gamma")])?;
+    write_bed4(
+        &blacklist_bed,
+        &[Bed4Row::new("chr1", 30, 31, "masked_gamma")],
+    )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -6660,15 +6754,18 @@ fn grouped_bed_scaling_factors_weight_each_grouped_end_motif() -> Result<()> {
     // - grouped windows keep that fragment in `beta` and one explicit zero row in `gamma`
     // - a chromosome-wide scaling factor of 2.0 should double both grouped endpoint motifs
     let bam = simple_paired_fragment_bam("ends_grouped_scaling", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_scaling.bed");
     let scaling_path = out_dir.path().join("grouped_scaling.tsv");
-    write_bed(
+    write_bed4(
         &grouped_bed,
-        &[("chr1", 10, 20, "beta"), ("chr1", 30, 40, "gamma")],
+        &[
+            Bed4Row::new("chr1", 10, 20, "beta"),
+            Bed4Row::new("chr1", 30, 40, "gamma"),
+        ],
     )?;
-    write_scaling_factors(&scaling_path, &[("chr1", 0, 256, 2.0)])?;
+    write_scaling_factors_tsv(&scaling_path, &[ScalingFactorRow::new("chr1", 0, 256, 2.0)])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -6713,9 +6810,12 @@ fn grouped_bed_group_index_omits_blacklisted_fraction_without_blacklist() -> Res
     let bam = simple_paired_fragment_bam("ends_group_index_no_blacklist", 10, 10, 4)?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_no_blacklist.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
-        &[("chr1", 10, 20, "beta"), ("chr1", 30, 40, "gamma")],
+        &[
+            Bed4Row::new("chr1", 10, 20, "beta"),
+            Bed4Row::new("chr1", 30, 40, "gamma"),
+        ],
     )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -6758,15 +6858,21 @@ fn grouped_bed_blacklist_filtering_drops_matching_fragments_before_grouping() ->
     //     beta  -> 1 / 10 = 0.1 blacklisted
     //     gamma -> 0
     let bam = simple_paired_fragment_bam("ends_grouped_blacklist", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_blacklist.bed");
     let blacklist_bed = out_dir.path().join("grouped_blacklist_mask.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
-        &[("chr1", 10, 20, "beta"), ("chr1", 30, 40, "gamma")],
+        &[
+            Bed4Row::new("chr1", 10, 20, "beta"),
+            Bed4Row::new("chr1", 30, 40, "gamma"),
+        ],
     )?;
-    write_bed(&blacklist_bed, &[("chr1", 15, 16, "masked_beta")])?;
+    write_bed4(
+        &blacklist_bed,
+        &[Bed4Row::new("chr1", 15, 16, "masked_beta")],
+    )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -6811,7 +6917,7 @@ fn grouped_bed_gc_correction_weights_each_grouped_end_motif() -> Result<()> {
     // - grouped windows keep `beta` as the counted row and preserve `gamma` as an explicit
     //   zero row
     let bam = simple_paired_fragment_bam("ends_grouped_gc", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_gc.bed");
     let gc_path = out_dir.path().join("grouped_gc_package.zarr");
@@ -6825,9 +6931,12 @@ fn grouped_bed_gc_correction_weights_each_grouped_end_motif() -> Result<()> {
         correction_matrix: array![[3.0_f64, 1.0_f64], [1.0_f64, 1.0_f64]],
     };
     package.write_zarr(&gc_path)?;
-    write_bed(
+    write_bed4(
         &grouped_bed,
-        &[("chr1", 10, 20, "beta"), ("chr1", 30, 40, "gamma")],
+        &[
+            Bed4Row::new("chr1", 10, 20, "beta"),
+            Bed4Row::new("chr1", 30, 40, "gamma"),
+        ],
     )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -6885,16 +6994,16 @@ fn grouped_bed_count_overlap_sums_same_group_window_weights_above_one() -> Resul
     // This test fails if grouped mode mistakenly unions same-group windows or normalizes them
     // back to one fragment's total mass.
     let bam = simple_paired_fragment_bam("ends_grouped_count_overlap", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_overlap.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
         &[
-            ("chr1", 10, 15, "beta"),
-            ("chr1", 12, 18, "beta"),
-            ("chr1", 15, 20, "alpha"),
-            ("chr1", 30, 35, "gamma"),
+            Bed4Row::new("chr1", 10, 15, "beta"),
+            Bed4Row::new("chr1", 12, 18, "beta"),
+            Bed4Row::new("chr1", 15, 20, "alpha"),
+            Bed4Row::new("chr1", 30, 35, "gamma"),
         ],
     )?;
 
@@ -6956,13 +7065,13 @@ fn grouped_bed_endpoint_aggregates_shared_groups_across_chromosomes() -> Result<
     let (bam, reference) = three_chrom_reference_end_fixture("ends_grouped_three_chr")?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_three_chr.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
         &[
-            ("chr2", 0, 200, "beta"),
-            ("chr1", 0, 200, "alpha"),
-            ("chr3", 0, 200, "beta"),
-            ("chr1", 150, 160, "gamma"),
+            Bed4Row::new("chr2", 0, 200, "beta"),
+            Bed4Row::new("chr1", 0, 200, "alpha"),
+            Bed4Row::new("chr3", 0, 200, "beta"),
+            Bed4Row::new("chr1", 150, 160, "gamma"),
         ],
     )?;
 
@@ -7054,21 +7163,21 @@ fn grouped_bed_scaling_factors_aggregate_shared_groups_across_chromosomes() -> R
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_three_chr_scaling.bed");
     let scaling_path = out_dir.path().join("grouped_three_chr_scaling.tsv");
-    write_bed(
+    write_bed4(
         &grouped_bed,
         &[
-            ("chr2", 0, 200, "beta"),
-            ("chr1", 0, 200, "alpha"),
-            ("chr3", 0, 200, "beta"),
-            ("chr1", 150, 160, "gamma"),
+            Bed4Row::new("chr2", 0, 200, "beta"),
+            Bed4Row::new("chr1", 0, 200, "alpha"),
+            Bed4Row::new("chr3", 0, 200, "beta"),
+            Bed4Row::new("chr1", 150, 160, "gamma"),
         ],
     )?;
-    write_scaling_factors(
+    write_scaling_factors_tsv(
         &scaling_path,
         &[
-            ("chr1", 0, 200, 1.5),
-            ("chr2", 0, 200, 2.0),
-            ("chr3", 0, 200, 3.0),
+            ScalingFactorRow::new("chr1", 0, 200, 1.5),
+            ScalingFactorRow::new("chr2", 0, 200, 2.0),
+            ScalingFactorRow::new("chr3", 0, 200, 3.0),
         ],
     )?;
 
@@ -7149,21 +7258,24 @@ fn grouped_bed_endpoint_aggregates_shared_groups_across_tiles_on_same_chromosome
     // - grouped endpoint output must therefore aggregate to:
     //     beta  -> `_A` = 2.0, `_G` = 2.0
     //     gamma -> all zeros
-    let bam = bam_from_specs(
-        vec![("chr1".to_string(), 256)],
-        vec![paired_fragment(10, 10, 4), paired_fragment(60, 10, 4)],
-        Vec::new(),
+    let bam = bam_from_fragments(
         "ends_grouped_same_chr_tiles",
+        vec![("chr1".to_string(), 256)],
+        vec![
+            PairedFragmentSpec::new(0, 10, 10, 4).build()?,
+            PairedFragmentSpec::new(0, 60, 10, 4).build()?,
+        ],
+        Vec::new(),
     )?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_same_chr_tiles.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
         &[
-            ("chr1", 10, 20, "beta"),
-            ("chr1", 60, 70, "beta"),
-            ("chr1", 120, 130, "gamma"),
+            Bed4Row::new("chr1", 10, 20, "beta"),
+            Bed4Row::new("chr1", 60, 70, "beta"),
+            Bed4Row::new("chr1", 120, 130, "gamma"),
         ],
     )?;
 
@@ -7208,15 +7320,15 @@ fn grouped_bed_sparse_output_keeps_zero_group_rows_and_only_observed_motifs() ->
     // - sparse output must therefore keep the zero row in shape even though only two motifs are
     //   observed overall
     let bam = simple_paired_fragment_bam("ends_grouped_sparse", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_sparse.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
         &[
-            ("chr1", 10, 11, "beta"),
-            ("chr1", 19, 20, "alpha"),
-            ("chr1", 30, 31, "gamma"),
+            Bed4Row::new("chr1", 10, 11, "beta"),
+            Bed4Row::new("chr1", 19, 20, "alpha"),
+            Bed4Row::new("chr1", 30, 31, "gamma"),
         ],
     )?;
 
@@ -7276,16 +7388,16 @@ fn grouped_bed_any_counts_same_group_intervals_separately() -> Result<()> {
     //     alpha -> `_G` = 1.0, `_A` = 1.0
     //     gamma -> 0.0
     let bam = simple_paired_fragment_bam("ends_grouped_any", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_any.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
         &[
-            ("chr1", 10, 15, "beta"),
-            ("chr1", 12, 18, "beta"),
-            ("chr1", 15, 20, "alpha"),
-            ("chr1", 30, 35, "gamma"),
+            Bed4Row::new("chr1", 10, 15, "beta"),
+            Bed4Row::new("chr1", 12, 18, "beta"),
+            Bed4Row::new("chr1", 15, 20, "alpha"),
+            Bed4Row::new("chr1", 30, 35, "gamma"),
         ],
     )?;
 
@@ -7331,10 +7443,10 @@ fn grouped_bed_any_counts_same_group_intervals_separately() -> Result<()> {
 fn grouped_bed_writes_prefixed_group_sidecars_and_suppresses_unprefixed_paths() -> Result<()> {
     // Arrange
     let bam = simple_paired_fragment_bam("ends_grouped_prefix", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_prefix.bed");
-    write_bed(&grouped_bed, &[("chr1", 10, 20, "beta")])?;
+    write_bed4(&grouped_bed, &[Bed4Row::new("chr1", 10, 20, "beta")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.output_prefix = "sampleA".to_string();
@@ -7381,16 +7493,16 @@ fn grouped_bed_assign_when_all_counts_each_containing_window_in_group() -> Resul
     //     alpha -> 0.0
     //     gamma -> 0.0
     let bam = simple_paired_fragment_bam("ends_grouped_all", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_all.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
         &[
-            ("chr1", 10, 20, "beta"),
-            ("chr1", 0, 20, "beta"),
-            ("chr1", 10, 19, "alpha"),
-            ("chr1", 30, 40, "gamma"),
+            Bed4Row::new("chr1", 10, 20, "beta"),
+            Bed4Row::new("chr1", 0, 20, "beta"),
+            Bed4Row::new("chr1", 10, 19, "alpha"),
+            Bed4Row::new("chr1", 30, 40, "gamma"),
         ],
     )?;
 
@@ -7437,7 +7549,7 @@ fn grouped_bed_errors_when_group_name_column_is_missing() -> Result<()> {
     // - grouped BED mode requires a fourth column naming the group
     // - a three-column BED row is therefore invalid and should fail loudly
     let bam = simple_paired_fragment_bam("ends_grouped_missing_group_name", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_missing_name.bed");
     std::fs::write(&grouped_bed, "chr1\t10\t20\n")?;
@@ -7467,10 +7579,10 @@ fn grouped_bed_errors_when_no_windows_survive_selected_chromosomes() -> Result<(
     // - grouped BED contains a valid group, but only on chr2
     // - the run is restricted to chr1, so grouped mode has no usable groups at all
     let bam = simple_paired_fragment_bam("ends_grouped_empty_after_filtering", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_wrong_chr.bed");
-    write_bed(&grouped_bed, &[("chr2", 10, 20, "beta")])?;
+    write_bed4(&grouped_bed, &[Bed4Row::new("chr2", 10, 20, "beta")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -7503,16 +7615,16 @@ fn grouped_bed_assign_when_midpoint_counts_exactly_one_adjacent_group_at_boundar
     // - endpoint-only windows are added as negative controls and must stay zero in midpoint mode
     // - exactly one of alpha/beta must receive both end motifs, never both
     let bam = simple_paired_fragment_bam("ends_grouped_midpoint_boundary", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_midpoint_boundary.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
         &[
-            ("chr1", 10, 11, "left_endpoint"),
-            ("chr1", 14, 15, "alpha"),
-            ("chr1", 15, 16, "beta"),
-            ("chr1", 19, 20, "right_endpoint"),
+            Bed4Row::new("chr1", 10, 11, "left_endpoint"),
+            Bed4Row::new("chr1", 14, 15, "alpha"),
+            Bed4Row::new("chr1", 15, 16, "beta"),
+            Bed4Row::new("chr1", 19, 20, "right_endpoint"),
         ],
     )?;
 
@@ -7570,16 +7682,16 @@ fn grouped_bed_assign_when_proportion_counts_only_groups_meeting_threshold() -> 
     //     alpha -> 0.0
     //     gamma -> 0.0
     let bam = simple_paired_fragment_bam("ends_grouped_proportion", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_proportion.bed");
-    write_bed(
+    write_bed4(
         &grouped_bed,
         &[
-            ("chr1", 10, 15, "beta"),
-            ("chr1", 15, 20, "beta"),
-            ("chr1", 10, 14, "alpha"),
-            ("chr1", 30, 40, "gamma"),
+            Bed4Row::new("chr1", 10, 15, "beta"),
+            Bed4Row::new("chr1", 15, 20, "beta"),
+            Bed4Row::new("chr1", 10, 14, "alpha"),
+            Bed4Row::new("chr1", 30, 40, "gamma"),
         ],
     )?;
 
@@ -7629,7 +7741,7 @@ fn settings_json_ignores_fragment_length_bounds_but_keeps_motif_definition_field
     // - window_assignment stays endpoint
     // - collapse_complement stays false
     let bam = simple_paired_fragment_bam("ends_settings_lengths", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -7668,7 +7780,7 @@ fn unpaired_mode_rejects_require_proper_pair() -> Result<()> {
     let bam = single_read_bam(
         "ends_unpaired_proper_pair",
         10,
-        vec![('M', 10)],
+        vec![Cigar::Match(10)],
         b"AAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
@@ -7699,7 +7811,7 @@ fn unpaired_mode_rejects_require_proper_pair() -> Result<()> {
 fn sparse_output_motif_labels_only_include_observed_motifs() -> Result<()> {
     // Arrange: one observed motif pair should not force unobserved motifs into the sparse label file.
     let bam = simple_paired_fragment_bam("ends_sparse_observed_only", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -7725,7 +7837,7 @@ fn sparse_output_motif_labels_only_include_observed_motifs() -> Result<()> {
 fn all_motifs_dense_output_enumerates_inside_only_labels_when_k_outside_is_zero() -> Result<()> {
     // Arrange: inside-only motifs should still have a fixed dense universe under all-motifs.
     let bam = simple_paired_fragment_bam("ends_inside_only_dense", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -7751,7 +7863,12 @@ fn all_motifs_dense_output_enumerates_inside_only_labels_when_k_outside_is_zero(
 fn read_backed_inside_only_runs_without_ref_2bit() -> Result<()> {
     // Arrange: when both the inside bases come from reads and k_outside=0, the command should not
     // require a reference genome.
-    let bam = single_read_bam("ends_read_only_no_ref", 10, vec![('M', 10)], b"AAAAAAAAAA")?;
+    let bam = single_read_bam(
+        "ends_read_only_no_ref",
+        10,
+        vec![Cigar::Match(10)],
+        b"AAAAAAAAAA",
+    )?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -7779,7 +7896,7 @@ fn read_backed_inside_only_runs_without_ref_2bit() -> Result<()> {
 fn output_prefix_is_applied_to_all_primary_end_outputs() -> Result<()> {
     // Arrange: output prefix should namespace all primary artifacts.
     let bam = simple_paired_fragment_bam("ends_prefixed_outputs", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -7808,12 +7925,15 @@ fn output_prefix_is_applied_to_all_primary_end_outputs() -> Result<()> {
 fn default_window_assignment_is_endpoint() -> Result<()> {
     // Arrange: without overriding assign-by, the documented default is endpoint.
     let bam = simple_paired_fragment_bam("ends_default_endpoint", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(
+    write_bed4(
         &windows_bed,
-        &[("chr1", 10, 11, "left"), ("chr1", 19, 20, "right")],
+        &[
+            Bed4Row::new("chr1", 10, 11, "left"),
+            Bed4Row::new("chr1", 19, 20, "right"),
+        ],
     )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -7847,7 +7967,7 @@ fn default_window_assignment_is_endpoint() -> Result<()> {
 fn by_size_windowing_writes_bins_tsv() -> Result<()> {
     // Arrange: fixed-size windowing should also persist the resolved window coordinates.
     let bam = simple_paired_fragment_bam("ends_by_size_bins", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -7881,7 +8001,7 @@ fn by_size_windowing_writes_bins_tsv() -> Result<()> {
 fn output_prefix_is_applied_to_bins_tsv_for_windowed_runs() -> Result<()> {
     // Arrange: prefixed runs should namespace the auxiliary bins TSV too.
     let bam = simple_paired_fragment_bam("ends_prefixed_bins", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -7913,7 +8033,7 @@ fn output_prefix_is_applied_to_bins_tsv_for_windowed_runs() -> Result<()> {
 fn output_prefix_is_applied_to_dense_all_motifs_outputs() -> Result<()> {
     // Arrange: prefixed all-motifs runs should namespace the dense primary outputs too.
     let bam = simple_paired_fragment_bam("ends_prefixed_dense_outputs", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -7942,7 +8062,7 @@ fn output_prefix_is_applied_to_dense_all_motifs_outputs() -> Result<()> {
 fn empty_output_prefix_writes_unprefixed_primary_outputs() -> Result<()> {
     // Arrange: the documented empty-prefix behavior is to write filenames without a leading prefix.
     let bam = simple_paired_fragment_bam("ends_empty_prefix", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -7969,7 +8089,7 @@ fn empty_output_prefix_writes_unprefixed_primary_outputs() -> Result<()> {
 fn empty_output_prefix_writes_unprefixed_bins_tsv_for_windowed_runs() -> Result<()> {
     // Arrange: the empty-prefix contract should also apply to auxiliary window outputs.
     let bam = simple_paired_fragment_bam("ends_empty_prefix_bins", 10, 10, 4)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);

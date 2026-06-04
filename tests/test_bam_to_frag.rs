@@ -25,11 +25,6 @@ mod tests_bam_to_frag {
     use tempfile::tempdir;
 
     // Bring your crate items into scope.
-    use super::fixtures::{
-        bam_from_specs, paired_fragment, simple_inward_bam, simple_reference_twobit,
-    };
-    #[cfg(feature = "cmd_bam_to_bam")]
-    use super::fixtures::{build_real_neutral_gc_package, build_real_non_neutral_gc_package};
     use cfdnalab::RunOptions;
     use cfdnalab::gc_bias::GCCorrectionPackage;
     #[cfg(feature = "cmd_bam_to_bam")]
@@ -48,6 +43,15 @@ mod tests_bam_to_frag {
     use cfdnalab::run_like_cli::fragment_count_weights::{
         FragmentCountWeightsConfig,
         run_fragment_count_weights as run_fragment_count_weights_command,
+    };
+    use cfdnalab::testing::{
+        PairedFragmentSpec, TempBam, bam_from_fragments, single_contig_inward_pair_bam,
+        twobit_from_sequences, twobit_with_single_repeating_contig,
+    };
+    #[cfg(feature = "cmd_bam_to_bam")]
+    use cfdnalab::testing::{
+        build_command_produced_gc_correction_package_for_length,
+        build_command_produced_gc_correction_package_from_reference_windows,
     };
     use cfdnalab::{
         constants::GC_CORRECTION_SCHEMA_VERSION,
@@ -220,7 +224,7 @@ mod tests_bam_to_frag {
     #[test]
     fn global_selection_matches_single_full_chromosome_bed_window() -> Result<()> {
         // Arrange:
-        // `simple_inward_bam()` contains one fragment spanning [20, 80) on chr1.
+        // `single_contig_inward_pair_bam()` contains one fragment spanning [20, 80) on chr1.
         //
         // Compare two logically equivalent selection modes:
         // - default global selection (`by_bed = None`)
@@ -229,7 +233,7 @@ mod tests_bam_to_frag {
         // Because `bam-to-frag` uses BED windows only as an inclusion filter, and the window
         // covers the entire chromosome, both runs must emit the exact same frag row:
         //   chr1 20 80 60 +
-        let bam = simple_inward_bam()?;
+        let bam = single_contig_inward_pair_bam()?;
         let work = tempdir().context("tempdir")?;
         let global_out = work.path().join("out_global_equiv");
         let bed_out = work.path().join("out_bed_equiv");
@@ -292,17 +296,17 @@ mod tests_bam_to_frag {
         // Then provide a BED file with a single chr1 window [0, 100).
         // In `bam-to-frag`, `--by-bed` is an inclusion filter, so chr1 should be kept and
         // chr2 should contribute nothing at all because that chromosome has no BED rows.
-        let chr1_fragment = paired_fragment(20, 60, 30);
-        let mut chr2_fragment = paired_fragment(120, 60, 30);
+        let chr1_fragment = PairedFragmentSpec::new(0, 20, 60, 30).build()?;
+        let mut chr2_fragment = PairedFragmentSpec::new(0, 120, 60, 30).build()?;
         chr2_fragment.forward.tid = 1;
         chr2_fragment.reverse.tid = 1;
         chr2_fragment.forward.mate_tid = Some(1);
         chr2_fragment.reverse.mate_tid = Some(1);
-        let bam = bam_from_specs(
+        let bam = bam_from_fragments(
+            "bam_to_frag_missing_chr_bed_windows",
             vec![("chr1".to_string(), 300), ("chr2".to_string(), 300)],
             vec![chr1_fragment, chr2_fragment],
             Vec::new(),
-            "bam_to_frag_missing_chr_bed_windows",
         )?;
 
         let work = tempdir().context("tempdir")?;
@@ -837,8 +841,9 @@ mod tests_bam_to_frag {
 
     #[test]
     fn bam_to_frag_gc_file_neutralize_invalid_writes_weight_one_and_keeps_row() -> Result<()> {
-        let bam = simple_inward_bam()?;
-        let ref_twobit = simple_reference_twobit()?;
+        let bam = single_contig_inward_pair_bam()?;
+        let ref_twobit =
+            twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
         let work = tempdir().context("tempdir")?;
         let out_dir = work.path().join("out_gc_fallback");
         std::fs::create_dir_all(&out_dir)?;
@@ -898,8 +903,9 @@ mod tests_bam_to_frag {
 
     #[test]
     fn bam_to_frag_gc_file_default_behavior_skips_invalid_fragment() -> Result<()> {
-        let bam = simple_inward_bam()?;
-        let ref_twobit = simple_reference_twobit()?;
+        let bam = single_contig_inward_pair_bam()?;
+        let ref_twobit =
+            twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
         let work = tempdir().context("tempdir")?;
         let out_dir = work.path().join("out_gc_default_skip");
         std::fs::create_dir_all(&out_dir)?;
@@ -966,8 +972,9 @@ mod tests_bam_to_frag {
         //
         // Because `bam-to-frag` validates the package before conversion starts, the correct
         // failure is the shared compatibility error rather than a late per-fragment lookup error.
-        let bam = simple_inward_bam()?;
-        let ref_twobit = simple_reference_twobit()?;
+        let bam = single_contig_inward_pair_bam()?;
+        let ref_twobit =
+            twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
         let work = tempdir().context("tempdir")?;
         let out_dir = work.path().join("out_gc_range_error");
         std::fs::create_dir_all(&out_dir)?;
@@ -1027,8 +1034,9 @@ mod tests_bam_to_frag {
         // Build the smallest valid GC correction package shape, but make the schema version
         // incompatible. `bam-to-frag` should fail while loading the package, before writing any
         // frag rows.
-        let bam = simple_inward_bam()?;
-        let ref_twobit = simple_reference_twobit()?;
+        let bam = single_contig_inward_pair_bam()?;
+        let ref_twobit =
+            twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
         let work = tempdir().context("tempdir")?;
         let out_dir = work.path().join("out_gc_bad_version");
         std::fs::create_dir_all(&out_dir)?;
@@ -1082,8 +1090,9 @@ mod tests_bam_to_frag {
         // Arrange:
         // Point `--gc-file` at a directory without the expected `.zarr` package suffix.
         // The command should reject that immediately during GC package loading.
-        let bam = simple_inward_bam()?;
-        let ref_twobit = simple_reference_twobit()?;
+        let bam = single_contig_inward_pair_bam()?;
+        let ref_twobit =
+            twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
         let work = tempdir().context("tempdir")?;
         let out_dir = work.path().join("out_gc_directory_error");
         std::fs::create_dir_all(&out_dir)?;
@@ -1131,7 +1140,7 @@ mod tests_bam_to_frag {
     #[cfg(feature = "cmd_bam_to_bam")]
     #[test]
     fn bam_to_frag_and_bam_to_bam_encode_same_coverage_scaling_weight() -> Result<()> {
-        let bam = simple_inward_bam()?;
+        let bam = single_contig_inward_pair_bam()?;
         let work = tempdir().context("tempdir")?;
         let scaling_path = work.path().join("shared_scaling.tsv");
         std::fs::write(
@@ -1195,7 +1204,7 @@ mod tests_bam_to_frag {
     #[cfg(feature = "cmd_bam_to_bam")]
     #[test]
     fn bam_to_frag_and_bam_to_bam_encode_same_count_scaling_weight() -> Result<()> {
-        let bam = simple_inward_bam()?;
+        let bam = single_contig_inward_pair_bam()?;
         let work = tempdir().context("tempdir")?;
         let scaling_path = work.path().join("shared_count_scaling.tsv");
         std::fs::write(
@@ -1265,7 +1274,7 @@ mod tests_bam_to_frag {
         // `bam-to-frag` averages each scaling file over the same full fragment span, so the output
         // row should carry both constants side by side. The header must keep a stable column order:
         //   coverage_scaling_weight, count_scaling_weight
-        let bam = simple_inward_bam()?;
+        let bam = single_contig_inward_pair_bam()?;
         let work = tempdir().context("tempdir")?;
         let coverage_scaling_path = work.path().join("coverage_scaling.tsv");
         let fragment_count_scaling_path = work.path().join("fragment_count_scaling.tsv");
@@ -1320,7 +1329,7 @@ mod tests_bam_to_frag {
         // Expected:
         // - header contains only `count_scaling_weight`
         // - the one fragment row carries that value
-        let bam = simple_inward_bam()?;
+        let bam = single_contig_inward_pair_bam()?;
         let work = tempdir().context("tempdir")?;
         let scaling_path = work.path().join("count_scaling.tsv");
         std::fs::write(
@@ -1363,8 +1372,9 @@ mod tests_bam_to_frag {
     #[cfg(feature = "cmd_bam_to_bam")]
     #[test]
     fn bam_to_frag_and_bam_to_bam_emit_combined_gc_scaling_and_length_metadata() -> Result<()> {
-        let bam = simple_inward_bam()?;
-        let ref_twobit = simple_reference_twobit()?;
+        let bam = single_contig_inward_pair_bam()?;
+        let ref_twobit =
+            twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
         let work = tempdir().context("tempdir")?;
 
         let scaling_path = work.path().join("shared_combined_scaling.tsv");
@@ -1498,7 +1508,7 @@ mod tests_bam_to_frag {
     #[cfg(all(feature = "cmd_bam_to_bam", feature = "cmd_coverage_weights"))]
     #[test]
     fn real_coverage_weights_tsv_has_same_effect_in_bam_to_frag_and_bam_to_bam() -> Result<()> {
-        let bam = simple_inward_bam()?;
+        let bam = single_contig_inward_pair_bam()?;
         let work = tempdir().context("tempdir")?;
 
         let weights_out_dir = work.path().join("weights_out");
@@ -1775,17 +1785,20 @@ mod tests_bam_to_frag {
         // `bam-to-frag` averages scaling over the full fragment span:
         //   chr1 weight = ((25/36) + (25/48) + (25/36)) / 3 = 275/432
         //   chr2 weight = 25/24
-        let mut chr2_fragment = paired_fragment(20, 20, 10);
+        let mut chr2_fragment = PairedFragmentSpec::new(0, 20, 20, 10).build()?;
         chr2_fragment.forward.tid = 1;
         chr2_fragment.reverse.tid = 1;
         chr2_fragment.forward.mate_tid = Some(1);
         chr2_fragment.reverse.mate_tid = Some(1);
 
-        let bam = bam_from_specs(
-            vec![("chr1".to_string(), 200), ("chr2".to_string(), 200)],
-            vec![paired_fragment(20, 60, 20), chr2_fragment],
-            Vec::new(),
+        let bam = bam_from_fragments(
             "bam_to_frag_real_multi_chr_scaling",
+            vec![("chr1".to_string(), 200), ("chr2".to_string(), 200)],
+            vec![
+                PairedFragmentSpec::new(0, 20, 60, 20).build()?,
+                chr2_fragment,
+            ],
+            Vec::new(),
         )?;
         let work = tempdir().context("tempdir")?;
 
@@ -1901,10 +1914,16 @@ mod tests_bam_to_frag {
     #[test]
     fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_bam_to_frag_and_bam_to_bam() -> Result<()>
     {
-        let bam = simple_inward_bam()?;
-        let reference = simple_reference_twobit()?;
+        let bam = single_contig_inward_pair_bam()?;
+        let reference =
+            twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
         let work = tempdir().context("tempdir")?;
-        let gc_path = build_real_neutral_gc_package(&bam.bam, &reference.path, work.path(), 60)?;
+        let gc_path = build_command_produced_gc_correction_package_for_length(
+            &bam.bam,
+            &reference.path,
+            work.path(),
+            60,
+        )?;
 
         // Manual expectations:
         // - `simple_inward_bam` contains one fragment [20, 80), length 60.
@@ -2016,7 +2035,7 @@ mod tests_bam_to_frag {
         // So both released converters must encode:
         // - one fragment row / mate pair with weight 5.0 for [10,20)
         // - nine fragment rows / mate pairs with weight 5/9 for [110,120) .. [190,200)
-        let reference = super::fixtures::twobit_from_sequences(
+        let reference = twobit_from_sequences(
             "bam_to_frag_real_non_neutral_reference",
             vec![(
                 "chr1".to_string(),
@@ -2026,16 +2045,16 @@ mod tests_bam_to_frag {
         let starts = [10_i64, 110, 120, 130, 140, 150, 160, 170, 180, 190];
         let fragments = starts
             .into_iter()
-            .map(|start| paired_fragment(start, 10, 5))
-            .collect();
-        let bam = bam_from_specs(
+            .map(|start| PairedFragmentSpec::new(0, start, 10, 5).build())
+            .collect::<Result<Vec<_>>>()?;
+        let bam = bam_from_fragments(
+            "bam_to_frag_real_non_neutral_bam",
             vec![("chr1".to_string(), 200)],
             fragments,
             Vec::new(),
-            "bam_to_frag_real_non_neutral_bam",
         )?;
         let work = tempdir().context("tempdir")?;
-        let gc_path = build_real_non_neutral_gc_package(
+        let gc_path = build_command_produced_gc_correction_package_from_reference_windows(
             &bam.bam,
             &reference.path,
             work.path(),
@@ -2148,12 +2167,12 @@ mod tests_bam_to_frag {
     #[test]
     fn scaling_tsv_must_cover_requested_chromosome_end_in_bam_to_frag() -> Result<()> {
         // Arrange:
-        // `simple_inward_bam()` uses chr1 length 200.
+        // `single_contig_inward_pair_bam()` uses chr1 length 200.
         // A scaling TSV that stops at 100 is malformed for this requested chromosome even though
         // the counted fragment itself lies inside the provided region.
         //
         // The command should therefore fail while loading scaling factors, before writing rows.
-        let bam = simple_inward_bam()?;
+        let bam = single_contig_inward_pair_bam()?;
         let work = tempdir().context("tempdir")?;
         let out_dir = work.path().join("out");
         fs::create_dir_all(&out_dir)?;
@@ -2198,7 +2217,7 @@ mod tests_bam_to_frag {
         // Mirror the coverage-side malformed scaling regression through the separate
         // `--count-scaling-factors` path. The loader contract is identical: requested
         // chromosomes must be fully covered by contiguous bins.
-        let bam = simple_inward_bam()?;
+        let bam = single_contig_inward_pair_bam()?;
         let work = tempdir().context("tempdir")?;
         let out_dir = work.path().join("out");
         fs::create_dir_all(&out_dir)?;
@@ -2243,8 +2262,9 @@ mod tests_bam_to_frag {
         // `bam-to-frag` also loads count scaling through the shared scaling-map path. When the
         // run applies `--gc-file`, an explicitly uncorrected count-scaling TSV is a known
         // incompatibility that should fail before any FRAG rows are written.
-        let bam = simple_inward_bam()?;
-        let ref_twobit = simple_reference_twobit()?;
+        let bam = single_contig_inward_pair_bam()?;
+        let ref_twobit =
+            twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
         let work = tempdir().context("tempdir")?;
         let out_dir = work.path().join("out_count_gc_mismatch");
         fs::create_dir_all(&out_dir)?;
@@ -2393,12 +2413,15 @@ mod tests_bam_to_frag {
     }
 
     #[cfg(feature = "cmd_fragment_count_weights")]
-    fn mixed_length_fragment_bam(name: &str) -> Result<super::fixtures::BamFixture> {
-        bam_from_specs(
-            vec![("chr1".to_string(), 100)],
-            vec![paired_fragment(0, 20, 10), paired_fragment(20, 60, 10)],
-            Vec::new(),
+    fn mixed_length_fragment_bam(name: &str) -> Result<TempBam> {
+        bam_from_fragments(
             name,
+            vec![("chr1".to_string(), 100)],
+            vec![
+                PairedFragmentSpec::new(0, 0, 20, 10).build()?,
+                PairedFragmentSpec::new(0, 20, 60, 10).build()?,
+            ],
+            Vec::new(),
         )
     }
 
@@ -2722,7 +2745,7 @@ mod tests_bam_to_frag {
         mapq: u8,
         cigar: &[Cigar],
         seq: &[u8],
-        qual: &[u8],
+        base_quality: &[u8],
         is_first_in_template: bool,
         mtid: i32,
         mpos: i64,
@@ -2730,7 +2753,7 @@ mod tests_bam_to_frag {
     ) -> Record {
         let mut rec = Record::new();
         let cigar_string = CigarString(cigar.to_vec());
-        rec.set(qname, Some(&cigar_string), seq, qual);
+        rec.set(qname, Some(&cigar_string), seq, base_quality);
 
         let mut flags: u16 = 0;
         flags |= 0x1; // paired

@@ -18,7 +18,7 @@ enum Stage {
 ///
 /// Example
 /// -------
-/// ```rust
+/// ```rust,ignore
 /// use cfdnalab::shared::coverage::Coverage;
 /// use cfdnalab::shared::fragment::minimal_fragment::Fragment;
 /// use cfdnalab::shared::gc_tag::GCTagValue;

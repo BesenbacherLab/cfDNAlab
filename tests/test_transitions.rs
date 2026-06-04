@@ -3,15 +3,16 @@
 mod fixtures;
 
 mod transitions_command_tests {
-    use crate::fixtures::{
-        FragmentSpec, ReadSpec, bam_from_specs, single_position_selection, twobit_from_sequences,
-    };
+    use crate::fixtures::single_position_selection;
     use anyhow::{Context, Result};
     use cfdnalab::RunOptions;
     use cfdnalab::run_like_cli::common::{
         ChromosomeArgs, IOCArgs, Ref2BitRequiredArgs, ReferenceFrame,
     };
     use cfdnalab::run_like_cli::transitions::{TransitionsConfig, run_transitions};
+    use cfdnalab::testing::{
+        Cigar, FragmentSpec, ReadSpec, bam_from_fragments, twobit_from_sequences,
+    };
     use ndarray::{Array3, s};
     use ndarray_npy::read_npy;
     use std::collections::HashMap;
@@ -51,9 +52,9 @@ mod transitions_command_tests {
                 forward: ReadSpec {
                     tid: 0,
                     pos: start,
-                    cigar: vec![('M', read_len)],
+                    cigar: vec![Cigar::Match(read_len)],
                     seq: vec![b'A'; read_len as usize],
-                    qual: 30,
+                    base_quality: 30,
                     is_reverse: false,
                     mapq: 60,
                     flags: FLAG_FIRST_MATE | FLAG_MATE_REVERSE | FLAG_PROPER_PAIR,
@@ -64,9 +65,9 @@ mod transitions_command_tests {
                 reverse: ReadSpec {
                     tid: 0,
                     pos: mate_start,
-                    cigar: vec![('M', read_len)],
+                    cigar: vec![Cigar::Match(read_len)],
                     seq: vec![b'T'; read_len as usize],
-                    qual: 30,
+                    base_quality: 30,
                     is_reverse: true,
                     mapq: 60,
                     flags: FLAG_SECOND_MATE | FLAG_PROPER_PAIR,
@@ -94,11 +95,11 @@ mod transitions_command_tests {
             vec![("chr1".to_string(), reference_seq.to_string())],
         )?;
         let chroms = vec![("chr1".to_string(), reference_seq.len() as u32)];
-        let bam = bam_from_specs(
+        let bam = bam_from_fragments(
+            "transitions_manual_bam",
             chroms,
             synthetic_fragments(),
             Vec::new(),
-            "transitions_manual_bam",
         )?;
         let out_dir = TempDir::new()?;
 

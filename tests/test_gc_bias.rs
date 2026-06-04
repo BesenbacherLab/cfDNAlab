@@ -26,6 +26,10 @@ mod tests_gc_bias {
             RefGCBiasConfig, RefGCWindowsArgs, run_ref_gc_bias as run_ref_gc_bias_command,
         },
     };
+    use cfdnalab::testing::{
+        Bed4Row, PairedFragmentSpec, bam_from_fragments, single_contig_inward_pair_bam,
+        twobit_from_sequences, twobit_with_single_repeating_contig, write_bed4,
+    };
 
     const GC_COMMAND_F64_TOL: f64 = 1e-6;
 
@@ -60,18 +64,18 @@ mod tests_gc_bias {
         // - Therefore the saved observed average count matrix has exactly 62.0 at GC% 100 and
         //   zero everywhere else. If the tile's non-zero sequence interval is ignored, the
         //   fragment cannot be mapped to the loaded prefix coordinates correctly.
-        let reference = fixtures::twobit_from_sequences(
+        let reference = twobit_from_sequences(
             "gc_bias_late_tile_origin_reference",
             vec![(
                 "chr1".to_string(),
                 fixtures::late_origin_gc_reference_sequence(),
             )],
         )?;
-        let bam = fixtures::bam_from_specs(
-            vec![("chr1".to_string(), 1_022)],
-            vec![fixtures::paired_fragment(900, 61, 20)],
-            Vec::new(),
+        let bam = bam_from_fragments(
             "gc_bias_late_tile_origin_bam",
+            vec![("chr1".to_string(), 1_022)],
+            vec![PairedFragmentSpec::new(0, 900, 61, 20).build()?],
+            Vec::new(),
         )?;
         let ref_gc_dir = TempDir::new()?;
         let bed_path = ref_gc_dir.path().join("late_window.bed");
@@ -203,8 +207,9 @@ mod tests_gc_bias {
         // - The correction package carries the footprint from `reference_a`.
         // - The loaders are asked to apply it with `reference_b`, whose chr1 length differs.
         // - Both loaders should fail before returning a usable correction matrix.
-        let reference_a = fixtures::simple_reference_twobit()?;
-        let reference_b = fixtures::twobit_from_sequences(
+        let reference_a =
+            twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
+        let reference_b = twobit_from_sequences(
             "gc_correction_loader_reference_mismatch",
             vec![("chr1".to_string(), "ACGT".repeat(80))],
         )?;
@@ -559,7 +564,7 @@ mod tests_gc_bias {
             output_prefix: String::new(),
             n_threads: 1,
             // These tests use small synthetic references, for example:
-            // - `simple_reference_twobit()` is 256 bp
+            // - `twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)` is 256 bp
             // - the smallest custom GC-bias fixture here is 200 bp
             //
             // `ref-gc-bias` samples fragment starts from the set of valid start positions,
@@ -624,7 +629,7 @@ mod tests_gc_bias {
     fn gc_bias_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero()
     -> Result<()> {
         // Arrange:
-        // Use the repeated 256 bp ACGT reference from `simple_reference_twobit()`.
+        // Use the repeated 256 bp ACGT reference from `twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)`.
         // For fragment length 60, every 60 bp fragment contains exactly 30 GC bases because:
         // - the reference repeats a 4 bp cycle with 2 GC bases per cycle
         // - 60 = 15 * 4, so each fragment spans exactly 15 full cycles
@@ -641,14 +646,18 @@ mod tests_gc_bias {
         // - default `min_mapq = 30`: 2 counts at GC% 50
         // - explicit `min_mapq = 30`: same as default
         // - explicit `min_mapq = 0`: 3 counts at GC% 50
-        let reference = fixtures::simple_reference_twobit()?;
+        let reference =
+            twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
         let fragment_with_mapq = |start: i64, mapq: u8| {
-            let mut fragment = fixtures::paired_fragment(start, 60, 20);
+            let mut fragment = PairedFragmentSpec::new(0, start, 60, 20)
+                .build()
+                .expect("valid paired-fragment fixture");
             fragment.forward.mapq = mapq;
             fragment.reverse.mapq = mapq;
             fragment
         };
-        let bam = fixtures::bam_from_specs(
+        let bam = bam_from_fragments(
+            "gc_bias_default_min_mapq",
             vec![("chr1".to_string(), 256)],
             vec![
                 fragment_with_mapq(20, 60),
@@ -656,7 +665,6 @@ mod tests_gc_bias {
                 fragment_with_mapq(140, 30),
             ],
             Vec::new(),
-            "gc_bias_default_min_mapq",
         )?;
         let ref_gc_dir = TempDir::new()?;
         write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 60, 0)?;
@@ -764,7 +772,7 @@ mod tests_gc_bias {
         //
         // The width correction is a no-op here because length 10 maps exactly to GC% bins
         // {0,10,20,...,100}, each with width 1.
-        let reference = fixtures::twobit_from_sequences(
+        let reference = twobit_from_sequences(
             "gc_bias_two_window_reference",
             vec![(
                 "chr1".to_string(),
@@ -777,13 +785,13 @@ mod tests_gc_bias {
         ];
         let fragments = starts
             .into_iter()
-            .map(|start| fixtures::paired_fragment(start, 10, 5))
-            .collect();
-        let bam = fixtures::bam_from_specs(
+            .map(|start| PairedFragmentSpec::new(0, start, 10, 5).build())
+            .collect::<Result<Vec<_>>>()?;
+        let bam = bam_from_fragments(
+            "gc_bias_two_window_bam",
             vec![("chr1".to_string(), 200_000)],
             fragments,
             Vec::new(),
-            "gc_bias_two_window_bam",
         )?;
         let ref_gc_dir = TempDir::new()?;
         write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 10, 0)?;
@@ -887,8 +895,9 @@ mod tests_gc_bias {
         // The command then cannot compute GC for any fragment, so no window contributes counts.
         // The scientifically correct outcome is a hard error rather than silently writing a
         // degenerate correction package.
-        let bam = fixtures::simple_inward_bam()?;
-        let reference = fixtures::simple_reference_twobit()?;
+        let bam = single_contig_inward_pair_bam()?;
+        let reference =
+            twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
         let ref_gc_dir = TempDir::new()?;
         write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 60, 0)?;
 
@@ -908,7 +917,10 @@ mod tests_gc_bias {
 
         let out_dir = TempDir::new()?;
         let blacklist_path = out_dir.path().join("blacklist.bed");
-        fixtures::write_bed(&blacklist_path, &[("chr1", 0, 256, "all_masked")])?;
+        write_bed4(
+            &blacklist_path,
+            &[Bed4Row::new("chr1", 0, 256, "all_masked")],
+        )?;
 
         let mut cfg =
             make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
@@ -941,8 +953,9 @@ mod tests_gc_bias {
         // - preserve `end_offset = 2`
         // - keep exactly one length bin, whose inclusive edge encoding is [60, 60]
         // - assign all length-bin frequency mass to that single bin
-        let bam = fixtures::simple_inward_bam()?;
-        let reference = fixtures::simple_reference_twobit()?;
+        let bam = single_contig_inward_pair_bam()?;
+        let reference =
+            twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
         let ref_gc_dir = TempDir::new()?;
         write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 60, 2)?;
 
@@ -1019,28 +1032,27 @@ mod tests_gc_bias {
         //
         // Therefore the split and merged runs must differ. If `gc-bias` ever starts merging BED
         // windows again, the split run will collapse to the merged result and this test will fail.
-        let reference = fixtures::twobit_from_sequences(
+        let reference = twobit_from_sequences(
             "gc_bias_overlapping_touching_vs_merged_reference",
             vec![(
                 "chr1".to_string(),
                 format!("{}{}", "A".repeat(100_000), "C".repeat(150_000)),
             )],
         )?;
-        let bam = fixtures::bam_from_specs(
+        let bam = bam_from_fragments(
+            "gc_bias_overlapping_touching_vs_merged_bam",
             vec![("chr1".to_string(), 250_000)],
             {
-                let mut fragments = vec![fixtures::paired_fragment(60_000, 10, 5)];
+                let mut fragments = vec![PairedFragmentSpec::new(0, 60_000, 10, 5).build()?];
                 for fragment_idx in 0..9 {
-                    fragments.push(fixtures::paired_fragment(
-                        160_000 + (fragment_idx as i64 * 20),
-                        10,
-                        5,
-                    ));
+                    fragments.push(
+                        PairedFragmentSpec::new(0, 160_000 + (fragment_idx as i64 * 20), 10, 5)
+                            .build()?,
+                    );
                 }
                 fragments
             },
             Vec::new(),
-            "gc_bias_overlapping_touching_vs_merged_bam",
         )?;
         let ref_gc_dir = TempDir::new()?;
         write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 10, 0)?;
@@ -1184,18 +1196,18 @@ mod tests_gc_bias {
             let base = if window_idx % 2 == 0 { 'A' } else { 'C' };
             sequence.push_str(&base.to_string().repeat(window_bp));
             let start = (window_idx * window_bp + 100) as i64;
-            fragments.push(fixtures::paired_fragment(start, 10, 5));
+            fragments.push(PairedFragmentSpec::new(0, start, 10, 5).build()?);
         }
         let chrom_len = (window_bp * num_windows) as u32;
-        let reference = fixtures::twobit_from_sequences(
+        let reference = twobit_from_sequences(
             "gc_bias_tile_invariance_reference",
             vec![("chr1".to_string(), sequence)],
         )?;
-        let bam = fixtures::bam_from_specs(
+        let bam = bam_from_fragments(
+            "gc_bias_tile_invariance_bam",
             vec![("chr1".to_string(), chrom_len)],
             fragments,
             Vec::new(),
-            "gc_bias_tile_invariance_bam",
         )?;
         let ref_gc_dir = TempDir::new()?;
         write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 10, 0)?;
@@ -1311,17 +1323,18 @@ mod tests_gc_bias {
         //   entire row
         // - on a 2-bin GC axis, the default `num_extreme_gc_bins = 1` also masks both columns
         // - the package pipeline therefore falls back to the neutral multiplicative row [1, 1]
-        let reference = fixtures::twobit_from_sequences(
+        let reference = twobit_from_sequences(
             "gc_bias_multi_chr_reference",
             vec![
                 ("chr1".to_string(), "A".repeat(100)),
                 ("chr2".to_string(), "C".repeat(100)),
             ],
         )?;
-        let bam = fixtures::bam_from_specs(
+        let bam = bam_from_fragments(
+            "gc_bias_multi_chr_bam",
             vec![("chr1".to_string(), 100), ("chr2".to_string(), 100)],
-            vec![fixtures::paired_fragment(10, 10, 5), {
-                let mut fragment = fixtures::paired_fragment(10, 10, 5);
+            vec![PairedFragmentSpec::new(0, 10, 10, 5).build()?, {
+                let mut fragment = PairedFragmentSpec::new(0, 10, 10, 5).build()?;
                 fragment.forward.tid = 1;
                 fragment.reverse.tid = 1;
                 fragment.forward.mate_tid = Some(1);
@@ -1329,7 +1342,6 @@ mod tests_gc_bias {
                 fragment
             }],
             Vec::new(),
-            "gc_bias_multi_chr_bam",
         )?;
         let ref_gc_dir = TempDir::new()?;
         let ref_cfg = RefGCBiasConfig {
@@ -1449,21 +1461,21 @@ mod tests_gc_bias {
         // As in the multi-chromosome test above, the exact package is still hand-derivable:
         // greedy GC binning creates [0] and [1..100], and the default single-length masking then
         // neutralizes the only row to multiplicative weights [1, 1].
-        let reference = fixtures::twobit_from_sequences(
+        let reference = twobit_from_sequences(
             "gc_bias_empty_tile_reference",
             vec![(
                 "chr1".to_string(),
                 format!("{}{}{}", "A".repeat(100), "A".repeat(100), "C".repeat(100)),
             )],
         )?;
-        let bam = fixtures::bam_from_specs(
+        let bam = bam_from_fragments(
+            "gc_bias_empty_tile_bam",
             vec![("chr1".to_string(), 300)],
             vec![
-                fixtures::paired_fragment(10, 10, 5),
-                fixtures::paired_fragment(210, 10, 5),
+                PairedFragmentSpec::new(0, 10, 10, 5).build()?,
+                PairedFragmentSpec::new(0, 210, 10, 5).build()?,
             ],
             Vec::new(),
-            "gc_bias_empty_tile_bam",
         )?;
         let ref_gc_dir = TempDir::new()?;
         write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 10, 0)?;
@@ -1577,7 +1589,7 @@ mod tests_gc_bias {
         // We deliberately use `tile_size = 95_000` so neither 100 kb window is tile-contained.
         // That makes the fixed-size streaming path and the explicit BED-window path both exercise
         // real cross-tile counting/reduction instead of a degenerate one-tile case.
-        let reference = fixtures::twobit_from_sequences(
+        let reference = twobit_from_sequences(
             "gc_bias_by_size_vs_bed_reference",
             vec![(
                 "chr1".to_string(),
@@ -1590,13 +1602,13 @@ mod tests_gc_bias {
         ];
         let fragments = starts
             .into_iter()
-            .map(|start| fixtures::paired_fragment(start, 10, 5))
-            .collect();
-        let bam = fixtures::bam_from_specs(
+            .map(|start| PairedFragmentSpec::new(0, start, 10, 5).build())
+            .collect::<Result<Vec<_>>>()?;
+        let bam = bam_from_fragments(
+            "gc_bias_by_size_vs_bed_bam",
             vec![("chr1".to_string(), 200_000)],
             fragments,
             Vec::new(),
-            "gc_bias_by_size_vs_bed_bam",
         )?;
         let ref_gc_dir = TempDir::new()?;
         write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 10, 0)?;
@@ -1746,7 +1758,7 @@ mod tests_gc_bias {
         // Its mean is already 1.0, so the final re-centering step changes nothing.
         // The package stores multiplicative correction factors, so the row is inverted:
         // - [1 / 0.2, 1 / 1.8] = [5.0, 5/9]
-        let reference = fixtures::twobit_from_sequences(
+        let reference = twobit_from_sequences(
             "gc_bias_real_non_neutral_reference",
             vec![(
                 "chr1".to_string(),
@@ -1756,13 +1768,13 @@ mod tests_gc_bias {
         let starts = [10_i64, 110, 120, 130, 140, 150, 160, 170, 180, 190];
         let fragments = starts
             .into_iter()
-            .map(|start| fixtures::paired_fragment(start, 10, 5))
-            .collect();
-        let bam = fixtures::bam_from_specs(
+            .map(|start| PairedFragmentSpec::new(0, start, 10, 5).build())
+            .collect::<Result<Vec<_>>>()?;
+        let bam = bam_from_fragments(
+            "gc_bias_real_non_neutral_bam",
             vec![("chr1".to_string(), 200)],
             fragments,
             Vec::new(),
-            "gc_bias_real_non_neutral_bam",
         )?;
 
         let ref_gc_dir = TempDir::new()?;
@@ -1884,7 +1896,7 @@ mod tests_gc_bias {
         //   GC% 100 -> 1/2
         // and zero elsewhere.
         let sigma = (1.0_f64 / (2.0 * std::f64::consts::LN_2)).sqrt();
-        let reference = fixtures::twobit_from_sequences(
+        let reference = twobit_from_sequences(
             "gc_bias_real_smoothed_reference",
             vec![(
                 "chr1".to_string(),
@@ -1899,15 +1911,15 @@ mod tests_gc_bias {
                 ),
             )],
         )?;
-        let bam = fixtures::bam_from_specs(
+        let bam = bam_from_fragments(
+            "gc_bias_real_smoothed_bam",
             vec![("chr1".to_string(), 52)],
             vec![
-                fixtures::paired_fragment(0, 10, 5),
-                fixtures::paired_fragment(20, 10, 5),
-                fixtures::paired_fragment(40, 10, 5),
+                PairedFragmentSpec::new(0, 0, 10, 5).build()?,
+                PairedFragmentSpec::new(0, 20, 10, 5).build()?,
+                PairedFragmentSpec::new(0, 40, 10, 5).build()?,
             ],
             Vec::new(),
-            "gc_bias_real_smoothed_bam",
         )?;
 
         let ref_gc_dir = TempDir::new()?;
@@ -2012,7 +2024,7 @@ mod tests_gc_bias {
         // Interpolation then sees three equal anchors and must fill every unsupported GC% bin with
         // the constant value 1.0. The saved `interpolated_cfdna_counts` matrix should therefore be
         // exactly all ones.
-        let reference = fixtures::twobit_from_sequences(
+        let reference = twobit_from_sequences(
             "gc_bias_real_interpolated_reference",
             vec![(
                 "chr1".to_string(),
@@ -2027,15 +2039,15 @@ mod tests_gc_bias {
                 ),
             )],
         )?;
-        let bam = fixtures::bam_from_specs(
+        let bam = bam_from_fragments(
+            "gc_bias_real_interpolated_bam",
             vec![("chr1".to_string(), 52)],
             vec![
-                fixtures::paired_fragment(0, 10, 5),
-                fixtures::paired_fragment(20, 10, 5),
-                fixtures::paired_fragment(40, 10, 5),
+                PairedFragmentSpec::new(0, 0, 10, 5).build()?,
+                PairedFragmentSpec::new(0, 20, 10, 5).build()?,
+                PairedFragmentSpec::new(0, 40, 10, 5).build()?,
             ],
             Vec::new(),
-            "gc_bias_real_interpolated_bam",
         )?;
 
         let ref_gc_dir = TempDir::new()?;
@@ -2134,8 +2146,9 @@ mod tests_gc_bias {
         //   5 normalized_binned_ref_counts
         //
         // The prefixes should make those twelve paths distinct in the shared directory.
-        let bam = fixtures::simple_inward_bam()?;
-        let reference = fixtures::simple_reference_twobit()?;
+        let bam = single_contig_inward_pair_bam()?;
+        let reference =
+            twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
         let ref_gc_dir = TempDir::new()?;
         write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 60, 0)?;
 
@@ -2246,21 +2259,21 @@ mod tests_gc_bias {
         //
         // As elsewhere for length 10, width correction is a no-op because GC%=0 and 100 are exact
         // reachable percentage bins with width 1.
-        let reference = fixtures::twobit_from_sequences(
+        let reference = twobit_from_sequences(
             "gc_bias_min_window_acgt_reference",
             vec![(
                 "chr1".to_string(),
                 format!("{}{}", "A".repeat(100), "C".repeat(100)),
             )],
         )?;
-        let bam = fixtures::bam_from_specs(
+        let bam = bam_from_fragments(
+            "gc_bias_min_window_acgt_bam",
             vec![("chr1".to_string(), 200)],
             vec![
-                fixtures::paired_fragment(85, 10, 5),
-                fixtures::paired_fragment(110, 10, 5),
+                PairedFragmentSpec::new(0, 85, 10, 5).build()?,
+                PairedFragmentSpec::new(0, 110, 10, 5).build()?,
             ],
             Vec::new(),
-            "gc_bias_min_window_acgt_bam",
         )?;
         let ref_gc_dir = TempDir::new()?;
         write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 10, 0)?;
@@ -2363,7 +2376,7 @@ mod tests_gc_bias {
         //   [40, 80)
         //
         // We compare two otherwise identical global runs. To keep the fixture realistic, place the
-        // touching blacklist away from the only fragment in `simple_inward_bam()`:
+        // touching blacklist away from the only fragment in `single_contig_inward_pair_bam()`:
         // - fragment span is [20,80)
         // - touching masked span is [120,160)
         //
@@ -2371,8 +2384,9 @@ mod tests_gc_bias {
         // fragment's GC context. Because the effective masked genomic coordinates are logically
         // identical, both the saved `avg_cfdna_counts` matrix and the final correction package
         // must match exactly.
-        let bam = fixtures::simple_inward_bam()?;
-        let reference = fixtures::simple_reference_twobit()?;
+        let bam = single_contig_inward_pair_bam()?;
+        let reference =
+            twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
         let ref_gc_dir = TempDir::new()?;
         write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 60, 0)?;
 
@@ -2465,12 +2479,13 @@ mod tests_gc_bias {
         //   contig footprint.
         // - `gc-bias` should reject the mismatch before creating the output directory or writing a
         //   downstream correction package.
-        let reference_a = fixtures::simple_reference_twobit()?;
-        let reference_b = fixtures::twobit_from_sequences(
+        let reference_a =
+            twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
+        let reference_b = twobit_from_sequences(
             "gc_bias_reference_footprint_mismatch",
             vec![("chr1".to_string(), "ACGT".repeat(80))],
         )?;
-        let bam = fixtures::simple_inward_bam()?;
+        let bam = single_contig_inward_pair_bam()?;
         let ref_gc_dir = TempDir::new()?;
         write_reference_package_for_single_length(&reference_a.path, &ref_gc_dir, 60, 0)?;
         let output_parent = TempDir::new()?;
