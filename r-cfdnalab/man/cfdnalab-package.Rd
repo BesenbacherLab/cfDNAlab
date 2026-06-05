@@ -25,5 +25,10 @@ Useful links:
 \author{
 \strong{Maintainer}: Ludvig Renbo Olsen \email{r-pkgs@ludvigolsen.dk} (\href{https://orcid.org/0009-0006-6798-7454}{ORCID})
 
+Authors:
+\itemize{
+  \item Ludvig Renbo Olsen \email{r-pkgs@ludvigolsen.dk} (\href{https://orcid.org/0009-0006-6798-7454}{ORCID})
+}
+
 }
 \keyword{internal}
