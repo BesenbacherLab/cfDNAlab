@@ -1,0 +1,42 @@
+name: CondaInstall
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "19 5 * * 1"
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -leo pipefail {0}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up documented conda environment
+        uses: mamba-org/setup-micromamba@v3
+        with:
+          environment-name: cfdnalab
+          create-args: >-
+            -c conda-forge
+            rust=1.94.0
+            zstandard
+            perl
+            fontconfig
+            llvmdev
+            clangdev
+          post-cleanup: all
+
+      - name: Install cfDNAlab from source
+        run: cargo install --path . --locked
+
+      - name: Verify installed binary
+        run: cfdna --help

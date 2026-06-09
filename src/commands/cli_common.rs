@@ -100,11 +100,13 @@ pub fn validate_output_prefix(prefix: &str) -> Result<()> {
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone)]
 pub struct IOCArgs {
-    /// Indexed, coordinate-sorted BAM input file `[path]`
+    /// Indexed, coordinate-sorted BAM input file `[path / URL]`
     ///
     /// Can be either **paired-end** or **unpaired** (set `--reads-are-fragments`).
     /// Unpaired assumes the reads span their fragments exactly
     /// (so read size is fragment size).
+    ///
+    /// Also accepts `http://`, `https://`, and `ftp://` URLs.
     #[cfg_attr(
         feature = "cli",
         clap(

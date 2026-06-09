@@ -1,14 +1,14 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use fxhash::{FxHashMap, FxHashSet};
-use rust_htslib::bam;
 use rust_htslib::bam::{IndexedReader, Read, Reader};
 use std::path::Path;
+use url::Url;
 
 /// Create a BAM file reader for a given chromosome.
 ///
 /// Returns Reader, tid, and chromosome length.
 pub fn create_chromosome_reader(bam_path: &Path, chr: &str) -> Result<(IndexedReader, u32, u64)> {
-    let reader = IndexedReader::from_path(bam_path).context(format!("opening BAM for {}", chr))?;
+    let reader = open_indexed_bam_reader(bam_path).context(format!("opening BAM for {}", chr))?;
     let header = reader.header().to_owned();
     let tid = header
         .tid(chr.as_bytes())
@@ -19,8 +19,40 @@ pub fn create_chromosome_reader(bam_path: &Path, chr: &str) -> Result<(IndexedRe
     Ok((reader, tid, chrom_len))
 }
 
+pub fn open_bam_reader(bam_path: &Path) -> Result<Reader> {
+    match bam_input_url(bam_path)? {
+        Some(url) => Reader::from_url(&url).with_context(|| format!("opening BAM URL {}", url)),
+        None => Reader::from_path(bam_path)
+            .with_context(|| format!("opening BAM {}", bam_path.display())),
+    }
+}
+
+fn open_indexed_bam_reader(bam_path: &Path) -> Result<IndexedReader> {
+    match bam_input_url(bam_path)? {
+        Some(url) => IndexedReader::from_url(&url)
+            .with_context(|| format!("opening indexed BAM URL {}", url)),
+        None => IndexedReader::from_path(bam_path)
+            .with_context(|| format!("opening indexed BAM {}", bam_path.display())),
+    }
+}
+
+fn bam_input_url(bam_path: &Path) -> Result<Option<Url>> {
+    let Some(raw_path) = bam_path.to_str() else {
+        return Ok(None);
+    };
+    if !raw_path.contains("://") {
+        return Ok(None);
+    }
+
+    let url = Url::parse(raw_path).with_context(|| format!("parsing BAM URL {}", raw_path))?;
+    match url.scheme() {
+        "ftp" | "http" | "https" => Ok(Some(url)),
+        scheme => bail!("unsupported BAM URL scheme '{}'", scheme),
+    }
+}
+
 pub fn bam_header_contigs<P: AsRef<std::path::Path>>(bam_path: P) -> Result<Vec<String>> {
-    let reader = Reader::from_path(bam_path)?;
+    let reader = open_bam_reader(bam_path.as_ref())?;
     let header = reader.header();
     let names = header
         .target_names()
@@ -36,7 +68,7 @@ pub fn bam_header_contigs<P: AsRef<std::path::Path>>(bam_path: P) -> Result<Vec<
 
 /// (tid, len) for each requested chromosome from the BAM header (no index/reads needed).
 pub fn bam_contigs_info<P: AsRef<Path>>(bam_path: P, chromosomes: &[String]) -> Result<Contigs> {
-    let rdr = bam::Reader::from_path(bam_path)?;
+    let rdr = open_bam_reader(bam_path.as_ref())?;
     let hdr = rdr.header().to_owned(); // HeaderView -> clone needed for tid2name() lifetime
 
     let want: FxHashSet<&str> = chromosomes.iter().map(|s| s.as_str()).collect();
@@ -72,4 +104,11 @@ pub fn bam_contigs_info<P: AsRef<Path>>(bam_path: P, chromosomes: &[String]) -> 
 pub struct Contigs {
     /// Chromosome -> (tid, length)
     pub contigs: FxHashMap<String, (i32, u32)>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    include!("bam_tests.rs");
 }

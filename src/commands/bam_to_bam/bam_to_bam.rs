@@ -26,7 +26,7 @@ use crate::{
         },
     },
     shared::{
-        bam::create_chromosome_reader,
+        bam::{create_chromosome_reader, open_bam_reader},
         bed::load_windows_from_bed,
         blacklist::is_blacklisted,
         fragment::with_records_fragment::WithRecordsFragment,
@@ -227,7 +227,7 @@ fn execute_bam_to_bam(opt: &BamToBamConfig, options: RunOptions) -> Result<BamTo
     pb.set_position(0);
 
     let header = {
-        let reader = bam::Reader::from_path(&opt.in_bam).context("opening BAM to read header")?;
+        let reader = open_bam_reader(&opt.in_bam).context("opening BAM to read header")?;
         Header::from_template(reader.header())
     };
     let temp_out_bam = final_outputs.temp_path_for(&opt.out_bam)?;

@@ -45,11 +45,11 @@ Compile and install:
 
 ```bash
 # Install latest release
-cargo install cfdnalab
+cargo install cfdnalab --locked
 cfdna --help
 
 # Latest development version
-cargo install --git https://github.com/BesenbacherLab/cfDNAlab
+cargo install --git https://github.com/BesenbacherLab/cfDNAlab --locked
 cfdna --help
 ```
 
