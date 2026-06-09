@@ -4,7 +4,7 @@ Fragment coverage measures how many fragments overlap each genomic position. In 
 
 When no GC correction or genomic smoothing is applied, each fragment is counted as `1.0` in the overlapping (aligned / gap) positions. Using GC correction and/or genomic smoothing changes this to a weight (floating point).
 
-For a fragment *counts*-like signal, see ["Normalize by countable bases"](fragment_coverage_guide.md/#normalize-by-countable-bases).
+For a fragment *counts*-like signal, see ["Normalize by countable bases"](#normalize-by-countable-bases).
 
 ## Positional fragment coverage
 
@@ -96,7 +96,7 @@ cfdna fcoverage \
 
 **NOTE**: *Requires* using GC-bias correction when calculating the scaling factors to avoid double-correction.
 
-See ["Genomic smoothing example"](fragment_coverage_guide.md/#genomic-smoothing-example) for when to use `cfdna coverage-weights` or `cfdna fragment-count-weights`.
+See ["Genomic smoothing example"](#genomic-smoothing-example) for when to use `cfdna coverage-weights` or `cfdna fragment-count-weights`.
 
 ```bash
 cfdna fcoverage \
