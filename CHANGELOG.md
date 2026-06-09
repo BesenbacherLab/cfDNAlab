@@ -9,6 +9,13 @@ This is the changelog for the main CLI tool. You can find the changelog for the 
 
 ## Unreleased
 
+**BREAKING CHANGES**:
+
+ - `cfdna fcoverage --per-window summary-stats*` output TSV columns are renamed and deduplicated.
+ - For `cfdna fcoverage --normalize-by-length`, aggregate TSV headers now use `fragment_mass` instead of `coverage` for the length-normalized signal columns.
+
+**Other changes**:
+
  - Allows reading BAM files from URLs via the `curl` feature in `rust-htslib`. This adds `url` as dependency.
  - Updates `rust-htslib` dependency to `1.0.0` and reduces its feature set for fewer dependencies.
  - Enables `libdeflate-sys` for faster BAM reading.

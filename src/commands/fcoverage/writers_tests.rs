@@ -5,7 +5,8 @@ use super::{
     write_summary_stats_row, write_windowed_runs,
 };
 use crate::commands::fcoverage::{
-    reducer::TileAggregateTempFiles, window_results::CoverageWindowAction,
+    config::COVERAGE_SIGNAL_LABEL, reducer::TileAggregateTempFiles,
+    window_results::CoverageWindowAction,
 };
 use crate::shared::base::{ZEROISH_F32_TOLERANCE, ZEROISH_F64_TOLERANCE};
 use crate::shared::{
@@ -114,6 +115,7 @@ fn grouped_writer_folds_explicit_segment_tile_outputs_into_group_rows() -> Resul
         CoverageWindowAction::Total,
         0,
         1,
+        COVERAGE_SIGNAL_LABEL,
         None,
     )?;
     let text = read_text(&final_path)?;
@@ -140,13 +142,12 @@ fn grouped_summary_writer_folds_explicit_raw_moments_before_deriving_stats() -> 
     // Group totals:
     //   span_positions = eligible_positions = 20
     //   nonzero_positions = 8
-    //   coverage_sum = 10
-    //   coverage_sum_of_squares = 14
+    //   covered_fraction = 8 / 20 = 0.4
+    //   total_coverage = 10
+    //   total_squared_coverage = 14
     // Derived:
     //   average = 10 / 20 = 0.5
-    //   total = 10
     //   variance = 14 / 20 - 0.5^2 = 0.45
-    //   covered_fraction = 8 / 20 = 0.4
     let temp_dir = TempDir::new()?;
     let out_dir = TempDir::new()?;
     let partials_path = temp_dir.path().join("group_segment_summary_rows");
@@ -173,6 +174,7 @@ fn grouped_summary_writer_folds_explicit_raw_moments_before_deriving_stats() -> 
         CoverageWindowAction::SummaryStats,
         6,
         1,
+        COVERAGE_SIGNAL_LABEL,
         None,
     )?;
     let text = read_text(&final_path)?;
@@ -182,13 +184,29 @@ fn grouped_summary_writer_folds_explicit_raw_moments_before_deriving_stats() -> 
         .collect();
 
     // Assert
+    assert_eq!(
+        rows[0],
+        vec![
+            "group_idx",
+            "span_positions",
+            "blacklisted_positions",
+            "eligible_positions",
+            "nonzero_positions",
+            "covered_fraction",
+            "total_coverage",
+            "total_squared_coverage",
+            "average_coverage",
+            "variance_coverage",
+            "sd_coverage",
+            "coefficient_of_variation_coverage",
+        ]
+    );
     assert_eq!(rows[1][0..5], ["5", "20", "0", "20", "8"]);
-    assert_eq!(rows[1][5], "10");
-    assert_eq!(rows[1][6], "14");
-    assert_eq!(rows[1][7], "0.5");
-    assert_eq!(rows[1][8], "10");
+    assert_eq!(rows[1][5], "0.4");
+    assert_eq!(rows[1][6], "10");
+    assert_eq!(rows[1][7], "14");
+    assert_eq!(rows[1][8], "0.5");
     assert_eq!(rows[1][9], "0.45");
-    assert_eq!(rows[1][12], "0.4");
 
     Ok(())
 }
@@ -216,6 +234,7 @@ fn bed_writer_errors_when_windows_have_no_returned_tile_outputs() -> Result<()> 
         CoverageWindowAction::Total,
         0,
         1,
+        COVERAGE_SIGNAL_LABEL,
         None,
     )
     .expect_err("BED windows without returned aggregate tile outputs should fail");
@@ -246,6 +265,7 @@ fn grouped_writer_errors_when_segments_have_no_returned_tile_outputs() -> Result
         CoverageWindowAction::Total,
         0,
         1,
+        COVERAGE_SIGNAL_LABEL,
         None,
     )
     .expect_err("grouped segments without returned aggregate tile outputs should fail");
@@ -270,28 +290,27 @@ fn derive_summary_stats_returns_nan_fields_when_no_positions_are_eligible() {
     assert_eq!(stats.blacklisted_positions, 20);
     assert_eq!(stats.eligible_positions, 0);
     assert_eq!(stats.nonzero_positions, 0);
-    assert_eq!(stats.coverage_sum, 0.0);
-    assert_eq!(stats.coverage_sum_of_squares, 0.0);
+    assert!(stats.covered_fraction.is_nan());
     assert_eq!(stats.total_coverage, 0.0);
+    assert_eq!(stats.total_squared_coverage, 0.0);
     assert!(stats.average_coverage.is_nan());
     assert!(stats.variance_coverage.is_nan());
     assert!(stats.sd_coverage.is_nan());
     assert!(stats.coefficient_of_variation_coverage.is_nan());
-    assert!(stats.covered_fraction.is_nan());
 }
 
 #[test]
 fn derive_nonnegative_variance_coverage_snaps_tiny_negative_cancellation_to_zero() {
     // Arrange
-    // Use a mean of 1.0 and choose `coverage_sum_of_squares` so the raw variance becomes
+    // Use a mean of 1.0 and choose `total_squared_coverage` so the raw variance becomes
     // `-ZEROISH_F32_TOLERANCE / 2`. That value is mathematically impossible, but small enough
     // that we intentionally classify it as a cancellation residue from `E[x^2] - E[x]^2`
     let average_coverage = 1.0_f64;
     let tiny_negative_variance = -(ZEROISH_F32_TOLERANCE as f64) / 2.0;
-    let coverage_sum_of_squares = 1.0 + tiny_negative_variance;
+    let total_squared_coverage = 1.0 + tiny_negative_variance;
 
     // Act
-    let variance = derive_nonnegative_variance_coverage(1, coverage_sum_of_squares, average_coverage)
+    let variance = derive_nonnegative_variance_coverage(1, total_squared_coverage, average_coverage)
         .expect("tiny negative variance should be repaired");
 
     // Assert
@@ -305,16 +324,17 @@ fn derive_nonnegative_variance_coverage_errors_on_material_negative_values() {
     // invariant violation rather than recoverable floating-point residue
     let average_coverage = 1.0_f64;
     let material_negative_variance = -10.0 * ZEROISH_F32_TOLERANCE as f64;
-    let coverage_sum_of_squares = 1.0 + material_negative_variance;
+    let total_squared_coverage = 1.0 + material_negative_variance;
 
     // Act
-    let err = derive_nonnegative_variance_coverage(1, coverage_sum_of_squares, average_coverage)
+    let err = derive_nonnegative_variance_coverage(1, total_squared_coverage, average_coverage)
         .expect_err("materially negative variance should fail");
 
     // Assert
     let err_text = err.to_string();
     assert!(err_text.contains("negative variance_coverage"));
     assert!(err_text.contains("eligible_positions=1"));
+    assert!(err_text.contains("total_squared_coverage="));
 }
 
 #[test]
@@ -400,14 +420,13 @@ fn write_summary_stats_row_marks_extreme_finite_cv_as_greater_than_one_e6() {
         blacklisted_positions: 0,
         eligible_positions: 10,
         nonzero_positions: 1,
-        coverage_sum: 1.0,
-        coverage_sum_of_squares: 2.0,
-        average_coverage: 0.1,
+        covered_fraction: 0.1,
         total_coverage: 1.0,
+        total_squared_coverage: 2.0,
+        average_coverage: 0.1,
         variance_coverage: 0.01,
         sd_coverage: 0.1,
         coefficient_of_variation_coverage: 1.0e6 + 1.0,
-        covered_fraction: 0.1,
     };
     let mut out = Vec::new();
 

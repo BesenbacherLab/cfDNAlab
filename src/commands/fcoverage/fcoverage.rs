@@ -772,6 +772,7 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
             | CoverageWindowAction::SummaryStatsOnUniqueBases => {
                 let final_path = opt.ioc.output_dir.join(final_aggregate_name.as_str());
                 let temp_final_path = final_outputs.temp_path_for(&final_path)?;
+                let aggregate_signal_label = opt.aggregate_signal_label();
 
                 match &window_opt {
                     DistributionWindowSpec::Bed(_) => write_bed_aggregate_output(
@@ -785,6 +786,7 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
                         opt.per_window,
                         decimals_to_use,
                         opt.ioc.n_threads,
+                        aggregate_signal_label,
                         restore_mean_multiplier,
                     )?,
                     DistributionWindowSpec::GroupedBed(_) => write_grouped_bed_aggregate_output(
@@ -797,6 +799,7 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
                         opt.per_window,
                         decimals_to_use,
                         opt.ioc.n_threads,
+                        aggregate_signal_label,
                         restore_mean_multiplier,
                     )?,
                     DistributionWindowSpec::Size(_) => write_size_aggregate_output(
@@ -810,6 +813,7 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
                         decimals_to_use,
                         opt.ioc.n_threads,
                         tile_and_window_boundaries_align,
+                        aggregate_signal_label,
                         restore_mean_multiplier,
                     )?,
                     DistributionWindowSpec::Global => {

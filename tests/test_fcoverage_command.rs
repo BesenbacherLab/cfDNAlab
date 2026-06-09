@@ -635,7 +635,7 @@ fn normalize_by_length_by_size_total_counts_each_fragment_as_one() -> Result<()>
     assert_eq!(
         lines,
         vec![
-            "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\ttotal_fragment_mass\tblacklisted_positions",
             "chr1\t0\t200\t1\t0",
         ]
     );
@@ -1322,7 +1322,7 @@ fn restore_mean_by_size_total_counts_mean_normalization_length_per_fragment() ->
     assert_eq!(
         text.lines().collect::<Vec<_>>(),
         vec![
-            "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\ttotal_fragment_mass\tblacklisted_positions",
             "chr1\t0\t200\t120\t0",
         ]
     );
@@ -1357,7 +1357,7 @@ fn restore_mean_by_size_average_restores_global_mean_level_for_single_full_windo
     assert_eq!(
         text.lines().collect::<Vec<_>>(),
         vec![
-            "chromosome\tstart\tend\taverage_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\taverage_fragment_mass\tblacklisted_positions",
             "chr1\t0\t200\t0.6\t0",
         ]
     );
@@ -1396,7 +1396,7 @@ fn restore_mean_by_size_total_aligned_fast_path_matches_general_path() -> Result
     }
 
     let expected = concat!(
-        "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions\n",
+        "chromosome\tstart\tend\ttotal_fragment_mass\tblacklisted_positions\n",
         "chr1\t0\t40\t30\t0\n",
         "chr1\t40\t80\t30\t0\n",
         "chr1\t80\t120\t15\t0\n",
@@ -1415,16 +1415,16 @@ fn restore_mean_by_size_summary_stats_derives_scaled_raw_and_derived_values() ->
     // Future-facing test for by-size summary stats.
     //
     // Manual expectations for the full 200 bp chromosome window:
-    // - Coverage values:
+    // - Restored fragment mass values:
     //     40 positions at 1.5
     //     80 positions at 0.75
     //     80 positions at 0
-    // - coverage_sum = 40*1.5 + 80*0.75 = 120
-    // - coverage_sum_of_squares = 40*(1.5^2) + 80*(0.75^2) = 90 + 45 = 135
-    // - average_coverage = 120 / 200 = 0.6
-    // - variance_coverage = (135 / 200) - 0.6^2 = 0.675 - 0.36 = 0.315
-    // - sd_coverage = sqrt(0.315)
-    // - coefficient_of_variation_coverage = sd / mean
+    // - total_fragment_mass = 40*1.5 + 80*0.75 = 120
+    // - total_squared_fragment_mass = 40*(1.5^2) + 80*(0.75^2) = 90 + 45 = 135
+    // - average_fragment_mass = 120 / 200 = 0.6
+    // - variance_fragment_mass = (135 / 200) - 0.6^2 = 0.675 - 0.36 = 0.315
+    // - sd_fragment_mass = sqrt(0.315)
+    // - coefficient_of_variation_fragment_mass = sd / mean
     // - covered_fraction = 120 / 200 = 0.6
     let bam = mixed_length_fragment_bam()?;
     let out_dir = TempDir::new()?;
@@ -1452,24 +1452,23 @@ fn restore_mean_by_size_summary_stats_derives_scaled_raw_and_derived_values() ->
             "blacklisted_positions",
             "eligible_positions",
             "nonzero_positions",
-            "coverage_sum",
-            "coverage_sum_of_squares",
-            "average_coverage",
-            "total_coverage",
-            "variance_coverage",
-            "sd_coverage",
-            "coefficient_of_variation_coverage",
             "covered_fraction",
+            "total_fragment_mass",
+            "total_squared_fragment_mass",
+            "average_fragment_mass",
+            "variance_fragment_mass",
+            "sd_fragment_mass",
+            "coefficient_of_variation_fragment_mass",
         ]
     );
     assert_eq!(
         rows[1][0..7],
         ["chr1", "0", "200", "200", "0", "200", "120"]
     );
-    assert_close_to_written_precision(rows[1][7].parse::<f64>()?, 120.0, 5);
-    assert_close_to_written_precision(rows[1][8].parse::<f64>()?, 135.0, 5);
-    assert_close_to_written_precision(rows[1][9].parse::<f64>()?, 0.6, 5);
-    assert_close_to_written_precision(rows[1][10].parse::<f64>()?, 120.0, 5);
+    assert_close_to_written_precision(rows[1][7].parse::<f64>()?, 0.6, 5);
+    assert_close_to_written_precision(rows[1][8].parse::<f64>()?, 120.0, 5);
+    assert_close_to_written_precision(rows[1][9].parse::<f64>()?, 135.0, 5);
+    assert_close_to_written_precision(rows[1][10].parse::<f64>()?, 0.6, 5);
     assert_close_to_written_precision(rows[1][11].parse::<f64>()?, 0.315, 5);
     assert_close_to_written_precision(rows[1][12].parse::<f64>()?, 0.315_f64.sqrt(), 5);
     assert_close(
@@ -1477,7 +1476,6 @@ fn restore_mean_by_size_summary_stats_derives_scaled_raw_and_derived_values() ->
         0.315_f64.sqrt() / 0.6_f64,
         1e-5,
     );
-    assert_close_to_written_precision(rows[1][14].parse::<f64>()?, 0.6, 5);
 
     Ok(())
 }
@@ -1554,7 +1552,7 @@ fn restore_mean_by_bed_average_handles_three_chromosomes_with_global_window_indi
     assert_eq!(
         text.lines().collect::<Vec<_>>(),
         vec![
-            "chromosome\tstart\tend\taverage_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\taverage_fragment_mass\tblacklisted_positions",
             "chr1\t20\t60\t1.5\t0",
             "chr2\t0\t40\t0.75\t0",
             "chr3\t50\t100\t0.75\t0",
@@ -1596,7 +1594,7 @@ fn restore_mean_by_bed_average_skips_chromosomes_without_windows_and_keeps_later
     assert_eq!(
         text.lines().collect::<Vec<_>>(),
         vec![
-            "chromosome\tstart\tend\taverage_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\taverage_fragment_mass\tblacklisted_positions",
             "chr2\t0\t40\t0.75\t0",
         ]
     );
@@ -1631,7 +1629,7 @@ fn restore_mean_by_size_total_handles_three_chromosomes() -> Result<()> {
     assert_eq!(
         text.lines().collect::<Vec<_>>(),
         vec![
-            "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\ttotal_fragment_mass\tblacklisted_positions",
             "chr1\t0\t200\t60\t0",
             "chr2\t0\t200\t60\t0",
             "chr3\t0\t200\t60\t0",
@@ -1651,7 +1649,7 @@ fn restore_mean_grouped_total_on_unique_bases_merges_same_group_overlaps_after_s
     // - Group `beta` intervals:
     //     [20, 50) and [40, 60)   -> merge to [20, 60) with 40 bp at 1.5
     //     [100,150) and [140,180) -> merge to [100,180) with 80 bp at 0.75
-    //   Unique union span = 120, total_coverage = 40*1.5 + 80*0.75 = 120
+    //   Unique union span = 120, total_fragment_mass = 40*1.5 + 80*0.75 = 120
     // - Group `gamma` stays a zero row on [0, 10)
     let bam = mixed_length_fragment_bam()?;
     let out_dir = TempDir::new()?;
@@ -1689,7 +1687,7 @@ fn restore_mean_grouped_total_on_unique_bases_merges_same_group_overlaps_after_s
                 "span_positions",
                 "blacklisted_positions",
                 "eligible_positions",
-                "total_coverage",
+                "total_fragment_mass",
             ],
             vec!["0", "120", "0", "120", "120"],
             vec!["1", "10", "0", "10", "0"],
@@ -1705,12 +1703,12 @@ fn restore_mean_grouped_summary_stats_on_unique_bases_writes_scaled_rows() -> Re
     //
     // Manual expectations for `beta` after merging same-group overlaps:
     // - eligible = nonzero = span = 120
-    // - coverage_sum = 120
-    // - coverage_sum_of_squares = 40*(1.5^2) + 80*(0.75^2) = 135
-    // - average_coverage = 120 / 120 = 1
-    // - variance_coverage = (135 / 120) - 1^2 = 0.125
-    // - sd_coverage = sqrt(0.125)
-    // - coefficient_of_variation_coverage = sqrt(0.125)
+    // - total_fragment_mass = 120
+    // - total_squared_fragment_mass = 40*(1.5^2) + 80*(0.75^2) = 135
+    // - average_fragment_mass = 120 / 120 = 1
+    // - variance_fragment_mass = (135 / 120) - 1^2 = 0.125
+    // - sd_fragment_mass = sqrt(0.125)
+    // - coefficient_of_variation_fragment_mass = sqrt(0.125)
     // - covered_fraction = 1
     let bam = mixed_length_fragment_bam()?;
     let out_dir = TempDir::new()?;
@@ -1742,15 +1740,31 @@ fn restore_mean_grouped_summary_stats_on_unique_bases_writes_scaled_rows() -> Re
     let text = read_zst_to_string(&result.final_out_path)?;
     let rows = parse_tsv(&text);
 
+    assert_eq!(
+        rows[0],
+        vec![
+            "group_idx",
+            "span_positions",
+            "blacklisted_positions",
+            "eligible_positions",
+            "nonzero_positions",
+            "covered_fraction",
+            "total_fragment_mass",
+            "total_squared_fragment_mass",
+            "average_fragment_mass",
+            "variance_fragment_mass",
+            "sd_fragment_mass",
+            "coefficient_of_variation_fragment_mass",
+        ]
+    );
     assert_eq!(rows[1][0..5], ["0", "120", "0", "120", "120"]);
-    assert_close_to_written_precision(rows[1][5].parse::<f64>()?, 120.0, 5);
-    assert_close_to_written_precision(rows[1][6].parse::<f64>()?, 135.0, 5);
-    assert_close_to_written_precision(rows[1][7].parse::<f64>()?, 1.0, 5);
-    assert_close_to_written_precision(rows[1][8].parse::<f64>()?, 120.0, 5);
+    assert_close_to_written_precision(rows[1][5].parse::<f64>()?, 1.0, 5);
+    assert_close_to_written_precision(rows[1][6].parse::<f64>()?, 120.0, 5);
+    assert_close_to_written_precision(rows[1][7].parse::<f64>()?, 135.0, 5);
+    assert_close_to_written_precision(rows[1][8].parse::<f64>()?, 1.0, 5);
     assert_close_to_written_precision(rows[1][9].parse::<f64>()?, 0.125, 5);
     assert_close_to_written_precision(rows[1][10].parse::<f64>()?, 0.125_f64.sqrt(), 5);
     assert_close_to_written_precision(rows[1][11].parse::<f64>()?, 0.125_f64.sqrt(), 5);
-    assert_close_to_written_precision(rows[1][12].parse::<f64>()?, 1.0, 5);
 
     assert_eq!(rows[2][0..5], ["1", "10", "0", "10", "0"]);
     assert_close_to_written_precision(rows[2][5].parse::<f64>()?, 0.0, 5);
@@ -1758,7 +1772,6 @@ fn restore_mean_grouped_summary_stats_on_unique_bases_writes_scaled_rows() -> Re
     assert_close_to_written_precision(rows[2][7].parse::<f64>()?, 0.0, 5);
     assert_close_to_written_precision(rows[2][8].parse::<f64>()?, 0.0, 5);
     assert!(rows[2][11].eq_ignore_ascii_case("NaN"));
-    assert_close_to_written_precision(rows[2][12].parse::<f64>()?, 0.0, 5);
 
     Ok(())
 }
@@ -1806,8 +1819,26 @@ fn restore_mean_grouped_plain_summary_stats_writes_scaled_rows() -> Result<()> {
     let result = run(&cfg)?;
     let output = read_zst_to_string(&result.final_out_path)?;
     let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+    let output_rows = parse_tsv(&output);
     let rows_by_name = grouped_rows_by_name(&output, &sidecar);
 
+    assert_eq!(
+        output_rows[0],
+        vec![
+            "group_idx",
+            "span_positions",
+            "blacklisted_positions",
+            "eligible_positions",
+            "nonzero_positions",
+            "covered_fraction",
+            "total_fragment_mass",
+            "total_squared_fragment_mass",
+            "average_fragment_mass",
+            "variance_fragment_mass",
+            "sd_fragment_mass",
+            "coefficient_of_variation_fragment_mass",
+        ]
+    );
     assert_eq!(
         rows_by_name["beta"][0..5]
             .iter()
@@ -1815,10 +1846,10 @@ fn restore_mean_grouped_plain_summary_stats_writes_scaled_rows() -> Result<()> {
             .collect::<Vec<_>>(),
         vec!["0", "90", "0", "90", "90"]
     );
-    assert_close_to_written_precision(rows_by_name["beta"][5].parse::<f64>()?, 90.0, 5);
-    assert_close_to_written_precision(rows_by_name["beta"][6].parse::<f64>()?, 101.25, 5);
-    assert_close_to_written_precision(rows_by_name["beta"][7].parse::<f64>()?, 1.0, 5);
-    assert_close_to_written_precision(rows_by_name["beta"][8].parse::<f64>()?, 90.0, 5);
+    assert_close_to_written_precision(rows_by_name["beta"][5].parse::<f64>()?, 1.0, 5);
+    assert_close_to_written_precision(rows_by_name["beta"][6].parse::<f64>()?, 90.0, 5);
+    assert_close_to_written_precision(rows_by_name["beta"][7].parse::<f64>()?, 101.25, 5);
+    assert_close_to_written_precision(rows_by_name["beta"][8].parse::<f64>()?, 1.0, 5);
     assert_close_to_written_precision(rows_by_name["beta"][9].parse::<f64>()?, 0.125, 5);
     assert_close(
         rows_by_name["beta"][10].parse::<f64>()?,
@@ -1830,7 +1861,6 @@ fn restore_mean_grouped_plain_summary_stats_writes_scaled_rows() -> Result<()> {
         0.125_f64.sqrt(),
         1e-5,
     );
-    assert_close_to_written_precision(rows_by_name["beta"][12].parse::<f64>()?, 1.0, 5);
 
     assert_eq!(
         rows_by_name["gamma"][0..5]
@@ -1846,7 +1876,6 @@ fn restore_mean_grouped_plain_summary_stats_writes_scaled_rows() -> Result<()> {
     assert_close_to_written_precision(rows_by_name["gamma"][9].parse::<f64>()?, 0.0, 5);
     assert_close_to_written_precision(rows_by_name["gamma"][10].parse::<f64>()?, 0.0, 5);
     assert!(rows_by_name["gamma"][11].eq_ignore_ascii_case("NaN"));
-    assert_close_to_written_precision(rows_by_name["gamma"][12].parse::<f64>()?, 0.0, 5);
 
     Ok(())
 }
@@ -2118,7 +2147,7 @@ fn restore_mean_by_bed_total_is_invariant_when_windows_cross_tile_boundaries() -
     }
 
     let expected = concat!(
-        "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions\n",
+        "chromosome\tstart\tend\ttotal_fragment_mass\tblacklisted_positions\n",
         "chr1\t0\t40\t30\t0\n",
         "chr1\t20\t80\t60\t0\n",
         "chr1\t120\t170\t37.5\t0\n",
@@ -2183,25 +2212,42 @@ fn restore_mean_by_bed_summary_stats_is_invariant_when_windows_cross_tiles() -> 
 
     assert_eq!(outputs[0], outputs[1]);
     let rows = parse_tsv(&outputs[0]);
+    assert_eq!(
+        rows[0],
+        vec![
+            "chromosome",
+            "start",
+            "end",
+            "span_positions",
+            "blacklisted_positions",
+            "eligible_positions",
+            "nonzero_positions",
+            "covered_fraction",
+            "total_fragment_mass",
+            "total_squared_fragment_mass",
+            "average_fragment_mass",
+            "variance_fragment_mass",
+            "sd_fragment_mass",
+            "coefficient_of_variation_fragment_mass",
+        ]
+    );
     assert_eq!(rows[1][0..7], ["chr1", "0", "80", "80", "0", "80", "40"]);
-    assert_close_to_written_precision(rows[1][7].parse::<f64>()?, 60.0, 5);
-    assert_close_to_written_precision(rows[1][8].parse::<f64>()?, 90.0, 5);
-    assert_close_to_written_precision(rows[1][9].parse::<f64>()?, 0.75, 5);
-    assert_close_to_written_precision(rows[1][10].parse::<f64>()?, 60.0, 5);
+    assert_close_to_written_precision(rows[1][7].parse::<f64>()?, 0.5, 5);
+    assert_close_to_written_precision(rows[1][8].parse::<f64>()?, 60.0, 5);
+    assert_close_to_written_precision(rows[1][9].parse::<f64>()?, 90.0, 5);
+    assert_close_to_written_precision(rows[1][10].parse::<f64>()?, 0.75, 5);
     assert_close_to_written_precision(rows[1][11].parse::<f64>()?, 0.5625, 5);
     assert_close_to_written_precision(rows[1][12].parse::<f64>()?, 0.75, 5);
     assert_close_to_written_precision(rows[1][13].parse::<f64>()?, 1.0, 5);
-    assert_close_to_written_precision(rows[1][14].parse::<f64>()?, 0.5, 5);
 
     assert_eq!(rows[2][0..7], ["chr1", "100", "180", "80", "0", "80", "80"]);
-    assert_close_to_written_precision(rows[2][7].parse::<f64>()?, 60.0, 5);
-    assert_close_to_written_precision(rows[2][8].parse::<f64>()?, 45.0, 5);
-    assert_close_to_written_precision(rows[2][9].parse::<f64>()?, 0.75, 5);
-    assert_close_to_written_precision(rows[2][10].parse::<f64>()?, 60.0, 5);
+    assert_close_to_written_precision(rows[2][7].parse::<f64>()?, 1.0, 5);
+    assert_close_to_written_precision(rows[2][8].parse::<f64>()?, 60.0, 5);
+    assert_close_to_written_precision(rows[2][9].parse::<f64>()?, 45.0, 5);
+    assert_close_to_written_precision(rows[2][10].parse::<f64>()?, 0.75, 5);
     assert_close_to_written_precision(rows[2][11].parse::<f64>()?, 0.0, 5);
     assert_close_to_written_precision(rows[2][12].parse::<f64>()?, 0.0, 5);
     assert_close_to_written_precision(rows[2][13].parse::<f64>()?, 0.0, 5);
-    assert_close_to_written_precision(rows[2][14].parse::<f64>()?, 1.0, 5);
 
     Ok(())
 }
@@ -2243,7 +2289,7 @@ fn restore_mean_by_bed_total_keeps_coordinate_sorted_output_when_same_start_wind
     assert_eq!(
         text.lines().collect::<Vec<_>>(),
         vec![
-            "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\ttotal_fragment_mass\tblacklisted_positions",
             "chr1\t0\t40\t30\t0",
             "chr1\t0\t100\t60\t0",
         ]
@@ -2260,7 +2306,7 @@ fn restore_mean_by_bed_total_halo_only_window_is_not_double_counted_across_tiles
     // - One 20 bp fragment spans [5, 25), so with restore-mean based on that one fragment the
     //   restored value is still 1 across the covered span.
     // - BED windows [5,10), [15,20), [20,25) each overlap 5 covered bases and must therefore
-    //   each report total_coverage = 5 exactly once.
+    //   each report total_fragment_mass = 5 exactly once.
     let bam = bam_from_fragments(
         "fcoverage_restore_mean_halo_only",
         vec![("chr1".to_string(), 40)],
@@ -2295,7 +2341,7 @@ fn restore_mean_by_bed_total_halo_only_window_is_not_double_counted_across_tiles
     assert_eq!(
         text.lines().collect::<Vec<_>>(),
         vec![
-            "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\ttotal_fragment_mass\tblacklisted_positions",
             "chr1\t5\t10\t5\t0",
             "chr1\t15\t20\t5\t0",
             "chr1\t20\t25\t5\t0",
@@ -2314,7 +2360,7 @@ fn restore_mean_grouped_bed_total_uses_site_weighted_group_semantics() -> Result
     //     [20, 50)  -> 30 * 1.5 = 45
     //     [100,160) -> 60 * 0.75 = 45
     //   span_positions = eligible_positions = 90
-    //   total_coverage = 90
+    //   total_fragment_mass = 90
     // - Group `alpha` = [20, 40) -> 20 * 1.5 = 30
     // - Group `gamma` = [0, 10) -> 0
     let bam = mixed_length_fragment_bam()?;
@@ -2424,7 +2470,7 @@ fn restore_mean_grouped_bed_ignores_groups_on_filtered_out_chromosomes() -> Resu
     // Manual expectations:
     // - We count only `chr1`.
     // - Only the 40 bp chr1 fragment is counted, so the observed mean normalization length is 40.
-    //   `alpha` on chr1 covers [0,100) and therefore gets total_coverage = 40.
+    //   `alpha` on chr1 covers [0,100) and therefore gets total_fragment_mass = 40.
     // - `beta` on chr2 must not appear because chr2 is filtered out.
     let bam = mixed_length_three_chromosome_bam()?;
     let out_dir = TempDir::new()?;
@@ -6721,25 +6767,23 @@ fn by_size_summary_stats_writes_expected_raw_and_derived_values() -> Result<()> 
             "blacklisted_positions",
             "eligible_positions",
             "nonzero_positions",
-            "coverage_sum",
-            "coverage_sum_of_squares",
-            "average_coverage",
+            "covered_fraction",
             "total_coverage",
+            "total_squared_coverage",
+            "average_coverage",
             "variance_coverage",
             "sd_coverage",
             "coefficient_of_variation_coverage",
-            "covered_fraction",
         ]
     );
     assert_eq!(rows[1][0..7], ["chr1", "0", "200", "200", "0", "200", "60"]);
-    assert_close(rows[1][7].parse::<f64>()?, 60.0, 1e-9);
+    assert_close(rows[1][7].parse::<f64>()?, 0.3, 1e-6);
     assert_close(rows[1][8].parse::<f64>()?, 60.0, 1e-9);
-    assert_close(rows[1][9].parse::<f64>()?, 0.3, 1e-6);
-    assert_close(rows[1][10].parse::<f64>()?, 60.0, 1e-9);
+    assert_close(rows[1][9].parse::<f64>()?, 60.0, 1e-9);
+    assert_close(rows[1][10].parse::<f64>()?, 0.3, 1e-6);
     assert_close(rows[1][11].parse::<f64>()?, 0.21, 1e-6);
     assert_close(rows[1][12].parse::<f64>()?, 0.21_f64.sqrt(), 1e-6);
     assert_close(rows[1][13].parse::<f64>()?, 0.21_f64.sqrt() / 0.3, 1e-6);
-    assert_close(rows[1][14].parse::<f64>()?, 0.3, 1e-6);
 
     Ok(())
 }
@@ -6816,36 +6860,33 @@ fn by_size_summary_stats_is_invariant_when_windows_cross_tile_boundaries() -> Re
             "blacklisted_positions",
             "eligible_positions",
             "nonzero_positions",
-            "coverage_sum",
-            "coverage_sum_of_squares",
-            "average_coverage",
+            "covered_fraction",
             "total_coverage",
+            "total_squared_coverage",
+            "average_coverage",
             "variance_coverage",
             "sd_coverage",
             "coefficient_of_variation_coverage",
-            "covered_fraction",
         ]
     );
 
     assert_eq!(rows[1][0..7], ["chr1", "0", "40", "40", "0", "40", "20"]);
-    assert_close(rows[1][7].parse::<f64>()?, 20.0, 1e-9);
+    assert_close(rows[1][7].parse::<f64>()?, 0.5, 1e-9);
     assert_close(rows[1][8].parse::<f64>()?, 20.0, 1e-9);
-    assert_close(rows[1][9].parse::<f64>()?, 0.5, 1e-9);
-    assert_close(rows[1][10].parse::<f64>()?, 20.0, 1e-9);
+    assert_close(rows[1][9].parse::<f64>()?, 20.0, 1e-9);
+    assert_close(rows[1][10].parse::<f64>()?, 0.5, 1e-9);
     assert_close(rows[1][11].parse::<f64>()?, 0.25, 1e-9);
     assert_close(rows[1][12].parse::<f64>()?, 0.5, 1e-9);
     assert_close(rows[1][13].parse::<f64>()?, 1.0, 1e-9);
-    assert_close(rows[1][14].parse::<f64>()?, 0.5, 1e-9);
 
     assert_eq!(rows[2][0..7], ["chr1", "40", "80", "40", "0", "40", "40"]);
-    assert_close(rows[2][7].parse::<f64>()?, 40.0, 1e-9);
+    assert_close(rows[2][7].parse::<f64>()?, 1.0, 1e-9);
     assert_close(rows[2][8].parse::<f64>()?, 40.0, 1e-9);
-    assert_close(rows[2][9].parse::<f64>()?, 1.0, 1e-9);
-    assert_close(rows[2][10].parse::<f64>()?, 40.0, 1e-9);
+    assert_close(rows[2][9].parse::<f64>()?, 40.0, 1e-9);
+    assert_close(rows[2][10].parse::<f64>()?, 1.0, 1e-9);
     assert_close(rows[2][11].parse::<f64>()?, 0.0, 1e-9);
     assert_close(rows[2][12].parse::<f64>()?, 0.0, 1e-9);
     assert_close(rows[2][13].parse::<f64>()?, 0.0, 1e-9);
-    assert_close(rows[2][14].parse::<f64>()?, 1.0, 1e-9);
 
     let expected_zero_windows = [("80", "120"), ("120", "160"), ("160", "200")];
     for (row, (start, end)) in rows[3..].iter().zip(expected_zero_windows) {
@@ -6863,7 +6904,6 @@ fn by_size_summary_stats_is_invariant_when_windows_cross_tile_boundaries() -> Re
         assert_close(row[11].parse::<f64>()?, 0.0, 1e-9);
         assert_close(row[12].parse::<f64>()?, 0.0, 1e-9);
         assert!(row[13].parse::<f64>()?.is_nan());
-        assert_close(row[14].parse::<f64>()?, 0.0, 1e-9);
     }
 
     Ok(())
@@ -6919,14 +6959,13 @@ fn by_bed_summary_stats_derives_variance_from_overlapping_fragments() -> Result<
 
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[1][0..7], ["chr1", "0", "100", "100", "0", "100", "60"]);
-    assert_close(rows[1][7].parse::<f64>()?, 100.0, 1e-9);
-    assert_close(rows[1][8].parse::<f64>()?, 180.0, 1e-9);
-    assert_close(rows[1][9].parse::<f64>()?, 1.0, 1e-9);
-    assert_close(rows[1][10].parse::<f64>()?, 100.0, 1e-9);
+    assert_close(rows[1][7].parse::<f64>()?, 0.6, 1e-9);
+    assert_close(rows[1][8].parse::<f64>()?, 100.0, 1e-9);
+    assert_close(rows[1][9].parse::<f64>()?, 180.0, 1e-9);
+    assert_close(rows[1][10].parse::<f64>()?, 1.0, 1e-9);
     assert_close(rows[1][11].parse::<f64>()?, 0.8, 1e-9);
     assert_close(rows[1][12].parse::<f64>()?, 0.8_f64.sqrt(), 1e-6);
     assert_close(rows[1][13].parse::<f64>()?, 0.8_f64.sqrt(), 1e-6);
-    assert_close(rows[1][14].parse::<f64>()?, 0.6, 1e-9);
 
     Ok(())
 }
@@ -7026,46 +7065,42 @@ fn by_bed_summary_stats_is_invariant_when_overlapping_windows_cross_tiles() -> R
             "blacklisted_positions",
             "eligible_positions",
             "nonzero_positions",
-            "coverage_sum",
-            "coverage_sum_of_squares",
-            "average_coverage",
+            "covered_fraction",
             "total_coverage",
+            "total_squared_coverage",
+            "average_coverage",
             "variance_coverage",
             "sd_coverage",
             "coefficient_of_variation_coverage",
-            "covered_fraction",
         ]
     );
 
     assert_eq!(rows[1][0..7], ["chr1", "0", "100", "100", "0", "100", "60"]);
-    assert_close(rows[1][7].parse::<f64>()?, 100.0, 1e-9);
-    assert_close(rows[1][8].parse::<f64>()?, 180.0, 1e-9);
-    assert_close(rows[1][9].parse::<f64>()?, 1.0, 1e-9);
-    assert_close(rows[1][10].parse::<f64>()?, 100.0, 1e-9);
+    assert_close(rows[1][7].parse::<f64>()?, 3.0 / 5.0, 1e-9);
+    assert_close(rows[1][8].parse::<f64>()?, 100.0, 1e-9);
+    assert_close(rows[1][9].parse::<f64>()?, 180.0, 1e-9);
+    assert_close(rows[1][10].parse::<f64>()?, 1.0, 1e-9);
     assert_close(rows[1][11].parse::<f64>()?, 4.0 / 5.0, 1e-9);
     assert_close(rows[1][12].parse::<f64>()?, (4.0_f64 / 5.0).sqrt(), 1e-6);
     assert_close(rows[1][13].parse::<f64>()?, (4.0_f64 / 5.0).sqrt(), 1e-6);
-    assert_close(rows[1][14].parse::<f64>()?, 3.0 / 5.0, 1e-9);
 
     assert_eq!(rows[2][0..7], ["chr1", "20", "80", "60", "0", "60", "60"]);
-    assert_close(rows[2][7].parse::<f64>()?, 100.0, 1e-9);
-    assert_close(rows[2][8].parse::<f64>()?, 180.0, 1e-9);
-    assert_close(rows[2][9].parse::<f64>()?, 5.0 / 3.0, 1e-6);
-    assert_close(rows[2][10].parse::<f64>()?, 100.0, 1e-9);
+    assert_close(rows[2][7].parse::<f64>()?, 1.0, 1e-9);
+    assert_close(rows[2][8].parse::<f64>()?, 100.0, 1e-9);
+    assert_close(rows[2][9].parse::<f64>()?, 180.0, 1e-9);
+    assert_close(rows[2][10].parse::<f64>()?, 5.0 / 3.0, 1e-6);
     assert_close(rows[2][11].parse::<f64>()?, 2.0 / 9.0, 1e-6);
     assert_close(rows[2][12].parse::<f64>()?, 2.0_f64.sqrt() / 3.0, 1e-6);
     assert_close(rows[2][13].parse::<f64>()?, 2.0_f64.sqrt() / 5.0, 1e-6);
-    assert_close(rows[2][14].parse::<f64>()?, 1.0, 1e-9);
 
     assert_eq!(rows[3][0..7], ["chr1", "30", "70", "40", "0", "40", "40"]);
-    assert_close(rows[3][7].parse::<f64>()?, 80.0, 1e-9);
-    assert_close(rows[3][8].parse::<f64>()?, 160.0, 1e-9);
-    assert_close(rows[3][9].parse::<f64>()?, 2.0, 1e-9);
-    assert_close(rows[3][10].parse::<f64>()?, 80.0, 1e-9);
+    assert_close(rows[3][7].parse::<f64>()?, 1.0, 1e-9);
+    assert_close(rows[3][8].parse::<f64>()?, 80.0, 1e-9);
+    assert_close(rows[3][9].parse::<f64>()?, 160.0, 1e-9);
+    assert_close(rows[3][10].parse::<f64>()?, 2.0, 1e-9);
     assert_close(rows[3][11].parse::<f64>()?, 0.0, 1e-9);
     assert_close(rows[3][12].parse::<f64>()?, 0.0, 1e-9);
     assert_close(rows[3][13].parse::<f64>()?, 0.0, 1e-9);
-    assert_close(rows[3][14].parse::<f64>()?, 1.0, 1e-9);
 
     Ok(())
 }
@@ -7180,14 +7215,13 @@ fn grouped_summary_stats_on_unique_bases_writes_expected_rows() -> Result<()> {
             "blacklisted_positions",
             "eligible_positions",
             "nonzero_positions",
-            "coverage_sum",
-            "coverage_sum_of_squares",
-            "average_coverage",
+            "covered_fraction",
             "total_coverage",
+            "total_squared_coverage",
+            "average_coverage",
             "variance_coverage",
             "sd_coverage",
             "coefficient_of_variation_coverage",
-            "covered_fraction",
         ]
     );
     assert_eq!(rows[1][0..5], ["0", "60", "0", "60", "60"]);

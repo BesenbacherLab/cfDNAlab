@@ -23,6 +23,8 @@ cfdna ref-gc-bias \
 
 ## Step 2. Build sample-specific GC correction
 
+Calculate the observed GC-bias for given sample and build the correction matrix:
+
 ```bash
 cfdna gc-bias --help
 
@@ -40,6 +42,8 @@ Use the same blacklist inputs as in step 1.
 
 ## Step 3. Apply correction in feature extraction commands
 
+When calling the feature extraction commands, pass the produced GC correction package via `--gc-file`. Note that the same BAM file should generally be used when calculating and correcting the GC-bias.
+
 ```bash
 cfdna fcoverage \
   --bam <sample>.bam \
@@ -48,11 +52,11 @@ cfdna fcoverage \
   --ref-2bit <path>/hg38.2bit
 ```
 
-The same pattern works for `lengths` and `midpoints`.
+The same pattern works for `lengths`, `ends`, and `midpoints`.
 
 ## Alternative: read GC weights from BAM aux tags
 
-If you prefer a different or custom GC-bias tool, the feature extraction commands also accept reading a GC weight from a BAM aux tag.
+If you prefer to use a different / custom GC-bias tool, the feature extraction commands can also read a GC weight from a BAM aux tag. Use `--gc-tag` and set the name of the aux tag to use.
 
 ```bash
 cfdna fcoverage \
