@@ -45,6 +45,40 @@ fn indexed_reader_fetches_records_from_http_bam_url() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn build_bam_bai_index_writes_explicit_bam_bai_sidecar() -> Result<()> {
+    let bam = crate::testing::single_contig_inward_pair_bam()?;
+    let temp_dir = TempDir::new()?;
+    let output_bam = temp_dir.path().join("indexed-output.bam");
+    fs::copy(bam.bam_path(), &output_bam).with_context(|| {
+        format!(
+            "copy fixture BAM {} to {}",
+            bam.bam_path().display(),
+            output_bam.display()
+        )
+    })?;
+
+    let output_bai = build_bam_bai_index(&output_bam)?;
+
+    // cfDNAlab writes BAM indexes next to generated BAMs using the standard `<name>.bam.bai`
+    // sidecar name. That exact filename matters because users and HTSlib both discover indexes by
+    // path convention when a command only receives the BAM path.
+    assert_eq!(output_bai, temp_dir.path().join("indexed-output.bam.bai"));
+
+    let mut reader = IndexedReader::from_path(&output_bam)?;
+    reader.fetch(("chr1", 0, 200))?;
+    let fetched_records = reader
+        .records()
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    assert_eq!(
+        fetched_records.len(),
+        2,
+        "the generated index should make the fixture's two records fetchable"
+    );
+
+    Ok(())
+}
+
 struct TemporaryCurrentDir {
     previous_dir: PathBuf,
     _temp_dir: TempDir,

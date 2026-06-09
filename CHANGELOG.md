@@ -12,6 +12,7 @@ This is the changelog for the main CLI tool. You can find the changelog for the 
  - Allows reading BAM files from URLs via the `curl` feature in `rust-htslib`. This adds `url` as dependency.
  - Updates `rust-htslib` dependency to `1.0.0` and reduces its feature set for fewer dependencies.
  - Enables `libdeflate-sys` for faster BAM reading.
+ - `bam-to-bam` and `frag-to-bam` writes `.bam.bai` index files alongside the BAM outputs.
  - Requires `bindgen >=0.69.5, <0.70` to remove issue with `0.69.4` when users don't install with lockfile.
  - Adds `--locked` to install commands in installation instructions.
 

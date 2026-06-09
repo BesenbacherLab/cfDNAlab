@@ -1,8 +1,10 @@
 use anyhow::{Context, Result, anyhow, bail};
 use fxhash::{FxHashMap, FxHashSet};
-use rust_htslib::bam::{IndexedReader, Read, Reader};
-use std::path::Path;
+use rust_htslib::bam::{self, IndexedReader, Read, Reader};
+use std::{ffi::OsString, path::Path, path::PathBuf};
 use url::Url;
+
+use crate::shared::thread_pool::default_thread_count;
 
 /// Create a BAM file reader for a given chromosome.
 ///
@@ -34,6 +36,48 @@ fn open_indexed_bam_reader(bam_path: &Path) -> Result<IndexedReader> {
         None => IndexedReader::from_path(bam_path)
             .with_context(|| format!("opening indexed BAM {}", bam_path.display())),
     }
+}
+
+pub(crate) fn bam_bai_path(bam_path: &Path) -> Result<PathBuf> {
+    let file_name = bam_path
+        .file_name()
+        .with_context(|| format!("BAM path has no file name: {}", bam_path.display()))?;
+    let mut index_file_name = OsString::from(file_name);
+    index_file_name.push(".bai");
+    Ok(bam_path.with_file_name(index_file_name))
+}
+
+pub(crate) fn build_bam_bai_index(bam_path: &Path) -> Result<PathBuf> {
+    let bai_path = bam_bai_path(bam_path)?;
+    let indexing_threads = u32::try_from(default_thread_count()).unwrap_or(u32::MAX);
+    // `samtools index sample.bam` conventionally creates `sample.bam.bai`. Passing the path
+    // explicitly keeps cfDNAlab's generated BAM outputs predictable instead of depending on HTSlib's
+    // default sidecar naming.
+    //
+    // These conversion commands do not expose their own thread count. Use the same default policy as
+    // the shared CLI thread option: leave one core free when possible, but always use at least one
+    // indexing thread.
+    bam::index::build(
+        bam_path,
+        Some(bai_path.as_path()),
+        bam::index::Type::Bai,
+        indexing_threads,
+    )
+    .with_context(|| {
+        format!(
+            "indexing BAM {} to {} with {} thread(s)",
+            bam_path.display(),
+            bai_path.display(),
+            indexing_threads
+        )
+    })?;
+    if !bai_path.exists() {
+        bail!(
+            "BAM index build completed but {} was not created",
+            bai_path.display()
+        );
+    }
+    Ok(bai_path)
 }
 
 fn bam_input_url(bam_path: &Path) -> Result<Option<Url>> {

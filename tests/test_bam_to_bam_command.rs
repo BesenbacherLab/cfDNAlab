@@ -2,7 +2,7 @@
 
 mod fixtures;
 
-use std::{collections::HashMap, fs, path::Path};
+use std::{collections::HashMap, fs, path::Path, path::PathBuf};
 
 use anyhow::{Context, Result};
 use cfdnalab::RunOptions;
@@ -87,6 +87,38 @@ fn filters_on_mapping_quality_and_fragment_membership() -> Result<()> {
         lengths.iter().all(|&len| len == 160),
         "Surviving reads must carry the fl AUX tag"
     );
+
+    Ok(())
+}
+
+#[test]
+fn writes_bam_index_and_reports_it_in_output_files() -> Result<()> {
+    // Arrange:
+    // The command writes a coordinate-sorted BAM, so the expected companion index is the standard
+    // `<output>.bam.bai` sidecar. The fetch below verifies that the sidecar is usable by HTSlib, not
+    // merely that a file with the right name exists.
+    let bam = single_contig_inward_pair_bam()?;
+    let work = tempdir()?;
+    let out_bam = work.path().join("indexed.bam");
+    let out_bai = expected_bam_bai_path(&out_bam);
+    let mut cfg = base_config(&bam.bam, &out_bam);
+    cfg.min_mapq = 0;
+    cfg.fragment_lengths_mut().min_fragment_length = 10;
+
+    // Act
+    let result = run_bam_to_bam_for_test(&cfg)?;
+
+    // Assert
+    assert_eq!(result.output_bam, out_bam);
+    assert_eq!(result.output_files, vec![out_bam.clone(), out_bai.clone()]);
+    assert!(out_bai.exists(), "Expected BAM index {}", out_bai.display());
+
+    let mut indexed_reader = bam::IndexedReader::from_path(&out_bam)?;
+    indexed_reader.fetch(("chr1", 0, 200))?;
+    let fetched_records = indexed_reader
+        .records()
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    assert_eq!(fetched_records.len(), 2);
 
     Ok(())
 }
@@ -1692,6 +1724,15 @@ fn base_config(in_bam: &Path, out_bam: &Path) -> BamToBamConfig {
         chromosomes_file: None,
     };
     BamToBamConfig::new(in_bam.to_path_buf(), out_bam.to_path_buf(), chrom_args)
+}
+
+fn expected_bam_bai_path(bam_path: &Path) -> PathBuf {
+    let mut file_name = bam_path
+        .file_name()
+        .expect("test BAM path should have a file name")
+        .to_os_string();
+    file_name.push(".bai");
+    bam_path.with_file_name(file_name)
 }
 
 fn orphan_read(pos: i64) -> ReadSpec {
