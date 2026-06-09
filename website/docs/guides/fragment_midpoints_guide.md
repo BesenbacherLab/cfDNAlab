@@ -1,6 +1,6 @@
 # Extract Fragment Midpoint Profiles
 
-Multiple studies have profiled midpoint coverage around e.g. transcription factor binding sites (summed per transcription factor, per position) [REFS]. This can inform about the binding activity of different transcription factors related to cancer.
+Multiple studies have profiled midpoint coverage around e.g. transcription factor binding sites (summed per transcription factor, per position) (Doebley et al., 2022). This can inform about the binding activity of different transcription factors related to cancer.
 
 ## Base command
 
@@ -104,3 +104,7 @@ df <- midpoint_data_frame(
   with_lengths = 167
 )
 ```
+
+## References
+
+- Doebley et al. A framework for clinical cancer subtyping from nucleosome profiling of cell-free DNA. Nat Commun 13, 7475 (2022). <https://doi.org/10.1038/s41467-022-35076-w>

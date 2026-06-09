@@ -75,7 +75,7 @@ cfdna fcoverage \
 
 ## Genomic smoothing example
 
-When you're interested in local, relative coverage changes instead of large-scale changes from CNVs etc., you can use genomic smoothing to weight contributions more similarly across genomic regions. In some analyses, this can be thought of as a copy-number normalization.
+When you're interested in local, relative coverage changes instead of large-scale changes from CNVs etc., you can use genomic smoothing to weight contributions more similarly across genomic regions. In some analyses, this can be thought of as a copy-number normalization. See more in the [genomic smoothing guide](./genomic_smoothing_guide.md).
 
 When calling `cfdna fcoverage` **WITHOUT** `--normalize-by-length` (this is the default), we suggest using the `cfdna coverage-weights` command for calculating scaling factors, as it has the same fragment-length-weighting.
 
@@ -88,6 +88,7 @@ cfdna fcoverage \
   --output-prefix <sample_id> \
   --n-threads 12 \
   --blacklist <path>/hg38-blacklist.v2.bed \
+  # Precomputed scaling factors
   --scaling-factors <sample_directory>/coverage_weights/<sample_id>.coverage.scaling_factors.tsv
 ```
 
@@ -104,8 +105,10 @@ cfdna fcoverage \
   --output-prefix <sample_id> \
   --n-threads 12 \
   --blacklist <path>/hg38-blacklist.v2.bed \
+  # Precomputed GC correction file and reference genome
   --gc-file <sample_directory>/gc_bias/gc_bias_correction.zarr \
   --ref-2bit <path>/hg38.2bit \
+  # Precomputed scaling factors
   --scaling-factors <sample_directory>/gc_corrected_coverage_weights/<sample_id>.coverage.scaling_factors.tsv
 ```
 

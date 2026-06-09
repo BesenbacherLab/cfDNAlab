@@ -5,7 +5,8 @@ use super::{
     write_summary_stats_row, write_windowed_runs,
 };
 use crate::commands::fcoverage::{
-    config::COVERAGE_SIGNAL_LABEL, reducer::TileAggregateTempFiles,
+    config::{COVERAGE_SIGNAL_LABEL, FRAGMENT_MASS_SIGNAL_LABEL},
+    reducer::TileAggregateTempFiles,
     window_results::CoverageWindowAction,
 };
 use crate::shared::base::{ZEROISH_F32_TOLERANCE, ZEROISH_F64_TOLERANCE};
@@ -133,6 +134,52 @@ fn grouped_writer_folds_explicit_segment_tile_outputs_into_group_rows() -> Resul
 }
 
 #[test]
+fn grouped_writer_uses_fragment_mass_header_when_length_normalized() -> Result<()> {
+    // Arrange
+    let temp_dir = TempDir::new()?;
+    let out_dir = TempDir::new()?;
+    let partials_path = temp_dir.path().join("group_segment_rows");
+    write_text(&partials_path, "0\t4\t10\t0\n1\t6\t10\t0\n")?;
+
+    let mut tile_outputs_by_chr = FxHashMap::default();
+    tile_outputs_by_chr.insert(
+        "chr1".to_string(),
+        vec![TileAggregateTempFiles {
+            tile_index: 0,
+            partials_path,
+            cross_index_path: None,
+        }],
+    );
+    let grouped_layout = grouped_layout_for_writer_tests()?;
+    let final_path = out_dir.path().join("grouped_total_fragment_mass.tsv.zst");
+
+    // Act
+    write_grouped_bed_aggregate_output(
+        &final_path,
+        &tile_outputs_by_chr,
+        &grouped_layout,
+        &["chr1".to_string()],
+        CoverageWindowAction::Total,
+        0,
+        1,
+        FRAGMENT_MASS_SIGNAL_LABEL,
+        None,
+    )?;
+    let text = read_text(&final_path)?;
+
+    // Assert
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        vec![
+            "group_idx\tspan_positions\tblacklisted_positions\teligible_positions\ttotal_fragment_mass",
+            "5\t20\t0\t20\t10",
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
 fn grouped_summary_writer_folds_explicit_raw_moments_before_deriving_stats() -> Result<()> {
     // Arrange
     // Summary grouped output must carry raw moments through segment reduction and group folding
@@ -207,6 +254,68 @@ fn grouped_summary_writer_folds_explicit_raw_moments_before_deriving_stats() -> 
     assert_eq!(rows[1][7], "14");
     assert_eq!(rows[1][8], "0.5");
     assert_eq!(rows[1][9], "0.45");
+
+    Ok(())
+}
+
+#[test]
+fn grouped_summary_writer_uses_fragment_mass_headers_when_length_normalized() -> Result<()> {
+    // Arrange
+    let temp_dir = TempDir::new()?;
+    let out_dir = TempDir::new()?;
+    let partials_path = temp_dir.path().join("group_segment_summary_rows");
+    write_text(&partials_path, "0\t4\t10\t0\t3\t4\n1\t6\t10\t0\t5\t10\n")?;
+
+    let mut tile_outputs_by_chr = FxHashMap::default();
+    tile_outputs_by_chr.insert(
+        "chr1".to_string(),
+        vec![TileAggregateTempFiles {
+            tile_index: 0,
+            partials_path,
+            cross_index_path: None,
+        }],
+    );
+    let grouped_layout = grouped_layout_for_writer_tests()?;
+    let final_path = out_dir.path().join("grouped_summary_fragment_mass.tsv.zst");
+
+    // Act
+    write_grouped_bed_aggregate_output(
+        &final_path,
+        &tile_outputs_by_chr,
+        &grouped_layout,
+        &["chr1".to_string()],
+        CoverageWindowAction::SummaryStats,
+        6,
+        1,
+        FRAGMENT_MASS_SIGNAL_LABEL,
+        None,
+    )?;
+    let text = read_text(&final_path)?;
+    let rows: Vec<Vec<_>> = text
+        .lines()
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .collect();
+
+    // Assert
+    assert_eq!(
+        rows[0],
+        vec![
+            "group_idx",
+            "span_positions",
+            "blacklisted_positions",
+            "eligible_positions",
+            "nonzero_positions",
+            "covered_fraction",
+            "total_fragment_mass",
+            "total_squared_fragment_mass",
+            "average_fragment_mass",
+            "variance_fragment_mass",
+            "sd_fragment_mass",
+            "coefficient_of_variation_fragment_mass",
+        ]
+    );
+    assert_eq!(rows[1][0..5], ["5", "20", "0", "20", "8"]);
+    assert_eq!(rows[1][6], "10");
 
     Ok(())
 }
@@ -440,10 +549,12 @@ fn write_summary_stats_row_marks_extreme_finite_cv_as_greater_than_one_e6() {
     )
     .expect("summary row should format");
     let rendered = String::from_utf8(out).expect("summary row should stay valid UTF-8");
+    let rendered_fields = rendered.trim_end().split('\t').collect::<Vec<_>>();
 
     // Assert
-    assert!(
-        rendered.contains("\t>1e6\t"),
+    assert_eq!(
+        rendered_fields.last().copied(),
+        Some(">1e6"),
         "expected CV field to render as >1e6, got: {rendered}"
     );
 }
