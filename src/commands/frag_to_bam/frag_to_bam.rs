@@ -5,6 +5,7 @@ use crate::{
         frag_to_bam::config::FragToBamConfig,
     },
     shared::{
+        bam::{bam_bai_path, build_bam_bai_index},
         blacklist::is_blacklisted,
         cli_output,
         constants::{
@@ -49,15 +50,15 @@ pub struct FragToBamCounters {
 
 /// Result from `frag-to-bam`.
 ///
-/// The command writes one BAM file reconstructed from a fragment table. The result reports the
-/// parsed-line counters and final output path.
+/// The command writes one BAM file reconstructed from a fragment table plus its `.bam.bai` index.
+/// The result reports the parsed-line counters and final output paths.
 #[derive(Debug)]
 pub struct FragToBamRunResult {
     /// Line parsing, filtering, and writing counters collected during the run.
     pub counters: FragToBamCounters,
     /// Final BAM path written by the command.
     pub output_bam: PathBuf,
-    /// Final output files produced by the command.
+    /// Final output files produced by the command: the BAM followed by its `.bam.bai` index.
     pub output_files: Vec<PathBuf>,
 }
 
@@ -169,7 +170,7 @@ pub fn run_frag_to_bam(opt: &FragToBamConfig, options: RunOptions) -> Result<Fra
     Ok(FragToBamRunResult {
         counters,
         output_bam: output_path.clone(),
-        output_files: vec![output_path],
+        output_files: vec![output_path.clone(), bam_bai_path(&output_path)?],
     })
 }
 
@@ -432,7 +433,12 @@ fn execute_frag_to_bam(opt: &FragToBamConfig) -> Result<(FragToBamCounters, Path
     }
     drop(writer);
 
+    // HTSlib can only index a complete BAM. Build the BAI while both artifacts are still in the
+    // command temp directory, then move the BAM and BAI into place together through `FinalOutputFiles`.
+    let temp_bai_path = build_bam_bai_index(&temp_output_path)?;
+    let output_bai_path = bam_bai_path(&output_path)?;
     final_outputs.record(temp_output_path, output_path.clone())?;
+    final_outputs.record(temp_bai_path, output_bai_path)?;
     final_outputs.move_into_place()?;
 
     temp_dir_guard

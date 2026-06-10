@@ -83,7 +83,7 @@ fn load_stride_bins_from_fcoverage_tsv_reads_contiguous_bins_from_zstd() -> Resu
 }
 
 #[test]
-fn load_stride_bins_from_fcoverage_tsv_marks_fully_blacklisted_rows_as_nan() -> Result<()> {
+fn load_stride_bins_from_fragment_mass_tsv_marks_fully_blacklisted_rows_as_nan() -> Result<()> {
     // Arrange:
     // Total outputs from fcoverage use raw sums, so a fully blacklisted stride can appear as
     // finite zero even though it has no eligible denominator. The loader must convert that row
@@ -93,7 +93,7 @@ fn load_stride_bins_from_fcoverage_tsv_marks_fully_blacklisted_rows_as_nan() -> 
         &tempdir,
         "coverage.total.tsv",
         &[
-            "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\ttotal_fragment_mass\tblacklisted_positions",
             "chr1\t0\t10\t0\t10",
             "chr1\t10\t20\t5\t0",
         ],
@@ -103,7 +103,7 @@ fn load_stride_bins_from_fcoverage_tsv_marks_fully_blacklisted_rows_as_nan() -> 
     let bins_by_chr = load_stride_bins_from_fcoverage_tsv(
         &make_run_result(path),
         &["chr1".to_string()],
-        "total_coverage",
+        "total_fragment_mass",
         10,
     )?;
 
@@ -227,6 +227,18 @@ fn load_stride_bins_from_fcoverage_tsv_reads_requested_value_column() -> Result<
     assert_eq!(chr1_bins[0].stride_value, 12.5);
     assert_eq!(chr1_bins[1].stride_value, 25.0);
     Ok(())
+}
+
+#[test]
+fn scaling_weights_command_uses_current_fcoverage_value_headers() {
+    assert_eq!(
+        ScalingWeightsCommand::Coverage.fcoverage_value_header(),
+        "average_coverage"
+    );
+    assert_eq!(
+        ScalingWeightsCommand::FragmentCount.fcoverage_value_header(),
+        "total_fragment_mass"
+    );
 }
 
 #[test]

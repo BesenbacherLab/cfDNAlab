@@ -28,7 +28,7 @@ use std::path::PathBuf;
 ///
 /// The BAM header contains all contigs from `--chrom-sizes` in the `--chrom-sizes` order.
 ///
-/// The BAM file is not indexed. This can be done with `samtools index`.
+/// A BAI index is written next to the BAM as `<output>.bam.bai`.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Clone)]
 pub struct FragToBamConfig {

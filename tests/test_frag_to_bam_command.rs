@@ -206,6 +206,10 @@ fn output_bam_path(output_dir: &Path, prefix: &str) -> PathBuf {
     output_dir.join(format!("{prefix}.fragments.bam"))
 }
 
+fn output_bai_path(output_dir: &Path, prefix: &str) -> PathBuf {
+    output_dir.join(format!("{prefix}.fragments.bam.bai"))
+}
+
 fn build_bai_for_test_bam(bam_path: &Path) -> Result<PathBuf> {
     let bai_path = bam_path.with_extension("bam.bai");
     bam::index::build(bam_path, None, bam::index::Type::Bai, 1)
@@ -478,6 +482,53 @@ fn given_valid_frag_when_run_then_writes_expected_unpaired_bam_records() -> Resu
     assert_eq!(rows.len(), 2);
     assert_unpaired_full_match_record(&rows[0], "chr2", 5, 15, 30, '-', "fragment_1");
     assert_unpaired_full_match_record(&rows[1], "chr1", 10, 20, 60, '+', "fragment_2");
+
+    Ok(())
+}
+
+#[test]
+fn given_valid_frag_when_run_then_writes_bam_index_and_reports_it() -> Result<()> {
+    // Arrange:
+    // `frag-to-bam` validates that input fragments are coordinate-ordered, writes a coordinate-sorted
+    // BAM, and should therefore leave the BAM immediately usable through HTSlib's indexed reader.
+    let input_dir = TempDir::new()?;
+    let output_dir = TempDir::new()?;
+    let frag_path = input_dir.path().join("input.frag.tsv");
+    let chrom_sizes_path = input_dir.path().join("chrom.sizes");
+
+    write_frag_file(&frag_path, &["chr1\t20\t80\t60\t+"])?;
+    write_chrom_sizes(&chrom_sizes_path, &[("chr1", 200)])?;
+
+    let config = make_config(
+        frag_path,
+        output_dir.path().to_path_buf(),
+        chrom_sizes_path,
+        base_chromosomes(&["chr1"]),
+    );
+    let output_bam = output_bam_path(output_dir.path(), "restored");
+    let output_bai = output_bai_path(output_dir.path(), "restored");
+
+    // Act
+    let result = run_frag_to_bam_command(&config, RunOptions::new_quiet())?;
+
+    // Assert
+    assert_eq!(result.output_bam, output_bam);
+    assert_eq!(
+        result.output_files,
+        vec![output_bam.clone(), output_bai.clone()]
+    );
+    assert!(
+        output_bai.exists(),
+        "Expected BAM index {}",
+        output_bai.display()
+    );
+
+    let mut indexed_reader = bam::IndexedReader::from_path(&output_bam)?;
+    indexed_reader.fetch(("chr1", 0, 100))?;
+    let fetched_records = indexed_reader
+        .records()
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    assert_eq!(fetched_records.len(), 1);
 
     Ok(())
 }

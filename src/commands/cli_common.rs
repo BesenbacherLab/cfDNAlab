@@ -6,6 +6,7 @@ use crate::shared::interval::Interval;
 use crate::shared::positioning::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
 use crate::shared::reference::{load_chrom_sizes_with_order, twobit_contig_names};
 use crate::shared::scale_genome::load_scaling_factors_tsv;
+use crate::shared::thread_pool::default_thread_count;
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::FxHashMap;
 use std::{path::Path, path::PathBuf, str::FromStr};
@@ -100,11 +101,13 @@ pub fn validate_output_prefix(prefix: &str) -> Result<()> {
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone)]
 pub struct IOCArgs {
-    /// Indexed, coordinate-sorted BAM input file `[path]`
+    /// Indexed, coordinate-sorted BAM input file `[path / URL]`
     ///
     /// Can be either **paired-end** or **unpaired** (set `--reads-are-fragments`).
     /// Unpaired assumes the reads span their fragments exactly
     /// (so read size is fragment size).
+    ///
+    /// Also accepts `http://`, `https://`, and `ftp://` URLs.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -135,7 +138,7 @@ pub struct IOCArgs {
     /// Defaults to the number of available CPU cores (-1).
     #[cfg_attr(
         feature = "cli",
-        clap(short = 't', long, default_value_t = (num_cpus::get()-1).max(1), help_heading = "Core")
+        clap(short = 't', long, default_value_t = default_thread_count(), help_heading = "Core")
     )]
     pub n_threads: usize,
 }

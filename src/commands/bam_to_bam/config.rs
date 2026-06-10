@@ -12,7 +12,8 @@ use std::path::PathBuf;
 /// them directly to a given BAM file. Filter which reads/fragments to write and add correction
 /// weights as AUX tags on the reads. The new BAM file is coordinate-sorted.
 ///
-/// The output BAM keeps the input BAM header and chromosome order.
+/// The output BAM keeps the input BAM header and chromosome order. A BAI
+/// index is written next to the BAM as `<output>.bam.bai`.
 ///
 /// **NOTE**: This is **not** needed for running other `cfDNAlab` tools.
 /// Those tools will **not** automatically use the correction tags.

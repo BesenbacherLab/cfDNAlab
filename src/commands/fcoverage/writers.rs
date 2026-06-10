@@ -77,25 +77,24 @@ fn fold_reduced_segment_into_group(
     Ok(())
 }
 
-/// Exact raw and derived summary statistics for one final output row.
+/// Summary statistics for one final output row.
 ///
-/// The struct keeps both layers together on purpose:
-/// - exact additive raw fields, which are needed for grouped folding and auditing
-/// - final derived values, which are needed for TSV output
+/// Reducers and grouped folding keep internal raw fields named for their additive role, such as
+/// `coverage_sum`. This final row uses the public TSV names instead, so the writer cannot
+/// accidentally expose both an internal raw name and a user-facing alias for the same value.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SummaryStatsRow {
     pub(crate) span_positions: u64,
     pub(crate) blacklisted_positions: u64,
     pub(crate) eligible_positions: u64,
     pub(crate) nonzero_positions: u64,
-    pub(crate) coverage_sum: f64,
-    pub(crate) coverage_sum_of_squares: f64,
-    pub(crate) average_coverage: f64,
+    pub(crate) covered_fraction: f64,
     pub(crate) total_coverage: f64,
+    pub(crate) total_squared_coverage: f64,
+    pub(crate) average_coverage: f64,
     pub(crate) variance_coverage: f64,
     pub(crate) sd_coverage: f64,
     pub(crate) coefficient_of_variation_coverage: f64,
-    pub(crate) covered_fraction: f64,
 }
 
 /// Formatter for the CV column only.
@@ -153,33 +152,30 @@ pub(crate) fn derive_summary_stats(
     blacklisted_positions: u64,
     eligible_positions: u64,
     nonzero_positions: u64,
-    coverage_sum: f64,
-    coverage_sum_of_squares: f64,
+    total_coverage: f64,
+    total_squared_coverage: f64,
 ) -> Result<SummaryStatsRow> {
-    let total_coverage = coverage_sum;
-
     if eligible_positions == 0 {
         return Ok(SummaryStatsRow {
             span_positions,
             blacklisted_positions,
             eligible_positions,
             nonzero_positions,
-            coverage_sum: total_coverage,
-            coverage_sum_of_squares,
-            average_coverage: f64::NAN,
+            covered_fraction: f64::NAN,
             total_coverage,
+            total_squared_coverage,
+            average_coverage: f64::NAN,
             variance_coverage: f64::NAN,
             sd_coverage: f64::NAN,
             coefficient_of_variation_coverage: f64::NAN,
-            covered_fraction: f64::NAN,
         });
     }
 
     let eligible_positions_f64 = eligible_positions as f64;
-    let average_coverage = coverage_sum / eligible_positions_f64;
+    let average_coverage = total_coverage / eligible_positions_f64;
     let variance_coverage = derive_nonnegative_variance_coverage(
         eligible_positions,
-        coverage_sum_of_squares,
+        total_squared_coverage,
         average_coverage,
     )?;
     let sd_coverage = variance_coverage.sqrt();
@@ -192,14 +188,13 @@ pub(crate) fn derive_summary_stats(
         blacklisted_positions,
         eligible_positions,
         nonzero_positions,
-        coverage_sum,
-        coverage_sum_of_squares,
-        average_coverage,
+        covered_fraction,
         total_coverage,
+        total_squared_coverage,
+        average_coverage,
         variance_coverage,
         sd_coverage,
         coefficient_of_variation_coverage,
-        covered_fraction,
     })
 }
 
@@ -239,11 +234,11 @@ fn derive_coefficient_of_variation_coverage(average_coverage: f64, sd_coverage: 
 /// producing `NaN` in the output.
 fn derive_nonnegative_variance_coverage(
     eligible_positions: u64,
-    coverage_sum_of_squares: f64,
+    total_squared_coverage: f64,
     average_coverage: f64,
 ) -> Result<f64> {
     let eligible_positions_f64 = eligible_positions as f64;
-    let raw_variance = coverage_sum_of_squares / eligible_positions_f64 - average_coverage.powi(2);
+    let raw_variance = total_squared_coverage / eligible_positions_f64 - average_coverage.powi(2);
 
     if raw_variance.is_finite() && raw_variance < 0.0 {
         // Tiny negative variance is a known cancellation artifact from `E[x^2] - E[x]^2`
@@ -254,11 +249,11 @@ fn derive_nonnegative_variance_coverage(
         }
 
         bail!(
-            "derived a negative variance_coverage {} below the allowed cancellation tolerance {}. eligible_positions={}, coverage_sum_of_squares={}, average_coverage={}",
+            "derived a negative variance_coverage {} below the allowed cancellation tolerance {}. eligible_positions={}, total_squared_coverage={}, average_coverage={}",
             raw_variance,
             ZEROISH_F32_TOLERANCE,
             eligible_positions,
-            coverage_sum_of_squares,
+            total_squared_coverage,
             average_coverage,
         );
     }
@@ -278,25 +273,25 @@ fn write_summary_stats_fields<W: Write>(
 ) -> Result<()> {
     write!(
         w,
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         stats.span_positions,
         stats.blacklisted_positions,
         stats.eligible_positions,
         stats.nonzero_positions,
         CompactNumber {
-            v: stats.coverage_sum,
-            decimals
-        },
-        CompactNumber {
-            v: stats.coverage_sum_of_squares,
-            decimals
-        },
-        CompactNumber {
-            v: stats.average_coverage,
+            v: stats.covered_fraction,
             decimals
         },
         CompactNumber {
             v: stats.total_coverage,
+            decimals
+        },
+        CompactNumber {
+            v: stats.total_squared_coverage,
+            decimals
+        },
+        CompactNumber {
+            v: stats.average_coverage,
             decimals
         },
         CompactNumber {
@@ -310,10 +305,6 @@ fn write_summary_stats_fields<W: Write>(
         CoverageCoefficientOfVariation {
             value: stats.coefficient_of_variation_coverage,
             decimals,
-        },
-        CompactNumber {
-            v: stats.covered_fraction,
-            decimals
         },
     )?;
     Ok(())
@@ -454,12 +445,14 @@ pub(crate) fn write_grouped_summary_stats_row<W: Write>(
     Ok(())
 }
 
-fn aggregate_value_header(action: CoverageWindowAction) -> &'static str {
+fn aggregate_value_header(action: CoverageWindowAction, signal_label: &str) -> String {
     match action {
         CoverageWindowAction::Average | CoverageWindowAction::AverageOnUniqueBases => {
-            "average_coverage"
+            format!("average_{signal_label}")
         }
-        CoverageWindowAction::Total | CoverageWindowAction::TotalOnUniqueBases => "total_coverage",
+        CoverageWindowAction::Total | CoverageWindowAction::TotalOnUniqueBases => {
+            format!("total_{signal_label}")
+        }
         CoverageWindowAction::SummaryStats | CoverageWindowAction::SummaryStatsOnUniqueBases => {
             unreachable!("summary-stats uses a dedicated header")
         }
@@ -470,12 +463,16 @@ fn aggregate_value_header(action: CoverageWindowAction) -> &'static str {
     }
 }
 
-pub(crate) fn summary_stats_header() -> &'static str {
-    "chromosome\tstart\tend\tspan_positions\tblacklisted_positions\teligible_positions\tnonzero_positions\tcoverage_sum\tcoverage_sum_of_squares\taverage_coverage\ttotal_coverage\tvariance_coverage\tsd_coverage\tcoefficient_of_variation_coverage\tcovered_fraction"
+pub(crate) fn summary_stats_header(signal_label: &str) -> String {
+    format!(
+        "chromosome\tstart\tend\tspan_positions\tblacklisted_positions\teligible_positions\tnonzero_positions\tcovered_fraction\ttotal_{signal_label}\ttotal_squared_{signal_label}\taverage_{signal_label}\tvariance_{signal_label}\tsd_{signal_label}\tcoefficient_of_variation_{signal_label}"
+    )
 }
 
-fn grouped_summary_stats_header() -> &'static str {
-    "group_idx\tspan_positions\tblacklisted_positions\teligible_positions\tnonzero_positions\tcoverage_sum\tcoverage_sum_of_squares\taverage_coverage\ttotal_coverage\tvariance_coverage\tsd_coverage\tcoefficient_of_variation_coverage\tcovered_fraction"
+fn grouped_summary_stats_header(signal_label: &str) -> String {
+    format!(
+        "group_idx\tspan_positions\tblacklisted_positions\teligible_positions\tnonzero_positions\tcovered_fraction\ttotal_{signal_label}\ttotal_squared_{signal_label}\taverage_{signal_label}\tvariance_{signal_label}\tsd_{signal_label}\tcoefficient_of_variation_{signal_label}"
+    )
 }
 
 /// Convert one grouped raw accumulator into the final non-summary reported value.
@@ -561,6 +558,8 @@ fn aggregate_tile_outputs_for_chromosome<'a>(
 ///     Decimal precision used in the final output.
 /// - `n_threads`:
 ///     Compression worker count for the output writer.
+/// - `signal_label`:
+///     Public signal name used inside aggregate value column names.
 /// - `restore_mean_multiplier`:
 ///     Optional late multiplier applied to raw coverage sums before finalization.
 pub(crate) fn write_bed_aggregate_output(
@@ -572,12 +571,13 @@ pub(crate) fn write_bed_aggregate_output(
     action: CoverageWindowAction,
     decimals: i32,
     n_threads: usize,
+    signal_label: &str,
     restore_mean_multiplier: Option<f64>,
 ) -> Result<()> {
     let mut writer = open_zstd_auto_writer(final_path, 3, Some(n_threads as u32))?;
     if action.is_summary_stats() {
         // Summary-stats derives final columns from exact reduced sums and moments.
-        writeln!(writer, "{}", summary_stats_header())?;
+        writeln!(writer, "{}", summary_stats_header(signal_label))?;
         for chromosome in chromosomes {
             let Some(windows_for_chr) = windows_by_chr.get(chromosome) else {
                 continue;
@@ -607,7 +607,7 @@ pub(crate) fn write_bed_aggregate_output(
         writeln!(
             writer,
             "chromosome\tstart\tend\t{}\tblacklisted_positions",
-            aggregate_value_header(action)
+            aggregate_value_header(action, signal_label)
         )?;
         for chromosome in chromosomes {
             let Some(windows_for_chr) = windows_by_chr.get(chromosome) else {
@@ -654,6 +654,9 @@ pub(crate) fn write_bed_aggregate_output(
 /// Basic and summary reducers share the same fold because basic partial rows are expanded into the
 /// same in-memory accumulator shape with summary-only fields set to zero. Summary-stats derives
 /// final statistics after all segments in a group have been folded.
+///
+/// `signal_label` only changes final public column names. The grouped reducer still folds the same
+/// internal additive values.
 pub(crate) fn write_grouped_bed_aggregate_output(
     final_path: &Path,
     tile_outputs_by_chr: &FxHashMap<String, Vec<TileAggregateTempFiles>>,
@@ -662,6 +665,7 @@ pub(crate) fn write_grouped_bed_aggregate_output(
     action: CoverageWindowAction,
     decimals: i32,
     n_threads: usize,
+    signal_label: &str,
     restore_mean_multiplier: Option<f64>,
 ) -> Result<()> {
     // Start each group with the span declared by the grouped layout. Segment rows fill in only the
@@ -731,7 +735,7 @@ pub(crate) fn write_grouped_bed_aggregate_output(
 
     let mut writer = open_zstd_auto_writer(final_path, 3, Some(n_threads as u32))?;
     if action.is_summary_stats() {
-        writeln!(writer, "{}", grouped_summary_stats_header())?;
+        writeln!(writer, "{}", grouped_summary_stats_header(signal_label))?;
         for group_idx in sorted_group_indices {
             // Groups without segment contributions still write one row. Their span was seeded
             // from the layout above, while coverage-derived fields remain zero.
@@ -750,7 +754,7 @@ pub(crate) fn write_grouped_bed_aggregate_output(
         writeln!(
             writer,
             "group_idx\tspan_positions\tblacklisted_positions\teligible_positions\t{}",
-            aggregate_value_header(action)
+            aggregate_value_header(action, signal_label)
         )?;
         for group_idx in sorted_group_indices {
             let accum = grouped_accums.get(&group_idx).copied().unwrap_or_default();
@@ -785,6 +789,9 @@ pub(crate) fn write_grouped_bed_aggregate_output(
 ///
 /// Summary-stats derives mean, nonzero, and dispersion columns only after exact raw rows have been
 /// reduced. Non-summary outputs finalize `average` or `total` from the reduced raw sums.
+///
+/// `signal_label` only changes final public column names. The fixed-size reducers still use the
+/// same internal additive values for coverage and length-normalized fragment mass.
 pub(crate) fn write_size_aggregate_output(
     final_path: &Path,
     tile_outputs_by_chr: &FxHashMap<String, Vec<TileAggregateTempFiles>>,
@@ -796,6 +803,7 @@ pub(crate) fn write_size_aggregate_output(
     decimals: i32,
     n_threads: usize,
     tile_and_window_boundaries_align: bool,
+    signal_label: &str,
     restore_mean_multiplier: Option<f64>,
 ) -> Result<()> {
     if tile_and_window_boundaries_align && restore_mean_multiplier.is_none() {
@@ -808,11 +816,11 @@ pub(crate) fn write_size_aggregate_output(
         // existing "missing cross-index means one contribution" rule.
 
         let header = if action.is_summary_stats() {
-            summary_stats_header().to_string()
+            summary_stats_header(signal_label)
         } else {
             format!(
                 "chromosome\tstart\tend\t{}\tblacklisted_positions",
-                aggregate_value_header(action)
+                aggregate_value_header(action, signal_label)
             )
         };
         let _ = concat_aligned_size_tile_final_outputs(
@@ -839,7 +847,7 @@ pub(crate) fn write_size_aggregate_output(
     let mut writer = open_zstd_auto_writer(final_path, 3, Some(n_threads as u32))?;
     if action.is_summary_stats() {
         // Summary-stats derives final columns from exact reduced sums and moments.
-        writeln!(writer, "{}", summary_stats_header())?;
+        writeln!(writer, "{}", summary_stats_header(signal_label))?;
         for chromosome in chromosomes {
             let chrom_len = chromosome_length_u64(contigs, chromosome)?;
             if chrom_len == 0 {
@@ -861,7 +869,7 @@ pub(crate) fn write_size_aggregate_output(
         writeln!(
             writer,
             "chromosome\tstart\tend\t{}\tblacklisted_positions",
-            aggregate_value_header(action)
+            aggregate_value_header(action, signal_label)
         )?;
         for chromosome in chromosomes {
             let chrom_len = chromosome_length_u64(contigs, chromosome)?;

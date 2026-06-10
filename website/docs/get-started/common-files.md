@@ -106,7 +106,7 @@ While you can use any folder structure you want, the below layout conceptualizes
 
 Keeping shared reference files separate from sample-specific outputs makes the pipeline easier to understand:
 
-Some sidecar files and alternative outputs only appear in relevant modes, such as `group_index.tsv` for grouped outputs and the different `fcoverage` aggregate files.
+Some additional files and alternative outputs only appear in relevant modes, such as `group_index.tsv` for grouped outputs and the different `fcoverage` aggregate files.
 
 ```text
 project/

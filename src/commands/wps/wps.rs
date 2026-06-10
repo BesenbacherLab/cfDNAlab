@@ -1,4 +1,5 @@
 use crate::command_run::{CommandRunResult, RunOptions};
+use crate::commands::fcoverage::config::COVERAGE_SIGNAL_LABEL;
 use crate::commands::fcoverage::reducer::TileAggregateTempFiles;
 use crate::commands::fcoverage::tiling::{
     TileTempFile, TileTempFileKind, adapt_fetch_to_extreme_windows, finalize_value,
@@ -649,6 +650,7 @@ pub fn run_wps(opt: &WPSConfig, options: RunOptions) -> Result<WPSRunResult> {
                             action,
                             decimals_to_use,
                             opt.shared_args.ioc.n_threads as usize,
+                            COVERAGE_SIGNAL_LABEL,
                             None,
                         )?;
                     }
@@ -667,6 +669,7 @@ pub fn run_wps(opt: &WPSConfig, options: RunOptions) -> Result<WPSRunResult> {
                             decimals_to_use,
                             opt.shared_args.ioc.n_threads as usize,
                             tile_and_window_boundaries_align,
+                            COVERAGE_SIGNAL_LABEL,
                             None,
                         )?;
                     }

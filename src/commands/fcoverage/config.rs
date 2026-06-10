@@ -6,6 +6,9 @@ use crate::commands::cli_common::{
 };
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 
+pub(crate) const COVERAGE_SIGNAL_LABEL: &str = "coverage";
+pub(crate) const FRAGMENT_MASS_SIGNAL_LABEL: &str = "fragment_mass";
+
 /// How fragment length normalization should be applied in `fcoverage`.
 ///
 /// `unit-mass` is the ordinary length-normalized mode where each counted fragment contributes
@@ -208,7 +211,14 @@ pub struct FCoverageConfig {
     /// - `"total"`: Get the total coverage per window.
     ///
     /// - `"summary-stats"`: Get raw and derived coverage summary statistics per window.
-    ///   Average, variance, standard deviation, CV, and covered fraction are `NaN`
+    ///   The following metrics are present:
+    ///   `span_positions`, `blacklisted_positions`,
+    ///   `eligible_positions`, `nonzero_positions`, `covered_fraction`,
+    ///   `total_coverage`, `total_squared_coverage`, `average_coverage`,
+    ///   `variance_coverage`, `sd_coverage`, and `coefficient_of_variation_coverage`.
+    ///   With `--normalize-by-length`, the coverage metric names use `fragment_mass`
+    ///   instead of `coverage`, for example `total_fragment_mass`.
+    ///   Average, variance, standard deviation, CV, and covered fraction metrics are `NaN`
     ///   when the window has no eligible positions after masking.
     ///
     /// For `--by-bed` only:
@@ -359,6 +369,14 @@ impl FCoverageConfig {
 
     pub fn uses_length_normalization(&self) -> bool {
         self.normalize_by_length_mode != LengthNormalizationMode::Off
+    }
+
+    pub(crate) fn aggregate_signal_label(&self) -> &'static str {
+        if self.uses_length_normalization() {
+            FRAGMENT_MASS_SIGNAL_LABEL
+        } else {
+            COVERAGE_SIGNAL_LABEL
+        }
     }
 
     pub fn restores_mean_after_length_normalization(&self) -> bool {
