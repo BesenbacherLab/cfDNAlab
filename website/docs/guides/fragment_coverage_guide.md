@@ -6,7 +6,11 @@ When no GC correction or genomic smoothing is applied, each fragment is counted 
 
 For a fragment *counts*-like signal, see ["Normalize by countable bases"](#normalize-by-countable-bases).
 
-## Positional fragment coverage
+## Examples
+
+The following examples show different aspects of the `cfdna fcoverage` command. They can of course be combined in a multitude of ways, but for simplification we just show one aspect at a time.
+
+### Positional fragment coverage
 
 Extract the per-position fragment coverage into BedGraph files: 
 
@@ -41,7 +45,7 @@ bedGraphToBigWig \
   <prefix>.fcoverage.per_position.bw
 ```
 
-## Average coverage in windows
+### Average coverage in windows
 
 Extract the average positional coverage in 1Mb bins:
 
@@ -57,7 +61,7 @@ cfdna fcoverage \
   --per-window 'average'
 ```
 
-## GC-bias correction example
+### GC-bias correction example
 
 To correct the sample-specific GC-bias, you need to precompute the correction matrix (see the [GC-bias guide](./correct_gc_bias_guide.md)). Then you provide that correction file as:
 
@@ -73,7 +77,7 @@ cfdna fcoverage \
   --ref-2bit <path>/hg38.2bit
 ```
 
-## Genomic smoothing example
+### Genomic smoothing example
 
 When you're interested in local, relative coverage changes instead of large-scale changes from CNVs etc., you can use genomic smoothing to weight contributions more similarly across genomic regions. In some analyses, this can be thought of as a copy-number normalization. See more in the [genomic smoothing guide](./genomic_smoothing_guide.md).
 
@@ -92,7 +96,7 @@ cfdna fcoverage \
   --scaling-factors <sample_directory>/coverage_weights/<sample_id>.coverage.scaling_factors.tsv
 ```
 
-## GC-bias correction + genomic smoothing
+### GC-bias correction + genomic smoothing
 
 **NOTE**: *Requires* using GC-bias correction when calculating the scaling factors to avoid double-correction.
 
@@ -112,7 +116,7 @@ cfdna fcoverage \
   --scaling-factors <sample_directory>/gc_corrected_coverage_weights/<sample_id>.coverage.scaling_factors.tsv
 ```
 
-## Normalize by countable bases
+### Normalize by countable bases
 
 In the default coverage mode, longer fragments weight more than shorter fragments simply because they cover more positions (each counted with `1.0` before correction/scaling). When you instead want all fragments to contribute the same mass, you can enable `--normalize-by-length` and count them as `1.0/num_countable_bases` (the fragment length in most cases). 
 
@@ -137,7 +141,7 @@ cfdna fcoverage \
 
 If you want positional values on the same scale as the regular coverage tracks, you can use `--normalize-by-length=restore-mean`. This multiplies each coverage value by the mean `num_countable_bases` from all the counted fragments. This makes interpretation of positional values *closer* to "how many fragments overlap this position". For windows, this pairs better with `--per-window average` (**NOTE**: rescaling can lead to longer runtime, so for "fragment counts per window", the `--normalize-by-length --per-window 'total'` approach is better).
 
-## Windowed summary statistics
+### Windowed summary statistics
 
 So, you're not satisfied with a mere average coverage metric per window, ay? Me neither, at least not in all cases. Hence, I implemented the option to extract the following summary statistics per window (or per group when supplying grouped windows with `--by-grouped-bed`):
 
