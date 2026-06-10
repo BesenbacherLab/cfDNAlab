@@ -191,6 +191,6 @@ length_counts_matrix(lengths)
 
 ## References
 
-- Cristiano et al. Genome-wide cell-free DNA fragmentation in patients with cancer. Nature. 2019 Jun;570(7761):385-389. <https://doi.org/10.1038/s41586-019-1272-6>
+- Cristiano et al. Genome-wide cell-free DNA fragmentation in patients with cancer. Nature. 2019 Jun;570(7761):385-389. [https://doi.org/10.1038/s41586-019-1272-6](https://doi.org/10.1038/s41586-019-1272-6)
 
-- Renaud et al. Elife. 2022 Jul 27;11:e71569. <https://doi.org/10.7554/eLife.71569>
+- Renaud et al. Elife. 2022 Jul 27;11:e71569. [https://doi.org/10.7554/eLife.71569](https://doi.org/10.7554/eLife.71569)
