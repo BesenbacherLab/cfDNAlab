@@ -53,7 +53,7 @@ struct LengthSettings<'a> {
 /// The settings are intentionally focused on interpretation. They include the
 /// length axis, row aggregation mode, assignment mode, and whether optional
 /// weighting inputs affected the counts.
-pub(super) fn write_length_settings_json(
+pub(crate) fn write_length_settings_json(
     settings_path: &std::path::Path,
     opt: &LengthsConfig,
     window_opt: &DistributionWindowSpec,
@@ -96,7 +96,7 @@ pub(super) fn write_length_settings_json(
 /// remaining directly readable as a TSV in R and Python. `decimals` controls only the written count
 /// representation, not the internal aggregation precision. Blacklist fractions are always rounded
 /// to three decimals.
-pub(super) fn write_length_counts_tsv(
+pub(crate) fn write_length_counts_tsv(
     output_path: &Path,
     counts: &[LengthCounts],
     length_axis: &LengthAxis,
@@ -237,7 +237,7 @@ pub(super) fn write_length_counts_tsv(
 ///
 /// The count matrix has only numeric values. This enum supplies the row keys
 /// that make those values usable without sidecar joins.
-pub(super) enum LengthCountRowMetadata<'a> {
+pub(crate) enum LengthCountRowMetadata<'a> {
     /// One global row with only count columns.
     Global,
     /// One row per fixed-size or BED window.

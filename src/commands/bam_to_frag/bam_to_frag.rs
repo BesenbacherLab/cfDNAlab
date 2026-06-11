@@ -1,11 +1,7 @@
 use crate::{
     command_run::{CommandRunResult, RunOptions},
     commands::{
-        bam_to_frag::{
-            concat::concat_frag_zst_to_gzip,
-            config::BamToFragConfig,
-            sorted_writer::{Entry as WindowEntry, WindowSorter},
-        },
+        bam_to_frag::config::BamToFragConfig,
         cli_common::{
             WindowSpec, ensure_output_dir, load_blacklist_map, load_scaling_map,
             resolve_chromosomes_and_contigs, validate_output_prefix,
@@ -26,6 +22,10 @@ use crate::{
         blacklist::is_blacklisted,
         fragment::frag_file_fragment::FragFileFragment,
         fragment_iterators::fragments_with_frag_file_info_from_bam,
+        fragment_table::{
+            FragmentRowEntry as WindowEntry, FragmentRowSorter as WindowSorter,
+            concat_fragment_zst_to_gzip,
+        },
         interval::{IndexedInterval, Interval},
         io::{FinalOutputFiles, dot_join},
         overlaps::find_overlapping_windows,
@@ -280,7 +280,7 @@ fn execute_bam_to_frag(opt: &BamToFragConfig, options: RunOptions) -> Result<Bam
         );
     }
     let temp_output_file = final_outputs.temp_path_for(&output_file)?;
-    concat_frag_zst_to_gzip(&chromosome_paths, &temp_output_file, false)?;
+    concat_fragment_zst_to_gzip(&chromosome_paths, &temp_output_file, false)?;
     final_outputs.record(temp_output_file, output_file.clone())?;
 
     // Create text line

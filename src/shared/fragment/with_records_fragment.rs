@@ -6,7 +6,12 @@ use crate::shared::interval::Interval;
 use rust_htslib::bam::ext::BamRecordExtensions; // reference_end()
 use rust_htslib::bam::record::Record;
 
-/// Compact per-read info with extracted indel events.
+/// Per-read info used when fragment output needs the original BAM record.
+///
+/// This keeps the orientation fields needed for pairing plus the cloned `Record`. The
+/// paired-fragment validity rules in this module must stay aligned with
+/// `collect_fragment_with_read_order`, because allelic-fragments uses this representation for row
+/// output and the minimal read-order representation for the control-count pass.
 #[derive(Debug, Clone)]
 pub(crate) struct WithRecordReadInfo {
     pub(crate) tid: i32,
@@ -18,6 +23,9 @@ pub(crate) struct WithRecordReadInfo {
 impl TryFrom<&Record> for WithRecordReadInfo {
     type Error = crate::Error;
 
+    /// Build full-record read info from a BAM record.
+    ///
+    /// The interval stores `pos` to `reference_end`.
     #[inline]
     fn try_from(r: &Record) -> Result<Self> {
         Ok(WithRecordReadInfo {
@@ -56,7 +64,7 @@ impl PairOrientable for WithRecordReadInfo {
     }
 }
 
-/// Fragment with mapq and read1 strand.
+/// Fragment with the BAM record or records used to build it.
 #[derive(Debug, Clone)]
 pub(crate) struct WithRecordsFragment {
     pub(crate) interval: Interval<u32>, // forward.pos .. reverse.end
@@ -87,6 +95,9 @@ impl WithRecordsFragment {
 
 /// Build a `WithRecordsFragment` from two reads.
 ///
+/// The reads must be on the same contig, inward oriented, and exactly one read must be marked
+/// read1. The read1/read2 check rejects duplicate-mate or ambiguous pairs before row construction.
+///
 /// NOTE: Consumes the records.
 pub(crate) fn collect_fragment_with_records(
     a: &WithRecordReadInfo,
@@ -94,6 +105,9 @@ pub(crate) fn collect_fragment_with_records(
 ) -> Option<WithRecordsFragment> {
     let (forward, reverse) = oriented_pair_from_read_info(a, b)?;
     if !is_inwards_oriented(forward, reverse) {
+        return None;
+    }
+    if forward.record.is_first_in_template() == reverse.record.is_first_in_template() {
         return None;
     }
 
@@ -106,7 +120,10 @@ pub(crate) fn collect_fragment_with_records(
     })
 }
 
-/// Build a `WithRecordsFragment` from a single read (unpaired input).
+/// Build a `WithRecordsFragment` from a single read in `--reads-are-fragments` mode.
+///
+/// Read filtering has already decided whether the record is acceptable. No mate-orientation checks
+/// are applied because the read itself is the fragment.
 pub(crate) fn collect_fragment_with_records_from_single_read(
     read: &WithRecordReadInfo,
 ) -> Option<WithRecordsFragment> {

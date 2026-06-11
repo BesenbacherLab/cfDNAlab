@@ -591,7 +591,7 @@ fn parse_gc_length_trim_rare(raw_value: &str) -> std::result::Result<f64, String
     Ok(value)
 }
 
-pub(super) fn validate_gc_length_trim_rare(value: f64) -> Result<()> {
+pub(crate) fn validate_gc_length_trim_rare(value: f64) -> Result<()> {
     anyhow::ensure!(
         value.is_finite() && (0.0..1.0).contains(&value),
         "--gc-length-trim-rare must be finite and within [0, 1)"

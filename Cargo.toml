@@ -43,6 +43,7 @@ default = [
 cli = ["clap"]
 docs_gen = []
 testing = []
+cmd_allelic_fragments = ["cmd_gc_bias"]
 cmd_bam_to_bam = ["cmd_gc_bias"]
 cmd_bam_to_frag = ["cmd_gc_bias"]
 ends_experimental = []

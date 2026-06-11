@@ -1,4 +1,6 @@
 use crate::command_run::RunOptions;
+#[cfg(feature = "cmd_allelic_fragments")]
+use crate::commands::allelic_fragments::config::AllelicFragmentsConfig;
 #[cfg(feature = "cmd_bam_to_bam")]
 use crate::commands::bam_to_bam::config::BamToBamConfig;
 #[cfg(feature = "cmd_bam_to_frag")]
@@ -43,6 +45,7 @@ pub(crate) const CLI_SEPARATOR_WIDTH: usize = 48;
     not(any(
         feature = "cmd_bam_to_bam",
         feature = "cmd_bam_to_frag",
+        feature = "cmd_allelic_fragments",
         feature = "cmd_frag_to_bam",
         feature = "cmd_coverage_weights",
         feature = "cmd_fragment_count_weights",
@@ -71,6 +74,8 @@ pub(crate) struct Cli {
 
 #[cfg_attr(feature = "cli", derive(clap::Subcommand))]
 pub(crate) enum Cmd {
+    #[cfg(feature = "cmd_allelic_fragments")]
+    AllelicFragments(AllelicFragmentsConfig),
     #[cfg(feature = "cmd_gc_bias")]
     GCBias(GCConfig),
     #[cfg(feature = "cmd_ref_gc_bias")]
@@ -125,6 +130,11 @@ pub(crate) fn run_cli() {
         Cmd::CoverageWeights(config) => (
             config.shared.logging.log.clone(),
             Some(config.shared.ioc.output_dir.as_path()),
+        ),
+        #[cfg(feature = "cmd_allelic_fragments")]
+        Cmd::AllelicFragments(config) => (
+            config.logging.log.clone(),
+            Some(config.ioc.output_dir.as_path()),
         ),
         #[cfg(feature = "cmd_fragment_count_weights")]
         Cmd::FragmentCountWeights(config) => (
@@ -212,6 +222,14 @@ pub(crate) fn run_cli() {
         Cmd::GCBias(config) => {
             crate::commands::gc_bias::gc_bias::run_gc_bias(&config, RunOptions::new_cli())
                 .map(|_| ())
+        }
+        #[cfg(feature = "cmd_allelic_fragments")]
+        Cmd::AllelicFragments(config) => {
+            crate::commands::allelic_fragments::allelic_fragments::run_allelic_fragments(
+                &config,
+                RunOptions::new_cli(),
+            )
+            .map(|_| ())
         }
         #[cfg(feature = "cmd_ref_gc_bias")]
         Cmd::RefGcBias(config) => {

@@ -1,3 +1,5 @@
+#[cfg(feature = "cmd_allelic_fragments")]
+pub(crate) mod allelic_fragments;
 #[cfg(feature = "cmd_bam_to_bam")]
 pub(crate) mod bam_to_bam;
 #[cfg(feature = "cmd_bam_to_frag")]

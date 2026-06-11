@@ -9,6 +9,7 @@ pub(crate) mod coverage;
 pub(crate) mod formatters;
 pub(crate) mod fragment;
 pub(crate) mod fragment_iterators;
+pub(crate) mod fragment_table;
 pub(crate) mod gc_tag;
 pub(crate) mod indel_mode;
 pub(crate) mod interval;

@@ -277,8 +277,29 @@ Optional target TSV column:
 id
 ```
 
-`pos` is 1-based, matching VCF-style position semantics. Internally, the
-command converts each target to a 0-based single-base interval `[pos - 1, pos)`.
+`pos` is a 0-based genomic position, matching the rest of cfDNAlab's TSV inputs.
+VCF `POS` is 1-based and must be converted with `POS - 1` before use.
+Passing VCF `POS` directly shifts every target by one base and should be called
+out clearly in CLI help and user-facing docs.
+
+Rows on chromosomes outside the selected chromosome set should be ignored before
+target-specific validation such as duplicate-position checks. This lets a
+genome-wide target panel be reused for subset runs without forcing users to
+pre-filter the panel first.
+
+VCF conversion belongs in the user guide rather than in terse CLI help, because
+normal VCFs can contain multiallelic ALT fields such as `G,T`, indels, symbolic
+alleles, filtered records, and other shapes that should not be blindly copied
+into a SNP target TSV. Any documented conversion must make the coordinate shift
+and allele filtering explicit.
+
+Example conversion for already-filtered simple biallelic SNP VCF records where A
+is REF and B is ALT:
+
+```bash
+awk 'BEGIN { print "chrom\tpos\tA_allele\tB_allele" }
+     !/^#/ { printf "%s\t%d\t%s\t%s\n", $1, $2 - 1, $4, $5 }' input.vcf > targets.tsv
+```
 
 The initial target-calling semantics should be durable for SNPs:
 
@@ -298,6 +319,10 @@ When duplicate `(chrom, pos)` rows are present:
   alone cannot identify which target row was called
 - same-position rows must have a collapsible allele-label structure for
   fragment-level `allele_class`
+
+If an `id` column is present, every target row must have a nonempty ID. This
+keeps the column unambiguous and avoids mixing named and unnamed target records
+in the same file.
 
 A same-position target group is collapsible when either all rows share the same
 `A_allele` or all rows share the same `B_allele`. Collapsible groups define a
@@ -332,6 +357,13 @@ The emitted `start` and `end` columns use that fragment span.
 
 A target overlaps a fragment when the target's 0-based position lies inside the
 fragment span `[start, end)`.
+
+Target-overlap scans must handle paired-fragment iterators that yield fragments
+when the second mate is seen, not necessarily in nondecreasing fragment-start
+order. Any moving target pointer must keep a lookback of at least
+`max_fragment_length` before the current fragment start and then scan forward to
+the actual start. Advancing the pointer directly to `fragment_start` can skip
+targets for later-yielded long fragments and misclassify them as controls.
 
 A target can overlap the fragment span without being callable. This happens when
 the target lies in the inter-mate gap, in a deletion or refskip, or in a part of
@@ -402,8 +434,9 @@ mean that two mates disagreed at a single target.
 
 For unique target positions, row-level `target_calls` and site-level evidence
 are the same. For duplicate target positions, `target_calls` remains aligned to
-input target rows, while `allele_class` uses the collapsed site-level allele map
-for that physical position.
+the sorted overlapped target rows, ordered by target position and then input row
+index. `allele_class` uses the collapsed site-level allele map for that physical
+position.
 
 ## Default Output
 
@@ -454,7 +487,7 @@ expand `target_calls`, `target_positions`, or `target_ids` automatically.
 The packages should instead offer explicit helper functions or read options for
 users who want to parse list-like columns or expand the fragment table into a
 long per-fragment-target data frame. Those helpers must document coordinate
-semantics clearly: target TSV positions are 1-based genomic positions, while
+semantics clearly: target TSV positions are 0-based genomic positions, while
 `target_positions` in the fragment output are 0-based positions relative to the
 fragment `start`.
 
@@ -756,7 +789,8 @@ should not run a counting pass. It should go directly to the full fragment pass
 and write only target-overlapping fragments.
 
 When controls are requested, control sampling should be deterministic for a
-given seed, BAM, target file, chromosome selection, and filter configuration.
+given seed, BAM, target file, chromosome selection, filter configuration, tile
+size, and control mode.
 
 `control-mode` defines both the candidate universe and the sampling allocation:
 
@@ -785,14 +819,25 @@ different control definition.
 ### Sampling Method
 
 The recommended exact design is two-pass rank sampling. It avoids writing
-temporary control rows and keeps the statistical definition independent of
-processing tiles.
+temporary control rows before final output and keeps the candidate counts exact
+for a fixed processing tile configuration.
 
 The first pass should use a minimal fragment representation. It should pair
 reads, apply the ordinary read and fragment filters, apply blacklist filtering,
 compute the project fragment span, and test whether the span overlaps any target
 site. It should not inspect target bases, build allele calls, compute motifs,
 compute GC annotations, or build final output rows.
+
+The minimal first-pass fragment representation is allowed and preferred for
+speed, but it must accept and reject the same read pairs as the full with-records
+fragment path. In paired-end mode, both paths must reject pairs unless exactly
+one mate is read1. Otherwise the counting pass and output pass can disagree
+about which fragments exist.
+
+Target-overlap logic in the first counting pass and second output pass must be
+the same lookback-based scan described under Fragment and Target Semantics.
+Control counts and target-overlapping output rows must not depend on whether a
+fragment happened to be yielded after a later-starting fragment.
 
 For binned control modes, the first pass must also record `(bin, partition)`
 control-candidate counts. This table is what makes it possible to recover the
@@ -802,17 +847,15 @@ bin.
 The second pass should use the full with-records fragment path. It writes all
 target-overlapping fragments and writes only sampled control fragments.
 
-The first and second pass must enumerate eligible control candidates in the
-same canonical order. The canonical order should be independent of thread count,
-tile size, and scheduling. It should be the same order used for sorted fragment
-output: selected chromosome order, then fragment `start`, `end`, `read1_strand`,
-and a stable fragment or template identity tie-breaker.
+The first and second pass must enumerate eligible control candidates in the same
+tile-local order for a fixed tile configuration. Changing `--tile-size` may
+change which controls are selected for a given seed, because control ranks are
+assigned within processing tiles. Target-overlapping output rows and candidate
+counts must still not depend on tile size.
 
-Execution partitions are implementation chunks, not part of the statistical
-definition. They should be contiguous ranges in the canonical order so prefix
-sums can map sampled ranks back to workers. Fetch halos may be used internally,
-but a fragment is counted only once, in the partition whose core owns the
-fragment start.
+Execution partitions are implementation chunks used for parallel processing and
+rank prefixes. Fetch halos may be used internally, but a fragment is counted only
+once, in the partition whose core owns the fragment start.
 
 ### Global Rank Sampling
 
@@ -931,9 +974,9 @@ remainders so the total equals `requested_controls_total` without inflating
 sparse bins by independently applying `ceil` to every bin.
 
 For `--n-controls`, allocate `n_controls` across bins in proportion to
-`case_count_for_bin`, again using floors plus largest remainders. `bin-matched`
-with no target-overlapping fragments should fail with a clear error, because
-there is no case distribution to match.
+`case_count_for_bin`, again using floors plus largest remainders. If
+`bin-matched` sees no target-overlapping fragments, it should fail with a clear
+error because there is no case distribution to match.
 
 ### Bin-Uniform Allocation
 
@@ -981,7 +1024,8 @@ many unique ranks from:
 
 If a bin has fewer eligible controls than requested, the command must not fail
 silently. The run summary should report requested and delivered controls
-genome-wide and per affected bin. The default should not silently refill missing
+genome-wide. Logs may report how many bins had a shortfall, but should not print
+one line per affected bin. The default should not silently refill missing
 controls from other bins, because that changes the chosen binned sampling
 definition.
 
@@ -991,6 +1035,7 @@ Read and fragment filters should follow the existing BAM fragment commands:
 
 - secondary, supplementary, duplicate, and failed-QC reads are excluded
 - paired-end mode requires mapped mates on the same tid and inward orientation
+- paired-end fragments require exactly one read1 and one read2 record
 - `--reads-are-fragments` supports unpaired fragment-like input
 - fragment length filters use the existing defaults and validation
 - `--min-mapq` should default to `30`, matching the more interpretive fragment
@@ -1012,6 +1057,29 @@ dropping them with an explicit option.
 ## Implementation Fit
 
 The implementation should be closer to `bam-to-frag` than to `ends`.
+
+The command should reuse existing cfDNAlab infrastructure wherever it matches
+the needed semantics. Shared command behavior should read like other commands:
+same argument structs for BAM IO, chromosomes, fragment length filters,
+blacklists, logging, output prefix handling, tile construction, sorted output,
+and run-result reporting. New code should only fill the allele-target-specific
+gaps, such as target TSV parsing, base-at-target extraction, allele
+classification, and control-rank allocation.
+
+CLI help for shared arguments should be copied from the existing command configs
+and changed only where the command genuinely differs, for example output
+filename examples or command-specific defaults. Do not rewrite shared option
+docs for style preference in this command.
+
+Do not reimplement shared mechanics just because this command has a new output
+schema. The goal is a concise command-specific layer on top of established
+fragment iteration, interval, tiling, blacklist, GC/scaling, and writer helpers.
+
+If shared helper code is moved out of a command-specific module, preserve the
+existing documentation unless it is wrong. In particular, the bounded fragment
+row sorter must keep its correctness rationale, memory-bound description, and
+limitations because its validity depends on the non-obvious bounded-disorder
+assumption.
 
 Reusable pieces:
 

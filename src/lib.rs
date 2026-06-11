@@ -129,6 +129,13 @@ pub mod run_like_cli {
         pub use crate::commands::bam_to_bam::config::BamToBamConfig;
     }
 
+    #[cfg(feature = "cmd_allelic_fragments")]
+    pub mod allelic_fragments {
+        pub use crate::commands::allelic_fragments::allelic_fragments::run_allelic_fragments;
+        pub use crate::commands::allelic_fragments::config::{AllelicFragmentsConfig, ControlMode};
+        pub use crate::commands::allelic_fragments::result::AllelicFragmentsRunResult;
+    }
+
     #[cfg(feature = "cmd_bam_to_frag")]
     pub mod bam_to_frag {
         pub use crate::commands::bam_to_frag::bam_to_frag::{BamToFragRunResult, run_bam_to_frag};

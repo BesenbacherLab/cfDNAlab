@@ -147,6 +147,14 @@ counter_struct!(EndsCounters;
     counted_motifs: u64
 );
 
+#[cfg(feature = "cmd_allelic_fragments")]
+counter_struct!(AllelicFragmentsCounters;
+    blacklisted_fragments: u64,
+    target_overlapping_fragments: u64,
+    control_candidate_fragments: u64,
+    sampled_control_fragments: u64
+);
+
 #[cfg(feature = "cmd_midpoints")]
 counter_struct!(ProfileGroupsCounters;
     blacklisted_fragments: u64,

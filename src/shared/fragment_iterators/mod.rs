@@ -13,8 +13,10 @@ mod frag_file;
 mod indel_counts;
 #[cfg(feature = "cmd_fragment_kmers")]
 mod kmer_segments;
+#[cfg(feature = "cmd_allelic_fragments")]
+mod read_order;
 mod segments;
-#[cfg(feature = "cmd_bam_to_bam")]
+#[cfg(any(feature = "cmd_bam_to_bam", feature = "cmd_allelic_fragments"))]
 mod with_records;
 
 pub(crate) use basic::*;
@@ -27,6 +29,8 @@ pub(crate) use frag_file::*;
 pub(crate) use indel_counts::*;
 #[cfg(feature = "cmd_fragment_kmers")]
 pub(crate) use kmer_segments::*;
+#[cfg(feature = "cmd_allelic_fragments")]
+pub(crate) use read_order::*;
 pub(crate) use segments::*;
-#[cfg(feature = "cmd_bam_to_bam")]
+#[cfg(any(feature = "cmd_bam_to_bam", feature = "cmd_allelic_fragments"))]
 pub(crate) use with_records::*;
