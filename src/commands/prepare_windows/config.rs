@@ -1,7 +1,7 @@
 use crate::{
     commands::cli_common::ChromosomeArgs,
     commands::prepare_windows::{labels::validate_label_token, near_file::NearDuplicatesPolicy},
-    shared::blacklist::BlacklistStrategy,
+    shared::{blacklist::BlacklistStrategy, thread_pool::default_thread_count},
 };
 #[cfg(feature = "cli")]
 use clap::{ArgGroup, Parser, ValueEnum};
@@ -1152,7 +1152,7 @@ pub struct PrepareConfig {
     /// Defaults to the number of available CPU cores (-1).
     #[cfg_attr(
         feature = "cli",
-        clap(short = 't', long, default_value_t = (num_cpus::get()-1).max(1), help_heading = "Core")
+        clap(short = 't', long, default_value_t = default_thread_count(), help_heading = "Core")
     )]
     pub n_threads: usize,
 }
@@ -1358,7 +1358,7 @@ impl Default for PrepareConfig {
             merge_gap: None,
             merge_label: MergeLabel::Join,
             seed: None,
-            n_threads: (num_cpus::get() - 1).max(1),
+            n_threads: default_thread_count(),
         }
     }
 }

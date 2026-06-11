@@ -26,7 +26,7 @@ use crate::{
         },
     },
     shared::{
-        bam::create_chromosome_reader,
+        bam::{bam_bai_path, build_bam_bai_index, create_chromosome_reader, open_bam_reader},
         bed::load_windows_from_bed,
         blacklist::is_blacklisted,
         fragment::with_records_fragment::WithRecordsFragment,
@@ -47,16 +47,16 @@ const COMMAND_TARGET: &str = "bam-to-bam";
 
 /// Result from `bam-to-bam`.
 ///
-/// The command writes one filtered or annotated BAM file. The result keeps the fragment counters
-/// and the final output path together so library callers do not need to reconstruct file names
-/// from the configuration.
+/// The command writes one filtered or annotated BAM file plus its `.bam.bai` index. The result keeps
+/// the fragment counters and final output paths together so library callers do not need to
+/// reconstruct file names from the configuration.
 #[derive(Debug)]
 pub struct BamToBamRunResult {
     /// Fragment and filtering counters collected during the run.
     pub counters: BamToBamCounters,
     /// Final BAM path written by the command.
     pub output_bam: std::path::PathBuf,
-    /// Final output files produced by the command.
+    /// Final output files produced by the command: the BAM followed by its `.bam.bai` index.
     pub output_files: Vec<std::path::PathBuf>,
 }
 
@@ -130,7 +130,7 @@ pub fn run_bam_to_bam(opt: &BamToBamConfig, options: RunOptions) -> Result<BamTo
     Ok(BamToBamRunResult {
         counters: global_counter,
         output_bam: opt.out_bam.clone(),
-        output_files: vec![opt.out_bam.clone()],
+        output_files: vec![opt.out_bam.clone(), bam_bai_path(&opt.out_bam)?],
     })
 }
 
@@ -227,7 +227,7 @@ fn execute_bam_to_bam(opt: &BamToBamConfig, options: RunOptions) -> Result<BamTo
     pb.set_position(0);
 
     let header = {
-        let reader = bam::Reader::from_path(&opt.in_bam).context("opening BAM to read header")?;
+        let reader = open_bam_reader(&opt.in_bam).context("opening BAM to read header")?;
         Header::from_template(reader.header())
     };
     let temp_out_bam = final_outputs.temp_path_for(&opt.out_bam)?;
@@ -273,7 +273,12 @@ fn execute_bam_to_bam(opt: &BamToBamConfig, options: RunOptions) -> Result<BamTo
     }
     drop(writer);
 
+    // HTSlib can only index a complete BAM. Build the BAI while both artifacts are still in the
+    // command temp directory, then move the BAM and BAI into place together through `FinalOutputFiles`.
+    let temp_out_bai = build_bam_bai_index(&temp_out_bam)?;
+    let out_bai = bam_bai_path(&opt.out_bam)?;
     final_outputs.record(temp_out_bam, opt.out_bam.clone())?;
+    final_outputs.record(temp_out_bai, out_bai)?;
     final_outputs.move_into_place()?;
 
     Ok(global_counter)

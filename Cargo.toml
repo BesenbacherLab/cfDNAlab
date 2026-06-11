@@ -1,6 +1,6 @@
 [package]
 name = "cfdnalab"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.94"
 authors = ["Ludvig Renbo Olsen", "Søren Besenbacher"]
@@ -68,6 +68,9 @@ cmd_wps_peaks = ["cmd_wps", "cmd_gc_bias", "staged-sg-filter"]
 anyhow = "1.0.98"
 arrayvec = "0.7.6"
 bincode = { version = "2.0.1", features = ["serde"] }
+# Keep unlocked `cargo install cfdnalab` off the hts-sys bindgen version that predates the
+# libclang compatibility fix we want.
+bindgen = { version = ">=0.69.5, <0.70", default-features = false, features = ["runtime"] }
 chrono = { version = "0.4.42", features = ["clock"] }
 clap = { version = "4.5.37", features = ["derive"], optional = true }
 ctrlc = "3.5.1"
@@ -82,7 +85,7 @@ num_cpus = "1.17.0"
 plotters = { version = "0.3.7", features = ["fontconfig-dlopen"], optional = true }
 rand = "0.9.1"
 rayon = "1.10.0"
-rust-htslib = "0.50.0"
+rust-htslib = { version = "1.0.0", default-features = false, features = ["curl", "libdeflate"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0"
 smallvec = "1.15.1"
@@ -93,6 +96,7 @@ tempfile = "3.20.0"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["fmt"] }
 twobit = "0.2.2"
+url = "2.5.4"
 zarrs = "0.23.11"
 zip = { version = "4.6.1", default-features = false, features = ["deflate"] }
 zstd = { version = "0.13.3", features = ["zstdmt"] }

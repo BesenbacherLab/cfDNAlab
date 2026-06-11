@@ -89,7 +89,7 @@ impl ScalingWeightsCommand {
     fn fcoverage_value_header(self) -> &'static str {
         match self {
             Self::Coverage => "average_coverage",
-            Self::FragmentCount => "total_coverage",
+            Self::FragmentCount => "total_fragment_mass",
         }
     }
 

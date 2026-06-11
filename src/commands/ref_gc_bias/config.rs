@@ -1,4 +1,5 @@
 use crate::commands::cli_common::*;
+use crate::shared::thread_pool::default_thread_count;
 use std::path::PathBuf;
 
 /// Build a reference GC bias table for cfDNA correction.
@@ -49,7 +50,7 @@ pub struct RefGCBiasConfig {
     /// Defaults to the number of available CPU cores (-1).
     #[cfg_attr(
         feature = "cli",
-        clap(short = 't', long, default_value_t = (num_cpus::get()-1).max(1), help_heading = "Core")
+        clap(short = 't', long, default_value_t = default_thread_count(), help_heading = "Core")
     )]
     pub n_threads: usize,
 

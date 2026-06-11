@@ -12,14 +12,14 @@ conda activate cfdnalab
 ## Latest release
 
 ```bash
-cargo install cfdnalab
+cargo install cfdnalab --locked
 cfdna --help
 ```
 
 ## Build from GitHub
 
 ```bash
-cargo install --git https://github.com/BesenbacherLab/cfDNAlab
+cargo install --git https://github.com/BesenbacherLab/cfDNAlab --locked
 ```
 
 Verify installation:
@@ -34,7 +34,7 @@ cfdna --help
 # Once downloaded, enter the directory
 cd cfDNAlab
 # Then build it as so:
-cargo build --release
+cargo build --release --locked
 ```
 
 The binary is available at `target/release/cfdna`.
