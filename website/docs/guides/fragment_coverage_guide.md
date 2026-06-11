@@ -157,7 +157,7 @@ Position stats:
 
 - `covered_fraction`: Fraction of eligible positions with coverage above zero.
 
-Together, these columns describe the denominator and coverage breadth used by the coverage statistics: `span_positions` is the full reference span, `blacklisted_positions` is the masked part of that span, `eligible_positions` is the unmasked part used for coverage calculations, and `nonzero_positions` plus `covered_fraction` describe the subset and fraction of eligible positions that actually have coverage.
+Together, these columns describe which positions are counted and how many of those positions have any coverage: `span_positions` is the full reference span, `blacklisted_positions` is the masked part of that span, `eligible_positions` is the unmasked part used for coverage calculations, and `nonzero_positions` plus `covered_fraction` describe the subset and fraction of eligible positions that actually have coverage.
 
 Coverage stats:
 
