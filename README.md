@@ -10,7 +10,9 @@
   <a href="https://github.com/BesenbacherLab/cfDNAlab/actions/workflows/rust.yml"><img src="https://github.com/BesenbacherLab/cfDNAlab/actions/workflows/rust.yml/badge.svg" alt="CI" /></a>
   <a href="https://codecov.io/gh/BesenbacherLab/cfDNAlab"><img src="https://codecov.io/gh/BesenbacherLab/cfDNAlab/branch/main/graph/badge.svg" alt="codecov" /></a>
   <a href="https://crates.io/crates/cfdnalab"><img src="https://img.shields.io/crates/v/cfdnalab" alt="crates.io" /></a>
-  <a href="https://anaconda.org/bioconda/cfdnalab"><img src="https://img.shields.io/badge/bioconda-not_published-lightgrey" alt="BioConda" /></a>
+  <!-- <a href="https://anaconda.org/bioconda/cfdnalab"><img src="https://img.shields.io/badge/bioconda-not_published-lightgrey" alt="BioConda" /></a>-->
+  <a href="https://github.com/BesenbacherLab/cfDNAlab/tree/main/r-cfdnalab"><img src=src="https://img.shields.io/badge/R-loaders-276DC3" alt="R package for loading outputs" /></a>
+<a href="https://github.com/BesenbacherLab/cfDNAlab/tree/main/py-cfdnalab"><img src="https://img.shields.io/badge/Python-loaders-3776AB" alt="Python package for loading outputs" /></a>
   <a href="https://cfDNAlab.tools"><img src="https://img.shields.io/badge/docs-cfDNAlab.tools-blue" alt="Docs" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT" /></a>
 </p>
