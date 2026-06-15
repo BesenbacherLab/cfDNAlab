@@ -21,15 +21,16 @@ pub type FragmentCountWeightsRunResult = ScalingWeightsRunResult;
 /// reuses the scaling-weights implementation with length normalization enabled, so each accepted
 /// fragment contributes unit mass across its span.
 ///
-/// Reporting is controlled by `options`. `report_statistics` prints the final summary and
-/// `log_statuses` controls status messages. This command does not use progress bars.
+/// Reporting is controlled by `options`. `report_statistics` prints the final summary,
+/// `show_progress` controls the internal `fcoverage` progress bar, and `log_statuses` controls
+/// status messages.
 ///
 /// Parameters
 /// ----------
 /// - `opt`:
 ///     Fully resolved configuration for the `fragment-count-weights` command.
 /// - `options`:
-///     Reporting controls for statistics and status logs.
+///     Reporting controls for statistics, progress bars, and status logs.
 ///
 /// Returns
 /// -------

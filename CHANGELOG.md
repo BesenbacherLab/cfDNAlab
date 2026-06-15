@@ -7,6 +7,12 @@ This is the changelog for the main CLI tool. You can find the changelog for the 
 
 <br />
 
+## Unreleased
+
+ - `cfdna fragment-count-weights` and `cfdna coverage-weights` shows progress bar by default in the internal call to `cfdna fcoverage`.
+
+<br />
+
 ## cfDNAlab 0.4.0
 
 **BREAKING CHANGES**:
