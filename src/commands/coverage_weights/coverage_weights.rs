@@ -132,15 +132,16 @@ impl ScalingWeightsCommand {
 /// reused by other commands. It runs `fcoverage` internally, reads stride-level coverage values,
 /// smooths them, and normalizes the smoothed signal to a global mean.
 ///
-/// Reporting is controlled by `options`. `report_statistics` prints the final summary and
-/// `log_statuses` controls status messages. This command does not use progress bars.
+/// Reporting is controlled by `options`. `report_statistics` prints the final summary,
+/// `show_progress` controls the internal `fcoverage` progress bar, and `log_statuses` controls
+/// status messages.
 ///
 /// Parameters
 /// ----------
 /// - `opt`:
 ///     Fully resolved configuration for the `coverage-weights` command.
 /// - `options`:
-///     Reporting controls for statistics and status logs.
+///     Reporting controls for statistics, progress bars, and status logs.
 ///
 /// Returns
 /// -------
@@ -180,7 +181,7 @@ pub fn run_coverage_weights(
 /// - `source_ignore_gap`:
 ///     Optional `fcoverage` gap-handling override for the internal producer run.
 /// - `options`:
-///     Reporting controls for statistics and status logs.
+///     Reporting controls for statistics, progress bars, and status logs.
 ///
 /// Returns
 /// -------
@@ -241,7 +242,7 @@ pub(crate) fn run_with_fcoverage(
         &fcoverage_cfg,
         RunOptions {
             report_statistics: false,
-            show_progress: false,
+            show_progress: options.show_progress,
             log_statuses: options.log_statuses,
         },
     )
