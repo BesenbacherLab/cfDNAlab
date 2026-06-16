@@ -584,3 +584,7 @@ fn add_signature(mut command: clap::Command, signature: &str) -> clap::Command {
     }
     command
 }
+
+#[cfg(all(test, feature = "cli"))]
+#[path = "cli_app_roundtrip_tests.rs"]
+mod cli_app_roundtrip_tests;

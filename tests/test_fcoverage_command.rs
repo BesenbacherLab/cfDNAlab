@@ -170,7 +170,7 @@ fn fcoverage_rejects_gc_file_without_ref_2bit_before_output_setup() -> Result<()
 }
 
 fn set_restore_mean_length_normalization(cfg: &mut FCoverageConfig) {
-    cfg.set_normalize_by_length_mode(LengthNormalizationMode::RestoreMean);
+    cfg.set_normalize_by_length(LengthNormalizationMode::RestoreMean);
 }
 
 fn mixed_length_fragment_bam() -> Result<TempBam> {
@@ -581,7 +581,7 @@ fn normalize_by_length_keeps_fractional_positional_output_without_other_weights(
     cfg.set_decimals(4);
     cfg.set_per_window(CoverageWindowAction::Average);
     cfg.set_keep_zero_runs(false);
-    cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
+    cfg.set_normalize_by_length(LengthNormalizationMode::UnitMass);
 
     // Manual expectations:
     // - The single fragment covers [20, 80), length 60.
@@ -615,7 +615,7 @@ fn normalize_by_length_by_size_total_counts_each_fragment_as_one() -> Result<()>
     cfg.set_decimals(5);
     cfg.set_per_window(CoverageWindowAction::Total);
     cfg.set_windows(windows);
-    cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
+    cfg.set_normalize_by_length(LengthNormalizationMode::UnitMass);
 
     // Manual expectations:
     // - The fragment spans 60 bases and contributes 1 / 60 to each covered base.
@@ -669,7 +669,7 @@ fn normalize_by_length_and_gc_file_weights_multiply_per_position() -> Result<()>
     cfg.set_decimals(6);
     cfg.set_per_window(CoverageWindowAction::Average);
     cfg.set_keep_zero_runs(false);
-    cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
+    cfg.set_normalize_by_length(LengthNormalizationMode::UnitMass);
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
@@ -803,7 +803,7 @@ fn normalize_by_length_uses_counted_segment_length_for_gapped_fragments() -> Res
     cfg.set_per_window(CoverageWindowAction::Average);
     cfg.set_keep_zero_runs(false);
     cfg.unpaired.reads_are_fragments = true;
-    cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
+    cfg.set_normalize_by_length(LengthNormalizationMode::UnitMass);
 
     // Manual expectations:
     // - The read spans [20, 70) on the reference with a 10 bp deletion in the middle.
@@ -839,7 +839,7 @@ fn normalize_by_length_ignore_gap_renormalizes_over_remaining_counted_span() -> 
         cfg.set_per_window(CoverageWindowAction::Average);
         cfg.set_keep_zero_runs(false);
         cfg.set_ignore_gap(ignore_gap);
-        cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
+        cfg.set_normalize_by_length(LengthNormalizationMode::UnitMass);
 
         run(&cfg)?;
 
@@ -883,7 +883,7 @@ fn normalize_by_length_matches_between_paired_and_unpaired_for_same_span() -> Re
     paired_cfg.set_per_window(CoverageWindowAction::Average);
     paired_cfg.set_keep_zero_runs(false);
     paired_cfg.set_output_prefix("paired");
-    paired_cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
+    paired_cfg.set_normalize_by_length(LengthNormalizationMode::UnitMass);
 
     let mut unpaired_cfg = base_config(&unpaired_bam.bam, unpaired_out.path());
     unpaired_cfg.set_decimals(4);
@@ -891,7 +891,7 @@ fn normalize_by_length_matches_between_paired_and_unpaired_for_same_span() -> Re
     unpaired_cfg.set_keep_zero_runs(false);
     unpaired_cfg.set_output_prefix("unpaired");
     unpaired_cfg.unpaired.reads_are_fragments = true;
-    unpaired_cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
+    unpaired_cfg.set_normalize_by_length(LengthNormalizationMode::UnitMass);
 
     // Manual expectations:
     // - Both inputs represent the same counted span [20, 80), length 60.
@@ -961,7 +961,7 @@ fn normalize_by_length_uses_paired_counted_segments_when_ignore_gap_is_on() -> R
     cfg.set_per_window(CoverageWindowAction::Average);
     cfg.set_keep_zero_runs(false);
     cfg.set_ignore_gap(true);
-    cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
+    cfg.set_normalize_by_length(LengthNormalizationMode::UnitMass);
 
     // Manual expectations:
     // - The fragment outer span is [20, 80), length 60.
@@ -1015,7 +1015,7 @@ fn normalize_by_length_uses_counted_segment_length_for_refskip_fragments() -> Re
     cfg.set_per_window(CoverageWindowAction::Average);
     cfg.set_keep_zero_runs(false);
     cfg.unpaired.reads_are_fragments = true;
-    cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
+    cfg.set_normalize_by_length(LengthNormalizationMode::UnitMass);
 
     // Manual expectations:
     // - The read spans [20, 70) on the reference with a 10 bp ref-skip in the middle.
@@ -1079,7 +1079,7 @@ fn normalize_by_length_segmented_fragment_still_multiplies_gc_and_scaling() -> R
     cfg.set_per_window(CoverageWindowAction::Average);
     cfg.set_keep_zero_runs(false);
     cfg.unpaired.reads_are_fragments = true;
-    cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
+    cfg.set_normalize_by_length(LengthNormalizationMode::UnitMass);
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
@@ -4801,7 +4801,7 @@ fn normalize_by_length_and_gc_tag_weights_multiply_per_position() -> Result<()> 
     cfg.set_decimals(4);
     cfg.set_keep_zero_runs(false);
     cfg.unpaired.reads_are_fragments = true;
-    cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
+    cfg.set_normalize_by_length(LengthNormalizationMode::UnitMass);
     cfg.set_gc(ApplyGCArgs {
         gc_file: None,
         gc_tag: Some("GC".to_string()),

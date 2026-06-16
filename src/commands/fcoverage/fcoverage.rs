@@ -197,11 +197,16 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
     if opt.unpaired.reads_are_fragments && opt.ignore_gap {
         bail!("--ignore-gap cannot be used with --reads-are-fragments");
     }
-    let (chromosomes, contigs) =
-        resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     let window_opt = opt.windows.resolve_windows();
     let prefix = opt.output_prefix.trim();
     validate_output_prefix(prefix)?;
+
+    if options.log_equivalent_cli {
+        let command = crate::ToCliCommand::to_cli_string(opt)?;
+        info!(target: COMMAND_TARGET, "Equivalent CLI: {command}");
+    }
+    let (chromosomes, contigs) =
+        resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
 
     // Create output directory
     ensure_output_dir(&opt.ioc.output_dir)?;
@@ -407,7 +412,7 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
     let partials_prefix = partials_prefix.as_str();
     let finals_prefix = finals_prefix.as_str();
 
-    let length_norm_prefix = match opt.normalize_by_length_mode {
+    let length_norm_prefix = match opt.normalize_by_length {
         crate::commands::fcoverage::config::LengthNormalizationMode::Off => "",
         crate::commands::fcoverage::config::LengthNormalizationMode::UnitMass => {
             "length_normalized"

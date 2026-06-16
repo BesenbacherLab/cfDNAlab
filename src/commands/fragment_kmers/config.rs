@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
 use crate::{
+    ToCliCommand,
+    cli_command::helpers::*,
     commands::cli_common::{
         ApplyGCArgs, BaseSelectionArgs, ChromosomeArgs, FragmentLengthArgs,
         FragmentPositionSelectionArgs, IOCArgs, LoggingArgs, Ref2BitRequiredArgs, ScaleGenomeArgs,
@@ -15,7 +17,7 @@ use crate::{
 
 /// Commands that are shared with `transitions``
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FragmentKmersSharedArgs {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,
@@ -306,7 +308,7 @@ impl FragmentKmersSharedArgs {
 /// The read is mapped to a different `tid` than the mate.
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FragmentKmersConfig {
     /// Args shared with downstream tools like `transitions`
     #[cfg_attr(feature = "cli", clap(flatten))]
@@ -443,5 +445,46 @@ impl FragmentKmersConfig {
 
     pub fn set_gc(&mut self, gc: ApplyGCArgs) {
         self.shared_args.set_gc(gc);
+    }
+}
+
+pub(crate) fn push_fragment_kmers_shared_cli_args(
+    args: &mut Vec<std::ffi::OsString>,
+    config: &FragmentKmersSharedArgs,
+) {
+    push_ioc(args, &config.ioc);
+    push_ref_2bit_required(args, &config.ref_genome);
+    push_unpaired(args, &config.unpaired);
+    push_output_prefix(args, &config.output_prefix);
+    push_value(args, "--tile-size", config.tile_size);
+    push_value(args, "--indel-mode", indel_mode_value(config.indel_mode));
+    push_bool(args, "--ignore-gap", config.ignore_gap);
+    push_position_selection(args, &config.position_selection);
+    push_base_selection(args, &config.base_selection);
+    push_windows(args, &config.windows);
+    push_chromosomes(args, &config.chromosomes);
+    push_scale_genome(args, &config.scale_genome);
+    push_fragment_lengths(args, &config.fragment_lengths);
+    push_value(args, "--min-mapq", config.min_mapq);
+    push_bool(args, "--require-proper-pair", config.require_proper_pair);
+    push_blacklist_common(
+        args,
+        config.blacklist.as_deref(),
+        config.blacklist_min_size,
+        &config.blacklist_strategy,
+    );
+    push_apply_gc(args, &config.gc);
+    push_logging(args, &config.logging);
+}
+
+impl ToCliCommand for FragmentKmersConfig {
+    fn to_cli_args(&self) -> crate::Result<Vec<std::ffi::OsString>> {
+        let mut args = command_args("fragment-kmers");
+        push_fragment_kmers_shared_cli_args(&mut args, &self.shared_args);
+        push_values(&mut args, "--kmer-sizes", &self.kmer_sizes);
+        push_bool(&mut args, "--canonical", self.canonical);
+        push_bool(&mut args, "--positional-counts", self.positional_counts);
+        push_bool(&mut args, "--save-sparse", self.save_sparse);
+        Ok(args)
     }
 }

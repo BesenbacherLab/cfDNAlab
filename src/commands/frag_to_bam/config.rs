@@ -1,5 +1,6 @@
 use crate::commands::cli_common::{ChromosomeArgs, FragmentLengthArgs, LoggingArgs};
 use crate::shared::blacklist::BlacklistStrategy;
+use crate::{ToCliCommand, cli_command::helpers::*};
 use std::path::PathBuf;
 
 /// Convert a finaleDB-style frag file to a BAM file with unpaired reads
@@ -30,7 +31,7 @@ use std::path::PathBuf;
 ///
 /// A BAI index is written next to the BAM as `<output>.bam.bai`.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FragToBamConfig {
     /// Path to a coordinate-sorted `.tsv` frag file `[path]`
     #[cfg_attr(
@@ -243,5 +244,33 @@ impl FragToBamConfig {
 
     pub fn set_blacklist_strategy(&mut self, blacklist_strategy: BlacklistStrategy) {
         self.blacklist_strategy = blacklist_strategy;
+    }
+}
+
+impl ToCliCommand for FragToBamConfig {
+    fn to_cli_args(&self) -> crate::Result<Vec<std::ffi::OsString>> {
+        let mut args = command_args("frag-to-bam");
+        push_path(&mut args, "--frag", &self.frag);
+        push_path(&mut args, "--output-dir", &self.output_dir);
+        push_output_prefix(&mut args, &self.output_prefix);
+        push_optional_path(&mut args, "--frag-header", self.frag_header.as_deref());
+        push_path(&mut args, "--chrom-sizes", &self.chrom_sizes);
+        push_chromosomes(&mut args, &self.chromosomes);
+        push_fragment_lengths(&mut args, &self.fragment_lengths);
+        push_value(&mut args, "--min-mapq", self.min_mapq);
+        push_bool(&mut args, "--ignore-extras", self.ignore_extras);
+        push_bool(
+            &mut args,
+            "--allow-unknown-extras",
+            self.allow_unknown_extras,
+        );
+        push_blacklist_common(
+            &mut args,
+            self.blacklist.as_deref(),
+            self.blacklist_min_size,
+            &self.blacklist_strategy,
+        );
+        push_logging(&mut args, &self.logging);
+        Ok(args)
     }
 }

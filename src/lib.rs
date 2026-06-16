@@ -1,5 +1,6 @@
 #[cfg(feature = "cli")]
 pub(crate) mod cli_app;
+pub mod cli_command;
 pub mod command_run;
 pub(crate) mod commands;
 pub mod error;
@@ -7,6 +8,7 @@ pub(crate) mod shared;
 #[cfg(any(feature = "testing", test))]
 pub mod testing;
 
+pub use cli_command::ToCliCommand;
 pub use command_run::{CommandRunResult, RunOptions};
 pub use error::{Error, Result};
 

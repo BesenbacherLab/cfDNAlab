@@ -1,4 +1,6 @@
 use crate::{
+    ToCliCommand,
+    cli_command::helpers::*,
     commands::{
         cli_common::{
             ApplyGCArgs, ChromosomeArgs, DistributionWindowsArgs, FragmentLengthArgs, IOCArgs,
@@ -85,7 +87,7 @@ Counts (`<outside>_<inside>`): `AT_CG: 1`, `GA_TG: 1`
     feature = "cli",
     clap(about = ENDS_ABOUT, long_about = ENDS_LONG_ABOUT)
 )]
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EndsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,
@@ -447,5 +449,87 @@ impl EndsConfig {
 
     pub fn set_ref_2bit(&mut self, ref_2bit: Option<PathBuf>) {
         self.ref_2bit = ref_2bit;
+    }
+}
+
+impl ToCliCommand for EndsConfig {
+    fn to_cli_args(&self) -> crate::Result<Vec<std::ffi::OsString>> {
+        let mut args = command_args("ends");
+        push_ioc(&mut args, &self.ioc);
+        push_unpaired(&mut args, &self.unpaired);
+        push_output_prefix(&mut args, &self.output_prefix);
+        push_optional_path(&mut args, "--ref-2bit", self.ref_2bit.as_deref());
+        push_value(&mut args, "--k-inside", self.k_inside);
+        push_value(&mut args, "--k-outside", self.k_outside);
+        push_value(
+            &mut args,
+            "--source-inside",
+            kmer_source_value(self.source_inside),
+        );
+        push_value(
+            &mut args,
+            "--clip-strategy",
+            clip_strategy_value(self.clip.clip_strategy),
+        );
+        push_value(&mut args, "--max-soft-clips", self.clip.max_soft_clips);
+        push_value(
+            &mut args,
+            "--indel-filter",
+            indel_motif_filter_value(self.indel_filter),
+        );
+        push_value(&mut args, "--tile-size", self.tile_size);
+        push_distribution_windows(&mut args, &self.windows);
+        push_value(
+            &mut args,
+            "--assign-by",
+            window_motif_assigner_value(&self.window_assignment.assign_by),
+        );
+        push_chromosomes(&mut args, &self.chromosomes);
+        push_scale_genome(&mut args, &self.scale_genome);
+        push_bool(&mut args, "--collapse-complement", self.collapse_complement);
+        push_bool(&mut args, "--all-motifs", self.all_motifs);
+        push_optional_path(&mut args, "--motifs-file", self.motifs_file.as_deref());
+        push_fragment_lengths(&mut args, &self.fragment_lengths);
+        push_value(&mut args, "--min-mapq", self.min_mapq);
+        for filter in &self.bq_filter {
+            push_value(&mut args, "--bq-filter", filter.as_cli_expr());
+        }
+        push_bool(&mut args, "--require-proper-pair", self.require_proper_pair);
+        push_blacklist_common(
+            &mut args,
+            self.blacklist.as_deref(),
+            self.blacklist_min_size,
+            &self.blacklist_strategy,
+        );
+        push_apply_gc(&mut args, &self.gc);
+        push_logging(&mut args, &self.logging);
+        Ok(args)
+    }
+}
+
+fn kmer_source_value(source: KmerSource) -> &'static str {
+    match source {
+        KmerSource::Read => "read",
+        KmerSource::Reference => "reference",
+    }
+}
+
+fn clip_strategy_value(strategy: ClipStrategy) -> &'static str {
+    match strategy {
+        ClipStrategy::Aligned => "aligned",
+        ClipStrategy::IncludeAtAlignedBoundary => "include-at-aligned-boundary",
+        ClipStrategy::IncludeAtShiftedBoundary => "include-at-shifted-boundary",
+        ClipStrategy::Skip => "skip",
+    }
+}
+
+fn window_motif_assigner_value(assigner: &WindowMotifAssigner) -> String {
+    match assigner {
+        WindowMotifAssigner::Endpoint => "endpoint".to_string(),
+        WindowMotifAssigner::CountOverlap => "count-overlap".to_string(),
+        WindowMotifAssigner::Any => "any".to_string(),
+        WindowMotifAssigner::All => "all".to_string(),
+        WindowMotifAssigner::Midpoint => "midpoint".to_string(),
+        WindowMotifAssigner::Proportion(threshold) => format!("proportion={threshold}"),
     }
 }

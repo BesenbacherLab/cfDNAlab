@@ -231,12 +231,17 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
         warn!(target: COMMAND_TARGET, "{warning_message}");
     }
     opt.gc.validate(opt.ref_2bit.as_deref())?;
-    let (chromosomes, contigs) =
-        resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     let window_opt = opt.windows.resolve_windows();
     let fetch_window_opt = window_opt.as_fetch_window_spec();
     let prefix = opt.output_prefix.trim();
     validate_output_prefix(prefix)?;
+
+    if options.log_equivalent_cli {
+        let command = crate::ToCliCommand::to_cli_string(opt)?;
+        info!(target: COMMAND_TARGET, "Equivalent CLI: {command}");
+    }
+    let (chromosomes, contigs) =
+        resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
 
     // Create output directory
     ensure_output_dir(&opt.ioc.output_dir)?;

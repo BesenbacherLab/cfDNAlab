@@ -1,0 +1,21 @@
+name: RustNoCli
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  no-cli-library:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+    - name: Install system dependencies
+      run: sudo apt-get update && sudo apt-get install -y pkg-config libfontconfig1-dev
+    - name: Run non-CLI library tests
+      run: cargo test --no-default-features --features "testing,plotters,cmd_bam_to_bam,cmd_bam_to_frag,cmd_coverage_weights,cmd_ends,cmd_fcoverage,cmd_fragment_count_weights,cmd_frag_to_bam,cmd_gc_bias,cmd_lengths,cmd_midpoints,cmd_ref_gc_bias" --verbose

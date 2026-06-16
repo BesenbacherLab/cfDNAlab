@@ -5,6 +5,7 @@ use crate::commands::cli_common::{
     ChromosomeArgs, DistributionWindowsArgs, FragmentLengthArgs, IOCArgs, LoggingArgs, UnpairedArgs,
 };
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
+use crate::{ToCliCommand, cli_command::helpers::*};
 
 pub(crate) const COVERAGE_SIGNAL_LABEL: &str = "coverage";
 pub(crate) const FRAGMENT_MASS_SIGNAL_LABEL: &str = "fragment_mass";
@@ -107,7 +108,7 @@ pub enum LengthNormalizationMode {
 /// The read is mapped to a different `tid` than the mate.
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FCoverageConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,
@@ -158,7 +159,7 @@ pub struct FCoverageConfig {
             help_heading = "Core"
         )
     )]
-    pub normalize_by_length_mode: LengthNormalizationMode,
+    pub normalize_by_length: LengthNormalizationMode,
 
     /// Optional prefix for output files (e.g., a sample name) `[string]`
     ///
@@ -329,7 +330,7 @@ impl FCoverageConfig {
                 reads_are_fragments: false,
             },
             logging: LoggingArgs::default(),
-            normalize_by_length_mode: LengthNormalizationMode::Off,
+            normalize_by_length: LengthNormalizationMode::Off,
             output_prefix: String::new(),
             decimals: 2,
             keep_zero_runs: false,
@@ -360,15 +361,12 @@ impl FCoverageConfig {
         self.unpaired = unpaired;
     }
 
-    pub fn set_normalize_by_length_mode(
-        &mut self,
-        normalize_by_length_mode: LengthNormalizationMode,
-    ) {
-        self.normalize_by_length_mode = normalize_by_length_mode;
+    pub fn set_normalize_by_length(&mut self, normalize_by_length: LengthNormalizationMode) {
+        self.normalize_by_length = normalize_by_length;
     }
 
     pub fn uses_length_normalization(&self) -> bool {
-        self.normalize_by_length_mode != LengthNormalizationMode::Off
+        self.normalize_by_length != LengthNormalizationMode::Off
     }
 
     pub(crate) fn aggregate_signal_label(&self) -> &'static str {
@@ -380,7 +378,7 @@ impl FCoverageConfig {
     }
 
     pub fn restores_mean_after_length_normalization(&self) -> bool {
-        self.normalize_by_length_mode == LengthNormalizationMode::RestoreMean
+        self.normalize_by_length == LengthNormalizationMode::RestoreMean
     }
 
     pub fn set_decimals(&mut self, decimals: u8) {
@@ -437,5 +435,60 @@ impl FCoverageConfig {
 
     pub fn set_ref_2bit(&mut self, ref_2bit: Option<PathBuf>) {
         self.ref_2bit = ref_2bit;
+    }
+}
+
+impl ToCliCommand for FCoverageConfig {
+    fn to_cli_args(&self) -> crate::Result<Vec<std::ffi::OsString>> {
+        let mut args = command_args("fcoverage");
+        push_ioc(&mut args, &self.ioc);
+        push_unpaired(&mut args, &self.unpaired);
+        push_value(
+            &mut args,
+            "--normalize-by-length",
+            length_normalization_value(self.normalize_by_length),
+        );
+        push_output_prefix(&mut args, &self.output_prefix);
+        push_value(&mut args, "--decimals", self.decimals);
+        push_bool(&mut args, "--keep-zero-runs", self.keep_zero_runs);
+        push_value(&mut args, "--tile-size", self.tile_size);
+        push_value(
+            &mut args,
+            "--per-window",
+            coverage_window_action_value(self.per_window),
+        );
+        push_bool(&mut args, "--ignore-gap", self.ignore_gap);
+        push_distribution_windows(&mut args, &self.windows);
+        push_chromosomes(&mut args, &self.chromosomes);
+        push_scale_genome(&mut args, &self.scale_genome);
+        push_fragment_lengths(&mut args, &self.fragment_lengths);
+        push_value(&mut args, "--min-mapq", self.min_mapq);
+        push_bool(&mut args, "--require-proper-pair", self.require_proper_pair);
+        push_path_values(&mut args, "--blacklist", self.blacklist.as_deref());
+        push_apply_gc(&mut args, &self.gc);
+        push_optional_path(&mut args, "--ref-2bit", self.ref_2bit.as_deref());
+        push_logging(&mut args, &self.logging);
+        Ok(args)
+    }
+}
+
+fn length_normalization_value(mode: LengthNormalizationMode) -> &'static str {
+    match mode {
+        LengthNormalizationMode::Off => "off",
+        LengthNormalizationMode::UnitMass => "unit-mass",
+        LengthNormalizationMode::RestoreMean => "restore-mean",
+    }
+}
+
+pub(crate) fn coverage_window_action_value(action: CoverageWindowAction) -> &'static str {
+    match action {
+        CoverageWindowAction::Average => "average",
+        CoverageWindowAction::Total => "total",
+        CoverageWindowAction::SummaryStats => "summary-stats",
+        CoverageWindowAction::AverageOnUniqueBases => "average-on-unique-bases",
+        CoverageWindowAction::TotalOnUniqueBases => "total-on-unique-bases",
+        CoverageWindowAction::SummaryStatsOnUniqueBases => "summary-stats-on-unique-bases",
+        CoverageWindowAction::OnlyIncludeThesePositionsUnique => "unique-positions",
+        CoverageWindowAction::OnlyIncludeThesePositionsIndexed => "indexed-positions",
     }
 }

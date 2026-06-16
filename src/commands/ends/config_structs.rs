@@ -278,7 +278,7 @@ impl ClipStrategy {
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct ClippingArgs {
     /// How to extract a motif when its fragment end is clipped `[string]`
     ///
@@ -356,7 +356,7 @@ pub struct ClippingArgs {
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct AssignMotifToWindowArgs {
     /// When to assign motifs to windows `[string]`
     ///

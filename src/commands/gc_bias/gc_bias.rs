@@ -312,11 +312,15 @@ pub fn run_gc_bias(opt: &GCConfig, options: RunOptions) -> Result<GCBiasRunResul
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
-    let (chromosomes, contigs) =
-        resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     let prefix = opt.output_prefix.trim();
     validate_output_prefix(prefix)?;
     let window_opt = opt.windows.resolve_windows();
+    if options.log_equivalent_cli {
+        let command = crate::ToCliCommand::to_cli_string(opt)?;
+        info!(target: COMMAND_TARGET, "Equivalent CLI: {command}");
+    }
+    let (chromosomes, contigs) =
+        resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
 
     info!(target: COMMAND_TARGET, "Loading reference GC bias");
     let ReferenceGCData {

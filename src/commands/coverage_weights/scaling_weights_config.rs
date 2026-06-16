@@ -8,7 +8,7 @@ use anyhow::bail;
 /// These settings control how raw fragment mass is counted before the
 /// command-specific smoothing and scaling-factor postprocessing is applied.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ScalingWeightsArgs {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,

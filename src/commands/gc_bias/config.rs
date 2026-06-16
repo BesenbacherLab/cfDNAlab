@@ -1,5 +1,6 @@
 use crate::commands::cli_common::*;
 use crate::commands::gc_bias::outliers::{OutlierAction, OutlierRule, OutlierScope};
+use crate::{ToCliCommand, cli_command::helpers::*};
 use anyhow::{Result, anyhow};
 use std::path::PathBuf;
 
@@ -101,7 +102,7 @@ pub enum OutlierScopeArg {
 /// The read is mapped to a different `tid` than the mate.
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GCConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,
@@ -200,7 +201,7 @@ pub struct GCConfig {
     )]
     pub min_gc_bin_mass: f32,
 
-    /// Number of extreme GC bins (`--min_gc_bin_mass`) from each side to interpolate from neighbouring corrections `[integer]`
+    /// Number of extreme GC bins (`--min-gc-bin-mass`) from each side to interpolate from neighbouring corrections `[integer]`
     ///
     /// The most extreme GC fractions are very sparsely observed. This can lead to extreme corrections.
     /// Set the number of bins from each side where we interpolate a correction based on the neighbouring corrections.
@@ -217,7 +218,7 @@ pub struct GCConfig {
     )]
     pub num_extreme_gc_bins: u8,
 
-    /// Number of the **shortest** fragment length bins (`--min_length_bin_mass`) to interpolate from neighbouring corrections `[integer]`
+    /// Number of the **shortest** fragment length bins (`--min-length-bin-mass`) to interpolate from neighbouring corrections `[integer]`
     ///
     /// The shortest fragment lengths can be very sparsely observed. This can lead to extreme corrections.
     /// Set the number of short-length bins where we interpolate a correction based on the neighbouring corrections.
@@ -546,4 +547,68 @@ fn resolve_outlier_quantiles(vals: &[f32]) -> Result<(f32, f32)> {
         ));
     }
     Ok((lower, upper))
+}
+
+impl ToCliCommand for GCConfig {
+    fn to_cli_args(&self) -> crate::Result<Vec<std::ffi::OsString>> {
+        let mut args = command_args("gc-bias");
+        push_ioc(&mut args, &self.ioc);
+        push_unpaired(&mut args, &self.unpaired);
+        push_output_prefix(&mut args, &self.output_prefix);
+        push_ref_2bit_required(&mut args, &self.ref_genome);
+        push_path(&mut args, "--ref-gc-file", &self.ref_gc_file);
+        push_gc_windows(&mut args, &self.windows);
+        push_assign_to_window(&mut args, &self.window_assignment);
+        push_chromosomes(&mut args, &self.chromosomes);
+        push_value(&mut args, "--tile-size", self.tile_size);
+        push_value(&mut args, "--min-length-bin-mass", self.min_length_bin_mass);
+        push_value(
+            &mut args,
+            "--min-length-bin-width",
+            self.min_length_bin_width,
+        );
+        push_value(&mut args, "--min-gc-bin-mass", self.min_gc_bin_mass);
+        push_value(&mut args, "--num-extreme-gc-bins", self.num_extreme_gc_bins);
+        push_value(
+            &mut args,
+            "--num-short-length-bins",
+            self.num_short_length_bins,
+        );
+        push_path_values(&mut args, "--blacklist", self.blacklist.as_deref());
+        push_value(&mut args, "--min-mapq", self.min_mapq);
+        push_bool(&mut args, "--require-proper-pair", self.require_proper_pair);
+        push_value(&mut args, "--min-window-acgt-pct", self.min_window_acgt_pct);
+        push_value(
+            &mut args,
+            "--outlier-method",
+            outlier_method_value(self.outlier_method),
+        );
+        push_value(
+            &mut args,
+            "--outlier-scope",
+            outlier_scope_value(self.outlier_scope),
+        );
+        push_values(&mut args, "--outlier-quantiles", &self.outlier_quantiles);
+        push_value(&mut args, "--outlier-k", self.outlier_k);
+        push_bool(&mut args, "--save-intermediates", self.save_intermediates);
+        push_logging(&mut args, &self.logging);
+        Ok(args)
+    }
+}
+
+fn outlier_method_value(method: OutlierMethodArg) -> &'static str {
+    match method {
+        OutlierMethodArg::None => "none",
+        OutlierMethodArg::Quantile => "quantile",
+        OutlierMethodArg::Iqr => "iqr",
+        OutlierMethodArg::Stddev => "stddev",
+        OutlierMethodArg::Mad => "mad",
+    }
+}
+
+fn outlier_scope_value(scope: OutlierScopeArg) -> &'static str {
+    match scope {
+        OutlierScopeArg::PerLength => "per-length",
+        OutlierScopeArg::Global => "global",
+    }
 }

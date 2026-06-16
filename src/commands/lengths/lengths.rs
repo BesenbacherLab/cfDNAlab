@@ -235,12 +235,16 @@ pub fn run_lengths(opt: &LengthsConfig, options: RunOptions) -> Result<LengthsRu
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
-    let (chromosomes, contigs) =
-        resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     let window_opt = opt.windows.resolve_windows();
     let fetch_window_opt = window_opt.as_fetch_window_spec();
     let prefix = opt.output_prefix.trim();
     validate_output_prefix(prefix)?;
+    if options.log_equivalent_cli {
+        let command = crate::ToCliCommand::to_cli_string(opt)?;
+        info!(target: COMMAND_TARGET, "Equivalent CLI: {command}");
+    }
+    let (chromosomes, contigs) =
+        resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
 
     // Create output directory
     ensure_output_dir(&opt.ioc.output_dir)?;

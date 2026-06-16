@@ -106,10 +106,6 @@ pub fn run_wps_peaks(opt: &WPSPeaksConfig, options: RunOptions) -> Result<WPSPea
     if opt.shared_args.unpaired.reads_are_fragments && opt.shared_args.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
-    let (chromosomes, contigs) = resolve_chromosomes_and_contigs(
-        &opt.shared_args.chromosomes,
-        &opt.shared_args.ioc.bam.as_path(),
-    )?;
     let prefix = opt.shared_args.output_prefix.trim();
     validate_output_prefix(prefix)?;
     let window_opt = opt.shared_args.windows.resolve_windows();
@@ -137,6 +133,15 @@ pub fn run_wps_peaks(opt: &WPSPeaksConfig, options: RunOptions) -> Result<WPSPea
     opt.shared_args
         .gc
         .validate(opt.shared_args.ref_2bit.as_deref())?;
+
+    if options.log_equivalent_cli {
+        let command = crate::ToCliCommand::to_cli_string(opt)?;
+        info!(target: COMMAND_TARGET, "Equivalent CLI: {command}");
+    }
+    let (chromosomes, contigs) = resolve_chromosomes_and_contigs(
+        &opt.shared_args.chromosomes,
+        &opt.shared_args.ioc.bam.as_path(),
+    )?;
 
     // Create output directory if needed
     ensure_output_dir(&opt.shared_args.ioc.output_dir)?;

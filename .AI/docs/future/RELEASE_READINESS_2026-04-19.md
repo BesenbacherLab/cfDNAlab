@@ -113,7 +113,7 @@ Action:
 ## Current Good Signals
 
 - `Cargo.toml` metadata has name, version, authors, description, license, README, repository, homepage, documentation, keywords, and category.
-- Default features expose the documented release commands and do not include experimental commands such as `fragment-kmers`, `prepare-windows`, `wps`, or `wps-peaks`.
+- Default features expose the documented release commands and do not include experimental commands such as `fragment-kmers`, `prep-windows`, `wps`, or `wps-peaks`.
 - README command list matches the default release command set.
 - Generated CLI docs exist locally for the 11 release commands and the generation script uses `--scope release`.
 - CI has separate default, all-features, docs, and coverage workflows.

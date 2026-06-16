@@ -1,5 +1,6 @@
 use crate::commands::cli_common::*;
 use crate::shared::thread_pool::default_thread_count;
+use crate::{ToCliCommand, cli_command::helpers::*};
 use std::path::PathBuf;
 
 /// Build a reference GC bias table for cfDNA correction.
@@ -14,6 +15,7 @@ use std::path::PathBuf;
 /// A support mask flags bins with too few counts per megabase (including theoretically unobservable
 /// GC-by-length combinations), and the sparse bins are interpolated using neighbours.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RefGCBiasConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ref_genome: Ref2BitRequiredArgs,
@@ -200,7 +202,7 @@ fn parse_positive_usize(raw: &str) -> Result<usize, String> {
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct RefGCWindowsArgs {
     /// BED file with regions to include `[path]`
     ///
@@ -216,5 +218,31 @@ impl RefGCWindowsArgs {
         } else {
             WindowSpec::Global
         }
+    }
+}
+
+impl ToCliCommand for RefGCBiasConfig {
+    fn to_cli_args(&self) -> crate::Result<Vec<std::ffi::OsString>> {
+        let mut args = command_args("ref-gc-bias");
+        push_ref_2bit_required(&mut args, &self.ref_genome);
+        push_path(&mut args, "--output-dir", &self.output_dir);
+        push_output_prefix(&mut args, &self.output_prefix);
+        push_value(&mut args, "--n-threads", self.n_threads);
+        push_value(&mut args, "--n-positions", self.n_positions);
+        if let Some(seed) = self.seed {
+            push_value(&mut args, "--seed", seed);
+        }
+        push_optional_path(&mut args, "--by-bed", self.windows.by_bed.as_deref());
+        push_chromosomes(&mut args, &self.chromosomes);
+        push_path_values(&mut args, "--blacklist", self.blacklist.as_deref());
+        push_fragment_lengths(&mut args, &self.fragment_lengths);
+        push_value(&mut args, "--end-offset", self.end_offset);
+        push_bool(&mut args, "--skip-interpolation", self.skip_interpolation);
+        push_value(&mut args, "--smoothing-sigma", self.smoothing_sigma);
+        push_value(&mut args, "--smoothing-radius", self.smoothing_radius);
+        push_bool(&mut args, "--skip-smoothing", self.skip_smoothing);
+        push_value(&mut args, "--tile-size", self.tile_size);
+        push_logging(&mut args, &self.logging);
+        Ok(args)
     }
 }

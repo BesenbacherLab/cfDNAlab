@@ -140,6 +140,10 @@ fn execute_bam_to_bam(opt: &BamToBamConfig, options: RunOptions) -> Result<BamTo
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
+    if options.log_equivalent_cli {
+        let command = crate::ToCliCommand::to_cli_string(opt)?;
+        info!(target: COMMAND_TARGET, "Equivalent CLI: {command}");
+    }
     let (mut chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.in_bam.as_path())?;
     // Preserve the selected subset, but write it in the input BAM header order.

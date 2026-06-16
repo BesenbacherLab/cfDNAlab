@@ -1,11 +1,15 @@
 use crate::{
+    ToCliCommand,
+    cli_command::helpers::{command_args, push_bool},
     command_run::{CommandRunResult, RunOptions},
     commands::{
         cli_common::{ensure_output_dir, resolve_chromosomes_and_contigs, validate_output_prefix},
         counters::FCoverageCounters,
-        coverage_weights::scaling_weights_config::ScalingWeightsArgs,
         coverage_weights::striding::{
             StrideBin, fill_triangular_overlap, normalize_weighted_average_overlap_by_global_mean,
+        },
+        coverage_weights::{
+            config::push_scaling_weights_cli_args, scaling_weights_config::ScalingWeightsArgs,
         },
         fcoverage::{
             config::{FCoverageConfig, LengthNormalizationMode},
@@ -79,6 +83,17 @@ pub(crate) enum ScalingWeightsCommand {
 }
 
 impl ScalingWeightsCommand {
+    fn target(self) -> &'static str {
+        match self {
+            Self::Coverage => "coverage-weights",
+            Self::FragmentCount => "fragment-count-weights",
+        }
+    }
+
+    fn subcommand(self) -> &'static str {
+        self.target()
+    }
+
     fn fcoverage_window_action(self) -> CoverageWindowAction {
         match self {
             Self::Coverage => CoverageWindowAction::Average,
@@ -123,6 +138,23 @@ impl ScalingWeightsCommand {
             Self::Coverage => info!(target: "coverage-weights", "{message}"),
             Self::FragmentCount => info!(target: "fragment-count-weights", "{message}"),
         }
+    }
+}
+
+struct ScalingWeightsCli<'a> {
+    config: &'a ScalingWeightsArgs,
+    command: ScalingWeightsCommand,
+    ignore_gap: bool,
+}
+
+impl ToCliCommand for ScalingWeightsCli<'_> {
+    fn to_cli_args(&self) -> crate::Result<Vec<std::ffi::OsString>> {
+        let mut args = command_args(self.command.subcommand());
+        push_scaling_weights_cli_args(&mut args, self.config);
+        if matches!(self.command, ScalingWeightsCommand::Coverage) {
+            push_bool(&mut args, "--ignore-gap", self.ignore_gap);
+        }
+        Ok(args)
     }
 }
 
@@ -200,8 +232,6 @@ pub(crate) fn run_with_fcoverage(
     options: RunOptions,
 ) -> Result<ScalingWeightsRunResult> {
     let start_time = Instant::now();
-    let (chromosomes, _contigs) =
-        resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     opt.check_bin_sizes()?;
     opt.fragment_lengths.validate()?;
     opt.gc.validate(opt.ref_2bit.as_deref())?;
@@ -209,6 +239,17 @@ pub(crate) fn run_with_fcoverage(
         bail!("--ignore-gap cannot be used with --reads-are-fragments");
     }
     validate_output_prefix(opt.output_prefix.trim())?;
+
+    if options.log_equivalent_cli {
+        let command_text = crate::ToCliCommand::to_cli_string(&ScalingWeightsCli {
+            config: opt,
+            command,
+            ignore_gap: source_ignore_gap.unwrap_or(false),
+        })?;
+        command.info(&format!("Equivalent CLI: {command_text}"));
+    }
+    let (chromosomes, _contigs) =
+        resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
 
     // Keep all intermediate files under the user-chosen output directory so disk usage stays
     // within the filesystem location the user already selected for results.
@@ -244,6 +285,7 @@ pub(crate) fn run_with_fcoverage(
             report_statistics: false,
             show_progress: options.show_progress,
             log_statuses: options.log_statuses,
+            log_equivalent_cli: options.log_equivalent_cli,
         },
     )
     .context("running internal fcoverage")?;
@@ -384,7 +426,7 @@ fn build_fcoverage_stride_config(
     );
 
     cfg.set_unpaired(opt.unpaired.clone());
-    cfg.set_normalize_by_length_mode(if normalize_by_length {
+    cfg.set_normalize_by_length(if normalize_by_length {
         LengthNormalizationMode::UnitMass
     } else {
         LengthNormalizationMode::Off

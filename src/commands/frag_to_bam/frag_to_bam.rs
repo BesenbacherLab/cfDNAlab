@@ -33,7 +33,7 @@ use std::{
     path::{Path, PathBuf},
     time::Instant,
 };
-use tracing::warn;
+use tracing::{info, warn};
 
 const COMMAND_TARGET: &str = "frag-to-bam";
 
@@ -136,7 +136,7 @@ struct FragColumnLayout {
 /// cannot be written.
 pub fn run_frag_to_bam(opt: &FragToBamConfig, options: RunOptions) -> Result<FragToBamRunResult> {
     let start_time = Instant::now();
-    let (counters, output_path) = execute_frag_to_bam(opt)?;
+    let (counters, output_path) = execute_frag_to_bam(opt, options)?;
 
     let elapsed = start_time.elapsed();
     if options.report_statistics {
@@ -174,9 +174,16 @@ pub fn run_frag_to_bam(opt: &FragToBamConfig, options: RunOptions) -> Result<Fra
     })
 }
 
-fn execute_frag_to_bam(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
+fn execute_frag_to_bam(
+    opt: &FragToBamConfig,
+    options: RunOptions,
+) -> Result<(FragToBamCounters, PathBuf)> {
     opt.fragment_lengths.validate()?;
     validate_output_prefix(opt.output_prefix.trim())?;
+    if options.log_equivalent_cli {
+        let command = crate::ToCliCommand::to_cli_string(opt)?;
+        info!(target: COMMAND_TARGET, "Equivalent CLI: {command}");
+    }
     ensure_output_dir(&opt.output_dir)?;
     let column_layout = resolve_frag_column_layout(opt)?;
 

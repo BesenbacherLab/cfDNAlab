@@ -39,7 +39,7 @@ Invalid values fail during CLI parsing. `file=` with an empty path is invalid.
 - The top-level binary initializes logging once before command execution.
 - Nested command calls, such as `coverage-weights` calling internal `fcoverage`, must not print nested top-level banners.
 - Nested calls should log phase messages with their own targets, so users can see where work is happening.
-- `prepare-windows` and `visualize-positions` currently force stdout logging because they do not expose shared `LoggingArgs`.
+- `prep-windows` and `visualize-positions` currently force stdout logging because they do not expose shared `LoggingArgs`.
 
 ## Implementation Invariants
 

@@ -80,14 +80,24 @@ impl CommandRunResult for VisualizePositionsRunResult {
 /// visualization cannot be written.
 pub fn run_visualize_positions(
     cfg: &VisualizePositionsConfig,
-    _options: RunOptions,
+    options: RunOptions,
 ) -> Result<VisualizePositionsRunResult> {
     let viz_cfg = cfg.build()?;
+
+    if options.log_equivalent_cli {
+        let command = crate::ToCliCommand::to_cli_string(cfg)?;
+        tracing::info!(target: "visualize-positions", "Equivalent CLI: {command}");
+    }
 
     fs::create_dir_all(&cfg.work_dir)
         .with_context(|| format!("creating work directory {}", cfg.work_dir.display()))?;
 
-    let results = compute_visualizations(&viz_cfg, &cfg.position_selection, &cfg.work_dir)?;
+    let results = compute_visualizations(
+        &viz_cfg,
+        &cfg.position_selection,
+        &cfg.work_dir,
+        options.log_equivalent_cli,
+    )?;
 
     let rendered = match viz_cfg.style {
         Style::Ascii => render_ascii(&results, &viz_cfg),
@@ -117,6 +127,7 @@ fn compute_visualizations(
     viz_cfg: &VizConfig,
     position_args: &FragmentPositionSelectionArgs,
     work_dir: &Path,
+    log_equivalent_cli: bool,
 ) -> Result<Vec<LengthVisualization>> {
     let temp_dir = TempDirBuilder::new()
         .prefix("cfdna_viz")
@@ -138,6 +149,7 @@ fn compute_visualizations(
         temp_dir.path(),
         &run_k_sizes,
         prefix,
+        log_equivalent_cli,
     )?;
 
     let main_positional_spec = viz_cfg.position_specs[0].clone();
@@ -472,6 +484,7 @@ fn run_fragment_kmers(
     temp_dir: &Path,
     kmer_sizes: &[u8],
     prefix: &str,
+    log_equivalent_cli: bool,
 ) -> Result<()> {
     let mut cfg = FragmentKmersConfig::new(
         IOCArgs {
@@ -510,7 +523,10 @@ fn run_fragment_kmers(
     cfg.set_windows(windows_args);
     crate::commands::fragment_kmers::fragment_kmers::run_fragment_kmers(
         &cfg,
-        RunOptions::new_quiet(),
+        RunOptions {
+            log_equivalent_cli,
+            ..RunOptions::new_quiet()
+        },
     )
     .context("running fragment-kmers for visualize-positions")?;
     Ok(())

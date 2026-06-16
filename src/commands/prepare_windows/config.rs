@@ -1,4 +1,6 @@
 use crate::{
+    ToCliCommand,
+    cli_command::helpers::*,
     commands::cli_common::ChromosomeArgs,
     commands::prepare_windows::{labels::validate_label_token, near_file::NearDuplicatesPolicy},
     shared::{blacklist::BlacklistStrategy, thread_pool::default_thread_count},
@@ -122,7 +124,8 @@ use std::path::PathBuf;
 ///     --distance-sign signed
 ///
 /// ```
-#[cfg_attr(feature = "cli", derive(Parser, Clone))]
+#[cfg_attr(feature = "cli", derive(Parser))]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(
     feature = "cli",
     command(
@@ -237,12 +240,7 @@ pub struct PrepareConfig {
     /// Example: `--score-col 4`
     #[cfg_attr(
         feature = "cli",
-        clap(
-            long,
-            value_parser,
-            requires = "score-filter",
-            help_heading = "Score filtering"
-        )
+        clap(long, value_parser, help_heading = "Score filtering")
     )]
     pub score_col: Option<String>,
 
@@ -255,7 +253,7 @@ pub struct PrepareConfig {
         clap(
             long,
             value_parser,
-            requires = "score-col",
+            requires = "score_col",
             help_heading = "Score filtering"
         )
     )]
@@ -843,7 +841,7 @@ pub struct PrepareConfig {
         clap(
             long,
             value_parser = clap::value_parser!(u32).range(1..),
-            requires = "chrom-sizes",
+            requires = "chrom_sizes",
             help_heading = "Resizing / flanking (select max. one transformation)"
         )
     )]
@@ -858,7 +856,7 @@ pub struct PrepareConfig {
             long,
             value_parser = clap::value_parser!(i32),
             num_args = 2,
-            requires = "chrom-sizes",
+            requires = "chrom_sizes",
             help_heading = "Resizing / flanking (select max. one transformation)"
         )
     )]
@@ -1112,7 +1110,7 @@ pub struct PrepareConfig {
         clap(
             long,
             value_parser = clap::value_parser!(u32).range(0..),
-            requires = "merge-scope",
+            requires = "merge_scope",
             help_heading = "Merging neighbours"
         )
     )]
@@ -1379,5 +1377,263 @@ fn parse_sep(input: &str) -> Result<char, String> {
             }
             Ok(ch)
         }
+    }
+}
+
+impl ToCliCommand for PrepareConfig {
+    fn to_cli_args(&self) -> crate::Result<Vec<std::ffi::OsString>> {
+        let mut args = command_args("prep-windows");
+        push_path(&mut args, "--input", &self.input);
+        push_path(&mut args, "--output", &self.output);
+        push_chromosomes(&mut args, &self.chromosomes);
+        push_value(&mut args, "--header", header_mode_value(self.header));
+        push_value(&mut args, "--sep", separator_value(self.sep));
+        push_value(&mut args, "--cols", &self.cols);
+        push_values(&mut args, "--group-cols", &self.group_cols);
+        if let Some(score_col) = &self.score_col {
+            push_value(&mut args, "--score-col", score_col);
+        }
+        if let Some(score_filter) = &self.score_filter {
+            push_value(&mut args, "--score-filter", score_filter);
+        }
+        push_value(
+            &mut args,
+            "--score-missing",
+            missing_score_value(self.score_missing),
+        );
+        push_values(
+            &mut args,
+            "--compose",
+            &self
+                .compose
+                .iter()
+                .map(compose_spec_value)
+                .collect::<Vec<_>>(),
+        );
+        push_values(&mut args, "--out-labels", &self.out_labels);
+        push_values(&mut args, "--min-per", &self.min_per);
+        push_values(&mut args, "--exclude-labels", &self.exclude_labels);
+        push_path_values(&mut args, "--blacklist", self.blacklist.as_deref());
+        push_value(&mut args, "--blacklist-halo", self.blacklist_halo);
+        push_value(
+            &mut args,
+            "--blacklist-strategy",
+            blacklist_strategy_value(&self.blacklist_strategy),
+        );
+
+        if let Some(near) = &self.near {
+            push_path(&mut args, "--near", near);
+            push_value(
+                &mut args,
+                "--near-header",
+                header_mode_value(self.near_header),
+            );
+            if let Some(near_strand_col) = &self.near_strand_col {
+                push_value(&mut args, "--near-strand-col", near_strand_col);
+            }
+            push_values(&mut args, "--near-group-cols", &self.near_group_cols);
+            push_value(&mut args, "--near-edge", near_edge_value(self.near_edge));
+            push_value(
+                &mut args,
+                "--near-direction",
+                near_direction_value(self.near_direction),
+            );
+            push_value(&mut args, "--near-ties", near_tie_value(self.near_ties));
+            push_value(
+                &mut args,
+                "--near-duplicates",
+                near_duplicates_value(self.near_duplicates),
+            );
+            if let Some(distance_bins) = &self.distance_bins {
+                push_values(&mut args, "--distance-bins", distance_bins);
+            }
+            push_value(
+                &mut args,
+                "--distance-sign",
+                dist_sign_value(self.distance_sign),
+            );
+            if let Some(distance_max) = self.distance_max {
+                push_value(&mut args, "--distance-max", distance_max);
+            }
+        }
+        push_value(
+            &mut args,
+            "--distance-from",
+            coordinate_set_value(self.distance_from),
+        );
+
+        if let Some(resize) = self.resize {
+            push_value(&mut args, "--resize", resize);
+        }
+        if let Some(flank) = &self.flank {
+            push_values(&mut args, "--flank", flank);
+        }
+        push_optional_path(&mut args, "--chrom-sizes", self.chrom_sizes.as_deref());
+        push_value(&mut args, "--oob", oob_policy_value(self.oob));
+        if let Some(min_distance) = self.min_distance_within_group {
+            push_value(&mut args, "--min-distance-within-group", min_distance);
+        }
+        push_value(
+            &mut args,
+            "--distance-policy",
+            distance_policy_value(self.distance_policy),
+        );
+        push_value(
+            &mut args,
+            "--deduplicate",
+            dedup_keep_value(self.deduplicate),
+        );
+        if let Some(cluster_min) = self.cluster_min_overlaps {
+            push_value(&mut args, "--cluster-min-overlaps", cluster_min);
+        }
+        push_value(
+            &mut args,
+            "--cluster-on",
+            coordinate_set_value(self.cluster_on),
+        );
+        push_bool(
+            &mut args,
+            "--cluster-before-min-distance",
+            self.cluster_before_min_distance,
+        );
+        push_value(
+            &mut args,
+            "--merge-scope",
+            merge_scope_value(self.merge_scope),
+        );
+        push_value(&mut args, "--merge-key", &self.merge_key);
+        push_value(&mut args, "--merge-on", coordinate_set_value(self.merge_on));
+        if let Some(merge_gap) = self.merge_gap {
+            push_value(&mut args, "--merge-gap", merge_gap);
+        }
+        push_value(
+            &mut args,
+            "--merge-label",
+            merge_label_value(self.merge_label),
+        );
+        if let Some(seed) = self.seed {
+            push_value(&mut args, "--seed", seed);
+        }
+        push_value(&mut args, "--n-threads", self.n_threads);
+        Ok(args)
+    }
+}
+
+fn separator_value(separator: char) -> String {
+    match separator {
+        '\t' => "tab".to_string(),
+        '\n' => "nl".to_string(),
+        '\0' => "nul".to_string(),
+        '\r' => r"\r".to_string(),
+        ' ' => r"\x20".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn compose_spec_value(spec: &ComposeSpec) -> String {
+    format!("{}={}", spec.name, spec.parts.join(","))
+}
+
+fn header_mode_value(mode: HeaderMode) -> &'static str {
+    match mode {
+        HeaderMode::Auto => "auto",
+        HeaderMode::Present => "present",
+        HeaderMode::Absent => "absent",
+    }
+}
+
+fn missing_score_value(mode: MissingScore) -> &'static str {
+    match mode {
+        MissingScore::Keep => "keep",
+        MissingScore::Drop => "drop",
+    }
+}
+
+fn near_edge_value(edge: NearEdge) -> &'static str {
+    match edge {
+        NearEdge::Left => "left",
+        NearEdge::Right => "right",
+        NearEdge::Nearest => "nearest",
+        NearEdge::Upstream => "upstream",
+        NearEdge::Downstream => "downstream",
+    }
+}
+
+fn near_direction_value(direction: NearDirection) -> &'static str {
+    match direction {
+        NearDirection::Upstream => "upstream",
+        NearDirection::Downstream => "downstream",
+        NearDirection::Both => "both",
+    }
+}
+
+fn near_tie_value(policy: NearTiePolicy) -> &'static str {
+    match policy {
+        NearTiePolicy::Annotate => "annotate",
+        NearTiePolicy::Drop => "drop",
+    }
+}
+
+fn near_duplicates_value(policy: NearDuplicatesPolicy) -> &'static str {
+    match policy {
+        NearDuplicatesPolicy::Error => "error",
+        NearDuplicatesPolicy::KeepFirst => "keep-first",
+        NearDuplicatesPolicy::DropAll => "drop-all",
+        NearDuplicatesPolicy::Merge => "merge",
+    }
+}
+
+fn dist_sign_value(sign: DistSign) -> &'static str {
+    match sign {
+        DistSign::Absolute => "absolute",
+        DistSign::Signed => "signed",
+    }
+}
+
+fn coordinate_set_value(coordinates: CoordinateSet) -> &'static str {
+    match coordinates {
+        CoordinateSet::Resized => "resized",
+        CoordinateSet::Original => "original",
+    }
+}
+
+fn oob_policy_value(policy: OobPolicy) -> &'static str {
+    match policy {
+        OobPolicy::Drop => "drop",
+        OobPolicy::Trim => "trim",
+        OobPolicy::Allow => "allow",
+    }
+}
+
+fn distance_policy_value(policy: DistancePolicy) -> &'static str {
+    match policy {
+        DistancePolicy::KeepFirst => "keep-first",
+        DistancePolicy::KeepHighestScore => "keep-highest-score",
+        DistancePolicy::KeepLowestScore => "keep-lowest-score",
+        DistancePolicy::KeepLongest => "keep-longest",
+    }
+}
+
+fn dedup_keep_value(policy: DedupKeep) -> &'static str {
+    match policy {
+        DedupKeep::None => "none",
+        DedupKeep::KeepFirst => "keep-first",
+        DedupKeep::KeepHighestScore => "keep-highest-score",
+        DedupKeep::KeepLowestScore => "keep-lowest-score",
+    }
+}
+
+fn merge_scope_value(scope: MergeScope) -> &'static str {
+    match scope {
+        MergeScope::None => "none",
+        MergeScope::Within => "within",
+        MergeScope::Across => "across",
+    }
+}
+
+fn merge_label_value(label: MergeLabel) -> &'static str {
+    match label {
+        MergeLabel::Join => "join",
+        MergeLabel::First => "first",
     }
 }

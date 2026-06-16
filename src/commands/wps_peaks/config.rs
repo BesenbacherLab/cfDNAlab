@@ -2,8 +2,9 @@ use std::path::PathBuf;
 
 use crate::commands::cli_common::{ApplyGCArgs, ScaleGenomeArgs};
 use crate::commands::cli_common::{ChromosomeArgs, IOCArgs, WindowsArgs};
-use crate::commands::wps::config::WPSSharedConfig;
+use crate::commands::wps::config::{WPSSharedConfig, push_wps_shared_cli_args};
 use crate::commands::wps_peaks::window_peak_results::PeaksWindowAction;
+use crate::{ToCliCommand, cli_command::helpers::*};
 
 /*
 What do we actually want?
@@ -50,11 +51,11 @@ Peaks: Positions and stats? Just always give everything? Well, unique-positions,
 ///
 /// ## Blacklisting
 ///
-/// Positions where the `--window_size` window overlaps a (dilated) blacklisted region are set to `f32::NaN` (and thus not included in sums or averages).
+/// Positions where the `--window-size` window overlaps a (dilated) blacklisted region are set to `f32::NaN` (and thus not included in sums or averages).
 ///
 /// **Dilation**: We want to avoid any WPS scores being biased by neighbouring blacklisted intervals,
 /// which can have an unreasonably high number of overlapping fragments.
-/// Hence, we increase all blacklist intervals by the maximum fragment length + half the `--window_size` on both sides.
+/// Hence, we increase all blacklist intervals by the maximum fragment length + half the `--window-size` on both sides.
 ///
 /// ## Scaling
 ///
@@ -85,7 +86,7 @@ Peaks: Positions and stats? Just always give everything? Well, unique-positions,
 /// ```rust,ignore
 ///
 /// // Extract peaks (these arguments are always specified, hence `...` below)
-/// cfdna wps-peaks --bam <> --output-dir <> -n-threads <>
+/// cfdna wps-peaks --bam <> --output-dir <> --n-threads <>
 ///
 /// // Extract peaks in windows
 /// cfdna wps-peaks ... --by-bed <> --per-window "unique-positions"
@@ -96,7 +97,7 @@ Peaks: Positions and stats? Just always give everything? Well, unique-positions,
 /// ```
 ///
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WPSPeaksConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub shared_args: WPSSharedConfig,
@@ -259,5 +260,28 @@ fn parse_nonnegative_f32(input: &str) -> Result<f32, String> {
         Err("min-peak-height must be non-negative".into())
     } else {
         Ok(value)
+    }
+}
+
+impl ToCliCommand for WPSPeaksConfig {
+    fn to_cli_args(&self) -> crate::Result<Vec<std::ffi::OsString>> {
+        let mut args = command_args("wps-peaks");
+        push_wps_shared_cli_args(&mut args, &self.shared_args);
+        if let Some(action) = self.per_window {
+            push_value(&mut args, "--per-window", peaks_window_action_value(action));
+        }
+        push_value(&mut args, "--normalize-bp", self.normalize_bp);
+        push_value(&mut args, "--min-unmasked", self.min_unmasked);
+        push_bool(&mut args, "--no-smoothing", self.no_smoothing);
+        push_value(&mut args, "--min-peak-height", self.min_peak_height);
+        Ok(args)
+    }
+}
+
+fn peaks_window_action_value(action: PeaksWindowAction) -> &'static str {
+    match action {
+        PeaksWindowAction::Stats => "stats",
+        PeaksWindowAction::OnlyIncludeThesePositionsUnique => "unique-positions",
+        PeaksWindowAction::OnlyIncludeThesePositionsIndexed => "indexed-positions",
     }
 }

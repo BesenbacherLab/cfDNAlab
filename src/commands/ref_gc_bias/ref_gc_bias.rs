@@ -137,9 +137,6 @@ pub fn run_ref_gc_bias(opt: &RefGCBiasConfig, options: RunOptions) -> Result<Ref
     );
     let prefix = opt.output_prefix.trim();
     validate_output_prefix(prefix)?;
-    let chromosomes = opt
-        .chromosomes
-        .resolve_chromosomes(Some(ContigSource::ref_2bit(&opt.ref_genome.ref_2bit)))?;
     let window_opt = opt.windows.resolve_windows();
     opt.check_smoothing_settings()?;
 
@@ -153,6 +150,14 @@ pub fn run_ref_gc_bias(opt: &RefGCBiasConfig, options: RunOptions) -> Result<Ref
         opt.fragment_lengths.min_fragment_length,
         opt.end_offset
     );
+
+    if options.log_equivalent_cli {
+        let command = crate::ToCliCommand::to_cli_string(opt)?;
+        info!(target: COMMAND_TARGET, "Equivalent CLI: {command}");
+    }
+    let chromosomes = opt
+        .chromosomes
+        .resolve_chromosomes(Some(ContigSource::ref_2bit(&opt.ref_genome.ref_2bit)))?;
 
     // Create output directory
     ensure_output_dir(&opt.output_dir)?;

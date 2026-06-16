@@ -141,12 +141,16 @@ fn execute_bam_to_frag(opt: &BamToFragConfig, options: RunOptions) -> Result<Bam
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
-    let (chromosomes, contigs) =
-        resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
-    let temp_chrom_name_map = TempChromNameMap::from_contigs(&chromosomes)?;
     let prefix = opt.output_prefix.trim();
     validate_output_prefix(prefix)?;
     let window_opt = opt.resolve_windows();
+    if options.log_equivalent_cli {
+        let command = crate::ToCliCommand::to_cli_string(opt)?;
+        info!(target: COMMAND_TARGET, "Equivalent CLI: {command}");
+    }
+    let (chromosomes, contigs) =
+        resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
+    let temp_chrom_name_map = TempChromNameMap::from_contigs(&chromosomes)?;
 
     // Create output directory
     ensure_output_dir(&opt.ioc.output_dir)?;

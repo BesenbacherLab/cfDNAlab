@@ -1,6 +1,7 @@
 use crate::commands::cli_common::{ApplyGCArgs, LoggingArgs, ScaleGenomeArgs};
 use crate::commands::cli_common::{ChromosomeArgs, IOCArgs, UnpairedArgs, WindowsArgs};
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
+use crate::{ToCliCommand, cli_command::helpers::*};
 use std::path::PathBuf;
 
 /// Calculate positional windowed protection scores (WPS) across the genome.
@@ -31,11 +32,11 @@ use std::path::PathBuf;
 ///
 /// ## Blacklisting
 ///
-/// Positions where the `--window_size` window overlaps a (dilated) blacklisted region are set to `f32::NaN` (and thus not included in sums or averages).
+/// Positions where the `--window-size` window overlaps a (dilated) blacklisted region are set to `f32::NaN` (and thus not included in sums or averages).
 ///
 /// **Dilation**: We want to avoid any WPS scores being biased by neighbouring blacklisted intervals,
 /// which can have an unreasonably high number of overlapping fragments.
-/// Hence, we increase all blacklist intervals by the maximum fragment length + half the `--window_size` on both sides.
+/// Hence, we increase all blacklist intervals by the maximum fragment length + half the `--window-size` on both sides.
 ///
 /// ## Scaling
 ///
@@ -66,15 +67,15 @@ use std::path::PathBuf;
 /// ```rust,ignore
 ///
 /// // Extract WPS scores (these arguments are always specified, hence `...` below)
-/// cfdna wps --bam <> --output-dir <> -n-threads <>
+/// cfdna wps --bam <> --output-dir <> --n-threads <>
 ///
 /// // Extract positional WPS in windows
-/// cfdna wps-peaks ... --by-bed <> --per-window "unique-positions"
+/// cfdna wps ... --by-bed <> --per-window "unique-positions"
 ///
 /// ```
 ///
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WPSConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub shared_args: WPSSharedConfig,
@@ -82,10 +83,7 @@ pub struct WPSConfig {
     /// Output zero-WPS runs in positional outputs `[flag]`
     ///
     /// By default, only positions with non-zero values are written to the output.
-    #[cfg_attr(
-        feature = "cli",
-        clap(long, requires = "save-wps", help_heading = "Core")
-    )]
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
     pub keep_zero_runs: bool,
 
     // TODO: For WPS, perhaps coefficient of variation is the relevant metric for window aggregation? std/mean ish?
@@ -106,22 +104,16 @@ pub struct WPSConfig {
     /// - `"total"`: Get the total WPS per window.
     ///
     /// **NOTE**: Ignored when no windows are specified.
-    /// Required when `--save-wps` and either `--by-bed` or `--by-size` are provided.
+    /// Required when either `--by-bed` or `--by-size` is provided.
     #[cfg_attr(
         feature = "cli",
-        clap(
-            long,
-            value_parser,
-            requires = "save-wps",
-            ignore_case = true,
-            help_heading = "Core"
-        )
+        clap(long, value_parser, ignore_case = true, help_heading = "Core")
     )]
     pub per_window: Option<CoverageWindowAction>,
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WPSSharedConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,
@@ -382,5 +374,53 @@ impl WPSConfig {
 
     pub fn set_ref_2bit(&mut self, ref_2bit: Option<PathBuf>) {
         self.shared_args.set_ref_2bit(ref_2bit);
+    }
+}
+
+pub(crate) fn push_wps_shared_cli_args(
+    args: &mut Vec<std::ffi::OsString>,
+    config: &WPSSharedConfig,
+) {
+    push_ioc(args, &config.ioc);
+    push_unpaired(args, &config.unpaired);
+    push_output_prefix(args, &config.output_prefix);
+    push_value(args, "--window-size", config.window_size);
+    push_value(args, "--decimals", config.decimals);
+    push_value(args, "--tile-size", config.tile_size);
+    push_windows(args, &config.windows);
+    push_chromosomes(args, &config.chromosomes);
+    push_scale_genome(args, &config.scale_genome);
+    push_value(args, "--min-fragment-length", config.min_fragment_length);
+    push_value(args, "--max-fragment-length", config.max_fragment_length);
+    push_value(args, "--min-mapq", config.min_mapq);
+    push_bool(args, "--require-proper-pair", config.require_proper_pair);
+    push_path_values(args, "--blacklist", config.blacklist.as_deref());
+    push_apply_gc(args, &config.gc);
+    push_optional_path(args, "--ref-2bit", config.ref_2bit.as_deref());
+    push_logging(args, &config.logging);
+}
+
+impl ToCliCommand for WPSConfig {
+    fn to_cli_args(&self) -> crate::Result<Vec<std::ffi::OsString>> {
+        let mut args = command_args("wps");
+        push_wps_shared_cli_args(&mut args, &self.shared_args);
+        push_bool(&mut args, "--keep-zero-runs", self.keep_zero_runs);
+        if let Some(action) = self.per_window {
+            push_value(&mut args, "--per-window", wps_window_action_value(action));
+        }
+        Ok(args)
+    }
+}
+
+fn wps_window_action_value(action: CoverageWindowAction) -> &'static str {
+    match action {
+        CoverageWindowAction::Average => "average",
+        CoverageWindowAction::Total => "total",
+        CoverageWindowAction::SummaryStats => "summary-stats",
+        CoverageWindowAction::AverageOnUniqueBases => "average-on-unique-bases",
+        CoverageWindowAction::TotalOnUniqueBases => "total-on-unique-bases",
+        CoverageWindowAction::SummaryStatsOnUniqueBases => "summary-stats-on-unique-bases",
+        CoverageWindowAction::OnlyIncludeThesePositionsUnique => "unique-positions",
+        CoverageWindowAction::OnlyIncludeThesePositionsIndexed => "indexed-positions",
     }
 }

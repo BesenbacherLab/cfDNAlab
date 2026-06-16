@@ -1,4 +1,6 @@
 use crate::{
+    ToCliCommand,
+    cli_command::helpers::*,
     commands::{
         cli_common::{
             ApplyGCArgFileOnly, AssignToWindowArgs, ChromosomeArgs, DistributionWindowsArgs,
@@ -91,7 +93,7 @@ pub const DEFAULT_OUTPUT_DECIMALS: u8 = 6;
 /// The read is mapped to a different `tid` than the mate.
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LengthsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,
@@ -597,6 +599,64 @@ pub(super) fn validate_gc_length_trim_rare(value: f64) -> Result<()> {
         "--gc-length-trim-rare must be finite and within [0, 1)"
     );
     Ok(())
+}
+
+impl ToCliCommand for LengthsConfig {
+    fn to_cli_args(&self) -> crate::Result<Vec<std::ffi::OsString>> {
+        let mut args = command_args("lengths");
+        push_ioc(&mut args, &self.ioc);
+        push_unpaired(&mut args, &self.unpaired);
+        push_output_prefix(&mut args, &self.output_prefix);
+        push_value(&mut args, "--decimals", self.decimals);
+        push_value(&mut args, "--indel-mode", indel_mode_value(self.indel_mode));
+        push_value(&mut args, "--max-deletion-bases", self.max_deletion_bases);
+        push_value(&mut args, "--clip-mode", clip_mode_value(self.clip_mode));
+        push_value(&mut args, "--max-soft-clips", self.max_soft_clips);
+        push_value(&mut args, "--tile-size", self.tile_size);
+        push_distribution_windows(&mut args, &self.windows);
+        push_assign_to_window(&mut args, &self.window_assignment);
+        push_chromosomes(&mut args, &self.chromosomes);
+        push_scale_genome(&mut args, &self.scale_genome);
+        push_values(&mut args, "--length-bins", &self.length_bins);
+        push_value(&mut args, "--min-mapq", self.min_mapq);
+        push_bool(&mut args, "--require-proper-pair", self.require_proper_pair);
+        push_blacklist_common(
+            &mut args,
+            self.blacklist.as_deref(),
+            self.blacklist_min_size,
+            &self.blacklist_strategy,
+        );
+        push_apply_gc_file_only(&mut args, &self.gc);
+        push_value(
+            &mut args,
+            "--gc-length-weighting",
+            gc_length_weighting_value(self.gc_length_weighting),
+        );
+        push_value(
+            &mut args,
+            "--gc-length-range",
+            gc_length_range_value(self.gc_length_range),
+        );
+        push_value(&mut args, "--gc-length-trim-rare", self.gc_length_trim_rare);
+        push_optional_path(&mut args, "--ref-2bit", self.ref_2bit.as_deref());
+        push_logging(&mut args, &self.logging);
+        Ok(args)
+    }
+}
+
+fn gc_length_weighting_value(weighting: MarginalizeLengthsWeightingScheme) -> &'static str {
+    match weighting {
+        MarginalizeLengthsWeightingScheme::Equal => "equal",
+        MarginalizeLengthsWeightingScheme::Frequency => "frequency",
+        MarginalizeLengthsWeightingScheme::MaxFrequency => "max-frequency",
+    }
+}
+
+fn gc_length_range_value(range: GCLengthRange) -> &'static str {
+    match range {
+        GCLengthRange::Requested => "requested",
+        GCLengthRange::Package => "package",
+    }
 }
 
 #[cfg(test)]

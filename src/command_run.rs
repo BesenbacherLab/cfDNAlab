@@ -12,6 +12,8 @@ pub struct RunOptions {
     pub show_progress: bool,
     /// Write status messages such as input loading and output writing progress.
     pub log_statuses: bool,
+    /// Write the equivalent full CLI command before the command starts heavy work.
+    pub log_equivalent_cli: bool,
 }
 
 impl RunOptions {
@@ -23,6 +25,7 @@ impl RunOptions {
             report_statistics: true,
             show_progress: true,
             log_statuses: true,
+            log_equivalent_cli: true,
         }
     }
 
@@ -35,6 +38,7 @@ impl RunOptions {
             report_statistics: false,
             show_progress: false,
             log_statuses: false,
+            log_equivalent_cli: false,
         }
     }
 }

@@ -9,7 +9,15 @@ This is the changelog for the main CLI tool. You can find the changelog for the 
 
 ## Unreleased
 
+**BREAKING CHANGES**:
+
+ - `cfdna fcoverage --normalize-by-length` is now actually called `--normalize-by-length` instead of `--normalize-by-length-mode`.
+
+**Other changes**:
+
  - `cfdna fragment-count-weights` and `cfdna coverage-weights` shows progress bar by default in the internal call to `cfdna fcoverage`.
+ - CLI runs now log the *equivalent* full `cfdna <COMMAND> <OPTION>` command call for reproducibility and transparency.
+ - The Rust library can render *equivalent* command calls from exported configs without enabling the `cli` feature.
 
 <br />
 

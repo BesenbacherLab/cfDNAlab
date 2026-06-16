@@ -32,7 +32,7 @@ mod tests_clean_up_and_normalization {
     #[test]
     fn minimum_positive_support_uses_max_fragment_length_when_length_normalized() {
         let mut opt = base_config();
-        opt.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
+        opt.set_normalize_by_length(LengthNormalizationMode::UnitMass);
         opt.fragment_lengths_mut().max_fragment_length = 500;
 
         let expected_min_support = 1.0 / 500.0;
@@ -100,7 +100,7 @@ mod tests_clean_up_and_normalization {
     #[test]
     fn internal_cleanup_floor_stays_below_theoretical_minimum_with_gc_and_length_normalization() {
         let mut opt = base_config();
-        opt.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
+        opt.set_normalize_by_length(LengthNormalizationMode::UnitMass);
         opt.fragment_lengths_mut().max_fragment_length = 1000;
         opt.set_gc(ApplyGCArgs {
             gc_file: Some(PathBuf::from("gc_bias_correction.zarr")),
@@ -124,17 +124,17 @@ mod tests_clean_up_and_normalization {
     fn length_normalization_mode_defaults_to_off() {
         let opt = base_config();
 
-        assert_eq!(opt.normalize_by_length_mode, LengthNormalizationMode::Off);
+        assert_eq!(opt.normalize_by_length, LengthNormalizationMode::Off);
     }
 
     #[test]
     fn restore_mean_uses_same_intrinsic_minimum_positive_support_as_unit_mass() {
         let mut unit_mass = base_config();
-        unit_mass.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
+        unit_mass.set_normalize_by_length(LengthNormalizationMode::UnitMass);
         unit_mass.fragment_lengths_mut().max_fragment_length = 500;
 
         let mut restore_mean = base_config();
-        restore_mean.set_normalize_by_length_mode(LengthNormalizationMode::RestoreMean);
+        restore_mean.set_normalize_by_length(LengthNormalizationMode::RestoreMean);
         restore_mean.fragment_lengths_mut().max_fragment_length = 500;
 
         assert_eq!(

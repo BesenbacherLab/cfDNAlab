@@ -5,7 +5,7 @@ use std::str::FromStr;
 /// Possible values:
 ///     `"any"`, `"all"`, `"midpoint"`, or `"proportion=<threshold>"` [string]
 ///
-/// Example of proportion: `--blacklist_strategy proportion=0.2` (no space around `=`)
+/// Example of proportion: `--blacklist-strategy proportion=0.2` (no space around `=`)
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum BlacklistStrategy {
     /// Any positions overlap with blacklisted regions.

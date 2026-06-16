@@ -12,7 +12,7 @@ use tracing_subscriber::{Layer, filter::filter_fn, fmt, layer::SubscriberExt};
 
 /// Shared logging argument used by commands that opt into tracing-based CLI output.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LoggingArgs {
     /// Logging destination `[stdout|quiet|file|file=<path>]`
     ///

@@ -900,7 +900,7 @@ fn build_fcoverage_stride_config_uses_unit_mass_and_total_for_fragment_count_wei
     );
 
     assert_eq!(
-        cfg.normalize_by_length_mode,
+        cfg.normalize_by_length,
         LengthNormalizationMode::UnitMass
     );
     assert_eq!(cfg.per_window, CoverageWindowAction::Total);

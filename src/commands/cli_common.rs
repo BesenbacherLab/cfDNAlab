@@ -99,7 +99,7 @@ pub fn validate_output_prefix(prefix: &str) -> Result<()> {
 
 /// Args for in-/output and core (threads).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct IOCArgs {
     /// Indexed, coordinate-sorted BAM input file `[path / URL]`
     ///
@@ -144,7 +144,7 @@ pub struct IOCArgs {
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct UnpairedArgs {
     /// The input has one read per fragment and the **read spans the full aligned fragment** (e.g. Nanopore) `[flag]`
     ///
@@ -157,7 +157,7 @@ pub struct UnpairedArgs {
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Ref2BitRequiredArgs {
     /// 2bit reference genome file [path]
     ///
@@ -176,7 +176,7 @@ pub struct Ref2BitRequiredArgs {
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Ref2BitOptionalForGCArgs {
     /// Optional 2bit reference genome file [path]
     ///
@@ -200,7 +200,7 @@ pub struct Ref2BitOptionalForGCArgs {
 
 /// Args for setting minimum and maximum fragment length.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FragmentLengthArgs {
     /// Minimum fragment length to include `[integer]`
     #[cfg_attr(
@@ -269,7 +269,7 @@ impl FragmentLengthArgs {
 ///
 /// Whether to perform a command globally (1 overall genomic window)
 /// or in windows specified with a BED file or a fixed window size.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum WindowSpec {
     Global,
     Size(u64),
@@ -286,7 +286,7 @@ pub enum WindowSpec {
             .multiple(false)
     )
 )]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct WindowsArgs {
     /// Window definition: a fixed window size `[integer]`
     ///
@@ -332,7 +332,7 @@ impl WindowsArgs {
 ///
 /// Whether to perform a command globally (1 overall genomic window)
 /// or in windows specified with a BED file or a fixed window size.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum DistributionWindowSpec {
     Global,
     Size(u64),
@@ -350,7 +350,7 @@ pub enum DistributionWindowSpec {
             .multiple(false)
     )
 )]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct DistributionWindowsArgs {
     /// Window definition: a fixed window size `[integer]`
     ///
@@ -438,7 +438,7 @@ impl DistributionWindowSpec {
             .multiple(false)
     )
 )]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct GCWindowsArgs {
     /// Window definition: a fixed window size `[integer]`
     ///
@@ -542,7 +542,7 @@ impl FromStr for WindowAssigner {
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct AssignToWindowArgs {
     /// The **fragment positions** that should overlap a window for it to be counted in that window,
     /// OR the option to count the fraction of overlapping bases `[string]`
@@ -587,7 +587,7 @@ pub struct AssignToWindowArgs {
         group = clap::ArgGroup::new("chrom_select")
             .args(&["chromosomes", "chromosomes_file"])
             .multiple(false)))]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ChromosomeArgs {
     /// Names of chromosomes to process (comma-separated or repeated). E.g. `'chr1,chr2,chr3'`.
     ///
@@ -618,7 +618,7 @@ pub struct ChromosomeArgs {
 }
 
 /// Source used to expand `--chromosomes all`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContigSourceKind {
     Bam,
     Ref2Bit,
@@ -626,7 +626,7 @@ pub enum ContigSourceKind {
 }
 
 /// Path and format for the contig source used by chromosome resolution.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ContigSource {
     pub path: PathBuf,
     pub kind: ContigSourceKind,
@@ -698,7 +698,7 @@ impl ChromosomeArgs {
 /* Genomic scaling (applying normalize_genome) */
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ScaleGenomeArgs {
     /// Optional path to non-negative scaling factors for normalizing/smoothing the genome `[path]`
     ///
@@ -741,7 +741,7 @@ pub struct ScaleGenomeArgs {
         group = clap::ArgGroup::new("gc_correction")
             .args(&["gc_file", "gc_tag"])
             .multiple(false)))]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ApplyGCArgs {
     /// Optional path to GC correction file *made from the same BAM file* with `cfdna gc-bias` `[path]`
     ///
@@ -809,7 +809,7 @@ impl ApplyGCArgs {
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ApplyGCArgFileOnly {
     /// Optional path to GC correction file *made from the same BAM file* with `cfdna gc-bias` `[path]`
     ///
@@ -848,7 +848,7 @@ fn validate_gc_file_reference(gc_file: Option<&Path>, ref_2bit: Option<&Path>) -
 
 // TODO: Is "nearest" clear enough in all usecases?
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct FragmentPositionSelectionArgs {
     /// Choose the reference frame that interprets every other region selection argument `[left|right|per-end|nearest|mid]`.
     ///
@@ -944,6 +944,7 @@ pub struct FragmentPositionSelectionArgs {
     pub step: Vec<usize>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct UnparsedPositionalSelectionSpec {
     pub frame: ReferenceFrame,
     pub positions: String,
@@ -1023,7 +1024,7 @@ impl FragmentPositionSelectionArgs {
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct BaseSelectionArgs {
     /// Choose which coordinate source defines the counted positions `[reference|prefer-reads|reads|nearest-read]`
     ///
