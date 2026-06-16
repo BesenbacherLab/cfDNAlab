@@ -36,14 +36,18 @@ Suggest a tool or feature [here](https://github.com/BesenbacherLab/cfDNAlab/issu
 
 ## Installation
 
-You may need a few dependencies that can be installed as a conda environment with:
+Please install these dependencies first:
 
 ```bash
-conda create -n cfdnalab rust=1.94.0 zstandard perl fontconfig conda-forge::llvmdev conda-forge::clangdev
+conda create -n cfdnalab \
+  rust=1.94.0 zstandard perl fontconfig \
+  'conda-forge::clang=21.*' 'conda-forge::clangdev=21.*' \
+  'conda-forge::libclang=21.*' 'conda-forge::llvmdev=21.*'
 conda activate cfdnalab
+export LIBCLANG_PATH="$CONDA_PREFIX/lib"
 ```
 
-Compile and install:
+Compile and install `cfDNAlab`:
 
 ```bash
 # Install latest release
