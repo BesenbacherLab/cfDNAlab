@@ -1,0 +1,20 @@
+[package]
+name = "cfdnalab-downstream-rust-tests"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[features]
+default = []
+cmd_midpoints = ["cfdnalab/cmd_midpoints"]
+cmd_ends = ["cfdnalab/cmd_ends"]
+cmd_lengths = ["cfdnalab/cmd_lengths"]
+testing = ["cfdnalab/testing"]
+
+[dependencies]
+anyhow = "1.0.98"
+cfdnalab = { path = "../..", default-features = false }
+
+[[test]]
+name = "test_downstream_rust_loaders"
+path = "test_downstream_rust_loaders.rs"

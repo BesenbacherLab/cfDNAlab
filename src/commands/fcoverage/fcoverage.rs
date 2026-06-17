@@ -139,8 +139,8 @@ enum FCoverageTileTempOutput {
 ///
 /// Errors
 /// ------
-/// Returns an error if the BAM cannot be read, auxiliary files are invalid, or writing outputs
-/// fails at any stage.
+/// Returns an error if the BAM, BED, blacklist, GC-correction, or scaling files cannot be read, or
+/// if writing outputs fails at any stage.
 pub fn run_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCoverageRunResult> {
     let start_time = Instant::now();
 
@@ -1224,7 +1224,7 @@ fn process_tile(
                 None
             };
 
-            // Writers: compressed partials and cross sidecar
+            // Writers: compressed partials and cross-index file
             let mut w_part = open_zstd_auto_writer(&partials_out, 3, None)?;
             let mut w_cross = open_zstd_auto_writer(&cross_idx_out, 3, None)?;
 
@@ -1476,7 +1476,7 @@ fn process_tile(
                     };
 
                     // Write the full bin start/end, not just this tile's overlap.
-                    // The reducer merges partial rows by `bin_start` from the cross-index sidecar,
+                    // The reducer merges partial rows by `bin_start` from the cross-index file,
                     // so this row must keep the original bin coordinates even when this tile only
                     // contributes part of that bin.
                     if wants_summary_stats {

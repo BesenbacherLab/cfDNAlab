@@ -36,8 +36,8 @@ fn minimal_config(output_dir: PathBuf) -> LengthsConfig {
 fn read_settings(output_dir: &std::path::Path, prefix: &str) -> Value {
     let settings_path = settings_path(output_dir, prefix);
     let settings_text =
-        std::fs::read_to_string(settings_path).expect("settings sidecar should be readable");
-    serde_json::from_str(&settings_text).expect("settings sidecar should be valid JSON")
+        std::fs::read_to_string(settings_path).expect("settings JSON should be readable");
+    serde_json::from_str(&settings_text).expect("settings JSON should be valid JSON")
 }
 
 fn settings_path(output_dir: &std::path::Path, prefix: &str) -> PathBuf {
@@ -390,7 +390,7 @@ fn length_counts_tsv_errors_when_group_name_cannot_be_written_as_one_tsv_cell() 
 #[test]
 fn settings_writer_records_non_default_interpretation_fields() {
     // Arrange:
-    // The sidecar should keep output interpretation fields, not ordinary filters.
+    // The settings JSON should keep output interpretation fields, not ordinary filters.
     // This configuration exercises the non-default names and boolean indicators.
     let out_dir = TempDir::new().expect("tempdir");
     let mut config = minimal_config(out_dir.path().to_path_buf());
@@ -421,7 +421,7 @@ fn settings_writer_records_non_default_interpretation_fields() {
         &window_spec,
         &length_axis,
     )
-        .expect("settings sidecar should write");
+        .expect("settings JSON should write");
     let settings = read_settings(out_dir.path(), "sample");
 
     // Assert
@@ -456,7 +456,7 @@ fn settings_writer_records_non_default_interpretation_fields() {
 #[test]
 fn settings_writer_uses_compact_stepped_range_definition_for_dense_default() {
     // Arrange:
-    // The default per-bp axis has many edges. The sidecar should describe it
+    // The default per-bp axis has many edges. The settings JSON should describe it
     // as a compact stepped range instead of writing every edge value.
     let out_dir = TempDir::new().expect("tempdir");
     let config = minimal_config(out_dir.path().to_path_buf());
@@ -470,7 +470,7 @@ fn settings_writer_uses_compact_stepped_range_definition_for_dense_default() {
         &DistributionWindowSpec::Global,
         &length_axis,
     )
-    .expect("dense settings sidecar should write");
+    .expect("dense settings JSON should write");
     let settings = read_settings(out_dir.path(), "dense");
 
     // Assert
@@ -501,14 +501,14 @@ fn settings_writer_records_bed_and_grouped_window_semantics() {
         &DistributionWindowSpec::Bed(PathBuf::from("windows.bed")),
         &length_axis,
     )
-    .expect("BED settings sidecar should write");
+    .expect("BED settings JSON should write");
     write_length_settings_json(
         &settings_path(out_dir.path(), "groups"),
         &config,
         &DistributionWindowSpec::GroupedBed(PathBuf::from("groups.bed")),
         &length_axis,
     )
-    .expect("grouped settings sidecar should write");
+    .expect("grouped settings JSON should write");
 
     let bed_settings = read_settings(out_dir.path(), "bed");
     let grouped_settings = read_settings(out_dir.path(), "groups");

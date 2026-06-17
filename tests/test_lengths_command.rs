@@ -3809,7 +3809,7 @@ mod tests_lengths_command {
     }
 
     #[test]
-    fn grouped_bed_any_aggregates_shared_groups_across_chromosomes_and_uses_prefixed_sidecars()
+    fn grouped_bed_any_aggregates_shared_groups_across_chromosomes_and_uses_prefixed_metadata_files()
     -> Result<()> {
         // Arrange:
         // The three-chrom fixture contributes exactly one fragment per chromosome:

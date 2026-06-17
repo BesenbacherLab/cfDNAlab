@@ -64,7 +64,7 @@ const DENSE_PROFILE_SIZE_WARNING_BYTES: usize = 50 * 1_000_000_000;
 
 /// Result from `midpoints`.
 ///
-/// The command writes grouped midpoint profiles as Zarr plus sidecar metadata. The result records
+/// The command writes grouped midpoint profiles as Zarr plus metadata files. The result records
 /// the main profile path, group index path, settings path, and run counters.
 #[derive(Debug)]
 pub struct MidpointsRunResult {

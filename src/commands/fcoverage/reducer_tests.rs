@@ -25,7 +25,7 @@ fn bed_window_reducer_uses_explicit_tile_outputs_and_ignores_matching_decoys() -
     //   the old discovery convention
     //
     // Window orig_idx 7 spans [10,15). It crosses two tile cores, so both tiles list `7` in their
-    // cross-index sidecar. The exact additive reduction is:
+    // cross-index file. The exact additive reduction is:
     //   coverage_sum = 2 + 3 = 5
     //   eligible_positions = 2 + 3 = 5
     //   blacklisted_positions = 0 + 0 = 0
@@ -335,7 +335,7 @@ fn size_summary_reducer_uses_explicit_tile_outputs_for_raw_moment_rows() -> Resu
 fn size_reducer_accepts_missing_cross_index_for_single_contribution_partials() -> Result<()> {
     // Arrange
     // Aligned restore-mean by-size tiles are intended to write raw partial rows without a
-    // cross-index sidecar. Missing cross-index still means one expected contribution for each
+    // cross-index file. Missing cross-index still means one expected contribution for each
     // logical bin.
     let temp_dir = TempDir::new()?;
     let tile0_partials = temp_dir.path().join("tile0.aligned_size_rows");

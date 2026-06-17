@@ -95,7 +95,7 @@ fn filters_on_mapping_quality_and_fragment_membership() -> Result<()> {
 fn writes_bam_index_and_reports_it_in_output_files() -> Result<()> {
     // Arrange:
     // The command writes a coordinate-sorted BAM, so the expected companion index is the standard
-    // `<output>.bam.bai` sidecar. The fetch below verifies that the sidecar is usable by HTSlib, not
+    // `<output>.bam.bai` index file. The fetch below verifies that the index is usable by HTSlib, not
     // merely that a file with the right name exists.
     let bam = single_contig_inward_pair_bam()?;
     let work = tempdir()?;

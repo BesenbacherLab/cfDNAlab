@@ -26,17 +26,20 @@ jobs:
         with:
           environment-name: cfdnalab
           create-args: >-
-            -c conda-forge
             rust=1.94.0
             zstandard
             perl
             fontconfig
-            llvmdev
-            clangdev
+            conda-forge::clang=21.*
+            conda-forge::clangdev=21.*
+            conda-forge::libclang=21.*
+            conda-forge::llvmdev=21.*
           post-cleanup: all
 
-      - name: Install cfDNAlab from source
-        run: cargo install --path . --locked
+      - name: Install checked-out cfDNAlab package
+        run: |
+          export LIBCLANG_PATH="$CONDA_PREFIX/lib"
+          cargo install --path . --locked --force
 
       - name: Verify installed binary
         run: cfdna --help

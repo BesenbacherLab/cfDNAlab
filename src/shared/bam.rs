@@ -52,7 +52,7 @@ pub(crate) fn build_bam_bai_index(bam_path: &Path) -> Result<PathBuf> {
     let indexing_threads = u32::try_from(default_thread_count()).unwrap_or(u32::MAX);
     // `samtools index sample.bam` conventionally creates `sample.bam.bai`. Passing the path
     // explicitly keeps cfDNAlab's generated BAM outputs predictable instead of depending on HTSlib's
-    // default sidecar naming.
+    // default index-file naming.
     //
     // These conversion commands do not expose their own thread count. Use the same default policy as
     // the shared CLI thread option: leave one core free when possible, but always use at least one

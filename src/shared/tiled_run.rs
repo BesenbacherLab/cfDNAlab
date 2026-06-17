@@ -245,8 +245,8 @@ impl<'a> TileWindowsIter<'a> {
     /// Produces the next source-slice index whose window intersects the tile core.
     ///
     /// Cached index bounds may include neighbouring candidates, so this method checks overlap on
-    /// the fly and discards false positives before yielding. Use this when a caller needs to keep
-    /// sidecar vectors aligned with the source window slice.
+    /// the fly and discards false positives before yielding. Use this when a caller needs source
+    /// window indices to keep separate per-window arrays in the same order.
     ///
     /// # Returns
     /// `Some(index)` when another overlapping window is available, otherwise `None` at the end of
@@ -362,8 +362,8 @@ fn advance_window_span_bounds(
 /// - `span`: Optional cached span previously produced by `precompute_tile_window_spans`.
 ///
 /// # Returns
-/// A `TileWindowsIter` positioned to stream overlapping windows. Commands that need aligned
-/// sidecar data can use its crate-local source-index access on the returned iterator.
+/// A `TileWindowsIter` positioned to stream overlapping windows. Commands that need source window
+/// indices can use the crate-local index method on the returned iterator.
 pub(crate) fn overlapping_windows_for_tile<'a>(
     windows: &'a [IndexedInterval<u64>],
     tile: &Tile,
@@ -533,14 +533,14 @@ pub(crate) enum TileMode<'w> {
         windows: &'w [IndexedInterval<u64>], // Per-chr windows
         masked: bool,                        // Use masked counts/sums
         partials_out: std::path::PathBuf, // Cross-boundary windows (idx, sum, allowed, blacklisted)
-        cross_idx_out: std::path::PathBuf, // Sidecar listing crossers
+        cross_idx_out: std::path::PathBuf, // Cross-index file listing crossers
     },
     AggregatesBySize {
         window_bp: u64,                    // Fixed window size in bases
         masked: bool,                      // Use masked counts/sums
         finals_out: std::path::PathBuf,    // Final windows that do not need reducing
         partials_out: std::path::PathBuf, // Cross-boundary windows (idx, sum, allowed, blacklisted)
-        cross_idx_out: std::path::PathBuf, // Sidecar listing crossers
+        cross_idx_out: std::path::PathBuf, // Cross-index file listing crossers
         guaranteed_aligned: bool, // Tiles and window_bp align, so write per-tile FINALS (no reducer needed)
     },
 }

@@ -4,6 +4,7 @@ pub mod cli_command;
 pub mod command_run;
 pub(crate) mod commands;
 pub mod error;
+pub mod output_loaders;
 pub(crate) mod shared;
 #[cfg(any(feature = "testing", test))]
 pub mod testing;

@@ -53,7 +53,7 @@ const CFDNALAB_MIDPOINT_SCHEMA_VERSION: u32 = 1;
 ///
 /// Axis metadata is stored as ordinary arrays so downstream users can build dataframes without
 /// consulting a sidecar file. General command settings stay in `midpoint_settings.json`.
-pub(super) fn write_midpoint_profiles_zarr(
+pub(crate) fn write_midpoint_profiles_zarr(
     store_path: &Path,
     counts: ArrayView3<'_, f32>,
     group_idx_to_name: &FxHashMap<u64, String>,

@@ -772,12 +772,12 @@ cfdna fcoverage \
 
 Most commands write one of these output types:
 
-| Format          | Use                            | Read with                                                                                                                                                        |
-| --------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.zarr`         | array(s) with meta data        | Our [R](https://github.com/BesenbacherLab/cfDNAlab/tree/main/r-cfdnalab) and [Python](https://github.com/BesenbacherLab/cfDNAlab/tree/main/py-cfdnalab) packages |
-| `.tsv.zst`      | tabular outputs                | `zstdcat`, Pandas in Python, fread in R                                                                                                                          |
-| `.bedgraph.zst` | positional tracks              | `zstdcat`, Convert to bigWig                                                                                                                                     |
-| `.json`, `.txt` | settings and auxiliary outputs | any text reader                                                                                                                                                  |
+| Format          | Use                         | Read with                                                                                                                                                        |
+| --------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.zarr`         | array(s) with meta data     | Our [R](https://github.com/BesenbacherLab/cfDNAlab/tree/main/r-cfdnalab) and [Python](https://github.com/BesenbacherLab/cfDNAlab/tree/main/py-cfdnalab) packages |
+| `.tsv.zst`      | tabular outputs             | `zstdcat`, Pandas in Python, fread in R                                                                                                                          |
+| `.bedgraph.zst` | positional tracks           | `zstdcat`, Convert to bigWig                                                                                                                                     |
+| `.json`, `.txt` | settings and metadata files | any text reader                                                                                                                                                  |
 
 The Zarr directories can be read with our [R](https://github.com/BesenbacherLab/cfDNAlab/tree/main/r-cfdnalab) and [Python](https://github.com/BesenbacherLab/cfDNAlab/tree/main/py-cfdnalab) packages (*installed separately*):
 

@@ -149,8 +149,8 @@ impl WpsTileTempOutput {
 ///
 /// Errors
 /// ------
-/// Returns an error if the BAM cannot be read, auxiliary files are invalid, or writing outputs
-/// fails at any stage.
+/// Returns an error if the BAM, BED, blacklist, GC-correction, or scaling files cannot be read, or
+/// if writing outputs fails at any stage.
 pub fn run_wps(opt: &WPSConfig, options: RunOptions) -> Result<WPSRunResult> {
     let start_time = Instant::now();
     if opt.shared_args.unpaired.reads_are_fragments && opt.shared_args.require_proper_pair {

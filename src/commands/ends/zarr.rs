@@ -5,7 +5,7 @@
 //!
 //! - `counts[row, motif]` for dense output
 //! - `sparse/{row,motif,count,shape,sparse_dimension}` for sparse COO output
-//! - motif or motif-group labels and row metadata needed to interpret the counts without TSV sidecars
+//! - motif or motif-group labels and row metadata needed to interpret the counts without joining TSV files
 //!
 //! The code below should only do work that is specific to this schema or to clearer validation.
 //! Low-level details such as writing `zarr.json`, applying zstd, V3 dimension names, and chunk

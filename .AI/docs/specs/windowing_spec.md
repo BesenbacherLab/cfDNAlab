@@ -56,7 +56,7 @@ Use `fetch_span_for_tile` rather than ad hoc BED-to-fetch logic.
 - `window_derived_fetch_extent_for_core_overlap` must use true tile-core overlaps, even when a cached candidate span is wider.
 - `window_derived_fetch_extent_for_candidates` must use the candidate span directly and must not reapply core-overlap filtering.
 
-## Metadata Sidecars
+## Metadata Files
 
 - Ordinary window metadata uses `chrom`, `start`, `end`, and `blacklisted_fraction`.
 - Grouped metadata always includes `group_idx` and `group_name`.

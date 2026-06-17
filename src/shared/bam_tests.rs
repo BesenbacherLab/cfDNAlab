@@ -18,7 +18,7 @@ use tempfile::TempDir;
 //
 // Remote indexed BAM access is not just "open this URL". HTSlib expects the server to behave like a
 // byte-addressable file store: it may send HEAD requests, ask for byte ranges, and discover the
-// index by trying standard sidecar paths next to the BAM URL. The small server below implements only
+// index by trying standard index-file paths next to the BAM URL. The small server below implements only
 // that subset so the test verifies cfDNAlab's URL path through rust-htslib without depending on an
 // external public BAM file.
 #[test]
@@ -26,7 +26,7 @@ fn indexed_reader_fetches_records_from_http_bam_url() -> Result<()> {
     let bam = crate::testing::single_contig_inward_pair_bam()?;
     let server = BamHttpServer::new(fs::read(bam.bam_path())?, fs::read(bam.bai_path())?)?;
 
-    // When only a remote BAM URL is passed, HTSlib may cache the discovered index sidecar in the
+    // When only a remote BAM URL is passed, HTSlib may cache the discovered index file in the
     // current directory before opening the indexed reader. Without this guard, running the test from
     // the repository root can leave files such as `remote.bam.bai` behind. The guard also serializes
     // current-directory changes because the process current directory is global state.
@@ -46,7 +46,7 @@ fn indexed_reader_fetches_records_from_http_bam_url() -> Result<()> {
 }
 
 #[test]
-fn build_bam_bai_index_writes_explicit_bam_bai_sidecar() -> Result<()> {
+fn build_bam_bai_index_writes_explicit_bam_bai_index_file() -> Result<()> {
     let bam = crate::testing::single_contig_inward_pair_bam()?;
     let temp_dir = TempDir::new()?;
     let output_bam = temp_dir.path().join("indexed-output.bam");
@@ -61,7 +61,7 @@ fn build_bam_bai_index_writes_explicit_bam_bai_sidecar() -> Result<()> {
     let output_bai = build_bam_bai_index(&output_bam)?;
 
     // cfDNAlab writes BAM indexes next to generated BAMs using the standard `<name>.bam.bai`
-    // sidecar name. That exact filename matters because users and HTSlib both discover indexes by
+    // index-file name. That exact filename matters because users and HTSlib both discover indexes by
     // path convention when a command only receives the BAM path.
     assert_eq!(output_bai, temp_dir.path().join("indexed-output.bam.bai"));
 
@@ -127,7 +127,7 @@ impl BamHttpServer {
     // The server owns the BAM and BAI bytes and serves them from fixed paths:
     //
     // - `/remote.bam` is the input URL passed to cfDNAlab's BAM opener.
-    // - `/remote.bam.bai` and `/remote.bai` are the standard index sidecar names HTSlib probes when
+    // - `/remote.bam.bai` and `/remote.bai` are the standard index-file names HTSlib probes when
     //   it has to infer the index URL from the BAM URL.
     //
     // Binding to port 0 asks the OS for a free local port, which avoids collisions between test runs.

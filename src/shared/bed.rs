@@ -1122,7 +1122,7 @@ pub(crate) fn build_grouped_coverage_layout(
         };
 
         // Sort before assigning fresh `segment_idx` values so the internal identifiers stay
-        // stable and predictable for tests, reducers, and sidecar mappings.
+        // stable and predictable for tests, reducers, and metadata mappings.
         chromosome_segments.sort_unstable_by_key(|(interval, group_idx)| {
             (interval.start(), interval.end(), *group_idx)
         });

@@ -322,7 +322,7 @@ mod tests_newest_bed_loaders {
         // Arrange
         // Group 2 is present in the metadata map but has no windows in the layout.
         // The layout builder should not delete that name, because the caller may still need the
-        // full sidecar mapping that came from the grouped BED loader
+        // full metadata mapping that came from the grouped BED loader
         let mut grouped_windows_by_chr = FxHashMap::default();
         grouped_windows_by_chr.insert("chr1".to_string(), grouped_windows(&[(0, 10, 0)]));
         let group_idx_to_name = group_names(&[(0, "alpha"), (2, "gamma")]);

@@ -72,4 +72,4 @@
 
 - Counting code should keep the matrix dense in final output and use sparse or tiled internals only as implementation detail.
 - All per-window and per-group merges must preserve length-axis identity.
-- Settings sidecars are part of the output contract. Add fields when they are necessary for reproducibility, but avoid duplicating values already obvious from filenames or TSV column names.
+- Settings JSON files are part of the output contract. Add fields when they are necessary for reproducibility, but avoid duplicating values already obvious from filenames or TSV column names.
