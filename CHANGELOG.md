@@ -15,10 +15,11 @@ This is the changelog for the main CLI tool. You can find the changelog for the 
 
 **Other changes**:
 
+ - Pins the build-time Clang/LLVM conda packages to version 21.x in installation instructions to avoid broken `rust-htslib` bindings with libclang version 22.
  - `cfdna fragment-count-weights` and `cfdna coverage-weights` shows progress bar by default in the internal call to `cfdna fcoverage`.
  - CLI runs now log the *equivalent* full `cfdna <COMMAND> <OPTION>` command call for reproducibility and transparency.
  - The Rust library can render *equivalent* command calls from exported configs without enabling the `cli` feature.
- - Pins the build-time Clang/LLVM conda packages to version 21.x in installation instructions to avoid broken `rust-htslib` bindings with libclang version 22.
+ - Adds initial output loaders to the Rust library.
 
 <br />
 
