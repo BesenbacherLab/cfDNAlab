@@ -42,9 +42,12 @@
 
 use crate::{
     interval::Interval,
-    output_loaders::common::{
-        DenseMatrix, WindowRow, contiguous_index_span, ensure_unique_indices, ensure_unique_labels,
-        resolve_row_indices,
+    output_loaders::{
+        OutputLoaderError, OutputLoaderResult,
+        common::{
+            DenseMatrix, WindowRow, contiguous_index_span, ensure_unique_indices,
+            ensure_unique_labels, resolve_row_indices, validate_zarr_public_label,
+        },
     },
     shared::zarr::read_zarr_root_attributes,
 };
@@ -97,8 +100,8 @@ const END_MOTIF_SCHEMA_VERSION: u64 = 2;
 ///
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn load_ends_output(path: impl AsRef<Path>) -> Result<EndsOutput> {
-    EndsParser::new(path.as_ref()).load()
+pub fn load_ends_output(path: impl AsRef<Path>) -> OutputLoaderResult<EndsOutput> {
+    EndsParser::new(path.as_ref()).load().map_err(Into::into)
 }
 
 /// Loaded end-motif counts from `cfdna ends`.
@@ -151,18 +154,22 @@ impl EndsOutput {
     }
 
     /// Return window metadata, or an error if this is not a windowed output.
-    pub fn window_metadata(&self) -> Result<&[WindowRow]> {
+    pub fn window_metadata(&self) -> OutputLoaderResult<&[WindowRow]> {
         match &self.row_metadata {
             EndMotifRowMetadata::Windows { windows, .. } => Ok(windows),
-            _ => bail!("end-motif output is not windowed"),
+            _ => Err(OutputLoaderError::message(
+                "end-motif output is not windowed",
+            )),
         }
     }
 
     /// Return group metadata, or an error if this is not a grouped output.
-    pub fn group_metadata(&self) -> Result<&[EndMotifGroupRow]> {
+    pub fn group_metadata(&self) -> OutputLoaderResult<&[EndMotifGroupRow]> {
         match &self.row_metadata {
             EndMotifRowMetadata::Groups(groups) => Ok(groups),
-            _ => bail!("end-motif output is not grouped"),
+            _ => Err(OutputLoaderError::message(
+                "end-motif output is not grouped",
+            )),
         }
     }
 
@@ -174,7 +181,7 @@ impl EndsOutput {
     /// ----------
     /// - `row_index`:
     ///     Zero-based row index in the window metadata.
-    pub fn window(&self, row_index: usize) -> Result<Option<&WindowRow>> {
+    pub fn window(&self, row_index: usize) -> OutputLoaderResult<Option<&WindowRow>> {
         Ok(self.window_metadata()?.get(row_index))
     }
 
@@ -186,7 +193,7 @@ impl EndsOutput {
     /// ----------
     /// - `row_index`:
     ///     Zero-based row index in the group metadata.
-    pub fn group(&self, row_index: usize) -> Result<Option<&EndMotifGroupRow>> {
+    pub fn group(&self, row_index: usize) -> OutputLoaderResult<Option<&EndMotifGroupRow>> {
         Ok(self.group_metadata()?.get(row_index))
     }
 
@@ -200,20 +207,14 @@ impl EndsOutput {
     /// ----------
     /// - `group_name`:
     ///     Group label to resolve to a zero-based row index.
-    pub fn group_index(&self, group_name: &str) -> Result<usize> {
+    pub fn group_index(&self, group_name: &str) -> OutputLoaderResult<usize> {
         let groups = self.group_metadata()?;
-        let mut matching_groups = groups
+        Ok(groups
             .iter()
             .filter(|group| group.name == group_name)
-            .map(|group| group.index);
-        let group_index = matching_groups
+            .map(|group| group.index)
             .next()
-            .with_context(|| format!("end-motif output has no group named '{group_name}'"))?;
-        ensure!(
-            matching_groups.next().is_none(),
-            "end-motif output has multiple groups named '{group_name}'"
-        );
-        Ok(group_index)
+            .with_context(|| format!("end-motif output has no group named '{group_name}'"))?)
     }
 
     /// Return whether one group name exists in a grouped output.
@@ -235,11 +236,12 @@ impl EndsOutput {
     /// ----------
     /// - `motif_label`:
     ///     Motif or motif-group label to resolve to a zero-based motif index.
-    pub fn motif_index(&self, motif_label: &str) -> Result<usize> {
-        self.motif_label_indices
+    pub fn motif_index(&self, motif_label: &str) -> OutputLoaderResult<usize> {
+        Ok(self
+            .motif_label_indices
             .get(motif_label)
             .copied()
-            .with_context(|| format!("end-motif output has no motif label '{motif_label}'"))
+            .with_context(|| format!("end-motif output has no motif label '{motif_label}'"))?)
     }
 
     /// Return whether one motif label exists.
@@ -281,23 +283,31 @@ impl EndsOutput {
     ///     Zero-based count row index.
     /// - `motif_label`:
     ///     Motif or motif-group label to resolve before reading the count.
-    pub fn count_for_motif(&self, row_index: usize, motif_label: &str) -> Result<Option<f64>> {
+    pub fn count_for_motif(
+        &self,
+        row_index: usize,
+        motif_label: &str,
+    ) -> OutputLoaderResult<Option<f64>> {
         Ok(self.count(row_index, self.motif_index(motif_label)?))
     }
 
     /// Return dense counts, or an error if this store is sparse.
-    pub fn dense_counts(&self) -> Result<&DenseMatrix<f64>> {
+    pub fn dense_counts(&self) -> OutputLoaderResult<&DenseMatrix<f64>> {
         match &self.data {
             EndMotifCountsData::Dense(counts) => Ok(counts),
-            EndMotifCountsData::Sparse(_) => bail!("end-motif output is sparse"),
+            EndMotifCountsData::Sparse(_) => {
+                Err(OutputLoaderError::message("end-motif output is sparse"))
+            }
         }
     }
 
     /// Return sparse COO counts, or an error if this store is dense.
-    pub fn sparse_counts(&self) -> Result<&EndMotifSparseCounts> {
+    pub fn sparse_counts(&self) -> OutputLoaderResult<&EndMotifSparseCounts> {
         match &self.data {
             EndMotifCountsData::Sparse(sparse) => Ok(sparse),
-            EndMotifCountsData::Dense(_) => bail!("end-motif output is dense"),
+            EndMotifCountsData::Dense(_) => {
+                Err(OutputLoaderError::message("end-motif output is dense"))
+            }
         }
     }
 
@@ -409,6 +419,10 @@ impl EndsOutput {
         motif_indices: Option<&[usize]>,
         row_label: &str,
     ) -> Result<EndMotifCountSelection> {
+        ensure!(
+            row_indices.is_none() || self.row_mode() != EndMotifRowMode::Global,
+            "global end-motif output has no selectable row axis"
+        );
         let row_indices = resolve_row_indices(row_indices, self.row_count(), row_label)?;
         let motif_indices = resolve_motif_indices(motif_indices, self.motif_count())?;
         ensure_unique_indices(&row_indices, row_label)?;
@@ -664,7 +678,7 @@ impl<'a> EndsSelector<'a> {
     /// Sparse selections copy only stored COO entries whose source row and
     /// motif are both selected. Stored entries outside the selected axes are
     /// skipped. Missing in-bounds cells remain implicit zero counts.
-    pub fn read(self) -> Result<EndMotifCountSelection> {
+    pub fn read(self) -> OutputLoaderResult<EndMotifCountSelection> {
         self.ensure_no_selector_conflict()?;
         let (motif_indices, motif_labels) = match self.motifs {
             MotifAxisSelector::All => (None, None),
@@ -674,7 +688,7 @@ impl<'a> EndsSelector<'a> {
         let motif_indices = motif_indices.as_deref();
         let motif_labels = motif_labels.as_deref();
 
-        match self.rows {
+        let selection = match self.rows {
             EndMotifRowSelector::All => {
                 if let Some(motif_labels) = motif_labels {
                     self.output
@@ -710,7 +724,8 @@ impl<'a> EndsSelector<'a> {
                 self.output
                     .select_group_counts_by_name(Some(names.as_slice()), motif_indices)
             }
-        }
+        }?;
+        Ok(selection)
     }
 }
 
@@ -896,18 +911,22 @@ impl EndMotifCountSelection {
     }
 
     /// Return selected window metadata, or an error if the selection is not windowed.
-    pub fn window_metadata(&self) -> Result<&[WindowRow]> {
+    pub fn window_metadata(&self) -> OutputLoaderResult<&[WindowRow]> {
         match &self.row_metadata {
             EndMotifRowMetadata::Windows { windows, .. } => Ok(windows),
-            _ => bail!("end-motif count selection is not windowed"),
+            _ => Err(OutputLoaderError::message(
+                "end-motif count selection is not windowed",
+            )),
         }
     }
 
     /// Return selected group metadata, or an error if the selection is not grouped.
-    pub fn group_metadata(&self) -> Result<&[EndMotifGroupRow]> {
+    pub fn group_metadata(&self) -> OutputLoaderResult<&[EndMotifGroupRow]> {
         match &self.row_metadata {
             EndMotifRowMetadata::Groups(groups) => Ok(groups),
-            _ => bail!("end-motif count selection is not grouped"),
+            _ => Err(OutputLoaderError::message(
+                "end-motif count selection is not grouped",
+            )),
         }
     }
 
@@ -968,18 +987,22 @@ impl EndMotifCountSelection {
     }
 
     /// Return dense selected counts, or an error if this selection is sparse.
-    pub fn dense_counts(&self) -> Result<&DenseMatrix<f64>> {
+    pub fn dense_counts(&self) -> OutputLoaderResult<&DenseMatrix<f64>> {
         match &self.data {
             EndMotifCountsData::Dense(counts) => Ok(counts),
-            EndMotifCountsData::Sparse(_) => bail!("end-motif count selection is sparse"),
+            EndMotifCountsData::Sparse(_) => Err(OutputLoaderError::message(
+                "end-motif count selection is sparse",
+            )),
         }
     }
 
     /// Return sparse selected counts, or an error if this selection is dense.
-    pub fn sparse_counts(&self) -> Result<&EndMotifSparseCounts> {
+    pub fn sparse_counts(&self) -> OutputLoaderResult<&EndMotifSparseCounts> {
         match &self.data {
             EndMotifCountsData::Sparse(sparse) => Ok(sparse),
-            EndMotifCountsData::Dense(_) => bail!("end-motif count selection is dense"),
+            EndMotifCountsData::Dense(_) => Err(OutputLoaderError::message(
+                "end-motif count selection is dense",
+            )),
         }
     }
 
@@ -994,7 +1017,7 @@ impl EndMotifCountSelection {
     ///
     /// Dense selections are cloned into the returned matrix. Sparse selections
     /// are explicitly densified into a row-major matrix.
-    pub fn to_dense_matrix(&self) -> Result<DenseMatrix<f64>> {
+    pub fn to_dense_matrix(&self) -> OutputLoaderResult<DenseMatrix<f64>> {
         match &self.data {
             EndMotifCountsData::Dense(counts) => Ok(counts.clone()),
             EndMotifCountsData::Sparse(sparse) => sparse.to_dense_matrix(),
@@ -1152,7 +1175,7 @@ impl EndMotifSparseCounts {
     }
 
     /// Reconstruct a dense count matrix from the stored COO entries.
-    pub fn to_dense_matrix(&self) -> Result<DenseMatrix<f64>> {
+    pub fn to_dense_matrix(&self) -> OutputLoaderResult<DenseMatrix<f64>> {
         let value_count = self
             .row_count
             .checked_mul(self.motif_count)
@@ -1170,7 +1193,11 @@ impl EndMotifSparseCounts {
                 .context("end-motif sparse coordinate overflow")?;
             values[value_index] = count;
         }
-        DenseMatrix::from_row_major(values, self.row_count, self.motif_count)
+        Ok(DenseMatrix::from_row_major(
+            values,
+            self.row_count,
+            self.motif_count,
+        )?)
     }
 
     /// Build a sparse selection from selected source row and motif indices.
@@ -1345,7 +1372,11 @@ fn resolve_motif_label_indices<S: AsRef<str>>(
     ensure_unique_labels(motif_labels, "motif_labels")?;
     motif_labels
         .iter()
-        .map(|motif_label| output.motif_index(motif_label.as_ref()))
+        .map(|motif_label| {
+            output
+                .motif_index(motif_label.as_ref())
+                .map_err(anyhow::Error::from)
+        })
         .collect()
 }
 
@@ -1368,7 +1399,11 @@ fn resolve_group_name_indices<S: AsRef<str>>(
     ensure_unique_labels(group_names, "group_names")?;
     group_names
         .iter()
-        .map(|group_name| output.group_index(group_name.as_ref()))
+        .map(|group_name| {
+            output
+                .group_index(group_name.as_ref())
+                .map_err(anyhow::Error::from)
+        })
         .collect()
 }
 
@@ -1625,7 +1660,12 @@ fn read_motif_ascii_labels(store: Arc<FilesystemStore>, motif_count: usize) -> R
     }
     bytes
         .chunks_exact(motif_width)
-        .map(|motif_bytes| {
+        .enumerate()
+        .map(|(motif_index, motif_bytes)| {
+            ensure!(
+                motif_bytes.is_ascii(),
+                "motif_ascii row {motif_index} contains non-ASCII motif bytes"
+            );
             String::from_utf8(motif_bytes.to_vec()).context("motif_ascii contains invalid UTF-8")
         })
         .collect()
@@ -1727,6 +1767,7 @@ fn read_group_row_metadata(
 
     // Group labels live on the row axis, one group name per count row
     let group_names = read_zarr_labels(root_path, "group", "group_name", row_count)?;
+    ensure_unique_labels(&group_names, "group_names")?;
 
     // Group-level arrays must have one value per count row
     let eligible_windows = read_zarr_array1::<i32>(store.clone(), "/eligible_windows")?;
@@ -1922,10 +1963,11 @@ fn read_zarr_labels(
     labels
         .iter()
         .map(|label| {
-            label
+            let label = label
                 .as_str()
-                .map(str::to_string)
-                .with_context(|| format!("Zarr array {array_path} label is not a string"))
+                .with_context(|| format!("Zarr array {array_path} label is not a string"))?;
+            validate_zarr_public_label(label, expected_label_field)?;
+            Ok(label.to_string())
         })
         .collect()
 }

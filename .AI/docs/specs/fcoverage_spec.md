@@ -31,6 +31,7 @@
 - Fixed-size mode uses contiguous chromosome bins. The final bin is clipped to chromosome length.
 - BED mode preserves original BED row indices through reduction. Output order follows the original BED index, not necessarily coordinate order unless the input was already ordered that way.
 - Grouped BED mode collapses rows by `group_idx`. Plain grouped aggregate actions preserve the command's grouped span semantics, while `*-on-unique-bases` actions merge overlapping or touching bases within each group before computing support.
+- Grouped aggregate outputs write one row per `group_idx`. Duplicate `group_idx` rows are invalid.
 - `--per-window average` writes mean coverage over eligible bases.
 - `--per-window total` writes coverage sum over eligible bases.
 - `--per-window summary-stats` writes the summary schema described below and is handled through reducer paths, not direct positional window extraction.

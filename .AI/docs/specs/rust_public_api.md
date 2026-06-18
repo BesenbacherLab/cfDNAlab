@@ -23,8 +23,34 @@ Stable public categories currently include:
 - `cfdnalab::clip_mode`
 - `cfdnalab::constants`
 - `cfdnalab::parsing`
+- `cfdnalab::output_loaders`
 
 `cfdnalab::gc_bias` is public only when `cmd_gc_bias` is enabled.
+
+## Output Loaders
+
+`cfdnalab::output_loaders` exposes Rust loaders for files written by cfDNAlab
+commands. Each loader is gated by the cargo feature for the command that writes
+that output:
+
+- `cmd_lengths` exposes `load_lengths_output`.
+- `cmd_fcoverage` exposes `load_fcoverage_output` and
+  `load_fcoverage_output_with_group_index`.
+- `cmd_ends` exposes `load_ends_output`.
+- `cmd_midpoints` exposes `load_midpoints_output`.
+
+Loader methods return `OutputLoaderResult<T>` with `OutputLoaderError`. The
+error messages carry path, line, selector, and Zarr-array context. The public
+error type is stable, but downstream code should not rely on exact message text
+unless a behavior test in this repo pins it.
+
+Loaders are strict readers for cfDNAlab outputs. They reject malformed schemas,
+duplicate grouped labels or duplicate grouped fcoverage rows, impossible support
+metadata, non-finite count values where the writer contract does not allow
+them, and explicit row selectors on global outputs.
+
+The detailed loader contract is in
+[`output_loaders_spec.md`](output_loaders_spec.md).
 
 ## Command-Style Runners
 

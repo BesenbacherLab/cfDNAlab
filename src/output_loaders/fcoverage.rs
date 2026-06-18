@@ -37,7 +37,10 @@
 
 use crate::{
     interval::Interval,
-    output_loaders::common::{ensure_unique_indices, resolve_row_indices},
+    output_loaders::{
+        OutputLoaderError, OutputLoaderResult,
+        common::{ensure_unique_indices, resolve_row_indices},
+    },
     shared::io::open_text_reader,
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -86,10 +89,10 @@ use std::{
 ///
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn load_fcoverage_output(path: impl AsRef<Path>) -> Result<FCoverageOutput> {
+pub fn load_fcoverage_output(path: impl AsRef<Path>) -> OutputLoaderResult<FCoverageOutput> {
     let path = path.as_ref();
     ensure_non_positional_path(path)?;
-    FCoverageParser::new(path, None).load()
+    FCoverageParser::new(path, None).load().map_err(Into::into)
 }
 
 /// Load a non-positional grouped `cfdna fcoverage` aggregate table with group names.
@@ -139,10 +142,12 @@ pub fn load_fcoverage_output(path: impl AsRef<Path>) -> Result<FCoverageOutput> 
 pub fn load_fcoverage_output_with_group_index(
     path: impl AsRef<Path>,
     group_index_path: impl AsRef<Path>,
-) -> Result<FCoverageOutput> {
+) -> OutputLoaderResult<FCoverageOutput> {
     let path = path.as_ref();
     ensure_non_positional_path(path)?;
-    FCoverageParser::new(path, Some(group_index_path.as_ref())).load()
+    FCoverageParser::new(path, Some(group_index_path.as_ref()))
+        .load()
+        .map_err(Into::into)
 }
 
 /// Loaded non-positional output from `cfdna fcoverage`.
@@ -150,6 +155,7 @@ pub fn load_fcoverage_output_with_group_index(
 pub struct FCoverageOutput {
     row_metadata: FCoverageRowMetadata,
     signal: FCoverageSignal,
+    filename_metadata: FCoverageFilenameMetadata,
     data: FCoverageData,
 }
 
@@ -164,19 +170,33 @@ impl FCoverageOutput {
         &self.row_metadata
     }
 
+    /// Return command-mode hints parsed from the output filename.
+    ///
+    /// These values come only from canonical cfDNAlab filename parts such as
+    /// `fcoverage.total_on_unique_bases.tsv.zst` or
+    /// `length_normalized.restored_mean`. Renamed files report `Unknown` for
+    /// fields that are not present in the filename.
+    pub fn filename_metadata(&self) -> &FCoverageFilenameMetadata {
+        &self.filename_metadata
+    }
+
     /// Return genomic window metadata, or an error if this is not a windowed output.
-    pub fn window_metadata(&self) -> Result<&[FCoverageWindowRow]> {
+    pub fn window_metadata(&self) -> OutputLoaderResult<&[FCoverageWindowRow]> {
         match &self.row_metadata {
             FCoverageRowMetadata::Windows(windows) => Ok(windows),
-            _ => bail!("fcoverage output is not windowed"),
+            _ => Err(OutputLoaderError::message(
+                "fcoverage output is not windowed",
+            )),
         }
     }
 
     /// Return group metadata, or an error if this is not a grouped output.
-    pub fn group_metadata(&self) -> Result<&[FCoverageGroupRow]> {
+    pub fn group_metadata(&self) -> OutputLoaderResult<&[FCoverageGroupRow]> {
         match &self.row_metadata {
             FCoverageRowMetadata::Groups(groups) => Ok(groups),
-            _ => bail!("fcoverage output is not grouped"),
+            _ => Err(OutputLoaderError::message(
+                "fcoverage output is not grouped",
+            )),
         }
     }
 
@@ -188,7 +208,7 @@ impl FCoverageOutput {
     /// ----------
     /// - `row_index`:
     ///     Zero-based row index in the window metadata.
-    pub fn window(&self, row_index: usize) -> Result<Option<&FCoverageWindowRow>> {
+    pub fn window(&self, row_index: usize) -> OutputLoaderResult<Option<&FCoverageWindowRow>> {
         Ok(self.window_metadata()?.get(row_index))
     }
 
@@ -200,7 +220,7 @@ impl FCoverageOutput {
     /// ----------
     /// - `row_index`:
     ///     Zero-based row index in the group metadata.
-    pub fn group(&self, row_index: usize) -> Result<Option<&FCoverageGroupRow>> {
+    pub fn group(&self, row_index: usize) -> OutputLoaderResult<Option<&FCoverageGroupRow>> {
         Ok(self.group_metadata()?.get(row_index))
     }
 
@@ -213,17 +233,18 @@ impl FCoverageOutput {
     /// ----------
     /// - `group_name`:
     ///     Exact group name from the group-index file.
-    pub fn group_index(&self, group_name: &str) -> Result<usize> {
+    pub fn group_index(&self, group_name: &str) -> OutputLoaderResult<usize> {
         let groups = self.group_metadata()?;
-        ensure!(
-            groups.iter().any(|group| group.name.is_some()),
-            "fcoverage output has no group names loaded; use load_fcoverage_output_with_group_index() with a group-index file"
-        );
-        groups
+        if !groups.iter().any(|group| group.name.is_some()) {
+            return Err(OutputLoaderError::message(
+                "fcoverage output has no group names loaded; use load_fcoverage_output_with_group_index() with a group-index file",
+            ));
+        }
+        Ok(groups
             .iter()
             .find(|group| group.name.as_deref() == Some(group_name))
             .map(|group| group.index)
-            .with_context(|| format!("fcoverage output has no group named '{group_name}'"))
+            .with_context(|| format!("fcoverage output has no group named '{group_name}'"))?)
     }
 
     /// Return whether a loaded grouped output contains a group name.
@@ -251,10 +272,12 @@ impl FCoverageOutput {
     }
 
     /// Return the scalar aggregate mode, or an error for summary-stat outputs.
-    pub fn value_mode(&self) -> Result<FCoverageValueMode> {
+    pub fn value_mode(&self) -> OutputLoaderResult<FCoverageValueMode> {
         match &self.data {
             FCoverageData::Values { value_mode, .. } => Ok(*value_mode),
-            FCoverageData::SummaryStats(_) => bail!("fcoverage output contains summary stats"),
+            FCoverageData::SummaryStats(_) => Err(OutputLoaderError::message(
+                "fcoverage output contains summary stats",
+            )),
         }
     }
 
@@ -267,10 +290,12 @@ impl FCoverageOutput {
     }
 
     /// Return scalar aggregate values in output-row order.
-    pub fn values(&self) -> Result<&[f64]> {
+    pub fn values(&self) -> OutputLoaderResult<&[f64]> {
         match &self.data {
             FCoverageData::Values { values, .. } => Ok(values),
-            FCoverageData::SummaryStats(_) => bail!("fcoverage output contains summary stats"),
+            FCoverageData::SummaryStats(_) => Err(OutputLoaderError::message(
+                "fcoverage output contains summary stats",
+            )),
         }
     }
 
@@ -280,15 +305,17 @@ impl FCoverageOutput {
     /// ----------
     /// - `row_index`:
     ///     Zero-based output row index.
-    pub fn value(&self, row_index: usize) -> Result<Option<f64>> {
+    pub fn value(&self, row_index: usize) -> OutputLoaderResult<Option<f64>> {
         Ok(self.values()?.get(row_index).copied())
     }
 
     /// Return summary statistics in output-row order.
-    pub fn summary_stats(&self) -> Result<&[FCoverageSummaryStats]> {
+    pub fn summary_stats(&self) -> OutputLoaderResult<&[FCoverageSummaryStats]> {
         match &self.data {
             FCoverageData::SummaryStats(stats) => Ok(stats),
-            FCoverageData::Values { .. } => bail!("fcoverage output contains scalar values"),
+            FCoverageData::Values { .. } => Err(OutputLoaderError::message(
+                "fcoverage output contains scalar values",
+            )),
         }
     }
 
@@ -298,7 +325,10 @@ impl FCoverageOutput {
     /// ----------
     /// - `row_index`:
     ///     Zero-based output row index.
-    pub fn summary_stat(&self, row_index: usize) -> Result<Option<&FCoverageSummaryStats>> {
+    pub fn summary_stat(
+        &self,
+        row_index: usize,
+    ) -> OutputLoaderResult<Option<&FCoverageSummaryStats>> {
         Ok(self.summary_stats()?.get(row_index))
     }
 
@@ -393,7 +423,10 @@ impl FCoverageOutput {
         }
         group_names
             .iter()
-            .map(|group_name| self.group_index(group_name.as_ref()))
+            .map(|group_name| {
+                self.group_index(group_name.as_ref())
+                    .map_err(anyhow::Error::from)
+            })
             .collect()
     }
 
@@ -628,9 +661,9 @@ impl<'a> FCoverageSelector<'a> {
     }
 
     /// Read selected rows into the selection type that matches the loaded file.
-    pub fn read(self) -> Result<FCoverageSelection> {
+    pub fn read(self) -> OutputLoaderResult<FCoverageSelection> {
         self.ensure_no_selector_conflict()?;
-        match self.output.data() {
+        let selection = match self.output.data() {
             FCoverageData::Values { .. } => match self.rows {
                 FCoverageRowSelector::All => self
                     .output
@@ -679,7 +712,8 @@ impl<'a> FCoverageSelector<'a> {
                         .map(FCoverageSelection::SummaryStats)
                 }
             },
-        }
+        }?;
+        Ok(selection)
     }
 }
 
@@ -737,6 +771,53 @@ pub enum FCoverageValueMode {
     Average,
     /// Total value across eligible positions.
     Total,
+}
+
+/// Whether a fcoverage aggregate filename names ordinary or unique-base grouping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FCoverageAggregationBasis {
+    /// The filename uses `average`, `total`, or `summary_stats`.
+    Ordinary,
+    /// The filename uses `*_on_unique_bases`.
+    UniqueBases,
+    /// The filename does not contain a recognized aggregate action.
+    Unknown,
+}
+
+/// Fragment length-normalization mode parsed from a fcoverage filename.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FCoverageLengthNormalization {
+    /// The filename has no length-normalization marker.
+    Off,
+    /// The filename contains `length_normalized`.
+    UnitMass,
+    /// The filename contains `length_normalized.restored_mean`.
+    RestoredMean,
+    /// The filename does not contain enough recognized parts to decide.
+    Unknown,
+}
+
+/// Command-mode hints parsed from a fcoverage output filename.
+///
+/// This metadata is intentionally lightweight. It reflects canonical filename
+/// parts when they are present and uses `Unknown` when a user renamed the file
+/// or supplied another valid aggregate table name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FCoverageFilenameMetadata {
+    aggregation_basis: FCoverageAggregationBasis,
+    length_normalization: FCoverageLengthNormalization,
+}
+
+impl FCoverageFilenameMetadata {
+    /// Return whether the filename names ordinary or unique-base aggregation.
+    pub fn aggregation_basis(&self) -> FCoverageAggregationBasis {
+        self.aggregation_basis
+    }
+
+    /// Return length-normalization mode parsed from the filename.
+    pub fn length_normalization(&self) -> FCoverageLengthNormalization {
+        self.length_normalization
+    }
 }
 
 /// Row metadata for a loaded fcoverage aggregate table.
@@ -811,7 +892,7 @@ impl FCoverageSelection {
     }
 
     /// Return selected window metadata, or an error if the selection is not windowed.
-    pub fn window_metadata(&self) -> Result<&[FCoverageWindowRow]> {
+    pub fn window_metadata(&self) -> OutputLoaderResult<&[FCoverageWindowRow]> {
         match self {
             Self::Values(selection) => selection.window_metadata(),
             Self::SummaryStats(selection) => selection.window_metadata(),
@@ -819,7 +900,7 @@ impl FCoverageSelection {
     }
 
     /// Return selected group metadata, or an error if the selection is not grouped.
-    pub fn group_metadata(&self) -> Result<&[FCoverageGroupRow]> {
+    pub fn group_metadata(&self) -> OutputLoaderResult<&[FCoverageGroupRow]> {
         match self {
             Self::Values(selection) => selection.group_metadata(),
             Self::SummaryStats(selection) => selection.group_metadata(),
@@ -848,18 +929,22 @@ impl FCoverageSelection {
     }
 
     /// Return the scalar aggregate mode, or an error for summary-stat selections.
-    pub fn value_mode(&self) -> Result<FCoverageValueMode> {
+    pub fn value_mode(&self) -> OutputLoaderResult<FCoverageValueMode> {
         match self {
             Self::Values(selection) => Ok(selection.value_mode()),
-            Self::SummaryStats(_) => bail!("fcoverage selection contains summary stats"),
+            Self::SummaryStats(_) => Err(OutputLoaderError::message(
+                "fcoverage selection contains summary stats",
+            )),
         }
     }
 
     /// Return selected scalar values, or an error for summary-stat selections.
-    pub fn values(&self) -> Result<&[f64]> {
+    pub fn values(&self) -> OutputLoaderResult<&[f64]> {
         match self {
             Self::Values(selection) => Ok(selection.values()),
-            Self::SummaryStats(_) => bail!("fcoverage selection contains summary stats"),
+            Self::SummaryStats(_) => Err(OutputLoaderError::message(
+                "fcoverage selection contains summary stats",
+            )),
         }
     }
 
@@ -869,15 +954,17 @@ impl FCoverageSelection {
     /// ----------
     /// - `selected_row_index`:
     ///     Zero-based row index within the selected rows.
-    pub fn value(&self, selected_row_index: usize) -> Result<Option<f64>> {
+    pub fn value(&self, selected_row_index: usize) -> OutputLoaderResult<Option<f64>> {
         Ok(self.values()?.get(selected_row_index).copied())
     }
 
     /// Return selected summary stats, or an error for scalar-value selections.
-    pub fn summary_stats(&self) -> Result<&[FCoverageSummaryStats]> {
+    pub fn summary_stats(&self) -> OutputLoaderResult<&[FCoverageSummaryStats]> {
         match self {
             Self::SummaryStats(selection) => Ok(selection.stats()),
-            Self::Values(_) => bail!("fcoverage selection contains scalar values"),
+            Self::Values(_) => Err(OutputLoaderError::message(
+                "fcoverage selection contains scalar values",
+            )),
         }
     }
 
@@ -890,7 +977,7 @@ impl FCoverageSelection {
     pub fn summary_stat(
         &self,
         selected_row_index: usize,
-    ) -> Result<Option<&FCoverageSummaryStats>> {
+    ) -> OutputLoaderResult<Option<&FCoverageSummaryStats>> {
         Ok(self.summary_stats()?.get(selected_row_index))
     }
 }
@@ -912,18 +999,22 @@ impl FCoverageValueSelection {
     }
 
     /// Return selected window metadata, or an error if the selection is not windowed.
-    pub fn window_metadata(&self) -> Result<&[FCoverageWindowRow]> {
+    pub fn window_metadata(&self) -> OutputLoaderResult<&[FCoverageWindowRow]> {
         match &self.row_metadata {
             FCoverageRowMetadata::Windows(windows) => Ok(windows),
-            _ => bail!("fcoverage value selection is not windowed"),
+            _ => Err(OutputLoaderError::message(
+                "fcoverage value selection is not windowed",
+            )),
         }
     }
 
     /// Return selected group metadata, or an error if the selection is not grouped.
-    pub fn group_metadata(&self) -> Result<&[FCoverageGroupRow]> {
+    pub fn group_metadata(&self) -> OutputLoaderResult<&[FCoverageGroupRow]> {
         match &self.row_metadata {
             FCoverageRowMetadata::Groups(groups) => Ok(groups),
-            _ => bail!("fcoverage value selection is not grouped"),
+            _ => Err(OutputLoaderError::message(
+                "fcoverage value selection is not grouped",
+            )),
         }
     }
 
@@ -979,18 +1070,22 @@ impl FCoverageSummaryStatsSelection {
     }
 
     /// Return selected window metadata, or an error if the selection is not windowed.
-    pub fn window_metadata(&self) -> Result<&[FCoverageWindowRow]> {
+    pub fn window_metadata(&self) -> OutputLoaderResult<&[FCoverageWindowRow]> {
         match &self.row_metadata {
             FCoverageRowMetadata::Windows(windows) => Ok(windows),
-            _ => bail!("fcoverage summary-stat selection is not windowed"),
+            _ => Err(OutputLoaderError::message(
+                "fcoverage summary-stat selection is not windowed",
+            )),
         }
     }
 
     /// Return selected group metadata, or an error if the selection is not grouped.
-    pub fn group_metadata(&self) -> Result<&[FCoverageGroupRow]> {
+    pub fn group_metadata(&self) -> OutputLoaderResult<&[FCoverageGroupRow]> {
         match &self.row_metadata {
             FCoverageRowMetadata::Groups(groups) => Ok(groups),
-            _ => bail!("fcoverage summary-stat selection is not grouped"),
+            _ => Err(OutputLoaderError::message(
+                "fcoverage summary-stat selection is not grouped",
+            )),
         }
     }
 
@@ -1170,7 +1265,7 @@ impl FCoverageParser {
             )?);
         }
 
-        schema.finish(rows)
+        schema.finish(rows, parse_filename_metadata(&self.path))
     }
 }
 
@@ -1307,12 +1402,19 @@ impl FCoverageSchema {
         match self {
             Self::Value {
                 row_mode: FCoverageRowMode::Windows,
+                value_mode,
                 ..
             } => {
                 ensure_column_count(path, line_number, &fields, 5)?;
                 let row_index = line_number - 2;
                 let window = parse_window_row(path, line_number, row_index, &fields, None)?;
-                let value = parse_f64_field(path, line_number, "value", fields[3])?;
+                let value = parse_scalar_value_field(
+                    path,
+                    line_number,
+                    *value_mode,
+                    fields[3],
+                    Some(window.interval.len() - window.blacklisted_positions),
+                )?;
                 Ok(ParsedRow::Value {
                     row_metadata: ParsedRowMetadata::Window(window),
                     value,
@@ -1320,13 +1422,20 @@ impl FCoverageSchema {
             }
             Self::Value {
                 row_mode: FCoverageRowMode::Groups,
+                value_mode,
                 ..
             } => {
                 ensure_column_count(path, line_number, &fields, 5)?;
                 let row_index = line_number - 2;
                 let group =
                     parse_group_row(path, line_number, row_index, &fields, group_names_by_idx)?;
-                let value = parse_f64_field(path, line_number, "value", fields[4])?;
+                let value = parse_scalar_value_field(
+                    path,
+                    line_number,
+                    *value_mode,
+                    fields[4],
+                    Some(group.eligible_positions),
+                )?;
                 Ok(ParsedRow::Value {
                     row_metadata: ParsedRowMetadata::Group(group),
                     value,
@@ -1342,7 +1451,14 @@ impl FCoverageSchema {
                     parse_u64_field(path, line_number, "span_positions", fields[3])?;
                 let window =
                     parse_window_row(path, line_number, row_index, &fields, Some(span_positions))?;
-                let stats = parse_window_summary_stats(path, line_number, &fields)?;
+                let stats = parse_window_summary_stats(
+                    path,
+                    line_number,
+                    &fields,
+                    window
+                        .eligible_positions
+                        .expect("summary-stat window rows always store eligible_positions"),
+                )?;
                 Ok(ParsedRow::SummaryStats {
                     row_metadata: ParsedRowMetadata::Window(window),
                     stats,
@@ -1356,7 +1472,12 @@ impl FCoverageSchema {
                 let row_index = line_number - 2;
                 let group =
                     parse_group_row(path, line_number, row_index, &fields, group_names_by_idx)?;
-                let stats = parse_group_summary_stats(path, line_number, &fields)?;
+                let stats = parse_group_summary_stats(
+                    path,
+                    line_number,
+                    &fields,
+                    group.eligible_positions,
+                )?;
                 Ok(ParsedRow::SummaryStats {
                     row_metadata: ParsedRowMetadata::Group(group),
                     stats,
@@ -1382,7 +1503,11 @@ impl FCoverageSchema {
     /// - `FCoverageOutput`:
     ///     Final loaded output with row metadata, signal label, and either
     ///     scalar values or summary statistics.
-    fn finish(self, rows: Vec<ParsedRow>) -> Result<FCoverageOutput> {
+    fn finish(
+        self,
+        rows: Vec<ParsedRow>,
+        filename_metadata: FCoverageFilenameMetadata,
+    ) -> Result<FCoverageOutput> {
         match self {
             Self::Value {
                 value_mode, signal, ..
@@ -1391,6 +1516,7 @@ impl FCoverageSchema {
                 Ok(FCoverageOutput {
                     row_metadata,
                     signal,
+                    filename_metadata,
                     data: FCoverageData::Values { value_mode, values },
                 })
             }
@@ -1399,6 +1525,7 @@ impl FCoverageSchema {
                 Ok(FCoverageOutput {
                     row_metadata,
                     signal,
+                    filename_metadata,
                     data: FCoverageData::SummaryStats(stats),
                 })
             }
@@ -1480,14 +1607,24 @@ fn collect_row_metadata(rows: Vec<ParsedRowMetadata>) -> Result<FCoverageRowMeta
             .map(FCoverageRowMetadata::Windows),
         ParsedRowMetadata::Group(_) => rows
             .into_iter()
-            .map(|row| match row {
-                ParsedRowMetadata::Group(group) => Ok(group),
-                ParsedRowMetadata::Window(_) => {
-                    bail!("internal fcoverage loader row-mode mismatch")
-                }
-            })
-            .collect::<Result<Vec<_>>>()
-            .map(FCoverageRowMetadata::Groups),
+            .try_fold(
+                (Vec::new(), FxHashSet::default()),
+                |(mut groups, mut seen_group_indices), row| match row {
+                    ParsedRowMetadata::Group(group) => {
+                        ensure!(
+                            seen_group_indices.insert(group.group_idx),
+                            "fcoverage output has duplicate group_idx {}",
+                            group.group_idx
+                        );
+                        groups.push(group);
+                        Ok((groups, seen_group_indices))
+                    }
+                    ParsedRowMetadata::Window(_) => {
+                        bail!("internal fcoverage loader row-mode mismatch")
+                    }
+                },
+            )
+            .map(|(groups, _)| FCoverageRowMetadata::Groups(groups)),
     }
 }
 
@@ -1540,6 +1677,14 @@ fn parse_window_row(
             eligible_positions,
             interval.len()
         );
+        let expected_eligible_positions = interval.len() - blacklisted_positions;
+        ensure!(
+            eligible_positions == expected_eligible_positions,
+            "fcoverage output {} line {line_number} has eligible_positions {} but span minus blacklisted_positions is {}",
+            path.display(),
+            eligible_positions,
+            expected_eligible_positions
+        );
         Some(eligible_positions)
     } else {
         None
@@ -1581,6 +1726,14 @@ fn parse_group_row(
         eligible_positions,
         span_positions
     );
+    let expected_eligible_positions = span_positions - blacklisted_positions;
+    ensure!(
+        eligible_positions == expected_eligible_positions,
+        "fcoverage output {} line {line_number} has eligible_positions {} but span_positions minus blacklisted_positions is {}",
+        path.display(),
+        eligible_positions,
+        expected_eligible_positions
+    );
     let name = group_names_by_idx
         .map(|names_by_idx| {
             names_by_idx.get(&group_idx).cloned().with_context(|| {
@@ -1603,8 +1756,9 @@ fn parse_window_summary_stats(
     path: &Path,
     line_number: usize,
     fields: &[&str],
+    eligible_positions: u64,
 ) -> Result<FCoverageSummaryStats> {
-    parse_summary_stats_from_fields(path, line_number, fields, 6)
+    parse_summary_stats_from_fields(path, line_number, fields, 6, eligible_positions)
 }
 
 /// Parse summary statistics for a grouped row.
@@ -1612,8 +1766,9 @@ fn parse_group_summary_stats(
     path: &Path,
     line_number: usize,
     fields: &[&str],
+    eligible_positions: u64,
 ) -> Result<FCoverageSummaryStats> {
-    parse_summary_stats_from_fields(path, line_number, fields, 4)
+    parse_summary_stats_from_fields(path, line_number, fields, 4, eligible_positions)
 }
 
 /// Parse summary-stat value columns once the row-metadata prefix length is known.
@@ -1622,51 +1777,77 @@ fn parse_summary_stats_from_fields(
     line_number: usize,
     fields: &[&str],
     nonzero_positions_column: usize,
+    eligible_positions: u64,
 ) -> Result<FCoverageSummaryStats> {
     let covered_fraction_column = nonzero_positions_column + 1;
+    let nonzero_positions = parse_u64_field(
+        path,
+        line_number,
+        "nonzero_positions",
+        fields[nonzero_positions_column],
+    )?;
+    ensure!(
+        nonzero_positions <= eligible_positions,
+        "fcoverage output {} line {line_number} has nonzero_positions {} greater than eligible_positions {}",
+        path.display(),
+        nonzero_positions,
+        eligible_positions
+    );
+    let covered_fraction = parse_fraction_or_zero_support_nan(
+        path,
+        line_number,
+        "covered_fraction",
+        fields[covered_fraction_column],
+        eligible_positions,
+    )?;
+    let allow_zero_support_nan = eligible_positions == 0;
+    let total = parse_non_negative_summary_value(
+        path,
+        line_number,
+        "total",
+        fields[covered_fraction_column + 1],
+        allow_zero_support_nan,
+    )?;
+    let total_squared = parse_non_negative_summary_value(
+        path,
+        line_number,
+        "total_squared",
+        fields[covered_fraction_column + 2],
+        allow_zero_support_nan,
+    )?;
+    let average = parse_non_negative_summary_value(
+        path,
+        line_number,
+        "average",
+        fields[covered_fraction_column + 3],
+        allow_zero_support_nan,
+    )?;
+    let variance = parse_non_negative_summary_value(
+        path,
+        line_number,
+        "variance",
+        fields[covered_fraction_column + 4],
+        allow_zero_support_nan,
+    )?;
+    let sd = parse_non_negative_summary_value(
+        path,
+        line_number,
+        "sd",
+        fields[covered_fraction_column + 5],
+        allow_zero_support_nan,
+    )?;
+    let coefficient_of_variation =
+        parse_coefficient_of_variation(path, line_number, fields[covered_fraction_column + 6])?;
+    validate_coefficient_of_variation(path, line_number, coefficient_of_variation)?;
     Ok(FCoverageSummaryStats {
-        nonzero_positions: parse_u64_field(
-            path,
-            line_number,
-            "nonzero_positions",
-            fields[nonzero_positions_column],
-        )?,
-        covered_fraction: parse_f64_field(
-            path,
-            line_number,
-            "covered_fraction",
-            fields[covered_fraction_column],
-        )?,
-        total: parse_f64_field(
-            path,
-            line_number,
-            "total",
-            fields[covered_fraction_column + 1],
-        )?,
-        total_squared: parse_f64_field(
-            path,
-            line_number,
-            "total_squared",
-            fields[covered_fraction_column + 2],
-        )?,
-        average: parse_f64_field(
-            path,
-            line_number,
-            "average",
-            fields[covered_fraction_column + 3],
-        )?,
-        variance: parse_f64_field(
-            path,
-            line_number,
-            "variance",
-            fields[covered_fraction_column + 4],
-        )?,
-        sd: parse_f64_field(path, line_number, "sd", fields[covered_fraction_column + 5])?,
-        coefficient_of_variation: parse_coefficient_of_variation(
-            path,
-            line_number,
-            fields[covered_fraction_column + 6],
-        )?,
+        nonzero_positions,
+        covered_fraction,
+        total,
+        total_squared,
+        average,
+        variance,
+        sd,
+        coefficient_of_variation,
     })
 }
 
@@ -1776,6 +1957,94 @@ fn parse_coefficient_of_variation(
     }
 }
 
+/// Parse one scalar average or total value with field-specific numeric rules.
+fn parse_scalar_value_field(
+    path: &Path,
+    line_number: usize,
+    value_mode: FCoverageValueMode,
+    value: &str,
+    eligible_positions: Option<u64>,
+) -> Result<f64> {
+    let parsed = parse_f64_field(path, line_number, "value", value)?;
+    match value_mode {
+        FCoverageValueMode::Average => {
+            let allow_nan = eligible_positions == Some(0);
+            validate_non_negative_f64(path, line_number, "average value", parsed, allow_nan)?;
+        }
+        FCoverageValueMode::Total => {
+            validate_non_negative_f64(path, line_number, "total value", parsed, false)?;
+        }
+    }
+    Ok(parsed)
+}
+
+/// Parse a fraction while allowing `NaN` only for zero-support rows.
+fn parse_fraction_or_zero_support_nan(
+    path: &Path,
+    line_number: usize,
+    field_name: &str,
+    value: &str,
+    eligible_positions: u64,
+) -> Result<f64> {
+    let fraction = parse_f64_field(path, line_number, field_name, value)?;
+    if fraction.is_nan() && eligible_positions == 0 {
+        return Ok(fraction);
+    }
+    ensure!(
+        fraction.is_finite() && (0.0..=1.0).contains(&fraction),
+        "fcoverage output {} line {line_number} has {field_name} outside [0, 1]: {fraction}",
+        path.display()
+    );
+    Ok(fraction)
+}
+
+/// Parse a non-negative summary value while preserving zero-support `NaN`.
+fn parse_non_negative_summary_value(
+    path: &Path,
+    line_number: usize,
+    field_name: &str,
+    value: &str,
+    allow_nan: bool,
+) -> Result<f64> {
+    let parsed = parse_f64_field(path, line_number, field_name, value)?;
+    validate_non_negative_f64(path, line_number, field_name, parsed, allow_nan)?;
+    Ok(parsed)
+}
+
+/// Reject negative finite values and infinities in fcoverage numeric fields.
+fn validate_non_negative_f64(
+    path: &Path,
+    line_number: usize,
+    field_name: &str,
+    value: f64,
+    allow_nan: bool,
+) -> Result<()> {
+    if allow_nan && value.is_nan() {
+        return Ok(());
+    }
+    ensure!(
+        value.is_finite() && value >= 0.0,
+        "fcoverage output {} line {line_number} has {field_name} outside finite and non-negative range: {value}",
+        path.display()
+    );
+    Ok(())
+}
+
+/// Validate an already parsed coefficient of variation value.
+fn validate_coefficient_of_variation(
+    path: &Path,
+    line_number: usize,
+    value: FCoverageCoefficientOfVariation,
+) -> Result<()> {
+    match value {
+        FCoverageCoefficientOfVariation::Value(value) if value.is_nan() => Ok(()),
+        FCoverageCoefficientOfVariation::Value(value) => {
+            validate_non_negative_f64(path, line_number, "coefficient_of_variation", value, false)
+        }
+        FCoverageCoefficientOfVariation::GreaterThan(_) => Ok(()),
+    }
+}
+
 /// Reject command-generated positional fcoverage output suffixes.
 fn ensure_non_positional_path(path: &Path) -> Result<()> {
     let file_name = path
@@ -1798,6 +2067,47 @@ fn ensure_non_positional_path(path: &Path) -> Result<()> {
         path.display()
     );
     Ok(())
+}
+
+/// Parse command-mode hints from canonical fcoverage output filename parts.
+fn parse_filename_metadata(path: &Path) -> FCoverageFilenameMetadata {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let aggregation_basis = if contains_filename_part(file_name, "average_on_unique_bases")
+        || contains_filename_part(file_name, "total_on_unique_bases")
+        || contains_filename_part(file_name, "summary_stats_on_unique_bases")
+    {
+        FCoverageAggregationBasis::UniqueBases
+    } else if contains_filename_part(file_name, "average")
+        || contains_filename_part(file_name, "total")
+        || contains_filename_part(file_name, "summary_stats")
+    {
+        FCoverageAggregationBasis::Ordinary
+    } else {
+        FCoverageAggregationBasis::Unknown
+    };
+    let length_normalization = if file_name.contains(".length_normalized.restored_mean.fcoverage.")
+    {
+        FCoverageLengthNormalization::RestoredMean
+    } else if file_name.contains(".length_normalized.fcoverage.") {
+        FCoverageLengthNormalization::UnitMass
+    } else if file_name.contains(".fcoverage.") {
+        FCoverageLengthNormalization::Off
+    } else {
+        FCoverageLengthNormalization::Unknown
+    };
+    FCoverageFilenameMetadata {
+        aggregation_basis,
+        length_normalization,
+    }
+}
+
+/// Return whether `part` appears as a dot-delimited filename component.
+fn contains_filename_part(file_name: &str, part: &str) -> bool {
+    let marker = format!(".{part}.");
+    file_name.contains(&marker)
 }
 
 /// Read a grouped fcoverage group-index file with `group_idx` and `group_name` columns.

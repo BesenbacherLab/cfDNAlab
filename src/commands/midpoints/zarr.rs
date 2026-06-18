@@ -51,8 +51,9 @@ const CFDNALAB_MIDPOINT_SCHEMA_VERSION: u32 = 1;
 /// value directly as its row index. The writer validates this before writing so group metadata
 /// cannot silently drift away from the rows in `counts`.
 ///
-/// Axis metadata is stored as ordinary arrays so downstream users can build dataframes without
-/// consulting a sidecar file. General command settings stay in `midpoint_settings.json`.
+/// Axis metadata is stored as ordinary arrays so downstream readers can build data frames from the
+/// Zarr store itself, including group names, length bins, position bins, and eligible interval
+/// counts. General command settings stay in `midpoint_settings.json`.
 pub(crate) fn write_midpoint_profiles_zarr(
     store_path: &Path,
     counts: ArrayView3<'_, f32>,

@@ -7,6 +7,16 @@ use crate::interval::{IndexedInterval, Interval};
 ))]
 use fxhash::FxHashSet;
 
+/// Reject public Zarr labels that cannot round-trip as one stable text value.
+#[cfg(any(feature = "cmd_ends", feature = "cmd_midpoints"))]
+pub(crate) fn validate_zarr_public_label(value: &str, field_name: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !value.chars().any(char::is_control),
+        "Zarr label {field_name} contains a control character"
+    );
+    Ok(())
+}
+
 /// A dense two-dimensional array stored in row-major order.
 ///
 /// This stores a `Vec<T>` plus row and column counts. It keeps the output shape

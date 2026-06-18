@@ -57,9 +57,12 @@
 
 use crate::{
     interval::Interval,
-    output_loaders::common::{
-        DenseMatrix, LengthBin, WindowRow, contiguous_index_span, ensure_unique_indices,
-        ensure_unique_labels, resolve_row_indices,
+    output_loaders::{
+        OutputLoaderError, OutputLoaderResult,
+        common::{
+            DenseMatrix, LengthBin, WindowRow, contiguous_index_span, ensure_unique_indices,
+            ensure_unique_labels, resolve_row_indices,
+        },
     },
     shared::{
         constants::{MAX_SUPPORTED_FRAGMENT_LENGTH, MIN_ACGT_BASES_FOR_GC_FRACTION},
@@ -132,8 +135,8 @@ use std::{
 ///
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn load_lengths_output(path: impl AsRef<Path>) -> Result<LengthsOutput> {
-    LengthsParser::new(path.as_ref()).load()
+pub fn load_lengths_output(path: impl AsRef<Path>) -> OutputLoaderResult<LengthsOutput> {
+    LengthsParser::new(path.as_ref()).load().map_err(Into::into)
 }
 
 /// Row aggregation mode detected from the length-count table schema.
@@ -178,18 +181,18 @@ impl LengthsOutput {
     }
 
     /// Return window metadata, or an error if this is not a windowed output.
-    pub fn window_metadata(&self) -> Result<&[WindowRow]> {
+    pub fn window_metadata(&self) -> OutputLoaderResult<&[WindowRow]> {
         match &self.row_metadata {
             LengthRowMetadata::Windows(windows) => Ok(windows),
-            _ => bail!("lengths output is not windowed"),
+            _ => Err(OutputLoaderError::message("lengths output is not windowed")),
         }
     }
 
     /// Return group metadata, or an error if this is not a grouped output.
-    pub fn group_metadata(&self) -> Result<&[LengthGroupRow]> {
+    pub fn group_metadata(&self) -> OutputLoaderResult<&[LengthGroupRow]> {
         match &self.row_metadata {
             LengthRowMetadata::Groups(groups) => Ok(groups),
-            _ => bail!("lengths output is not grouped"),
+            _ => Err(OutputLoaderError::message("lengths output is not grouped")),
         }
     }
 
@@ -201,7 +204,7 @@ impl LengthsOutput {
     /// ----------
     /// - `row_index`:
     ///     Zero-based row index in the window metadata.
-    pub fn window(&self, row_index: usize) -> Result<Option<&WindowRow>> {
+    pub fn window(&self, row_index: usize) -> OutputLoaderResult<Option<&WindowRow>> {
         Ok(self.window_metadata()?.get(row_index))
     }
 
@@ -213,7 +216,7 @@ impl LengthsOutput {
     /// ----------
     /// - `row_index`:
     ///     Zero-based row index in the group metadata.
-    pub fn group(&self, row_index: usize) -> Result<Option<&LengthGroupRow>> {
+    pub fn group(&self, row_index: usize) -> OutputLoaderResult<Option<&LengthGroupRow>> {
         Ok(self.group_metadata()?.get(row_index))
     }
 
@@ -227,20 +230,14 @@ impl LengthsOutput {
     /// ----------
     /// - `group_name`:
     ///     Group label to resolve to a zero-based row index.
-    pub fn group_index(&self, group_name: &str) -> Result<usize> {
+    pub fn group_index(&self, group_name: &str) -> OutputLoaderResult<usize> {
         let groups = self.group_metadata()?;
-        let mut matching_groups = groups
+        Ok(groups
             .iter()
             .filter(|group| group.name == group_name)
-            .map(|group| group.index);
-        let group_index = matching_groups
+            .map(|group| group.index)
             .next()
-            .with_context(|| format!("lengths output has no group named '{group_name}'"))?;
-        ensure!(
-            matching_groups.next().is_none(),
-            "lengths output has multiple groups named '{group_name}'"
-        );
-        Ok(group_index)
+            .with_context(|| format!("lengths output has no group named '{group_name}'"))?)
     }
 
     /// Return whether one group name exists in a grouped output.
@@ -316,19 +313,23 @@ impl LengthsOutput {
     /// ----------
     /// - `range`:
     ///     Half-open fragment length interval `[start, end)` in bp.
-    pub fn length_bins_overlapping_range(&self, range: Interval<u32>) -> Result<Vec<LengthBin>> {
+    pub fn length_bins_overlapping_range(
+        &self,
+        range: Interval<u32>,
+    ) -> OutputLoaderResult<Vec<LengthBin>> {
         let selected = self
             .length_bins()
             .iter()
             .copied()
             .filter(|bin| bin.interval.intersects(range))
             .collect::<Vec<_>>();
-        ensure!(
-            !selected.is_empty(),
-            "length range [{}, {}) bp does not overlap any length bins",
-            range.start(),
-            range.end()
-        );
+        if selected.is_empty() {
+            return Err(OutputLoaderError::message(format!(
+                "length range [{}, {}) bp does not overlap any length bins",
+                range.start(),
+                range.end()
+            )));
+        }
         Ok(selected)
     }
 
@@ -412,6 +413,10 @@ impl LengthsOutput {
         length_range: Option<Interval<u32>>,
         row_label: &str,
     ) -> Result<LengthCountSelection> {
+        ensure!(
+            row_indices.is_none() || self.row_mode() != LengthOutputMode::Global,
+            "global lengths output has no selectable row axis"
+        );
         // Resolve optional selectors first so the copy path works with
         // concrete matrix row and column indices
         let row_indices = resolve_row_indices(row_indices, self.row_count(), row_label)?;
@@ -565,7 +570,10 @@ impl LengthsOutput {
         ensure_unique_labels(group_names, "group_names")?;
         group_names
             .iter()
-            .map(|group_name| self.group_index(group_name.as_ref()))
+            .map(|group_name| {
+                self.group_index(group_name.as_ref())
+                    .map_err(anyhow::Error::from)
+            })
             .collect()
     }
 
@@ -735,7 +743,7 @@ impl<'a> LengthsSelector<'a> {
     }
 
     /// Read the selected counts into an owned matrix with axis metadata.
-    pub fn read(self) -> Result<LengthCountSelection> {
+    pub fn read(self) -> OutputLoaderResult<LengthCountSelection> {
         self.ensure_no_selector_conflict()?;
         let (length_bin_indices, length_range) = match self.lengths {
             LengthAxisSelector::All => (None, None),
@@ -744,7 +752,7 @@ impl<'a> LengthsSelector<'a> {
         };
         let length_bin_indices = length_bin_indices.as_deref();
 
-        match self.rows {
+        let selection = match self.rows {
             LengthRowSelector::All => {
                 self.output
                     .select_counts(None, length_bin_indices, length_range)
@@ -769,7 +777,8 @@ impl<'a> LengthsSelector<'a> {
                 length_bin_indices,
                 length_range,
             ),
-        }
+        }?;
+        Ok(selection)
     }
 }
 
@@ -881,18 +890,22 @@ impl LengthCountSelection {
     }
 
     /// Return selected window metadata, or an error if the selection is not windowed.
-    pub fn window_metadata(&self) -> Result<&[WindowRow]> {
+    pub fn window_metadata(&self) -> OutputLoaderResult<&[WindowRow]> {
         match &self.row_metadata {
             LengthRowMetadata::Windows(windows) => Ok(windows),
-            _ => bail!("length count selection is not windowed"),
+            _ => Err(OutputLoaderError::message(
+                "length count selection is not windowed",
+            )),
         }
     }
 
     /// Return selected group metadata, or an error if the selection is not grouped.
-    pub fn group_metadata(&self) -> Result<&[LengthGroupRow]> {
+    pub fn group_metadata(&self) -> OutputLoaderResult<&[LengthGroupRow]> {
         match &self.row_metadata {
             LengthRowMetadata::Groups(groups) => Ok(groups),
-            _ => bail!("length count selection is not grouped"),
+            _ => Err(OutputLoaderError::message(
+                "length count selection is not grouped",
+            )),
         }
     }
 
@@ -1272,6 +1285,11 @@ impl LengthsSchema {
                         }
                     })
                     .collect::<Result<Vec<_>>>()?;
+                let group_names = groups
+                    .iter()
+                    .map(|group| group.name.as_str())
+                    .collect::<Vec<_>>();
+                ensure_unique_labels(&group_names, "group_names")?;
                 let counts = DenseMatrix::from_row_major(values, row_count, length_bin_count)?;
                 Ok(LengthsOutput {
                     row_metadata: LengthRowMetadata::Groups(groups),

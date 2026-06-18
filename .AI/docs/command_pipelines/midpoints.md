@@ -58,7 +58,7 @@ For odd-length fragments, the midpoint is the center base. For even-length fragm
 
 ## Outputs
 
-The main output is `<prefix>.midpoint_profiles.zarr/`. Its `counts` array stores `(group, length_bin, position)` values, and the `group` coordinate is the same zero-based `group_idx` used in `<prefix>.group_index.tsv`. The store also includes group names, length-bin intervals, position-bin intervals, and eligible interval counts. The companion `<prefix>.group_index.tsv` remains a plain-text group summary. The settings sidecar `<prefix>.midpoint_settings.json` records command settings so the run can be inspected without opening the Zarr store. When plotting is enabled, selected groups also produce quick-look PNG profiles and length-bin heatmaps.
+The main output is `<prefix>.midpoint_profiles.zarr/`. Its `counts` array stores `(group, length_bin, position)` values, and the `group` coordinate is the same zero-based `group_idx` used in `<prefix>.group_index.tsv`. The store also includes group names, length-bin intervals, position-bin intervals, and eligible interval counts. The companion `<prefix>.group_index.tsv` remains a plain-text group summary. The settings JSON `<prefix>.midpoint_settings.json` records command settings so the run can be inspected without opening the Zarr store. When plotting is enabled, selected groups also produce quick-look PNG profiles and length-bin heatmaps.
 
 ## Corrections And Filters
 

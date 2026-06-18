@@ -230,6 +230,11 @@ fn load_midpoints_output_reads_axes_and_count_selections() -> anyhow::Result<()>
         .positions(&[1, 1])
         .read()
         .expect_err("duplicate position selectors should fail");
+    let empty_position_error = loaded
+        .select()
+        .positions(&[])
+        .read()
+        .expect_err("empty position selectors should fail");
     let missing_length_range_error = loaded
         .select()
         .length_range(Interval::new(200, 250)?)
@@ -277,6 +282,11 @@ fn load_midpoints_output_reads_axes_and_count_selections() -> anyhow::Result<()>
         duplicate_position_error
             .to_string()
             .contains("position indices contain duplicate value 1")
+    );
+    assert!(
+        empty_position_error
+            .to_string()
+            .contains("cannot select zero midpoint positions")
     );
     assert!(
         missing_length_range_error
@@ -614,6 +624,97 @@ fn midpoint_counts_reject_nonfinite_and_allow_negative_values() -> anyhow::Resul
         non_finite_error
             .to_string()
             .contains("midpoint counts contain non-finite value")
+    );
+    Ok(())
+}
+
+/// Verify midpoint loaders reject malformed public labels from Zarr metadata.
+#[test]
+fn load_midpoints_output_rejects_control_character_group_labels() -> anyhow::Result<()> {
+    // Arrange:
+    // Group names become public selector strings. Control characters would not
+    // stay stable when users move labels into tables or command examples.
+    let temp = TempDir::new()?;
+    let path = temp.path().join("sample.midpoint_profiles.zarr");
+    let store = create_store(
+        &path,
+        json!({
+            "cfdnalab_schema": "midpoint_profiles",
+            "cfdnalab_schema_version": 1,
+            "primary_array": "counts",
+            "count_units": "weighted_midpoint_count",
+        }),
+    )?;
+    write_f32_array(
+        &store,
+        "counts",
+        &[1, 1, 1],
+        &["group", "length_bin", "position"],
+        &[1.0],
+        json!({}),
+    )?;
+    write_i32_array(
+        &store,
+        "group",
+        &[1],
+        &["group"],
+        &[0],
+        json!({
+            "label_field": "group_name",
+            "labels": ["bad\nlabel"],
+        }),
+    )?;
+    write_i32_array(
+        &store,
+        "eligible_intervals",
+        &[1],
+        &["group"],
+        &[1],
+        json!({}),
+    )?;
+    write_i32_array(&store, "length_bin", &[1], &["length_bin"], &[0], json!({}))?;
+    write_i32_array(
+        &store,
+        "length_start_bp",
+        &[1],
+        &["length_bin"],
+        &[30],
+        json!({}),
+    )?;
+    write_i32_array(
+        &store,
+        "length_end_bp",
+        &[1],
+        &["length_bin"],
+        &[40],
+        json!({}),
+    )?;
+    write_i32_array(&store, "position", &[1], &["position"], &[0], json!({}))?;
+    write_i32_array(
+        &store,
+        "position_bin_start_bp",
+        &[1],
+        &["position"],
+        &[0],
+        json!({}),
+    )?;
+    write_i32_array(
+        &store,
+        "position_bin_end_bp",
+        &[1],
+        &["position"],
+        &[1],
+        json!({}),
+    )?;
+
+    // Act
+    let error = load_midpoints_output(&path).expect_err("control-character label should fail");
+
+    // Assert
+    assert!(
+        error
+            .to_string()
+            .contains("Zarr label group_name contains a control character")
     );
     Ok(())
 }

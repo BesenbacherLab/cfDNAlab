@@ -42,4 +42,4 @@ those already exist.
 ### Package-wide
 
 - Shorten buffer and temporary-state lifetimes where they are obviously longer than needed
-- Narrow fetch or reference spans before loading heavy auxiliary state when that does not change semantics
+- Narrow fetch or reference spans before loading heavy extra state when that does not change semantics

@@ -6,7 +6,9 @@
 
 use cfdnalab::{
     interval::Interval,
-    output_loaders::{LengthOutputMode, LengthRowMetadata, load_lengths_output},
+    output_loaders::{
+        LengthOutputMode, LengthRowMetadata, OutputLoaderResult, load_lengths_output,
+    },
 };
 use flate2::{Compression, write::GzEncoder};
 use std::{fs::File, io::Write, path::Path};
@@ -387,8 +389,18 @@ fn lengths_output_selection_reports_wrong_mode_and_bad_indices() -> anyhow::Resu
     // silently misinterpreted selections.
     let temp = TempDir::new()?;
     let path = temp.path().join("sample.length_counts.tsv");
+    let windowed_path = temp.path().join("sample.windowed.length_counts.tsv");
     write_text(&path, "count_30\tcount_31_40\n12\t3.5\n")?;
+    write_text(
+        &windowed_path,
+        concat!(
+            "chrom\tstart\tend\tcount_30\tcount_31_40\n",
+            "chr1\t0\t20\t1\t2\n",
+            "chr1\t20\t40\t3\t4\n",
+        ),
+    )?;
     let loaded = load_lengths_output(&path)?;
+    let windowed = load_lengths_output(&windowed_path)?;
 
     // Act
     let window_error = loaded
@@ -397,25 +409,25 @@ fn lengths_output_selection_reports_wrong_mode_and_bad_indices() -> anyhow::Resu
         .length_bins(&[0])
         .read()
         .expect_err("global output is not windowed");
-    let row_error = loaded
+    let global_row_error = loaded
         .select()
-        .rows(&[1])
+        .rows(&[0])
         .length_bins(&[0])
         .read()
-        .expect_err("row index should be validated");
-    let length_bin_error = loaded
+        .expect_err("global output should not expose a selectable row axis");
+    let length_bin_error = windowed
         .select()
         .rows(&[0])
         .length_bins(&[2])
         .read()
         .expect_err("length bin index should be validated");
-    let duplicate_row_error = loaded
+    let duplicate_row_error = windowed
         .select()
         .rows(&[0, 0])
         .length_bins(&[0])
         .read()
         .expect_err("duplicate row indices should be rejected");
-    let duplicate_bin_error = loaded
+    let duplicate_bin_error = windowed
         .select()
         .rows(&[0])
         .length_bins(&[1, 1])
@@ -436,7 +448,11 @@ fn lengths_output_selection_reports_wrong_mode_and_bad_indices() -> anyhow::Resu
 
     // Assert
     assert!(window_error.to_string().contains("not windowed"));
-    assert!(row_error.to_string().contains("row index 1 is outside"));
+    assert!(
+        global_row_error
+            .to_string()
+            .contains("global lengths output has no selectable row axis")
+    );
     assert!(
         length_bin_error
             .to_string()
@@ -472,9 +488,10 @@ fn lengths_output_group_name_lookup_reports_missing_and_duplicate_names() -> any
     // Group labels are user-facing selectors. Missing labels and duplicated
     // labels must be reported rather than resolving to an arbitrary row.
     let temp = TempDir::new()?;
-    let path = temp.path().join("sample.length_counts.tsv");
+    let duplicate_path = temp.path().join("duplicate.length_counts.tsv");
+    let unique_path = temp.path().join("unique.length_counts.tsv");
     write_text(
-        &path,
+        &duplicate_path,
         concat!(
             "group_name\teligible_windows\tcount_30\n",
             "alpha\t2\t1\n",
@@ -482,12 +499,19 @@ fn lengths_output_group_name_lookup_reports_missing_and_duplicate_names() -> any
             "beta\t1\t3\n",
         ),
     )?;
-    let loaded = load_lengths_output(&path)?;
+    write_text(
+        &unique_path,
+        concat!(
+            "group_name\teligible_windows\tcount_30\n",
+            "alpha\t2\t1\n",
+            "beta\t1\t3\n",
+        ),
+    )?;
+    let loaded = load_lengths_output(&unique_path)?;
 
     // Act
-    let duplicate_name_error = loaded
-        .group_index("alpha")
-        .expect_err("duplicate group names should fail");
+    let duplicate_name_error =
+        load_lengths_output(&duplicate_path).expect_err("duplicate group names should fail");
     let missing_name_error = loaded
         .select()
         .groups_by_name(&["missing"])
@@ -498,7 +522,7 @@ fn lengths_output_group_name_lookup_reports_missing_and_duplicate_names() -> any
     assert!(
         duplicate_name_error
             .to_string()
-            .contains("multiple groups named 'alpha'")
+            .contains("group_names contains duplicate value 'alpha'")
     );
     assert!(
         missing_name_error
@@ -657,6 +681,36 @@ fn load_lengths_output_rejects_bedgraph_like_input() -> anyhow::Result<()> {
 
     // Assert
     assert!(error.to_string().contains("unsupported header"));
+    Ok(())
+}
+
+/// Verify the public loader result type is the lengths loader error boundary.
+#[test]
+fn load_lengths_output_returns_public_loader_result() -> anyhow::Result<()> {
+    // Arrange:
+    // Public loader failures should use OutputLoaderResult, while preserving
+    // the contextual message that tells users what to fix in the file.
+    let temp = TempDir::new()?;
+    let path = temp.path().join("sample.length_counts.tsv");
+    write_text(&path, "count_30\nNaN\n")?;
+
+    // Act
+    let result: OutputLoaderResult<_> = load_lengths_output(&path);
+    let error = result.expect_err("non-finite count should fail");
+
+    // Assert
+    assert!(
+        error
+            .as_anyhow()
+            .to_string()
+            .contains("outside finite and non-negative range")
+    );
+    let standard_error: &dyn std::error::Error = &error;
+    assert!(
+        standard_error
+            .to_string()
+            .contains("outside finite and non-negative range")
+    );
     Ok(())
 }
 

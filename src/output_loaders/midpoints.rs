@@ -34,9 +34,12 @@
 
 use crate::{
     interval::{IndexedInterval, Interval},
-    output_loaders::common::{
-        DenseArray3, LengthBin, contiguous_index_span, ensure_unique_indices, ensure_unique_labels,
-        resolve_row_indices,
+    output_loaders::{
+        OutputLoaderError, OutputLoaderResult,
+        common::{
+            DenseArray3, LengthBin, contiguous_index_span, ensure_unique_indices,
+            ensure_unique_labels, resolve_row_indices, validate_zarr_public_label,
+        },
     },
     shared::{
         constants::{MAX_SUPPORTED_FRAGMENT_LENGTH, MIN_ACGT_BASES_FOR_GC_FRACTION},
@@ -67,6 +70,7 @@ pub type MidpointPositionBin = IndexedInterval<u32, usize>;
 /// The path must point to a midpoint profile Zarr directory. This function
 /// validates the schema and reads group, fragment length, and position axes.
 /// Count values are read later by `read_all_counts()` or `select().read()`.
+/// Outputs with no groups, no length bins, or no position bins are rejected.
 ///
 /// Parameters
 /// ----------
@@ -105,8 +109,10 @@ pub type MidpointPositionBin = IndexedInterval<u32, usize>;
 ///
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn load_midpoints_output(path: impl AsRef<Path>) -> Result<MidpointsOutput> {
-    MidpointsParser::new(path.as_ref()).load()
+pub fn load_midpoints_output(path: impl AsRef<Path>) -> OutputLoaderResult<MidpointsOutput> {
+    MidpointsParser::new(path.as_ref())
+        .load()
+        .map_err(Into::into)
 }
 
 /// Loaded midpoint metadata and path-backed count access.
@@ -175,11 +181,12 @@ impl MidpointsOutput {
     /// ----------
     /// - `group_name`:
     ///     Group label to resolve to a zero-based group index.
-    pub fn group_index(&self, group_name: &str) -> Result<usize> {
-        self.group_name_indices
+    pub fn group_index(&self, group_name: &str) -> OutputLoaderResult<usize> {
+        Ok(self
+            .group_name_indices
             .get(group_name)
             .copied()
-            .with_context(|| format!("midpoints output has no group named '{group_name}'"))
+            .with_context(|| format!("midpoints output has no group named '{group_name}'"))?)
     }
 
     /// Return whether one group name exists.
@@ -215,19 +222,23 @@ impl MidpointsOutput {
     /// ----------
     /// - `range`:
     ///     Half-open fragment length interval `[start, end)` in bp.
-    pub fn length_bins_overlapping_range(&self, range: Interval<u32>) -> Result<Vec<LengthBin>> {
+    pub fn length_bins_overlapping_range(
+        &self,
+        range: Interval<u32>,
+    ) -> OutputLoaderResult<Vec<LengthBin>> {
         let selected = self
             .length_bins
             .iter()
             .copied()
             .filter(|bin| bin.interval.intersects(range))
             .collect::<Vec<_>>();
-        ensure!(
-            !selected.is_empty(),
-            "length range [{}, {}) bp does not overlap any midpoint length bins",
-            range.start(),
-            range.end()
-        );
+        if selected.is_empty() {
+            return Err(OutputLoaderError::message(format!(
+                "length range [{}, {}) bp does not overlap any midpoint length bins",
+                range.start(),
+                range.end()
+            )));
+        }
         Ok(selected)
     }
 
@@ -253,19 +264,20 @@ impl MidpointsOutput {
     pub fn position_bins_overlapping_range(
         &self,
         range: Interval<u32>,
-    ) -> Result<Vec<MidpointPositionBin>> {
+    ) -> OutputLoaderResult<Vec<MidpointPositionBin>> {
         let selected = self
             .position_bins
             .iter()
             .copied()
             .filter(|bin| bin.interval.intersects(range))
             .collect::<Vec<_>>();
-        ensure!(
-            !selected.is_empty(),
-            "position range [{}, {}) bp does not overlap any midpoint position bins",
-            range.start(),
-            range.end()
-        );
+        if selected.is_empty() {
+            return Err(OutputLoaderError::message(format!(
+                "position range [{}, {}) bp does not overlap any midpoint position bins",
+                range.start(),
+                range.end()
+            )));
+        }
         Ok(selected)
     }
 
@@ -273,7 +285,7 @@ impl MidpointsOutput {
     ///
     /// This can be large. Use `select()` when only some groups, length bins, or
     /// positions are needed.
-    pub fn read_all_counts(&self) -> Result<MidpointCountSelection> {
+    pub fn read_all_counts(&self) -> OutputLoaderResult<MidpointCountSelection> {
         self.select().read()
     }
 
@@ -383,7 +395,10 @@ impl MidpointsOutput {
         ensure_unique_labels(group_names, "group_names")?;
         group_names
             .iter()
-            .map(|group_name| self.group_index(group_name.as_ref()))
+            .map(|group_name| {
+                self.group_index(group_name.as_ref())
+                    .map_err(anyhow::Error::from)
+            })
             .collect()
     }
 
@@ -421,6 +436,10 @@ impl MidpointsOutput {
             "use either position_indices or position_range, not both"
         );
         if let Some(position_indices) = position_indices {
+            ensure!(
+                !position_indices.is_empty(),
+                "cannot select zero midpoint positions"
+            );
             return Ok(position_indices.to_vec());
         }
         if let Some(position_range) = position_range {
@@ -568,6 +587,9 @@ impl<'a> MidpointsSelector<'a> {
 
     /// Select positions by zero-based position-bin index.
     ///
+    /// Passing an empty slice is an error. Midpoint selections need at least
+    /// one position bin.
+    ///
     /// Parameters
     /// ----------
     /// - `position_indices`:
@@ -652,7 +674,7 @@ impl<'a> MidpointsSelector<'a> {
     }
 
     /// Read the selected count array with selected axis metadata.
-    pub fn read(self) -> Result<MidpointCountSelection> {
+    pub fn read(self) -> OutputLoaderResult<MidpointCountSelection> {
         self.ensure_no_selector_conflict()?;
         let (length_bin_indices, length_range) = match self.lengths {
             MidpointLengthSelector::All => (None, None),
@@ -668,7 +690,7 @@ impl<'a> MidpointsSelector<'a> {
         };
         let position_indices = position_indices.as_deref();
 
-        match self.groups {
+        let selection = match self.groups {
             MidpointGroupSelector::All => self.output.select_counts(
                 None,
                 length_bin_indices,
@@ -690,7 +712,8 @@ impl<'a> MidpointsSelector<'a> {
                 position_indices,
                 position_range,
             ),
-        }
+        }?;
+        Ok(selection)
     }
 }
 
@@ -1352,10 +1375,11 @@ fn read_zarr_labels(
     labels
         .iter()
         .map(|label| {
-            label
+            let label = label
                 .as_str()
-                .map(str::to_string)
-                .with_context(|| format!("Zarr array {array_path} label is not a string"))
+                .with_context(|| format!("Zarr array {array_path} label is not a string"))?;
+            validate_zarr_public_label(label, expected_label_field)?;
+            Ok(label.to_string())
         })
         .collect()
 }

@@ -5,16 +5,21 @@
 //! command runners produce files, while `output_loaders` opens files that have
 //! already been written.
 //!
-//! Loader entry points:
+//! Loader entry points are compiled with the matching command feature:
 //!
 //! ```text
-//! load_lengths_output(path)   -> LengthsOutput
-//! load_fcoverage_output(path) -> FCoverageOutput
-//! load_ends_output(path)      -> EndsOutput
-//! load_midpoints_output(path) -> MidpointsOutput
+//! cmd_lengths   -> load_lengths_output(path)
+//! cmd_fcoverage -> load_fcoverage_output(path)
+//! cmd_ends      -> load_ends_output(path)
+//! cmd_midpoints -> load_midpoints_output(path)
 //! ```
+//!
+//! Public loader methods return `OutputLoaderResult<T>`. Error messages include
+//! the path, line, array, or selector context needed to fix malformed cfDNAlab
+//! outputs.
 
 mod common;
+mod error;
 
 #[cfg(feature = "cmd_ends")]
 mod ends;
@@ -29,6 +34,7 @@ mod lengths;
 mod midpoints;
 
 pub use common::{DenseMatrix, LengthBin, WindowRow};
+pub use error::{OutputLoaderError, OutputLoaderResult};
 
 #[cfg(feature = "cmd_midpoints")]
 pub use common::DenseArray3;
@@ -43,7 +49,8 @@ pub use ends::{
 
 #[cfg(feature = "cmd_fcoverage")]
 pub use fcoverage::{
-    FCoverageCoefficientOfVariation, FCoverageData, FCoverageGroupRow, FCoverageOutput,
+    FCoverageAggregationBasis, FCoverageCoefficientOfVariation, FCoverageData,
+    FCoverageFilenameMetadata, FCoverageGroupRow, FCoverageLengthNormalization, FCoverageOutput,
     FCoverageRowMetadata, FCoverageRowMode, FCoverageSelection, FCoverageSelector, FCoverageSignal,
     FCoverageSummaryStats, FCoverageSummaryStatsSelection, FCoverageValueMode,
     FCoverageValueSelection, FCoverageWindowRow, load_fcoverage_output,

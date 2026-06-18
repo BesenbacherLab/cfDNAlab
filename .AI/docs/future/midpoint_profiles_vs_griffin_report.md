@@ -157,7 +157,7 @@ For aggregate profile shape, the interval-level prefilter is better. It avoids
 one-sided fragment loss near profile edges, which can otherwise produce artificial
 dips or shoulders.
 
-### Metadata Sidecar For Arrays
+### Metadata JSON For Arrays
 
 Our `.npy` profile values are accompanied by a settings JSON that records axis
 order, length bins, bin size, smoothing, flanks, and blacklist prefiltering.

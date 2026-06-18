@@ -5,7 +5,8 @@
 //! per-window positional outputs are intentionally rejected by this public API.
 
 use cfdnalab::output_loaders::{
-    FCoverageCoefficientOfVariation, FCoverageRowMode, FCoverageValueMode, load_fcoverage_output,
+    FCoverageAggregationBasis, FCoverageCoefficientOfVariation, FCoverageLengthNormalization,
+    FCoverageRowMode, FCoverageValueMode, load_fcoverage_output,
     load_fcoverage_output_with_group_index,
 };
 use std::{fs::File, io::Write, path::Path};
@@ -35,6 +36,14 @@ fn load_fcoverage_output_reads_window_average_tsv() -> anyhow::Result<()> {
     assert_eq!(loaded.row_mode(), FCoverageRowMode::Windows);
     assert_eq!(loaded.value_mode()?, FCoverageValueMode::Average);
     assert_eq!(loaded.signal().label(), "coverage");
+    assert_eq!(
+        loaded.filename_metadata().aggregation_basis(),
+        FCoverageAggregationBasis::Ordinary
+    );
+    assert_eq!(
+        loaded.filename_metadata().length_normalization(),
+        FCoverageLengthNormalization::Off
+    );
     assert_eq!(loaded.row_count(), 2);
     assert_eq!(loaded.values()?, &[1.5, 0.0]);
     assert_eq!(loaded.value(1)?, Some(0.0));
@@ -102,6 +111,14 @@ fn load_fcoverage_output_reads_grouped_total_fragment_mass_from_zstd() -> anyhow
     assert_eq!(loaded.row_mode(), FCoverageRowMode::Groups);
     assert_eq!(loaded.value_mode()?, FCoverageValueMode::Total);
     assert_eq!(loaded.signal().label(), "fragment_mass");
+    assert_eq!(
+        loaded.filename_metadata().aggregation_basis(),
+        FCoverageAggregationBasis::UniqueBases
+    );
+    assert_eq!(
+        loaded.filename_metadata().length_normalization(),
+        FCoverageLengthNormalization::Off
+    );
     assert_eq!(loaded.values()?, &[42.5, 0.0]);
     assert!(loaded.window_metadata().is_err());
 
@@ -144,6 +161,62 @@ fn load_fcoverage_output_reads_grouped_total_fragment_mass_from_zstd() -> anyhow
             .map(|group| group.name.as_deref())
             .collect::<Vec<_>>(),
         vec![Some("beta"), Some("alpha")]
+    );
+    Ok(())
+}
+
+/// Verify fcoverage filename metadata is parsed only from recognized filename parts.
+#[test]
+fn load_fcoverage_output_reports_filename_metadata_from_canonical_names() -> anyhow::Result<()> {
+    // Arrange:
+    // The table header is enough to load values, but canonical filenames carry
+    // command-mode hints such as restored-mean length normalization. Renamed
+    // files should load normally and report unknown filename metadata.
+    let temp = TempDir::new()?;
+    let restored_mean_path = temp
+        .path()
+        .join("sample.length_normalized.restored_mean.fcoverage.average.tsv");
+    let unit_mass_path = temp
+        .path()
+        .join("sample.length_normalized.fcoverage.average.tsv");
+    let renamed_path = temp.path().join("renamed.tsv");
+    let average_tsv = concat!(
+        "chromosome\tstart\tend\taverage_fragment_mass\tblacklisted_positions\n",
+        "chr1\t0\t10\t1.25\t0\n",
+    );
+    write_text(&restored_mean_path, average_tsv)?;
+    write_text(&unit_mass_path, average_tsv)?;
+    write_text(&renamed_path, average_tsv)?;
+
+    // Act
+    let restored_mean = load_fcoverage_output(&restored_mean_path)?;
+    let unit_mass = load_fcoverage_output(&unit_mass_path)?;
+    let renamed = load_fcoverage_output(&renamed_path)?;
+
+    // Assert
+    assert_eq!(
+        restored_mean.filename_metadata().aggregation_basis(),
+        FCoverageAggregationBasis::Ordinary
+    );
+    assert_eq!(
+        restored_mean.filename_metadata().length_normalization(),
+        FCoverageLengthNormalization::RestoredMean
+    );
+    assert_eq!(
+        unit_mass.filename_metadata().aggregation_basis(),
+        FCoverageAggregationBasis::Ordinary
+    );
+    assert_eq!(
+        unit_mass.filename_metadata().length_normalization(),
+        FCoverageLengthNormalization::UnitMass
+    );
+    assert_eq!(
+        renamed.filename_metadata().aggregation_basis(),
+        FCoverageAggregationBasis::Unknown
+    );
+    assert_eq!(
+        renamed.filename_metadata().length_normalization(),
+        FCoverageLengthNormalization::Unknown
     );
     Ok(())
 }
@@ -325,6 +398,63 @@ fn fcoverage_group_name_selection_requires_group_index_file() -> anyhow::Result<
             .to_string()
             .contains("no group names loaded")
     );
+    Ok(())
+}
+
+/// Verify fcoverage group-index files reject duplicate group names.
+#[test]
+fn load_fcoverage_output_with_group_index_rejects_duplicate_group_names() -> anyhow::Result<()> {
+    // Arrange:
+    // The aggregate TSV stores numeric rows, but the loaded group names become
+    // public selectors. Duplicate names would make groups_by_name ambiguous.
+    let temp = TempDir::new()?;
+    let path = temp.path().join("sample.fcoverage.total.tsv");
+    let group_index_path = temp.path().join("sample.group_index.tsv");
+    write_text(
+        &path,
+        concat!(
+            "group_idx\tspan_positions\tblacklisted_positions\teligible_positions\ttotal_coverage\n",
+            "0\t10\t0\t10\t1\n",
+            "1\t20\t0\t20\t2\n",
+        ),
+    )?;
+    write_text(
+        &group_index_path,
+        "group_idx\tgroup_name\n0\talpha\n1\talpha\n",
+    )?;
+
+    // Act
+    let error = load_fcoverage_output_with_group_index(&path, &group_index_path)
+        .expect_err("duplicate group-index names should fail");
+
+    // Assert
+    assert!(error.to_string().contains("duplicate group_name 'alpha'"));
+    Ok(())
+}
+
+/// Verify grouped fcoverage outputs reject duplicate group indices.
+#[test]
+fn load_fcoverage_output_rejects_duplicate_group_indices() -> anyhow::Result<()> {
+    // Arrange:
+    // A grouped aggregate should contain at most one row for each group_idx.
+    // Duplicate group rows would make group selection and downstream joins
+    // ambiguous.
+    let temp = TempDir::new()?;
+    let path = temp.path().join("sample.fcoverage.total.tsv");
+    write_text(
+        &path,
+        concat!(
+            "group_idx\tspan_positions\tblacklisted_positions\teligible_positions\ttotal_coverage\n",
+            "0\t10\t0\t10\t1\n",
+            "0\t20\t0\t20\t2\n",
+        ),
+    )?;
+
+    // Act
+    let error = load_fcoverage_output(&path).expect_err("duplicate group_idx should fail");
+
+    // Assert
+    assert!(error.to_string().contains("duplicate group_idx 0"));
     Ok(())
 }
 
@@ -551,9 +681,15 @@ fn load_fcoverage_output_rejects_missing_rows_and_invalid_row_metadata() -> anyh
     let header_only_path = temp.path().join("header_only.fcoverage.average.tsv");
     let invalid_blacklist_path = temp.path().join("invalid_blacklist.fcoverage.average.tsv");
     let invalid_span_path = temp.path().join("invalid_span.fcoverage.summary_stats.tsv");
+    let invalid_window_eligible_path = temp
+        .path()
+        .join("invalid_window_eligible.fcoverage.summary_stats.tsv");
     let invalid_group_eligible_path = temp
         .path()
         .join("invalid_group_eligible.fcoverage.total.tsv");
+    let invalid_group_support_path = temp
+        .path()
+        .join("invalid_group_support.fcoverage.total.tsv");
     write_text(
         &header_only_path,
         "chromosome\tstart\tend\taverage_coverage\tblacklisted_positions\n",
@@ -581,6 +717,22 @@ fn load_fcoverage_output_rejects_missing_rows_and_invalid_row_metadata() -> anyh
             "0\t10\t0\t11\t1\n",
         ),
     )?;
+    write_text(
+        &invalid_window_eligible_path,
+        concat!(
+            "chromosome\tstart\tend\tspan_positions\tblacklisted_positions\teligible_positions\t",
+            "nonzero_positions\tcovered_fraction\ttotal_coverage\ttotal_squared_coverage\t",
+            "average_coverage\tvariance_coverage\tsd_coverage\tcoefficient_of_variation_coverage\n",
+            "chr1\t0\t10\t10\t2\t9\t1\t0.111\t1\t1\t1\t0\t0\t0\n",
+        ),
+    )?;
+    write_text(
+        &invalid_group_support_path,
+        concat!(
+            "group_idx\tspan_positions\tblacklisted_positions\teligible_positions\ttotal_coverage\n",
+            "0\t10\t2\t9\t1\n",
+        ),
+    )?;
 
     // Act
     let header_only_error =
@@ -591,6 +743,10 @@ fn load_fcoverage_output_rejects_missing_rows_and_invalid_row_metadata() -> anyh
         load_fcoverage_output(&invalid_span_path).expect_err("bad span should fail");
     let invalid_group_eligible_error = load_fcoverage_output(&invalid_group_eligible_path)
         .expect_err("bad eligible positions should fail");
+    let invalid_window_eligible_error = load_fcoverage_output(&invalid_window_eligible_path)
+        .expect_err("bad window support relation should fail");
+    let invalid_group_support_error = load_fcoverage_output(&invalid_group_support_path)
+        .expect_err("bad group support relation should fail");
 
     // Assert
     assert!(header_only_error.to_string().contains("has no data rows"));
@@ -608,6 +764,16 @@ fn load_fcoverage_output_rejects_missing_rows_and_invalid_row_metadata() -> anyh
         invalid_group_eligible_error
             .to_string()
             .contains("eligible_positions 11 greater than span_positions 10")
+    );
+    assert!(
+        invalid_window_eligible_error
+            .to_string()
+            .contains("span minus blacklisted_positions is 8")
+    );
+    assert!(
+        invalid_group_support_error
+            .to_string()
+            .contains("span_positions minus blacklisted_positions is 8")
     );
     Ok(())
 }
@@ -654,6 +820,101 @@ fn load_fcoverage_output_rejects_bad_value_header_and_cv_threshold() -> anyhow::
         bad_cv_error
             .to_string()
             .contains("invalid coefficient_of_variation threshold")
+    );
+    Ok(())
+}
+
+/// Verify fcoverage value fields reject impossible numeric values.
+#[test]
+fn load_fcoverage_output_rejects_invalid_numeric_values() -> anyhow::Result<()> {
+    // Arrange:
+    // The loader preserves documented zero-support NaN values, but infinities,
+    // negative finite values, and impossible support-derived fractions should
+    // fail during load.
+    let temp = TempDir::new()?;
+    let total_nan_path = temp.path().join("total_nan.fcoverage.total.tsv");
+    let nonzero_path = temp.path().join("nonzero.fcoverage.summary_stats.tsv");
+    let fraction_path = temp.path().join("fraction.fcoverage.summary_stats.tsv");
+    let negative_path = temp.path().join("negative.fcoverage.summary_stats.tsv");
+    let infinity_path = temp.path().join("infinity.fcoverage.summary_stats.tsv");
+    let negative_cv_path = temp.path().join("negative_cv.fcoverage.summary_stats.tsv");
+    let summary_header = concat!(
+        "group_idx\tspan_positions\tblacklisted_positions\teligible_positions\t",
+        "nonzero_positions\tcovered_fraction\ttotal_coverage\ttotal_squared_coverage\t",
+        "average_coverage\tvariance_coverage\tsd_coverage\tcoefficient_of_variation_coverage\n",
+    );
+    write_text(
+        &total_nan_path,
+        concat!(
+            "group_idx\tspan_positions\tblacklisted_positions\teligible_positions\ttotal_coverage\n",
+            "0\t10\t0\t10\tNaN\n",
+        ),
+    )?;
+    write_text(
+        &nonzero_path,
+        &format!("{summary_header}0\t10\t2\t8\t9\t0.5\t1\t1\t1\t0\t0\t0\n"),
+    )?;
+    write_text(
+        &fraction_path,
+        &format!("{summary_header}0\t10\t0\t10\t1\t1.5\t1\t1\t1\t0\t0\t0\n"),
+    )?;
+    write_text(
+        &negative_path,
+        &format!("{summary_header}0\t10\t0\t10\t1\t0.1\t-1\t1\t1\t0\t0\t0\n"),
+    )?;
+    write_text(
+        &infinity_path,
+        &format!("{summary_header}0\t10\t0\t10\t1\t0.1\tinf\t1\t1\t0\t0\t0\n"),
+    )?;
+    write_text(
+        &negative_cv_path,
+        &format!("{summary_header}0\t10\t0\t10\t1\t0.1\t1\t1\t1\t0\t0\t-0.5\n"),
+    )?;
+
+    // Act
+    let total_nan_error =
+        load_fcoverage_output(&total_nan_path).expect_err("total NaN should fail");
+    let nonzero_error =
+        load_fcoverage_output(&nonzero_path).expect_err("nonzero support should fail");
+    let fraction_error =
+        load_fcoverage_output(&fraction_path).expect_err("bad fraction should fail");
+    let negative_error =
+        load_fcoverage_output(&negative_path).expect_err("negative total should fail");
+    let infinity_error =
+        load_fcoverage_output(&infinity_path).expect_err("infinite total should fail");
+    let negative_cv_error =
+        load_fcoverage_output(&negative_cv_path).expect_err("negative CV should fail");
+
+    // Assert
+    assert!(
+        total_nan_error
+            .to_string()
+            .contains("total value outside finite and non-negative range")
+    );
+    assert!(
+        nonzero_error
+            .to_string()
+            .contains("nonzero_positions 9 greater than eligible_positions 8")
+    );
+    assert!(
+        fraction_error
+            .to_string()
+            .contains("covered_fraction outside [0, 1]")
+    );
+    assert!(
+        negative_error
+            .to_string()
+            .contains("total outside finite and non-negative range")
+    );
+    assert!(
+        infinity_error
+            .to_string()
+            .contains("total outside finite and non-negative range")
+    );
+    assert!(
+        negative_cv_error
+            .to_string()
+            .contains("coefficient_of_variation outside finite and non-negative range")
     );
     Ok(())
 }

@@ -292,6 +292,11 @@ fn load_ends_output_selects_dense_global_motifs_with_global_metadata() -> anyhow
 
     // Act
     let selected = loaded.select().motifs_by_label(&["_TT", "_AA"]).read()?;
+    let row_error = loaded
+        .select()
+        .rows(&[0])
+        .read()
+        .expect_err("global output should not expose a selectable row axis");
 
     // Assert
     assert_eq!(selected.row_metadata(), &EndMotifRowMetadata::Global);
@@ -302,8 +307,133 @@ fn load_ends_output_selects_dense_global_motifs_with_global_metadata() -> anyhow
         &["_TT".to_string(), "_AA".to_string()]
     );
     assert_eq!(selected.dense_counts()?.values_row_major(), &[5.0, 2.0]);
+    assert!(
+        row_error
+            .to_string()
+            .contains("global end-motif output has no selectable row axis")
+    );
     assert!(selected.window_metadata().is_err());
     assert!(selected.group_metadata().is_err());
+    Ok(())
+}
+
+/// Verify end-motif loaders reject malformed public labels from Zarr metadata.
+#[test]
+fn load_ends_output_rejects_invalid_public_labels() -> anyhow::Result<()> {
+    // Arrange:
+    // Concrete motifs are stored as fixed-width ASCII bytes. Motif groups use
+    // JSON labels. Both become public selector strings and must be stable text.
+    let temp = TempDir::new()?;
+    let non_ascii_path = temp.path().join("non_ascii.end_motifs.zarr");
+    let non_ascii_store = create_store(
+        &non_ascii_path,
+        json!({
+            "cfdnalab_schema": "end_motif_counts",
+            "cfdnalab_schema_version": 2,
+            "storage_mode": "dense",
+            "row_mode": "global",
+            "motif_axis_kind": "motif",
+            "count_units": "weighted_end_motif_count",
+            "primary_array": "counts",
+            "primary_group": null,
+        }),
+    )?;
+    write_i32_array(
+        &non_ascii_store,
+        "motif_index",
+        &[1],
+        &["motif"],
+        &[0],
+        json!({}),
+    )?;
+    write_i32_array(
+        &non_ascii_store,
+        "motif_byte",
+        &[2],
+        &["motif_byte"],
+        &[0, 1],
+        json!({}),
+    )?;
+    write_u8_array(
+        &non_ascii_store,
+        "motif_ascii",
+        &[1, 2],
+        &["motif", "motif_byte"],
+        b"\xC3\x85",
+        json!({}),
+    )?;
+    write_i32_array(&non_ascii_store, "row", &[1], &["row"], &[0], json!({}))?;
+    write_f64_array(
+        &non_ascii_store,
+        "counts",
+        &[1, 1],
+        &["row", "motif"],
+        &[1.0],
+        json!({}),
+    )?;
+
+    let control_label_path = temp.path().join("control_label.end_motifs.zarr");
+    let control_label_store = create_store(
+        &control_label_path,
+        json!({
+            "cfdnalab_schema": "end_motif_counts",
+            "cfdnalab_schema_version": 2,
+            "storage_mode": "dense",
+            "row_mode": "global",
+            "motif_axis_kind": "motif_group",
+            "count_units": "weighted_end_motif_count",
+            "primary_array": "counts",
+            "primary_group": null,
+        }),
+    )?;
+    write_i32_array(
+        &control_label_store,
+        "motif_index",
+        &[1],
+        &["motif"],
+        &[0],
+        json!({
+            "label_field": "motif_group",
+            "labels": ["bad\nlabel"],
+        }),
+    )?;
+    write_i32_array(
+        &control_label_store,
+        "row",
+        &[1],
+        &["row"],
+        &[0],
+        json!({
+            "label_field": "row_label",
+            "labels": ["global"],
+        }),
+    )?;
+    write_f64_array(
+        &control_label_store,
+        "counts",
+        &[1, 1],
+        &["row", "motif"],
+        &[1.0],
+        json!({}),
+    )?;
+
+    // Act
+    let non_ascii_error =
+        load_ends_output(&non_ascii_path).expect_err("non-ASCII motif bytes should fail");
+    let control_label_error =
+        load_ends_output(&control_label_path).expect_err("control-character label should fail");
+
+    // Assert
+    assert!(
+        non_ascii_error
+            .to_string()
+            .contains("motif_ascii row 0 contains non-ASCII motif bytes")
+    );
+    assert!(
+        control_label_error
+            .to_string()
+            .contains("Zarr label motif_group contains a control character")
+    );
     Ok(())
 }
 
@@ -411,6 +541,87 @@ fn load_ends_output_selects_dense_grouped_labels_with_group_metadata() -> anyhow
             })
             .collect::<Vec<_>>(),
         vec![("beta", 7.0), ("alpha", 3.0)]
+    );
+    Ok(())
+}
+
+/// Verify grouped end-motif outputs reject duplicate group names.
+#[test]
+fn load_ends_output_rejects_duplicate_group_names() -> anyhow::Result<()> {
+    // Arrange:
+    // Group names are public selectors. Duplicate labels would make
+    // name-based lookup ambiguous, so the loader rejects them during load.
+    let temp = TempDir::new()?;
+    let path = temp.path().join("sample.end_motifs.zarr");
+    let store = create_store(
+        &path,
+        json!({
+            "cfdnalab_schema": "end_motif_counts",
+            "cfdnalab_schema_version": 2,
+            "storage_mode": "dense",
+            "row_mode": "grouped_bed",
+            "motif_axis_kind": "motif_group",
+            "count_units": "weighted_end_motif_count",
+            "primary_array": "counts",
+            "primary_group": null,
+        }),
+    )?;
+    write_i32_array(
+        &store,
+        "motif_index",
+        &[1],
+        &["motif"],
+        &[0],
+        json!({
+            "label_field": "motif_group",
+            "labels": ["left"],
+        }),
+    )?;
+    write_i32_array(&store, "row", &[2], &["row"], &[0, 1], json!({}))?;
+    write_i32_array(
+        &store,
+        "group",
+        &[2],
+        &["row"],
+        &[0, 1],
+        json!({
+            "label_field": "group_name",
+            "labels": ["alpha", "alpha"],
+        }),
+    )?;
+    write_i32_array(
+        &store,
+        "eligible_windows",
+        &[2],
+        &["row"],
+        &[1, 1],
+        json!({}),
+    )?;
+    write_f64_array(
+        &store,
+        "blacklisted_fraction",
+        &[2],
+        &["row"],
+        &[0.0, 0.0],
+        json!({}),
+    )?;
+    write_f64_array(
+        &store,
+        "counts",
+        &[2, 1],
+        &["row", "motif"],
+        &[1.0, 2.0],
+        json!({}),
+    )?;
+
+    // Act
+    let error = load_ends_output(&path).expect_err("duplicate group names should fail");
+
+    // Assert
+    assert!(
+        error
+            .to_string()
+            .contains("group_names contains duplicate value 'alpha'")
     );
     Ok(())
 }
@@ -669,7 +880,17 @@ fn load_ends_output_reads_sparse_global_store_with_no_motifs() -> anyhow::Result
         b"",
         json!({}),
     )?;
-    write_i32_array(&store, "row", &[1], &["row"], &[0], json!({}))?;
+    write_i32_array(
+        &store,
+        "row",
+        &[1],
+        &["row"],
+        &[0],
+        json!({
+            "label_field": "row_label",
+            "labels": ["global"],
+        }),
+    )?;
     write_group(&store, "/sparse", json!({}))?;
     write_i32_array(&store, "sparse/row", &[0], &["nnz"], &[], json!({}))?;
     write_i32_array(&store, "sparse/motif", &[0], &["nnz"], &[], json!({}))?;
@@ -926,7 +1147,17 @@ fn load_ends_output_rejects_negative_sparse_counts() -> anyhow::Result<()> {
         b"_AA",
         json!({}),
     )?;
-    write_i32_array(&store, "row", &[1], &["row"], &[0], json!({}))?;
+    write_i32_array(
+        &store,
+        "row",
+        &[1],
+        &["row"],
+        &[0],
+        json!({
+            "label_field": "row_label",
+            "labels": ["global"],
+        }),
+    )?;
     write_group(&store, "/sparse", json!({}))?;
     write_i32_array(&store, "sparse/row", &[1], &["nnz"], &[0], json!({}))?;
     write_i32_array(&store, "sparse/motif", &[1], &["nnz"], &[0], json!({}))?;
