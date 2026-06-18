@@ -23,7 +23,9 @@ axis. The end-motif fixtures cover dense global output, sparse windowed output, 
 Run locally only when you want to check downstream package compatibility:
 
 ```bash
+CFDNALAB_DOWNSTREAM_FIXTURE_DIR=downstream_tests/tmp \
 cargo test --no-default-features --features cmd_midpoints,cmd_ends,cmd_lengths,testing --test generate_downstream_zarr_fixtures -- --ignored
+CFDNALAB_DOWNSTREAM_FIXTURE_DIR=downstream_tests/tmp \
 cargo test --manifest-path downstream_tests/rust/Cargo.toml --no-default-features --features cmd_midpoints,cmd_ends,cmd_lengths,testing --test test_downstream_rust_loaders -- --ignored
 python -m pip install -r downstream_tests/requirements-python.txt
 python -m pip install -e py-cfdnalab
