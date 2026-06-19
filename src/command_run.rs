@@ -73,6 +73,19 @@ impl Default for RunOptions {
 ///     A `RunOptions` value or expression with a `log_statuses` field.
 /// - `$arg`:
 ///     The arguments forwarded to `tracing::info!` when status logging is enabled.
+#[cfg(any(
+    feature = "cmd_bam_to_bam",
+    feature = "cmd_bam_to_frag",
+    feature = "cmd_coverage_weights",
+    feature = "cmd_ends",
+    feature = "cmd_fcoverage",
+    feature = "cmd_fragment_kmers",
+    feature = "cmd_gc_bias",
+    feature = "cmd_lengths",
+    feature = "cmd_midpoints",
+    feature = "cmd_wps",
+    feature = "cmd_wps_peaks",
+))]
 macro_rules! status_info {
     ($options:expr, $($arg:tt)+) => {{
         if ($options).log_statuses {
@@ -81,6 +94,19 @@ macro_rules! status_info {
     }};
 }
 
+#[cfg(any(
+    feature = "cmd_bam_to_bam",
+    feature = "cmd_bam_to_frag",
+    feature = "cmd_coverage_weights",
+    feature = "cmd_ends",
+    feature = "cmd_fcoverage",
+    feature = "cmd_fragment_kmers",
+    feature = "cmd_gc_bias",
+    feature = "cmd_lengths",
+    feature = "cmd_midpoints",
+    feature = "cmd_wps",
+    feature = "cmd_wps_peaks",
+))]
 pub(crate) use status_info;
 
 /// Shared interface for command-specific run results.
