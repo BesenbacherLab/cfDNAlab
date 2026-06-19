@@ -10,7 +10,7 @@ This is the changelog for the main CLI tool. You can find the changelog for the 
 ## Unreleased
 
  - The Rust `fcoverage` run result now includes grouped `group_index.tsv` sidecars in `output_files()` when they are written.
- - Rust-library adds missing blacklist setters on `LengthsConfig`. 
+ - Adds missing blacklist setters on the Rust `LengthsConfig` API.
 
 <br />
 
