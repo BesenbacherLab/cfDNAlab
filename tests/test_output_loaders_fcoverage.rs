@@ -432,6 +432,40 @@ fn load_fcoverage_output_with_group_index_rejects_duplicate_group_names() -> any
     Ok(())
 }
 
+/// Verify fcoverage group-index files cannot name groups missing from the TSV.
+#[test]
+fn load_fcoverage_output_with_group_index_rejects_extra_group_index_rows() -> anyhow::Result<()> {
+    // Arrange:
+    // The group-index file must describe exactly the grouped aggregate rows.
+    // An extra sidecar row would make a mismatched group_index.tsv look valid.
+    let temp = TempDir::new()?;
+    let path = temp.path().join("sample.fcoverage.total.tsv");
+    let group_index_path = temp.path().join("sample.group_index.tsv");
+    write_text(
+        &path,
+        concat!(
+            "group_idx\tspan_positions\tblacklisted_positions\teligible_positions\ttotal_coverage\n",
+            "0\t10\t0\t10\t1\n",
+        ),
+    )?;
+    write_text(
+        &group_index_path,
+        "group_idx\tgroup_name\n0\talpha\n1\tbeta\n",
+    )?;
+
+    // Act
+    let error = load_fcoverage_output_with_group_index(&path, &group_index_path)
+        .expect_err("extra group-index rows should fail");
+
+    // Assert
+    assert!(
+        error
+            .to_string()
+            .contains("group_idx 1 with no matching row")
+    );
+    Ok(())
+}
+
 /// Verify grouped fcoverage outputs reject duplicate group indices.
 #[test]
 fn load_fcoverage_output_rejects_duplicate_group_indices() -> anyhow::Result<()> {

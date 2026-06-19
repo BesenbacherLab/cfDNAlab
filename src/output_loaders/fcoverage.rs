@@ -1265,6 +1265,19 @@ impl FCoverageParser {
             )?);
         }
 
+        if let Some(group_names_by_idx) = &group_names_by_idx {
+            let group_index_path = self
+                .group_index_path
+                .as_deref()
+                .expect("group-index path exists when group names were loaded");
+            ensure_group_index_matches_rows(
+                &self.path,
+                group_index_path,
+                group_names_by_idx,
+                &rows,
+            )?;
+        }
+
         schema.finish(rows, parse_filename_metadata(&self.path))
     }
 }
@@ -1551,6 +1564,54 @@ enum ParsedRow {
 enum ParsedRowMetadata {
     Window(FCoverageWindowRow),
     Group(FCoverageGroupRow),
+}
+
+/// Require every group-index sidecar row to correspond to a grouped TSV row.
+fn ensure_group_index_matches_rows(
+    path: &Path,
+    group_index_path: &Path,
+    group_names_by_idx: &FxHashMap<u64, String>,
+    rows: &[ParsedRow],
+) -> Result<()> {
+    let mut seen_group_indices = FxHashSet::default();
+    for row in rows {
+        match row {
+            ParsedRow::Value {
+                row_metadata: ParsedRowMetadata::Group(group),
+                ..
+            }
+            | ParsedRow::SummaryStats {
+                row_metadata: ParsedRowMetadata::Group(group),
+                ..
+            } => {
+                seen_group_indices.insert(group.group_idx);
+            }
+            ParsedRow::Value {
+                row_metadata: ParsedRowMetadata::Window(_),
+                ..
+            }
+            | ParsedRow::SummaryStats {
+                row_metadata: ParsedRowMetadata::Window(_),
+                ..
+            } => {}
+        }
+    }
+
+    let mut missing_group_indices = group_names_by_idx
+        .keys()
+        .copied()
+        .filter(|group_idx| !seen_group_indices.contains(group_idx))
+        .collect::<Vec<_>>();
+    missing_group_indices.sort_unstable();
+    if let Some(missing_group_idx) = missing_group_indices.first() {
+        bail!(
+            "fcoverage group-index file {} contains group_idx {} with no matching row in {}",
+            group_index_path.display(),
+            missing_group_idx,
+            path.display()
+        );
+    }
+    Ok(())
 }
 
 /// Split parsed scalar-value rows into row metadata and value vectors.

@@ -1,3 +1,4 @@
+#[cfg(has_cli_commands)]
 use crate::command_run::RunOptions;
 #[cfg(feature = "cmd_bam_to_bam")]
 use crate::commands::bam_to_bam::config::BamToBamConfig;
@@ -38,27 +39,7 @@ use clap::builder::styling::{AnsiColor, Style, Styles};
 
 pub(crate) const CLI_SEPARATOR_WIDTH: usize = 48;
 
-#[cfg(all(
-    feature = "cli",
-    not(any(
-        feature = "cmd_bam_to_bam",
-        feature = "cmd_bam_to_frag",
-        feature = "cmd_frag_to_bam",
-        feature = "cmd_coverage_weights",
-        feature = "cmd_fragment_count_weights",
-        feature = "cmd_ends",
-        feature = "cmd_fcoverage",
-        feature = "cmd_fragment_kmers",
-        feature = "cmd_gc_bias",
-        feature = "cmd_lengths",
-        feature = "cmd_prepare_windows",
-        feature = "cmd_midpoints",
-        feature = "cmd_transitions",
-        feature = "cmd_visualize_positions",
-        feature = "cmd_wps",
-        feature = "cmd_wps_peaks"
-    ))
-))]
+#[cfg(all(feature = "cli", not(has_cli_commands)))]
 compile_error!("Building the CLI requires enabling at least one cmd_* feature.");
 
 #[cfg_attr(feature = "cli", derive(clap::Parser))]
@@ -106,10 +87,11 @@ pub(crate) enum Cmd {
     FragToBam(FragToBamConfig),
 }
 
-#[cfg(feature = "cli")]
+#[cfg(all(feature = "cli", has_cli_commands))]
 pub(crate) fn run_cli() {
     use clap::FromArgMatches;
 
+    #[cfg(uses_temp_dirs)]
     if crate::shared::tiled_run::run_temp_dir_cleanup_helper_if_requested() {
         return;
     }
@@ -316,6 +298,11 @@ pub(crate) fn run_cli() {
         crate::shared::logging::duplicate_stderr_line_to_file(&rendered_error);
         std::process::exit(1);
     }
+}
+
+#[cfg(all(feature = "cli", not(has_cli_commands)))]
+pub(crate) fn run_cli() {
+    unreachable!("the CLI requires at least one cmd_* feature");
 }
 
 /// Build terminal-oriented clap command with sanitized docs and branded signature

@@ -14,6 +14,27 @@ fn main() {
         &["cmd_ends", "cmd_fcoverage", "cmd_lengths", "cmd_midpoints"],
     );
     define_any_feature_cfg(
+        "has_cli_commands",
+        &[
+            "cmd_bam_to_bam",
+            "cmd_bam_to_frag",
+            "cmd_coverage_weights",
+            "cmd_ends",
+            "cmd_fcoverage",
+            "cmd_frag_to_bam",
+            "cmd_fragment_count_weights",
+            "cmd_fragment_kmers",
+            "cmd_gc_bias",
+            "cmd_lengths",
+            "cmd_midpoints",
+            "cmd_prepare_windows",
+            "cmd_transitions",
+            "cmd_visualize_positions",
+            "cmd_wps",
+            "cmd_wps_peaks",
+        ],
+    );
+    define_any_feature_cfg(
         "reads_indexed_bam",
         &[
             "cmd_bam_to_bam",
