@@ -5,8 +5,8 @@
 //! per-window positional outputs are intentionally rejected by this public API.
 
 use cfdnalab::output_loaders::{
-    FCoverageAggregationBasis, FCoverageCoefficientOfVariation, FCoverageLengthNormalization,
-    FCoverageRowMode, FCoverageValueMode, load_fcoverage_output,
+    FCoverageAggregationBasis, FCoverageCoefficientOfVariation, FCoverageDataMode,
+    FCoverageLengthNormalization, FCoverageRowMode, FCoverageValueMode, load_fcoverage_output,
     load_fcoverage_output_with_group_index,
 };
 use std::{fs::File, io::Write, path::Path};
@@ -36,6 +36,19 @@ fn load_fcoverage_output_reads_window_average_tsv() -> anyhow::Result<()> {
     assert_eq!(loaded.row_mode(), FCoverageRowMode::Windows);
     assert_eq!(loaded.value_mode()?, FCoverageValueMode::Average);
     assert_eq!(loaded.signal().label(), "coverage");
+    let output_metadata = loaded.output_metadata();
+    assert_eq!(output_metadata.row_mode, FCoverageRowMode::Windows);
+    assert_eq!(output_metadata.data_mode, FCoverageDataMode::ScalarValues);
+    assert_eq!(
+        output_metadata.value_mode,
+        Some(FCoverageValueMode::Average)
+    );
+    assert_eq!(output_metadata.signal.label(), "coverage");
+    assert_eq!(output_metadata.row_count, 2);
+    assert_eq!(
+        output_metadata.to_string(),
+        "row_mode=windows, data_mode=average values, signal=coverage, row_count=2, aggregation_basis=ordinary, length_normalization=off"
+    );
     assert_eq!(
         loaded.filename_metadata().aggregation_basis(),
         FCoverageAggregationBasis::Ordinary

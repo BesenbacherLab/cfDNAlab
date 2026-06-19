@@ -232,7 +232,7 @@ LOADER_PAGES = (
             lengths = cfl.read_lengths("sample.length_counts.tsv.zst")
 
             bins = lengths.length_bins()
-            counts = lengths.counts_array(with_length_range=(100, 220))
+            counts = lengths.counts_array(with_length_range=(100, 221))
             fractions = lengths.data_frame(value="fraction")
             """
         ),
@@ -243,7 +243,7 @@ LOADER_PAGES = (
             lengths <- read_lengths("sample.length_counts.tsv.zst")
 
             bins <- length_bins(lengths)
-            counts <- length_counts_matrix(lengths, with_length_range = c(100L, 220L))
+            counts <- length_counts_matrix(lengths, with_length_range = c(100L, 221L))
             fractions <- length_data_frame(lengths, value = "fraction")
             """
         ),

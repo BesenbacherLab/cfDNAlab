@@ -95,6 +95,16 @@ fn load_ends_output_reads_dense_windowed_motif_store() -> anyhow::Result<()> {
     assert_eq!(loaded.storage_mode(), EndMotifStorageMode::Dense);
     assert_eq!(loaded.row_mode(), EndMotifRowMode::BedWindows);
     assert_eq!(loaded.motif_axis_kind(), EndMotifAxisKind::Motif);
+    let output_metadata = loaded.output_metadata();
+    assert_eq!(output_metadata.storage_mode, EndMotifStorageMode::Dense);
+    assert_eq!(output_metadata.row_mode, EndMotifRowMode::BedWindows);
+    assert_eq!(output_metadata.motif_axis_kind, EndMotifAxisKind::Motif);
+    assert_eq!(output_metadata.row_count, 2);
+    assert_eq!(output_metadata.motif_count, 2);
+    assert_eq!(
+        output_metadata.to_string(),
+        "storage_mode=dense, row_mode=BED windows, motif_axis=motifs, row_count=2, motif_count=2"
+    );
     assert_eq!(
         loaded.motif_labels(),
         &["_AA".to_string(), "_GG".to_string()]

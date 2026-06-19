@@ -42,29 +42,29 @@ pub use common::DenseArray3;
 #[cfg(feature = "cmd_ends")]
 pub use ends::{
     EndMotifAxisKind, EndMotifCountSelection, EndMotifCountsData, EndMotifGroupRow,
-    EndMotifRowMetadata, EndMotifRowMode, EndMotifSparseCountLookup, EndMotifSparseCounts,
-    EndMotifSparseEntry, EndMotifStorageMode, EndMotifWindowMode, EndsOutput, EndsSelector,
-    load_ends_output,
+    EndMotifOutputMetadata, EndMotifRowMetadata, EndMotifRowMode, EndMotifSparseCountLookup,
+    EndMotifSparseCounts, EndMotifSparseEntry, EndMotifStorageMode, EndMotifWindowMode, EndsOutput,
+    EndsSelector, load_ends_output,
 };
 
 #[cfg(feature = "cmd_fcoverage")]
 pub use fcoverage::{
-    FCoverageAggregationBasis, FCoverageCoefficientOfVariation, FCoverageData,
+    FCoverageAggregationBasis, FCoverageCoefficientOfVariation, FCoverageData, FCoverageDataMode,
     FCoverageFilenameMetadata, FCoverageGroupRow, FCoverageLengthNormalization, FCoverageOutput,
-    FCoverageRowMetadata, FCoverageRowMode, FCoverageSelection, FCoverageSelector, FCoverageSignal,
-    FCoverageSummaryStats, FCoverageSummaryStatsSelection, FCoverageValueMode,
-    FCoverageValueSelection, FCoverageWindowRow, load_fcoverage_output,
+    FCoverageOutputMetadata, FCoverageRowMetadata, FCoverageRowMode, FCoverageSelection,
+    FCoverageSelector, FCoverageSignal, FCoverageSummaryStats, FCoverageSummaryStatsSelection,
+    FCoverageValueMode, FCoverageValueSelection, FCoverageWindowRow, load_fcoverage_output,
     load_fcoverage_output_with_group_index,
 };
 
 #[cfg(feature = "cmd_lengths")]
 pub use lengths::{
-    LengthCountSelection, LengthGroupRow, LengthOutputMode, LengthRowMetadata, LengthsOutput,
-    LengthsSelector, load_lengths_output,
+    LengthCountSelection, LengthGroupRow, LengthOutputMetadata, LengthOutputMode,
+    LengthRowMetadata, LengthsOutput, LengthsSelector, load_lengths_output,
 };
 
 #[cfg(feature = "cmd_midpoints")]
 pub use midpoints::{
     MidpointCountSelection, MidpointGroupRow, MidpointPositionBin, MidpointsOutput,
-    MidpointsSelector, load_midpoints_output,
+    MidpointsOutputMetadata, MidpointsSelector, load_midpoints_output,
 };

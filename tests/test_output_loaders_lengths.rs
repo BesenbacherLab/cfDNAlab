@@ -29,6 +29,16 @@ fn load_lengths_output_reads_global_plain_tsv() -> anyhow::Result<()> {
 
     // Assert
     assert_eq!(loaded.row_mode(), LengthOutputMode::Global);
+    let output_metadata = loaded.output_metadata();
+    assert_eq!(output_metadata.row_mode, LengthOutputMode::Global);
+    assert_eq!(output_metadata.row_count, 1);
+    assert_eq!(output_metadata.length_bin_count, 2);
+    assert_eq!(output_metadata.min_fragment_length, Some(30));
+    assert_eq!(output_metadata.max_fragment_length_exclusive, Some(40));
+    assert_eq!(
+        output_metadata.to_string(),
+        "row_mode=global, row_count=1, length_bin_count=2, fragment_length_range=[30, 40) bp"
+    );
     assert_eq!(loaded.row_metadata(), &LengthRowMetadata::Global);
     assert_eq!(loaded.row_count(), 1);
     assert_eq!(loaded.length_bin_count(), 2);

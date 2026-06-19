@@ -28,12 +28,12 @@
 //!                 row_metadata: FCoverageRowMetadata
 //! ```
 //!
-//! Use `FCoverageOutput` directly for shared information such as `row_mode()`,
-//! `signal()`, and `row_count()`. Use `values()` and `value_mode()` for scalar
-//! aggregate outputs, or `summary_stats()` for summary-stat outputs. Use
-//! `select()` to extract rows from either data mode with the same row-selector
-//! API. Selections include selected row metadata next to selected values, so
-//! each value or summary-stat row can be paired with its window or group.
+//! Use `output_metadata()` for a compact overview of the loaded output. Use
+//! `values()` and `value_mode()` for scalar aggregate outputs, or
+//! `summary_stats()` for summary-stat outputs. Use `select()` to extract rows
+//! from either data mode with the same row-selector API. Selections include
+//! selected row metadata next to selected values, so each value or summary-stat
+//! row can be paired with its window or group.
 
 use crate::{
     interval::Interval,
@@ -46,6 +46,7 @@ use crate::{
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::{FxHashMap, FxHashSet};
 use std::{
+    fmt,
     io::BufRead,
     path::{Path, PathBuf},
 };
@@ -180,6 +181,27 @@ impl FCoverageOutput {
         &self.filename_metadata
     }
 
+    /// Return a compact description of the loaded fcoverage output.
+    ///
+    /// This combines row mode, data mode, signal label, filename-derived command
+    /// hints, and row count in one value for logging or quick checks.
+    pub fn output_metadata(&self) -> FCoverageOutputMetadata {
+        let (data_mode, value_mode) = match &self.data {
+            FCoverageData::Values { value_mode, .. } => {
+                (FCoverageDataMode::ScalarValues, Some(*value_mode))
+            }
+            FCoverageData::SummaryStats(_) => (FCoverageDataMode::SummaryStats, None),
+        };
+        FCoverageOutputMetadata {
+            row_mode: self.row_mode(),
+            data_mode,
+            value_mode,
+            signal: self.signal.clone(),
+            filename_metadata: self.filename_metadata,
+            row_count: self.row_count(),
+        }
+    }
+
     /// Return genomic window metadata, or an error if this is not a windowed output.
     pub fn window_metadata(&self) -> OutputLoaderResult<&[FCoverageWindowRow]> {
         match &self.row_metadata {
@@ -266,7 +288,7 @@ impl FCoverageOutput {
         &self.signal
     }
 
-    /// Return whether the output contains scalar values or summary stats.
+    /// Return scalar aggregate values or summary stats in output-row order.
     pub fn data(&self) -> &FCoverageData {
         &self.data
     }
@@ -299,7 +321,7 @@ impl FCoverageOutput {
         }
     }
 
-    /// Return one scalar aggregate value, if `row_index` is in bounds.
+    /// Return a scalar aggregate value, if `row_index` is in bounds.
     ///
     /// Parameters
     /// ----------
@@ -319,7 +341,7 @@ impl FCoverageOutput {
         }
     }
 
-    /// Return one summary-stat row, if `row_index` is in bounds.
+    /// Return a summary-stat row, if `row_index` is in bounds.
     ///
     /// Parameters
     /// ----------
@@ -820,6 +842,51 @@ impl FCoverageFilenameMetadata {
     }
 }
 
+/// Compact metadata for a loaded fcoverage aggregate table.
+///
+/// This is intended for quick inspection and logging. It collects the output
+/// settings that otherwise live behind separate accessors on `FCoverageOutput`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FCoverageOutputMetadata {
+    /// Whether output rows are genomic windows or grouped-BED groups.
+    pub row_mode: FCoverageRowMode,
+    /// Whether row values are scalar aggregates or summary statistics.
+    pub data_mode: FCoverageDataMode,
+    /// Scalar aggregate mode for `average` and `total` outputs.
+    pub value_mode: Option<FCoverageValueMode>,
+    /// Signal label parsed from value columns, such as `coverage` or `fragment_mass`.
+    pub signal: FCoverageSignal,
+    /// Command-mode hints parsed from the output filename.
+    pub filename_metadata: FCoverageFilenameMetadata,
+    /// Number of output rows.
+    pub row_count: usize,
+}
+
+impl fmt::Display for FCoverageOutputMetadata {
+    /// Render one-line output context for logs or interactive inspection.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "row_mode={}, data_mode={}, signal={}, row_count={}, aggregation_basis={}, length_normalization={}",
+            describe_row_mode(self.row_mode),
+            describe_data_mode(self.data_mode, self.value_mode),
+            self.signal.label(),
+            self.row_count,
+            describe_aggregation_basis(self.filename_metadata.aggregation_basis()),
+            describe_length_normalization(self.filename_metadata.length_normalization())
+        )
+    }
+}
+
+/// Whether fcoverage output rows store scalar values or summary statistics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FCoverageDataMode {
+    /// Scalar aggregate values from `average` or `total` outputs.
+    ScalarValues,
+    /// Raw and derived summary statistics from `summary_stats` outputs.
+    SummaryStats,
+}
+
 /// Row metadata for a loaded fcoverage aggregate table.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FCoverageRowMetadata {
@@ -871,6 +938,44 @@ pub enum FCoverageData {
     },
     /// Raw and derived summary statistics in output-row order.
     SummaryStats(Vec<FCoverageSummaryStats>),
+}
+
+fn describe_row_mode(row_mode: FCoverageRowMode) -> &'static str {
+    match row_mode {
+        FCoverageRowMode::Windows => "windows",
+        FCoverageRowMode::Groups => "groups",
+    }
+}
+
+fn describe_data_mode(
+    data_mode: FCoverageDataMode,
+    value_mode: Option<FCoverageValueMode>,
+) -> &'static str {
+    match (data_mode, value_mode) {
+        (FCoverageDataMode::ScalarValues, Some(FCoverageValueMode::Average)) => "average values",
+        (FCoverageDataMode::ScalarValues, Some(FCoverageValueMode::Total)) => "total values",
+        (FCoverageDataMode::ScalarValues, None) => "scalar values",
+        (FCoverageDataMode::SummaryStats, _) => "summary stats",
+    }
+}
+
+fn describe_aggregation_basis(aggregation_basis: FCoverageAggregationBasis) -> &'static str {
+    match aggregation_basis {
+        FCoverageAggregationBasis::Ordinary => "ordinary",
+        FCoverageAggregationBasis::UniqueBases => "unique bases",
+        FCoverageAggregationBasis::Unknown => "unknown",
+    }
+}
+
+fn describe_length_normalization(
+    length_normalization: FCoverageLengthNormalization,
+) -> &'static str {
+    match length_normalization {
+        FCoverageLengthNormalization::Off => "off",
+        FCoverageLengthNormalization::UnitMass => "unit mass",
+        FCoverageLengthNormalization::RestoredMean => "restored mean",
+        FCoverageLengthNormalization::Unknown => "unknown",
+    }
 }
 
 /// Selected rows from an `FCoverageOutput`.
@@ -1412,6 +1517,7 @@ impl FCoverageSchema {
         group_names_by_idx: Option<&FxHashMap<u64, String>>,
     ) -> Result<ParsedRow> {
         let fields = line.split('\t').collect::<Vec<_>>();
+        let row_index = line_number - 2;
         match self {
             Self::Value {
                 row_mode: FCoverageRowMode::Windows,
@@ -1419,7 +1525,6 @@ impl FCoverageSchema {
                 ..
             } => {
                 ensure_column_count(path, line_number, &fields, 5)?;
-                let row_index = line_number - 2;
                 let window = parse_window_row(path, line_number, row_index, &fields, None)?;
                 let value = parse_scalar_value_field(
                     path,
@@ -1439,7 +1544,6 @@ impl FCoverageSchema {
                 ..
             } => {
                 ensure_column_count(path, line_number, &fields, 5)?;
-                let row_index = line_number - 2;
                 let group =
                     parse_group_row(path, line_number, row_index, &fields, group_names_by_idx)?;
                 let value = parse_scalar_value_field(
@@ -1459,7 +1563,6 @@ impl FCoverageSchema {
                 ..
             } => {
                 ensure_column_count(path, line_number, &fields, 14)?;
-                let row_index = line_number - 2;
                 let span_positions =
                     parse_u64_field(path, line_number, "span_positions", fields[3])?;
                 let window =
@@ -1482,7 +1585,6 @@ impl FCoverageSchema {
                 ..
             } => {
                 ensure_column_count(path, line_number, &fields, 12)?;
-                let row_index = line_number - 2;
                 let group =
                     parse_group_row(path, line_number, row_index, &fields, group_names_by_idx)?;
                 let stats = parse_group_summary_stats(

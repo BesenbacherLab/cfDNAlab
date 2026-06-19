@@ -55,7 +55,7 @@ use anyhow::{Context, Result, bail, ensure};
 use fxhash::FxHashMap;
 use serde_json::Value;
 use std::{
-    fs,
+    fmt, fs,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -133,6 +133,20 @@ impl EndsOutput {
     /// Return motif-axis labels in count-column order.
     pub fn motif_labels(&self) -> &[String] {
         &self.motif_labels
+    }
+
+    /// Return a compact description of the loaded end-motif output.
+    ///
+    /// This combines storage mode, row mode, motif-axis kind, row count, and
+    /// motif count in one value for logging or quick checks.
+    pub fn output_metadata(&self) -> EndMotifOutputMetadata {
+        EndMotifOutputMetadata {
+            storage_mode: self.storage_mode(),
+            row_mode: self.row_mode(),
+            motif_axis_kind: self.motif_axis_kind(),
+            row_count: self.row_count(),
+            motif_count: self.motif_count(),
+        }
     }
 
     /// Return the number of count rows.
@@ -779,6 +793,39 @@ impl MotifAxisSelector {
     }
 }
 
+/// Compact metadata for loaded end-motif counts.
+///
+/// This is intended for quick inspection and logging. It collects the output
+/// settings that otherwise live behind separate accessors on `EndsOutput`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EndMotifOutputMetadata {
+    /// Whether counts are dense or sparse COO.
+    pub storage_mode: EndMotifStorageMode,
+    /// Whether rows are global, windows, or grouped-BED groups.
+    pub row_mode: EndMotifRowMode,
+    /// Whether motif-axis labels are motifs or motif groups.
+    pub motif_axis_kind: EndMotifAxisKind,
+    /// Number of count rows.
+    pub row_count: usize,
+    /// Number of motif-axis labels.
+    pub motif_count: usize,
+}
+
+impl fmt::Display for EndMotifOutputMetadata {
+    /// Render one-line output context for logs or interactive inspection.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "storage_mode={}, row_mode={}, motif_axis={}, row_count={}, motif_count={}",
+            describe_end_motif_storage_mode(self.storage_mode),
+            describe_end_motif_row_mode(self.row_mode),
+            describe_end_motif_axis_kind(self.motif_axis_kind),
+            self.row_count,
+            self.motif_count
+        )
+    }
+}
+
 /// End-motif count storage mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EndMotifStorageMode {
@@ -808,6 +855,29 @@ pub enum EndMotifAxisKind {
     Motif,
     /// Motif-group labels from `--motifs-file`.
     MotifGroup,
+}
+
+fn describe_end_motif_storage_mode(storage_mode: EndMotifStorageMode) -> &'static str {
+    match storage_mode {
+        EndMotifStorageMode::Dense => "dense",
+        EndMotifStorageMode::SparseCoo => "sparse COO",
+    }
+}
+
+fn describe_end_motif_row_mode(row_mode: EndMotifRowMode) -> &'static str {
+    match row_mode {
+        EndMotifRowMode::Global => "global",
+        EndMotifRowMode::SizeWindows => "size windows",
+        EndMotifRowMode::BedWindows => "BED windows",
+        EndMotifRowMode::Groups => "groups",
+    }
+}
+
+fn describe_end_motif_axis_kind(axis_kind: EndMotifAxisKind) -> &'static str {
+    match axis_kind {
+        EndMotifAxisKind::Motif => "motifs",
+        EndMotifAxisKind::MotifGroup => "motif groups",
+    }
 }
 
 /// Row metadata for loaded end-motif counts.

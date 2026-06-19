@@ -68,7 +68,7 @@ Use `with_length_range=(start, end)` for all whole length bins overlapping a hal
 ```python
 group_data = midpoints.data_frame(groups="LYL1")
 length_bin_data = midpoints.data_frame(with_lengths=167)
-length_range_data = midpoints.data_frame(with_length_range=(100, 220))
+length_range_data = midpoints.data_frame(with_length_range=(100, 221))
 ```
 
 When selecting multiple lengths, each value must fall in a different length
@@ -93,7 +93,7 @@ for _, group in midpoints.group_metadata().iterrows():
 profile = midpoints.counts_array(group_idxs=0, length_bin_idxs=0)
 group_counts = midpoints.counts_array(groups="LYL1")
 length_bin_counts = midpoints.counts_array(with_lengths=167)
-length_range_counts = midpoints.counts_array(with_length_range=(100, 220))
+length_range_counts = midpoints.counts_array(with_length_range=(100, 221))
 ```
 
 `counts_array()` always returns dimensions in the same order: group, length bin, and midpoint position. Scalar selectors keep their dimension as length one.
@@ -202,13 +202,13 @@ lengths = cfl.read_lengths("sample.length_counts.tsv.zst")
 bins = lengths.length_bins()
 lengths.length_bin_idx(167)
 counts = lengths.counts_array()
-selected_counts = lengths.counts_array(with_length_range=(100, 220))
+selected_counts = lengths.counts_array(with_length_range=(100, 221))
 count_data = lengths.data_frame(value="count")
 fraction_data = lengths.data_frame(value="fraction")
 density_data = lengths.data_frame(value="density")
 wide_density_data = lengths.data_frame(value="density", keep_wide=True)
 range_fraction_data = lengths.data_frame(
-    with_length_range=(100, 220),
+    with_length_range=(100, 221),
     value="fraction",
     denominator="selected_bins",
 )
@@ -231,7 +231,7 @@ window_counts = lengths.counts_array(window_idxs=0)
 window_data = lengths.data_frame(window_idxs=0, value="fraction")
 selected_windows = lengths.data_frame(
     window_idxs=[0, 2, 3],
-    with_length_range=(100, 220),
+    with_length_range=(100, 221),
     value="density",
     keep_wide=True,
 )
@@ -254,7 +254,7 @@ group_counts = lengths.counts_array(groups="t-cells")
 group_data = lengths.data_frame(groups="t-cells", value="fraction")
 selected_groups = lengths.data_frame(
     groups=["t-cells", "b-cells"],
-    with_length_range=(100, 220),
+    with_length_range=(100, 221),
     value="density",
     keep_wide=True,
     max_blacklisted_fraction=0.1,

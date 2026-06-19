@@ -115,10 +115,10 @@ lengths <- read_lengths("sample.length_counts.tsv.zst")
 length_bins(lengths)
 length_counts_matrix(lengths)
 length_data_frame(lengths, value = "fraction")
-length_data_frame(lengths, with_length_range = c(100L, 220L))
+length_data_frame(lengths, with_length_range = c(100L, 221L))
 length_data_frame(
   lengths,
-  with_length_range = c(100L, 220L),
+  with_length_range = c(100L, 221L),
   value = "fraction",
   denominator = "selected_bins"
 )

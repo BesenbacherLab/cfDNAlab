@@ -119,6 +119,18 @@ fn load_midpoints_output_reads_axes_and_count_selections() -> anyhow::Result<()>
 
     // Assert
     assert_eq!(loaded.counts_shape(), (2, 2, 4));
+    let output_metadata = loaded.output_metadata();
+    assert_eq!(output_metadata.group_count, 2);
+    assert_eq!(output_metadata.length_bin_count, 2);
+    assert_eq!(output_metadata.min_fragment_length, 30);
+    assert_eq!(output_metadata.max_fragment_length_exclusive, 151);
+    assert_eq!(output_metadata.position_bin_count, 4);
+    assert_eq!(output_metadata.min_position, 0);
+    assert_eq!(output_metadata.max_position_exclusive, 18);
+    assert_eq!(
+        output_metadata.to_string(),
+        "group_count=2, length_bin_count=2, fragment_length_range=[30, 151) bp, position_bin_count=4, position_range=[0, 18) bp"
+    );
     assert_eq!(loaded.group_count(), 2);
     assert_eq!(loaded.length_bin_count(), 2);
     assert_eq!(loaded.position_bin_count(), 4);

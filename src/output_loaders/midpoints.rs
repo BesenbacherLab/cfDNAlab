@@ -50,7 +50,7 @@ use anyhow::{Context, Result, bail, ensure};
 use fxhash::FxHashMap;
 use serde_json::Value;
 use std::{
-    fs,
+    fmt, fs,
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
@@ -160,6 +160,22 @@ impl MidpointsOutput {
     /// Return the count array shape as `(groups, length_bins, positions)`.
     pub fn counts_shape(&self) -> (usize, usize, usize) {
         self.count_shape
+    }
+
+    /// Return a compact description of the loaded midpoint profile output.
+    ///
+    /// This combines axis counts and covered bin ranges in one value for
+    /// logging or quick checks.
+    pub fn output_metadata(&self) -> MidpointsOutputMetadata {
+        MidpointsOutputMetadata {
+            group_count: self.group_count(),
+            length_bin_count: self.length_bin_count(),
+            position_bin_count: self.position_bin_count(),
+            min_fragment_length: self.length_bins[0].start(),
+            max_fragment_length_exclusive: self.length_bins[self.length_bins.len() - 1].end(),
+            min_position: self.position_bins[0].start(),
+            max_position_exclusive: self.position_bins[self.position_bins.len() - 1].end(),
+        }
     }
 
     /// Return one group row by zero-based group index.
@@ -783,6 +799,46 @@ impl MidpointPositionSelector {
     }
 }
 
+/// Compact metadata for a loaded midpoint profile store.
+///
+/// This is intended for quick inspection and logging. It collects the axis
+/// sizes and covered bin ranges that otherwise live behind separate accessors
+/// on `MidpointsOutput`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MidpointsOutputMetadata {
+    /// Number of groups on the first count-array axis.
+    pub group_count: usize,
+    /// Number of fragment length bins on the second count-array axis.
+    pub length_bin_count: usize,
+    /// Inclusive lower bound of the first fragment length bin.
+    pub min_fragment_length: u32,
+    /// Exclusive upper bound of the last fragment length bin.
+    pub max_fragment_length_exclusive: u32,
+    /// Number of interval-relative position bins on the third count-array axis.
+    pub position_bin_count: usize,
+    /// Inclusive lower bound of the first interval-relative position bin.
+    pub min_position: u32,
+    /// Exclusive upper bound of the last interval-relative position bin.
+    pub max_position_exclusive: u32,
+}
+
+impl fmt::Display for MidpointsOutputMetadata {
+    /// Render one-line output context for logs or interactive inspection.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "group_count={}, length_bin_count={}, fragment_length_range=[{}, {}) bp, position_bin_count={}, position_range=[{}, {}) bp",
+            self.group_count,
+            self.length_bin_count,
+            self.min_fragment_length,
+            self.max_fragment_length_exclusive,
+            self.position_bin_count,
+            self.min_position,
+            self.max_position_exclusive
+        )
+    }
+}
+
 /// Metadata for one midpoint profile group.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MidpointGroupRow {
@@ -890,7 +946,7 @@ impl MidpointCountSelection {
     }
 }
 
-/// Parser for one `cfdna midpoints` Zarr store.
+/// Parser for a `cfdna midpoints` Zarr store.
 ///
 /// The parser validates root metadata and reads axis metadata arrays during
 /// loading. It does not read the `/counts` array into memory, because

@@ -71,6 +71,7 @@ use crate::{
 };
 use anyhow::{Context, Result, bail, ensure};
 use std::{
+    fmt,
     io::BufRead,
     path::{Path, PathBuf},
 };
@@ -178,6 +179,20 @@ impl LengthsOutput {
     /// Return row metadata describing what each count-matrix row represents.
     pub fn row_metadata(&self) -> &LengthRowMetadata {
         &self.row_metadata
+    }
+
+    /// Return a compact description of the loaded lengths output.
+    ///
+    /// This combines row mode, row count, fragment length-bin count, and the
+    /// covered fragment length range in one value for logging or quick checks.
+    pub fn output_metadata(&self) -> LengthOutputMetadata {
+        LengthOutputMetadata {
+            row_mode: self.row_mode(),
+            row_count: self.row_count(),
+            length_bin_count: self.length_bin_count(),
+            min_fragment_length: self.length_bins.first().map(|bin| bin.start()),
+            max_fragment_length_exclusive: self.length_bins.last().map(|bin| bin.end()),
+        }
     }
 
     /// Return window metadata, or an error if this is not a windowed output.
@@ -829,6 +844,61 @@ impl LengthAxisSelector {
             Self::Indices(_) => Some("length_bins"),
             Self::Range(_) => Some("length_range"),
         }
+    }
+}
+
+/// Compact metadata for a loaded length-count table.
+///
+/// This is intended for quick inspection and logging. It collects the output
+/// settings that otherwise live behind separate accessors on `LengthsOutput`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LengthOutputMetadata {
+    /// Whether count rows are global, genomic windows, or grouped-BED groups.
+    pub row_mode: LengthOutputMode,
+    /// Number of count rows.
+    pub row_count: usize,
+    /// Number of fragment length bins.
+    pub length_bin_count: usize,
+    /// Inclusive lower bound of the first fragment length bin.
+    pub min_fragment_length: Option<u32>,
+    /// Exclusive upper bound of the last fragment length bin.
+    pub max_fragment_length_exclusive: Option<u32>,
+}
+
+impl fmt::Display for LengthOutputMetadata {
+    /// Render one-line output context for logs or interactive inspection.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "row_mode={}, row_count={}, length_bin_count={}, fragment_length_range={}",
+            describe_length_output_mode(self.row_mode),
+            self.row_count,
+            self.length_bin_count,
+            describe_fragment_length_range(
+                self.min_fragment_length,
+                self.max_fragment_length_exclusive
+            )
+        )
+    }
+}
+
+fn describe_fragment_length_range(
+    min_fragment_length: Option<u32>,
+    max_fragment_length_exclusive: Option<u32>,
+) -> String {
+    match (min_fragment_length, max_fragment_length_exclusive) {
+        (Some(min_fragment_length), Some(max_fragment_length_exclusive)) => {
+            format!("[{min_fragment_length}, {max_fragment_length_exclusive}) bp")
+        }
+        _ => "none".to_string(),
+    }
+}
+
+fn describe_length_output_mode(row_mode: LengthOutputMode) -> &'static str {
+    match row_mode {
+        LengthOutputMode::Global => "global",
+        LengthOutputMode::Windows => "windows",
+        LengthOutputMode::Groups => "groups",
     }
 }
 
