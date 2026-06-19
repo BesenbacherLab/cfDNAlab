@@ -414,7 +414,8 @@ fn ref_gc_bias_config_roundtrips_through_rendered_cli_with_non_default_programma
 #[test]
 fn lengths_config_roundtrips_through_rendered_cli() {
     use crate::{
-        commands::cli_common::DistributionWindowsArgs, commands::lengths::config::LengthsConfig,
+        commands::{cli_common::DistributionWindowsArgs, lengths::config::LengthsConfig},
+        shared::blacklist::BlacklistStrategy,
     };
 
     let mut config = LengthsConfig::new(ioc(), chromosomes());
@@ -425,6 +426,9 @@ fn lengths_config_roundtrips_through_rendered_cli() {
         by_grouped_bed: None,
     });
     config.set_length_bins_spec("30:101:10");
+    config.set_blacklist(Some(vec![PathBuf::from("blacklist.bed")]));
+    config.set_blacklist_min_size(5);
+    config.set_blacklist_strategy(BlacklistStrategy::Proportion(0.2));
 
     assert_config_roundtrips!(config, Lengths, "lengths");
 }
