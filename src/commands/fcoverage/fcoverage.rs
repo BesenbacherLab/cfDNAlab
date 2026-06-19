@@ -203,7 +203,8 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
 
     if options.log_equivalent_cli {
         let command = crate::ToCliCommand::to_cli_string(opt)?;
-        info!(target: COMMAND_TARGET, "Equivalent CLI: {command}");
+        let message = crate::command_run::equivalent_cli_log_message(&command);
+        info!(target: COMMAND_TARGET, "{message}");
     }
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
@@ -711,6 +712,7 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
 
     // Write every final output to the temp directory before moving any of them into place
     // This keeps failed writes from leaving a mix of old and new final files
+    let mut extra_output_files = Vec::new();
     let final_out_path = if !windowed {
         // Whole-genome positional coverage
         let positional_outputs = positional_tile_outputs(&tile_temp_outputs);
@@ -833,7 +835,8 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
                             .context("grouped outputs require group index metadata")?
                             .group_idx_to_name,
                     )?;
-                    final_outputs.record(temp_group_index_path, group_index_path)?;
+                    final_outputs.record(temp_group_index_path, group_index_path.clone())?;
+                    extra_output_files.push(group_index_path);
                 }
 
                 final_outputs.record(temp_final_path, final_path.clone())?;
@@ -851,11 +854,14 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
         final_out_path.display()
     );
 
+    let mut output_files = vec![final_out_path.clone()];
+    output_files.extend(extra_output_files);
+
     Ok(FCoverageRunResult {
         counters: global_counter,
         mean_normalization_length,
         final_out_path: final_out_path.clone(),
-        output_files: vec![final_out_path],
+        output_files,
     })
 }
 

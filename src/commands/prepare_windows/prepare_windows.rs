@@ -258,7 +258,8 @@ pub fn run_prepare_windows(
 
     if options.log_equivalent_cli {
         let command = crate::ToCliCommand::to_cli_string(cfg)?;
-        tracing::info!(target: "prep-windows", "Equivalent CLI: {command}");
+        let message = crate::command_run::equivalent_cli_log_message(&command);
+        tracing::info!(target: "prep-windows", "{message}");
     }
 
     // Compile distance bins (if any)

@@ -7,6 +7,12 @@ This is the changelog for the main CLI tool. You can find the changelog for the 
 
 <br />
 
+## Unreleased
+
+ - The Rust `fcoverage` run result now includes grouped `group_index.tsv` sidecars in `output_files()` when they are written.
+
+<br />
+
 ## cfDNAlab 0.5.0
 
 **BREAKING CHANGES**:

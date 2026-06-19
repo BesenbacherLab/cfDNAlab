@@ -182,7 +182,8 @@ fn execute_frag_to_bam(
     validate_output_prefix(opt.output_prefix.trim())?;
     if options.log_equivalent_cli {
         let command = crate::ToCliCommand::to_cli_string(opt)?;
-        info!(target: COMMAND_TARGET, "Equivalent CLI: {command}");
+        let message = crate::command_run::equivalent_cli_log_message(&command);
+        info!(target: COMMAND_TARGET, "{message}");
     }
     ensure_output_dir(&opt.output_dir)?;
     let column_layout = resolve_frag_column_layout(opt)?;

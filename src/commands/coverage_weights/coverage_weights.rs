@@ -264,7 +264,8 @@ pub(crate) fn run_with_fcoverage(
             command,
             ignore_gap: source_ignore_gap.unwrap_or(false),
         })?;
-        command.info(&format!("Equivalent CLI: {command_text}"));
+        let message = crate::command_run::equivalent_cli_log_message(&command_text);
+        command.info(&message);
     }
     let (chromosomes, _contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;

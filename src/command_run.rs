@@ -109,6 +109,15 @@ macro_rules! status_info {
 ))]
 pub(crate) use status_info;
 
+/// Format the equivalent CLI command as a readable log block.
+///
+/// The tracing formatter already prefixes the event with the command target,
+/// so the command itself is put on its own line for easier copying from stdout
+/// and log files.
+pub(crate) fn equivalent_cli_log_message(command: &str) -> String {
+    format!("Equivalent CLI:\n\n{command}\n")
+}
+
 /// Shared interface for command-specific run results.
 ///
 /// Each command returns its own result type because output files and counters differ by command.

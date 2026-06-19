@@ -202,7 +202,8 @@ pub fn run_wps(opt: &WPSConfig, options: RunOptions) -> Result<WPSRunResult> {
 
     if options.log_equivalent_cli {
         let command = crate::ToCliCommand::to_cli_string(opt)?;
-        info!(target: COMMAND_TARGET, "Equivalent CLI: {command}");
+        let message = crate::command_run::equivalent_cli_log_message(&command);
+        info!(target: COMMAND_TARGET, "{message}");
     }
     let (chromosomes, contigs) = resolve_chromosomes_and_contigs(
         &opt.shared_args.chromosomes,
