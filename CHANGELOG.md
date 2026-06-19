@@ -7,12 +7,16 @@ This is the changelog for the main CLI tool. You can find the changelog for the 
 
 <br />
 
+## Unreleased
+
+<br />
+
 ## cfDNAlab 0.5.0
 
 **BREAKING CHANGES**:
 
  - `cfdna fcoverage --normalize-by-length` is now actually called `--normalize-by-length` instead of `--normalize-by-length-mode`, matching the guides and documentation.
- - The Rust crate feature `cmd_ref_gc_bias` has been removed. Enable `cmd_gc_bias` to compile both the `gc-bias` and `ref-gc-bias` command APIs.
+ - The Rust crate feature `cmd_ref_gc_bias` has been removed. Enable `cmd_gc_bias` (on by default) to compile both the `gc-bias` and `ref-gc-bias` command APIs.
 
 **Other changes**:
 
