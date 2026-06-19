@@ -1,15 +1,21 @@
 use anyhow::{Context, Result};
-use flate2::{Compression, read::MultiGzDecoder, write::GzEncoder};
+use flate2::read::MultiGzDecoder;
+#[cfg(writes_text_outputs)]
+use flate2::{Compression, write::GzEncoder};
 use fxhash::FxHashMap;
+#[cfg(writes_text_outputs)]
+use std::io::{self, BufWriter, Write};
 use std::{
     fs::File,
-    io::{self, BufRead, BufReader, BufWriter, Write},
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
 };
 use zstd::Decoder as ZstdDecoder;
+#[cfg(writes_text_outputs)]
 use zstd::Encoder as ZstdEncoder;
 
 const BUF_CAP: usize = 1 << 20;
+#[cfg(writes_text_outputs)]
 const DEFAULT_ZSTD_LEVEL: i32 = 3;
 const REPLACEABLE_DIRECTORY_EXTENSIONS: &[&str] = &["zarr"];
 
@@ -56,6 +62,7 @@ pub(crate) fn open_text_reader(path: &Path) -> Result<Box<dyn BufRead>> {
     }
 }
 
+#[cfg(writes_text_outputs)]
 enum WriterInner {
     #[cfg(feature = "cmd_prepare_windows")]
     Stdout(BufWriter<io::Stdout>),
@@ -65,10 +72,12 @@ enum WriterInner {
 }
 
 /// Writer that finishes compression streams when dropped via [`finish`](TextWriter::finish).
+#[cfg(writes_text_outputs)]
 pub(crate) struct TextWriter {
     inner: WriterInner,
 }
 
+#[cfg(writes_text_outputs)]
 impl TextWriter {
     fn new(inner: WriterInner) -> Self {
         Self { inner }
@@ -99,6 +108,7 @@ impl TextWriter {
     }
 }
 
+#[cfg(writes_text_outputs)]
 impl Write for TextWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match &mut self.inner {
@@ -131,6 +141,7 @@ pub(crate) fn stdout_text_writer() -> TextWriter {
 }
 
 /// Create a writer that compresses according to the file extension (`.gz`, `.zst`).
+#[cfg(writes_text_outputs)]
 pub(crate) fn create_text_writer(path: &Path) -> Result<TextWriter> {
     let ext = path
         .extension()
@@ -187,6 +198,13 @@ impl FinalOutputFiles {
         output_path_in_dir(&self.temp_dir, final_path)
     }
 
+    #[cfg(any(
+        feature = "cmd_ends",
+        feature = "cmd_fcoverage",
+        feature = "cmd_fragment_kmers",
+        feature = "cmd_gc_bias",
+        feature = "cmd_wps"
+    ))]
     pub(crate) fn temp_dir(&self) -> &Path {
         &self.temp_dir
     }
@@ -207,6 +225,10 @@ impl FinalOutputFiles {
     ///
     /// Each temp path is mapped to `output_dir/<file name>`. Use this after passing
     /// `FinalOutputFiles::temp_dir` to a writer that returns the files it created.
+    #[cfg(any(
+        all(feature = "cmd_gc_bias", feature = "plotters"),
+        feature = "cmd_fragment_kmers"
+    ))]
     pub(crate) fn record_temp_files_with_same_names_in(
         &mut self,
         temp_paths: impl IntoIterator<Item = PathBuf>,

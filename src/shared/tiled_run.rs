@@ -1,38 +1,65 @@
-use crate::shared::bam::Contigs;
-use crate::shared::interval::{IndexedInterval, Interval};
+#[cfg(uses_temp_dirs)]
 use crate::shared::io::dot_join;
-use anyhow::{Context, ensure};
+#[cfg(uses_tile_window_helpers)]
+use crate::shared::{
+    bam::Contigs,
+    interval::{IndexedInterval, Interval},
+};
+#[cfg(checks_tile_bam_tid)]
+use anyhow::Context;
+#[cfg(uses_tile_window_helpers)]
+use anyhow::ensure;
+#[cfg(uses_temp_dirs)]
 use rand::{Rng, distr::Alphanumeric};
-use std::env;
+#[cfg(uses_temp_dirs)]
 use std::ffi::OsString;
-use std::io::ErrorKind;
-use std::path::{Path, PathBuf};
-use std::process::{self, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
-use std::thread;
-use std::time::Duration;
+#[cfg(uses_temp_dirs)]
+use std::{
+    env,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+    process::{self, Command, Stdio},
+    sync::{
+        Mutex, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::Duration,
+};
+#[cfg(uses_temp_dirs)]
 use tracing::warn;
 
+#[cfg(uses_temp_dirs)]
 const TEMP_DIR_CLEANUP_TARGET: &str = "temp-dir-cleanup";
+#[cfg(uses_temp_dirs)]
 const TEMP_DIR_CLEANUP_HELPER_ARG: &str = "--__cfdnalab-clean-temp-dirs";
+#[cfg(uses_temp_dirs)]
 const TEMP_DIR_CLEANUP_INITIAL_DELAY: Duration = Duration::from_millis(250);
+#[cfg(uses_temp_dirs)]
 const TEMP_DIR_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(250);
+#[cfg(uses_temp_dirs)]
 const TEMP_DIR_CLEANUP_MAX_ATTEMPTS: usize = 120;
+#[cfg(uses_temp_dirs)]
 static TEMP_DIR_CTRL_C_CLEANUP_STARTED: AtomicBool = AtomicBool::new(false);
+#[cfg(uses_temp_dirs)]
 static TEMP_DIR_CTRL_C_HANDLER_INSTALLED: OnceLock<()> = OnceLock::new();
+#[cfg(uses_temp_dirs)]
 static TEMP_DIR_CTRL_C_REGISTRY: OnceLock<Mutex<Vec<PathBuf>>> = OnceLock::new();
 
 /// A processing tile for one chromosome
+#[cfg(uses_tile_window_helpers)]
 #[derive(Debug, Clone)]
 pub(crate) struct Tile {
     pub(crate) chr: String,
+    #[allow(dead_code)]
     pub(crate) tid: i32,
+    #[allow(dead_code)]
     pub(crate) index: u32, // 0-based index within chromosome
     pub(crate) core: Interval<u32>,
     pub(crate) fetch: Interval<u32>,
 }
 
+#[cfg(uses_tile_window_helpers)]
 impl Tile {
     /// Create a tile from checked half-open core and fetch intervals.
     ///
@@ -100,6 +127,7 @@ impl Tile {
     /// `Tile::tid` is stored as `i32` because it follows the tiling inputs, while
     /// rust-htslib returns BAM tids as `u32`. Keep the conversion and comparison
     /// together so callers cannot accidentally wrap negative tids with `as u32`.
+    #[cfg(checks_tile_bam_tid)]
     pub(crate) fn ensure_matches_bam_tid(&self, bam_tid: u32) -> anyhow::Result<()> {
         let tile_tid =
             u32::try_from(self.tid).context("tile tid is negative for BAM tid comparison")?;
@@ -119,12 +147,14 @@ impl Tile {
 /// The range `[first_idx, last_idx_exclusive)` selects the portion of the chromosome-specific
 /// window slice whose starts fall before the tile core end. Windows that end before the tile core
 /// start are excluded when the span is constructed, so streaming from `first_idx` is safe.
+#[cfg(uses_tile_window_helpers)]
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct TileWindowSpan {
     pub(crate) first_idx: usize,
     pub(crate) last_idx_exclusive: usize,
 }
 
+#[cfg(uses_tile_window_helpers)]
 impl TileWindowSpan {
     /// Reports whether the cached window span is empty.
     ///
@@ -154,6 +184,7 @@ impl TileWindowSpan {
 /// # Returns
 /// A vector the same length as `tiles` containing the optional `[first, last)` window index span
 /// for each tile.
+#[cfg(uses_tile_window_helpers)]
 pub(crate) fn precompute_tile_window_spans<'a, F>(
     tiles: &[Tile],
     mut windows_for_chr: F,
@@ -233,6 +264,7 @@ where
 ///
 /// The underlying slice is filtered on-the-fly to skip windows whose span does not intersect the
 /// tile, so callers do not need to duplicate the overlap predicates.
+#[cfg(uses_tile_window_helpers)]
 pub(crate) struct TileWindowsIter<'a> {
     windows: &'a [IndexedInterval<u64>],
     next_idx: usize,
@@ -241,12 +273,13 @@ pub(crate) struct TileWindowsIter<'a> {
     core_end: u64,
 }
 
+#[cfg(uses_tile_window_helpers)]
 impl<'a> TileWindowsIter<'a> {
     /// Produces the next source-slice index whose window intersects the tile core.
     ///
     /// Cached index bounds may include neighbouring candidates, so this method checks overlap on
-    /// the fly and discards false positives before yielding. Use this when a caller needs to keep
-    /// sidecar vectors aligned with the source window slice.
+    /// the fly and discards false positives before yielding. Use this when a caller needs source
+    /// window indices to keep separate per-window arrays in the same order.
     ///
     /// # Returns
     /// `Some(index)` when another overlapping window is available, otherwise `None` at the end of
@@ -266,6 +299,7 @@ impl<'a> TileWindowsIter<'a> {
     }
 }
 
+#[cfg(uses_tile_window_helpers)]
 impl<'a> Iterator for TileWindowsIter<'a> {
     type Item = &'a IndexedInterval<u64>;
 
@@ -292,6 +326,7 @@ impl<'a> Iterator for TileWindowsIter<'a> {
 ///
 /// # Returns
 /// A pair `(left, right)` giving the half-open window index range whose members may overlap.
+#[cfg(uses_tile_window_helpers)]
 fn span_bounds_without_cache(
     windows: &[IndexedInterval<u64>],
     core_start: u64,
@@ -330,6 +365,7 @@ fn span_bounds_without_cache(
 /// -------
 /// - `(usize, usize)`:
 ///   Updated half-open candidate-window index span `(left, right)`
+#[cfg(uses_tile_window_helpers)]
 fn advance_window_span_bounds(
     windows: &[IndexedInterval<u64>],
     mut left: usize,
@@ -362,8 +398,9 @@ fn advance_window_span_bounds(
 /// - `span`: Optional cached span previously produced by `precompute_tile_window_spans`.
 ///
 /// # Returns
-/// A `TileWindowsIter` positioned to stream overlapping windows. Commands that need aligned
-/// sidecar data can use its crate-local source-index access on the returned iterator.
+/// A `TileWindowsIter` positioned to stream overlapping windows. Commands that need source window
+/// indices can use the crate-local index method on the returned iterator.
+#[cfg(uses_tile_window_helpers)]
 pub(crate) fn overlapping_windows_for_tile<'a>(
     windows: &'a [IndexedInterval<u64>],
     tile: &Tile,
@@ -402,6 +439,13 @@ pub(crate) fn overlapping_windows_for_tile<'a>(
 /// # Returns
 /// `Some(interval)` as absolute fetch limits when a non-empty span remains, otherwise `None`.
 #[inline]
+#[cfg(any(
+    feature = "cmd_ends",
+    feature = "cmd_fcoverage",
+    feature = "cmd_fragment_kmers",
+    feature = "cmd_lengths",
+    feature = "cmd_midpoints"
+))]
 pub(crate) fn clamp_fetch_to_window_span(
     tile: &Tile,
     chrom_len: u64,
@@ -445,6 +489,7 @@ pub(crate) fn clamp_fetch_to_window_span(
 /// # Returns
 /// A tuple `(tiles, guaranteed_aligned)` where `tiles` contains every generated `Tile` and
 /// `guaranteed_aligned` flags whether cores were aligned to `align_bp`.
+#[cfg(uses_tile_window_helpers)]
 pub(crate) fn build_tiles(
     chromosomes: &[String],
     contigs: &Contigs,
@@ -521,6 +566,11 @@ pub(crate) fn build_tiles(
 }
 
 /// What the tile should write
+#[cfg(any(
+    feature = "cmd_fcoverage",
+    feature = "cmd_wps",
+    feature = "cmd_wps_peaks"
+))]
 pub(crate) enum TileMode<'w> {
     /// Whole positional coverage for the core,
     /// or windowed positional coverage without index (unique positions)
@@ -533,14 +583,14 @@ pub(crate) enum TileMode<'w> {
         windows: &'w [IndexedInterval<u64>], // Per-chr windows
         masked: bool,                        // Use masked counts/sums
         partials_out: std::path::PathBuf, // Cross-boundary windows (idx, sum, allowed, blacklisted)
-        cross_idx_out: std::path::PathBuf, // Sidecar listing crossers
+        cross_idx_out: std::path::PathBuf, // Cross-index file listing crossers
     },
     AggregatesBySize {
         window_bp: u64,                    // Fixed window size in bases
         masked: bool,                      // Use masked counts/sums
         finals_out: std::path::PathBuf,    // Final windows that do not need reducing
         partials_out: std::path::PathBuf, // Cross-boundary windows (idx, sum, allowed, blacklisted)
-        cross_idx_out: std::path::PathBuf, // Sidecar listing crossers
+        cross_idx_out: std::path::PathBuf, // Cross-index file listing crossers
         guaranteed_aligned: bool, // Tiles and window_bp align, so write per-tile FINALS (no reducer needed)
     },
 }
@@ -555,6 +605,7 @@ pub(crate) enum TileMode<'w> {
 ///
 /// # Returns
 /// `Some(index)` when a numeric segment is found; otherwise `None`.
+#[cfg(feature = "cmd_gc_bias")]
 pub(crate) fn parse_tile_index(file_name: &str) -> Option<u32> {
     for seg in file_name.rsplit('.') {
         if !seg.is_empty() && seg.chars().all(|c| c.is_ascii_digit()) {
@@ -573,6 +624,7 @@ pub(crate) fn parse_tile_index(file_name: &str) -> Option<u32> {
 ///
 /// # Returns
 /// A string consisting of `n` random ASCII letters or digits.
+#[cfg(uses_temp_dirs)]
 fn random_suffix(n: usize) -> String {
     rand::rng()
         .sample_iter(&Alphanumeric)
@@ -592,6 +644,7 @@ fn random_suffix(n: usize) -> String {
 ///
 /// # Returns
 /// Path to the created temporary directory.
+#[cfg(uses_temp_dirs)]
 pub(crate) fn make_temp_dir(base_out: &Path, prefix: &str) -> anyhow::Result<PathBuf> {
     // Try a few times just in case
     for _ in 0..8 {
@@ -614,11 +667,13 @@ pub(crate) fn make_temp_dir(base_out: &Path, prefix: &str) -> anyhow::Result<Pat
 /// Commands keep this value in scope for as long as tile files may be needed. The directory is
 /// removed when the guard is dropped, so early returns clean up the same way as successful runs.
 /// Call `remove()` when cleanup failure should be reported on the normal success path.
+#[cfg(uses_temp_dirs)]
 pub(crate) struct TempDirGuard {
     path: PathBuf,
     removed: bool,
 }
 
+#[cfg(uses_temp_dirs)]
 impl TempDirGuard {
     /// Creates and guards a unique temporary directory inside `base_out`.
     pub(crate) fn new(base_out: &Path, prefix: &str) -> anyhow::Result<Self> {
@@ -643,6 +698,12 @@ impl TempDirGuard {
     }
 
     /// Removes the guarded directory and disables drop-time cleanup after success.
+    #[cfg(any(
+        feature = "cmd_frag_to_bam",
+        feature = "cmd_gc_bias",
+        feature = "cmd_prepare_windows",
+        feature = "cmd_transitions"
+    ))]
     pub(crate) fn remove(&mut self) -> anyhow::Result<()> {
         if self.removed {
             return Ok(());
@@ -664,6 +725,7 @@ impl TempDirGuard {
     }
 }
 
+#[cfg(uses_temp_dirs)]
 impl Drop for TempDirGuard {
     fn drop(&mut self) {
         if self.removed {
@@ -691,10 +753,12 @@ impl Drop for TempDirGuard {
     }
 }
 
+#[cfg(uses_temp_dirs)]
 fn temp_dir_ctrl_c_registry() -> &'static Mutex<Vec<PathBuf>> {
     TEMP_DIR_CTRL_C_REGISTRY.get_or_init(|| Mutex::new(Vec::new()))
 }
 
+#[cfg(uses_temp_dirs)]
 fn install_temp_dir_ctrl_c_cleanup_handler() {
     TEMP_DIR_CTRL_C_HANDLER_INSTALLED.get_or_init(|| {
         if let Err(err) = ctrlc::set_handler(|| {
@@ -736,6 +800,7 @@ fn install_temp_dir_ctrl_c_cleanup_handler() {
     });
 }
 
+#[cfg(uses_temp_dirs)]
 fn spawn_temp_dir_cleanup_helper(paths: &[PathBuf]) -> std::io::Result<()> {
     let current_exe = env::current_exe()?;
     let mut command = Command::new(current_exe);
@@ -761,6 +826,14 @@ fn spawn_temp_dir_cleanup_helper(paths: &[PathBuf]) -> std::io::Result<()> {
 /// The normal CLI calls this before Clap parsing. The helper sleeps briefly so the interrupted
 /// parent process can exit and close tile-writer file handles, then removes the registered temp
 /// directories with bounded retries.
+#[cfg(uses_temp_dirs)]
+#[cfg_attr(
+    not(feature = "cli"),
+    allow(
+        dead_code,
+        reason = "temp-dir cleanup helper is compiled with temp-dir support even when only the CLI binary currently calls it"
+    )
+)]
 pub(crate) fn run_temp_dir_cleanup_helper_if_requested() -> bool {
     let mut args = env::args_os();
     let _program = args.next();
@@ -783,6 +856,7 @@ pub(crate) fn run_temp_dir_cleanup_helper_if_requested() -> bool {
     process::exit(exit_code);
 }
 
+#[cfg(uses_temp_dirs)]
 fn cleanup_temp_dirs_with_retries(
     paths: &[PathBuf],
     initial_delay: Duration,
@@ -820,6 +894,7 @@ fn cleanup_temp_dirs_with_retries(
     failures
 }
 
+#[cfg(uses_temp_dirs)]
 fn remove_temp_dir_once(path: &Path) -> std::io::Result<()> {
     match std::fs::remove_dir_all(path) {
         Ok(()) => Ok(()),
@@ -828,6 +903,7 @@ fn remove_temp_dir_once(path: &Path) -> std::io::Result<()> {
     }
 }
 
+#[cfg(uses_temp_dirs)]
 fn warn_cleanup_failures(failures: Vec<(PathBuf, String)>) {
     for (path, err) in failures {
         eprintln!(
@@ -838,6 +914,7 @@ fn warn_cleanup_failures(failures: Vec<(PathBuf, String)>) {
     }
 }
 
+#[cfg(uses_temp_dirs)]
 fn register_temp_dir_for_ctrl_c_cleanup(path: &Path) {
     let mut paths = match temp_dir_ctrl_c_registry().lock() {
         Ok(paths) => paths,
@@ -846,6 +923,7 @@ fn register_temp_dir_for_ctrl_c_cleanup(path: &Path) {
     paths.push(path.to_path_buf());
 }
 
+#[cfg(uses_temp_dirs)]
 fn unregister_temp_dir_for_ctrl_c_cleanup(path: &Path) {
     let mut paths = match temp_dir_ctrl_c_registry().lock() {
         Ok(paths) => paths,
@@ -854,7 +932,7 @@ fn unregister_temp_dir_for_ctrl_c_cleanup(path: &Path) {
     paths.retain(|registered_path| registered_path != path);
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(uses_temp_dirs, uses_tile_window_helpers)))]
 mod tests {
     include!("tiled_run_tests.rs");
 }

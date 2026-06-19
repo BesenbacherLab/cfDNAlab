@@ -44,7 +44,7 @@ For paired-end BAM input, `fcoverage` builds one fragment from inward-facing mat
 
 ## Output Views
 
-Without windowing, the command writes per-position bedGraph coverage. With `--by-size` or `--by-bed`, it writes one compressed TSV row per window. With `--by-grouped-bed`, windows are reduced to group-level rows and a group-index sidecar records the group names. BED mode can also write positional coverage restricted to the selected windows.
+Without windowing, the command writes per-position bedGraph coverage. With `--by-size` or `--by-bed`, it writes one compressed TSV row per window. With `--by-grouped-bed`, windows are reduced to group-level rows and a group-index TSV records the group names. BED mode can also write positional coverage restricted to the selected windows.
 
 ## Corrections And Weights
 

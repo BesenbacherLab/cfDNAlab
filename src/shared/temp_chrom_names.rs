@@ -1,5 +1,8 @@
+#[cfg(uses_temp_chrom_name_map)]
 use anyhow::{Result, bail};
-use std::collections::HashMap;
+#[cfg(uses_temp_chrom_name_map)]
+use fxhash::FxHashMap;
+#[cfg(uses_temp_chrom_paths)]
 use std::path::{Path, PathBuf};
 
 pub(crate) fn temp_chrom_token(index: usize) -> String {
@@ -11,17 +14,21 @@ pub(crate) fn temp_chrom_token(index: usize) -> String {
 /// Raw contig names are biological identifiers, not path components. This mapper keeps those
 /// identifiers out of intermediate filenames while preserving a reversible in-memory mapping for
 /// reducers that need to associate temp files back to their source contig.
+#[cfg(uses_temp_chrom_name_map)]
 #[derive(Debug, Clone)]
 pub(crate) struct TempChromNameMap {
-    raw_to_token: HashMap<String, String>,
+    raw_to_token: FxHashMap<String, String>,
     #[allow(dead_code)]
-    token_to_raw: HashMap<String, String>,
+    token_to_raw: FxHashMap<String, String>,
 }
 
+#[cfg(uses_temp_chrom_name_map)]
 impl TempChromNameMap {
     pub(crate) fn from_contigs(contigs: &[String]) -> Result<Self> {
-        let mut raw_to_token = HashMap::with_capacity(contigs.len());
-        let mut token_to_raw = HashMap::with_capacity(contigs.len());
+        let mut raw_to_token =
+            FxHashMap::with_capacity_and_hasher(contigs.len(), Default::default());
+        let mut token_to_raw =
+            FxHashMap::with_capacity_and_hasher(contigs.len(), Default::default());
 
         for (index, contig) in contigs.iter().enumerate() {
             if raw_to_token.contains_key(contig) {
@@ -56,6 +63,7 @@ impl TempChromNameMap {
             .ok_or_else(|| anyhow::anyhow!("missing raw contig name for temp token '{}'", token))
     }
 
+    #[cfg(uses_temp_chrom_paths)]
     pub(crate) fn path_with_suffix(
         &self,
         temp_dir: &Path,
@@ -66,7 +74,7 @@ impl TempChromNameMap {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, uses_temp_chrom_name_map))]
 mod tests {
     use super::TempChromNameMap;
 
@@ -87,14 +95,17 @@ mod tests {
         assert_eq!(map.token_for("../chr2").unwrap(), "chrom-000001");
         assert_eq!(map.raw_for("chrom-000002").unwrap(), "chrom-000000");
 
-        let path = map
-            .path_with_suffix(
-                std::path::Path::new("/tmp/run"),
-                "chr/with/slash",
-                "frag.tmp",
-            )
-            .unwrap();
-        assert_eq!(path, std::path::Path::new("/tmp/run/chrom-000000.frag.tmp"));
+        #[cfg(uses_temp_chrom_paths)]
+        {
+            let path = map
+                .path_with_suffix(
+                    std::path::Path::new("/tmp/run"),
+                    "chr/with/slash",
+                    "frag.tmp",
+                )
+                .unwrap();
+            assert_eq!(path, std::path::Path::new("/tmp/run/chrom-000000.frag.tmp"));
+        }
     }
 
     #[test]

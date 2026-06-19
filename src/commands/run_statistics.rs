@@ -1,3 +1,8 @@
+#![allow(
+    dead_code,
+    reason = "feature-limited builds compile shared statistics helpers even when no enabled command prints fragment statistics"
+)]
+
 use crate::{
     commands::counters::BaseCounters,
     shared::cli_output,
@@ -8,6 +13,14 @@ use crate::{
 use std::time::Duration;
 
 /// Shared note for tile-based commands whose overlap halos can inflate statistics only.
+#[cfg(any(
+    feature = "cmd_fcoverage",
+    feature = "cmd_fragment_kmers",
+    feature = "cmd_midpoints",
+    feature = "cmd_transitions",
+    feature = "cmd_wps",
+    feature = "cmd_wps_peaks"
+))]
 pub(crate) const TILE_DOUBLE_COUNT_NOTE: &str = "Note: A few reads/fragments may be counted twice in the statistics (only) around the parallelization tiles.";
 
 /// Labels for the common fragment-statistics block.

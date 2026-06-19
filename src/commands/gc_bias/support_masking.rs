@@ -1,7 +1,11 @@
 use crate::commands::gc_bias::counting::calculate_gc_bin;
-use ndarray::{Array2, ArrayBase, Data, Ix2, Zip};
+use ndarray::Array2;
+use ndarray::Zip;
+#[cfg(any(feature = "cmd_gc_bias"))]
+use ndarray::{ArrayBase, Data, Ix2};
 
 #[allow(dead_code)]
+#[cfg(any(feature = "cmd_gc_bias"))]
 pub(crate) struct StatsBySupportMask {
     pub(crate) sum_for_supported: f64,
     pub(crate) sum_for_unsupported: f64,
@@ -10,6 +14,7 @@ pub(crate) struct StatsBySupportMask {
 }
 
 /// Get count and value-sums for all supported/unsupported bins.
+#[cfg(any(feature = "cmd_gc_bias"))]
 pub(crate) fn stats_by_support_mask<S, M>(
     matrix: &ArrayBase<S, Ix2>,
     support_mask: &ArrayBase<M, Ix2>,
@@ -55,6 +60,7 @@ where
 ///
 ///   - The N most extreme GC bins on each side.
 ///   - The M shortest-length bins (often very sparse below ~70-100bp).
+#[cfg(any(feature = "cmd_gc_bias"))]
 pub(crate) fn build_extreme_bins_support_mask(
     shape: (usize, usize),
     extreme_gc_bins_per_side: usize,
@@ -91,6 +97,7 @@ pub(crate) fn build_extreme_bins_support_mask(
     mask
 }
 
+#[cfg(any(feature = "cmd_gc_bias"))]
 pub(crate) fn set_masked_entries_to_value(
     matrix: &mut Array2<f64>,
     mask: &Array2<bool>,

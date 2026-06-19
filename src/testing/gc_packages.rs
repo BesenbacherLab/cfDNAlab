@@ -4,7 +4,7 @@
 //! downstream command behavior with a real package file. The hand-authored
 //! package writers are small and deterministic. The command-produced helpers
 //! run `ref-gc-bias` and `gc-bias` with quiet options and require both
-//! `cmd_gc_bias` and `cmd_ref_gc_bias`.
+//! `cmd_gc_bias`.
 //!
 //! This module deliberately exposes GC correction package helpers, not private
 //! reference-GC loaders. If a test needs to inspect a reference-GC package, add
@@ -14,12 +14,12 @@
 use anyhow::{Result, ensure};
 #[cfg(feature = "cmd_gc_bias")]
 use std::path::Path;
-#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+#[cfg(feature = "cmd_gc_bias")]
 use std::path::PathBuf;
-#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+#[cfg(feature = "cmd_gc_bias")]
 use tempfile::TempDir;
 
-#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+#[cfg(feature = "cmd_gc_bias")]
 use crate::{
     RunOptions,
     commands::{
@@ -172,7 +172,7 @@ pub fn write_two_bin_gc_correction_package(
 
 /// Build a command-produced GC correction package for one fragment length.
 ///
-/// Requires the `testing`, `cmd_gc_bias`, and `cmd_ref_gc_bias` cargo features.
+/// Requires the `testing` and `cmd_gc_bias` cargo features.
 ///
 /// This runs the real `ref-gc-bias` then `gc-bias` producer chain. The helper
 /// is intended for tests that need a valid package artifact produced through
@@ -188,7 +188,7 @@ pub fn write_two_bin_gc_correction_package(
 ///
 /// This helper does not promise unit weights. The resulting correction matrix
 /// depends on the supplied BAM, reference, and producer settings.
-#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+#[cfg(feature = "cmd_gc_bias")]
 pub fn build_command_produced_gc_correction_package_for_length(
     bam_path: &Path,
     reference_path: &Path,
@@ -206,7 +206,7 @@ pub fn build_command_produced_gc_correction_package_for_length(
 
 /// Build a command-produced GC correction package for a fragment length range.
 ///
-/// Requires the `testing`, `cmd_gc_bias`, and `cmd_ref_gc_bias` cargo features.
+/// Requires the `testing` and `cmd_gc_bias` cargo features.
 ///
 /// This is the range version of
 /// `build_command_produced_gc_correction_package_for_length`. It is useful when
@@ -229,7 +229,7 @@ pub fn build_command_produced_gc_correction_package_for_length(
 ///
 /// This helper does not promise unit weights. The resulting correction matrix
 /// depends on the supplied BAM, reference, and producer settings.
-#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+#[cfg(feature = "cmd_gc_bias")]
 pub fn build_command_produced_gc_correction_package_for_range(
     bam_path: &Path,
     reference_path: &Path,
@@ -308,7 +308,7 @@ pub fn build_command_produced_gc_correction_package_for_range(
 
 /// Build a command-produced GC correction package from caller-supplied reference windows.
 ///
-/// Requires the `testing`, `cmd_gc_bias`, and `cmd_ref_gc_bias` cargo features.
+/// Requires the `testing` and `cmd_gc_bias` cargo features.
 ///
 /// Use this when the reference-side counts and resulting weights must be
 /// derivable from explicit windows at the test site.
@@ -325,7 +325,7 @@ pub fn build_command_produced_gc_correction_package_for_range(
 /// The package is written below `out_dir` in a deterministic subdirectory named
 /// from `fragment_length`. The returned path points to the generated
 /// `gc_bias_correction.zarr` store.
-#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+#[cfg(feature = "cmd_gc_bias")]
 pub fn build_command_produced_gc_correction_package_from_reference_windows(
     bam_path: &Path,
     reference_path: &Path,
@@ -347,7 +347,7 @@ pub fn build_command_produced_gc_correction_package_from_reference_windows(
 
 /// Build a command-produced GC correction package from reference windows and a length range.
 ///
-/// Requires the `testing`, `cmd_gc_bias`, and `cmd_ref_gc_bias` cargo features.
+/// Requires the `testing` and `cmd_gc_bias` cargo features.
 ///
 /// This is the range version of
 /// `build_command_produced_gc_correction_package_from_reference_windows`. It
@@ -363,7 +363,7 @@ pub fn build_command_produced_gc_correction_package_from_reference_windows(
 /// The package is written below `out_dir` in a deterministic subdirectory named
 /// from the requested length range. The returned path points to the generated
 /// `gc_bias_correction.zarr` store.
-#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+#[cfg(feature = "cmd_gc_bias")]
 pub fn build_command_produced_gc_correction_package_from_reference_windows_for_range(
     bam_path: &Path,
     reference_path: &Path,
@@ -432,7 +432,7 @@ pub fn build_command_produced_gc_correction_package_from_reference_windows_for_r
     Ok(gc_out_dir.join("gc_bias_correction.zarr"))
 }
 
-#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+#[cfg(feature = "cmd_gc_bias")]
 fn base_chromosomes(chromosome_names: &[&str]) -> ChromosomeArgs {
     ChromosomeArgs {
         chromosomes: Some(
@@ -445,7 +445,7 @@ fn base_chromosomes(chromosome_names: &[&str]) -> ChromosomeArgs {
     }
 }
 
-#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+#[cfg(feature = "cmd_gc_bias")]
 fn configure_gc_bias_common(gc_cfg: &mut GCConfig) {
     gc_cfg.set_min_mapq(0);
     gc_cfg.set_tile_size(1_000_000);

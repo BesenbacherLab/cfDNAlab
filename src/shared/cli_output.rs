@@ -7,6 +7,13 @@ use crate::cli_app::{CLI_SEPARATOR_WIDTH, plain_terminal_signature, terminal_sig
 const CLI_SEPARATOR_WIDTH: usize = 48;
 
 /// Print the top-level command banner to the configured primary sink.
+#[cfg_attr(
+    not(feature = "cli"),
+    allow(
+        dead_code,
+        reason = "non-CLI library builds keep banner formatting available without compiling the CLI command tree"
+    )
+)]
 pub(crate) fn print_command_banner(command_name: &str) {
     let signature = command_banner_signature();
     logging::write_primary(&signature);
@@ -15,6 +22,13 @@ pub(crate) fn print_command_banner(command_name: &str) {
 }
 
 /// Print the closing command separator to the configured primary sink.
+#[cfg_attr(
+    not(feature = "cli"),
+    allow(
+        dead_code,
+        reason = "non-CLI library builds keep banner formatting available without compiling the CLI command tree"
+    )
+)]
 pub(crate) fn print_command_footer() {
     logging::write_primary_line(&"─".repeat(CLI_SEPARATOR_WIDTH));
 }

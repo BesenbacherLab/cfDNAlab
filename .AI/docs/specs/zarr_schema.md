@@ -9,7 +9,7 @@ attributes and array attributes define the biological schema.
 - Store paths must end in `.zarr` and contain a root `zarr.json`.
 - Root attributes must include `cfdnalab_schema` and
   `cfdnalab_schema_version`.
-- Current schema versions are `1` for `midpoint_profiles` and
+- Current schema versions are `1` for `midpoint_profiles`, `2` for
   `end_motif_counts`, and `3` for `reference_gc_package` and
   `gc_correction_package`.
 - `int32` arrays are used for coordinate axes, small label indices, and small
@@ -61,9 +61,10 @@ Zarr V3 array metadata.
 Root attributes:
 
 - `cfdnalab_schema = "end_motif_counts"`
-- `cfdnalab_schema_version = 1`
+- `cfdnalab_schema_version = 2`
 - `storage_mode = "dense"` or `"sparse_coo"`
 - `row_mode = "global"`, `"size"`, `"bed"`, or `"grouped_bed"`
+- `motif_axis_kind = "motif"` or `"motif_group"`
 - `count_units = "weighted_end_motif_count"`
 - `primary_array = "counts"` and `primary_group = null` for dense output.
 - `primary_array = null`, `primary_group = "sparse"`,

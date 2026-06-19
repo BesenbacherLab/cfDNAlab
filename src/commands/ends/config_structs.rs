@@ -1,4 +1,3 @@
-use crate::shared::constants::{DEFAULT_MAX_SOFT_CLIPS, MAX_MAX_SOFT_CLIPS};
 use std::str::FromStr;
 
 #[cfg(feature = "cli")]
@@ -278,7 +277,7 @@ impl ClipStrategy {
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct ClippingArgs {
     /// How to extract a motif when its fragment end is clipped `[string]`
     ///
@@ -347,8 +346,9 @@ pub struct ClippingArgs {
         feature = "cli",
         clap(
             long,
-            default_value_t = DEFAULT_MAX_SOFT_CLIPS,
-            value_parser = clap::value_parser!(u16).range(0..=MAX_MAX_SOFT_CLIPS as i64),
+            default_value_t = crate::shared::constants::DEFAULT_MAX_SOFT_CLIPS,
+            value_parser = clap::value_parser!(u16)
+                .range(0..=crate::shared::constants::MAX_MAX_SOFT_CLIPS as i64),
             help_heading = "Clipping"
         )
     )]
@@ -356,7 +356,7 @@ pub struct ClippingArgs {
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct AssignMotifToWindowArgs {
     /// When to assign motifs to windows `[string]`
     ///

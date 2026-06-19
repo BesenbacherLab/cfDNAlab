@@ -10,6 +10,7 @@ use std::fmt;
 ///
 /// # Returns
 /// The rounded value.
+#[cfg(feature = "cmd_fcoverage")]
 pub(crate) fn round_to(x: f64, decimals: i32) -> f64 {
     if decimals <= 0 {
         return x.round();
@@ -29,6 +30,7 @@ pub(crate) fn round_to(x: f64, decimals: i32) -> f64 {
 ///
 /// # Returns
 /// The rounded value.
+#[cfg(feature = "cmd_fcoverage")]
 pub(crate) fn round_to_with_precomputed_factor(x: f64, factor: f64) -> f64 {
     if factor == 1.0 {
         return x.round();

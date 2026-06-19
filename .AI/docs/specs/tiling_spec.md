@@ -59,7 +59,7 @@ For fixed-size windows, fetch narrowing derives the first and last fixed bins to
 
 - Reducers must consume explicit tile paths returned by workers.
 - Reducers must not scan temp directories to discover work.
-- Cross-tile sidecars should list only boundary-crossing rows or windows.
+- Cross-tile metadata files should list only boundary-crossing rows or windows.
 - Missing cross-index entries mean the row had one contribution.
 - Fixed-size aggregate reducers key by full fixed-bin start before final chromosome clipping.
 - BED aggregate reducers key by original BED index.

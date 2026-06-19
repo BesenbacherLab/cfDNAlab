@@ -129,7 +129,7 @@ Do not guess silently when the distinction matters.
 ## Group Metadata
 
 Grouped `fcoverage` aggregate files contain `group_idx`, not `group_name`.
-The Rust command writes a separate `<prefix>.group_index.tsv` sidecar with:
+The Rust command writes a separate `<prefix>.group_index.tsv` group-index file with:
 
 ```text
 group_idx  group_name
@@ -138,9 +138,9 @@ group_idx  group_name
 Package behavior should be explicit:
 
 - If `group_index_path` is supplied, validate and join group names.
-- If it is omitted, try deterministic sidecar discovery only when the main file
+- If it is omitted, try deterministic group-index file discovery only when the main file
   name follows the cfDNAlab pattern.
-- If group names are requested and no sidecar is available, error clearly.
+- If group names are requested and no group-index file is available, error clearly.
 - Keep numeric group-index selection usable without group names.
 
 R must convert public group indices to one-based indices. Store the raw file
@@ -237,12 +237,18 @@ for a friendly loader:
 
 Treat it as a low-level run table unless a future use case justifies a richer
 object. If a richer object is added, require the source BED or a window metadata
-sidecar rather than guessing.
+file rather than guessing.
 
 ## Implementation Order
 
+TODO: before treating R/Python aggregate `fcoverage` loaders as supported, add
+cfDNAlab-generated downstream fixtures for average, total, summary-stats,
+grouped output with `group_index.tsv`, and unique-base grouped output. The
+fixtures should cover both `coverage` and `fragment_mass` headers where the
+loader behavior differs.
+
 1. Add aggregate TSV schema validation in Python and R.
-2. Add grouped sidecar loading and group-name selectors.
+2. Add grouped group-index file loading and group-name selectors.
 3. Add `window_metadata()`, `group_metadata()`, and data-frame helpers.
 4. Add derived `blacklisted_fraction` filtering.
 5. Document BigWig conversion and existing R/Python BigWig reader options.
@@ -255,7 +261,7 @@ sidecar rather than guessing.
 - Should `fcoverage` write a settings JSON so package loaders can distinguish
   grouped plain and grouped unique-base outputs without filename inference?
 - Should grouped aggregate TSVs eventually include `group_name` directly, like
-  grouped length outputs, or is the sidecar acceptable?
+  grouped length outputs, or is the separate group-index file acceptable?
 - Should package loaders accept `chromosome` as a public column name for
   `fcoverage`, or normalize it to `chrom` for consistency with other package
   loaders?

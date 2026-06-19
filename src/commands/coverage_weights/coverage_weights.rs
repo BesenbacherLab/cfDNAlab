@@ -1,11 +1,15 @@
 use crate::{
-    command_run::{CommandRunResult, RunOptions},
+    ToCliCommand,
+    cli_command::helpers::{command_args, push_bool},
+    command_run::{CommandRunResult, RunOptions, status_info},
     commands::{
         cli_common::{ensure_output_dir, resolve_chromosomes_and_contigs, validate_output_prefix},
         counters::FCoverageCounters,
-        coverage_weights::scaling_weights_config::ScalingWeightsArgs,
         coverage_weights::striding::{
             StrideBin, fill_triangular_overlap, normalize_weighted_average_overlap_by_global_mean,
+        },
+        coverage_weights::{
+            config::push_scaling_weights_cli_args, scaling_weights_config::ScalingWeightsArgs,
         },
         fcoverage::{
             config::{FCoverageConfig, LengthNormalizationMode},
@@ -75,13 +79,27 @@ pub type CoverageWeightsRunResult = ScalingWeightsRunResult;
 #[derive(Clone, Copy)]
 pub(crate) enum ScalingWeightsCommand {
     Coverage,
+    #[cfg(feature = "cmd_fragment_count_weights")]
     FragmentCount,
 }
 
 impl ScalingWeightsCommand {
+    fn target(self) -> &'static str {
+        match self {
+            Self::Coverage => "coverage-weights",
+            #[cfg(feature = "cmd_fragment_count_weights")]
+            Self::FragmentCount => "fragment-count-weights",
+        }
+    }
+
+    fn subcommand(self) -> &'static str {
+        self.target()
+    }
+
     fn fcoverage_window_action(self) -> CoverageWindowAction {
         match self {
             Self::Coverage => CoverageWindowAction::Average,
+            #[cfg(feature = "cmd_fragment_count_weights")]
             Self::FragmentCount => CoverageWindowAction::Total,
         }
     }
@@ -89,6 +107,7 @@ impl ScalingWeightsCommand {
     fn fcoverage_value_header(self) -> &'static str {
         match self {
             Self::Coverage => "average_coverage",
+            #[cfg(feature = "cmd_fragment_count_weights")]
             Self::FragmentCount => "total_fragment_mass",
         }
     }
@@ -96,6 +115,7 @@ impl ScalingWeightsCommand {
     fn output_file_name(self) -> &'static str {
         match self {
             Self::Coverage => "coverage.scaling_factors.tsv",
+            #[cfg(feature = "cmd_fragment_count_weights")]
             Self::FragmentCount => "fragment_counts.scaling_factors.tsv",
         }
     }
@@ -103,17 +123,19 @@ impl ScalingWeightsCommand {
     fn output_value_headers(self) -> (&'static str, &'static str) {
         match self {
             Self::Coverage => ("stride_average_coverage", "smoothed_coverage"),
+            #[cfg(feature = "cmd_fragment_count_weights")]
             Self::FragmentCount => ("stride_fragment_mass", "smoothed_fragment_mass"),
         }
     }
 
-    fn normalization_message(self, global_mean: f32, stride: u32) -> String {
+    fn normalization_message(self, global_mean: f32, _stride: u32) -> String {
         match self {
             Self::Coverage => format!(
                 "Normalized smoothed coverage to global mean: {global_mean} (average coverage per eligible base)"
             ),
+            #[cfg(feature = "cmd_fragment_count_weights")]
             Self::FragmentCount => format!(
-                "Normalized smoothed fragment counts to global mean: {global_mean} (unit fragments per {stride} bp stride)"
+                "Normalized smoothed fragment counts to global mean: {global_mean} (unit fragments per {_stride} bp stride)"
             ),
         }
     }
@@ -121,8 +143,36 @@ impl ScalingWeightsCommand {
     fn info(self, message: &str) {
         match self {
             Self::Coverage => info!(target: "coverage-weights", "{message}"),
+            #[cfg(feature = "cmd_fragment_count_weights")]
             Self::FragmentCount => info!(target: "fragment-count-weights", "{message}"),
         }
+    }
+
+    fn status_info(self, options: RunOptions, message: &str) {
+        match self {
+            Self::Coverage => status_info!(options, target: "coverage-weights", "{message}"),
+            #[cfg(feature = "cmd_fragment_count_weights")]
+            Self::FragmentCount => {
+                status_info!(options, target: "fragment-count-weights", "{message}")
+            }
+        }
+    }
+}
+
+struct ScalingWeightsCli<'a> {
+    config: &'a ScalingWeightsArgs,
+    command: ScalingWeightsCommand,
+    ignore_gap: bool,
+}
+
+impl ToCliCommand for ScalingWeightsCli<'_> {
+    fn to_cli_args(&self) -> crate::Result<Vec<std::ffi::OsString>> {
+        let mut args = command_args(self.command.subcommand());
+        push_scaling_weights_cli_args(&mut args, self.config);
+        if matches!(self.command, ScalingWeightsCommand::Coverage) {
+            push_bool(&mut args, "--ignore-gap", self.ignore_gap);
+        }
+        Ok(args)
     }
 }
 
@@ -200,8 +250,6 @@ pub(crate) fn run_with_fcoverage(
     options: RunOptions,
 ) -> Result<ScalingWeightsRunResult> {
     let start_time = Instant::now();
-    let (chromosomes, _contigs) =
-        resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     opt.check_bin_sizes()?;
     opt.fragment_lengths.validate()?;
     opt.gc.validate(opt.ref_2bit.as_deref())?;
@@ -209,6 +257,17 @@ pub(crate) fn run_with_fcoverage(
         bail!("--ignore-gap cannot be used with --reads-are-fragments");
     }
     validate_output_prefix(opt.output_prefix.trim())?;
+
+    if options.log_equivalent_cli {
+        let command_text = crate::ToCliCommand::to_cli_string(&ScalingWeightsCli {
+            config: opt,
+            command,
+            ignore_gap: source_ignore_gap.unwrap_or(false),
+        })?;
+        command.info(&format!("Equivalent CLI: {command_text}"));
+    }
+    let (chromosomes, _contigs) =
+        resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
 
     // Keep all intermediate files under the user-chosen output directory so disk usage stays
     // within the filesystem location the user already selected for results.
@@ -235,21 +294,18 @@ pub(crate) fn run_with_fcoverage(
         source_ignore_gap.unwrap_or(false),
     );
 
-    if options.log_statuses {
-        command.info("Calling internal fcoverage");
-    }
+    command.status_info(options, "Calling internal fcoverage");
     let fcoverage_result = run_fcoverage(
         &fcoverage_cfg,
         RunOptions {
             report_statistics: false,
             show_progress: options.show_progress,
             log_statuses: options.log_statuses,
+            log_equivalent_cli: options.log_equivalent_cli,
         },
     )
     .context("running internal fcoverage")?;
-    if options.log_statuses {
-        command.info("Reading internal fcoverage output");
-    }
+    command.status_info(options, "Reading internal fcoverage output");
 
     let mut bins_by_chr = load_stride_bins_from_fcoverage_tsv(
         &fcoverage_result,
@@ -268,13 +324,15 @@ pub(crate) fn run_with_fcoverage(
     let mean_weighted_average_overlap =
         normalize_weighted_average_overlap_by_global_mean(&mut bins_by_chr, true, true)?;
 
-    if options.log_statuses {
-        command.info(&command.normalization_message(mean_weighted_average_overlap, opt.stride));
-    }
+    command.status_info(
+        options,
+        &command.normalization_message(mean_weighted_average_overlap, opt.stride),
+    );
 
-    if options.log_statuses {
-        command.info("Writing stride-bin coordinates and scaling factors to disk");
-    }
+    command.status_info(
+        options,
+        "Writing stride-bin coordinates and scaling factors to disk",
+    );
     let file_name = dot_join(&[opt.output_prefix.as_str(), command.output_file_name()]);
     let final_output_path = opt.ioc.output_dir.join(&file_name);
     let temp_output_path = final_outputs.temp_path_for(&final_output_path)?;
@@ -324,9 +382,10 @@ pub(crate) fn run_with_fcoverage(
     drop(tsv_writer);
     final_outputs.record(temp_output_path, final_output_path.clone())?;
     final_outputs.move_into_place()?;
-    if options.log_statuses {
-        command.info(&format!("Saved output to: {}", final_output_path.display()));
-    }
+    command.status_info(
+        options,
+        &format!("Saved output to: {}", final_output_path.display()),
+    );
 
     let global_counter = fcoverage_result.counters;
     let elapsed = start_time.elapsed();
@@ -384,7 +443,7 @@ fn build_fcoverage_stride_config(
     );
 
     cfg.set_unpaired(opt.unpaired.clone());
-    cfg.set_normalize_by_length_mode(if normalize_by_length {
+    cfg.set_normalize_by_length(if normalize_by_length {
         LengthNormalizationMode::UnitMass
     } else {
         LengthNormalizationMode::Off

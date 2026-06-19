@@ -1,12 +1,14 @@
 use std::path::PathBuf;
 
 use crate::{
+    ToCliCommand,
+    cli_command::helpers::*,
     commands::{
         cli_common::{
             ChromosomeArgs, FragmentLengthArgs, FragmentPositionSelectionArgs, IOCArgs,
             Ref2BitRequiredArgs, ScaleGenomeArgs, WindowsArgs,
         },
-        fragment_kmers::config::FragmentKmersSharedArgs,
+        fragment_kmers::config::{FragmentKmersSharedArgs, push_fragment_kmers_shared_cli_args},
     },
     shared::{blacklist::BlacklistStrategy, indel_mode::IndelMode},
 };
@@ -40,7 +42,7 @@ use crate::{
 /// The read failed quality check.
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TransitionsConfig {
     /// Args shared with `fragment-kmers`
     #[cfg_attr(feature = "cli", clap(flatten))]
@@ -155,5 +157,16 @@ impl TransitionsConfig {
 
     pub fn set_require_proper_pair(&mut self, require: bool) {
         self.shared_args.set_require_proper_pair(require);
+    }
+}
+
+impl ToCliCommand for TransitionsConfig {
+    fn to_cli_args(&self) -> crate::Result<Vec<std::ffi::OsString>> {
+        let mut args = command_args("transitions");
+        push_fragment_kmers_shared_cli_args(&mut args, &self.shared_args);
+        push_values(&mut args, "--orders", &self.orders);
+        push_bool(&mut args, "--canonical", self.canonical);
+        push_bool(&mut args, "--save-sparse", self.save_sparse);
+        Ok(args)
     }
 }

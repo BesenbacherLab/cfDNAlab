@@ -9,7 +9,7 @@ This file is the authoritative entry point for repo-specific agent instructions.
 - Keep functions small and single-purpose when reasonable.
 - Prefer explicit names over abbreviations. Do not use single-letter variable names.
 - Do not fail silently. If something is wrong, the program should tell the user.
-- Run `cargo check` after code changes and `cargo check --tests` after test code changes. After major refactors, run `cargo check --all-features`. When working on non-default commands (see cargo.toml), include their command features in these calls as well.
+- Run `cargo check` after code changes and `cargo check --tests --features testing` after test code changes. After major refactors, run `cargo check --all-features`. When working on non-default commands (see cargo.toml), include their command features in these calls as well.
 - Do NOT run tests. I run tests in this project. You use mental derivation only.
 - If a file is changed, always read it before answering.
 - If I ask for a new code review, never rely on memory to answer.
@@ -30,6 +30,7 @@ Spellings:
 
  - "fragment length", not "fragment-length" - unless specifically relevant in the situation (e.g., "fragment-length-wise").
  - "data frame", not "data-frame".
+ - Use "a"/"an" instead of "one" unless the count is relevant. It is more natural.
 
 Always read [.AI/collaboration.md](/Users/au547627/Documents/Development/rust/cfDNAlab/.AI/collaboration.md) to avoid annoying sycophanting. I want truth not praise.
 

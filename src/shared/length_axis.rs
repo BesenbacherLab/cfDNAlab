@@ -123,6 +123,7 @@ impl LengthAxis {
     ///
     /// This uses the same lookup table as `bin_index()` and is intended for cheap inclusion checks
     /// before adding count mass.
+    #[cfg(any(feature = "cmd_lengths"))]
     #[inline]
     pub(crate) fn contains(&self, length: u32) -> bool {
         self.bin_index(length as usize).is_some()
@@ -147,7 +148,7 @@ impl LengthAxis {
 
     /// Return a JSON-serializable description of the length-bin output axis.
     ///
-    /// Commands that write dense or table-like length-binned outputs use this shared sidecar
+    /// Commands that write dense or table-like length-binned outputs use this shared length-axis
     /// representation so downstream readers see the same half-open bin contract everywhere.
     pub(crate) fn settings(&self) -> LengthAxisSettings<'_> {
         LengthAxisSettings {

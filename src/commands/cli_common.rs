@@ -1,14 +1,10 @@
 use crate::shared::bam::bam_header_contigs;
-use crate::shared::bam::{Contigs, bam_contigs_info};
-use crate::shared::blacklist::load_blacklists;
+#[cfg(any(feature = "cmd_ends", feature = "cmd_lengths"))]
+use crate::shared::constants::MAX_MAX_SOFT_CLIPS;
 use crate::shared::constants::{MAX_SUPPORTED_FRAGMENT_LENGTH, MIN_ACGT_BASES_FOR_GC_FRACTION};
-use crate::shared::interval::Interval;
 use crate::shared::positioning::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
 use crate::shared::reference::{load_chrom_sizes_with_order, twobit_contig_names};
-use crate::shared::scale_genome::load_scaling_factors_tsv;
-use crate::shared::thread_pool::default_thread_count;
 use anyhow::{Context, Result, bail, ensure};
-use fxhash::FxHashMap;
 use std::{path::Path, path::PathBuf, str::FromStr};
 
 pub use crate::shared::logging::{LogSpec, LoggingArgs};
@@ -97,9 +93,24 @@ pub fn validate_output_prefix(prefix: &str) -> Result<()> {
     Ok(())
 }
 
+/// Validate the configured maximum soft-clipped bases per fragment end.
+///
+/// Clap enforces this for CLI parsing. Programmatic configs can bypass clap, so commands should
+/// call this before using the value for filtering or tile padding.
+#[cfg(any(feature = "cmd_ends", feature = "cmd_lengths"))]
+pub fn validate_max_soft_clips(max_soft_clips: u16) -> Result<()> {
+    ensure!(
+        max_soft_clips <= MAX_MAX_SOFT_CLIPS,
+        "--max-soft-clips ({}) must be <= {}",
+        max_soft_clips,
+        MAX_MAX_SOFT_CLIPS
+    );
+    Ok(())
+}
+
 /// Args for in-/output and core (threads).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct IOCArgs {
     /// Indexed, coordinate-sorted BAM input file `[path / URL]`
     ///
@@ -138,13 +149,18 @@ pub struct IOCArgs {
     /// Defaults to the number of available CPU cores (-1).
     #[cfg_attr(
         feature = "cli",
-        clap(short = 't', long, default_value_t = default_thread_count(), help_heading = "Core")
+        clap(
+            short = 't',
+            long,
+            default_value_t = crate::shared::thread_pool::default_thread_count(),
+            help_heading = "Core"
+        )
     )]
     pub n_threads: usize,
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct UnpairedArgs {
     /// The input has one read per fragment and the **read spans the full aligned fragment** (e.g. Nanopore) `[flag]`
     ///
@@ -157,7 +173,7 @@ pub struct UnpairedArgs {
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Ref2BitRequiredArgs {
     /// 2bit reference genome file [path]
     ///
@@ -176,7 +192,7 @@ pub struct Ref2BitRequiredArgs {
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Ref2BitOptionalForGCArgs {
     /// Optional 2bit reference genome file [path]
     ///
@@ -200,7 +216,7 @@ pub struct Ref2BitOptionalForGCArgs {
 
 /// Args for setting minimum and maximum fragment length.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FragmentLengthArgs {
     /// Minimum fragment length to include `[integer]`
     #[cfg_attr(
@@ -269,7 +285,7 @@ impl FragmentLengthArgs {
 ///
 /// Whether to perform a command globally (1 overall genomic window)
 /// or in windows specified with a BED file or a fixed window size.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum WindowSpec {
     Global,
     Size(u64),
@@ -286,7 +302,7 @@ pub enum WindowSpec {
             .multiple(false)
     )
 )]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct WindowsArgs {
     /// Window definition: a fixed window size `[integer]`
     ///
@@ -332,7 +348,7 @@ impl WindowsArgs {
 ///
 /// Whether to perform a command globally (1 overall genomic window)
 /// or in windows specified with a BED file or a fixed window size.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum DistributionWindowSpec {
     Global,
     Size(u64),
@@ -350,7 +366,7 @@ pub enum DistributionWindowSpec {
             .multiple(false)
     )
 )]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct DistributionWindowsArgs {
     /// Window definition: a fixed window size `[integer]`
     ///
@@ -438,7 +454,7 @@ impl DistributionWindowSpec {
             .multiple(false)
     )
 )]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct GCWindowsArgs {
     /// Window definition: a fixed window size `[integer]`
     ///
@@ -542,7 +558,7 @@ impl FromStr for WindowAssigner {
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct AssignToWindowArgs {
     /// The **fragment positions** that should overlap a window for it to be counted in that window,
     /// OR the option to count the fraction of overlapping bases `[string]`
@@ -587,7 +603,7 @@ pub struct AssignToWindowArgs {
         group = clap::ArgGroup::new("chrom_select")
             .args(&["chromosomes", "chromosomes_file"])
             .multiple(false)))]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ChromosomeArgs {
     /// Names of chromosomes to process (comma-separated or repeated). E.g. `'chr1,chr2,chr3'`.
     ///
@@ -618,7 +634,7 @@ pub struct ChromosomeArgs {
 }
 
 /// Source used to expand `--chromosomes all`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContigSourceKind {
     Bam,
     Ref2Bit,
@@ -626,7 +642,7 @@ pub enum ContigSourceKind {
 }
 
 /// Path and format for the contig source used by chromosome resolution.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ContigSource {
     pub path: PathBuf,
     pub kind: ContigSourceKind,
@@ -698,7 +714,7 @@ impl ChromosomeArgs {
 /* Genomic scaling (applying normalize_genome) */
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ScaleGenomeArgs {
     /// Optional path to non-negative scaling factors for normalizing/smoothing the genome `[path]`
     ///
@@ -741,7 +757,7 @@ pub struct ScaleGenomeArgs {
         group = clap::ArgGroup::new("gc_correction")
             .args(&["gc_file", "gc_tag"])
             .multiple(false)))]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ApplyGCArgs {
     /// Optional path to GC correction file *made from the same BAM file* with `cfdna gc-bias` `[path]`
     ///
@@ -809,7 +825,7 @@ impl ApplyGCArgs {
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ApplyGCArgFileOnly {
     /// Optional path to GC correction file *made from the same BAM file* with `cfdna gc-bias` `[path]`
     ///
@@ -848,7 +864,7 @@ fn validate_gc_file_reference(gc_file: Option<&Path>, ref_2bit: Option<&Path>) -
 
 // TODO: Is "nearest" clear enough in all usecases?
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct FragmentPositionSelectionArgs {
     /// Choose the reference frame that interprets every other region selection argument `[left|right|per-end|nearest|mid]`.
     ///
@@ -944,6 +960,7 @@ pub struct FragmentPositionSelectionArgs {
     pub step: Vec<usize>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct UnparsedPositionalSelectionSpec {
     pub frame: ReferenceFrame,
     pub positions: String,
@@ -1023,7 +1040,7 @@ impl FragmentPositionSelectionArgs {
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct BaseSelectionArgs {
     /// Choose which coordinate source defines the counted positions `[reference|prefer-reads|reads|nearest-read]`
     ///
@@ -1068,6 +1085,10 @@ pub struct BaseSelectionArgs {
 
 // Common loaders
 
+#[allow(
+    dead_code,
+    reason = "single-command feature builds compile shared command helpers unevenly"
+)]
 /// Resolve chromosomes and BAM contig metadata once for a command.
 ///
 /// Implementation details:
@@ -1088,14 +1109,19 @@ pub struct BaseSelectionArgs {
 pub fn resolve_chromosomes_and_contigs(
     chrom_args: &ChromosomeArgs,
     bam_path: &Path,
-) -> Result<(Vec<String>, Contigs)> {
+) -> Result<(Vec<String>, crate::shared::bam::Contigs)> {
     let chromosomes = chrom_args
         .resolve_chromosomes(Some(ContigSource::bam(bam_path)))
         .context("resolve chromosomes")?;
-    let contigs = bam_contigs_info(bam_path, &chromosomes).context("fetch contig metadata")?;
+    let contigs = crate::shared::bam::bam_contigs_info(bam_path, &chromosomes)
+        .context("fetch contig metadata")?;
     Ok((chromosomes, contigs))
 }
 
+#[allow(
+    dead_code,
+    reason = "single-command feature builds compile shared command helpers unevenly"
+)]
 /// Create the output directory if it does not exist.
 ///
 /// Implementation details:
@@ -1116,6 +1142,10 @@ pub fn ensure_output_dir(path: &Path) -> Result<()> {
         .with_context(|| format!("cannot create output directory: {}", path.display()))
 }
 
+#[allow(
+    dead_code,
+    reason = "single-command feature builds compile shared command helpers unevenly"
+)]
 /// Load blacklist intervals when the user supplied one or more BED files.
 ///
 /// Implementation details:
@@ -1135,18 +1165,27 @@ pub fn ensure_output_dir(path: &Path) -> Result<()> {
 /// Errors:
 /// - Propagates parsing errors if any BED file is malformed or unavailable.
 pub fn load_blacklist_map(
-    beds: Option<&Vec<std::path::PathBuf>>,
+    beds: Option<&Vec<PathBuf>>,
     min_size: u64,
     halo_bp: u64,
     chromosomes: &Vec<String>,
-) -> Result<FxHashMap<String, Vec<Interval<u64>>>> {
+) -> Result<fxhash::FxHashMap<String, Vec<crate::shared::interval::Interval<u64>>>> {
     if let Some(paths) = beds {
-        load_blacklists(paths, min_size, halo_bp, Some(chromosomes.as_slice()))
+        crate::shared::blacklist::load_blacklists(
+            paths,
+            min_size,
+            halo_bp,
+            Some(chromosomes.as_slice()),
+        )
     } else {
-        Ok(FxHashMap::default())
+        Ok(fxhash::FxHashMap::default())
     }
 }
 
+#[allow(
+    dead_code,
+    reason = "single-command feature builds compile shared command helpers unevenly"
+)]
 /// Load per-chromosome scaling factors (if provided).
 ///
 /// Implementation details:
@@ -1175,13 +1214,14 @@ pub fn load_blacklist_map(
 pub fn load_scaling_map(
     scale_args: &ScaleGenomeArgs,
     chromosomes: &[String],
-    contigs: &Contigs,
+    contigs: &crate::shared::bam::Contigs,
     current_gc_mode: crate::shared::scale_genome::ScalingGCMode,
     current_ignore_gap: Option<bool>,
-) -> Result<FxHashMap<String, Vec<crate::shared::scale_genome::ScalingBin>>> {
+) -> Result<fxhash::FxHashMap<String, Vec<crate::shared::scale_genome::ScalingBin>>> {
     if let Some(path) = &scale_args.scaling_factors {
         let loaded =
-            load_scaling_factors_tsv(path, chromosomes, contigs).context("load scaling factors")?;
+            crate::shared::scale_genome::load_scaling_factors_tsv(path, chromosomes, contigs)
+                .context("load scaling factors")?;
         crate::shared::scale_genome::ensure_scaling_gc_compatibility(
             path,
             loaded.metadata,
@@ -1194,7 +1234,7 @@ pub fn load_scaling_map(
         );
         Ok(loaded.bins_by_chromosome)
     } else {
-        Ok(FxHashMap::with_hasher(Default::default()))
+        Ok(fxhash::FxHashMap::with_hasher(Default::default()))
     }
 }
 

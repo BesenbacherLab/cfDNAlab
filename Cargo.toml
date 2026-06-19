@@ -8,6 +8,7 @@ description = "Ultra-fast command-line tools for cell-free DNA fragmentomics ana
 license = "MIT"
 readme = "README.md"
 include = [
+    "/build.rs",
     "/Cargo.toml",
     "/Cargo.lock",
     "/CHANGELOG.md",
@@ -38,7 +39,6 @@ default = [
     "cmd_gc_bias",
     "cmd_lengths",
     "cmd_midpoints",
-    "cmd_ref_gc_bias",
 ]
 cli = ["clap"]
 docs_gen = []
@@ -53,11 +53,10 @@ cmd_fcoverage = ["cmd_gc_bias"]
 cmd_fragment_count_weights = ["cmd_coverage_weights"]
 cmd_fragment_kmers = ["cmd_gc_bias"]
 cmd_fragment_kmers_tests = ["cmd_fragment_kmers"]
-cmd_gc_bias = ["cmd_ref_gc_bias"]
+cmd_gc_bias = []
 cmd_lengths = ["cmd_gc_bias"]
 cmd_prepare_windows = []
 cmd_midpoints = ["cmd_gc_bias"]
-cmd_ref_gc_bias = []
 cmd_transitions = ["cmd_fragment_kmers"]
 cmd_visualize_positions = ["cmd_fragment_kmers"]
 cmd_visualize_positions_tests = ["cmd_visualize_positions"]

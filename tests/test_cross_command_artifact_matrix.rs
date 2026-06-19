@@ -4,8 +4,7 @@
     feature = "cmd_fcoverage",
     feature = "cmd_gc_bias",
     feature = "cmd_lengths",
-    feature = "cmd_midpoints",
-    feature = "cmd_ref_gc_bias"
+    feature = "cmd_midpoints"
 ))]
 
 mod fixtures;

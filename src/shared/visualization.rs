@@ -34,6 +34,7 @@ impl AxisBounds {
 #[derive(Debug, Clone)]
 pub(crate) struct Track {
     pub(crate) name: String,
+    #[cfg_attr(not(feature = "cmd_visualize_positions"), allow(dead_code))]
     pub(crate) axis: AxisBounds,
     pub(crate) selected_indices: Vec<i32>,
 }
@@ -50,6 +51,7 @@ impl Track {
     /// -------
     /// - `bool`:
     ///   `true` when no indices are selected on the track
+    #[cfg(any(feature = "cmd_visualize_positions"))]
     pub(crate) fn is_empty(&self) -> bool {
         self.selected_indices.is_empty()
     }

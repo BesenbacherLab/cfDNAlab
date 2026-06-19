@@ -147,7 +147,7 @@ pub(crate) struct BlacklistCursor {
     pub(crate) post_cursor: usize, // Post-merge filtering
 }
 
-/// Result from `prepare-windows`.
+/// Result from `prep-windows`.
 ///
 /// The command writes a transformed BED-like file or stdout output. The result records the output
 /// path when one exists and the list of final files produced by the run.
@@ -177,7 +177,7 @@ impl CommandRunResult for PrepareWindowsRunResult {
     }
 }
 
-/// Run the `prepare-windows` command.
+/// Run the `prep-windows` command.
 ///
 /// This command streams BED-like windows, applies configured filters and transforms, and writes the
 /// resulting window table. It can resize, flank, merge, deduplicate, annotate nearest intervals,
@@ -189,7 +189,7 @@ impl CommandRunResult for PrepareWindowsRunResult {
 /// Parameters
 /// ----------
 /// - `cfg`:
-///     Fully resolved configuration for the `prepare-windows` command.
+///     Fully resolved configuration for the `prep-windows` command.
 /// - `options`:
 ///     Reporting controls for elapsed time, progress bars, and status logs.
 ///
@@ -255,6 +255,11 @@ pub fn run_prepare_windows(
     } else {
         Some(chromosomes.as_slice())
     };
+
+    if options.log_equivalent_cli {
+        let command = crate::ToCliCommand::to_cli_string(cfg)?;
+        tracing::info!(target: "prep-windows", "Equivalent CLI: {command}");
+    }
 
     // Compile distance bins (if any)
     let distance_bins = if let Some(specs) = &cfg.distance_bins {

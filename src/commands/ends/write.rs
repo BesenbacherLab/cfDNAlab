@@ -15,7 +15,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Write the small settings sidecar needed to interpret end-motif outputs.
+/// Write the small settings JSON needed to interpret end-motif outputs.
 ///
 /// This records the motif-definition and target-axis settings needed to
 /// interpret the count columns. The Zarr store remains the source of truth for
@@ -24,7 +24,7 @@ use std::{
 /// Parameters
 /// ----------
 /// - `output_dir`:
-///   Directory where the sidecar should be written
+///   Directory where the settings JSON should be written
 /// - `prefix`:
 ///   Optional output-file prefix
 /// - `opt`:
@@ -35,7 +35,7 @@ use std::{
 /// Returns
 /// -------
 /// - `Result<PathBuf>`:
-///   Path to the written settings sidecar
+///   Path to the written settings JSON
 pub(crate) fn write_end_settings_json(
     output_dir: &Path,
     prefix: &str,
@@ -152,7 +152,7 @@ fn base_quality_filter_settings_entry(filters: &[BaseQualityFilter]) -> Option<S
     Some(format!("  \"bq_filters\": [{joined}]"))
 }
 
-/// Convert the inside-source enum to its JSON-sidecar string form.
+/// Convert the inside-source enum to its settings JSON string form.
 ///
 /// Parameters
 /// ----------
@@ -162,7 +162,7 @@ fn base_quality_filter_settings_entry(filters: &[BaseQualityFilter]) -> Option<S
 /// Returns
 /// -------
 /// - `&'static str`:
-///   Stable sidecar string for that setting
+///   Stable settings string for that setting
 fn kmer_source_name(source: KmerSource) -> &'static str {
     match source {
         KmerSource::Read => "read",
@@ -170,7 +170,7 @@ fn kmer_source_name(source: KmerSource) -> &'static str {
     }
 }
 
-/// Convert the clip-strategy enum to its JSON-sidecar string form.
+/// Convert the clip-strategy enum to its settings JSON string form.
 ///
 /// Parameters
 /// ----------
@@ -180,7 +180,7 @@ fn kmer_source_name(source: KmerSource) -> &'static str {
 /// Returns
 /// -------
 /// - `&'static str`:
-///   Stable sidecar string for that setting
+///   Stable settings string for that setting
 pub(crate) fn clip_strategy_name(strategy: ClipStrategy) -> &'static str {
     match strategy {
         ClipStrategy::Aligned => "aligned",
@@ -190,7 +190,7 @@ pub(crate) fn clip_strategy_name(strategy: ClipStrategy) -> &'static str {
     }
 }
 
-/// Convert the window-assignment mode to its JSON-sidecar string form.
+/// Convert the window-assignment mode to its settings JSON string form.
 ///
 /// Parameters
 /// ----------
@@ -200,7 +200,7 @@ pub(crate) fn clip_strategy_name(strategy: ClipStrategy) -> &'static str {
 /// Returns
 /// -------
 /// - `String`:
-///   Stable sidecar string for that setting
+///   Stable settings string for that setting
 fn window_assigner_name(assigner: WindowMotifAssigner) -> String {
     match assigner {
         WindowMotifAssigner::Endpoint => "endpoint".to_string(),
@@ -214,7 +214,7 @@ fn window_assigner_name(assigner: WindowMotifAssigner) -> String {
     }
 }
 
-/// Convert the indel-filter policy to its JSON-sidecar string form.
+/// Convert the indel-filter policy to its settings JSON string form.
 ///
 /// Parameters
 /// ----------
@@ -224,7 +224,7 @@ fn window_assigner_name(assigner: WindowMotifAssigner) -> String {
 /// Returns
 /// -------
 /// - `&'static str`:
-///   Stable sidecar string for that setting
+///   Stable settings string for that setting
 fn indel_filter_name(policy: IndelMotifFilterPolicy) -> &'static str {
     match policy {
         IndelMotifFilterPolicy::Auto => "auto",
@@ -249,7 +249,7 @@ fn indel_filter_name(policy: IndelMotifFilterPolicy) -> &'static str {
 /// Returns
 /// -------
 /// - `&'static str`:
-///   Effective sidecar string for that run
+///   Effective settings string for that run
 fn effective_indel_filter_name(
     policy: IndelMotifFilterPolicy,
     source_inside: KmerSource,
@@ -267,7 +267,7 @@ fn effective_indel_filter_name(
 /// Format a proportion threshold in a stable user-readable form.
 ///
 /// This avoids scientific notation and trims noisy trailing zeros so the
-/// settings sidecar stays easy to read and stable across runs.
+/// settings JSON stays easy to read and stable across runs.
 ///
 /// Parameters
 /// ----------
@@ -277,7 +277,7 @@ fn effective_indel_filter_name(
 /// Returns
 /// -------
 /// - `String`:
-///   Stable decimal representation for JSON-sidecar output
+///   Stable decimal representation for settings JSON output
 fn format_proportion_threshold(value: f64) -> String {
     let mut formatted = format!("{value:.15}");
     while formatted.contains('.') && formatted.ends_with('0') {

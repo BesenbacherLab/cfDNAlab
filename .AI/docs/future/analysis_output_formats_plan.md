@@ -2,7 +2,7 @@
 
 This note tracks the public output-format cleanup across analysis commands. The
 goal is to make outputs self-contained, directly loadable from R and Python, and
-harder to misinterpret than raw arrays plus loosely related sidecars.
+harder to misinterpret than raw arrays plus loosely related files.
 
 ## Current Direction
 
@@ -128,7 +128,7 @@ and by axis 0 of `counts`. The writer must reject non-contiguous group indices
 because otherwise metadata rows could describe the wrong count rows.
 
 The Zarr package should be self-contained for downstream analysis. The
-plain-text `group_index.tsv` can remain as an auxiliary human-readable summary,
+plain-text `group_index.tsv` can remain as a human-readable group summary,
 but users should not need it for normal plotting once the Zarr reader examples
 are settled.
 
@@ -336,7 +336,7 @@ The target public package should be:
 <prefix>.end_settings.json
 ```
 
-The settings sidecar is `<prefix>.end_settings.json` for consistency with the
+The settings JSON is `<prefix>.end_settings.json` for consistency with the
 other command settings files. The settings JSON remains human-readable command
 provenance. The Zarr store carries the machine-readable arrays needed for
 downstream analysis.
@@ -689,7 +689,7 @@ Python helper cleanup before release:
 - Whether zstd remains acceptable across the target R readers.
 - Whether `counts` should stay `float32` on disk or move to `float64`.
 - Whether JSON-attribute label arrays are acceptable for long-term R/Python
-  downstream use, or whether a future schema needs separate label sidecars.
+  downstream use, or whether a future schema needs separate label files.
 - Whether the package should include a small `README.txt` with the schema version
   and loading pointers.
 - Whether any optional export should produce a long TSV for small selected
@@ -809,4 +809,4 @@ The ends transition is successful when:
 - Chromosome, sparse-dimension, row-label, and group labels are readable from
   JSON attributes without Zarr string-array support.
 - Users can build window-indexed, group-indexed, and motif-indexed data frames
-  from the Python helper without manually joining sidecar files.
+  from the Python helper without manually joining separate files.

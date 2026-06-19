@@ -2,7 +2,7 @@
 //!
 //! The intended logic is specified in the `peak_calling_logic.md` document.
 
-use crate::command_run::{CommandRunResult, RunOptions};
+use crate::command_run::{CommandRunResult, RunOptions, status_info};
 use crate::commands::cli_common::{
     WindowSpec, ensure_output_dir, load_blacklist_map, load_scaling_map,
     resolve_chromosomes_and_contigs, validate_output_prefix,
@@ -82,15 +82,15 @@ impl CommandRunResult for WPSPeaksRunResult {
 /// scaling lookups, computes WPS values per tile, smooths and normalizes them in memory, then
 /// writes called peaks.
 ///
-/// Reporting is controlled by `options`. `report_statistics` prints the final summary and
-/// `show_progress` controls progress bars. This command does not use status logs.
+/// Reporting is controlled by `options`. `report_statistics` prints the final summary,
+/// `show_progress` controls progress bars, and `log_statuses` controls status messages.
 ///
 /// Parameters
 /// ----------
 /// - `opt`:
 ///     Fully resolved configuration for the `wps-peaks` command.
 /// - `options`:
-///     Reporting controls for statistics and progress bars.
+///     Reporting controls for statistics, progress bars, and status logs.
 ///
 /// Returns
 /// -------
@@ -99,17 +99,13 @@ impl CommandRunResult for WPSPeaksRunResult {
 ///
 /// Errors
 /// ------
-/// Returns an error if the BAM cannot be read, auxiliary files are invalid, WPS calculation fails,
-/// or peak outputs cannot be written.
+/// Returns an error if the BAM, BED, blacklist, GC-correction, scaling, or WPS input files cannot
+/// be read, if WPS calculation fails, or if peak outputs cannot be written.
 pub fn run_wps_peaks(opt: &WPSPeaksConfig, options: RunOptions) -> Result<WPSPeaksRunResult> {
     let start_time = Instant::now();
     if opt.shared_args.unpaired.reads_are_fragments && opt.shared_args.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
-    let (chromosomes, contigs) = resolve_chromosomes_and_contigs(
-        &opt.shared_args.chromosomes,
-        &opt.shared_args.ioc.bam.as_path(),
-    )?;
     let prefix = opt.shared_args.output_prefix.trim();
     validate_output_prefix(prefix)?;
     let window_opt = opt.shared_args.windows.resolve_windows();
@@ -138,11 +134,20 @@ pub fn run_wps_peaks(opt: &WPSPeaksConfig, options: RunOptions) -> Result<WPSPea
         .gc
         .validate(opt.shared_args.ref_2bit.as_deref())?;
 
+    if options.log_equivalent_cli {
+        let command = crate::ToCliCommand::to_cli_string(opt)?;
+        info!(target: COMMAND_TARGET, "Equivalent CLI: {command}");
+    }
+    let (chromosomes, contigs) = resolve_chromosomes_and_contigs(
+        &opt.shared_args.chromosomes,
+        &opt.shared_args.ioc.bam.as_path(),
+    )?;
+
     // Create output directory if needed
     ensure_output_dir(&opt.shared_args.ioc.output_dir)?;
 
     if opt.shared_args.blacklist.is_some() {
-        info!(target: COMMAND_TARGET, "Loading blacklists");
+        status_info!(options, target: COMMAND_TARGET, "Loading blacklists");
     }
     // Dilate blacklists so fragments that could reach them do not affect the WPS baseline
     let blacklist_halo =
@@ -163,7 +168,7 @@ pub fn run_wps_peaks(opt: &WPSPeaksConfig, options: RunOptions) -> Result<WPSPea
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
-            info!(target: COMMAND_TARGET, "Loading window coordinates");
+            status_info!(options, target: COMMAND_TARGET, "Loading window coordinates");
             let wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
             ensure_plain_bed_windows_not_empty(&wds)?;
             if matches!(
@@ -171,7 +176,8 @@ pub fn run_wps_peaks(opt: &WPSPeaksConfig, options: RunOptions) -> Result<WPSPea
                 Some(PeaksWindowAction::OnlyIncludeThesePositionsUnique)
             ) {
                 // Merge in-place to avoid double memory-usage
-                info!(
+                status_info!(
+                    options,
                     target: COMMAND_TARGET,
                     "Merging overlapping/touching windows"
                 );
@@ -203,7 +209,7 @@ pub fn run_wps_peaks(opt: &WPSPeaksConfig, options: RunOptions) -> Result<WPSPea
 
     // Load genomic scaling factors
     if opt.shared_args.scale_genome.scaling_factors.is_some() {
-        info!(target: COMMAND_TARGET, "Loading scaling factors");
+        status_info!(options, target: COMMAND_TARGET, "Loading scaling factors");
     }
     let scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
         &opt.shared_args.scale_genome,
@@ -218,7 +224,7 @@ pub fn run_wps_peaks(opt: &WPSPeaksConfig, options: RunOptions) -> Result<WPSPea
 
     // Load GC correction package if specified
     if opt.shared_args.gc.gc_file.is_some() {
-        info!(target: COMMAND_TARGET, "Loading GC correction matrix");
+        status_info!(options, target: COMMAND_TARGET, "Loading GC correction matrix");
     }
     let gc_corrector = load_gc_corrector(
         opt.shared_args.gc.gc_file.as_ref(),
@@ -263,7 +269,7 @@ pub fn run_wps_peaks(opt: &WPSPeaksConfig, options: RunOptions) -> Result<WPSPea
     let total_tiles = tiles.len();
     let progress = ProgressFactory::with_enabled(options.show_progress);
     let pb = Arc::new(progress.default_bar(total_tiles as u64));
-    info!(target: COMMAND_TARGET, "Calling peaks per tile");
+    status_info!(options, target: COMMAND_TARGET, "Calling peaks per tile");
 
     // Configure global thread‐pool size
     init_global_pool(opt.shared_args.ioc.n_threads as usize)?;
@@ -465,13 +471,19 @@ pub fn run_wps_peaks(opt: &WPSPeaksConfig, options: RunOptions) -> Result<WPSPea
 
     final_outputs.move_into_place()?;
     if wrote_stats {
-        info!(
+        status_info!(
+            options,
             target: COMMAND_TARGET,
             "Saved window stats to: {}",
             final_output_path.display()
         );
     } else {
-        info!(target: COMMAND_TARGET, "Saved peaks to: {}", final_output_path.display());
+        status_info!(
+            options,
+            target: COMMAND_TARGET,
+            "Saved peaks to: {}",
+            final_output_path.display()
+        );
     }
 
     let elapsed = start_time.elapsed();

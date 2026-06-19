@@ -1125,7 +1125,7 @@ Package fit:
 
 Summary:
 
-- use mappability, repeat burden, or related context as an auxiliary prior or
+- use mappability, repeat burden, or related context as an annotation prior or
   annotation
 - do not let it define the main command contract
 
@@ -1176,7 +1176,7 @@ Main weaknesses:
 
 Package fit:
 
-- moderate as an optional sidecar or future mode
+- moderate as an optional separate output or future mode
 - not the main v1 output
 
 #### 6. Feature-aware fragmentomic scoring
@@ -1219,7 +1219,7 @@ Why it ranks low:
 
 Still useful for:
 
-- sidecar outputs
+- separate interval outputs
 - future recurrent-resource workflows
 
 #### 8. Panel-of-normals or negative-control normalization as a dependency
@@ -1760,7 +1760,7 @@ The output should be a full-coverage TSV with at least:
 - `outlier_class`
 - `scaling_factor`
 
-Possible future sidecars:
+Possible future output files:
 
 - sparse interval BED for hard-thresholded greylist-like regions
 - summary table of the most extreme loci before and after capping
@@ -1958,7 +1958,7 @@ than trying to force one command to be both.
 - Should positional and fragment-averaged downstream use cases get different
   defaults even if they share one command?
 - Should v1 expose only a continuous scaling output, or also support a
-  greylist-like interval sidecar?
+  greylist-like interval file?
 - Is coverage-only scoring the right scope for v1, or should feature-aware
   scoring already be reserved in the design?
 - How much of the output should be hard masked versus softly capped?

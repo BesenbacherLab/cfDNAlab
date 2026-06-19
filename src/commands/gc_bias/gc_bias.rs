@@ -1,5 +1,5 @@
 use crate::{
-    command_run::{CommandRunResult, RunOptions},
+    command_run::{CommandRunResult, RunOptions, status_info},
     commands::{
         cli_common::*,
         counters::GCCounters,
@@ -288,15 +288,15 @@ impl ReduceState {
 /// writes a correction package for later commands. It applies configured fragment filters,
 /// windowing, support masks, outlier handling, smoothing, and interpolation.
 ///
-/// Reporting is controlled by `options`. `report_statistics` prints the final summary and
-/// `show_progress` controls progress bars. This command does not use status logs.
+/// Reporting is controlled by `options`. `report_statistics` prints the final summary,
+/// `show_progress` controls progress bars, and `log_statuses` controls status messages.
 ///
 /// Parameters
 /// ----------
 /// - `opt`:
 ///     Fully resolved configuration for the `gc-bias` command.
 /// - `options`:
-///     Reporting controls for statistics and progress bars.
+///     Reporting controls for statistics, progress bars, and status logs.
 ///
 /// Returns
 /// -------
@@ -312,13 +312,17 @@ pub fn run_gc_bias(opt: &GCConfig, options: RunOptions) -> Result<GCBiasRunResul
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
-    let (chromosomes, contigs) =
-        resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     let prefix = opt.output_prefix.trim();
     validate_output_prefix(prefix)?;
     let window_opt = opt.windows.resolve_windows();
+    if options.log_equivalent_cli {
+        let command = crate::ToCliCommand::to_cli_string(opt)?;
+        info!(target: COMMAND_TARGET, "Equivalent CLI: {command}");
+    }
+    let (chromosomes, contigs) =
+        resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
 
-    info!(target: COMMAND_TARGET, "Loading reference GC bias");
+    status_info!(options, target: COMMAND_TARGET, "Loading reference GC bias");
     let ReferenceGCData {
         counts: reference_counts,
         unobservables_support_mask: reference_unobservables_support_mask,
@@ -349,6 +353,7 @@ pub fn run_gc_bias(opt: &GCConfig, options: RunOptions) -> Result<GCBiasRunResul
         final_outputs.temp_dir().to_path_buf(),
         opt.ioc.output_dir.clone(),
         prefix.to_string(),
+        options.log_statuses,
     );
 
     // Load blacklist intervals if provided
@@ -357,7 +362,7 @@ pub fn run_gc_bias(opt: &GCConfig, options: RunOptions) -> Result<GCBiasRunResul
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
-            info!(target: COMMAND_TARGET, "Loading window coordinates");
+            status_info!(options, target: COMMAND_TARGET, "Loading window coordinates");
             let windows = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
             ensure_plain_bed_windows_not_empty(&windows)?;
             Some(windows)
@@ -399,7 +404,7 @@ pub fn run_gc_bias(opt: &GCConfig, options: RunOptions) -> Result<GCBiasRunResul
     // Configure global thread‐pool size
     init_global_pool(opt.ioc.n_threads)?;
 
-    info!(target: COMMAND_TARGET, "Counting per tile");
+    status_info!(options, target: COMMAND_TARGET, "Counting per tile");
 
     pb.set_position(0);
 
@@ -490,7 +495,7 @@ pub fn run_gc_bias(opt: &GCConfig, options: RunOptions) -> Result<GCBiasRunResul
     drop(windows_map);
     drop(blacklist_map);
 
-    info!(target: COMMAND_TARGET, "Processing counts");
+    status_info!(options, target: COMMAND_TARGET, "Processing counts");
     if !windows_aligned_to_tiles && !matches!(window_opt, WindowSpec::Global) {
         let (cross_sum, cross_weight) = stream_crossing_files(
             reduce_state.crossing_files.clone(),
@@ -536,7 +541,7 @@ pub fn run_gc_bias(opt: &GCConfig, options: RunOptions) -> Result<GCBiasRunResul
 
     // Smoothe GC counts on counts-level for each fragment length
     if !reference_metadata.skip_smoothing {
-        info!(target: COMMAND_TARGET, "Smoothing cfDNA GC counts");
+        status_info!(options, target: COMMAND_TARGET, "Smoothing cfDNA GC counts");
         avg_gc_counts.smooth_length_rows_in_place(
             reference_metadata.smoothing_sigma,
             reference_metadata.smoothing_radius,
@@ -544,7 +549,8 @@ pub fn run_gc_bias(opt: &GCConfig, options: RunOptions) -> Result<GCBiasRunResul
     }
 
     // Convert GC counts to grid with lengths x GC percentage bins
-    info!(
+    status_info!(
+        options,
         target: COMMAND_TARGET,
         "Converting cfDNA GC counts to GC percentage bins"
     );
@@ -570,7 +576,7 @@ pub fn run_gc_bias(opt: &GCConfig, options: RunOptions) -> Result<GCBiasRunResul
         "average cfDNA counts",
     )?;
 
-    info!(target: COMMAND_TARGET, "Normalizing average counts");
+    status_info!(options, target: COMMAND_TARGET, "Normalizing average counts");
     // Normalize GC counts array by its mean (just to remove the weighting scaling)
     // Ignores unsupported elements when calculating the mean
     let mut norm_gc_counts =
@@ -586,7 +592,8 @@ pub fn run_gc_bias(opt: &GCConfig, options: RunOptions) -> Result<GCBiasRunResul
 
     // Interpolate counts for the unsupported cells
     if !reference_metadata.skip_interpolation {
-        info!(
+        status_info!(
+            options,
             target: COMMAND_TARGET,
             "Interpolating counts for unsupported cells (very low reference counts)"
         );
@@ -618,7 +625,8 @@ pub fn run_gc_bias(opt: &GCConfig, options: RunOptions) -> Result<GCBiasRunResul
     // Smoothe the *normalized* counts
     let do_smoothing = false;
     let smoothed_gc_counts = if do_smoothing {
-        info!(
+        status_info!(
+            options,
             target: COMMAND_TARGET,
             "Smoothing counts with 2D Gaussian kernel"
         );
@@ -713,10 +721,12 @@ pub fn run_gc_bias(opt: &GCConfig, options: RunOptions) -> Result<GCBiasRunResul
         mean_scale_per_length_array(&binned_ref_counts, 0., Some(&correction_support_mask));
 
     // Set extreme GC bins to 1.0 in both arrays to avoid zero-division etc.
-    info!(
+    status_info!(
+        options,
         target: COMMAND_TARGET,
         "Setting counts to 1.0 for up to 2x{} extreme GC bins and {} shortest-length bins",
-        opt.num_extreme_gc_bins, opt.num_short_length_bins
+        opt.num_extreme_gc_bins,
+        opt.num_short_length_bins
     );
     if correction_support_mask.iter().any(|&supported| !supported) {
         set_masked_entries_to_value(&mut norm_gc_counts, &correction_support_mask, 1.0);
@@ -755,16 +765,19 @@ pub fn run_gc_bias(opt: &GCConfig, options: RunOptions) -> Result<GCBiasRunResul
             mean_scale_per_length_array(&raw_correction_matrix, 0., Some(&correction_support_mask));
 
         if correction_support_mask.iter().any(|&supported| !supported) {
-            info!(
+            status_info!(
+                options,
                 target: COMMAND_TARGET,
                 "Interpolating corrections for up to 2x{} extreme GC bins and {} shortest-length bins",
-                opt.num_extreme_gc_bins, opt.num_short_length_bins
+                opt.num_extreme_gc_bins,
+                opt.num_short_length_bins
             );
             interpolate_masked_corrections(&mut norm_correction_matrix, &correction_support_mask)?;
         }
 
         if !matches!(outlier_rule, OutlierRule::None) {
-            info!(
+            status_info!(
+                options,
                 target: COMMAND_TARGET,
                 "Applying outlier handling to correction matrix"
             );
@@ -840,7 +853,7 @@ pub fn run_gc_bias(opt: &GCConfig, options: RunOptions) -> Result<GCBiasRunResul
     {
         use crate::commands::gc_bias::plotting::plot_gc_bias;
 
-        info!(target: COMMAND_TARGET, "Plotting GC bias");
+        status_info!(options, target: COMMAND_TARGET, "Plotting GC bias");
 
         let temp_plot_paths = plot_gc_bias(
             final_outputs.temp_dir(),
@@ -1568,6 +1581,7 @@ struct IntermediateFileSaver {
     temp_dir: PathBuf,
     final_dir: PathBuf,
     prefix: String,
+    log_statuses: bool,
     previously_saved: usize,
 }
 
@@ -1581,12 +1595,14 @@ impl IntermediateFileSaver {
         temp_dir: PathBuf,
         final_dir: PathBuf,
         prefix: String,
+        log_statuses: bool,
     ) -> Self {
         IntermediateFileSaver {
             save_intermediates,
             temp_dir,
             final_dir,
             prefix,
+            log_statuses,
             previously_saved: 0,
         }
     }
@@ -1606,7 +1622,7 @@ impl IntermediateFileSaver {
         S: Data<Elem = f64>,
     {
         if self.save_intermediates {
-            info!(target: COMMAND_TARGET, "Intermediate file: Saving {}", msg_tag);
+            status_info!(self, target: COMMAND_TARGET, "Intermediate file: Saving {}", msg_tag);
             let file_name = format!("gc_bias.{}.{}.npy", file_tag, self.previously_saved);
             let output_name = dot_join(&[self.prefix.as_str(), file_name.as_str()]);
             let temp_path = self.temp_dir.join(output_name.as_str());

@@ -12,6 +12,7 @@ pub struct Fragment {
     /// Checked non-empty fragment span on the reference.
     pub(crate) interval: Interval<u32>,
     /// Optional GC weight from aux tag if provided
+    #[allow(dead_code)]
     pub(crate) gc_tag: crate::shared::gc_tag::GCTagValue,
 }
 

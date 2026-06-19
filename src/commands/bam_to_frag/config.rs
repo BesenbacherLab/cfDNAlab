@@ -3,6 +3,7 @@ use crate::commands::cli_common::{
     UnpairedArgs, WindowSpec,
 };
 use crate::shared::blacklist::BlacklistStrategy;
+use crate::{ToCliCommand, cli_command::helpers::*};
 use std::path::PathBuf;
 
 /// Write the fragments from a BAM file to a finaleDB-style frag file.
@@ -45,7 +46,7 @@ use std::path::PathBuf;
 /// The read is mapped to a different `tid` than the mate.
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BamToFragConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,
@@ -266,5 +267,39 @@ impl BamToFragConfig {
 
     pub fn set_ref_2bit(&mut self, ref_2bit: Option<PathBuf>) {
         self.ref_2bit = ref_2bit;
+    }
+}
+
+impl ToCliCommand for BamToFragConfig {
+    fn to_cli_args(&self) -> crate::Result<Vec<std::ffi::OsString>> {
+        let mut args = command_args("bam-to-frag");
+        push_ioc(&mut args, &self.ioc);
+        push_unpaired(&mut args, &self.unpaired);
+        push_output_prefix(&mut args, &self.output_prefix);
+        push_optional_path(&mut args, "--by-bed", self.by_bed.as_deref());
+        push_chromosomes(&mut args, &self.chromosomes);
+        push_optional_path(
+            &mut args,
+            "--coverage-scaling-factors",
+            self.coverage_scaling_factors.as_deref(),
+        );
+        push_optional_path(
+            &mut args,
+            "--count-scaling-factors",
+            self.count_scaling_factors.as_deref(),
+        );
+        push_fragment_lengths(&mut args, &self.fragment_lengths);
+        push_value(&mut args, "--min-mapq", self.min_mapq);
+        push_bool(&mut args, "--require-proper-pair", self.require_proper_pair);
+        push_blacklist_common(
+            &mut args,
+            self.blacklist.as_deref(),
+            self.blacklist_min_size,
+            &self.blacklist_strategy,
+        );
+        push_apply_gc_file_only(&mut args, &self.gc);
+        push_optional_path(&mut args, "--ref-2bit", self.ref_2bit.as_deref());
+        push_logging(&mut args, &self.logging);
+        Ok(args)
     }
 }

@@ -1,23 +1,33 @@
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use fxhash::{FxHashMap, FxHashSet};
-use rust_htslib::bam::{self, IndexedReader, Read, Reader};
-use std::{ffi::OsString, path::Path, path::PathBuf};
+#[cfg(writes_bam_output)]
+use rust_htslib::bam;
+#[cfg(reads_indexed_bam)]
+use rust_htslib::bam::IndexedReader;
+use rust_htslib::bam::{Read, Reader};
+#[cfg(writes_bam_output)]
+use std::ffi::OsString;
+use std::path::Path;
+#[cfg(writes_bam_output)]
+use std::path::PathBuf;
 use url::Url;
 
+#[cfg(writes_bam_output)]
 use crate::shared::thread_pool::default_thread_count;
 
 /// Create a BAM file reader for a given chromosome.
 ///
 /// Returns Reader, tid, and chromosome length.
+#[cfg(reads_indexed_bam)]
 pub fn create_chromosome_reader(bam_path: &Path, chr: &str) -> Result<(IndexedReader, u32, u64)> {
     let reader = open_indexed_bam_reader(bam_path).context(format!("opening BAM for {}", chr))?;
     let header = reader.header().to_owned();
     let tid = header
         .tid(chr.as_bytes())
-        .ok_or_else(|| anyhow!("{} not in BAM", chr))?;
+        .ok_or_else(|| anyhow::anyhow!("{} not in BAM", chr))?;
     let chrom_len = header
         .target_len(tid)
-        .ok_or_else(|| anyhow!("No length for {}", chr))? as u64;
+        .ok_or_else(|| anyhow::anyhow!("No length for {}", chr))? as u64;
     Ok((reader, tid, chrom_len))
 }
 
@@ -29,6 +39,7 @@ pub fn open_bam_reader(bam_path: &Path) -> Result<Reader> {
     }
 }
 
+#[cfg(reads_indexed_bam)]
 fn open_indexed_bam_reader(bam_path: &Path) -> Result<IndexedReader> {
     match bam_input_url(bam_path)? {
         Some(url) => IndexedReader::from_url(&url)
@@ -38,6 +49,7 @@ fn open_indexed_bam_reader(bam_path: &Path) -> Result<IndexedReader> {
     }
 }
 
+#[cfg(writes_bam_output)]
 pub(crate) fn bam_bai_path(bam_path: &Path) -> Result<PathBuf> {
     let file_name = bam_path
         .file_name()
@@ -47,12 +59,13 @@ pub(crate) fn bam_bai_path(bam_path: &Path) -> Result<PathBuf> {
     Ok(bam_path.with_file_name(index_file_name))
 }
 
+#[cfg(writes_bam_output)]
 pub(crate) fn build_bam_bai_index(bam_path: &Path) -> Result<PathBuf> {
     let bai_path = bam_bai_path(bam_path)?;
     let indexing_threads = u32::try_from(default_thread_count()).unwrap_or(u32::MAX);
     // `samtools index sample.bam` conventionally creates `sample.bam.bai`. Passing the path
     // explicitly keeps cfDNAlab's generated BAM outputs predictable instead of depending on HTSlib's
-    // default sidecar naming.
+    // default index-file naming.
     //
     // These conversion commands do not expose their own thread count. Use the same default policy as
     // the shared CLI thread option: leave one core free when possible, but always use at least one

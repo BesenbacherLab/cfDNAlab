@@ -1,3 +1,8 @@
+#![allow(
+    dead_code,
+    reason = "feature-limited builds compile shared counter definitions even when no enabled command constructs them"
+)]
+
 use crate::shared::iterator_counter::FragmentCounterSnapshot;
 use std::ops::AddAssign;
 
@@ -41,6 +46,10 @@ impl BaseCounters {
 
 /// Macro to declare a counters struct with a BaseCounters + extra fields,
 /// plus AddAssign and add_from_snapshot impls.
+#[allow(
+    unused_macros,
+    reason = "feature-limited builds may compile this helper without any enabled counter declarations"
+)]
 macro_rules! counter_struct {
     // No extra fields
     ($name:ident ;) => {

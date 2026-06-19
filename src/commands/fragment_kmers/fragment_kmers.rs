@@ -5,7 +5,7 @@
 
 use crate::shared::gc_tag::ClassifiedGCTagWeight;
 use crate::{
-    command_run::{CommandRunResult, RunOptions},
+    command_run::{CommandRunResult, RunOptions, status_info},
     commands::{
         cli_common::{
             WindowSpec, ensure_output_dir, load_blacklist_map, load_scaling_map,
@@ -180,10 +180,6 @@ fn execute_fragment_kmers(
     if opt.shared_args.unpaired.reads_are_fragments && opt.shared_args.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
-    let (chromosomes, contigs) = resolve_chromosomes_and_contigs(
-        &opt.shared_args.chromosomes,
-        opt.shared_args.ioc.bam.as_path(),
-    )?;
     let window_opt = opt.shared_args.windows.resolve_windows();
     let position_specs = opt
         .shared_args
@@ -193,12 +189,21 @@ fn execute_fragment_kmers(
     let prefix = opt.shared_args.output_prefix.trim();
     validate_output_prefix(prefix)?;
 
+    if options.log_equivalent_cli {
+        let command = crate::ToCliCommand::to_cli_string(opt)?;
+        info!(target: COMMAND_TARGET, "Equivalent CLI: {command}");
+    }
+    let (chromosomes, contigs) = resolve_chromosomes_and_contigs(
+        &opt.shared_args.chromosomes,
+        opt.shared_args.ioc.bam.as_path(),
+    )?;
+
     // Create output directory
     ensure_output_dir(&opt.shared_args.ioc.output_dir)?;
 
     // Load blacklist intervals if provided
-    if opt.shared_args.blacklist.is_some() && options.log_statuses {
-        info!(target: COMMAND_TARGET, "Loading blacklists");
+    if opt.shared_args.blacklist.is_some() {
+        status_info!(options, target: COMMAND_TARGET, "Loading blacklists");
     }
     let blacklist_map = load_blacklist_map(
         opt.shared_args.blacklist.as_ref(),
@@ -210,9 +215,7 @@ fn execute_fragment_kmers(
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
-            if options.log_statuses {
-                info!(target: COMMAND_TARGET, "Loading window coordinates");
-            }
+            status_info!(options, target: COMMAND_TARGET, "Loading window coordinates");
             let windows = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
             ensure_plain_bed_windows_not_empty(&windows)?;
             Some(windows)
@@ -243,8 +246,8 @@ fn execute_fragment_kmers(
     };
 
     // Load genomic scaling factors
-    if opt.shared_args.scale_genome.scaling_factors.is_some() && options.log_statuses {
-        info!(target: COMMAND_TARGET, "Loading scaling factors");
+    if opt.shared_args.scale_genome.scaling_factors.is_some() {
+        status_info!(options, target: COMMAND_TARGET, "Loading scaling factors");
     }
     let scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
         &opt.shared_args.scale_genome,
@@ -258,8 +261,8 @@ fn execute_fragment_kmers(
     )?;
 
     // Load GC correction package if specified
-    if opt.shared_args.gc.gc_file.is_some() && options.log_statuses {
-        info!(target: COMMAND_TARGET, "Loading GC correction matrix");
+    if opt.shared_args.gc.gc_file.is_some() {
+        status_info!(options, target: COMMAND_TARGET, "Loading GC correction matrix");
     }
     let gc_corrector = load_gc_corrector(
         opt.shared_args.gc.gc_file.as_ref(),
@@ -320,9 +323,7 @@ fn execute_fragment_kmers(
     // Configure global thread‐pool size
     init_global_pool(opt.shared_args.ioc.n_threads)?;
 
-    if options.log_statuses {
-        info!(target: COMMAND_TARGET, "Counting per chromosome");
-    }
+    status_info!(options, target: COMMAND_TARGET, "Counting per chromosome");
 
     pb.set_position(0);
 
@@ -383,9 +384,7 @@ fn execute_fragment_kmers(
         pb.finish_and_clear();
     }
 
-    if options.log_statuses {
-        info!(target: COMMAND_TARGET, "Reducing per-tile counts");
-    }
+    status_info!(options, target: COMMAND_TARGET, "Reducing per-tile counts");
 
     let mut global_counter = FragmentKmersCounters::default();
     let mut tile_results_by_chr: FxHashMap<String, Vec<TileResult>> = FxHashMap::default();
@@ -445,9 +444,7 @@ fn execute_fragment_kmers(
 
         let (_, motifs_by_k) = prepare_decoded_counts(&flattened, opt.canonical, &kmer_specs);
 
-        if options.log_statuses {
-            info!(target: COMMAND_TARGET, "Writing positional counts to disk");
-        }
+        status_info!(options, target: COMMAND_TARGET, "Writing positional counts to disk");
         let temp_output_paths = write_positional_output(
             &positional_decoded,
             &motifs_by_k,
@@ -475,9 +472,7 @@ fn execute_fragment_kmers(
 
         // Write counts to the temp folder first
         // They move into output_dir after all requested output files have been written
-        if options.log_statuses {
-            info!(target: COMMAND_TARGET, "Writing counts to disk");
-        }
+        status_info!(options, target: COMMAND_TARGET, "Writing counts to disk");
         let temp_output_paths = write_decoded_counts_matrix(
             &prepared_counts,
             &kmer_specs,
@@ -510,9 +505,7 @@ fn execute_fragment_kmers(
 
     // Write window coordinates plus overlap metadata to the same temp folder as the count outputs
     if !matches!(window_opt, WindowSpec::Global) {
-        if options.log_statuses {
-            info!(target: COMMAND_TARGET, "Writing window coordinates to disk");
-        }
+        status_info!(options, target: COMMAND_TARGET, "Writing window coordinates to disk");
         let bins_path = opt
             .shared_args
             .ioc

@@ -4,6 +4,7 @@ use crate::commands::{
     visualize_positions::{Style, VizConfig, parse::parse_lengths},
 };
 use crate::shared::positioning::{BasesFrom, ReferenceFrame};
+use crate::{ToCliCommand, cli_command::helpers::*};
 use anyhow::{Context, Result, anyhow};
 #[cfg(feature = "cli")]
 use clap::Parser;
@@ -28,7 +29,8 @@ const MIN_FRAGMENT_LENGTH: u32 = 10;
 /// To ensure the exact same positional and filtering logic is shared between this visualizer
 /// and `fragment-kmers`, we synthesize fragments of the specified lengths, run it through
 /// `fragment-kmers` with positional counting, and, finally, reconstruct the counted positions.
-#[cfg_attr(feature = "cli", derive(Parser, Clone))]
+#[cfg_attr(feature = "cli", derive(Parser))]
+#[derive(Debug, Clone, PartialEq)]
 pub struct VisualizePositionsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub position_selection: FragmentPositionSelectionArgs,
@@ -223,5 +225,38 @@ impl VisualizePositionsConfig {
             show_half: self.show_half,
             show_mid: !self.hide_mid,
         })
+    }
+}
+
+impl ToCliCommand for VisualizePositionsConfig {
+    fn to_cli_args(&self) -> crate::Result<Vec<std::ffi::OsString>> {
+        let mut args = command_args("visualize-positions");
+        push_position_selection(&mut args, &self.position_selection);
+        push_base_selection(&mut args, &self.base_selection);
+        push_path(&mut args, "--work-dir", &self.work_dir);
+        if let Some(lengths) = &self.lengths {
+            push_values(&mut args, "--lengths", lengths);
+        }
+        if let Some(length_range) = &self.length_range {
+            push_value(&mut args, "--length-range", length_range);
+        }
+        if let Some(kmer_sizes) = &self.kmer_sizes {
+            push_values(&mut args, "--kmer-sizes", kmer_sizes);
+        }
+        push_value(&mut args, "--style", self.style.as_str());
+        if let Some(width) = self.width {
+            push_value(&mut args, "--width", width);
+        }
+        if let Some(height) = self.height {
+            push_value(&mut args, "--height", height);
+        }
+        push_optional_path(&mut args, "--output", self.output.as_deref());
+        if let Some(label) = &self.label {
+            push_value(&mut args, "--label", label);
+        }
+        push_bool(&mut args, "--hide-index", self.hide_index);
+        push_bool(&mut args, "--show-half", self.show_half);
+        push_bool(&mut args, "--hide-mid", self.hide_mid);
+        Ok(args)
     }
 }

@@ -24,7 +24,7 @@ pub(crate) mod lengths;
 pub(crate) mod midpoints;
 #[cfg(feature = "cmd_prepare_windows")]
 pub(crate) mod prepare_windows;
-#[cfg(feature = "cmd_ref_gc_bias")]
+#[cfg(feature = "cmd_gc_bias")]
 pub(crate) mod ref_gc_bias;
 mod run_statistics;
 #[cfg(feature = "cmd_transitions")]

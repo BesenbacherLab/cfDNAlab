@@ -1,9 +1,10 @@
 use crate::{
-    command_run::{CommandRunResult, RunOptions},
+    command_run::{CommandRunResult, RunOptions, status_info},
     commands::{
         cli_common::{
             DistributionWindowSpec, WindowAssigner, ensure_output_dir, load_blacklist_map,
-            load_scaling_map, resolve_chromosomes_and_contigs, validate_output_prefix,
+            load_scaling_map, resolve_chromosomes_and_contigs, validate_max_soft_clips,
+            validate_output_prefix,
         },
         counters::LengthsCounters,
         gc_bias::{
@@ -11,7 +12,7 @@ use crate::{
             counting::build_gc_prefixes,
         },
         lengths::{
-            config::{LengthsConfig, validate_gc_length_trim_rare},
+            config::{LengthsConfig, validate_gc_length_trim_rare, validate_max_deletion_bases},
             counting::{LengthAxis, LengthCounts},
             tiling::{reduce_partials_for_chr, write_cross_npy, write_partials_npz},
             writer::{LengthCountRowMetadata, write_length_counts_tsv, write_length_settings_json},
@@ -208,15 +209,15 @@ fn reorder_bed_outputs_by_original_index(
 /// fragment filters, optional indel or clipping adjustments, blacklists, GC correction, and genomic
 /// scaling before writing the count table.
 ///
-/// Reporting is controlled by `options`. `report_statistics` prints the final summary and
-/// `show_progress` controls progress bars. This command does not use status logs.
+/// Reporting is controlled by `options`. `report_statistics` prints the final summary,
+/// `show_progress` controls progress bars, and `log_statuses` controls status messages.
 ///
 /// Parameters
 /// ----------
 /// - `opt`:
 ///     Fully resolved configuration for the `lengths` command.
 /// - `options`:
-///     Reporting controls for statistics and progress bars.
+///     Reporting controls for statistics, progress bars, and status logs.
 ///
 /// Returns
 /// -------
@@ -231,23 +232,29 @@ pub fn run_lengths(opt: &LengthsConfig, options: RunOptions) -> Result<LengthsRu
     let start_time = Instant::now();
     let length_axis = Arc::new(LengthAxis::new(opt.resolve_length_bins()?)?);
     validate_gc_length_trim_rare(opt.gc_length_trim_rare)?;
+    validate_max_deletion_bases(opt.max_deletion_bases)?;
+    validate_max_soft_clips(opt.max_soft_clips)?;
     opt.gc.validate(opt.ref_2bit.as_deref())?;
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
-    let (chromosomes, contigs) =
-        resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     let window_opt = opt.windows.resolve_windows();
     let fetch_window_opt = window_opt.as_fetch_window_spec();
     let prefix = opt.output_prefix.trim();
     validate_output_prefix(prefix)?;
+    if options.log_equivalent_cli {
+        let command = crate::ToCliCommand::to_cli_string(opt)?;
+        info!(target: COMMAND_TARGET, "Equivalent CLI: {command}");
+    }
+    let (chromosomes, contigs) =
+        resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
 
     // Create output directory
     ensure_output_dir(&opt.ioc.output_dir)?;
 
     // Load blacklist intervals if provided
     if opt.blacklist.is_some() {
-        info!(target: COMMAND_TARGET, "Loading blacklists");
+        status_info!(options, target: COMMAND_TARGET, "Loading blacklists");
     }
     let blacklist_map = load_blacklist_map(
         opt.blacklist.as_ref(),
@@ -259,7 +266,7 @@ pub fn run_lengths(opt: &LengthsConfig, options: RunOptions) -> Result<LengthsRu
     // Load windows from BED file
     let windows_map = match &window_opt {
         DistributionWindowSpec::Bed(bed) => {
-            info!(target: COMMAND_TARGET, "Loading window coordinates");
+            status_info!(options, target: COMMAND_TARGET, "Loading window coordinates");
             let windows = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
             ensure_plain_bed_windows_not_empty(&windows)?;
             Some(windows)
@@ -268,7 +275,7 @@ pub fn run_lengths(opt: &LengthsConfig, options: RunOptions) -> Result<LengthsRu
     };
     let (grouped_windows_map, group_idx_to_name) = match &window_opt {
         DistributionWindowSpec::GroupedBed(bed) => {
-            info!(target: COMMAND_TARGET, "Loading grouped window coordinates");
+            status_info!(options, target: COMMAND_TARGET, "Loading grouped window coordinates");
             let (windows_map, group_idx_to_name, _strand_detection) =
                 load_grouped_windows_from_bed(
                     bed,
@@ -304,7 +311,7 @@ pub fn run_lengths(opt: &LengthsConfig, options: RunOptions) -> Result<LengthsRu
 
     // Load genomic scaling factors
     if opt.scale_genome.scaling_factors.is_some() {
-        info!(target: COMMAND_TARGET, "Loading scaling factors");
+        status_info!(options, target: COMMAND_TARGET, "Loading scaling factors");
     }
     let scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
         &opt.scale_genome,
@@ -316,7 +323,7 @@ pub fn run_lengths(opt: &LengthsConfig, options: RunOptions) -> Result<LengthsRu
 
     // Load GC correction package if specified
     if opt.gc.gc_file.is_some() {
-        info!(target: COMMAND_TARGET, "Loading GC correction matrix");
+        status_info!(options, target: COMMAND_TARGET, "Loading GC correction matrix");
     }
     let gc_corrector = load_length_agnostic_gc_corrector(
         opt.gc.gc_file.as_ref(),
@@ -385,7 +392,7 @@ pub fn run_lengths(opt: &LengthsConfig, options: RunOptions) -> Result<LengthsRu
     let partials_prefix = &dot_join(&[prefix, "part"]);
     let cross_prefix = &dot_join(&[prefix, "cross"]);
 
-    info!(target: COMMAND_TARGET, "Counting per tile");
+    status_info!(options, target: COMMAND_TARGET, "Counting per tile");
 
     // Configure global thread‐pool size
     init_global_pool(opt.ioc.n_threads)?;
@@ -451,10 +458,10 @@ pub fn run_lengths(opt: &LengthsConfig, options: RunOptions) -> Result<LengthsRu
 
     match &window_opt {
         DistributionWindowSpec::GroupedBed(_) => {
-            info!(target: COMMAND_TARGET, "Merging grouped counts across tiles");
+            status_info!(options, target: COMMAND_TARGET, "Merging grouped counts across tiles");
         }
         _ => {
-            info!(target: COMMAND_TARGET, "Reducing temporary tile files");
+            status_info!(options, target: COMMAND_TARGET, "Reducing temporary tile files");
         }
     }
 
@@ -575,7 +582,8 @@ pub fn run_lengths(opt: &LengthsConfig, options: RunOptions) -> Result<LengthsRu
 
     // Sort by original index (when given a bed file)
     if matches!(&window_opt, DistributionWindowSpec::Bed(_)) {
-        info!(
+        status_info!(
+            options,
             target: COMMAND_TARGET,
             "Reordering counts by original window index in BED file"
         );
@@ -583,7 +591,7 @@ pub fn run_lengths(opt: &LengthsConfig, options: RunOptions) -> Result<LengthsRu
         reorder_bed_outputs_by_original_index(&mut bin_info, &mut all_bins)?;
     }
 
-    info!(target: COMMAND_TARGET, "Writing final files");
+    status_info!(options, target: COMMAND_TARGET, "Writing final files");
 
     // Write every final output to the temp directory before moving any of them into place
     // This keeps failed writes from leaving a mix of old and new final files
@@ -644,12 +652,13 @@ pub fn run_lengths(opt: &LengthsConfig, options: RunOptions) -> Result<LengthsRu
     // Plot the global fragment length distribution after the machine-readable outputs are complete
     #[cfg(feature = "plotters")]
     {
-        info!(target: COMMAND_TARGET, "Plotting overall length distribution");
+        status_info!(options, target: COMMAND_TARGET, "Plotting overall length distribution");
 
         use crate::shared::plotters::lineplot::write_line_plot_png;
 
         if all_bins.is_empty() {
-            info!(
+            status_info!(
+                options,
                 target: COMMAND_TARGET,
                 "Skipping overall length plot because no bins were produced"
             );

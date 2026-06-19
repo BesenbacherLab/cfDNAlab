@@ -98,10 +98,10 @@
 - Fixed-size and BED row metadata includes `chromosome`, `row_chromosome`, `row_start_bp`, `row_end_bp`, and `blacklisted_fraction`. Chromosome names are stored as JSON labels on `chromosome`, and `row_chromosome` indexes that chromosome axis.
 - Grouped-BED row metadata includes `group`, `eligible_windows`, and `blacklisted_fraction`. Group names are stored as JSON labels on `group`, and grouped rows require contiguous zero-based group indices matching count rows.
 - Sparse COO shape dimensions are described by `sparse/sparse_dimension`, whose JSON labels are `["row", "motif"]`.
-- Settings sidecar is `<prefix>.end_settings.json` and records motif lengths, `--all-motifs`, motifs-file path and mode when used, inside source, clip strategy, window assignment, indel filter, effective indel filter, base-quality filters, and experimental complement collapse when enabled.
+- Settings JSON is `<prefix>.end_settings.json` and records motif lengths, `--all-motifs`, motifs-file path and mode when used, inside source, clip strategy, window assignment, indel filter, effective indel filter, base-quality filters, and experimental complement collapse when enabled.
 
 ## Open Notes
 
-! Warning: The settings sidecar intentionally does not yet record every normalization input, such as GC/scaling file paths and dense-vs-sparse format. Do not treat it as a complete provenance record.
+! Warning: The settings JSON intentionally does not yet record every normalization input, such as GC/scaling file paths and dense-vs-sparse format. Do not treat it as a complete provenance record.
 
 ! Warning: Motif reference preload is still full-tile plus motif padding even when sparse BED fetch narrowing skips most aligned reads. This is a performance issue, not a correctness mismatch.

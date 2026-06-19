@@ -170,7 +170,7 @@ fn fcoverage_rejects_gc_file_without_ref_2bit_before_output_setup() -> Result<()
 }
 
 fn set_restore_mean_length_normalization(cfg: &mut FCoverageConfig) {
-    cfg.set_normalize_by_length_mode(LengthNormalizationMode::RestoreMean);
+    cfg.set_normalize_by_length(LengthNormalizationMode::RestoreMean);
 }
 
 fn mixed_length_fragment_bam() -> Result<TempBam> {
@@ -314,13 +314,13 @@ fn pearson_r_from_summary_stats_rows(global_row: &[String], group_row: &[String]
 
 fn grouped_rows_by_name(
     output_text: &str,
-    sidecar_text: &str,
+    group_index_text: &str,
 ) -> std::collections::BTreeMap<String, Vec<String>> {
     let output_rows = parse_tsv(output_text);
-    let sidecar_rows = parse_tsv(sidecar_text);
+    let group_index_rows = parse_tsv(group_index_text);
 
     let mut idx_to_name = std::collections::BTreeMap::new();
-    for row in sidecar_rows.into_iter().skip(1) {
+    for row in group_index_rows.into_iter().skip(1) {
         idx_to_name.insert(row[0].to_string(), row[1].to_string());
     }
 
@@ -328,7 +328,7 @@ fn grouped_rows_by_name(
     for row in output_rows.into_iter().skip(1) {
         let group_name = idx_to_name
             .get(row[0])
-            .expect("group_idx in output must exist in sidecar")
+            .expect("group_idx in output must exist in group-index file")
             .clone();
         rows_by_name.insert(
             group_name,
@@ -581,7 +581,7 @@ fn normalize_by_length_keeps_fractional_positional_output_without_other_weights(
     cfg.set_decimals(4);
     cfg.set_per_window(CoverageWindowAction::Average);
     cfg.set_keep_zero_runs(false);
-    cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
+    cfg.set_normalize_by_length(LengthNormalizationMode::UnitMass);
 
     // Manual expectations:
     // - The single fragment covers [20, 80), length 60.
@@ -615,7 +615,7 @@ fn normalize_by_length_by_size_total_counts_each_fragment_as_one() -> Result<()>
     cfg.set_decimals(5);
     cfg.set_per_window(CoverageWindowAction::Total);
     cfg.set_windows(windows);
-    cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
+    cfg.set_normalize_by_length(LengthNormalizationMode::UnitMass);
 
     // Manual expectations:
     // - The fragment spans 60 bases and contributes 1 / 60 to each covered base.
@@ -669,7 +669,7 @@ fn normalize_by_length_and_gc_file_weights_multiply_per_position() -> Result<()>
     cfg.set_decimals(6);
     cfg.set_per_window(CoverageWindowAction::Average);
     cfg.set_keep_zero_runs(false);
-    cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
+    cfg.set_normalize_by_length(LengthNormalizationMode::UnitMass);
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
@@ -803,7 +803,7 @@ fn normalize_by_length_uses_counted_segment_length_for_gapped_fragments() -> Res
     cfg.set_per_window(CoverageWindowAction::Average);
     cfg.set_keep_zero_runs(false);
     cfg.unpaired.reads_are_fragments = true;
-    cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
+    cfg.set_normalize_by_length(LengthNormalizationMode::UnitMass);
 
     // Manual expectations:
     // - The read spans [20, 70) on the reference with a 10 bp deletion in the middle.
@@ -839,7 +839,7 @@ fn normalize_by_length_ignore_gap_renormalizes_over_remaining_counted_span() -> 
         cfg.set_per_window(CoverageWindowAction::Average);
         cfg.set_keep_zero_runs(false);
         cfg.set_ignore_gap(ignore_gap);
-        cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
+        cfg.set_normalize_by_length(LengthNormalizationMode::UnitMass);
 
         run(&cfg)?;
 
@@ -883,7 +883,7 @@ fn normalize_by_length_matches_between_paired_and_unpaired_for_same_span() -> Re
     paired_cfg.set_per_window(CoverageWindowAction::Average);
     paired_cfg.set_keep_zero_runs(false);
     paired_cfg.set_output_prefix("paired");
-    paired_cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
+    paired_cfg.set_normalize_by_length(LengthNormalizationMode::UnitMass);
 
     let mut unpaired_cfg = base_config(&unpaired_bam.bam, unpaired_out.path());
     unpaired_cfg.set_decimals(4);
@@ -891,7 +891,7 @@ fn normalize_by_length_matches_between_paired_and_unpaired_for_same_span() -> Re
     unpaired_cfg.set_keep_zero_runs(false);
     unpaired_cfg.set_output_prefix("unpaired");
     unpaired_cfg.unpaired.reads_are_fragments = true;
-    unpaired_cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
+    unpaired_cfg.set_normalize_by_length(LengthNormalizationMode::UnitMass);
 
     // Manual expectations:
     // - Both inputs represent the same counted span [20, 80), length 60.
@@ -961,7 +961,7 @@ fn normalize_by_length_uses_paired_counted_segments_when_ignore_gap_is_on() -> R
     cfg.set_per_window(CoverageWindowAction::Average);
     cfg.set_keep_zero_runs(false);
     cfg.set_ignore_gap(true);
-    cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
+    cfg.set_normalize_by_length(LengthNormalizationMode::UnitMass);
 
     // Manual expectations:
     // - The fragment outer span is [20, 80), length 60.
@@ -1015,7 +1015,7 @@ fn normalize_by_length_uses_counted_segment_length_for_refskip_fragments() -> Re
     cfg.set_per_window(CoverageWindowAction::Average);
     cfg.set_keep_zero_runs(false);
     cfg.unpaired.reads_are_fragments = true;
-    cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
+    cfg.set_normalize_by_length(LengthNormalizationMode::UnitMass);
 
     // Manual expectations:
     // - The read spans [20, 70) on the reference with a 10 bp ref-skip in the middle.
@@ -1079,7 +1079,7 @@ fn normalize_by_length_segmented_fragment_still_multiplies_gc_and_scaling() -> R
     cfg.set_per_window(CoverageWindowAction::Average);
     cfg.set_keep_zero_runs(false);
     cfg.unpaired.reads_are_fragments = true;
-    cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
+    cfg.set_normalize_by_length(LengthNormalizationMode::UnitMass);
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
@@ -1818,9 +1818,9 @@ fn restore_mean_grouped_plain_summary_stats_writes_scaled_rows() -> Result<()> {
 
     let result = run(&cfg)?;
     let output = read_zst_to_string(&result.final_out_path)?;
-    let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+    let group_index_text = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
     let output_rows = parse_tsv(&output);
-    let rows_by_name = grouped_rows_by_name(&output, &sidecar);
+    let rows_by_name = grouped_rows_by_name(&output, &group_index_text);
 
     assert_eq!(
         output_rows[0],
@@ -1885,7 +1885,7 @@ fn restore_mean_grouped_plain_summary_stats_is_invariant_when_segments_cross_til
     // Future-facing grouped summary tile-size invariance test.
     let bam = mixed_length_fragment_bam()?;
     let mut outputs = Vec::new();
-    let mut sidecars = Vec::new();
+    let mut group_index_texts = Vec::new();
 
     for tile_size in [33_u32, 1_000_u32] {
         let out_dir = TempDir::new()?;
@@ -1914,13 +1914,13 @@ fn restore_mean_grouped_plain_summary_stats_is_invariant_when_segments_cross_til
 
         let result = run(&cfg)?;
         outputs.push(read_zst_to_string(&result.final_out_path)?);
-        sidecars.push(std::fs::read_to_string(
+        group_index_texts.push(std::fs::read_to_string(
             out_dir.path().join("testcov.group_index.tsv"),
         )?);
     }
 
     assert_eq!(outputs[0], outputs[1]);
-    assert_eq!(sidecars[0], sidecars[1]);
+    assert_eq!(group_index_texts[0], group_index_texts[1]);
 
     Ok(())
 }
@@ -2388,8 +2388,8 @@ fn restore_mean_grouped_bed_total_uses_site_weighted_group_semantics() -> Result
 
     let result = run(&cfg)?;
     let output = read_zst_to_string(&result.final_out_path)?;
-    let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
-    let rows_by_name = grouped_rows_by_name(&output, &sidecar);
+    let group_index_text = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+    let rows_by_name = grouped_rows_by_name(&output, &group_index_text);
 
     assert_eq!(
         rows_by_name["beta"]
@@ -2422,7 +2422,7 @@ fn restore_mean_grouped_bed_total_is_invariant_when_plain_group_segments_cross_t
     // Future-facing grouped plain-total tile-size invariance test.
     let bam = mixed_length_fragment_bam()?;
     let mut outputs = Vec::new();
-    let mut sidecars = Vec::new();
+    let mut group_index_texts = Vec::new();
 
     for tile_size in [33_u32, 1_000_u32] {
         let out_dir = TempDir::new()?;
@@ -2452,13 +2452,13 @@ fn restore_mean_grouped_bed_total_is_invariant_when_plain_group_segments_cross_t
 
         let result = run(&cfg)?;
         outputs.push(read_zst_to_string(&result.final_out_path)?);
-        sidecars.push(std::fs::read_to_string(
+        group_index_texts.push(std::fs::read_to_string(
             out_dir.path().join("testcov.group_index.tsv"),
         )?);
     }
 
     assert_eq!(outputs[0], outputs[1]);
-    assert_eq!(sidecars[0], sidecars[1]);
+    assert_eq!(group_index_texts[0], group_index_texts[1]);
 
     Ok(())
 }
@@ -2496,8 +2496,8 @@ fn restore_mean_grouped_bed_ignores_groups_on_filtered_out_chromosomes() -> Resu
 
     let result = run(&cfg)?;
     let output = read_zst_to_string(&result.final_out_path)?;
-    let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
-    let rows_by_name = grouped_rows_by_name(&output, &sidecar);
+    let group_index_text = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+    let rows_by_name = grouped_rows_by_name(&output, &group_index_text);
 
     assert_eq!(rows_by_name.len(), 1);
     assert_eq!(
@@ -4801,7 +4801,7 @@ fn normalize_by_length_and_gc_tag_weights_multiply_per_position() -> Result<()> 
     cfg.set_decimals(4);
     cfg.set_keep_zero_runs(false);
     cfg.unpaired.reads_are_fragments = true;
-    cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
+    cfg.set_normalize_by_length(LengthNormalizationMode::UnitMass);
     cfg.set_gc(ApplyGCArgs {
         gc_file: None,
         gc_tag: Some("GC".to_string()),
@@ -5778,9 +5778,9 @@ fn grouped_bed_total_uses_site_weighted_group_semantics() -> Result<()> {
     run(&cfg)?;
 
     let output = read_zst_to_string(&out_dir.path().join("testcov.fcoverage.total.tsv.zst"))?;
-    let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+    let group_index_text = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
     let output_rows = parse_tsv(&output);
-    let sidecar_rows = parse_tsv(&sidecar);
+    let group_index_rows = parse_tsv(&group_index_text);
 
     assert_eq!(
         output_rows,
@@ -5798,7 +5798,7 @@ fn grouped_bed_total_uses_site_weighted_group_semantics() -> Result<()> {
         ]
     );
     assert_eq!(
-        sidecar_rows,
+        group_index_rows,
         vec![
             vec!["group_idx", "group_name"],
             vec!["0", "beta"],
@@ -5831,11 +5831,11 @@ fn grouped_bed_total_is_invariant_when_plain_group_segments_cross_tiles() -> Res
     //     total_coverage = 0
     // - `tile_size=33` forces the segment rows for `beta`, `alpha`, and `delta` through the
     //   cross-tile BED-basic reducer, while `tile_size=1000` keeps them in one tile. The final
-    //   grouped totals and stable group-index sidecar must still be identical.
+    //   grouped totals and stable group-index file must still be identical.
     let bam = single_contig_inward_pair_bam()?;
     let tile_sizes = [33_u32, 1_000_u32];
     let mut outputs = Vec::new();
-    let mut sidecars = Vec::new();
+    let mut group_index_texts = Vec::new();
 
     for tile_size in tile_sizes {
         let out_dir = TempDir::new()?;
@@ -5868,7 +5868,7 @@ fn grouped_bed_total_is_invariant_when_plain_group_segments_cross_tiles() -> Res
         outputs.push(read_zst_to_string(
             &out_dir.path().join("testcov.fcoverage.total.tsv.zst"),
         )?);
-        sidecars.push(std::fs::read_to_string(
+        group_index_texts.push(std::fs::read_to_string(
             out_dir.path().join("testcov.group_index.tsv"),
         )?);
     }
@@ -5878,11 +5878,11 @@ fn grouped_bed_total_is_invariant_when_plain_group_segments_cross_tiles() -> Res
         "plain grouped total output should not depend on tile size"
     );
     assert_eq!(
-        sidecars[0], sidecars[1],
-        "group sidecar should not depend on tile size"
+        group_index_texts[0], group_index_texts[1],
+        "group-index file should not depend on tile size"
     );
 
-    let rows_by_name = grouped_rows_by_name(&outputs[0], &sidecars[0]);
+    let rows_by_name = grouped_rows_by_name(&outputs[0], &group_index_texts[0]);
 
     assert_eq!(
         rows_by_name["beta"]
@@ -5964,7 +5964,7 @@ fn grouped_bed_ignores_groups_on_filtered_out_chromosomes() -> Result<()> {
     //     `beta` on `chr2` with span [0, 120)
     // - Only the `chr1` chromosome should participate in grouped loading and counting.
     //   Therefore:
-    //     sidecar contains only `alpha`
+    //     group-index file contains only `alpha`
     //     output contains only one grouped row
     //     `alpha` has span_positions = eligible_positions = 100 and total_coverage = 60
     let bam = bam_from_fragments(
@@ -5998,7 +5998,7 @@ fn grouped_bed_ignores_groups_on_filtered_out_chromosomes() -> Result<()> {
     run(&cfg)?;
 
     let output = read_zst_to_string(&out_dir.path().join("testcov.fcoverage.total.tsv.zst"))?;
-    let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+    let group_index_text = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
 
     assert_eq!(
         parse_tsv(&output),
@@ -6014,7 +6014,7 @@ fn grouped_bed_ignores_groups_on_filtered_out_chromosomes() -> Result<()> {
         ]
     );
     assert_eq!(
-        parse_tsv(&sidecar),
+        parse_tsv(&group_index_text),
         vec![vec!["group_idx", "group_name"], vec!["0", "alpha"]]
     );
 
@@ -6183,8 +6183,8 @@ fn grouped_bed_total_with_blacklist_uses_site_weighted_group_semantics() -> Resu
     run(&cfg)?;
 
     let output = read_zst_to_string(&out_dir.path().join("testcov.fcoverage.total.tsv.zst"))?;
-    let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
-    let rows_by_name = grouped_rows_by_name(&output, &sidecar);
+    let group_index_text = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+    let rows_by_name = grouped_rows_by_name(&output, &group_index_text);
 
     assert_eq!(
         rows_by_name["beta"]
@@ -6257,8 +6257,8 @@ fn grouped_bed_total_on_unique_bases_with_blacklist_merges_same_group_overlap_on
             .path()
             .join("testcov.fcoverage.total_on_unique_bases.tsv.zst"),
     )?;
-    let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
-    let rows_by_name = grouped_rows_by_name(&output, &sidecar);
+    let group_index_text = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+    let rows_by_name = grouped_rows_by_name(&output, &group_index_text);
 
     assert_eq!(
         rows_by_name["beta"]
@@ -6330,8 +6330,8 @@ fn grouped_bed_average_on_unique_bases_with_blacklist_uses_only_eligible_positio
             .path()
             .join("testcov.fcoverage.average_on_unique_bases.tsv.zst"),
     )?;
-    let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
-    let rows_by_name = grouped_rows_by_name(&output, &sidecar);
+    let group_index_text = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+    let rows_by_name = grouped_rows_by_name(&output, &group_index_text);
 
     assert_eq!(
         rows_by_name["beta"][0..4]
@@ -6388,8 +6388,8 @@ fn grouped_bed_average_writes_nan_when_group_has_no_eligible_positions() -> Resu
     run(&cfg)?;
 
     let output = read_zst_to_string(&out_dir.path().join("testcov.fcoverage.average.tsv.zst"))?;
-    let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
-    let rows_by_name = grouped_rows_by_name(&output, &sidecar);
+    let group_index_text = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+    let rows_by_name = grouped_rows_by_name(&output, &group_index_text);
 
     assert_eq!(
         rows_by_name["masked"]
@@ -6451,8 +6451,8 @@ fn grouped_bed_average_on_unique_bases_writes_nan_when_group_has_no_eligible_pos
             .path()
             .join("testcov.fcoverage.average_on_unique_bases.tsv.zst"),
     )?;
-    let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
-    let rows_by_name = grouped_rows_by_name(&output, &sidecar);
+    let group_index_text = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+    let rows_by_name = grouped_rows_by_name(&output, &group_index_text);
 
     assert_eq!(
         rows_by_name["masked"]
@@ -6524,8 +6524,8 @@ fn grouped_summary_stats_on_unique_bases_with_blacklist_excludes_masked_position
             .path()
             .join("testcov.fcoverage.summary_stats_on_unique_bases.tsv.zst"),
     )?;
-    let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
-    let rows_by_name = grouped_rows_by_name(&output, &sidecar);
+    let group_index_text = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+    let rows_by_name = grouped_rows_by_name(&output, &group_index_text);
 
     assert_eq!(
         rows_by_name["beta"][0..5]
@@ -6605,7 +6605,7 @@ fn grouped_summary_stats_with_blacklist_is_invariant_when_plain_group_segments_c
     let bam = single_contig_inward_pair_bam()?;
     let tile_sizes = [33_u32, 1_000_u32];
     let mut outputs = Vec::new();
-    let mut sidecars = Vec::new();
+    let mut group_index_texts = Vec::new();
 
     for tile_size in tile_sizes {
         let out_dir = TempDir::new()?;
@@ -6644,7 +6644,7 @@ fn grouped_summary_stats_with_blacklist_is_invariant_when_plain_group_segments_c
                 .path()
                 .join("testcov.fcoverage.summary_stats.tsv.zst"),
         )?);
-        sidecars.push(std::fs::read_to_string(
+        group_index_texts.push(std::fs::read_to_string(
             out_dir.path().join("testcov.group_index.tsv"),
         )?);
     }
@@ -6654,11 +6654,11 @@ fn grouped_summary_stats_with_blacklist_is_invariant_when_plain_group_segments_c
         "plain grouped summary-stats output should not depend on tile size"
     );
     assert_eq!(
-        sidecars[0], sidecars[1],
-        "group sidecar should not depend on tile size"
+        group_index_texts[0], group_index_texts[1],
+        "group-index file should not depend on tile size"
     );
 
-    let rows_by_name = grouped_rows_by_name(&outputs[0], &sidecars[0]);
+    let rows_by_name = grouped_rows_by_name(&outputs[0], &group_index_texts[0]);
 
     assert_eq!(
         rows_by_name["beta"][0..5]
@@ -7286,8 +7286,8 @@ fn grouped_summary_stats_with_global_row_treats_global_as_ordinary_site_weighted
             .path()
             .join("testcov.fcoverage.summary_stats.tsv.zst"),
     )?;
-    let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
-    let rows_by_name = grouped_rows_by_name(&output, &sidecar);
+    let group_index_text = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+    let rows_by_name = grouped_rows_by_name(&output, &group_index_text);
 
     assert_eq!(
         rows_by_name
@@ -7457,8 +7457,8 @@ fn grouped_summary_stats_on_unique_bases_supports_downstream_pearson_with_gc_sca
             .path()
             .join("testcov.fcoverage.summary_stats_on_unique_bases.tsv.zst"),
     )?;
-    let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
-    let rows_by_name = grouped_rows_by_name(&output, &sidecar);
+    let group_index_text = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+    let rows_by_name = grouped_rows_by_name(&output, &group_index_text);
 
     let mut direct_coverage = vec![0.0_f64; 600];
     let mut direct_mask = vec![0.0_f64; 600];

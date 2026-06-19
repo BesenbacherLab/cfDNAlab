@@ -1,6 +1,12 @@
 use crate::commands::cli_common::*;
-use crate::shared::thread_pool::default_thread_count;
+use crate::{ToCliCommand, cli_command::helpers::*};
 use std::path::PathBuf;
+
+const DEFAULT_N_POSITIONS: usize = 500_000_000;
+const DEFAULT_END_OFFSET: u8 = 10;
+const DEFAULT_SMOOTHING_SIGMA: f64 = 0.8;
+const DEFAULT_SMOOTHING_RADIUS: u8 = 2;
+const DEFAULT_TILE_SIZE: u32 = 10_000_000;
 
 /// Build a reference GC bias table for cfDNA correction.
 ///
@@ -14,6 +20,7 @@ use std::path::PathBuf;
 /// A support mask flags bins with too few counts per megabase (including theoretically unobservable
 /// GC-by-length combinations), and the sparse bins are interpolated using neighbours.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RefGCBiasConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ref_genome: Ref2BitRequiredArgs,
@@ -50,7 +57,12 @@ pub struct RefGCBiasConfig {
     /// Defaults to the number of available CPU cores (-1).
     #[cfg_attr(
         feature = "cli",
-        clap(short = 't', long, default_value_t = default_thread_count(), help_heading = "Core")
+        clap(
+            short = 't',
+            long,
+            default_value_t = crate::shared::thread_pool::default_thread_count(),
+            help_heading = "Core"
+        )
     )]
     pub n_threads: usize,
 
@@ -71,7 +83,7 @@ pub struct RefGCBiasConfig {
         feature = "cli",
         clap(
             long,
-            default_value = "500000000",
+            default_value_t = DEFAULT_N_POSITIONS,
             value_parser = parse_positive_usize,
             help_heading = "Core"
         )
@@ -112,7 +124,7 @@ pub struct RefGCBiasConfig {
     /// The default of `10 bp` is based on the GCfix paper by Rahman et al. 2025.
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "10",
+        clap(long, default_value_t = DEFAULT_END_OFFSET,
              value_parser = clap::value_parser!(u8).range(0..20), help_heading="Core"))]
     pub end_offset: u8,
 
@@ -136,7 +148,7 @@ pub struct RefGCBiasConfig {
     /// Note: The same smoothing parameters (sigma and radius) are used for downstream `cfdna gc-bias` calls.
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "0.8",
+        clap(long, default_value_t = DEFAULT_SMOOTHING_SIGMA,
              value_parser = clap::value_parser!(f64), help_heading="Smoothing"))]
     pub smoothing_sigma: f64,
 
@@ -145,7 +157,7 @@ pub struct RefGCBiasConfig {
     /// Kernel size is `2 * radius + 1`.
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "2",
+        clap(long, default_value_t = DEFAULT_SMOOTHING_RADIUS,
              value_parser = clap::value_parser!(u8).range(1..10), help_heading="Smoothing"))]
     pub smoothing_radius: u8,
 
@@ -160,7 +172,7 @@ pub struct RefGCBiasConfig {
         feature = "cli",
         clap(
             long,
-            default_value = "10000000",
+            default_value_t = DEFAULT_TILE_SIZE,
             value_parser = clap::value_parser!(u32).range(1000000..),
             help_heading = "Core"
         )
@@ -172,6 +184,125 @@ pub struct RefGCBiasConfig {
 }
 
 impl RefGCBiasConfig {
+    /// Build a `ref-gc-bias` config with the same defaults used by the CLI.
+    pub fn new(ref_2bit: PathBuf, output_dir: PathBuf, chromosomes: ChromosomeArgs) -> Self {
+        Self {
+            ref_genome: Ref2BitRequiredArgs { ref_2bit },
+            output_dir,
+            output_prefix: String::new(),
+            n_threads: crate::shared::thread_pool::default_thread_count(),
+            n_positions: DEFAULT_N_POSITIONS,
+            seed: None,
+            windows: RefGCWindowsArgs::default(),
+            chromosomes,
+            blacklist: None,
+            fragment_lengths: FragmentLengthArgs::default(),
+            end_offset: DEFAULT_END_OFFSET,
+            skip_interpolation: false,
+            smoothing_sigma: DEFAULT_SMOOTHING_SIGMA,
+            smoothing_radius: DEFAULT_SMOOTHING_RADIUS,
+            skip_smoothing: false,
+            tile_size: DEFAULT_TILE_SIZE,
+            logging: LoggingArgs::default(),
+        }
+    }
+
+    /// Set the 2bit reference genome path.
+    pub fn set_ref_2bit(&mut self, ref_2bit: PathBuf) {
+        self.ref_genome.ref_2bit = ref_2bit;
+    }
+
+    /// Set the output directory.
+    pub fn set_output_dir(&mut self, output_dir: PathBuf) {
+        self.output_dir = output_dir;
+    }
+
+    /// Set the optional filename prefix for the output package.
+    pub fn set_output_prefix<S: Into<String>>(&mut self, output_prefix: S) {
+        self.output_prefix = output_prefix.into();
+    }
+
+    /// Set the number of worker threads.
+    pub fn set_n_threads(&mut self, n_threads: usize) {
+        self.n_threads = n_threads;
+    }
+
+    /// Set the approximate number of genomic starting positions to sample.
+    pub fn set_n_positions(&mut self, n_positions: usize) {
+        self.n_positions = n_positions;
+    }
+
+    /// Set the optional sampling seed.
+    pub fn set_seed(&mut self, seed: Option<u64>) {
+        self.seed = seed;
+    }
+
+    /// Set the reference-window selection.
+    pub fn set_windows(&mut self, windows: RefGCWindowsArgs) {
+        self.windows = windows;
+    }
+
+    /// Set the optional BED file used to restrict sampled reference positions.
+    pub fn set_by_bed(&mut self, by_bed: Option<PathBuf>) {
+        self.windows.by_bed = by_bed;
+    }
+
+    /// Set the chromosome selection.
+    pub fn set_chromosomes(&mut self, chromosomes: ChromosomeArgs) {
+        self.chromosomes = chromosomes;
+    }
+
+    /// Set optional blacklist BED files.
+    pub fn set_blacklist(&mut self, blacklist: Option<Vec<PathBuf>>) {
+        self.blacklist = blacklist;
+    }
+
+    /// Return mutable access to the fragment length range.
+    pub fn fragment_lengths_mut(&mut self) -> &mut FragmentLengthArgs {
+        &mut self.fragment_lengths
+    }
+
+    /// Set the fragment length range.
+    pub fn set_fragment_lengths(&mut self, fragment_lengths: FragmentLengthArgs) {
+        self.fragment_lengths = fragment_lengths;
+    }
+
+    /// Set how many bases to ignore at each fragment end for GC counting.
+    pub fn set_end_offset(&mut self, end_offset: u8) {
+        self.end_offset = end_offset;
+    }
+
+    /// Set whether zero-count interpolation should be skipped.
+    pub fn set_skip_interpolation(&mut self, skip_interpolation: bool) {
+        self.skip_interpolation = skip_interpolation;
+    }
+
+    /// Set the Gaussian smoothing sigma.
+    pub fn set_smoothing_sigma(&mut self, smoothing_sigma: f64) {
+        self.smoothing_sigma = smoothing_sigma;
+    }
+
+    /// Set the Gaussian smoothing radius.
+    pub fn set_smoothing_radius(&mut self, smoothing_radius: u8) {
+        self.smoothing_radius = smoothing_radius;
+    }
+
+    /// Set whether raw GC-count smoothing should be skipped.
+    pub fn set_skip_smoothing(&mut self, skip_smoothing: bool) {
+        self.skip_smoothing = skip_smoothing;
+    }
+
+    /// Set the reference tile size.
+    pub fn set_tile_size(&mut self, tile_size: u32) {
+        self.tile_size = tile_size;
+    }
+
+    /// Set logging options used when rendering equivalent CLI calls.
+    pub fn set_logging(&mut self, logging: LoggingArgs) {
+        self.logging = logging;
+    }
+
+    /// Validate smoothing settings before command execution.
     pub fn check_smoothing_settings(&self) -> anyhow::Result<()> {
         if self.skip_smoothing {
             return Ok(());
@@ -200,7 +331,7 @@ fn parse_positive_usize(raw: &str) -> Result<usize, String> {
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct RefGCWindowsArgs {
     /// BED file with regions to include `[path]`
     ///
@@ -217,4 +348,35 @@ impl RefGCWindowsArgs {
             WindowSpec::Global
         }
     }
+}
+
+impl ToCliCommand for RefGCBiasConfig {
+    fn to_cli_args(&self) -> crate::Result<Vec<std::ffi::OsString>> {
+        let mut args = command_args("ref-gc-bias");
+        push_ref_2bit_required(&mut args, &self.ref_genome);
+        push_path(&mut args, "--output-dir", &self.output_dir);
+        push_output_prefix(&mut args, &self.output_prefix);
+        push_value(&mut args, "--n-threads", self.n_threads);
+        push_value(&mut args, "--n-positions", self.n_positions);
+        if let Some(seed) = self.seed {
+            push_value(&mut args, "--seed", seed);
+        }
+        push_optional_path(&mut args, "--by-bed", self.windows.by_bed.as_deref());
+        push_chromosomes(&mut args, &self.chromosomes);
+        push_path_values(&mut args, "--blacklist", self.blacklist.as_deref());
+        push_fragment_lengths(&mut args, &self.fragment_lengths);
+        push_value(&mut args, "--end-offset", self.end_offset);
+        push_bool(&mut args, "--skip-interpolation", self.skip_interpolation);
+        push_value(&mut args, "--smoothing-sigma", self.smoothing_sigma);
+        push_value(&mut args, "--smoothing-radius", self.smoothing_radius);
+        push_bool(&mut args, "--skip-smoothing", self.skip_smoothing);
+        push_value(&mut args, "--tile-size", self.tile_size);
+        push_logging(&mut args, &self.logging);
+        Ok(args)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    include!("config_tests.rs");
 }

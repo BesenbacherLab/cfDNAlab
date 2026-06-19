@@ -5,8 +5,12 @@
 Create the following conda environment to allow building the software.
 
 ```bash
-conda create -n cfdnalab rust=1.94.0 zstandard perl fontconfig conda-forge::llvmdev conda-forge::clangdev
+conda create -n cfdnalab \
+  rust=1.94.0 zstandard perl fontconfig \
+  'conda-forge::clang=21.*' 'conda-forge::clangdev=21.*' \
+  'conda-forge::libclang=21.*' 'conda-forge::llvmdev=21.*'
 conda activate cfdnalab
+export LIBCLANG_PATH="$CONDA_PREFIX/lib"
 ```
 
 ## Latest release

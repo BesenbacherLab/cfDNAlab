@@ -1,4 +1,4 @@
-#![cfg(all(feature = "cmd_ref_gc_bias", feature = "testing"))]
+#![cfg(all(feature = "cmd_gc_bias", feature = "testing"))]
 
 use anyhow::Result;
 use cfdnalab::{

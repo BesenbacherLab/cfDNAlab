@@ -421,7 +421,7 @@ fn build_bed_coords_by_idx(
 
 /// Count the expected number of tile contributions for each reducer row key.
 ///
-/// Cross-index sidecars list only boundary-crossing rows. Any key missing from every sidecar still
+/// Cross-index files list only boundary-crossing rows. Any key missing from every cross-index file still
 /// expects exactly one contribution, but this helper deliberately returns only the explicit counts.
 /// The reducer applies the `default = 1` policy at the read point so that rule stays obvious.
 ///
@@ -466,7 +466,7 @@ fn load_expected_contributions(
 #[inline]
 /// Return how many tile rows must be seen before one reduced row is complete.
 ///
-/// Keys missing from all cross-index sidecars default to one contribution because they stayed
+/// Keys missing from all cross-index files default to one contribution because they stayed
 /// inside one tile core and therefore produced exactly one partial row.
 fn expected_contribution_count(expected_contributions: &FxHashMap<u64, u32>, key: u64) -> u32 {
     *expected_contributions.get(&key).unwrap_or(&1)
@@ -476,7 +476,7 @@ fn expected_contribution_count(expected_contributions: &FxHashMap<u64, u32>, key
 ///
 /// The returned heap is keyed only by the next visible row key. It is not a completeness proof.
 /// Final correctness still comes from the stable row identity plus the expected
-/// contribution counts loaded from the cross-index sidecars.
+/// contribution counts loaded from the cross-index files.
 fn open_partials_streams(
     chr: &str,
     files_by_tile: &FxHashMap<u32, TileFiles>,
@@ -493,7 +493,7 @@ fn open_partials_streams(
     //
     // The heap does not prove that a BED row or fixed-size bin is complete. It only picks the
     // next stream to read from. Final correctness still comes from the stable row identity plus
-    // the expected contribution count loaded from the cross-index sidecars.
+    // the expected contribution count loaded from the cross-index files.
     let mut streams: Vec<PartialsStream> = Vec::new();
     let mut current_rows: Vec<Option<ParsedPartialRow>> = Vec::new();
     let mut heap: StreamHeap = BinaryHeap::new();
@@ -573,10 +573,10 @@ fn push_next_row_for_stream(
 ///   output is coordinate-sorted unless the windows were explicitly reindexed upstream
 ///
 /// Cross-index logic:
-/// - sidecars list only boundary-crossing rows
-/// - windows fully contained in one tile are absent from all sidecars, so the reducer expects one
+/// - cross-index files list only boundary-crossing rows
+/// - windows fully contained in one tile are absent from all cross-index files, so the reducer expects one
 ///   contribution
-/// - boundary windows appear in each crossed tile's sidecar, and that sidecar count is the
+/// - boundary windows appear in each crossed tile's cross-index file, and that count is the
 ///   expected number of partial rows
 ///
 /// This engine intentionally stays separate from the fixed-size engine. Both engines share the
@@ -679,7 +679,7 @@ pub(crate) fn reduce_bed_rows(
 /// by any clipped tile-local overlap. Partial rows must therefore carry the full `bin_start` and
 /// `bin_end`. Changing those bounds to clipped pieces would break cross-tile merging.
 ///
-/// Cross-index sidecars count how many tiles contribute to each full bin start. If a bin is not
+/// Cross-index files count how many tiles contribute to each full bin start. If a bin is not
 /// listed in any cross-index file, the reducer expects exactly one contribution. Missing
 /// cross-index files are valid for aligned single-contribution partials.
 ///
@@ -785,7 +785,7 @@ pub(crate) fn reduce_size_rows(
     Ok(())
 }
 
-/// Sidecar type information for one tile
+/// Partial and cross-index file information for one tile
 #[derive(Default, Clone)]
 struct TileFiles {
     pub(crate) partials_path: Option<PathBuf>,

@@ -142,9 +142,10 @@ fn run(args: &Cli) -> Result<()> {
 fn release_command_names() -> Vec<String> {
     let mut names = Vec::new();
     #[cfg(feature = "cmd_gc_bias")]
-    names.push("gc-bias".to_string());
-    #[cfg(feature = "cmd_ref_gc_bias")]
-    names.push("ref-gc-bias".to_string());
+    {
+        names.push("gc-bias".to_string());
+        names.push("ref-gc-bias".to_string());
+    }
     #[cfg(feature = "cmd_coverage_weights")]
     names.push("coverage-weights".to_string());
     #[cfg(feature = "cmd_fragment_count_weights")]
@@ -250,7 +251,7 @@ fn is_default_value_line(line: &str) -> bool {
 
 #[cfg(all(feature = "cli", feature = "docs_gen"))]
 fn write_generated_notice(out_dir: &Path) -> Result<()> {
-    let notice_text = "AUTO-GENERATED DIRECTORY - DO NOT EDIT\nSource: cfdna Clap config and command tree\n\nRegenerate with:\n\ncargo run --example gen_cli_docs --features cli,docs_gen,cmd_bam_to_bam,cmd_bam_to_frag,cmd_frag_to_bam,cmd_coverage_weights,cmd_fragment_count_weights,cmd_ends,cmd_fcoverage,cmd_gc_bias,cmd_lengths,cmd_midpoints,cmd_ref_gc_bias -- --out-dir website/docs/generated/cli --scope release\n";
+    let notice_text = "AUTO-GENERATED DIRECTORY - DO NOT EDIT\nSource: cfdna Clap config and command tree\n\nRegenerate with:\n\ncargo run --example gen_cli_docs --features cli,docs_gen,cmd_bam_to_bam,cmd_bam_to_frag,cmd_frag_to_bam,cmd_coverage_weights,cmd_fragment_count_weights,cmd_ends,cmd_fcoverage,cmd_gc_bias,cmd_lengths,cmd_midpoints -- --out-dir website/docs/generated/cli --scope release\n";
     fs::write(out_dir.join("GENERATED_NOTICE.txt"), notice_text)
         .with_context(|| format!("writing {}", out_dir.join("GENERATED_NOTICE.txt").display()))?;
     Ok(())

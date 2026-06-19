@@ -43,8 +43,13 @@ jobs:
 
       - name: Generate downstream fixtures with cfDNAlab
         env:
-          CFDNALAB_DOWNSTREAM_FIXTURE_DIR: downstream_tests/tmp
+          CFDNALAB_DOWNSTREAM_FIXTURE_DIR: ${{ github.workspace }}/downstream_tests/tmp
         run: cargo test --no-default-features --features cmd_midpoints,cmd_ends,cmd_lengths,testing --test generate_downstream_zarr_fixtures -- --ignored
+
+      - name: Run Rust output loader downstream tests
+        env:
+          CFDNALAB_DOWNSTREAM_FIXTURE_DIR: ${{ github.workspace }}/downstream_tests/tmp
+        run: cargo test --manifest-path downstream_tests/rust/Cargo.toml --no-default-features --features cmd_midpoints,cmd_ends,cmd_lengths,testing --test test_downstream_rust_loaders -- --ignored
 
       - name: Upload downstream fixtures
         uses: actions/upload-artifact@v4

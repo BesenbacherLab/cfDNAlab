@@ -1,6 +1,8 @@
+use crate::commands::coverage_weights::{
+    config::push_scaling_weights_cli_args, scaling_weights_config::ScalingWeightsArgs,
+};
+use crate::{ToCliCommand, cli_command::helpers::*};
 use std::ops::{Deref, DerefMut};
-
-use crate::commands::coverage_weights::scaling_weights_config::ScalingWeightsArgs;
 
 /// Extract fragment count-based smoothing weights in large genomic bins ("megabins")
 /// with a rolling window and calculate normalizing scaling factors for smoothing
@@ -104,7 +106,7 @@ use crate::commands::coverage_weights::scaling_weights_config::ScalingWeightsArg
 /// The read is mapped to a different `tid` than the mate.
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FragmentCountWeightsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub shared: ScalingWeightsArgs,
@@ -132,5 +134,13 @@ impl Deref for FragmentCountWeightsConfig {
 impl DerefMut for FragmentCountWeightsConfig {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.shared
+    }
+}
+
+impl ToCliCommand for FragmentCountWeightsConfig {
+    fn to_cli_args(&self) -> crate::Result<Vec<std::ffi::OsString>> {
+        let mut args = command_args("fragment-count-weights");
+        push_scaling_weights_cli_args(&mut args, &self.shared);
+        Ok(args)
     }
 }

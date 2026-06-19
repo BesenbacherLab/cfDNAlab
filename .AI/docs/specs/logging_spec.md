@@ -19,7 +19,7 @@ Invalid values fail during CLI parsing. `file=` with an empty path is invalid.
 - Warnings and errors always go to stderr.
 - In file mode, warnings and errors are also written to the log file.
 - In quiet mode, warnings and errors still go to stderr.
-- Progress bars draw to stderr only when stderr is a terminal and logging is not quiet.
+- Progress bars draw to stderr only when stderr is a terminal and runner progress is enabled.
 - Non-TTY progress output must be hidden to avoid corrupting redirected logs.
 
 ## Formatting
@@ -37,13 +37,29 @@ Invalid values fail during CLI parsing. `file=` with an empty path is invalid.
 ## Command Boundary
 
 - The top-level binary initializes logging once before command execution.
+- The top-level binary derives runner `RunOptions` from the parsed CLI logging mode.
+  `quiet` passes quiet runner options, while `stdout` and file modes pass CLI-style
+  runner options.
 - Nested command calls, such as `coverage-weights` calling internal `fcoverage`, must not print nested top-level banners.
 - Nested calls should log phase messages with their own targets, so users can see where work is happening.
-- `prepare-windows` and `visualize-positions` currently force stdout logging because they do not expose shared `LoggingArgs`.
+- `prep-windows` and `visualize-positions` currently force stdout logging because they do not expose shared `LoggingArgs`.
+
+## Rust API Boundary
+
+- Direct Rust command-runner calls do not initialize the CLI logging runtime.
+- Downstream Rust applications should install their own `tracing` subscriber if
+  they want to capture cfDNAlab status messages.
+- `RunOptions` controls runner reporting side effects for direct calls.
+- `LoggingArgs` and `LogSpec` are CLI-facing config fields. They are used by the
+  binary and by `ToCliCommand`, not by direct runner dispatch.
+- `RunOptions::new_quiet()` is the default recommendation for downstream
+  library-style use because it avoids stdout summaries, progress bars, status
+  messages, and equivalent CLI logging.
 
 ## Implementation Invariants
 
 - `PRIMARY_OUTPUT` is initialized once per process. Reinitialization is an error.
 - `write_primary` and `write_primary_line` are the only APIs that should write command narration outside tracing.
 - Top-level errors are rendered to stderr and duplicated to file mode after the command footer.
-- Progress factories must call `logging::progress_enabled()` so quiet mode is honored globally.
+- Progress factories must not read CLI logging state. They only honor the explicit
+  runner progress flag and stderr terminal detection.

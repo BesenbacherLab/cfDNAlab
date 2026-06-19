@@ -53,10 +53,10 @@ struct MidpointSettings<'a> {
     interval_blacklist_prefilter: IntervalBlacklistPrefilterSettings,
 }
 
-/// Write the midpoint command settings sidecar.
+/// Write the midpoint command settings JSON.
 ///
 /// The Zarr store carries the axis metadata needed for downstream loading. This JSON file records
-/// command settings in a plain human-readable sidecar.
+/// command settings in a plain human-readable file.
 ///
 /// Parameters
 /// ----------
@@ -72,7 +72,7 @@ struct MidpointSettings<'a> {
 ///     Margin used when interval-level blacklist prefiltering is enabled.
 /// - `use_blacklist_prefilter`:
 ///     Whether interval-level blacklist prefiltering was active for this run.
-pub(super) fn write_midpoint_settings_json(
+pub(crate) fn write_midpoint_settings_json(
     settings_path: &Path,
     opt: &MidpointsConfig,
     length_axis: &LengthAxis,

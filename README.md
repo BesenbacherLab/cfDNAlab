@@ -36,14 +36,18 @@ Suggest a tool or feature [here](https://github.com/BesenbacherLab/cfDNAlab/issu
 
 ## Installation
 
-You may need a few dependencies that can be installed as a conda environment with:
+Please install these dependencies first:
 
 ```bash
-conda create -n cfdnalab rust=1.94.0 zstandard perl fontconfig conda-forge::llvmdev conda-forge::clangdev
+conda create -n cfdnalab \
+  rust=1.94.0 zstandard perl fontconfig \
+  'conda-forge::clang=21.*' 'conda-forge::clangdev=21.*' \
+  'conda-forge::libclang=21.*' 'conda-forge::llvmdev=21.*'
 conda activate cfdnalab
+export LIBCLANG_PATH="$CONDA_PREFIX/lib"
 ```
 
-Compile and install:
+Compile and install `cfDNAlab`:
 
 ```bash
 # Install latest release
@@ -768,12 +772,12 @@ cfdna fcoverage \
 
 Most commands write one of these output types:
 
-| Format          | Use                            | Read with                                                                                                                                                        |
-| --------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.zarr`         | array(s) with meta data        | Our [R](https://github.com/BesenbacherLab/cfDNAlab/tree/main/r-cfdnalab) and [Python](https://github.com/BesenbacherLab/cfDNAlab/tree/main/py-cfdnalab) packages |
-| `.tsv.zst`      | tabular outputs                | `zstdcat`, Pandas in Python, fread in R                                                                                                                          |
-| `.bedgraph.zst` | positional tracks              | `zstdcat`, Convert to bigWig                                                                                                                                     |
-| `.json`, `.txt` | settings and auxiliary outputs | any text reader                                                                                                                                                  |
+| Format          | Use                         | Read with                                                                                                                                                        |
+| --------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.zarr`         | array(s) with meta data     | Our [R](https://github.com/BesenbacherLab/cfDNAlab/tree/main/r-cfdnalab) and [Python](https://github.com/BesenbacherLab/cfDNAlab/tree/main/py-cfdnalab) packages |
+| `.tsv.zst`      | tabular outputs             | `zstdcat`, Pandas in Python, fread in R                                                                                                                          |
+| `.bedgraph.zst` | positional tracks           | `zstdcat`, Convert to bigWig                                                                                                                                     |
+| `.json`, `.txt` | settings and metadata files | any text reader                                                                                                                                                  |
 
 The Zarr directories can be read with our [R](https://github.com/BesenbacherLab/cfDNAlab/tree/main/r-cfdnalab) and [Python](https://github.com/BesenbacherLab/cfDNAlab/tree/main/py-cfdnalab) packages (*installed separately*):
 

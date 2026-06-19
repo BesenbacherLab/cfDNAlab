@@ -31,6 +31,7 @@
 - Fixed-size mode uses contiguous chromosome bins. The final bin is clipped to chromosome length.
 - BED mode preserves original BED row indices through reduction. Output order follows the original BED index, not necessarily coordinate order unless the input was already ordered that way.
 - Grouped BED mode collapses rows by `group_idx`. Plain grouped aggregate actions preserve the command's grouped span semantics, while `*-on-unique-bases` actions merge overlapping or touching bases within each group before computing support.
+- Grouped aggregate outputs write one row per `group_idx`. Duplicate `group_idx` rows are invalid.
 - `--per-window average` writes mean coverage over eligible bases.
 - `--per-window total` writes coverage sum over eligible bases.
 - `--per-window summary-stats` writes the summary schema described below and is handled through reducer paths, not direct positional window extraction.
@@ -49,36 +50,52 @@
 Basic aggregate rows:
 
 ```text
-chromosome  start  end  average_coverage|total_coverage  blacklisted_positions
+chromosome  start  end  average_<signal>|total_<signal>  blacklisted_positions
 ```
 
 Grouped aggregate rows:
 
 ```text
-group_idx  span_positions  blacklisted_positions  eligible_positions  average_coverage|total_coverage
+group_idx  span_positions  blacklisted_positions  eligible_positions  average_<signal>|total_<signal>
 ```
 
-Summary rows:
+`<signal>` is `coverage` for unnormalized coverage and `fragment_mass` for length-normalized outputs.
+
+Windowed summary rows:
 
 ```text
-chromosome|group_idx
+chromosome
 start
 end
 span_positions
 blacklisted_positions
 eligible_positions
 nonzero_positions
-coverage_sum
-coverage_sum_of_squares
-average_coverage
-total_coverage
-variance_coverage
-sd_coverage
-coefficient_of_variation_coverage
 covered_fraction
+total_<signal>
+total_squared_<signal>
+average_<signal>
+variance_<signal>
+sd_<signal>
+coefficient_of_variation_<signal>
 ```
 
-For grouped summary output, `group_idx` replaces chromosome/start/end identity in the grouped schema.
+Grouped summary rows:
+
+```text
+group_idx
+span_positions
+blacklisted_positions
+eligible_positions
+nonzero_positions
+covered_fraction
+total_<signal>
+total_squared_<signal>
+average_<signal>
+variance_<signal>
+sd_<signal>
+coefficient_of_variation_<signal>
+```
 
 Numeric policies:
 
@@ -86,14 +103,14 @@ Numeric policies:
 - Tiny negative variance from floating-point error is snapped to zero. Larger negative variance is an error.
 - Coefficient of variation is `NaN` when the mean is effectively zero.
 - Finite CV values above `1e6` are printed as `>1e6`.
-- Restore-mean scales `coverage_sum` by the multiplier and `coverage_sum_of_squares` by multiplier squared.
+- Restore-mean scales `total_<signal>` by the multiplier and `total_squared_<signal>` by multiplier squared.
 
 ## Reducer Invariants
 
 - Reducers consume the explicit tile paths returned by workers. They must not discover work by scanning temp directories.
 - BED reducer keys are original BED indices. Duplicate original indices are an error.
 - Fixed-size reducer keys are full bin starts before final-bin clipping.
-- Cross-index sidecars list only rows that crossed tile boundaries. Missing sidecar keys mean the row had exactly one contribution.
+- Cross-index files list only rows that crossed tile boundaries. Missing cross-index keys mean the row had exactly one contribution.
 - Aligned tile/window boundaries can bypass fixed-size reduction by concatenating tile finals, but restore-mean always forces reducer aggregation.
 - Missing tile output for a chromosome that has expected windows is an error.
 

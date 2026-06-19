@@ -183,7 +183,7 @@ The Zarr store contains:
 ```
 
 - `average_window_span` is the mean BED span, the whole selected genome span in global mode, or the mean fixed-size chromosome-bin span including clipped chromosome-end bins.
-- For windows crossing tile boundaries, partial counts are spilled to temporary `.npz` sidecars and merged by stable window index before window scaling.
+- For windows crossing tile boundaries, partial counts are spilled to temporary `.npz` metadata files and merged by stable window index before window scaling.
 
 ### Sample Processing
 

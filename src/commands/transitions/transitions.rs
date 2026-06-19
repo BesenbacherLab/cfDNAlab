@@ -185,6 +185,11 @@ pub fn run_transitions(
     let prefix = opt.shared_args.output_prefix.trim();
     validate_output_prefix(prefix)?;
 
+    if options.log_equivalent_cli {
+        let command = crate::ToCliCommand::to_cli_string(opt)?;
+        tracing::info!(target: "transitions", "Equivalent CLI: {command}");
+    }
+
     // Create output directory
     ensure_output_dir(&opt.shared_args.ioc.output_dir)?;
 
@@ -211,8 +216,13 @@ pub fn run_transitions(
     };
     fk_cfg.set_output_prefix(prefix.to_string());
 
-    let fragment_kmers_result =
-        fragment_kmers::run_fragment_kmers(&fk_cfg, RunOptions::new_quiet())?;
+    let fragment_kmers_result = fragment_kmers::run_fragment_kmers(
+        &fk_cfg,
+        RunOptions {
+            log_equivalent_cli: options.log_equivalent_cli,
+            ..RunOptions::new_quiet()
+        },
+    )?;
     let global_counter = fragment_kmers_result.counters;
 
     let counts_dir = fk_cfg.shared_args.ioc.output_dir.as_path();

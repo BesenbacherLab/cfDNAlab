@@ -1,18 +1,31 @@
+#[cfg(feature = "cli")]
 use anyhow::{Context, Result};
+#[cfg(feature = "cli")]
 use chrono::Local;
+#[cfg(feature = "cli")]
 use rand::{Rng, distr::Alphanumeric};
+use std::io::{self, Write};
+use std::path::PathBuf;
+#[cfg(feature = "cli")]
 use std::{
     fs::{self, File, OpenOptions},
-    io::{self, Write},
-    path::{Path, PathBuf},
+    path::Path,
     sync::{Arc, Mutex, OnceLock},
 };
+#[cfg(feature = "cli")]
 use tracing::Level;
+#[cfg(feature = "cli")]
 use tracing_subscriber::{Layer, filter::filter_fn, fmt, layer::SubscriberExt};
 
 /// Shared logging argument used by commands that opt into tracing-based CLI output.
+///
+/// This field is consumed by the top-level CLI before it calls a command runner, and by
+/// `ToCliCommand` when rendering a config back to command-line arguments. Direct Rust calls to
+/// `run_*` functions do not read `config.logging`. Use `RunOptions` to control cfDNAlab reporting
+/// side effects, and install an application-owned `tracing` subscriber if you want to collect
+/// cfDNAlab status messages inside another Rust application.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LoggingArgs {
     /// Logging destination `[stdout|quiet|file|file=<path>]`
     ///
@@ -38,6 +51,9 @@ pub struct LoggingArgs {
 }
 
 /// Parsed logging mode for a top-level command.
+///
+/// This describes where the cfDNAlab CLI sends its normal run narrative. It does not install or
+/// change logging for direct Rust command-runner calls.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum LogSpec {
     #[default]
@@ -47,6 +63,7 @@ pub enum LogSpec {
 }
 
 /// Parse the compact `--log` grammar shared by tracing-enabled commands.
+#[cfg(feature = "cli")]
 pub fn parse_log_spec(value: &str) -> Result<LogSpec, String> {
     match value {
         "stdout" => Ok(LogSpec::Stdout),
@@ -70,6 +87,7 @@ pub fn parse_log_spec(value: &str) -> Result<LogSpec, String> {
     }
 }
 
+#[cfg(feature = "cli")]
 #[derive(Clone)]
 enum PrimaryOutput {
     Stdout,
@@ -77,12 +95,14 @@ enum PrimaryOutput {
     File(Arc<Mutex<File>>),
 }
 
+#[cfg(feature = "cli")]
 static PRIMARY_OUTPUT: OnceLock<PrimaryOutput> = OnceLock::new();
 
 /// Initialize tracing and the shared primary output sink for one CLI invocation.
 ///
 /// The primary sink carries the normal run narrative and explicit summary blocks.
 /// Warnings and errors always stay on `stderr`.
+#[cfg(feature = "cli")]
 pub fn init_cli_logging(
     command_name: &str,
     log_spec: &LogSpec,
@@ -117,6 +137,7 @@ pub fn init_cli_logging(
 }
 
 /// Write a preformatted block to the primary sink without appending a newline.
+#[cfg(feature = "cli")]
 pub fn write_primary(text: &str) {
     match PRIMARY_OUTPUT.get() {
         Some(PrimaryOutput::Stdout) | None => {
@@ -136,12 +157,23 @@ pub fn write_primary(text: &str) {
     }
 }
 
+/// Write a preformatted block to stdout when the CLI logging runtime is not compiled.
+#[cfg(not(feature = "cli"))]
+pub fn write_primary(text: &str) {
+    let mut stdout = io::stdout().lock();
+    stdout
+        .write_all(text.as_bytes())
+        .expect("writing primary output");
+    stdout.flush().expect("flushing primary output");
+}
+
 /// Write one logical line to the primary sink.
 pub fn write_primary_line(line: &str) {
     write_primary(&format!("{line}\n"));
 }
 
 /// Duplicate a top-level stderr line into the log file when file logging is active.
+#[cfg(feature = "cli")]
 pub fn duplicate_stderr_line_to_file(line: &str) {
     if let Some(PrimaryOutput::File(file)) = PRIMARY_OUTPUT.get() {
         let mut file = file.lock().expect("locking primary log file");
@@ -152,15 +184,12 @@ pub fn duplicate_stderr_line_to_file(line: &str) {
 }
 
 /// Return whether the current primary sink should use terminal-oriented formatting.
+#[cfg(feature = "cli")]
 pub fn primary_uses_terminal_formatting() -> bool {
     matches!(PRIMARY_OUTPUT.get(), Some(PrimaryOutput::Stdout) | None)
 }
 
-/// Return whether progress reporting should remain enabled.
-pub fn progress_enabled() -> bool {
-    !matches!(PRIMARY_OUTPUT.get(), Some(PrimaryOutput::Quiet))
-}
-
+#[cfg(feature = "cli")]
 fn resolve_log_path(
     command_name: &str,
     log_spec: &LogSpec,
@@ -184,6 +213,7 @@ fn resolve_log_path(
     }
 }
 
+#[cfg(feature = "cli")]
 fn random_suffix(length: usize) -> String {
     rand::rng()
         .sample_iter(&Alphanumeric)
@@ -192,6 +222,7 @@ fn random_suffix(length: usize) -> String {
         .collect()
 }
 
+#[cfg(feature = "cli")]
 fn install_tracing(primary_output: PrimaryOutput) -> Result<()> {
     let stderr_layer = fmt::layer()
         .with_ansi(false)
@@ -246,17 +277,20 @@ fn install_tracing(primary_output: PrimaryOutput) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "cli")]
 #[derive(Clone)]
 struct PrimaryMakeWriter {
     output: PrimaryOutput,
 }
 
+#[cfg(feature = "cli")]
 impl PrimaryMakeWriter {
     fn new(output: PrimaryOutput) -> Self {
         Self { output }
     }
 }
 
+#[cfg(feature = "cli")]
 impl<'a> tracing_subscriber::fmt::writer::MakeWriter<'a> for PrimaryMakeWriter {
     type Writer = PrimaryWriter;
 
@@ -269,12 +303,14 @@ impl<'a> tracing_subscriber::fmt::writer::MakeWriter<'a> for PrimaryMakeWriter {
     }
 }
 
+#[cfg(feature = "cli")]
 enum PrimaryWriter {
     Stdout(io::Stdout),
     Sink(io::Sink),
     File(Arc<Mutex<File>>),
 }
 
+#[cfg(feature = "cli")]
 impl Write for PrimaryWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {

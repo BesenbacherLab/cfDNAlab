@@ -5,7 +5,7 @@ Final user-facing outputs are completion signals for workflow managers and ad ho
 ## Final Output Set
 
 - A final output is any user-facing file whose existence can be interpreted as command completion.
-- Primary outputs, compressed tables, BED or bedGraph outputs, group-index sidecars, settings files, headers, BAM files, package files, and other metadata needed to interpret a primary output are part of the final output set.
+- Primary outputs, compressed tables, BED or bedGraph outputs, group-index files, settings files, headers, BAM files, package files, and other metadata needed to interpret a primary output are part of the final output set.
 - Internal tile files and reducer scratch files are not final outputs. They stay in command temp directories and are not public completion signals.
 
 ## Write Contract
@@ -28,7 +28,7 @@ Commands should use `shared::io::FinalOutputFiles` for final output placement:
 - `record_temp_files_with_same_names_in` records files created inside the final-output temp directory when a writer returns the paths it created.
 - `move_into_place` renames all recorded temp files to their final paths.
 
-The helper enforces path bookkeeping. Callers are still responsible for writing complete files, closing writers, and recording all required sidecars before calling `move_into_place`.
+The helper enforces path bookkeeping. Callers are still responsible for writing complete files, closing writers, and recording all required metadata files before calling `move_into_place`.
 
 ## Temp Directories and Cleanup
 

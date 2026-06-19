@@ -44,7 +44,7 @@ fn eligible_interval_counts_include_zero_count_groups() {
 
 #[test]
 fn write_midpoint_group_index_sorts_and_defaults_missing_counts() {
-    // The sidecar is parsed by name downstream, so the writer must keep the public column name,
+    // The group-index file is parsed by name downstream, so the writer must keep the public column name,
     // sort rows by group index, and keep groups with no retained intervals visible.
     let temp = TempDir::new().expect("temp dir should be created");
     let output_path = temp.path().join("sites.group_index.tsv");

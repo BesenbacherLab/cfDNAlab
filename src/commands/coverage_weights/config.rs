@@ -1,6 +1,7 @@
 use std::ops::{Deref, DerefMut};
 
 use crate::commands::coverage_weights::scaling_weights_config::ScalingWeightsArgs;
+use crate::{ToCliCommand, cli_command::helpers::*};
 
 /// Extract fragment coverage-based smoothing weights in large genomic bins ("megabins")
 /// with a rolling window and calculate normalizing scaling factors for smoothing
@@ -101,7 +102,7 @@ use crate::commands::coverage_weights::scaling_weights_config::ScalingWeightsArg
 /// The read is mapped to a different `tid` than the mate.
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CoverageWeightsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub shared: ScalingWeightsArgs,
@@ -142,5 +143,34 @@ impl Deref for CoverageWeightsConfig {
 impl DerefMut for CoverageWeightsConfig {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.shared
+    }
+}
+
+pub(crate) fn push_scaling_weights_cli_args(
+    args: &mut Vec<std::ffi::OsString>,
+    config: &ScalingWeightsArgs,
+) {
+    push_ioc(args, &config.ioc);
+    push_unpaired(args, &config.unpaired);
+    push_output_prefix(args, &config.output_prefix);
+    push_value(args, "--tile-size", config.tile_size);
+    push_value(args, "--stride", config.stride);
+    push_value(args, "--bin-size", config.bin_size);
+    push_chromosomes(args, &config.chromosomes);
+    push_fragment_lengths(args, &config.fragment_lengths);
+    push_value(args, "--min-mapq", config.min_mapq);
+    push_bool(args, "--require-proper-pair", config.require_proper_pair);
+    push_path_values(args, "--blacklist", config.blacklist.as_deref());
+    push_apply_gc(args, &config.gc);
+    push_optional_path(args, "--ref-2bit", config.ref_2bit.as_deref());
+    push_logging(args, &config.logging);
+}
+
+impl ToCliCommand for CoverageWeightsConfig {
+    fn to_cli_args(&self) -> crate::Result<Vec<std::ffi::OsString>> {
+        let mut args = command_args("coverage-weights");
+        push_scaling_weights_cli_args(&mut args, &self.shared);
+        push_bool(&mut args, "--ignore-gap", self.ignore_gap);
+        Ok(args)
     }
 }

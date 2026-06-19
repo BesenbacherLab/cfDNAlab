@@ -996,7 +996,7 @@ fn read_text_file(path: &Path) -> Result<String> {
 }
 
 fn parse_json(text: &str) -> Value {
-    serde_json::from_str(text).expect("settings sidecar should be valid JSON")
+    serde_json::from_str(text).expect("settings JSON should be valid JSON")
 }
 
 fn end_motif_storage_mode(out_dir: &Path) -> Result<String> {
@@ -4681,9 +4681,9 @@ fn motifs_file_counts_selected_60bp_motif_from_k30_inside_and_k30_outside() -> R
 }
 
 #[test]
-fn dense_all_motifs_output_records_all_motifs_in_settings_sidecar() -> Result<()> {
+fn dense_all_motifs_output_records_all_motifs_in_settings_json() -> Result<()> {
     // Arrange: --all-motifs changes the count axis from observed-only to a dense fixed axis, so the
-    // sidecar should record it.
+    // settings JSON should record it.
     let bam = simple_paired_fragment_bam("ends_dense_settings", 10, 10, 4)?;
     let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
@@ -7739,7 +7739,7 @@ fn both_kmer_sizes_zero_is_rejected() -> Result<()> {
 
 #[test]
 fn settings_json_keeps_the_runtime_fields_needed_to_interpret_output() -> Result<()> {
-    // Arrange: this run changes only fields that still belong in the sidecar contract:
+    // Arrange: this run changes only fields that still belong in the settings JSON contract:
     // - source_inside = read
     // - clip_strategy = skip
     // - window_assignment = endpoint
@@ -7793,7 +7793,7 @@ fn settings_json_keeps_the_runtime_fields_needed_to_interpret_output() -> Result
 
 #[test]
 fn settings_json_formats_proportion_window_assignment_stably() -> Result<()> {
-    // Arrange: use a simple exact decimal that should stay readable in the sidecar.
+    // Arrange: use a simple exact decimal that should stay readable in the settings JSON.
     let bam = single_read_bam(
         "ends_settings_proportion_precision",
         10,
@@ -7821,7 +7821,7 @@ fn settings_json_formats_proportion_window_assignment_stably() -> Result<()> {
     run(&cfg)?;
     let settings = read_text_file(&settings_path(out_dir.path()))?;
 
-    // Assert: exact sidecar contract, not just substring presence.
+    // Assert: exact settings JSON contract, not just substring presence.
     assert_eq!(
         parse_json(&settings),
         expected_settings_json(
@@ -8782,7 +8782,8 @@ fn grouped_bed_any_counts_same_group_intervals_separately() -> Result<()> {
 }
 
 #[test]
-fn grouped_bed_writes_prefixed_group_sidecars_and_suppresses_unprefixed_paths() -> Result<()> {
+fn grouped_bed_writes_prefixed_group_metadata_files_and_suppresses_unprefixed_paths() -> Result<()>
+{
     // Arrange
     let bam = simple_paired_fragment_bam("ends_grouped_prefix", 10, 10, 4)?;
     let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
@@ -9342,7 +9343,7 @@ fn by_size_windowing_writes_bins_tsv() -> Result<()> {
 
 #[test]
 fn output_prefix_is_applied_to_bins_tsv_for_windowed_runs() -> Result<()> {
-    // Arrange: prefixed runs should namespace the auxiliary bins TSV too.
+    // Arrange: prefixed runs should namespace the bins TSV too.
     let bam = simple_paired_fragment_bam("ends_prefixed_bins", 10, 10, 4)?;
     let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
@@ -9430,7 +9431,7 @@ fn empty_output_prefix_writes_unprefixed_primary_outputs() -> Result<()> {
 
 #[test]
 fn empty_output_prefix_writes_unprefixed_bins_tsv_for_windowed_runs() -> Result<()> {
-    // Arrange: the empty-prefix contract should also apply to auxiliary window outputs.
+    // Arrange: the empty-prefix contract should also apply to the bins TSV.
     let bam = simple_paired_fragment_bam("ends_empty_prefix_bins", 10, 10, 4)?;
     let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;

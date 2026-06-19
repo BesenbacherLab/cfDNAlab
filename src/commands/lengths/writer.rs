@@ -25,9 +25,9 @@ const BLACKLISTED_FRACTION_DECIMALS: i32 = 3;
 
 /// Interpretation metadata for a fragment length count table.
 ///
-/// This sidecar records the information needed to understand the count columns
+/// This settings JSON records the information needed to understand the count columns
 /// and row semantics without inspecting the command line that produced the
-/// output. Ordinary filters stay out of the sidecar unless they change how the
+/// output. Ordinary filters stay out of the settings JSON unless they change how the
 /// table should be interpreted downstream.
 #[derive(Serialize)]
 struct LengthSettings<'a> {
@@ -48,12 +48,12 @@ struct LengthSettings<'a> {
     blacklist_used: bool,
 }
 
-/// Write the JSON sidecar that describes a fragment length count table.
+/// Write the settings JSON that describes a fragment length count table.
 ///
 /// The settings are intentionally focused on interpretation. They include the
 /// length axis, row aggregation mode, assignment mode, and whether optional
 /// weighting inputs affected the counts.
-pub(super) fn write_length_settings_json(
+pub(crate) fn write_length_settings_json(
     settings_path: &std::path::Path,
     opt: &LengthsConfig,
     window_opt: &DistributionWindowSpec,
@@ -96,7 +96,7 @@ pub(super) fn write_length_settings_json(
 /// remaining directly readable as a TSV in R and Python. `decimals` controls only the written count
 /// representation, not the internal aggregation precision. Blacklist fractions are always rounded
 /// to three decimals.
-pub(super) fn write_length_counts_tsv(
+pub(crate) fn write_length_counts_tsv(
     output_path: &Path,
     counts: &[LengthCounts],
     length_axis: &LengthAxis,
@@ -236,8 +236,8 @@ pub(super) fn write_length_counts_tsv(
 /// Row metadata needed to write the public length-count table.
 ///
 /// The count matrix has only numeric values. This enum supplies the row keys
-/// that make those values usable without sidecar joins.
-pub(super) enum LengthCountRowMetadata<'a> {
+/// that make those values usable without joining separate metadata files.
+pub(crate) enum LengthCountRowMetadata<'a> {
     /// One global row with only count columns.
     Global,
     /// One row per fixed-size or BED window.
@@ -478,7 +478,7 @@ fn write_validated_tsv_field(
     Ok(())
 }
 
-/// Return the row aggregation label stored in the settings sidecar.
+/// Return the row aggregation label stored in the settings JSON.
 fn aggregation_level_name(window_opt: &DistributionWindowSpec) -> &'static str {
     match window_opt {
         DistributionWindowSpec::Global => "global",
@@ -487,7 +487,7 @@ fn aggregation_level_name(window_opt: &DistributionWindowSpec) -> &'static str {
     }
 }
 
-/// Return the windowing mode label stored in the settings sidecar.
+/// Return the windowing mode label stored in the settings JSON.
 fn window_mode_name(window_opt: &DistributionWindowSpec) -> &'static str {
     match window_opt {
         DistributionWindowSpec::Global => "global",
@@ -497,7 +497,7 @@ fn window_mode_name(window_opt: &DistributionWindowSpec) -> &'static str {
     }
 }
 
-/// Return the indel handling label stored in the settings sidecar.
+/// Return the indel handling label stored in the settings JSON.
 fn indel_mode_name(indel_mode: IndelMode) -> &'static str {
     match indel_mode {
         IndelMode::Ignore => "ignore",
@@ -506,7 +506,7 @@ fn indel_mode_name(indel_mode: IndelMode) -> &'static str {
     }
 }
 
-/// Return the soft-clip handling label stored in the settings sidecar.
+/// Return the soft-clip handling label stored in the settings JSON.
 fn clip_mode_name(clip_mode: ClipMode) -> &'static str {
     match clip_mode {
         ClipMode::Aligned => "aligned",
@@ -515,7 +515,7 @@ fn clip_mode_name(clip_mode: ClipMode) -> &'static str {
     }
 }
 
-/// Return the window assignment label stored in the settings sidecar.
+/// Return the window assignment label stored in the settings JSON.
 fn window_assigner_name(assigner: WindowAssigner) -> String {
     match assigner {
         WindowAssigner::CountOverlap => "count-overlap".to_string(),
@@ -526,7 +526,7 @@ fn window_assigner_name(assigner: WindowAssigner) -> String {
     }
 }
 
-/// Return the GC length-weighting label stored in the settings sidecar.
+/// Return the GC length-weighting label stored in the settings JSON.
 fn gc_length_weighting_name(weighting: MarginalizeLengthsWeightingScheme) -> &'static str {
     match weighting {
         MarginalizeLengthsWeightingScheme::Equal => "equal",
@@ -535,7 +535,7 @@ fn gc_length_weighting_name(weighting: MarginalizeLengthsWeightingScheme) -> &'s
     }
 }
 
-/// Return the GC package range label stored in the settings sidecar.
+/// Return the GC package range label stored in the settings JSON.
 fn gc_length_range_name(range: GCLengthRange) -> &'static str {
     match range {
         GCLengthRange::Requested => "requested",
