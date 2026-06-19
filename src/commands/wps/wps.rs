@@ -1,4 +1,4 @@
-use crate::command_run::{CommandRunResult, RunOptions};
+use crate::command_run::{CommandRunResult, RunOptions, status_info};
 use crate::commands::fcoverage::config::COVERAGE_SIGNAL_LABEL;
 use crate::commands::fcoverage::reducer::TileAggregateTempFiles;
 use crate::commands::fcoverage::tiling::{
@@ -132,15 +132,15 @@ impl WpsTileTempOutput {
 /// chromosomes, prepares optional windows, blacklists, and scaling data, processes tiles in
 /// parallel, applies smoothing, and writes positional or aggregated WPS outputs.
 ///
-/// Reporting is controlled by `options`. `report_statistics` prints the final summary and
-/// `show_progress` controls progress bars. This command does not use status logs.
+/// Reporting is controlled by `options`. `report_statistics` prints the final summary,
+/// `show_progress` controls progress bars, and `log_statuses` controls status messages.
 ///
 /// Parameters
 /// ----------
 /// - `opt`:
 ///     Fully resolved configuration for the `wps` command.
 /// - `options`:
-///     Reporting controls for statistics and progress bars.
+///     Reporting controls for statistics, progress bars, and status logs.
 ///
 /// Returns
 /// -------
@@ -213,7 +213,7 @@ pub fn run_wps(opt: &WPSConfig, options: RunOptions) -> Result<WPSRunResult> {
     ensure_output_dir(&opt.shared_args.ioc.output_dir)?;
 
     if opt.shared_args.blacklist.is_some() {
-        info!(target: COMMAND_TARGET, "Loading blacklists");
+        status_info!(options, target: COMMAND_TARGET, "Loading blacklists");
     }
     // We don't want WPS scores that were biased from neighbouring blacklisted regions
     // So we don't use positions where any fragments could also touch a blacklisted region
@@ -229,7 +229,7 @@ pub fn run_wps(opt: &WPSConfig, options: RunOptions) -> Result<WPSRunResult> {
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
-            info!(target: COMMAND_TARGET, "Loading window coordinates");
+            status_info!(options, target: COMMAND_TARGET, "Loading window coordinates");
             let wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
             ensure_plain_bed_windows_not_empty(&wds)?;
             if matches!(
@@ -237,7 +237,8 @@ pub fn run_wps(opt: &WPSConfig, options: RunOptions) -> Result<WPSRunResult> {
                 Some(CoverageWindowAction::OnlyIncludeThesePositionsUnique)
             ) {
                 // Merge in-place to avoid double memory-usage
-                info!(
+                status_info!(
+                    options,
                     target: COMMAND_TARGET,
                     "Merging overlapping/touching windows"
                 );
@@ -266,7 +267,7 @@ pub fn run_wps(opt: &WPSConfig, options: RunOptions) -> Result<WPSRunResult> {
 
     // Load genomic scaling factors
     if opt.shared_args.scale_genome.scaling_factors.is_some() {
-        info!(target: COMMAND_TARGET, "Loading scaling factors");
+        status_info!(options, target: COMMAND_TARGET, "Loading scaling factors");
     }
     let scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
         &opt.shared_args.scale_genome,
@@ -281,7 +282,7 @@ pub fn run_wps(opt: &WPSConfig, options: RunOptions) -> Result<WPSRunResult> {
 
     // Load GC correction package if specified
     if opt.shared_args.gc.gc_file.is_some() {
-        info!(target: COMMAND_TARGET, "Loading GC correction matrix");
+        status_info!(options, target: COMMAND_TARGET, "Loading GC correction matrix");
     }
     let gc_corrector = load_gc_corrector(
         opt.shared_args.gc.gc_file.as_ref(),
@@ -402,7 +403,7 @@ pub fn run_wps(opt: &WPSConfig, options: RunOptions) -> Result<WPSRunResult> {
 
     let mut global_counter = WPSCounters::default();
 
-    info!(target: COMMAND_TARGET, "Calculating WPS per tile");
+    status_info!(options, target: COMMAND_TARGET, "Calculating WPS per tile");
     pb.set_position(0);
 
     let tile_window_spans_for_threads = tile_window_spans.clone();
@@ -582,7 +583,8 @@ pub fn run_wps(opt: &WPSConfig, options: RunOptions) -> Result<WPSRunResult> {
         }
     }
 
-    info!(
+    status_info!(
+        options,
         target: COMMAND_TARGET,
         "Merging temporary tile files to final output"
     );
@@ -711,7 +713,8 @@ pub fn run_wps(opt: &WPSConfig, options: RunOptions) -> Result<WPSRunResult> {
 
     final_outputs.move_into_place()?;
 
-    info!(
+    status_info!(
+        options,
         target: COMMAND_TARGET,
         "Saved output to: {}",
         final_out_path.display()

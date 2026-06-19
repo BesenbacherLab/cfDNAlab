@@ -36,6 +36,34 @@ jobs:
             conda-forge::llvmdev=21.*
           post-cleanup: all
 
+      - name: Check each released command feature without warnings
+        run: |
+          export LIBCLANG_PATH="$CONDA_PREFIX/lib"
+          export RUSTFLAGS="-D warnings"
+
+          released_command_features=(
+            cmd_bam_to_bam
+            cmd_bam_to_frag
+            cmd_coverage_weights
+            cmd_ends
+            cmd_fcoverage
+            cmd_fragment_count_weights
+            cmd_frag_to_bam
+            cmd_gc_bias
+            cmd_lengths
+            cmd_midpoints
+          )
+
+          for feature in "${released_command_features[@]}"; do
+            echo "::group::cargo check ${feature}"
+            cargo check --locked --no-default-features --features "${feature}"
+            echo "::endgroup::"
+
+            echo "::group::cargo check cli,${feature}"
+            cargo check --locked --no-default-features --features "cli,${feature}"
+            echo "::endgroup::"
+          done
+
       - name: Install checked-out cfDNAlab package
         run: |
           export LIBCLANG_PATH="$CONDA_PREFIX/lib"

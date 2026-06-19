@@ -1,5 +1,5 @@
 use crate::{
-    command_run::{CommandRunResult, RunOptions},
+    command_run::{CommandRunResult, RunOptions, status_info},
     commands::{
         bam_to_frag::{
             concat::concat_frag_zst_to_gzip,
@@ -156,8 +156,8 @@ fn execute_bam_to_frag(opt: &BamToFragConfig, options: RunOptions) -> Result<Bam
     ensure_output_dir(&opt.ioc.output_dir)?;
 
     // Load blacklist intervals if provided
-    if opt.blacklist.is_some() && options.log_statuses {
-        info!(target: COMMAND_TARGET, "Loading blacklists");
+    if opt.blacklist.is_some() {
+        status_info!(options, target: COMMAND_TARGET, "Loading blacklists");
     }
     let blacklist_map = load_blacklist_map(
         opt.blacklist.as_ref(),
@@ -169,9 +169,7 @@ fn execute_bam_to_frag(opt: &BamToFragConfig, options: RunOptions) -> Result<Bam
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
-            if options.log_statuses {
-                info!(target: COMMAND_TARGET, "Loading window coordinates");
-            }
+            status_info!(options, target: COMMAND_TARGET, "Loading window coordinates");
             let windows = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
             ensure_plain_bed_windows_not_empty(&windows)?;
             Some(windows)
@@ -181,8 +179,8 @@ fn execute_bam_to_frag(opt: &BamToFragConfig, options: RunOptions) -> Result<Bam
 
     // Load genomic scaling factors
     let coverage_scale_genome = opt.coverage_scale_genome_args();
-    if coverage_scale_genome.scaling_factors.is_some() && options.log_statuses {
-        info!(target: COMMAND_TARGET, "Loading coverage scaling factors");
+    if coverage_scale_genome.scaling_factors.is_some() {
+        status_info!(options, target: COMMAND_TARGET, "Loading coverage scaling factors");
     }
     let coverage_scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
         &coverage_scale_genome,
@@ -192,8 +190,8 @@ fn execute_bam_to_frag(opt: &BamToFragConfig, options: RunOptions) -> Result<Bam
         None,
     )?;
     let count_scale_genome = opt.count_scale_genome_args();
-    if count_scale_genome.scaling_factors.is_some() && options.log_statuses {
-        info!(target: COMMAND_TARGET, "Loading count-based scaling factors");
+    if count_scale_genome.scaling_factors.is_some() {
+        status_info!(options, target: COMMAND_TARGET, "Loading count-based scaling factors");
     }
     let count_scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
         &count_scale_genome,
@@ -204,8 +202,8 @@ fn execute_bam_to_frag(opt: &BamToFragConfig, options: RunOptions) -> Result<Bam
     )?;
 
     // Load GC correction package if specified
-    if opt.gc.gc_file.is_some() && options.log_statuses {
-        info!(target: COMMAND_TARGET, "Loading GC correction matrix");
+    if opt.gc.gc_file.is_some() {
+        status_info!(options, target: COMMAND_TARGET, "Loading GC correction matrix");
     }
     let gc_corrector = load_gc_corrector(
         opt.gc.gc_file.as_ref(),
@@ -232,9 +230,7 @@ fn execute_bam_to_frag(opt: &BamToFragConfig, options: RunOptions) -> Result<Bam
     // Configure global thread‐pool size
     init_global_pool(opt.ioc.n_threads)?;
 
-    if options.log_statuses {
-        info!(target: COMMAND_TARGET, "Converting per chromosome");
-    }
+    status_info!(options, target: COMMAND_TARGET, "Converting per chromosome");
 
     pb.set_position(0);
 
@@ -277,20 +273,17 @@ fn execute_bam_to_frag(opt: &BamToFragConfig, options: RunOptions) -> Result<Bam
     }
 
     // Concatenate chromosome-wise temp files
-    if options.log_statuses {
-        info!(
-            target: COMMAND_TARGET,
-            "Concatenating chromosome-wise frag files"
-        );
-    }
+    status_info!(
+        options,
+        target: COMMAND_TARGET,
+        "Concatenating chromosome-wise frag files"
+    );
     let temp_output_file = final_outputs.temp_path_for(&output_file)?;
     concat_frag_zst_to_gzip(&chromosome_paths, &temp_output_file, false)?;
     final_outputs.record(temp_output_file, output_file.clone())?;
 
     // Create text line
-    if options.log_statuses {
-        info!(target: COMMAND_TARGET, "Writing a header file");
-    }
+    status_info!(options, target: COMMAND_TARGET, "Writing a header file");
     let mut header = String::from("chromosome\tstart\tend\tmin_mapq\tread1_strand");
     for extra_column in [
         opt.gc.gc_file.is_some().then_some("gc_weight"),

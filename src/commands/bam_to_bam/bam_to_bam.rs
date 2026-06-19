@@ -5,7 +5,7 @@ use std::{sync::Arc, time::Instant};
 use tracing::info;
 
 use crate::{
-    command_run::{CommandRunResult, RunOptions},
+    command_run::{CommandRunResult, RunOptions, status_info},
     commands::{
         bam_to_bam::{
             config::BamToBamConfig,
@@ -162,8 +162,8 @@ fn execute_bam_to_bam(opt: &BamToBamConfig, options: RunOptions) -> Result<BamTo
     let mut final_outputs = FinalOutputFiles::new(temp_dir_guard.path())?;
 
     // Load blacklist intervals if provided
-    if opt.blacklist.is_some() && options.log_statuses {
-        info!(target: COMMAND_TARGET, "Loading blacklists");
+    if opt.blacklist.is_some() {
+        status_info!(options, target: COMMAND_TARGET, "Loading blacklists");
     }
     let blacklist_map = load_blacklist_map(
         opt.blacklist.as_ref(),
@@ -175,9 +175,7 @@ fn execute_bam_to_bam(opt: &BamToBamConfig, options: RunOptions) -> Result<BamTo
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
-            if options.log_statuses {
-                info!(target: COMMAND_TARGET, "Loading window coordinates");
-            }
+            status_info!(options, target: COMMAND_TARGET, "Loading window coordinates");
             let windows = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
             ensure_plain_bed_windows_not_empty(&windows)?;
             Some(windows)
@@ -187,8 +185,8 @@ fn execute_bam_to_bam(opt: &BamToBamConfig, options: RunOptions) -> Result<BamTo
 
     // Load genomic scaling factors
     let coverage_scale_genome = opt.coverage_scale_genome_args();
-    if coverage_scale_genome.scaling_factors.is_some() && options.log_statuses {
-        info!(target: COMMAND_TARGET, "Loading coverage scaling factors");
+    if coverage_scale_genome.scaling_factors.is_some() {
+        status_info!(options, target: COMMAND_TARGET, "Loading coverage scaling factors");
     }
     let coverage_scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
         &coverage_scale_genome,
@@ -198,8 +196,8 @@ fn execute_bam_to_bam(opt: &BamToBamConfig, options: RunOptions) -> Result<BamTo
         None,
     )?;
     let count_scale_genome = opt.count_scale_genome_args();
-    if count_scale_genome.scaling_factors.is_some() && options.log_statuses {
-        info!(target: COMMAND_TARGET, "Loading count-based scaling factors");
+    if count_scale_genome.scaling_factors.is_some() {
+        status_info!(options, target: COMMAND_TARGET, "Loading count-based scaling factors");
     }
     let count_scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
         &count_scale_genome,
@@ -210,8 +208,8 @@ fn execute_bam_to_bam(opt: &BamToBamConfig, options: RunOptions) -> Result<BamTo
     )?;
 
     // Load GC correction package if specified
-    if opt.gc.gc_file.is_some() && options.log_statuses {
-        info!(target: COMMAND_TARGET, "Loading GC correction matrix");
+    if opt.gc.gc_file.is_some() {
+        status_info!(options, target: COMMAND_TARGET, "Loading GC correction matrix");
     }
     let gc_corrector = load_gc_corrector(
         opt.gc.gc_file.as_ref(),
@@ -224,9 +222,7 @@ fn execute_bam_to_bam(opt: &BamToBamConfig, options: RunOptions) -> Result<BamTo
     let progress = ProgressFactory::with_enabled(options.show_progress);
     let pb = Arc::new(progress.default_bar(chromosomes.len() as u64));
 
-    if options.log_statuses {
-        info!(target: COMMAND_TARGET, "Converting per chromosome");
-    }
+    status_info!(options, target: COMMAND_TARGET, "Converting per chromosome");
 
     pb.set_position(0);
 

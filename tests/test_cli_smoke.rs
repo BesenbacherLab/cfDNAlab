@@ -108,9 +108,10 @@ fn path_text(path: &Path) -> String {
 fn help_text_is_available_for_all_enabled_release_commands() -> Result<()> {
     let mut release_commands = Vec::new();
     #[cfg(feature = "cmd_gc_bias")]
-    release_commands.push("gc-bias");
-    #[cfg(feature = "cmd_ref_gc_bias")]
-    release_commands.push("ref-gc-bias");
+    {
+        release_commands.push("gc-bias");
+        release_commands.push("ref-gc-bias");
+    }
     #[cfg(feature = "cmd_coverage_weights")]
     release_commands.push("coverage-weights");
     #[cfg(feature = "cmd_fragment_count_weights")]
@@ -635,7 +636,7 @@ fn frag_to_bam_cli_minimal_invocation_writes_output_bam() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "cmd_ref_gc_bias")]
+#[cfg(feature = "cmd_gc_bias")]
 #[test]
 fn ref_gc_bias_cli_minimal_invocation_writes_reference_package() -> Result<()> {
     // Arrange: Use tiny deterministic reference and conservative settings.
@@ -688,7 +689,7 @@ fn ref_gc_bias_cli_minimal_invocation_writes_reference_package() -> Result<()> {
     Ok(())
 }
 
-#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+#[cfg(feature = "cmd_gc_bias")]
 #[test]
 fn gc_bias_cli_minimal_invocation_writes_correction_package() -> Result<()> {
     // Arrange:

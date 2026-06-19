@@ -1,3 +1,8 @@
+#![allow(
+    dead_code,
+    reason = "feature-limited builds may compile counter snapshots without enabled fragment iterators"
+)]
+
 // Read + fragment counters for the generic fragment iterator
 // Local: For single-thread use
 // Shared: Safe for multi-thread use

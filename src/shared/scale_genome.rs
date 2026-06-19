@@ -1,8 +1,6 @@
-use crate::shared::{
-    bam::Contigs,
-    interval::Interval,
-    overlaps::{OverlappingWindow, OverlappingWindows},
-};
+#[cfg(any(feature = "cmd_ends", feature = "cmd_lengths"))]
+use crate::shared::overlaps::OverlappingWindow;
+use crate::shared::{bam::Contigs, interval::Interval, overlaps::OverlappingWindows};
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::{FxHashMap, FxHashSet};
 use std::io::{BufRead, BufReader};
@@ -306,6 +304,7 @@ pub fn compute_per_window_scaling_over_fragment(
 /// may differ from the aligned fragment span used for scaling. The scaling average is still
 /// computed over `fragment_interval`, but every row in `count_overlaps.windows` is returned.
 #[inline]
+#[cfg(any(feature = "cmd_ends", feature = "cmd_lengths"))]
 pub fn compute_per_window_scaling_over_fragment_for_selected_windows(
     fragment_interval: Interval<u64>,
     count_overlaps: &OverlappingWindows,
@@ -337,6 +336,7 @@ pub fn compute_per_window_scaling_over_fragment_for_selected_windows(
 /// The returned rows keep each assignment window's `idx` and overlap fraction, but replace the
 /// interval with the aligned-reference span used to average scaling. Windows with no aligned
 /// overlap use the nearest aligned reference base.
+#[cfg(any(feature = "cmd_ends", feature = "cmd_lengths"))]
 pub fn build_reference_based_scaling_overlaps_for_assignment_overlaps(
     count_overlaps: &OverlappingWindows,
     aligned_fragment_interval: Interval<u64>,

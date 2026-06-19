@@ -1,15 +1,17 @@
-use crate::shared::interval::{
-    IndexedInterval, Interval, TouchingMergePolicy, push_merged_interval,
-};
+use crate::shared::interval::IndexedInterval;
+#[cfg(feature = "cmd_fcoverage")]
+use crate::shared::interval::Interval;
 use crate::shared::interval::{ScoredInterval, Span};
+#[cfg(feature = "cmd_fcoverage")]
+use crate::shared::interval::{TouchingMergePolicy, push_merged_interval};
 use crate::shared::io::open_text_reader;
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::{FxHashMap, FxHashSet};
-use std::{
-    fs::File,
-    io::{BufRead, BufWriter, Write},
-    path::Path,
-};
+#[cfg(feature = "cmd_fcoverage")]
+use std::fs::File;
+#[cfg(feature = "cmd_fcoverage")]
+use std::io::{BufWriter, Write};
+use std::{io::BufRead, path::Path};
 
 /// Load windows from a BED file into a per-chromosome map.
 ///
@@ -268,18 +270,30 @@ impl Windows {
     }
 
     /// Number of windows.
+    #[allow(
+        dead_code,
+        reason = "feature-limited builds compile shared BED window containers without every accessor being used"
+    )]
     #[inline]
     pub(crate) fn len(&self) -> usize {
         self.windows.len()
     }
 
     /// True if there are no windows.
+    #[allow(
+        dead_code,
+        reason = "feature-limited builds compile shared BED window containers without every accessor being used"
+    )]
     #[inline]
     pub(crate) fn is_empty(&self) -> bool {
         self.windows.is_empty()
     }
 
     /// Borrow the underlying windows.
+    #[allow(
+        dead_code,
+        reason = "feature-limited builds compile shared BED window containers without every accessor being used"
+    )]
     #[inline]
     pub(crate) fn as_slice(&self) -> &[IndexedInterval<u64>] {
         &self.windows
@@ -339,6 +353,7 @@ impl Windows {
     /// - (merged, next_start_idx):
     ///     - `merged`: New `Windows` with merged, start-sorted `(start, end, new_idx)` tuples.
     ///     - `next_start_idx`: `start_idx + merged.len()`; pass this to the next chromosome.
+    #[cfg(flattens_bed_windows)]
     pub(crate) fn into_flattened_reindexed(self, start_idx: u64) -> (Windows, u64) {
         let mut merged_windows = self.windows; // Take ownership; reuse allocation
         if merged_windows.is_empty() {
@@ -426,6 +441,7 @@ fn is_sorted_by_start_with_scores(ws: &[ScoredInterval<u64>]) -> bool {
 
 /* GROUPED bed files */
 
+#[cfg(loads_grouped_bed)]
 const GROUPED_BED_STRAND_SAMPLE_ROWS: usize = 200;
 
 /// Load *grouped* windows from a BED file into a per-chromosome map.
@@ -452,6 +468,7 @@ const GROUPED_BED_STRAND_SAMPLE_ROWS: usize = 200;
 ///  - Mapping of 'group index -> group name'.
 ///
 ///  - Optional strand-detection metadata when `read_strands` is enabled.
+#[cfg(loads_grouped_bed)]
 pub(crate) fn load_grouped_windows_from_bed(
     bed: impl AsRef<Path>,
     chromosomes: Option<&[String]>,
@@ -704,6 +721,7 @@ pub(crate) fn load_grouped_windows_from_bed(
 
 /// Site orientation read from a BED file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(loads_grouped_bed)]
 pub(crate) enum Strand {
     /// Site has no directional interpretation.
     Unstranded,
@@ -718,6 +736,7 @@ pub(crate) enum Strand {
 /// This is a classifier, not strict parsing. The detector uses `None` to mean "this sampled
 /// column is not strand-like". Once a column has been selected, `parse_bed_strand_token` turns
 /// invalid values into user-facing errors.
+#[cfg(loads_grouped_bed)]
 fn classify_bed_strand_token(token: &str) -> Option<Strand> {
     match token {
         "." => Some(Strand::Unstranded),
@@ -732,6 +751,7 @@ fn classify_bed_strand_token(token: &str) -> Option<Strand> {
 /// This function is strict. It is only used after the loader has decided which column is the
 /// strand column, so any value other than `+`, `-`, or `.` is a malformed BED row and returns an
 /// error with the line and column number.
+#[cfg(loads_grouped_bed)]
 fn parse_bed_strand_token(value: &str, lineno: usize, column_number: usize) -> Result<Strand> {
     classify_bed_strand_token(value).with_context(|| {
         format!(
@@ -743,6 +763,7 @@ fn parse_bed_strand_token(value: &str, lineno: usize, column_number: usize) -> R
 
 /// Strand column found during grouped BED sampling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(loads_grouped_bed)]
 pub(crate) enum GroupedBedStrandColumn {
     Column5,
     Column6,
@@ -755,6 +776,7 @@ pub(crate) enum GroupedBedStrandColumn {
 /// when a wide BED-like file was treated as unstranded because column 6 did not contain `+`, `-`,
 /// or `.`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(loads_grouped_bed)]
 pub(crate) struct GroupedBedStrandDetection {
     pub(crate) sampled_rows: usize,
     pub(crate) column: Option<GroupedBedStrandColumn>,
@@ -765,6 +787,7 @@ pub(crate) struct GroupedBedStrandDetection {
 ///
 /// Blank lines, comments, and UCSC `track` or `browser` directives do not represent intervals and
 /// should not count toward strand-column detection or parsed window totals.
+#[cfg(loads_grouped_bed)]
 fn should_skip_bed_line(line: &str) -> bool {
     if line.as_bytes().first().is_some_and(|value| *value == b'#') {
         return true;
@@ -783,6 +806,7 @@ fn should_skip_bed_line(line: &str) -> bool {
 /// up front. Column 6 is preferred because it matches standard BED6 layout. Column 5 is accepted
 /// only when no sampled row has a column 6. If column 5 looks stranded but column 6 exists and is
 /// not a strand column, the file is treated as ambiguous and rejected.
+#[cfg(loads_grouped_bed)]
 fn detect_grouped_bed_strand_column(bed: &Path) -> Result<GroupedBedStrandDetection> {
     let mut reader = open_text_reader(bed)?;
     let mut buffer = String::new();
@@ -868,6 +892,7 @@ fn detect_grouped_bed_strand_column(bed: &Path) -> Result<GroupedBedStrandDetect
 ///
 /// The loader decides which field to pass based on the detected file layout. This helper only
 /// checks that the selected field exists and contains a supported strand token.
+#[cfg(loads_grouped_bed)]
 fn parse_grouped_bed_strand_value(
     value: Option<&str>,
     lineno: usize,
@@ -890,6 +915,7 @@ fn parse_grouped_bed_strand_value(
 /// - Coordinates are half-open: `[start, end)`.
 /// - `strands`, when present, is one-to-one with `windows` and uses the same order.
 #[derive(Debug, Clone)]
+#[cfg(loads_grouped_bed)]
 pub(crate) struct GroupedWindows {
     pub(crate) windows: Vec<IndexedInterval<u64>>, // (start, end, group idx)
     pub(crate) strands: Option<Vec<Strand>>,       // strands in the same order
@@ -898,6 +924,7 @@ pub(crate) struct GroupedWindows {
     span: Span<i64>,
 }
 
+#[cfg(loads_grouped_bed)]
 impl GroupedWindows {
     /// Construct from any window list (may be unsorted/overlapping).
     /// Ensures start- and end-sorted order (does not retain initial order)
@@ -939,6 +966,7 @@ impl GroupedWindows {
         Ok(Self::new(IndexedInterval::from_tuples(windows)?, strands))
     }
 
+    #[cfg(feature = "cmd_midpoints")]
     pub(crate) fn mut_windows_and_strands(
         &mut self,
     ) -> (&mut Vec<IndexedInterval<u64>>, &mut Option<Vec<Strand>>) {
@@ -982,12 +1010,14 @@ impl GroupedWindows {
 
     /// Number of windows.
     #[inline]
+    #[cfg(feature = "cmd_midpoints")]
     pub(crate) fn len(&self) -> usize {
         self.windows.len()
     }
 
     /// True if there are no windows.
     #[inline]
+    #[cfg(feature = "cmd_fcoverage")]
     pub(crate) fn is_empty(&self) -> bool {
         self.windows.is_empty()
     }
@@ -1043,6 +1073,7 @@ impl GroupedWindows {
     }
 }
 
+#[cfg(loads_grouped_bed)]
 impl Default for GroupedWindows {
     fn default() -> Self {
         Self {
@@ -1058,6 +1089,7 @@ impl Default for GroupedWindows {
 /// Each stored segment carries a stable `segment_idx` in the `IndexedInterval`, while the
 /// `segment_idx_to_group_idx` map preserves the grouped row identity.
 #[derive(Debug, Clone)]
+#[cfg(feature = "cmd_fcoverage")]
 pub(crate) struct GroupedCoverageLayout {
     pub(crate) segments_by_chr: FxHashMap<String, Windows>,
     pub(crate) segment_idx_to_group_idx: FxHashMap<u64, u64>,
@@ -1085,6 +1117,7 @@ pub(crate) struct GroupedCoverageLayout {
 /// -------
 /// - `layout`:
 ///     Per-chromosome segments plus stable maps back to the grouped row identity.
+#[cfg(feature = "cmd_fcoverage")]
 pub(crate) fn build_grouped_coverage_layout(
     grouped_windows_by_chr: &FxHashMap<String, GroupedWindows>,
     group_idx_to_name: &FxHashMap<u64, String>,
@@ -1163,6 +1196,7 @@ pub(crate) fn build_grouped_coverage_layout(
     })
 }
 
+#[cfg(feature = "cmd_fcoverage")]
 fn merged_group_segments(
     grouped_windows: &[IndexedInterval<u64>],
 ) -> Result<Vec<(Interval<u64>, u64)>> {
@@ -1223,6 +1257,7 @@ fn merged_group_segments(
 /// - Output has a header: `group_idx\tgroup_name`
 /// - Rows are sorted by `group_idx` ascending for determinism.
 /// - Creates the parent directory if needed.
+#[cfg(feature = "cmd_fcoverage")]
 pub(crate) fn write_group_idx_to_name_tsv<P: AsRef<Path>>(
     output_path: P,
     group_idx_to_name: &FxHashMap<u64, String>,

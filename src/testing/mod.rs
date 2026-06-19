@@ -32,7 +32,7 @@ pub use bam::{
     single_contig_inward_pair_bam, single_read_bam_with_qualities,
 };
 pub use bed::{Bed4Row, write_bed4};
-#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+#[cfg(feature = "cmd_gc_bias")]
 pub use gc_packages::{
     build_command_produced_gc_correction_package_for_length,
     build_command_produced_gc_correction_package_for_range,

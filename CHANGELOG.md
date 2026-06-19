@@ -12,6 +12,7 @@ This is the changelog for the main CLI tool. You can find the changelog for the 
 **BREAKING CHANGES**:
 
  - `cfdna fcoverage --normalize-by-length` is now actually called `--normalize-by-length` instead of `--normalize-by-length-mode`, matching the guides and documentation.
+ - The Rust crate feature `cmd_ref_gc_bias` has been removed. Enable `cmd_gc_bias` to compile both the `gc-bias` and `ref-gc-bias` command APIs.
 
 **Other changes**:
 
@@ -20,6 +21,7 @@ This is the changelog for the main CLI tool. You can find the changelog for the 
  - CLI runs now log the *equivalent* full `cfdna <COMMAND> <OPTION>` command call for reproducibility and transparency.
  - The Rust library can render *equivalent* command calls from exported configs without enabling the `cli` feature. This adds the `RunOptions.log_equivalent_cli` field.
  - Adds initial output loaders for `lengths`, `fcoverage`, `ends`, and `midpoints` to the Rust library.
+ - General feature gating improvements for an improved library experience.
 
 <br />
 

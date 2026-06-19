@@ -1,13 +1,28 @@
 use anyhow::Result;
 
-use crate::{
-    commands::cli_common::WindowSpec,
-    shared::{
-        interval::{IndexedInterval, Interval},
-        tiled_run::{
-            Tile, TileWindowSpan, clamp_fetch_to_window_span, overlapping_windows_for_tile,
-        },
-    },
+#[cfg(any(
+    feature = "cmd_ends",
+    feature = "cmd_fcoverage",
+    feature = "cmd_fragment_kmers",
+    feature = "cmd_lengths"
+))]
+use crate::commands::cli_common::WindowSpec;
+#[cfg(any(
+    feature = "cmd_ends",
+    feature = "cmd_fcoverage",
+    feature = "cmd_fragment_kmers",
+    feature = "cmd_lengths"
+))]
+use crate::shared::tiled_run::clamp_fetch_to_window_span;
+#[cfg(any(
+    feature = "cmd_fcoverage",
+    feature = "cmd_fragment_kmers",
+    feature = "cmd_midpoints"
+))]
+use crate::shared::tiled_run::overlapping_windows_for_tile;
+use crate::shared::{
+    interval::{IndexedInterval, Interval},
+    tiled_run::{Tile, TileWindowSpan},
 };
 
 /// Helpers for turning already-selected windows into an aligned BAM fetch interval.
@@ -42,9 +57,17 @@ use crate::{
 ///   BED windows may still be relevant for counting, but the BED coordinates are not safe inputs
 ///   to aligned BAM fetch narrowing. In that case the caller keeps the full aligned `tile.fetch`
 ///   band.
+#[cfg(any(
+    feature = "cmd_ends",
+    feature = "cmd_fcoverage",
+    feature = "cmd_fragment_kmers",
+    feature = "cmd_lengths"
+))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum BedFetchPolicy {
+    #[cfg(any(feature = "cmd_fcoverage", feature = "cmd_fragment_kmers"))]
     CoreOverlap,
+    #[cfg(any(feature = "cmd_ends", feature = "cmd_lengths"))]
     CandidateWindowExtent,
     #[allow(dead_code)]
     KeepTileFetch,
@@ -80,6 +103,12 @@ pub(crate) enum BedFetchPolicy {
 /// -------
 /// - `Result<Option<Interval<u64>>>`:
 ///   Checked absolute fetch interval, or `None` when no windows apply
+#[cfg(any(
+    feature = "cmd_ends",
+    feature = "cmd_fcoverage",
+    feature = "cmd_fragment_kmers",
+    feature = "cmd_lengths"
+))]
 pub(crate) fn fetch_span_for_tile(
     tile: &Tile,
     tile_window_span: Option<&TileWindowSpan>,
@@ -121,6 +150,7 @@ pub(crate) fn fetch_span_for_tile(
                 return Ok(None);
             };
             match bed_fetch_policy {
+                #[cfg(any(feature = "cmd_fcoverage", feature = "cmd_fragment_kmers"))]
                 BedFetchPolicy::CoreOverlap => {
                     let Some(window_span) = window_derived_fetch_extent_for_core_overlap(
                         windows_chr,
@@ -137,6 +167,7 @@ pub(crate) fn fetch_span_for_tile(
                         halo_bp,
                     )?)
                 }
+                #[cfg(any(feature = "cmd_ends", feature = "cmd_lengths"))]
                 BedFetchPolicy::CandidateWindowExtent => {
                     let Some(window_span) =
                         window_derived_fetch_extent_for_candidates(windows_chr, tile_window_span)?
@@ -177,6 +208,11 @@ pub(crate) fn fetch_span_for_tile(
 ///
 /// This helper must derive the leftmost and rightmost bounds from windows that actually overlap
 /// the tile core, even when a wider cached candidate span is available.
+#[cfg(any(
+    feature = "cmd_fcoverage",
+    feature = "cmd_fragment_kmers",
+    feature = "cmd_midpoints"
+))]
 pub(crate) fn window_derived_fetch_extent_for_core_overlap(
     windows_chr: &[IndexedInterval<u64>],
     tile: &Tile,
@@ -216,6 +252,7 @@ pub(crate) fn window_derived_fetch_extent_for_core_overlap(
 ///
 /// This helper must derive the min/max directly from the candidate span and must not reapply a
 /// core-overlap filter.
+#[cfg(any(feature = "cmd_ends", feature = "cmd_lengths"))]
 pub(crate) fn window_derived_fetch_extent_for_candidates(
     windows_chr: &[IndexedInterval<u64>],
     candidate_span: Option<&TileWindowSpan>,
@@ -259,6 +296,12 @@ pub(crate) fn window_derived_fetch_extent_for_candidates(
 /// - not performed here
 ///
 /// This is the generic "do not narrow fetch from BED windows" policy.
+#[cfg(any(
+    feature = "cmd_ends",
+    feature = "cmd_fcoverage",
+    feature = "cmd_fragment_kmers",
+    feature = "cmd_lengths"
+))]
 pub(crate) fn full_tile_fetch_span(tile: &Tile, chrom_len: u64) -> Result<Option<Interval<u64>>> {
     let fetch_start = tile.fetch_start() as u64;
     let fetch_end = (tile.fetch_end().min(chrom_len as u32)) as u64;

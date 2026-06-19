@@ -1,5 +1,6 @@
 use rust_htslib::bam::{Record, record::Cigar};
 
+#[cfg(any(feature = "cmd_lengths"))]
 use crate::shared::interval::{Interval, TouchingMergePolicy, merge_sorted_intervals};
 
 /// Terminal clipping summary in BAM storage orientation.
@@ -12,6 +13,7 @@ pub(crate) struct CigarEdgeInfo {
 
 /// Insertion anchored at one reference position with a positive inserted length.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[cfg(any(feature = "cmd_lengths"))]
 pub(crate) struct InsertionAnchor {
     pub(crate) reference_position: u32,
     pub(crate) inserted_length: u32,
@@ -19,6 +21,7 @@ pub(crate) struct InsertionAnchor {
 
 /// Compact indel summary extracted from one record's CIGAR string.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
+#[cfg(any(feature = "cmd_lengths"))]
 pub(crate) struct CigarIndelInfo {
     /// Deletions and ref-skips as reference intervals `[start, end)`.
     pub(crate) deletions: Vec<Interval<u32>>,
@@ -73,6 +76,7 @@ pub(crate) fn inspect_cigar_edges(record: &Record) -> CigarEdgeInfo {
 /// Reference-consuming operations are tracked in aligned reference coordinates starting at
 /// `record.pos()`. Adjacent or overlapping deletion-like intervals are merged after parsing so
 /// downstream code can assume a normalized representation.
+#[cfg(any(feature = "cmd_lengths"))]
 pub(crate) fn inspect_cigar_indels(record: &Record) -> CigarIndelInfo {
     let mut deletions: Vec<Interval<u32>> = Vec::new();
     let mut insertions: Vec<InsertionAnchor> = Vec::new();

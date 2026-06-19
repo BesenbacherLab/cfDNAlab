@@ -3,22 +3,21 @@ use std::io::{self, IsTerminal};
 #[allow(dead_code)]
 use std::time::Duration;
 
-use crate::shared::logging;
-
 const DEFAULT_BAR_TEMPLATE: &str = "       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}";
 #[allow(dead_code)]
 const DEFAULT_SPINNER_TEMPLATE: &str = "{spinner} {msg} [{elapsed_precise}]";
 #[allow(dead_code)]
 const DEFAULT_SPINNER_TICK_INTERVAL: Duration = Duration::from_millis(100);
 
-/// Creates terminal-aware progress bars and spinners for CLI commands.
+/// Creates terminal-aware progress bars and spinners for command runners.
 ///
 /// This keeps progress reporting consistent across commands while avoiding
 /// progress redraw noise in redirected logs and pipelines. The factory checks
 /// whether `stderr` is a terminal because `indicatif` draws to `stderr` by
 /// default.
 ///
-/// Use [`ProgressFactory::with_enabled`] when a command has a `--quiet` switch.
+/// Use [`ProgressFactory::with_enabled`] with the command's `RunOptions.show_progress`
+/// value.
 /// When drawing is disabled, the factory still returns normal `ProgressBar`
 /// values, they simply use a hidden draw target.
 ///
@@ -31,7 +30,7 @@ const DEFAULT_SPINNER_TICK_INTERVAL: Duration = Duration::from_millis(100);
 /// ```
 ///
 /// ```ignore
-/// let progress = ProgressFactory::with_enabled(!quiet);
+/// let progress = ProgressFactory::with_enabled(options.show_progress);
 /// let spinner = progress.default_spinner();
 /// spinner.set_message("Reading streamed input");
 /// ```
@@ -58,10 +57,10 @@ impl ProgressFactory {
         Self { enabled: false }
     }
 
-    /// Create a progress factory that honors both an explicit flag and TTY state.
+    /// Create a progress factory that honors the explicit progress setting and TTY state.
     pub(crate) fn with_enabled(enabled: bool) -> Self {
         Self {
-            enabled: enabled && logging::progress_enabled() && io::stderr().is_terminal(),
+            enabled: enabled && io::stderr().is_terminal(),
         }
     }
 

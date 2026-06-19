@@ -61,13 +61,17 @@ pub fn build_gc_prefixes(seq: &[u8]) -> GCPrefixes {
     GCPrefixes { gc, acgt }
 }
 
+#[allow(
+    dead_code,
+    reason = "ref-gc-bias shares this module but does not call GC correction lookup helpers"
+)]
+#[inline]
 /// Compute the GC integer percentage for a window [start, end), excluding 'N's.
 ///
 /// `min_acgt_count`: Minimum number of actual ACGT bases counted in the window.
 ///   E.g. if most of the window is blacklisted or Ns.
 ///
 /// Returns `None` if the window has too few A/T/G/C bases.
-#[inline]
 pub fn get_gc_integer_percentage_for_window(
     prefixes: &GCPrefixes,
     window: Interval<usize>,
@@ -104,6 +108,10 @@ pub struct GCCounts {
     pub num_acgt_out_of: (u64, u64),
 }
 
+#[allow(
+    dead_code,
+    reason = "gc-bias and ref-gc-bias share GCCounts but use different method subsets"
+)]
 impl GCCounts {
     /// Create a new `GCCounts` with specified ranges and binning.
     ///
@@ -244,7 +252,6 @@ impl GCCounts {
     /// -------
     /// count: Option<f64>
     ///     The count if indices are in range, otherwise `None`.
-    #[allow(dead_code)]
     pub fn get(&self, length: usize, gc: usize) -> Option<f64> {
         self.flat_index(length, gc).map(|idx| self.counts[idx])
     }
@@ -259,7 +266,6 @@ impl GCCounts {
     ///     GC bin (absolute).
     /// count: f64
     ///     Value to set as count.
-    #[allow(dead_code)]
     pub fn set(&mut self, length: usize, gc: usize, count: f64) {
         if let Some(idx) = self.flat_index(length, gc) {
             self.counts[idx] = count;

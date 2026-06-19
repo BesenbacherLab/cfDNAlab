@@ -1,3 +1,4 @@
+#![cfg(output_loader_api)]
 //! Public API tests for the Rust output-loader error type.
 //!
 //! These tests exercise the error surface the way a downstream Rust app would:

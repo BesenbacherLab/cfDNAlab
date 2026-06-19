@@ -9,8 +9,9 @@ Zarr importers.
 
 ## Feature Gates
 
-Each loader is compiled with the cargo feature for the command that writes the
-matching output:
+The `cfdnalab::output_loaders` module is compiled when at least one supported
+loader feature is enabled. Each loader is compiled with the cargo feature for
+the command that writes the matching output:
 
 - `cmd_lengths` exposes `load_lengths_output`.
 - `cmd_fcoverage` exposes `load_fcoverage_output` and
@@ -18,8 +19,8 @@ matching output:
 - `cmd_ends` exposes `load_ends_output`.
 - `cmd_midpoints` exposes `load_midpoints_output`.
 
-Shared matrix and axis types are exported from `output_loaders` when their
-loader features are enabled.
+`DenseMatrix`, `LengthBin`, and `WindowRow` are exported whenever
+`output_loaders` is compiled. `DenseArray3` is exported with `cmd_midpoints`.
 
 ## Error Contract
 

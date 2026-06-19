@@ -179,7 +179,7 @@ fn gc_bias_config_renders_cli_call() {
     assert_contains_pair(&args, "--outlier-method", "iqr");
 }
 
-#[cfg(feature = "cmd_ref_gc_bias")]
+#[cfg(feature = "cmd_gc_bias")]
 #[test]
 fn ref_gc_bias_config_renders_cli_call() {
     use cfdnalab::run_like_cli::common::{FragmentLengthArgs, Ref2BitRequiredArgs};

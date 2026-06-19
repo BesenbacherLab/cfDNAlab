@@ -197,7 +197,7 @@ fn gc_bias_renders_without_cli_feature() {
     assert_contains_pair(&args, "--outlier-method", "iqr");
 }
 
-#[cfg(feature = "cmd_ref_gc_bias")]
+#[cfg(feature = "cmd_gc_bias")]
 #[test]
 fn ref_gc_bias_renders_without_cli_feature() {
     use cfdnalab::run_like_cli::{

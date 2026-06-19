@@ -25,7 +25,7 @@
 //! thus clipped to the core (for this ACGT base count only).
 
 use crate::{
-    command_run::{CommandRunResult, RunOptions},
+    command_run::{CommandRunResult, RunOptions, status_info},
     commands::{
         cli_common::*,
         gc_bias::{
@@ -164,17 +164,18 @@ pub fn run_ref_gc_bias(opt: &RefGCBiasConfig, options: RunOptions) -> Result<Ref
 
     // Load blacklist intervals if provided
     if opt.blacklist.is_some() {
-        info!(target: COMMAND_TARGET, "Loading blacklists");
+        status_info!(options, target: COMMAND_TARGET, "Loading blacklists");
     }
     let blacklist_map = load_blacklist_map(opt.blacklist.as_ref(), 1, 0, &chromosomes)?;
 
     // Load windows from BED file and merge overlapping/touching intervals (unique positions)
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
-            info!(target: COMMAND_TARGET, "Loading window coordinates");
+            status_info!(options, target: COMMAND_TARGET, "Loading window coordinates");
             let mut wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
             ensure_plain_bed_windows_not_empty(&wds)?;
-            info!(
+            status_info!(
+                options,
                 target: COMMAND_TARGET,
                 "Merging overlapping/touching windows"
             );
@@ -275,7 +276,7 @@ pub fn run_ref_gc_bias(opt: &RefGCBiasConfig, options: RunOptions) -> Result<Ref
 
     let tile_window_spans_for_threads = tile_window_spans.clone();
 
-    info!(target: COMMAND_TARGET, "Counting in tiles");
+    status_info!(options, target: COMMAND_TARGET, "Counting in tiles");
 
     // Identity accumulator used by the reducer when no tiles have produced output yet
     let zero_counts = GCCounts::new(
@@ -347,7 +348,7 @@ pub fn run_ref_gc_bias(opt: &RefGCBiasConfig, options: RunOptions) -> Result<Ref
     drop(windows_map);
     drop(blacklist_map);
 
-    info!(target: COMMAND_TARGET, "Processing counts");
+    status_info!(options, target: COMMAND_TARGET, "Processing counts");
 
     let used_start_positions =
         total_counts.sum_for_length(opt.fragment_lengths.min_fragment_length as usize)?;
@@ -380,7 +381,7 @@ pub fn run_ref_gc_bias(opt: &RefGCBiasConfig, options: RunOptions) -> Result<Ref
     .expect("support mask should be created");
 
     if !opt.skip_interpolation {
-        info!(target: COMMAND_TARGET, "Interpolating missing counts");
+        status_info!(options, target: COMMAND_TARGET, "Interpolating missing counts");
         debug_assert_eq!(
             global_grid.dim(),
             outlier_support_mask.dim(),
@@ -455,19 +456,20 @@ pub fn run_ref_gc_bias(opt: &RefGCBiasConfig, options: RunOptions) -> Result<Ref
     final_outputs.move_into_place()?;
 
     let elapsed = start_time.elapsed();
-    if options.log_statuses {
-        info!(
-            target: COMMAND_TARGET,
-            "Windows covered {} total ACGT bases",
-            total_covered_acgt_positions
-        );
-        info!(
-            target: COMMAND_TARGET,
-            "Used {:.0} start positions at length {}",
-            used_start_positions, opt.fragment_lengths.min_fragment_length
-        );
-        info!(target: COMMAND_TARGET, "Elapsed time: {:.2?}", elapsed);
-    }
+    status_info!(
+        options,
+        target: COMMAND_TARGET,
+        "Windows covered {} total ACGT bases",
+        total_covered_acgt_positions
+    );
+    status_info!(
+        options,
+        target: COMMAND_TARGET,
+        "Used {:.0} start positions at length {}",
+        used_start_positions,
+        opt.fragment_lengths.min_fragment_length
+    );
+    status_info!(options, target: COMMAND_TARGET, "Elapsed time: {:.2?}", elapsed);
     Ok(RefGCBiasRunResult {
         counters: (),
         ref_gc_package_path: ref_gc_package_path.clone(),

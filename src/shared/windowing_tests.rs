@@ -1,4 +1,5 @@
 use super::*;
+use crate::commands::cli_common::WindowSpec;
 use crate::shared::{
     bam::Contigs,
     bed::{GroupedWindows, Windows},

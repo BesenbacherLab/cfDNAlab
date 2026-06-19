@@ -13,6 +13,7 @@ mod frag_file;
 mod indel_counts;
 #[cfg(feature = "cmd_fragment_kmers")]
 mod kmer_segments;
+#[cfg(feature = "cmd_fcoverage")]
 mod segments;
 #[cfg(feature = "cmd_bam_to_bam")]
 mod with_records;
@@ -27,6 +28,7 @@ pub(crate) use frag_file::*;
 pub(crate) use indel_counts::*;
 #[cfg(feature = "cmd_fragment_kmers")]
 pub(crate) use kmer_segments::*;
+#[cfg(feature = "cmd_fcoverage")]
 pub(crate) use segments::*;
 #[cfg(feature = "cmd_bam_to_bam")]
 pub(crate) use with_records::*;

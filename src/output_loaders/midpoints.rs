@@ -127,7 +127,7 @@ pub struct MidpointsOutput {
 }
 
 impl MidpointsOutput {
-    /// Return group metadata in count-axis order.
+    /// Return group metadata in the same order as the first count-array dimension.
     pub fn group_metadata(&self) -> &[MidpointGroupRow] {
         &self.groups
     }
@@ -137,7 +137,7 @@ impl MidpointsOutput {
         self.groups.len()
     }
 
-    /// Return fragment length bins in count-axis order.
+    /// Return fragment length bins in the same order as the second count-array dimension.
     pub fn length_bins(&self) -> &[LengthBin] {
         &self.length_bins
     }
@@ -147,7 +147,7 @@ impl MidpointsOutput {
         self.length_bins.len()
     }
 
-    /// Return interval-relative position bins in count-axis order.
+    /// Return interval-relative position bins in the same order as the third count-array dimension.
     pub fn position_bins(&self) -> &[MidpointPositionBin] {
         &self.position_bins
     }
@@ -189,7 +189,7 @@ impl MidpointsOutput {
             .with_context(|| format!("midpoints output has no group named '{group_name}'"))?)
     }
 
-    /// Return whether one group name exists.
+    /// Return whether a group name exists.
     ///
     /// Parameters
     /// ----------
@@ -786,7 +786,7 @@ impl MidpointPositionSelector {
 /// Metadata for one midpoint profile group.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MidpointGroupRow {
-    /// Zero-based group index in count-axis order.
+    /// Zero-based index into the first dimension of the midpoint count array.
     pub index: usize,
     /// Public group name from the grouped input intervals.
     pub name: String,

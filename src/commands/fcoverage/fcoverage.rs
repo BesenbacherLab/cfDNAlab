@@ -1,4 +1,4 @@
-use crate::command_run::{CommandRunResult, RunOptions};
+use crate::command_run::{CommandRunResult, RunOptions, status_info};
 use crate::commands::fcoverage::config::FCoverageConfig;
 use crate::commands::fcoverage::reducer::TileAggregateTempFiles;
 use crate::commands::fcoverage::tiling::{
@@ -211,8 +211,8 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
     // Create output directory
     ensure_output_dir(&opt.ioc.output_dir)?;
 
-    if opt.blacklist.is_some() && options.log_statuses {
-        info!(target: COMMAND_TARGET, "Loading blacklists");
+    if opt.blacklist.is_some() {
+        status_info!(options, target: COMMAND_TARGET, "Loading blacklists");
     }
     let blacklist_map = load_blacklist_map(opt.blacklist.as_ref(), 1, 0, &chromosomes)?;
 
@@ -270,9 +270,7 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
 
     match &window_opt {
         DistributionWindowSpec::Bed(bed) => {
-            if options.log_statuses {
-                info!(target: COMMAND_TARGET, "Loading window coordinates");
-            }
+            status_info!(options, target: COMMAND_TARGET, "Loading window coordinates");
             let wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
             ensure_plain_bed_windows_not_empty(&wds)?;
             if matches!(
@@ -280,9 +278,7 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
                 CoverageWindowAction::OnlyIncludeThesePositionsUnique
             ) {
                 // Merge in-place to avoid double memory usage
-                if options.log_statuses {
-                    info!(target: COMMAND_TARGET, "Merging overlapping/touching windows");
-                }
+                status_info!(options, target: COMMAND_TARGET, "Merging overlapping/touching windows");
                 // Take ownership so we can remove entries by chromosome
                 let mut wds_owned = wds;
                 let mut flattened_windows =
@@ -304,9 +300,7 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
             }
         }
         DistributionWindowSpec::GroupedBed(bed) => {
-            if options.log_statuses {
-                info!(target: COMMAND_TARGET, "Loading grouped window coordinates");
-            }
+            status_info!(options, target: COMMAND_TARGET, "Loading grouped window coordinates");
             let (grouped_windows_by_chr, group_idx_to_name, _strand_detection) =
                 load_grouped_windows_from_bed(
                     bed,
@@ -334,8 +328,8 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
     }
 
     // Load genomic scaling factors
-    if opt.scale_genome.scaling_factors.is_some() && options.log_statuses {
-        info!(target: COMMAND_TARGET, "Loading scaling factors");
+    if opt.scale_genome.scaling_factors.is_some() {
+        status_info!(options, target: COMMAND_TARGET, "Loading scaling factors");
     }
     let scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
         &opt.scale_genome,
@@ -349,8 +343,8 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
     )?;
 
     // Load GC correction package if specified
-    if opt.gc.gc_file.is_some() && options.log_statuses {
-        info!(target: COMMAND_TARGET, "Loading GC correction matrix");
+    if opt.gc.gc_file.is_some() {
+        status_info!(options, target: COMMAND_TARGET, "Loading GC correction matrix");
     }
     let gc_corrector = load_gc_corrector(
         opt.gc.gc_file.as_ref(),
@@ -476,9 +470,7 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
 
     let mut global_counter = FCoverageCounters::default();
 
-    if options.log_statuses {
-        info!(target: COMMAND_TARGET, "Counting per tile");
-    }
+    status_info!(options, target: COMMAND_TARGET, "Counting per tile");
 
     pb.set_position(0);
 
@@ -708,9 +700,11 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
         );
     }
 
-    if options.log_statuses {
-        info!(target: COMMAND_TARGET, "Merging temporary tile files to final output");
-    }
+    status_info!(
+        options,
+        target: COMMAND_TARGET,
+        "Merging temporary tile files to final output"
+    );
 
     // Merge temporary output files and
     // reduce windows present in multiple tiles
@@ -850,13 +844,12 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
 
     final_outputs.move_into_place()?;
 
-    if options.log_statuses {
-        info!(
-            target: COMMAND_TARGET,
-            "Saved output to: {}",
-            final_out_path.display()
-        );
-    }
+    status_info!(
+        options,
+        target: COMMAND_TARGET,
+        "Saved output to: {}",
+        final_out_path.display()
+    );
 
     Ok(FCoverageRunResult {
         counters: global_counter,

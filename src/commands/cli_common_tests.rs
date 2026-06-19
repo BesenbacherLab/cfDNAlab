@@ -1,9 +1,9 @@
 use super::{
     ApplyGCArgFileOnly, ApplyGCArgs, ChromosomeArgs, ContigSource, FragmentLengthArgs,
     parse_length_bins, parse_output_prefix, parse_sam_aux_tag_name, resolve_length_bin_edges,
-    validate_output_prefix,
+    validate_max_soft_clips, validate_output_prefix,
 };
-use crate::shared::constants::MAX_SUPPORTED_FRAGMENT_LENGTH;
+use crate::shared::constants::{MAX_MAX_SOFT_CLIPS, MAX_SUPPORTED_FRAGMENT_LENGTH};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -45,6 +45,28 @@ fn fragment_length_args_accepts_max_supported_fragment_length() {
 
     args.validate()
         .expect("the configured maximum supported fragment length should be valid");
+}
+
+#[test]
+fn validate_max_soft_clips_accepts_configured_limit() {
+    validate_max_soft_clips(MAX_MAX_SOFT_CLIPS)
+        .expect("the configured maximum soft-clip limit should be valid");
+}
+
+#[test]
+fn validate_max_soft_clips_rejects_values_above_configured_limit() {
+    let too_large = MAX_MAX_SOFT_CLIPS + 1;
+
+    let error = validate_max_soft_clips(too_large)
+        .expect_err("soft-clip limits above the configured maximum should fail");
+    let message = error.to_string();
+
+    assert!(
+        message.contains(&format!(
+            "--max-soft-clips ({too_large}) must be <= {MAX_MAX_SOFT_CLIPS}"
+        )),
+        "unexpected error: {message}"
+    );
 }
 
 #[test]

@@ -1,4 +1,10 @@
 use crate::shared::base::ZEROISH_F32_TOLERANCE;
+#[cfg(any(
+    feature = "cmd_ends",
+    feature = "cmd_fcoverage",
+    feature = "cmd_fragment_kmers",
+    feature = "cmd_midpoints"
+))]
 use anyhow::{Result, bail};
 use rust_htslib::bam::record::{Aux, Record};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -10,6 +16,7 @@ pub(crate) struct GCTagValue {
     /// Parsed GC weight if present and valid.
     pub(crate) weight: Option<f32>,
     /// True when the tag was not present on the read.
+    #[allow(dead_code)]
     pub(crate) was_missing: bool,
     /// True when the tag was present but unusable (wrong type, NaN, or outside the supported
     /// positive range after zero-snapping).
@@ -37,6 +44,12 @@ pub(crate) enum SanitizedGCWeight {
 
 /// Explicit classification of fragment-level GC-tag state.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg(any(
+    feature = "cmd_ends",
+    feature = "cmd_fcoverage",
+    feature = "cmd_fragment_kmers",
+    feature = "cmd_midpoints"
+))]
 pub(crate) enum ClassifiedGCTagWeight {
     /// Usable GC weight to apply to the fragment.
     Usable(f32),
@@ -150,6 +163,12 @@ impl GCTagValue {
     ///
     /// This keeps command code from having to manually decode the state from
     /// multiple flags and ensures impossible combinations fail loudly.
+    #[cfg(any(
+        feature = "cmd_ends",
+        feature = "cmd_fcoverage",
+        feature = "cmd_fragment_kmers",
+        feature = "cmd_midpoints"
+    ))]
     pub(crate) fn classify(self) -> Result<ClassifiedGCTagWeight> {
         match (self.weight, self.was_missing, self.had_invalid) {
             (Some(weight), false, false) => Ok(ClassifiedGCTagWeight::Usable(weight)),

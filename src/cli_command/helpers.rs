@@ -1,3 +1,8 @@
+#![allow(
+    dead_code,
+    reason = "feature-limited builds compile this helper module but use only the enabled commands' helpers"
+)]
+
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},

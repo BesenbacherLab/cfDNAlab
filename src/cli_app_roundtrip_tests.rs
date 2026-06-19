@@ -329,37 +329,83 @@ fn gc_bias_config_roundtrips_through_rendered_cli() {
     assert_config_roundtrips!(config, GCBias, "gc-bias");
 }
 
-#[cfg(feature = "cmd_ref_gc_bias")]
+#[cfg(feature = "cmd_gc_bias")]
 #[test]
 fn ref_gc_bias_config_roundtrips_through_rendered_cli() {
     use crate::commands::{
-        cli_common::{FragmentLengthArgs, Ref2BitRequiredArgs},
+        cli_common::FragmentLengthArgs,
         ref_gc_bias::config::{RefGCBiasConfig, RefGCWindowsArgs},
     };
 
-    let config = RefGCBiasConfig {
-        ref_genome: Ref2BitRequiredArgs {
-            ref_2bit: PathBuf::from("ref.2bit"),
+    let mut config = RefGCBiasConfig::new(
+        PathBuf::from("ref.2bit"),
+        PathBuf::from("out"),
+        chromosomes(),
+    );
+    config.set_output_prefix("hg38");
+    config.set_n_threads(2);
+    config.set_n_positions(10_000);
+    config.set_seed(Some(7));
+    config.set_windows(RefGCWindowsArgs {
+        by_bed: Some(PathBuf::from("regions.bed")),
+    });
+    config.set_by_bed(Some(PathBuf::from("regions.bed")));
+    config.set_chromosomes(chromosomes());
+    config.set_blacklist(Some(vec![PathBuf::from("blacklist.bed")]));
+    config.set_fragment_lengths(FragmentLengthArgs::default());
+    config.set_end_offset(10);
+    config.set_skip_interpolation(false);
+    config.set_smoothing_sigma(0.8);
+    config.set_smoothing_radius(2);
+    config.set_skip_smoothing(false);
+    config.set_tile_size(10_000_000);
+
+    assert_config_roundtrips!(config, RefGcBias, "ref-gc-bias");
+}
+
+#[cfg(feature = "cmd_gc_bias")]
+#[test]
+fn ref_gc_bias_config_roundtrips_through_rendered_cli_with_non_default_programmatic_fields() {
+    use crate::{
+        commands::{
+            cli_common::FragmentLengthArgs,
+            ref_gc_bias::config::{RefGCBiasConfig, RefGCWindowsArgs},
         },
-        output_dir: PathBuf::from("out"),
-        output_prefix: "hg38".to_string(),
-        n_threads: 2,
-        n_positions: 10_000,
-        seed: Some(7),
-        windows: RefGCWindowsArgs {
-            by_bed: Some(PathBuf::from("regions.bed")),
-        },
-        chromosomes: chromosomes(),
-        blacklist: Some(vec![PathBuf::from("blacklist.bed")]),
-        fragment_lengths: FragmentLengthArgs::default(),
-        end_offset: 10,
-        skip_interpolation: false,
-        smoothing_sigma: 0.8,
-        smoothing_radius: 2,
-        skip_smoothing: false,
-        tile_size: 10_000_000,
-        logging: Default::default(),
+        shared::logging::{LogSpec, LoggingArgs},
     };
+
+    let mut config = RefGCBiasConfig::new(
+        PathBuf::from("ref.2bit"),
+        PathBuf::from("out"),
+        ChromosomeArgs {
+            chromosomes: None,
+            chromosomes_file: Some(PathBuf::from("chromosomes.txt")),
+        },
+    );
+    config.set_ref_2bit(PathBuf::from("updated_ref.2bit"));
+    config.set_output_dir(PathBuf::from("updated_out"));
+    config.set_output_prefix("hg38");
+    config.set_n_threads(2);
+    config.set_n_positions(10_000);
+    config.set_seed(Some(7));
+    config.set_windows(RefGCWindowsArgs {
+        by_bed: Some(PathBuf::from("windows.bed")),
+    });
+    config.set_by_bed(Some(PathBuf::from("regions.bed")));
+    config.set_blacklist(Some(vec![PathBuf::from("blacklist.bed")]));
+    config.set_fragment_lengths(FragmentLengthArgs {
+        min_fragment_length: 40,
+        max_fragment_length: 220,
+    });
+    config.set_end_offset(5);
+    config.set_skip_interpolation(true);
+    config.set_smoothing_sigma(1.1);
+    config.set_smoothing_radius(4);
+    config.set_skip_smoothing(true);
+    config.set_tile_size(2_000_000);
+    config.set_logging(LoggingArgs {
+        log: LogSpec::Quiet,
+    });
 
     assert_config_roundtrips!(config, RefGcBias, "ref-gc-bias");
 }

@@ -1,10 +1,4 @@
 use crate::interval::{IndexedInterval, Interval};
-#[cfg(any(
-    feature = "cmd_lengths",
-    feature = "cmd_fcoverage",
-    feature = "cmd_ends",
-    feature = "cmd_midpoints"
-))]
 use fxhash::FxHashSet;
 
 /// Reject public Zarr labels that cannot round-trip as one stable text value.
@@ -30,6 +24,7 @@ pub struct DenseMatrix<T> {
 
 impl<T> DenseMatrix<T> {
     /// Build a dense matrix from row-major values and explicit shape metadata.
+    #[cfg(any(feature = "cmd_ends", feature = "cmd_lengths"))]
     pub(crate) fn from_row_major(
         values: Vec<T>,
         rows: usize,
@@ -306,12 +301,6 @@ pub struct WindowRow {
     pub blacklisted_fraction: Option<f64>,
 }
 
-#[cfg(any(
-    feature = "cmd_lengths",
-    feature = "cmd_fcoverage",
-    feature = "cmd_ends",
-    feature = "cmd_midpoints"
-))]
 /// Resolve an optional row selector to concrete zero-based source row indices.
 pub(crate) fn resolve_row_indices(
     row_indices: Option<&[usize]>,
@@ -328,12 +317,6 @@ pub(crate) fn resolve_row_indices(
     Ok((0..row_count).collect())
 }
 
-#[cfg(any(
-    feature = "cmd_lengths",
-    feature = "cmd_fcoverage",
-    feature = "cmd_ends",
-    feature = "cmd_midpoints"
-))]
 /// Reject duplicate zero-based indices before a selection is copied.
 pub(crate) fn ensure_unique_indices(indices: &[usize], label: &str) -> anyhow::Result<()> {
     let mut seen_indices = FxHashSet::default();
@@ -383,14 +366,7 @@ pub(crate) fn contiguous_index_span(indices: &[usize]) -> Option<(usize, usize)>
     Some((first_index, first_index + indices.len()))
 }
 
-#[cfg(all(
-    test,
-    any(
-        feature = "cmd_lengths",
-        feature = "cmd_ends",
-        feature = "cmd_midpoints"
-    )
-))]
+#[cfg(test)]
 mod tests {
     include!("common_tests.rs");
 }

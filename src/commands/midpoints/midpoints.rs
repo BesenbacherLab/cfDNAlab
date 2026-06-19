@@ -2,7 +2,7 @@ use crate::shared::bed::{GroupedBedStrandColumn, GroupedWindows, Strand};
 use crate::shared::gc_tag::ClassifiedGCTagWeight;
 use crate::shared::io::FinalOutputFiles;
 use crate::{
-    command_run::{CommandRunResult, RunOptions},
+    command_run::{CommandRunResult, RunOptions, status_info},
     commands::{
         cli_common::{
             ensure_output_dir, load_blacklist_map, load_scaling_map,
@@ -103,15 +103,15 @@ impl CommandRunResult for MidpointsRunResult {
 /// finish, those sparse partial files are merged into one dense `ProfileGroupsCounts` and written
 /// as the public `.midpoint_profiles.zarr` output with axes `(group, length_bin, position)`.
 ///
-/// Reporting is controlled by `options`. `report_statistics` prints the final summary and
-/// `show_progress` controls progress bars. This command does not use status logs.
+/// Reporting is controlled by `options`. `report_statistics` prints the final summary,
+/// `show_progress` controls progress bars, and `log_statuses` controls status messages.
 ///
 /// Parameters
 /// ----------
 /// - `opt`:
 ///     Fully resolved configuration for the `midpoints` command.
 /// - `options`:
-///     Reporting controls for statistics and progress bars.
+///     Reporting controls for statistics, progress bars, and status logs.
 ///
 /// Returns
 /// -------
@@ -142,7 +142,7 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
 
     // Load blacklist intervals if provided
     if opt.blacklist.is_some() {
-        info!(target: COMMAND_TARGET, "Loading blacklists");
+        status_info!(options, target: COMMAND_TARGET, "Loading blacklists");
     }
     let blacklist_map = load_blacklist_map(
         opt.blacklist.as_ref(),
@@ -152,7 +152,7 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
     )?;
 
     // Load grouped fixed-size windows from BED
-    info!(target: COMMAND_TARGET, "Loading fixed-size intervals");
+    status_info!(options, target: COMMAND_TARGET, "Loading fixed-size intervals");
     let (mut grouped_windows_map, group_idx_to_name, strand_detection) =
         load_grouped_windows_from_bed(
             opt.intervals.clone(),
@@ -164,7 +164,7 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
     if let Some(strand_detection) = strand_detection {
         match strand_detection.column {
             Some(GroupedBedStrandColumn::Column6) => {
-                info!(target: COMMAND_TARGET, "  Interval strands: loaded from BED column 6");
+                status_info!(options, target: COMMAND_TARGET, "  Interval strands: loaded from BED column 6");
             }
             Some(GroupedBedStrandColumn::Column5) => {
                 warn!(
@@ -179,7 +179,8 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
                 );
             }
             None => {
-                info!(
+                status_info!(
+                    options,
                     target: COMMAND_TARGET,
                     "  Interval strands: no BED strand column detected, treating intervals as unstranded"
                 );
@@ -194,7 +195,8 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
         num_groups
     );
     let total_windows: usize = grouped_windows_map.values().map(|gw| gw.len()).sum();
-    info!(
+    status_info!(
+        options,
         target: COMMAND_TARGET,
         "  Num. chromosomes: {:?} | Num. windows: {:?} | Num. groups: {:?}",
         grouped_windows_map.keys().len(),
@@ -233,7 +235,8 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
     let group_eligible_interval_counts =
         eligible_interval_counts_by_group(&grouped_windows_map, &group_idx_to_name);
 
-    info!(
+    status_info!(
+        options,
         target: COMMAND_TARGET,
         "  Intervals after chromosome filtering: {} | blacklist-prefiltered: {} | retained: {}",
         interval_stats.loaded_after_chromosome_filtering,
@@ -257,7 +260,8 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
         .checked_mul(std::mem::size_of::<f32>())
         .context("final midpoint profile byte size overflow")?;
     let final_profile_gb = final_profile_bytes as f64 / 1_000_000_000.0;
-    info!(
+    status_info!(
+        options,
         target: COMMAND_TARGET,
         "Dense midpoint counting shape: groups={} length_bins={} positions={} | approx {:.2} GB",
         num_groups,
@@ -266,7 +270,8 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
         dense_profile_gb,
     );
     if profile_layout.output_positions != profile_layout.flanked_length {
-        info!(
+        status_info!(
+            options,
             target: COMMAND_TARGET,
             "Final midpoint output shape: groups={} length_bins={} positions={} | approx {:.2} GB",
             num_groups,
@@ -286,7 +291,7 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
 
     // Load genomic scaling factors
     if opt.scale_genome.scaling_factors.is_some() {
-        info!(target: COMMAND_TARGET, "Loading scaling factors");
+        status_info!(options, target: COMMAND_TARGET, "Loading scaling factors");
     }
     let scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
         &opt.scale_genome,
@@ -301,7 +306,7 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
 
     // Load GC correction package if specified
     if opt.gc.gc_file.is_some() {
-        info!(target: COMMAND_TARGET, "Loading GC correction matrix");
+        status_info!(options, target: COMMAND_TARGET, "Loading GC correction matrix");
     }
     let gc_corrector = load_gc_corrector(
         opt.gc.gc_file.as_ref(),
@@ -358,7 +363,7 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
     // Configure global thread-pool size
     init_global_pool(opt.ioc.n_threads)?;
 
-    info!(target: COMMAND_TARGET, "Counting per chromosome");
+    status_info!(options, target: COMMAND_TARGET, "Counting per chromosome");
 
     pb.set_position(0);
 
@@ -430,7 +435,8 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
         global_counter += counter;
     }
 
-    info!(
+    status_info!(
+        options,
         target: COMMAND_TARGET,
         "Merging temporary tile files to final output"
     );
@@ -453,7 +459,8 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
     let mut final_outputs = FinalOutputFiles::new(temp_dir)?;
 
     let temp_counts_path = final_outputs.temp_path_for(&final_counts_path)?;
-    info!(
+    status_info!(
+        options,
         target: COMMAND_TARGET,
         "Writing final counts to temp Zarr store {}",
         temp_counts_path.display()
@@ -470,7 +477,8 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
     final_outputs.record(temp_counts_path, final_counts_path.clone())?;
 
     let temp_map_path = final_outputs.temp_path_for(&map_path)?;
-    info!(
+    status_info!(
+        options,
         target: COMMAND_TARGET,
         "Writing group index to temp file {}",
         temp_map_path.display()
@@ -483,7 +491,8 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
     final_outputs.record(temp_map_path, map_path.clone())?;
 
     let temp_settings_path = final_outputs.temp_path_for(&settings_path)?;
-    info!(
+    status_info!(
+        options,
         target: COMMAND_TARGET,
         "Writing midpoint profile settings to temp file {}",
         temp_settings_path.display()
@@ -504,7 +513,8 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
     {
         use crate::commands::midpoints::plotting::plot_midpoint_profiles;
 
-        info!(
+        status_info!(
+            options,
             target: COMMAND_TARGET,
             "Plotting selected groups' midpoint profiles"
         );

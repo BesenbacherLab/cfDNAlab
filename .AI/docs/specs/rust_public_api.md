@@ -23,14 +23,18 @@ Stable public categories currently include:
 - `cfdnalab::clip_mode`
 - `cfdnalab::constants`
 - `cfdnalab::parsing`
-- `cfdnalab::output_loaders`
 
-`cfdnalab::gc_bias` is public only when `cmd_gc_bias` is enabled.
+`cfdnalab::gc_bias`, `cfdnalab::run_like_cli::gc_bias`, and
+`cfdnalab::run_like_cli::ref_gc_bias` are public only when `cmd_gc_bias` is
+enabled.
+`cfdnalab::output_loaders` is public only when at least one supported output
+loader feature is enabled.
 
 ## Output Loaders
 
 `cfdnalab::output_loaders` exposes Rust loaders for files written by cfDNAlab
-commands. Each loader is gated by the cargo feature for the command that writes
+commands. The module is compiled when at least one supported loader feature is
+enabled. Each loader is gated by the cargo feature for the command that writes
 that output:
 
 - `cmd_lengths` exposes `load_lengths_output`.
@@ -64,15 +68,50 @@ Each command module exports:
 
 Runner names are command-specific. Do not expose generic `run()` functions for command workflows.
 
-The CLI and the Rust API call the same command runners. CLI dispatch passes `RunOptions::new_cli()`. Programmatic callers should pass `RunOptions::new_quiet()` when they want the same files and computation without progress bars, status logging, or printed statistics.
+The CLI and the Rust API call the same command runners. CLI dispatch derives
+`RunOptions` from the parsed `--log` mode. `stdout` and file modes pass
+`RunOptions::new_cli()`, while `quiet` passes `RunOptions::new_quiet()`.
+Programmatic callers should pass `RunOptions::new_quiet()` when they want the
+same files and computation without progress bars, status logging, or printed
+statistics.
 
 `RunOptions` controls reporting side effects only:
 
 - `report_statistics`
 - `show_progress`
 - `log_statuses`
+- `log_equivalent_cli`
 
 These flags must not change scientific computation or output-file content.
+
+## Programmatic Logging
+
+Downstream Rust applications own their own process logging. Direct calls to
+`run_*` command functions do not initialize cfDNAlab's CLI logging runtime and
+do not install a `tracing` subscriber.
+
+Use `RunOptions` to decide how much cfDNAlab reporting a direct runner call may
+produce:
+
+- `RunOptions::new_quiet()` is the recommended default for library-style use. It
+  suppresses cfDNAlab progress bars, status messages, equivalent CLI logging,
+  and final statistics.
+- If a downstream application wants cfDNAlab status messages, it should install
+  its own `tracing` subscriber once and pass a `RunOptions` value with
+  `log_statuses` and, if wanted, `log_equivalent_cli` enabled.
+- `report_statistics` prints cfDNAlab summary blocks. Downstream applications
+  should leave it disabled unless printing to stdout is part of their interface.
+- `show_progress` is for terminal-oriented runs. It should normally stay
+  disabled in services, notebooks, tests, and pipeline libraries.
+
+`LoggingArgs` and `LogSpec` on command config structs are CLI-facing. They are
+used by the `cfdna` binary before dispatch and by `ToCliCommand` when rendering
+command-line arguments. Setting `config.logging.log` does not redirect logs for
+a direct Rust `run_*` call.
+
+Warnings are ordinary `tracing` events or returned errors, depending on the
+code path. A downstream application that installs its own subscriber controls
+how those events are formatted and routed.
 
 ## Command Results
 

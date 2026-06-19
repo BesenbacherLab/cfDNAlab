@@ -4,6 +4,7 @@ pub mod cli_command;
 pub mod command_run;
 pub(crate) mod commands;
 pub mod error;
+#[cfg(output_loader_api)]
 pub mod output_loaders;
 pub(crate) mod shared;
 #[cfg(any(feature = "testing", test))]
@@ -221,7 +222,7 @@ pub mod run_like_cli {
         };
     }
 
-    #[cfg(feature = "cmd_ref_gc_bias")]
+    #[cfg(feature = "cmd_gc_bias")]
     pub mod ref_gc_bias {
         pub use crate::commands::ref_gc_bias::config::{RefGCBiasConfig, RefGCWindowsArgs};
         pub use crate::commands::ref_gc_bias::ref_gc_bias::{RefGCBiasRunResult, run_ref_gc_bias};

@@ -27,3 +27,25 @@ fn gc_length_trim_rare_validation_rejects_invalid_values() {
         );
     }
 }
+
+#[test]
+fn validate_max_deletion_bases_accepts_configured_limit() {
+    validate_max_deletion_bases(MAX_DELETION_BASES)
+        .expect("the configured maximum deletion-base limit should be valid");
+}
+
+#[test]
+fn validate_max_deletion_bases_rejects_values_above_configured_limit() {
+    let too_large = MAX_DELETION_BASES + 1;
+
+    let error = validate_max_deletion_bases(too_large)
+        .expect_err("deletion-base limits above the configured maximum should fail");
+    let message = error.to_string();
+
+    assert!(
+        message.contains(&format!(
+            "--max-deletion-bases ({too_large}) must be <= {MAX_DELETION_BASES}"
+        )),
+        "unexpected error: {message}"
+    );
+}

@@ -15,17 +15,17 @@ use crate::{
 };
 use std::path::PathBuf;
 
-const ENDS_ABOUT: &str = "Count fragment end- and breakpoint-motifs in a BAM-file.";
-
-const ENDS_LONG_ABOUT: &str = concat!(
-    "Count fragment end- and breakpoint-motifs in a BAM-file.\n\n",
-    "For each fragment end, it extracts the `--k-outside` bases just outside the fragment and the ",
-    "`--k-inside` bases just inside the fragment. For the right fragment end, these are ",
-    "reverse-complemented together. Finally, they are combined to the reference 5'->3'-oriented ",
-    "`\"<outside>_<inside>\"` motif.\n\n",
-    "## Visualization of counting\n\n",
-    "The following shows the counting for aligned fragment ends:\n\n",
-    r#"For `--k-inside 2 --k-outside 2`:
+macro_rules! ends_long_about {
+    () => {
+        concat!(
+            "Count fragment end- and breakpoint-motifs in a BAM-file.\n\n",
+            "For each fragment end, it extracts the `--k-outside` bases just outside the fragment and the ",
+            "`--k-inside` bases just inside the fragment. For the right fragment end, these are ",
+            "reverse-complemented together. Finally, they are combined to the reference 5'->3'-oriented ",
+            "`\"<outside>_<inside>\"` motif.\n\n",
+            "## Visualization of counting\n\n",
+            "The following shows the counting for aligned fragment ends:\n\n",
+            r#"For `--k-inside 2 --k-outside 2`:
 
 ```text
 Reference 5' >>>>>>>>>>>>>>>>>>>> 3'
@@ -43,45 +43,54 @@ Reverse (`CATC`) is reverse complemented to `GATG`
 
 Counts (`<outside>_<inside>`): `AT_CG: 1`, `GA_TG: 1`
 "#,
-    "\n",
-    "## Output files\n\n",
-    "Writes a self-contained `.end_motifs.zarr` store. The store contains either a dense ",
-    "`counts[row, motif]` matrix when `--all-motifs` is enabled, or sparse COO arrays otherwise. ",
-    "The column axis contains counts for the motifs unless `--motifs-file` has a group column, in which ",
-    "case it contains counts for those motif groups.\n\n",
-    "Concrete motif labels are saved as `<outside>_<inside>`. When `--motifs-file` has a group column, ",
-    "the raw group names are saved instead.\n\n",
-    "## GC correction\n\n",
-    "Weight the contribution of each fragment based on their GC contents per fragment length.\n\n",
-    "## Genomic smoothing (--scaling-factors)\n\n",
-    "Weight how genomic regions contribute to the count distribution(s), e.g., to reduce the ",
-    "influence of copy number alterations (if that is meaningful to your analysis). ",
-    "This weights the contribution of each fragment by region-wise precomputed scaling factors.\n\n",
-    "Can be precomputed with `cfdna fragment-count-weights` (recommended) or `cfdna coverage-weights`.\n\n",
-    "## Window assignment\n\n",
-    "By default, a motif is counted in the window the fragment end falls in with the weight 1.0 (before correction/scaling).\n\n",
-    "With `--clip-strategy include-at-shifted-boundary`, that endpoint can move outside the aligned span by the soft-clipped length. ",
-    "GC correction and scaling weights still use the aligned reference span.\n\n",
-    "With `--clip-strategy include-at-aligned-boundary`, the inside motif includes soft-clipped read bases, but the endpoint assignment stays at the aligned boundary.\n\n",
-    "Alternatively, we can weight the motif by how much the fragment overlaps the window or ",
-    "we can count both end motifs of a fragment if the *fragment midpoint* or a given ",
-    "*proportion* of positions overlaps the window.\n\n",
-    "## Blacklisting\n\n",
-    "1) Skips fragments that overlap blacklisted regions with a given proportion.\n\n",
-    "2) Skips motifs overlapping blacklisted regions.\n\n",
-    "Fragment-level blacklist filtering uses the same assignment coordinates as the selected clip strategy. ",
-    "With `--clip-strategy include-at-shifted-boundary`, soft-clipped boundary shifts can therefore make a fragment overlap blacklisted regions outside its aligned span.\n\n",
-    "With `--clip-strategy include-at-aligned-boundary`, motif-level blacklist validation only checks the part of the inside motif that still overlaps reference coordinates.\n\n",
-    "## Always-on exclusion criteria\n\n",
-    "The following criteria always exclude a read:\n\n",
-    "The read is secondary, supplementary or duplicate. ",
-    "The read failed quality check.\n\n",
-    "**Paired-end input only**: ",
-    "The read or mate read is unmapped. ",
-    "The read is mapped to a different `tid` than the mate. ",
-    "The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`). ",
-);
+            "\n",
+            "## Output files\n\n",
+            "Writes a self-contained `.end_motifs.zarr` store. The store contains either a dense ",
+            "`counts[row, motif]` matrix when `--all-motifs` is enabled, or sparse COO arrays otherwise. ",
+            "The column axis contains counts for the motifs unless `--motifs-file` has a group column, in which ",
+            "case it contains counts for those motif groups.\n\n",
+            "Concrete motif labels are saved as `<outside>_<inside>`. When `--motifs-file` has a group column, ",
+            "the raw group names are saved instead.\n\n",
+            "## GC correction\n\n",
+            "Weight the contribution of each fragment based on their GC contents per fragment length.\n\n",
+            "## Genomic smoothing (--scaling-factors)\n\n",
+            "Weight how genomic regions contribute to the count distribution(s), e.g., to reduce the ",
+            "influence of copy number alterations (if that is meaningful to your analysis). ",
+            "This weights the contribution of each fragment by region-wise precomputed scaling factors.\n\n",
+            "Can be precomputed with `cfdna fragment-count-weights` (recommended) or `cfdna coverage-weights`.\n\n",
+            "## Window assignment\n\n",
+            "By default, a motif is counted in the window the fragment end falls in with the weight 1.0 (before correction/scaling).\n\n",
+            "With `--clip-strategy include-at-shifted-boundary`, that endpoint can move outside the aligned span by the soft-clipped length. ",
+            "GC correction and scaling weights still use the aligned reference span.\n\n",
+            "With `--clip-strategy include-at-aligned-boundary`, the inside motif includes soft-clipped read bases, but the endpoint assignment stays at the aligned boundary.\n\n",
+            "Alternatively, we can weight the motif by how much the fragment overlaps the window or ",
+            "we can count both end motifs of a fragment if the *fragment midpoint* or a given ",
+            "*proportion* of positions overlaps the window.\n\n",
+            "## Blacklisting\n\n",
+            "1) Skips fragments that overlap blacklisted regions with a given proportion.\n\n",
+            "2) Skips motifs overlapping blacklisted regions.\n\n",
+            "Fragment-level blacklist filtering uses the same assignment coordinates as the selected clip strategy. ",
+            "With `--clip-strategy include-at-shifted-boundary`, soft-clipped boundary shifts can therefore make a fragment overlap blacklisted regions outside its aligned span.\n\n",
+            "With `--clip-strategy include-at-aligned-boundary`, motif-level blacklist validation only checks the part of the inside motif that still overlaps reference coordinates.\n\n",
+            "## Always-on exclusion criteria\n\n",
+            "The following criteria always exclude a read:\n\n",
+            "The read is secondary, supplementary or duplicate. ",
+            "The read failed quality check.\n\n",
+            "**Paired-end input only**: ",
+            "The read or mate read is unmapped. ",
+            "The read is mapped to a different `tid` than the mate. ",
+            "The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`). ",
+        )
+    };
+}
 
+#[cfg(feature = "cli")]
+const ENDS_ABOUT: &str = "Count fragment end- and breakpoint-motifs in a BAM-file.";
+
+#[cfg(feature = "cli")]
+const ENDS_LONG_ABOUT: &str = ends_long_about!();
+
+#[doc = ends_long_about!()]
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[cfg_attr(
     feature = "cli",

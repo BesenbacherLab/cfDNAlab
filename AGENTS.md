@@ -30,6 +30,7 @@ Spellings:
 
  - "fragment length", not "fragment-length" - unless specifically relevant in the situation (e.g., "fragment-length-wise").
  - "data frame", not "data-frame".
+ - Use "a"/"an" instead of "one" unless the count is relevant. It is more natural.
 
 Always read [.AI/collaboration.md](/Users/au547627/Documents/Development/rust/cfDNAlab/.AI/collaboration.md) to avoid annoying sycophanting. I want truth not praise.
 

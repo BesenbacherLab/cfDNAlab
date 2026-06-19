@@ -1,4 +1,3 @@
-use crate::shared::constants::{DEFAULT_MAX_SOFT_CLIPS, MAX_MAX_SOFT_CLIPS};
 use std::str::FromStr;
 
 #[cfg(feature = "cli")]
@@ -347,8 +346,9 @@ pub struct ClippingArgs {
         feature = "cli",
         clap(
             long,
-            default_value_t = DEFAULT_MAX_SOFT_CLIPS,
-            value_parser = clap::value_parser!(u16).range(0..=MAX_MAX_SOFT_CLIPS as i64),
+            default_value_t = crate::shared::constants::DEFAULT_MAX_SOFT_CLIPS,
+            value_parser = clap::value_parser!(u16)
+                .range(0..=crate::shared::constants::MAX_MAX_SOFT_CLIPS as i64),
             help_heading = "Clipping"
         )
     )]

@@ -1,11 +1,11 @@
 use crate::commands::ends::write::clip_strategy_name;
 use crate::shared::gc_tag::ClassifiedGCTagWeight;
 use crate::{
-    command_run::{CommandRunResult, RunOptions},
+    command_run::{CommandRunResult, RunOptions, status_info},
     commands::{
         cli_common::{
             DistributionWindowSpec, ensure_output_dir, load_blacklist_map, load_scaling_map,
-            resolve_chromosomes_and_contigs, validate_output_prefix,
+            resolve_chromosomes_and_contigs, validate_max_soft_clips, validate_output_prefix,
         },
         counters::EndsCounters,
         ends::{
@@ -145,15 +145,15 @@ fn outside_kmer_clip_strategy_warning(
 /// filtering, clipping policy, blacklists, GC correction, and genomic scaling. It writes the
 /// configured motif-count artifact and returns counters for the accepted fragments and motifs.
 ///
-/// Reporting is controlled by `options`. `report_statistics` prints the final summary and
-/// `show_progress` controls progress bars. This command does not use status logs.
+/// Reporting is controlled by `options`. `report_statistics` prints the final summary,
+/// `show_progress` controls progress bars, and `log_statuses` controls status messages.
 ///
 /// Parameters
 /// ----------
 /// - `opt`:
 ///     Fully resolved configuration for the `ends` command.
 /// - `options`:
-///     Reporting controls for statistics and progress bars.
+///     Reporting controls for statistics, progress bars, and status logs.
 ///
 /// Returns
 /// -------
@@ -167,6 +167,7 @@ fn outside_kmer_clip_strategy_warning(
 pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> {
     let start_time = Instant::now();
     opt.fragment_lengths.validate()?;
+    validate_max_soft_clips(opt.clip.max_soft_clips)?;
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
@@ -195,7 +196,8 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
         }
     };
     if let Some(selected_motifs) = selected_motifs.as_ref() {
-        info!(
+        status_info!(
+            options,
             target: COMMAND_TARGET,
             "Loaded {} selected end motif target(s)",
             selected_motifs.labels.len()
@@ -248,7 +250,7 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
 
     // Load blacklist intervals if provided
     if opt.blacklist.is_some() {
-        info!(target: COMMAND_TARGET, "Loading blacklists");
+        status_info!(options, target: COMMAND_TARGET, "Loading blacklists");
     }
     let blacklist_map = load_blacklist_map(
         opt.blacklist.as_ref(),
@@ -260,7 +262,7 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
     // Load windows from BED file
     let windows_map = match &window_opt {
         DistributionWindowSpec::Bed(bed) => {
-            info!(target: COMMAND_TARGET, "Loading window coordinates");
+            status_info!(options, target: COMMAND_TARGET, "Loading window coordinates");
             let windows = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
             ensure_plain_bed_windows_not_empty(&windows)?;
             Some(windows)
@@ -269,7 +271,7 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
     };
     let (grouped_windows_map, group_idx_to_name) = match &window_opt {
         DistributionWindowSpec::GroupedBed(bed) => {
-            info!(target: COMMAND_TARGET, "Loading grouped window coordinates");
+            status_info!(options, target: COMMAND_TARGET, "Loading grouped window coordinates");
             let (windows_map, group_idx_to_name, _strand_detection) =
                 load_grouped_windows_from_bed(
                     bed,
@@ -305,7 +307,7 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
 
     // Load genomic scaling factors
     if opt.scale_genome.scaling_factors.is_some() {
-        info!(target: COMMAND_TARGET, "Loading scaling factors");
+        status_info!(options, target: COMMAND_TARGET, "Loading scaling factors");
     }
     let scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
         &opt.scale_genome,
@@ -320,7 +322,7 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
 
     // Load GC correction package if specified
     if opt.gc.gc_file.is_some() {
-        info!(target: COMMAND_TARGET, "Loading GC correction matrix");
+        status_info!(options, target: COMMAND_TARGET, "Loading GC correction matrix");
     }
     let gc_corrector = load_gc_corrector(
         opt.gc.gc_file.as_ref(),
@@ -426,7 +428,7 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
         ),
     };
 
-    info!(target: COMMAND_TARGET, "Counting per tile");
+    status_info!(options, target: COMMAND_TARGET, "Counting per tile");
 
     // Configure global thread‐pool size
     init_global_pool(opt.ioc.n_threads)?;
@@ -544,7 +546,7 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
 
     // Write every final output to the temp directory before moving any of them into place
     // This keeps failed writes from leaving a mix of old and new final files
-    info!(target: COMMAND_TARGET, "Reducing temporary tile files");
+    status_info!(options, target: COMMAND_TARGET, "Reducing temporary tile files");
     let temp_motif_output_path = match selected_motifs.as_ref() {
         None => {
             // Start from an all-empty output matrix shape, then fill only the windows that were
@@ -703,7 +705,7 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
     // Write window coordinates plus overlap metadata as TSV to output_dir
     match &window_opt {
         DistributionWindowSpec::GroupedBed(_) => {
-            info!(target: COMMAND_TARGET, "Writing group metadata to disk");
+            status_info!(options, target: COMMAND_TARGET, "Writing group metadata to disk");
             let group_idx_to_name = group_idx_to_name
                 .as_ref()
                 .context("group_idx_to_name missing when writing grouped outputs")?;
@@ -728,7 +730,7 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
         }
         DistributionWindowSpec::Global => {}
         _ => {
-            info!(target: COMMAND_TARGET, "Writing window coordinates to disk");
+            status_info!(options, target: COMMAND_TARGET, "Writing window coordinates to disk");
             let bins_path = opt.ioc.output_dir.join(dot_join(&[prefix, "bins.tsv"]));
             let temp_bins_path = final_outputs.temp_path_for(&bins_path)?;
             write_bin_info_tsv(&temp_bins_path, &bin_info)?;

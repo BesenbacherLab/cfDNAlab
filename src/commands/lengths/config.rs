@@ -12,8 +12,7 @@ use crate::{
         blacklist::BlacklistStrategy,
         clip_mode::ClipMode,
         constants::{
-            DEFAULT_MAX_SOFT_CLIPS, MAX_MAX_SOFT_CLIPS, MAX_SUPPORTED_FRAGMENT_LENGTH,
-            MIN_ACGT_BASES_FOR_GC_FRACTION,
+            DEFAULT_MAX_SOFT_CLIPS, MAX_SUPPORTED_FRAGMENT_LENGTH, MIN_ACGT_BASES_FOR_GC_FRACTION,
         },
         indel_mode::IndelMode,
     },
@@ -227,7 +226,8 @@ pub struct LengthsConfig {
         clap(
             long,
             default_value_t = DEFAULT_MAX_SOFT_CLIPS,
-            value_parser = clap::value_parser!(u16).range(0..=MAX_MAX_SOFT_CLIPS as i64),
+            value_parser = clap::value_parser!(u16)
+                .range(0..=crate::shared::constants::MAX_MAX_SOFT_CLIPS as i64),
             help_heading = "Indels and clipping"
         )
     )]
@@ -585,6 +585,7 @@ impl LengthsConfig {
     }
 }
 
+#[cfg(feature = "cli")]
 fn parse_gc_length_trim_rare(raw_value: &str) -> std::result::Result<f64, String> {
     let value = raw_value
         .parse::<f64>()
@@ -597,6 +598,16 @@ pub(crate) fn validate_gc_length_trim_rare(value: f64) -> Result<()> {
     anyhow::ensure!(
         value.is_finite() && (0.0..1.0).contains(&value),
         "--gc-length-trim-rare must be finite and within [0, 1)"
+    );
+    Ok(())
+}
+
+pub(crate) fn validate_max_deletion_bases(max_deletion_bases: u16) -> Result<()> {
+    anyhow::ensure!(
+        max_deletion_bases <= MAX_DELETION_BASES,
+        "--max-deletion-bases ({}) must be <= {}",
+        max_deletion_bases,
+        MAX_DELETION_BASES
     );
     Ok(())
 }
