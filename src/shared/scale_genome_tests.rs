@@ -435,8 +435,8 @@ mod tests_normalize_command {
             Some(200),
             20,
             vec![Cigar::Match(60)],
-            &vec![b'A'; 60],
-            &vec![40; 60],
+            &[b'A'; 60],
+            &[40; 60],
         )
     }
 

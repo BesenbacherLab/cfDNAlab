@@ -72,9 +72,9 @@ impl OutlierStats {
 /// Parameters
 /// ----------
 /// - `sorted`:
-///     Values sorted in ascending order to sample from.
+///   Values sorted in ascending order to sample from.
 /// - `p`:
-///     Target percentile expressed as a fraction; values outside [0, 1] are clamped.
+///   Target percentile expressed as a fraction; values outside [0, 1] are clamped.
 ///
 /// Returns
 /// -------

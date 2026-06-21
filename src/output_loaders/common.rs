@@ -67,7 +67,7 @@ impl<T> DenseMatrix<T> {
     /// Parameters
     /// ----------
     /// - `row_index`:
-    ///     Zero-based row index in the matrix.
+    ///   Zero-based row index in the matrix.
     pub fn row(&self, row_index: usize) -> Option<&[T]> {
         if row_index >= self.rows {
             return None;
@@ -106,9 +106,9 @@ impl<T> DenseMatrix<T> {
     /// Parameters
     /// ----------
     /// - `row_index`:
-    ///     Zero-based row index in the matrix.
+    ///   Zero-based row index in the matrix.
     /// - `column_index`:
-    ///     Zero-based column index in the matrix.
+    ///   Zero-based column index in the matrix.
     pub fn get(&self, row_index: usize, column_index: usize) -> Option<&T> {
         if row_index >= self.rows || column_index >= self.columns {
             return None;
@@ -247,11 +247,11 @@ impl<T> DenseArray3<T> {
     /// Parameters
     /// ----------
     /// - `first_index`:
-    ///     Zero-based index on the first axis.
+    ///   Zero-based index on the first axis.
     /// - `second_index`:
-    ///     Zero-based index on the second axis.
+    ///   Zero-based index on the second axis.
     /// - `third_index`:
-    ///     Zero-based index on the third axis.
+    ///   Zero-based index on the third axis.
     pub fn get(&self, first_index: usize, second_index: usize, third_index: usize) -> Option<&T> {
         if second_index >= self.second || third_index >= self.third {
             return None;
@@ -268,9 +268,9 @@ impl<T> DenseArray3<T> {
     /// Parameters
     /// ----------
     /// - `first_index`:
-    ///     Zero-based index on the first axis.
+    ///   Zero-based index on the first axis.
     /// - `second_index`:
-    ///     Zero-based index on the second axis.
+    ///   Zero-based index on the second axis.
     pub fn values_along_third_axis(&self, first_index: usize, second_index: usize) -> Option<&[T]> {
         if second_index >= self.second {
             return None;

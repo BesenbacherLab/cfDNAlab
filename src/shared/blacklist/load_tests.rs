@@ -27,7 +27,7 @@ mod tests_load_blacklists {
             map.get("chr1").unwrap().as_slice(),
             Interval::from_tuples(&[(10, 20)])?.as_slice()
         );
-        assert!(map.get("chr2").is_none());
+        assert!(!map.contains_key("chr2"));
         Ok(())
     }
 

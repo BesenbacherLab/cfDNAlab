@@ -346,7 +346,7 @@ impl Windows {
     /// Parameters
     /// ----------
     /// - start_idx:
-    ///     First index to assign to the merged interval series.
+    ///   First index to assign to the merged interval series.
     ///
     /// Returns
     /// -------
@@ -1105,18 +1105,18 @@ pub(crate) struct GroupedCoverageLayout {
 /// Parameters
 /// ----------
 /// - `grouped_windows_by_chr`:
-///     Grouped BED coordinates keyed by chromosome.
+///   Grouped BED coordinates keyed by chromosome.
 /// - `group_idx_to_name`:
-///     Stable `group_idx -> group_name` mapping from the grouped BED loader.
+///   Stable `group_idx -> group_name` mapping from the grouped BED loader.
 /// - `chromosomes`:
-///     Chromosome order used to assign deterministic segment indices.
+///   Chromosome order used to assign deterministic segment indices.
 /// - `unique_bases`:
-///     Merge same-group overlaps and touches before indexing.
+///   Merge same-group overlaps and touches before indexing.
 ///
 /// Returns
 /// -------
 /// - `layout`:
-///     Per-chromosome segments plus stable maps back to the grouped row identity.
+///   Per-chromosome segments plus stable maps back to the grouped row identity.
 #[cfg(feature = "cmd_fcoverage")]
 pub(crate) fn build_grouped_coverage_layout(
     grouped_windows_by_chr: &FxHashMap<String, GroupedWindows>,

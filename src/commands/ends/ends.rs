@@ -151,14 +151,14 @@ fn outside_kmer_clip_strategy_warning(
 /// Parameters
 /// ----------
 /// - `opt`:
-///     Fully resolved configuration for the `ends` command.
+///   Fully resolved configuration for the `ends` command.
 /// - `options`:
-///     Reporting controls for statistics, progress bars, and status logs.
+///   Reporting controls for statistics, progress bars, and status logs.
 ///
 /// Returns
 /// -------
 /// - `Ok(EndsRunResult)`:
-///     Counters and output paths for the completed run.
+///   Counters and output paths for the completed run.
 ///
 /// Errors
 /// ------

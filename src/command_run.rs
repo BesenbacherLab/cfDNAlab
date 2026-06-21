@@ -70,9 +70,9 @@ impl Default for RunOptions {
 /// Parameters
 /// ----------
 /// - `$options`:
-///     A `RunOptions` value or expression with a `log_statuses` field.
+///   A `RunOptions` value or expression with a `log_statuses` field.
 /// - `$arg`:
-///     The arguments forwarded to `tracing::info!` when status logging is enabled.
+///   The arguments forwarded to `tracing::info!` when status logging is enabled.
 #[cfg(any(
     feature = "cmd_bam_to_bam",
     feature = "cmd_bam_to_frag",
@@ -109,13 +109,13 @@ macro_rules! status_info {
 ))]
 pub(crate) use status_info;
 
-/// Format the equivalent CLI command as a readable log block.
+/// Format the equivalent CLI command as a status log message.
 ///
 /// The tracing formatter already prefixes the event with the command target,
-/// so the command itself is put on its own line for easier copying from stdout
-/// and log files.
+/// so keep the command on the same line as the label for predictable assertions
+/// and simple line-oriented logs.
 pub(crate) fn equivalent_cli_log_message(command: &str) -> String {
-    format!("Equivalent CLI:\n\n{command}\n")
+    format!("Equivalent CLI: {command}")
 }
 
 /// Shared interface for command-specific run results.

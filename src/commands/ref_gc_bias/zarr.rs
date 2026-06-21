@@ -4,9 +4,9 @@
 //! produced by `ref_gc_bias.rs` before they get here, and the loader returns the
 //! same in-memory structures used by `gc-bias`.
 
-#[cfg(any(feature = "cmd_gc_bias"))]
+#[cfg(feature = "cmd_gc_bias")]
 use crate::commands::gc_bias::load_reference_bias::{ReferenceGCData, ReferenceGCMetadata};
-#[cfg(any(feature = "cmd_gc_bias"))]
+#[cfg(feature = "cmd_gc_bias")]
 use crate::shared::zarr::{
     ensure_zarr_schema, read_zarr_array1, read_zarr_array2, read_zarr_root_attributes,
 };
@@ -167,7 +167,7 @@ pub(crate) fn write_reference_gc_package_zarr(
 }
 
 /// Read a reference GC package from a Zarr V3 store.
-#[cfg(any(feature = "cmd_gc_bias"))]
+#[cfg(feature = "cmd_gc_bias")]
 pub(crate) fn read_reference_gc_package_zarr(path: &Path) -> Result<ReferenceGCData> {
     ensure!(
         path.is_dir(),
@@ -305,7 +305,7 @@ fn validate_reference_package_for_writing(package: &ReferenceGCZarrPackage<'_>) 
     Ok(())
 }
 
-#[cfg(any(feature = "cmd_gc_bias"))]
+#[cfg(feature = "cmd_gc_bias")]
 fn ensure_reference_metadata(
     counts: &Array2<f64>,
     unobservables_support_mask: &Array2<bool>,
@@ -431,7 +431,7 @@ fn write_bool_matrix(
     Ok(())
 }
 
-#[cfg(any(feature = "cmd_gc_bias"))]
+#[cfg(feature = "cmd_gc_bias")]
 fn read_labels(path: &Path, array_name: &str, expected_field: &str) -> Result<Vec<String>> {
     let metadata: Value = serde_json::from_str(&std::fs::read_to_string(
         path.join(array_name).join("zarr.json"),
@@ -461,7 +461,7 @@ fn read_labels(path: &Path, array_name: &str, expected_field: &str) -> Result<Ve
         .collect()
 }
 
-#[cfg(any(feature = "cmd_gc_bias"))]
+#[cfg(feature = "cmd_gc_bias")]
 fn ensure_contiguous_values(values: &[i32], axis_name: &str) -> Result<()> {
     for pair in values.windows(2) {
         ensure!(
@@ -472,7 +472,7 @@ fn ensure_contiguous_values(values: &[i32], axis_name: &str) -> Result<()> {
     Ok(())
 }
 
-#[cfg(any(feature = "cmd_gc_bias"))]
+#[cfg(feature = "cmd_gc_bias")]
 fn ensure_index_axis(values: &[i32], axis_name: &str) -> Result<()> {
     for (idx, value) in values.iter().enumerate() {
         ensure!(
@@ -483,14 +483,14 @@ fn ensure_index_axis(values: &[i32], axis_name: &str) -> Result<()> {
     Ok(())
 }
 
-#[cfg(any(feature = "cmd_gc_bias"))]
+#[cfg(feature = "cmd_gc_bias")]
 fn read_bool_attr(root: &Value, name: &str) -> Result<bool> {
     root.get(name)
         .and_then(Value::as_bool)
         .with_context(|| format!("Zarr root attribute {name} must be a bool"))
 }
 
-#[cfg(any(feature = "cmd_gc_bias"))]
+#[cfg(feature = "cmd_gc_bias")]
 fn read_u8_attr(root: &Value, name: &str) -> Result<u8> {
     let value = root
         .get(name)
@@ -499,7 +499,7 @@ fn read_u8_attr(root: &Value, name: &str) -> Result<u8> {
     u8::try_from(value).with_context(|| format!("{name} in reference GC package must fit in u8"))
 }
 
-#[cfg(any(feature = "cmd_gc_bias"))]
+#[cfg(feature = "cmd_gc_bias")]
 fn read_f64_attr(root: &Value, name: &str) -> Result<f64> {
     root.get(name)
         .and_then(Value::as_f64)

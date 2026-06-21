@@ -87,11 +87,9 @@ pub(crate) fn push_path_values(
     flag: &'static str,
     paths: Option<&[PathBuf]>,
 ) {
-    if let Some(paths) = paths {
-        if !paths.is_empty() {
-            args.push(OsString::from(flag));
-            args.extend(paths.iter().map(|path| path.as_os_str().to_os_string()));
-        }
+    if let Some(paths) = paths.filter(|paths| !paths.is_empty()) {
+        args.push(OsString::from(flag));
+        args.extend(paths.iter().map(|path| path.as_os_str().to_os_string()));
     }
 }
 

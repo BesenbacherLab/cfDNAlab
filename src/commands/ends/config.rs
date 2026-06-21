@@ -177,16 +177,16 @@ pub struct EndsConfig {
     ///
     /// - `"auto"`:
     ///   Select the option based on the source.
-    ///   
+    ///
     ///   For **read**-sequence bases, allow indels in the alignment.
     ///
     ///   For **reference** bases, skip motifs with indels in the alignment.
     ///
     /// - `"skip-affected-end"`:
-    /// Always skip motifs overlapping indels.
+    ///   Always skip motifs overlapping indels.
     ///
     /// - `"skip-affected-fragment"`:
-    /// Skip **fragments** when either end overlap indels.
+    ///   Skip **fragments** when either end overlap indels.
     #[cfg_attr(
         feature = "cli",
         clap(

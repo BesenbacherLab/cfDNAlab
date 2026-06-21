@@ -79,7 +79,7 @@ fn is_gc_weight_out_of_range(v: f32) -> bool {
     (!v.is_finite() && !v.is_nan())
         || (v < -ZEROISH_F32_TOLERANCE)
         || (v > ZEROISH_F32_TOLERANCE
-            && (v < MIN_REASONABLE_GC_WEIGHT || v > MAX_REASONABLE_GC_WEIGHT))
+            && !(MIN_REASONABLE_GC_WEIGHT..=MAX_REASONABLE_GC_WEIGHT).contains(&v))
 }
 
 #[inline]

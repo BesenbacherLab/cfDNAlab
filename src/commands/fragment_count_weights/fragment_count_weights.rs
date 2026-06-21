@@ -28,14 +28,14 @@ pub type FragmentCountWeightsRunResult = ScalingWeightsRunResult;
 /// Parameters
 /// ----------
 /// - `opt`:
-///     Fully resolved configuration for the `fragment-count-weights` command.
+///   Fully resolved configuration for the `fragment-count-weights` command.
 /// - `options`:
-///     Reporting controls for statistics, progress bars, and status logs.
+///   Reporting controls for statistics, progress bars, and status logs.
 ///
 /// Returns
 /// -------
 /// - `Ok(FragmentCountWeightsRunResult)`:
-///     The scaling-factor path, internal `fcoverage` result, and counters.
+///   The scaling-factor path, internal `fcoverage` result, and counters.
 ///
 /// Errors
 /// ------

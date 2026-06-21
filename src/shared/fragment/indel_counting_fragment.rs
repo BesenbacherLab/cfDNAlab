@@ -34,12 +34,16 @@ impl IndelReadInfo {
     /// Use that only for callers whose selected modes ignore those fields.
     #[inline]
     pub(crate) fn from_record(r: &Record, inspect_cigar: bool) -> Result<Self> {
-        let edge_info = inspect_cigar
-            .then(|| inspect_cigar_edges(r))
-            .unwrap_or_default();
-        let indel_info = inspect_cigar
-            .then(|| inspect_cigar_indels(r))
-            .unwrap_or_default();
+        let edge_info = if inspect_cigar {
+            inspect_cigar_edges(r)
+        } else {
+            Default::default()
+        };
+        let indel_info = if inspect_cigar {
+            inspect_cigar_indels(r)
+        } else {
+            Default::default()
+        };
 
         Ok(IndelReadInfo {
             tid: r.tid(),
@@ -199,7 +203,7 @@ impl FragmentWithIndelCounts {
             ClipMode::Adjust => self.end().saturating_add(self.right_soft_clip_bp) as u64,
             ClipMode::Aligned | ClipMode::Skip => self.end() as u64,
         };
-        Ok(Interval::new(start, end)?)
+        Interval::new(start, end)
     }
 }
 

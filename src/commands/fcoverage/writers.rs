@@ -543,25 +543,25 @@ fn aggregate_tile_outputs_for_chromosome<'a>(
 /// Parameters
 /// ----------
 /// - `final_path`:
-///     Final compressed output path to create.
+///   Final compressed output path to create.
 /// - `tile_outputs_by_chr`:
-///     Returned aggregate tile paths grouped by chromosome.
+///   Returned aggregate tile paths grouped by chromosome.
 /// - `windows_by_chr`:
-///     BED windows keyed by chromosome. These identities must match the partial rows.
+///   BED windows keyed by chromosome. These identities must match the partial rows.
 /// - `chromosomes`:
-///     Chromosome order to reduce and write.
+///   Chromosome order to reduce and write.
 /// - `masked`:
-///     Whether blacklist masking was active. Needed for scalar finalization.
+///   Whether blacklist masking was active. Needed for scalar finalization.
 /// - `action`:
-///     Requested aggregate mode for these BED windows.
+///   Requested aggregate mode for these BED windows.
 /// - `decimals`:
-///     Decimal precision used in the final output.
+///   Decimal precision used in the final output.
 /// - `n_threads`:
-///     Compression worker count for the output writer.
+///   Compression worker count for the output writer.
 /// - `signal_label`:
-///     Public signal name used inside aggregate value column names.
+///   Public signal name used inside aggregate value column names.
 /// - `restore_mean_multiplier`:
-///     Optional late multiplier applied to raw coverage sums before finalization.
+///   Optional late multiplier applied to raw coverage sums before finalization.
 pub(crate) fn write_bed_aggregate_output(
     final_path: &Path,
     tile_outputs_by_chr: &FxHashMap<String, Vec<TileAggregateTempFiles>>,

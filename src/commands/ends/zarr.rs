@@ -753,7 +753,7 @@ fn dense_count_chunk_shape(shape: [usize; 2]) -> Result<[usize; 2]> {
         return Ok(shape);
     }
 
-    let motif_chunk = shape[1].min(TARGET_DENSE_COUNT_CHUNK_CELLS).max(1);
+    let motif_chunk = shape[1].clamp(1, TARGET_DENSE_COUNT_CHUNK_CELLS);
     let row_chunk = shape[0]
         .min((TARGET_DENSE_COUNT_CHUNK_CELLS / motif_chunk).max(1))
         .max(1);

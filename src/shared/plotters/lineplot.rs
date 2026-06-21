@@ -19,26 +19,26 @@ pub(crate) struct LinePlotSeries<'a> {
 /// Parameters
 /// ----------
 /// - `out_path`:
-///     Destination path for the image file.
+///   Destination path for the image file.
 /// - `title`:
-///     Plot title shown above the chart.
+///   Plot title shown above the chart.
 /// - `x_label`:
-///     Label for the x axis.
+///   Label for the x axis.
 /// - `y_label`:
-///     Label for the y axis.
+///   Label for the y axis.
 /// - `x_values`:
-///     X coordinates for the series.
+///   X coordinates for the series.
 /// - `y_values`:
-///     Y coordinates for the series. Must match `x_values` length.
+///   Y coordinates for the series. Must match `x_values` length.
 /// - `width`:
-///     Canvas width in pixels.
+///   Canvas width in pixels.
 /// - `height`:
-///     Canvas height in pixels.
+///   Canvas height in pixels.
 ///
 /// Returns
 /// -------
 /// - `Result<()>`:
-///     Ok when the plot is written.
+///   Ok when the plot is written.
 pub(crate) fn write_line_plot_png<P: AsRef<Path>>(
     out_path: P,
     title: &str,
@@ -62,24 +62,24 @@ pub(crate) fn write_line_plot_png<P: AsRef<Path>>(
 /// Parameters
 /// ----------
 /// - `out_path`:
-///     Destination path for the image file.
+///   Destination path for the image file.
 /// - `title`:
-///     Plot title shown above the chart.
+///   Plot title shown above the chart.
 /// - `x_label`:
-///     Label for the x axis.
+///   Label for the x axis.
 /// - `y_label`:
-///     Label for the y axis.
+///   Label for the y axis.
 /// - `series`:
-///     Labeled series to draw. Each series must have non-empty x and y arrays of equal length.
+///   Labeled series to draw. Each series must have non-empty x and y arrays of equal length.
 /// - `width`:
-///     Canvas width in pixels.
+///   Canvas width in pixels.
 /// - `height`:
-///     Canvas height in pixels.
+///   Canvas height in pixels.
 ///
 /// Returns
 /// -------
 /// - `Result<()>`:
-///     Ok when the plot is written.
+///   Ok when the plot is written.
 pub(crate) fn write_multi_line_plot_png<P: AsRef<Path>>(
     out_path: P,
     title: &str,
@@ -102,26 +102,26 @@ pub(crate) fn write_multi_line_plot_png<P: AsRef<Path>>(
 /// Parameters
 /// ----------
 /// - `out_path`:
-///     Destination path for the image file.
+///   Destination path for the image file.
 /// - `title`:
-///     Plot title shown above the chart.
+///   Plot title shown above the chart.
 /// - `x_label`:
-///     Label for the x axis.
+///   Label for the x axis.
 /// - `y_label`:
-///     Label for the y axis.
+///   Label for the y axis.
 /// - `x_values`:
-///     X coordinates for the series.
+///   X coordinates for the series.
 /// - `y_values`:
-///     Y coordinates for the series. Must match `x_values` length.
+///   Y coordinates for the series. Must match `x_values` length.
 /// - `width`:
-///     Canvas width in pixels.
+///   Canvas width in pixels.
 /// - `height`:
-///     Canvas height in pixels.
+///   Canvas height in pixels.
 ///
 /// Returns
 /// -------
 /// - `Result<()>`:
-///     Ok when the plot is written.
+///   Ok when the plot is written.
 #[allow(dead_code)]
 pub(crate) fn write_line_plot_svg<P: AsRef<Path>>(
     out_path: P,

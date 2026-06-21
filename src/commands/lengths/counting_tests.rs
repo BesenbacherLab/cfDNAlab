@@ -242,7 +242,7 @@ mod tests_length_counting_2 {
         )?
         .context("expected >=1 overlapping scaling bin")?;
 
-        Ok(overlaps.windows.iter().map(|w| w.idx as usize).collect())
+        Ok(overlaps.windows.iter().map(|w| w.idx).collect())
     }
 
     // ------- tests -------
@@ -517,7 +517,7 @@ mod tests_length_counting_2 {
 
         let mut by_idx = std::collections::BTreeMap::new();
         for ow in overlaps.windows {
-            by_idx.insert(ow.idx, ow.overlap_fraction as f64);
+            by_idx.insert(ow.idx, ow.overlap_fraction);
         }
 
         approx_eq(*by_idx.get(&0).unwrap(), 2.0 / 6.0, 1e-6); // [3,5) in first window
@@ -911,7 +911,7 @@ mod tests_length_counting_2 {
         // Collect overlap fractions in a stable order by idx.
         let mut by_idx = BTreeMap::new();
         for w in res.windows {
-            by_idx.insert(w.idx, w.overlap_fraction as f64);
+            by_idx.insert(w.idx, w.overlap_fraction);
         }
 
         // Fractions are overlap_len / fragment_len = {7/24, 10/24, 7/24}
@@ -1234,7 +1234,7 @@ mod tests_length_counting_2 {
         let mut fracs = Vec::new();
         for w in res.windows {
             indices.push(w.idx);
-            fracs.push(w.overlap_fraction as f64);
+            fracs.push(w.overlap_fraction);
         }
 
         assert_eq!(indices, vec![1, 2, 3, 4, 5, 6, 7, 8]);
@@ -1264,7 +1264,7 @@ mod tests_length_counting_2 {
         )?
         .context("partition fractions")?;
 
-        let sum: f64 = res.windows.iter().map(|w| w.overlap_fraction as f64).sum();
+        let sum: f64 = res.windows.iter().map(|w| w.overlap_fraction).sum();
 
         approx_eq(sum, 1.0, 1e-6);
         Ok(())

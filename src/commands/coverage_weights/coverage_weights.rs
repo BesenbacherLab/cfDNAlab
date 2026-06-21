@@ -189,14 +189,14 @@ impl ToCliCommand for ScalingWeightsCli<'_> {
 /// Parameters
 /// ----------
 /// - `opt`:
-///     Fully resolved configuration for the `coverage-weights` command.
+///   Fully resolved configuration for the `coverage-weights` command.
 /// - `options`:
-///     Reporting controls for statistics, progress bars, and status logs.
+///   Reporting controls for statistics, progress bars, and status logs.
 ///
 /// Returns
 /// -------
 /// - `Ok(CoverageWeightsRunResult)`:
-///     The scaling-factor path, internal `fcoverage` result, and counters.
+///   The scaling-factor path, internal `fcoverage` result, and counters.
 ///
 /// Errors
 /// ------
@@ -223,20 +223,20 @@ pub fn run_coverage_weights(
 /// Parameters
 /// ----------
 /// - `opt`:
-///     Shared scaling-weight configuration.
+///   Shared scaling-weight configuration.
 /// - `normalize_by_length`:
-///     Whether each fragment contributes unit mass across its span.
+///   Whether each fragment contributes unit mass across its span.
 /// - `command`:
-///     Command flavor used to select output naming, headers, and logging target.
+///   Command flavor used to select output naming, headers, and logging target.
 /// - `source_ignore_gap`:
-///     Optional `fcoverage` gap-handling override for the internal producer run.
+///   Optional `fcoverage` gap-handling override for the internal producer run.
 /// - `options`:
-///     Reporting controls for statistics, progress bars, and status logs.
+///   Reporting controls for statistics, progress bars, and status logs.
 ///
 /// Returns
 /// -------
 /// - `Ok(ScalingWeightsRunResult)`:
-///     The scaling-factor path, internal `fcoverage` result, and counters.
+///   The scaling-factor path, internal `fcoverage` result, and counters.
 ///
 /// Errors
 /// ------

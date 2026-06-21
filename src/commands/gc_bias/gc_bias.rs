@@ -294,14 +294,14 @@ impl ReduceState {
 /// Parameters
 /// ----------
 /// - `opt`:
-///     Fully resolved configuration for the `gc-bias` command.
+///   Fully resolved configuration for the `gc-bias` command.
 /// - `options`:
-///     Reporting controls for statistics, progress bars, and status logs.
+///   Reporting controls for statistics, progress bars, and status logs.
 ///
 /// Returns
 /// -------
 /// - `Ok(GCBiasRunResult)`:
-///     Counters and output paths for the completed run.
+///   Counters and output paths for the completed run.
 ///
 /// Errors
 /// ------

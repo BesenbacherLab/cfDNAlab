@@ -419,7 +419,7 @@ mod tests_fragment_with_indel_counts_3 {
 
     // Helper: simple M-only cigar of length l
     fn m(len: u32) -> Vec<Cigar> {
-        vec![Cigar::Match(len as u32)]
+        vec![Cigar::Match(len)]
     }
 
     // Helper: cigar with ref deletion D at offset off of length d, total M before/after

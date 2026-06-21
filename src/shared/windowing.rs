@@ -26,7 +26,7 @@ pub(crate) use window_bin_info::{WindowBinInfo, build_bin_info};
 #[cfg(any(feature = "cmd_ends", feature = "cmd_fragment_kmers"))]
 pub(crate) use bin_info_tsv_writer::write_bin_info_tsv;
 
-#[cfg(any(feature = "cmd_ends"))]
+#[cfg(feature = "cmd_ends")]
 pub(crate) use group_index_writer::write_group_index_with_blacklist_tsv;
 
 /// Validate that an ordinary BED map contains at least one selected window.
@@ -327,7 +327,7 @@ mod bin_info_tsv_writer {
     }
 }
 
-#[cfg(any(feature = "cmd_ends"))]
+#[cfg(feature = "cmd_ends")]
 mod group_index_writer {
     use crate::shared::{
         bed::GroupedWindows, blacklist::compute_blacklist_overlap, interval::Interval,

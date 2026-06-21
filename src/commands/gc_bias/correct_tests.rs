@@ -237,7 +237,7 @@ fn correct_fragment_returns_none_when_fragment_length_is_below_package_range() {
     // span is only 28 bp. This can happen in `ends --clip-strategy include-at-shifted-boundary`, where
     // assignment length includes soft clips but GC correction still uses aligned reference bases.
     let corrector = one_bin_corrector();
-    let gc_prefixes = build_gc_prefixes(&vec![b'G'; 28]);
+    let gc_prefixes = build_gc_prefixes(&[b'G'; 28]);
     let fragment_interval = Interval::new(0_u64, 28_u64).expect("valid fragment interval");
 
     // Act

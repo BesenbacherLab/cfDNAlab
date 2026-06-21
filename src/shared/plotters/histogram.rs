@@ -8,15 +8,15 @@ use anyhow::{Result, ensure};
 ///
 /// # Parameters
 /// - `edges`:
-///     Bin boundaries in ascending order, inclusive of the left edge and
-///     exclusive of the right edge for every bin except the final edge which
-///     closes the interval.
+///   Bin boundaries in ascending order, inclusive of the left edge and
+///   exclusive of the right edge for every bin except the final edge which
+///   closes the interval.
 /// - `counts`:
-///     Mass assigned to each interval between successive edges.
+///   Mass assigned to each interval between successive edges.
 ///
 /// # Returns
 /// - `HistogramSpec`:
-///     Validated histogram ready for plotting.
+///   Validated histogram ready for plotting.
 #[derive(Clone, Debug)]
 pub(crate) struct HistogramSpec {
     pub(crate) edges: Vec<f64>,

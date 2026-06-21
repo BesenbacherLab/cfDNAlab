@@ -96,12 +96,12 @@ pub fn twobit_contig_footprint<P: AsRef<Path>>(path: P) -> Result<Vec<ContigFoot
 /// Parameters
 /// ----------
 /// - path:
-///     Path to sizes or FAI.
+///   Path to sizes or FAI.
 ///
 /// Returns
 /// -------
 /// - sizes:
-///     Map of chrom -> size (u32, saturating if > u32::MAX).
+///   Map of chrom -> size (u32, saturating if > u32::MAX).
 pub fn load_chrom_sizes<P: AsRef<Path>>(path: P) -> Result<FxHashMap<String, u32>> {
     let (_, sizes) = load_chrom_sizes_with_order(path)?;
     Ok(sizes)
@@ -112,12 +112,12 @@ pub fn load_chrom_sizes<P: AsRef<Path>>(path: P) -> Result<FxHashMap<String, u32
 /// Parameters
 /// ----------
 /// - path:
-///     Path to sizes or FAI.
+///   Path to sizes or FAI.
 ///
 /// Returns
 /// -------
 /// - sizes:
-///     Map of chrom -> size (u32, saturating if > u32::MAX).
+///   Map of chrom -> size (u32, saturating if > u32::MAX).
 pub fn load_chrom_sizes_with_order<P: AsRef<std::path::Path>>(
     path: P,
 ) -> Result<(Vec<String>, FxHashMap<String, u32>)> {

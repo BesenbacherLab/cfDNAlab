@@ -121,14 +121,14 @@ struct FragColumnLayout {
 /// Parameters
 /// ----------
 /// - `opt`:
-///     Fully resolved configuration for the `frag-to-bam` command.
+///   Fully resolved configuration for the `frag-to-bam` command.
 /// - `options`:
-///     Reporting control for the final summary.
+///   Reporting control for the final summary.
 ///
 /// Returns
 /// -------
 /// - `Ok(FragToBamRunResult)`:
-///     Counters and output paths for the completed run.
+///   Counters and output paths for the completed run.
 ///
 /// Errors
 /// ------

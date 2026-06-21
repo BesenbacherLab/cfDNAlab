@@ -135,7 +135,7 @@ fn counts_gc_for_each_window_with_end_offset() -> Result<()> {
         .enumerate()
     {
         assert_eq!(
-            window_counts.sum() as f64,
+            window_counts.sum(),
             expected_non_zero_cells.len() as f64,
             "window {window_index} should contain exactly one count for each tested length"
         );

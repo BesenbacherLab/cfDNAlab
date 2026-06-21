@@ -339,7 +339,7 @@ mod tests_newest_bed_loaders {
         assert_eq!(layout_segments_for_chr(&layout, "chr1"), vec![(0, 10, 0)]);
         assert_eq!(layout.group_idx_to_name, group_idx_to_name);
         assert_eq!(layout.group_span_positions.get(&0), Some(&10));
-        assert!(layout.group_span_positions.get(&2).is_none());
+        assert!(!layout.group_span_positions.contains_key(&2));
         Ok(())
     }
 
@@ -739,7 +739,7 @@ mod tests_bed_loader {
 
         assert_eq!(map.len(), 1);
         assert!(
-            map.get("chr1").is_none(),
+            !map.contains_key("chr1"),
             "chr1 should be excluded by the chromosome whitelist"
         );
         let chr2 = map.get("chr2").expect("chr2 missing");
@@ -777,7 +777,7 @@ mod tests_bed_loader {
 
         assert_eq!(map.len(), 1);
         assert!(
-            map.get("chr1").is_none(),
+            !map.contains_key("chr1"),
             "chr1 should be excluded by the chromosome whitelist"
         );
         let chr2 = map.get("chr2").expect("chr2 missing");

@@ -23,23 +23,23 @@ const SELECTED_LENGTH_BIAS_STEP_BP: usize = 20;
 /// Parameters
 /// ----------
 /// - `output_dir`:
-///     Destination for plot files.
+///   Destination for plot files.
 /// - `prefix`:
-///     Optional output-file prefix.
+///   Optional output-file prefix.
 /// - `gc_bins`:
-///     Mapping of GC-bin indices to contiguous GC ranges, used to build axis labels.
+///   Mapping of GC-bin indices to contiguous GC ranges, used to build axis labels.
 /// - `length_bins`:
-///     Mapping of length-bin indices to contiguous fragment length ranges for axis labels.
+///   Mapping of length-bin indices to contiguous fragment length ranges for axis labels.
 /// - `correction_matrix`:
-///     Correction factors shaped `(length_bin, gc_bin)`.
+///   Correction factors shaped `(length_bin, gc_bin)`.
 /// - `length_bin_frequencies`:
-///     Weight for each length bin when computing weighted averages.
+///   Weight for each length bin when computing weighted averages.
 /// - `reference_metadata`:
-///     Metadata describing fragment length bounds for labeling.
+///   Metadata describing fragment length bounds for labeling.
 /// - `full_res_counts`:
-///     Count grid on GC percent x fragment length used for unbinned histograms.
+///   Count grid on GC percent x fragment length used for unbinned histograms.
 /// - `binned_counts`:
-///     Count grid collapsed to GC/length bins for the binned heatmap histograms.
+///   Count grid collapsed to GC/length bins for the binned heatmap histograms.
 pub(crate) fn plot_gc_bias(
     output_dir: &Path,
     prefix: &str,

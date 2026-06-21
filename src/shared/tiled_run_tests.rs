@@ -833,7 +833,7 @@ mod tests_tiling {
         contigs.insert("chr1".to_string(), (0, 95u32));
         let contigs = Contigs { contigs };
         let (tiles, aligned) =
-            build_tiles(&vec!["chr1".to_string()], &contigs, 40, 10, None).unwrap();
+            build_tiles(&["chr1".to_string()], &contigs, 40, 10, None).unwrap();
         assert!(!aligned);
         // Expect 3 tiles: cores [0,40), [40,80), [80,95); halos extend but clamp to chrom len
         assert_eq!(tiles.len(), 3);
@@ -941,7 +941,7 @@ mod tests_tiling {
         let contigs = Contigs { contigs };
 
         let (tiles, aligned) = build_tiles(
-            &vec!["chr1".to_string(), "chr2".to_string()],
+            &["chr1".to_string(), "chr2".to_string()],
             &contigs,
             30,
             20,
@@ -956,7 +956,7 @@ mod tests_tiling {
 
         // Zero halo keeps fetch identical to the core on the second chromosome
         let (tiles_zero_halo, aligned_zero) =
-            build_tiles(&vec!["chr2".to_string()], &contigs, 15, 0, None).unwrap();
+            build_tiles(&["chr2".to_string()], &contigs, 15, 0, None).unwrap();
         assert!(!aligned_zero);
         for t in tiles_zero_halo {
             assert_eq!(t.fetch_start(), t.core_start());

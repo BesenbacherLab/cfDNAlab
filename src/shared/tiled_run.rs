@@ -12,8 +12,6 @@ use anyhow::ensure;
 #[cfg(uses_temp_dirs)]
 use rand::{Rng, distr::Alphanumeric};
 #[cfg(uses_temp_dirs)]
-use std::ffi::OsString;
-#[cfg(uses_temp_dirs)]
 use std::{
     env,
     io::ErrorKind,
@@ -840,7 +838,7 @@ pub(crate) fn run_temp_dir_cleanup_helper_if_requested() -> bool {
     let Some(mode) = args.next() else {
         return false;
     };
-    if mode != OsString::from(TEMP_DIR_CLEANUP_HELPER_ARG) {
+    if mode != TEMP_DIR_CLEANUP_HELPER_ARG {
         return false;
     }
 

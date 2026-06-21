@@ -93,14 +93,14 @@ impl CommandRunResult for BamToFragRunResult {
 /// Parameters
 /// ----------
 /// - `opt`:
-///     Fully resolved configuration for the `bam-to-frag` command.
+///   Fully resolved configuration for the `bam-to-frag` command.
 /// - `options`:
-///     Reporting controls for statistics, progress bars, and status logs.
+///   Reporting controls for statistics, progress bars, and status logs.
 ///
 /// Returns
 /// -------
 /// - `Ok(BamToFragRunResult)`:
-///     Counters and output paths for the completed run.
+///   Counters and output paths for the completed run.
 ///
 /// Errors
 /// ------
@@ -382,8 +382,7 @@ fn process_chrom(
         .collect();
 
     // Get coordinates to fetch reads from and to
-    let (fetch_from, fetch_to) = if windows.is_some() {
-        let wn = windows.unwrap();
+    let (fetch_from, fetch_to) = if let Some(wn) = windows {
         let fetch_start = wn[0].start() as i64;
         let fetch_end = wn.iter().map(|window| window.end()).max().unwrap() as i64;
         (

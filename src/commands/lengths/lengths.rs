@@ -215,14 +215,14 @@ fn reorder_bed_outputs_by_original_index(
 /// Parameters
 /// ----------
 /// - `opt`:
-///     Fully resolved configuration for the `lengths` command.
+///   Fully resolved configuration for the `lengths` command.
 /// - `options`:
-///     Reporting controls for statistics, progress bars, and status logs.
+///   Reporting controls for statistics, progress bars, and status logs.
 ///
 /// Returns
 /// -------
 /// - `Ok(LengthsRunResult)`:
-///     Counters and output paths for the completed run.
+///   Counters and output paths for the completed run.
 ///
 /// Errors
 /// ------

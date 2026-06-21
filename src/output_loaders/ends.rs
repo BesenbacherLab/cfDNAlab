@@ -75,12 +75,12 @@ const END_MOTIF_SCHEMA_VERSION: u64 = 2;
 /// Parameters
 /// ----------
 /// - `path`:
-///     Path to a `cfdna ends` Zarr output directory.
+///   Path to a `cfdna ends` Zarr output directory.
 ///
 /// Returns
 /// -------
 /// - `EndsOutput`:
-///     Loaded row metadata, motif labels, and dense or sparse count storage.
+///   Loaded row metadata, motif labels, and dense or sparse count storage.
 ///
 /// ```no_run
 /// use cfdnalab::output_loaders::load_ends_output;
@@ -194,7 +194,7 @@ impl EndsOutput {
     /// Parameters
     /// ----------
     /// - `row_index`:
-    ///     Zero-based row index in the window metadata.
+    ///   Zero-based row index in the window metadata.
     pub fn window(&self, row_index: usize) -> OutputLoaderResult<Option<&WindowRow>> {
         Ok(self.window_metadata()?.get(row_index))
     }
@@ -206,7 +206,7 @@ impl EndsOutput {
     /// Parameters
     /// ----------
     /// - `row_index`:
-    ///     Zero-based row index in the group metadata.
+    ///   Zero-based row index in the group metadata.
     pub fn group(&self, row_index: usize) -> OutputLoaderResult<Option<&EndMotifGroupRow>> {
         Ok(self.group_metadata()?.get(row_index))
     }
@@ -220,7 +220,7 @@ impl EndsOutput {
     /// Parameters
     /// ----------
     /// - `group_name`:
-    ///     Group label to resolve to a zero-based row index.
+    ///   Group label to resolve to a zero-based row index.
     pub fn group_index(&self, group_name: &str) -> OutputLoaderResult<usize> {
         let groups = self.group_metadata()?;
         Ok(groups
@@ -238,7 +238,7 @@ impl EndsOutput {
     /// Parameters
     /// ----------
     /// - `group_name`:
-    ///     Group label to look up.
+    ///   Group label to look up.
     pub fn has_group(&self, group_name: &str) -> bool {
         self.group_metadata()
             .is_ok_and(|groups| groups.iter().any(|group| group.name == group_name))
@@ -249,7 +249,7 @@ impl EndsOutput {
     /// Parameters
     /// ----------
     /// - `motif_label`:
-    ///     Motif or motif-group label to resolve to a zero-based motif index.
+    ///   Motif or motif-group label to resolve to a zero-based motif index.
     pub fn motif_index(&self, motif_label: &str) -> OutputLoaderResult<usize> {
         Ok(self
             .motif_label_indices
@@ -263,7 +263,7 @@ impl EndsOutput {
     /// Parameters
     /// ----------
     /// - `motif_label`:
-    ///     Motif or motif-group label to look up.
+    ///   Motif or motif-group label to look up.
     pub fn has_motif(&self, motif_label: &str) -> bool {
         self.motif_label_indices.contains_key(motif_label)
     }
@@ -279,9 +279,9 @@ impl EndsOutput {
     /// Parameters
     /// ----------
     /// - `row_index`:
-    ///     Zero-based count row index.
+    ///   Zero-based count row index.
     /// - `motif_index`:
-    ///     Zero-based motif axis index.
+    ///   Zero-based motif axis index.
     pub fn count(&self, row_index: usize, motif_index: usize) -> Option<f64> {
         match &self.data {
             EndMotifCountsData::Dense(counts) => counts.get(row_index, motif_index).copied(),
@@ -294,9 +294,9 @@ impl EndsOutput {
     /// Parameters
     /// ----------
     /// - `row_index`:
-    ///     Zero-based count row index.
+    ///   Zero-based count row index.
     /// - `motif_label`:
-    ///     Motif or motif-group label to resolve before reading the count.
+    ///   Motif or motif-group label to resolve before reading the count.
     pub fn count_for_motif(
         &self,
         row_index: usize,
@@ -555,8 +555,8 @@ impl<'a> EndsSelector<'a> {
     /// Parameters
     /// ----------
     /// - `row_indices`:
-    ///     Source row indices in output order. The returned selection keeps
-    ///     this order and rejects duplicates.
+    ///   Source row indices in output order. The returned selection keeps
+    ///   this order and rejects duplicates.
     pub fn rows(self, row_indices: &[usize]) -> Self {
         self.set_rows(EndMotifRowSelector::Rows(row_indices.to_vec()), "rows")
     }
@@ -568,8 +568,8 @@ impl<'a> EndsSelector<'a> {
     /// Parameters
     /// ----------
     /// - `window_indices`:
-    ///     Window row indices in output order. The returned selection keeps
-    ///     this order and rejects duplicates.
+    ///   Window row indices in output order. The returned selection keeps
+    ///   this order and rejects duplicates.
     pub fn windows(self, window_indices: &[usize]) -> Self {
         self.set_rows(
             EndMotifRowSelector::Windows(window_indices.to_vec()),
@@ -584,8 +584,8 @@ impl<'a> EndsSelector<'a> {
     /// Parameters
     /// ----------
     /// - `group_indices`:
-    ///     Group row indices in output order. The returned selection keeps this
-    ///     order and rejects duplicates.
+    ///   Group row indices in output order. The returned selection keeps this
+    ///   order and rejects duplicates.
     pub fn groups(self, group_indices: &[usize]) -> Self {
         self.set_rows(
             EndMotifRowSelector::Groups(group_indices.to_vec()),
@@ -601,8 +601,8 @@ impl<'a> EndsSelector<'a> {
     /// Parameters
     /// ----------
     /// - `group_names`:
-    ///     Group labels from grouped output metadata. The returned selection
-    ///     follows this order and rejects duplicates.
+    ///   Group labels from grouped output metadata. The returned selection
+    ///   follows this order and rejects duplicates.
     pub fn groups_by_name<S: AsRef<str>>(self, group_names: &[S]) -> Self {
         self.set_rows(
             EndMotifRowSelector::GroupNames(
@@ -620,8 +620,8 @@ impl<'a> EndsSelector<'a> {
     /// Parameters
     /// ----------
     /// - `motif_indices`:
-    ///     Motif axis indices in output order. The returned selection keeps
-    ///     this order and rejects duplicates.
+    ///   Motif axis indices in output order. The returned selection keeps
+    ///   this order and rejects duplicates.
     pub fn motifs(self, motif_indices: &[usize]) -> Self {
         self.set_motifs(MotifAxisSelector::Indices(motif_indices.to_vec()), "motifs")
     }
@@ -631,8 +631,8 @@ impl<'a> EndsSelector<'a> {
     /// Parameters
     /// ----------
     /// - `motif_labels`:
-    ///     Motif labels or motif-group labels from the output motif axis. The
-    ///     returned selection follows this order and rejects duplicates.
+    ///   Motif labels or motif-group labels from the output motif axis. The
+    ///   returned selection follows this order and rejects duplicates.
     pub fn motifs_by_label<S: AsRef<str>>(self, motif_labels: &[S]) -> Self {
         self.set_motifs(
             MotifAxisSelector::Labels(
@@ -1046,9 +1046,9 @@ impl EndMotifCountSelection {
     /// Parameters
     /// ----------
     /// - `row_index`:
-    ///     Zero-based row index within the selected matrix.
+    ///   Zero-based row index within the selected matrix.
     /// - `motif_index`:
-    ///     Zero-based motif index within the selected matrix.
+    ///   Zero-based motif index within the selected matrix.
     pub fn count(&self, row_index: usize, motif_index: usize) -> Option<f64> {
         match &self.data {
             EndMotifCountsData::Dense(counts) => counts.get(row_index, motif_index).copied(),
@@ -1193,11 +1193,11 @@ impl EndMotifSparseCounts {
     /// Parameters
     /// ----------
     /// - `row_index`:
-    ///     Zero-based row index in the dense matrix represented by this sparse
-    ///     object.
+    ///   Zero-based row index in the dense matrix represented by this sparse
+    ///   object.
     /// - `motif_index`:
-    ///     Zero-based motif index in the dense matrix represented by this
-    ///     sparse object.
+    ///   Zero-based motif index in the dense matrix represented by this
+    ///   sparse object.
     pub fn count(&self, row_index: usize, motif_index: usize) -> Option<f64> {
         if row_index >= self.row_count || motif_index >= self.motif_count {
             return None;
@@ -1360,9 +1360,9 @@ impl EndMotifSparseCountLookup {
     /// Parameters
     /// ----------
     /// - `row_index`:
-    ///     Zero-based row index in the represented dense matrix.
+    ///   Zero-based row index in the represented dense matrix.
     /// - `motif_index`:
-    ///     Zero-based motif index in the represented dense matrix.
+    ///   Zero-based motif index in the represented dense matrix.
     pub fn count(&self, row_index: usize, motif_index: usize) -> Option<f64> {
         if row_index >= self.row_count || motif_index >= self.motif_count {
             return None;
@@ -1487,12 +1487,12 @@ fn resolve_group_name_indices<S: AsRef<str>>(
 /// Parameters
 /// ----------
 /// - `selected_indices`:
-///     Source-axis indices requested by the selection, in selected output
-///     order.
+///   Source-axis indices requested by the selection, in selected output
+///   order.
 /// - `source_axis_len`:
-///     Number of rows or motifs on the source axis before selection.
+///   Number of rows or motifs on the source axis before selection.
 /// - `index_label`:
-///     Axis name used in out-of-bounds error messages.
+///   Axis name used in out-of-bounds error messages.
 fn build_selection_index_map(
     selected_indices: &[usize],
     source_axis_len: usize,
@@ -2050,12 +2050,12 @@ fn read_zarr_array_attributes(root_path: &Path, array_path: &str) -> Result<Valu
             .with_context(|| format!("read Zarr metadata {}", metadata_path.display()))?,
     )
     .with_context(|| format!("parse Zarr metadata {}", metadata_path.display()))?;
-    Ok(metadata.get("attributes").cloned().with_context(|| {
+    metadata.get("attributes").cloned().with_context(|| {
         format!(
             "Zarr metadata {} is missing attributes",
             metadata_path.display()
         )
-    })?)
+    })
 }
 
 /// Build the local `zarr.json` path for an array inside a Zarr store.

@@ -115,14 +115,14 @@ impl CommandRunResult for RefGCBiasRunResult {
 /// Parameters
 /// ----------
 /// - `opt`:
-///     Fully resolved configuration for the `ref-gc-bias` command.
+///   Fully resolved configuration for the `ref-gc-bias` command.
 /// - `options`:
-///     Reporting controls for progress bars and status logs.
+///   Reporting controls for progress bars and status logs.
 ///
 /// Returns
 /// -------
 /// - `Ok(RefGCBiasRunResult)`:
-///     Output path information for the completed run.
+///   Output path information for the completed run.
 ///
 /// Errors
 /// ------

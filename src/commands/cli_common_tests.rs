@@ -206,7 +206,7 @@ fn parse_length_bins_rejects_step_larger_than_max_fragment_length() {
 fn parse_length_bins_rejects_non_numeric_step_with_plain_message() {
     let spec = "30:1001:1.5";
 
-    let error = parse_length_bins(Some(&spec), 10, MAX_SUPPORTED_FRAGMENT_LENGTH)
+    let error = parse_length_bins(Some(spec), 10, MAX_SUPPORTED_FRAGMENT_LENGTH)
         .expect_err("non-integer steps should fail with a field-specific message");
     let message = format!("{error:#}");
 
@@ -220,7 +220,7 @@ fn parse_length_bins_rejects_non_numeric_step_with_plain_message() {
 fn parse_length_bins_rejects_negative_step_with_plain_message() {
     let spec = "30:1001:-1";
 
-    let error = parse_length_bins(Some(&spec), 10, MAX_SUPPORTED_FRAGMENT_LENGTH)
+    let error = parse_length_bins(Some(spec), 10, MAX_SUPPORTED_FRAGMENT_LENGTH)
         .expect_err("negative steps should fail with a field-specific message");
     let message = format!("{error:#}");
 
@@ -234,7 +234,7 @@ fn parse_length_bins_rejects_negative_step_with_plain_message() {
 fn parse_length_bins_rejects_unparseably_large_step_with_plain_message() {
     let spec = "30:1001:999999999999999999999999999999999999999999999999999";
 
-    let error = parse_length_bins(Some(&spec), 10, MAX_SUPPORTED_FRAGMENT_LENGTH)
+    let error = parse_length_bins(Some(spec), 10, MAX_SUPPORTED_FRAGMENT_LENGTH)
         .expect_err("unparseably large steps should fail with a field-specific message");
     let message = format!("{error:#}");
 

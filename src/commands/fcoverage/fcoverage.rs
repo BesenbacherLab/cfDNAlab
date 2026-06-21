@@ -128,14 +128,14 @@ enum FCoverageTileTempOutput {
 /// Parameters
 /// ----------
 /// - `opt`:
-///     Fully resolved configuration for the `fcoverage` command.
+///   Fully resolved configuration for the `fcoverage` command.
 /// - `options`:
-///     Reporting controls for statistics, progress bars, and status logs.
+///   Reporting controls for statistics, progress bars, and status logs.
 ///
 /// Returns
 /// -------
 /// - `Ok(FCoverageRunResult)`:
-///     Counters, normalization metadata, and output paths for the completed run.
+///   Counters, normalization metadata, and output paths for the completed run.
 ///
 /// Errors
 /// ------
@@ -498,7 +498,7 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
             let tile_result = if matches!(
                 window_opt,
                 DistributionWindowSpec::Bed(_) | DistributionWindowSpec::GroupedBed(_)
-            ) && windows_chr.map_or(true, |windows| windows.is_empty())
+            ) && windows_chr.is_none_or(|windows| windows.is_empty())
             {
                 // Skip this no-window tile and just return an empty counter
                 FCoverageTileResult {
@@ -983,7 +983,7 @@ fn process_tile(
                 .shift_left(fetch_start as u64)?;
 
             let gc_weight =
-                match gc_corrector.correct_fragment(fetch_relative_fragment, &gc_prefixes)? {
+                match gc_corrector.correct_fragment(fetch_relative_fragment, gc_prefixes)? {
                     Some(weight) => weight,
                     None => {
                         counter.gc_failed_fragments += 1;
@@ -1750,14 +1750,14 @@ pub(crate) fn add_fragment_clipped_to_core(
 /// Parameters
 /// ----------
 /// - `fragment`:
-///     Fragment span and optional counted reference segments for this molecule.
+///   Fragment span and optional counted reference segments for this molecule.
 /// - `opt`:
-///     Command configuration that controls whether length normalization is enabled.
+///   Command configuration that controls whether length normalization is enabled.
 ///
 /// Returns
 /// -------
 /// - `normalization_length`:
-///     `Some(denominator)` when length normalization is active, otherwise `None`.
+///   `Some(denominator)` when length normalization is active, otherwise `None`.
 ///
 /// Errors
 /// ------

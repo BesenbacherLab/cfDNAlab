@@ -130,16 +130,16 @@ pub fn scaling_gc_mode_for_run(gc_file_enabled: bool, gc_tag_enabled: bool) -> S
 /// Parameters
 /// ----------
 /// - cov:
-///     Mutable coverage slice for the tile core.
+///   Mutable coverage slice for the tile core.
 /// - core_start:
-///     Absolute start of the tile core (0-based).
+///   Absolute start of the tile core (0-based).
 /// - bins:
-///     Per-chromosome scaling bins with full coverage.
+///   Per-chromosome scaling bins with full coverage.
 ///
 /// Returns
 /// -------
 /// - _:
-///     Scales `cov[a..b]` by `1*sf` for each overlapping bin.
+///   Scales `cov[a..b]` by `1*sf` for each overlapping bin.
 #[inline]
 pub fn apply_scaling_to_coverage_in_place(cov: &mut [f32], core_start: u32, bins: &[ScalingBin]) {
     if cov.is_empty() || bins.is_empty() {

@@ -621,7 +621,7 @@ fn get_fragment_gc_uses_sequence_interval_as_prefix_origin() -> Result<()> {
     // - The sequence slice is 61 C bases, so fragment [900,961) has 61 GC bases.
     // - A local-origin bug would either ask the 61 bp prefix for [900,961) or otherwise fail
     //   to count the loaded slice as the fragment interval.
-    let prefixes = build_gc_prefixes(&vec![b'C'; 61]);
+    let prefixes = build_gc_prefixes(&[b'C'; 61]);
     let fragment_interval = Interval::new(900_u64, 961_u64)?;
     let sequence_interval = Interval::new(900_u64, 961_u64)?;
 
@@ -638,7 +638,7 @@ fn get_fragment_gc_returns_none_when_fragment_is_outside_loaded_sequence() -> Re
     // - Fragment [961,1022) is a valid reference interval, but its contracted GC window is
     //   completely outside the loaded sequence, so this is a legitimate missing correction
     //   rather than an indexing error.
-    let prefixes = build_gc_prefixes(&vec![b'C'; 61]);
+    let prefixes = build_gc_prefixes(&[b'C'; 61]);
     let fragment_interval = Interval::new(961_u64, 1022_u64)?;
     let sequence_interval = Interval::new(900_u64, 961_u64)?;
 
