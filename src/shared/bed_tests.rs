@@ -448,6 +448,44 @@ mod tests_bed_loader {
     }
 
     #[test]
+    fn should_error_when_bed_text_is_not_bed_even_with_chromosome_whitelist() -> Result<()> {
+        // Arrange:
+        // The first token is not whitelisted, but the sampled row still has to look like BED3.
+        let bed = write_bed(&["not bed content"])?;
+        let whitelist = vec!["chr1".to_string()];
+
+        // Act
+        let error = load_windows_from_bed(bed.path(), Some(whitelist.as_slice()), None, None)
+            .expect_err("malformed BED text should fail");
+
+        // Assert
+        assert!(
+            error.to_string().contains("invalid start"),
+            "unexpected error: {error:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn should_error_when_sampled_bed_row_looks_binary() -> Result<()> {
+        // Arrange:
+        // NUL bytes are a cheap signal that a file is not ordinary BED text.
+        let bed = write_bed(&["\0BigBed-like bytes"])?;
+        let whitelist = vec!["chr1".to_string()];
+
+        // Act
+        let error = load_windows_from_bed(bed.path(), Some(whitelist.as_slice()), None, None)
+            .expect_err("binary-looking BED input should fail");
+
+        // Assert
+        assert!(
+            error.to_string().contains("appears to be binary"),
+            "unexpected error: {error:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn should_filter_windows_by_predicate_when_loading_bed() -> Result<()> {
         // Arrange
         let bed = write_bed(&["chr1\t0\t5", "chr1\t10\t25", "chr1\t30\t33"])?;

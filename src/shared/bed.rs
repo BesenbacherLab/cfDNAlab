@@ -13,6 +13,9 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::{io::BufRead, path::Path};
 
+// Small bounded prefix used to reject obvious non-BED input before whitelist skipping
+const BED_FORMAT_SNIFF_ROWS: usize = 16;
+
 /// Load windows from a BED file into a per-chromosome map.
 ///
 /// The original window index is added. Any valid window increases the index,
@@ -56,6 +59,7 @@ pub(crate) fn load_windows_from_bed(
     let mut buf = String::new();
     let mut lineno: usize = 0;
     let mut orig_win_idx: u64 = 0; // Counter for all *valid* windows whether filtered out or not
+    let mut sniffed_rows = 0usize;
 
     loop {
         buf.clear();
@@ -79,6 +83,11 @@ pub(crate) fn load_windows_from_bed(
         let trimmed_line_start = line.trim_start();
         if trimmed_line_start.starts_with("track") || trimmed_line_start.starts_with("browser") {
             continue;
+        }
+
+        if sniffed_rows < BED_FORMAT_SNIFF_ROWS {
+            sniff_bed3_line(line, lineno)?;
+            sniffed_rows += 1;
         }
 
         // Strict parse of first 3 BED columns without allocating a Vec
@@ -212,6 +221,53 @@ fn start_end_are_valid_coordinates(start_str: &str, end_str: &str) -> Option<()>
         return None;
     }
     Some(())
+}
+
+fn sniff_bed3_line(line: &str, lineno: usize) -> Result<()> {
+    ensure!(
+        !line.as_bytes().contains(&0),
+        "BED parse error at line {}: input appears to be binary, not BED text",
+        lineno
+    );
+
+    let mut fields = line.split_ascii_whitespace();
+    let chr = fields
+        .next()
+        .with_context(|| format!("BED parse error at line {}: missing chromosome", lineno))?;
+    let start_str = fields.next().with_context(|| {
+        format!(
+            "BED parse error at line {}: missing start for chromosome: '{}'",
+            lineno, chr
+        )
+    })?;
+    let end_str = fields.next().with_context(|| {
+        format!(
+            "BED parse error at line {}: missing end for chromosome: '{}'",
+            lineno, chr
+        )
+    })?;
+
+    let start: u64 = start_str.parse().with_context(|| {
+        format!(
+            "BED parse error at line {}: invalid start '{}'",
+            lineno, start_str
+        )
+    })?;
+    let end: u64 = end_str.parse().with_context(|| {
+        format!(
+            "BED parse error at line {}: invalid end '{}'",
+            lineno, end_str
+        )
+    })?;
+
+    ensure!(
+        end > start,
+        "BED parse error at line {}: end ({}) must be greater than start ({})",
+        lineno,
+        end,
+        start
+    );
+    Ok(())
 }
 
 /// Owned collection of half-open windows with a cached genomic span.
@@ -520,6 +576,7 @@ pub(crate) fn load_grouped_windows_from_bed(
     let mut buf = String::new();
     let mut lineno: usize = 0;
     let mut orig_win_idx: u64 = 0; // Counter for all *valid* windows whether filtered out or not
+    let mut sniffed_rows = 0usize;
 
     loop {
         buf.clear();
@@ -534,6 +591,11 @@ pub(crate) fn load_grouped_windows_from_bed(
         // Fast skips
         if should_skip_bed_line(line) {
             continue;
+        }
+
+        if sniffed_rows < BED_FORMAT_SNIFF_ROWS {
+            sniff_bed3_line(line, lineno)?;
+            sniffed_rows += 1;
         }
 
         // Strict parse of first 3 BED columns without allocating a Vec
@@ -1335,6 +1397,7 @@ pub(crate) fn load_scored_windows_from_bed(
     let mut buf = String::new();
     let mut lineno: usize = 0;
     let mut orig_win_idx: u64 = 0; // Counter for all *valid* windows whether filtered out or not
+    let mut sniffed_rows = 0usize;
 
     loop {
         buf.clear();
@@ -1358,6 +1421,11 @@ pub(crate) fn load_scored_windows_from_bed(
         let trimmed_line_start = line.trim_start();
         if trimmed_line_start.starts_with("track") || trimmed_line_start.starts_with("browser") {
             continue;
+        }
+
+        if sniffed_rows < BED_FORMAT_SNIFF_ROWS {
+            sniff_bed3_line(line, lineno)?;
+            sniffed_rows += 1;
         }
 
         // Strict parse of first 3 BED columns without allocating a Vec
