@@ -11,6 +11,7 @@ This is the changelog for the main CLI tool. You can find the changelog for the 
 
  - The Rust `fcoverage` run result now includes grouped `group_index.tsv` sidecars in `output_files()` when they are written.
  - Adds missing blacklist setters on the Rust `LengthsConfig` API.
+ - Adds minimal validation of BED files to catch obviously non-BED formats.
 
 <br />
 
