@@ -175,11 +175,11 @@ pub fn create_overlapping_bins_by_size(
     Ok(first..last_excl)
 }
 
-/// Check whether two checked half-open intervals overlap.
+/// Check whether two checked half-open intervals share at least one base.
 ///
-/// This is the basic geometric predicate used by the window assignment code.
-/// Both intervals are already validated, so the helper only answers whether
-/// they share at least one base.
+/// Half-open intervals include their start coordinate and exclude their end coordinate, so
+/// `[0, 10)` and `[10, 20)` touch but do not overlap. Both inputs are already validated
+/// non-empty intervals.
 ///
 /// Parameters
 /// ----------

@@ -26,6 +26,8 @@ use crate::commands::midpoints::config::MidpointsConfig;
 use crate::commands::prepare_windows::config::PrepareConfig;
 #[cfg(feature = "cmd_gc_bias")]
 use crate::commands::ref_gc_bias::config::RefGCBiasConfig;
+#[cfg(feature = "cmd_ref_kmers")]
+use crate::commands::ref_kmers::config::RefKmersConfig;
 #[cfg(feature = "cmd_transitions")]
 use crate::commands::transitions::config::TransitionsConfig;
 #[cfg(feature = "cmd_visualize_positions")]
@@ -55,6 +57,8 @@ pub(crate) enum Cmd {
     GCBias(GCConfig),
     #[cfg(feature = "cmd_gc_bias")]
     RefGcBias(RefGCBiasConfig),
+    #[cfg(feature = "cmd_ref_kmers")]
+    RefKmers(RefKmersConfig),
     #[cfg(feature = "cmd_transitions")]
     Transitions(TransitionsConfig),
     #[cfg(feature = "cmd_coverage_weights")]
@@ -124,6 +128,11 @@ pub(crate) fn run_cli() {
         ),
         #[cfg(feature = "cmd_gc_bias")]
         Cmd::RefGcBias(config) => (
+            config.logging.log.clone(),
+            Some(config.output_dir.as_path()),
+        ),
+        #[cfg(feature = "cmd_ref_kmers")]
+        Cmd::RefKmers(config) => (
             config.logging.log.clone(),
             Some(config.output_dir.as_path()),
         ),
@@ -202,6 +211,10 @@ pub(crate) fn run_cli() {
         Cmd::RefGcBias(config) => {
             crate::commands::ref_gc_bias::ref_gc_bias::run_ref_gc_bias(&config, run_options)
                 .map(|_| ())
+        }
+        #[cfg(feature = "cmd_ref_kmers")]
+        Cmd::RefKmers(config) => {
+            crate::commands::ref_kmers::ref_kmers::run_ref_kmers(&config, run_options).map(|_| ())
         }
         #[cfg(feature = "cmd_transitions")]
         Cmd::Transitions(config) => {

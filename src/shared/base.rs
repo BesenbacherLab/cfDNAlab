@@ -1,5 +1,5 @@
 /// The 5 bases: `A, C, G, T, N`
-#[cfg(any(feature = "cmd_ends", feature = "cmd_fragment_kmers"))]
+#[cfg(uses_kmers)]
 pub(crate) const BASES: [char; 5] = ['A', 'C', 'G', 'T', 'N'];
 
 /// Shared zeroish tolerance for values that originate from `f32` arithmetic.
@@ -57,14 +57,14 @@ pub(crate) fn clamp_close_to_zero_f64_with_f32_threshold(value: f64) -> f64 {
 /// - T or t -> 3  
 /// - anything else -> 4
 #[inline(always)]
-#[cfg(any(feature = "cmd_ends", feature = "cmd_fragment_kmers"))]
+#[cfg(uses_kmers)]
 pub(crate) fn encode_base(b: u8) -> u8 {
     LUT[b as usize]
 }
 
 /// Static ASCII->radix-5 lookup table.
 /// 0 = A, 1 = C, 2 = G, 3 = T, 4 = N/other
-#[cfg(any(feature = "cmd_ends", feature = "cmd_fragment_kmers"))]
+#[cfg(uses_kmers)]
 static LUT: [u8; 256] = {
     const N: u8 = 4;
     let mut t = [N; 256];
@@ -90,7 +90,7 @@ static LUT: [u8; 256] = {
 /// - N or n -> N  
 /// - anything else -> identity (return `b`)
 #[inline]
-#[cfg(any(feature = "cmd_ends", feature = "cmd_fragment_kmers"))]
+#[cfg(uses_kmers)]
 pub(crate) fn complement(b: char) -> char {
     match b {
         'A' | 'a' => 'T',
@@ -103,13 +103,13 @@ pub(crate) fn complement(b: char) -> char {
 }
 
 /// Reverse-complement of a plain sequence, e.g. "AC" -> "GT"
-#[cfg(any(feature = "cmd_ends", feature = "cmd_fragment_kmers"))]
+#[cfg(uses_kmers)]
 pub(crate) fn rev_complement(seq: &str) -> String {
     seq.chars().rev().map(complement).collect()
 }
 
 /// Complement of a plain sequence, e.g. "AC" -> "TG"
-#[cfg(any(feature = "cmd_ends", feature = "cmd_fragment_kmers"))]
+#[cfg(uses_kmers)]
 pub(crate) fn complement_seq(seq: &str) -> String {
     seq.chars().map(complement).collect()
 }
@@ -126,7 +126,7 @@ pub(crate) fn complement_seq(seq: &str) -> String {
 /// Otherwise, k-mers are compared against their complement,
 /// returning the lexicographically smaller of the two.
 #[inline]
-#[cfg(any(feature = "cmd_ends", feature = "cmd_fragment_kmers"))]
+#[cfg(uses_kmers)]
 pub(crate) fn make_canonical(kmer: String, reverse: bool, odd_by_center: bool) -> String {
     let len = kmer.len();
 

@@ -11,7 +11,13 @@
 fn main() {
     define_any_feature_cfg(
         "output_loader_api",
-        &["cmd_ends", "cmd_fcoverage", "cmd_lengths", "cmd_midpoints"],
+        &[
+            "cmd_ends",
+            "cmd_fcoverage",
+            "cmd_lengths",
+            "cmd_midpoints",
+            "cmd_ref_kmers",
+        ],
     );
     define_any_feature_cfg(
         "has_cli_commands",
@@ -28,11 +34,16 @@ fn main() {
             "cmd_lengths",
             "cmd_midpoints",
             "cmd_prepare_windows",
+            "cmd_ref_kmers",
             "cmd_transitions",
             "cmd_visualize_positions",
             "cmd_wps",
             "cmd_wps_peaks",
         ],
+    );
+    define_any_feature_cfg(
+        "uses_kmers",
+        &["cmd_ends", "cmd_fragment_kmers", "cmd_ref_kmers"],
     );
     define_any_feature_cfg(
         "reads_indexed_bam",
@@ -52,7 +63,13 @@ fn main() {
     define_any_feature_cfg("writes_bam_output", &["cmd_bam_to_bam", "cmd_frag_to_bam"]);
     define_any_feature_cfg(
         "loads_grouped_bed",
-        &["cmd_ends", "cmd_fcoverage", "cmd_lengths", "cmd_midpoints"],
+        &[
+            "cmd_ends",
+            "cmd_fcoverage",
+            "cmd_lengths",
+            "cmd_midpoints",
+            "cmd_ref_kmers",
+        ],
     );
     define_any_feature_cfg(
         "writes_text_outputs",
@@ -76,6 +93,7 @@ fn main() {
             "cmd_lengths",
             "cmd_midpoints",
             "cmd_prepare_windows",
+            "cmd_ref_kmers",
             "cmd_wps",
             "cmd_wps_peaks",
         ],
@@ -91,6 +109,7 @@ fn main() {
             "cmd_lengths",
             "cmd_midpoints",
             "cmd_prepare_windows",
+            "cmd_ref_kmers",
             "cmd_wps",
             "cmd_wps_peaks",
         ],
@@ -105,6 +124,7 @@ fn main() {
             "cmd_fragment_kmers",
             "cmd_lengths",
             "cmd_midpoints",
+            "cmd_ref_kmers",
             "cmd_wps",
             "cmd_wps_peaks",
         ],
@@ -122,6 +142,7 @@ fn main() {
             "cmd_gc_bias",
             "cmd_lengths",
             "cmd_midpoints",
+            "cmd_ref_kmers",
             "cmd_wps",
             "cmd_wps_peaks",
         ],
@@ -140,6 +161,7 @@ fn main() {
             "cmd_lengths",
             "cmd_midpoints",
             "cmd_prepare_windows",
+            "cmd_ref_kmers",
             "cmd_transitions",
             "cmd_wps",
             "cmd_wps_peaks",

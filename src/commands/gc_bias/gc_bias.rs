@@ -1050,17 +1050,11 @@ fn process_tile(
         );
     }
 
-    // Fraction of a fragment that must overlap with a window to assign to that window
-    // Keeps overlap assignment consistent between streaming and non-streaming paths
-    let min_overlap_fraction: f64 = match opt.window_assignment.assign_by {
-        WindowAssigner::Any | WindowAssigner::CountOverlap => {
-            1. / (reference_metadata.max_fragment_length as f64 + 1.0)
-        } // +1 to avoid rounding error issues
-        WindowAssigner::All | WindowAssigner::Midpoint => {
-            1.0 - (1. / (reference_metadata.max_fragment_length as f64 + 1.0))
-        } // 1.0 but just below to avoid rounding errors
-        WindowAssigner::Proportion(p) => p,
-    };
+    // Use the same assign-by threshold for streaming fixed-size windows and BED/global lookup
+    let min_overlap_fraction = min_overlap_fraction_for_window_assignment(
+        opt.window_assignment.assign_by,
+        reference_metadata.max_fragment_length as u64,
+    );
 
     reader
         .fetch((tid, tile.fetch_start() as i64, tile.fetch_end() as i64))

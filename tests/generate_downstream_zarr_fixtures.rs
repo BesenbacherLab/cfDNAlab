@@ -459,12 +459,13 @@ fn generate_end_motif_zarr_fixtures_with_cfdnalab() -> Result<()> {
     let wide_motif_group_counts = read_sparse_count_matrix(&sparse_grouped_wide_motif_groups_path)?;
     assert_eq!(
         wide_motif_group_labels,
-        vec!["right-hit-wide", "left-hit-wide"]
+        vec!["left-hit-wide", "right-hit-wide"]
     );
     assert_eq!(wide_motif_group_counts.shape(), &[3, 2]);
-    assert_eq!(wide_motif_group_counts[(0, 0)], 1.0);
-    assert_eq!(wide_motif_group_counts[(0, 1)], 2.0);
-    assert_eq!(wide_motif_group_counts[(1, 0)], 1.0);
+    assert_eq!(wide_motif_group_counts[(0, 0)], 2.0);
+    assert_eq!(wide_motif_group_counts[(0, 1)], 1.0);
+    assert_eq!(wide_motif_group_counts[(1, 0)], 0.0);
+    assert_eq!(wide_motif_group_counts[(1, 1)], 1.0);
     assert_eq!(wide_motif_group_counts.row(2).sum(), 0.0);
     assert_eq!(wide_motif_group_counts.sum(), 4.0);
     let wide_motif_group_root_metadata: Value = serde_json::from_str(&std::fs::read_to_string(

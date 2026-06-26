@@ -2,9 +2,12 @@ use super::*;
 use crate::{
     commands::{
         cli_common::{ChromosomeArgs, IOCArgs},
-        ends::{config_structs::BaseQualityFilter, counting::EndMotifColumnKind},
+        ends::config_structs::BaseQualityFilter,
     },
-    shared::indel_mode::IndelMotifFilterPolicy,
+    shared::{
+        indel_mode::IndelMotifFilterPolicy,
+        kmers::motifs_file::SelectedMotifColumnKind,
+    },
 };
 use serde_json::{Map, Value, json};
 use std::path::Path;
@@ -181,7 +184,7 @@ fn write_end_settings_json_includes_motifs_file_path_and_mode() {
         out_dir.path(),
         "ends",
         &cfg,
-        Some(EndMotifColumnKind::MotifGroup),
+        Some(SelectedMotifColumnKind::MotifGroup),
     )
     .expect("settings json should write");
     let settings = std::fs::read_to_string(out_dir.path().join("ends.end_settings.json"))

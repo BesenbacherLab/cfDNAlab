@@ -3,8 +3,8 @@ use crate::{
     commands::{
         cli_common::{
             DistributionWindowSpec, WindowAssigner, ensure_output_dir, load_blacklist_map,
-            load_scaling_map, resolve_chromosomes_and_contigs, validate_max_soft_clips,
-            validate_output_prefix,
+            load_scaling_map, min_overlap_fraction_for_window_assignment,
+            resolve_chromosomes_and_contigs, validate_max_soft_clips, validate_output_prefix,
         },
         counters::LengthsCounters,
         gc_bias::{
@@ -908,16 +908,10 @@ fn process_tile(
     };
     let mut counts_by_group: FxHashMap<u64, LengthCounts> = FxHashMap::default();
 
-    // Fraction of a fragment that must overlap with a window to assign to that window
-    let min_overlap_fraction: f64 = match opt.window_assignment.assign_by {
-        WindowAssigner::Any | WindowAssigner::CountOverlap => {
-            1. / (max_fragment_reach_bp as f64 + 1.0)
-        } // +1 to avoid rounding error issues
-        WindowAssigner::All | WindowAssigner::Midpoint => {
-            1.0 - (1. / (max_fragment_reach_bp as f64 + 1.0))
-        } // 1.0 but just below to avoid rounding errors
-        WindowAssigner::Proportion(p) => p,
-    };
+    let min_overlap_fraction = min_overlap_fraction_for_window_assignment(
+        opt.window_assignment.assign_by,
+        max_fragment_reach_bp,
+    );
 
     // The overlap finder only needs checked BED-like intervals here.
     //

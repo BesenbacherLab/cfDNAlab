@@ -12,6 +12,7 @@ The loaders live under `cfdnalab::output_loaders` and are compiled with the matc
 | `cmd_ends`      | `load_ends_output()`      | `<prefix>.end_motifs.zarr`                               |
 | `cmd_lengths`   | `load_lengths_output()`   | `<prefix>.length_counts.tsv`, optionally `.gz` or `.zst` |
 | `cmd_fcoverage` | `load_fcoverage_output()` | non-positional aggregate `fcoverage` TSV outputs         |
+| `cmd_ref_kmers` | `load_ref_kmers_output()` | `<prefix>.ref_kmer_counts.zarr`                          |
 
 <br>
 
@@ -318,6 +319,68 @@ fn main() -> anyhow::Result<()> {
 ```
 
 Grouped fcoverage TSV files store numeric `group_idx` values. Use `load_fcoverage_output_with_group_index()` with the matching `group_index.tsv` when you want group names and `groups_by_name()` selection.
+
+<br>
+
+## Reference K-mer Frequencies
+
+Reference k-mer stores can be dense or sparse. They store row-wise frequencies plus a row scaling factor that reconstructs counts.
+
+```rust
+use cfdnalab::output_loaders::{
+    load_ref_kmers_output,
+    RefKmerStorageMode,
+};
+
+fn main() -> anyhow::Result<()> {
+    // Load output file and check the available metadata
+    let ref_kmers = load_ref_kmers_output("hg38.ref_kmer_counts.zarr")?;
+    println!("{:?}", ref_kmers.output_metadata());
+
+    // Reconstruct a count from one frequency and its row scaling factor
+    let motif_index = ref_kmers.motif_index("ACGT")?;
+    let count = ref_kmers
+        .count(0, motif_index)
+        .expect("row and motif indices should be in bounds");
+    println!("{count}");
+
+    // Select grouped rows and motifs, then work with reconstructed counts
+    let selected = ref_kmers
+        .select()
+        .groups_by_name(&["promoters", "enhancers"])
+        .motifs_by_label(&["ACGT", "TGCA"])
+        .read()?;
+    let selected_counts = selected.to_dense_count_matrix()?;
+    for (group, row_counts) in selected.group_metadata()?.iter().zip(selected_counts.rows()) {
+        let count_total = row_counts.iter().copied().sum::<f64>();
+        println!("{}\t{count_total}", group.name);
+    }
+
+    // Read the stored frequency data in its native mode
+    match ref_kmers.storage_mode() {
+        RefKmerStorageMode::Dense => {
+            let frequencies = ref_kmers.dense_frequencies()?;
+            println!("{:?}", frequencies.shape());
+        }
+        RefKmerStorageMode::SparseCoo => {
+            let sparse_frequencies = ref_kmers.sparse_frequencies()?;
+            for entry in sparse_frequencies.entries() {
+                println!(
+                    "{}\t{}\t{}",
+                    entry.row_index, entry.motif_index, entry.frequency
+                );
+            }
+            for entry in ref_kmers.sparse_count_entries()? {
+                println!("{}\t{}\t{}", entry.row_index, entry.motif_index, entry.count);
+            }
+        }
+    }
+
+    Ok(())
+}
+```
+
+Use `select().windows(...)`, `select().groups(...)`, or `select().groups_by_name(...)` for row subsets. Use `select().motifs(...)` or `select().motifs_by_label(...)` for motif subsets. Use `frequency()` or `frequency_for_motif()` when downstream code wants frequencies. Use `count()`, `count_for_motif()`, `sparse_count_entries()`, or `to_dense_count_matrix()` when it wants reconstructed counts.
 
 <br>
 

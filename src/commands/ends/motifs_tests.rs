@@ -2,6 +2,7 @@ use super::*;
 use crate::shared::{
     blacklist::apply_blacklist_mask_to_seq,
     fragment::ends_fragment::{FragmentWithEnds, ResolvedFragmentEnd},
+    kmers::kmer_codec::{KmerSpec, build_kmer_specs},
     tiled_run::Tile,
 };
 use crate::commands::ends::counting::decode_end_motif_counts;
@@ -12,8 +13,8 @@ fn spec_for_k(k: u8) -> KmerSpec {
     specs[&k].clone()
 }
 
-fn half_spec_for_k(k: u8) -> EndMotifHalfSpec {
-    EndMotifHalfSpec::from_radix5(spec_for_k(k))
+fn half_spec_for_k(k: u8) -> SelectedMotifHalfSpec {
+    SelectedMotifHalfSpec::from_radix5(spec_for_k(k))
 }
 
 fn read_only_motif_context(k_inside: u8) -> TileMotifContext<'static> {
@@ -133,7 +134,7 @@ fn count_fragment_in_window_endpoint_counts_only_left_end_when_window_hits_left_
     let fragment = fragment_with_two_ends(10, b"AC", 20, b"GT");
     let motif_context = read_only_motif_context(2);
     let mut counts_by_window = EndCountsByWindow::default();
-    let left_key = EncodedEndMotifKey {
+    let left_key = EncodedMotifKey {
         inside_code: motif_context
             .inside_spec
             .as_ref()
@@ -142,7 +143,7 @@ fn count_fragment_in_window_endpoint_counts_only_left_end_when_window_hits_left_
         outside_code: 0,
         reverse_on_decode: false,
     };
-    let right_key = EncodedEndMotifKey {
+    let right_key = EncodedMotifKey {
         inside_code: motif_context
             .inside_spec
             .as_ref()
@@ -186,7 +187,7 @@ fn count_fragment_in_window_endpoint_counts_only_right_end_when_window_hits_righ
     let fragment = fragment_with_two_ends(10, b"AC", 20, b"GT");
     let motif_context = read_only_motif_context(2);
     let mut counts_by_window = EndCountsByWindow::default();
-    let right_key = EncodedEndMotifKey {
+    let right_key = EncodedMotifKey {
         inside_code: motif_context
             .inside_spec
             .as_ref()
@@ -233,7 +234,7 @@ fn count_fragment_in_window_any_counts_both_ends_in_same_window() {
     let fragment = fragment_with_two_ends(10, b"AC", 20, b"GT");
     let motif_context = read_only_motif_context(2);
     let mut counts_by_window = EndCountsByWindow::default();
-    let left_key = EncodedEndMotifKey {
+    let left_key = EncodedMotifKey {
         inside_code: motif_context
             .inside_spec
             .as_ref()
@@ -242,7 +243,7 @@ fn count_fragment_in_window_any_counts_both_ends_in_same_window() {
         outside_code: 0,
         reverse_on_decode: false,
     };
-    let right_key = EncodedEndMotifKey {
+    let right_key = EncodedMotifKey {
         inside_code: motif_context
             .inside_spec
             .as_ref()
@@ -390,7 +391,7 @@ fn count_selected_fragment_in_window_counts_only_lookup_hits() {
     // motif should be filtered out before it reaches the sparse selected count map.
     let fragment = fragment_with_two_ends(10, b"AC", 20, b"GT");
     let motif_context = read_only_motif_context(2);
-    let left_key = EncodedEndMotifKey {
+    let left_key = EncodedMotifKey {
         inside_code: motif_context
             .inside_spec
             .as_ref()
@@ -399,9 +400,9 @@ fn count_selected_fragment_in_window_counts_only_lookup_hits() {
         outside_code: 0,
         reverse_on_decode: false,
     };
-    let selected_motifs = SelectedEndMotifLookup {
+    let selected_motifs = SelectedMotifLookup {
         labels: vec!["_AC".to_string()],
-        column_kind: crate::commands::ends::counting::EndMotifColumnKind::Motif,
+        column_kind: crate::shared::kmers::motifs_file::SelectedMotifColumnKind::Motif,
         inside_spec: None,
         outside_spec: None,
         lookup: FxHashMap::from_iter([(left_key, 0)]),
@@ -448,27 +449,27 @@ fn count_selected_fragment_in_window_reference_source_uses_reverse_state_for_tar
     let motif_context = reference_motif_context(reference, Some(2), Some(2));
     let inside_spec = motif_context.inside_spec.as_ref().expect("inside spec");
     let outside_spec = motif_context.outside_spec.as_ref().expect("outside spec");
-    let left_key = EncodedEndMotifKey {
+    let left_key = EncodedMotifKey {
         inside_code: inside_spec.encode_kmer_bytes(b"AC"),
         outside_code: outside_spec.encode_kmer_bytes(b"GT"),
         reverse_on_decode: false,
     };
-    let right_key = EncodedEndMotifKey {
+    let right_key = EncodedMotifKey {
         inside_code: inside_spec.encode_kmer_bytes(b"AA"),
         outside_code: outside_spec.encode_kmer_bytes(b"CG"),
         reverse_on_decode: true,
     };
-    let wrong_right_orientation_key = EncodedEndMotifKey {
+    let wrong_right_orientation_key = EncodedMotifKey {
         reverse_on_decode: false,
         ..right_key
     };
-    let selected_motifs = SelectedEndMotifLookup {
+    let selected_motifs = SelectedMotifLookup {
         labels: vec![
             "left_group".to_string(),
             "right_group".to_string(),
             "wrong_right_orientation".to_string(),
         ],
-        column_kind: crate::commands::ends::counting::EndMotifColumnKind::MotifGroup,
+        column_kind: crate::shared::kmers::motifs_file::SelectedMotifColumnKind::MotifGroup,
         inside_spec: None,
         outside_spec: None,
         lookup: FxHashMap::from_iter([
@@ -540,7 +541,7 @@ fn validate_blacklist_for_read_inside_code_returns_masked_reference_code_for_rea
     // - after masking [2, 3), that span starts with `N`
     // - any k-mer containing `N` must encode as `sentinel_n`
     let inside_radix_spec = spec_for_k(2);
-    let inside_spec = EndMotifHalfSpec::from_radix5(inside_radix_spec.clone());
+    let inside_spec = SelectedMotifHalfSpec::from_radix5(inside_radix_spec.clone());
     let mut reference_bases = b"ACGTAC".to_vec();
     let blacklist = [Interval::new(2_u64, 3_u64).expect("valid blacklist")];
     apply_blacklist_mask_to_seq(&mut reference_bases, &blacklist, 0);
@@ -579,7 +580,7 @@ fn validate_blacklist_for_read_inside_code_ignores_clipped_only_prefix_in_includ
     // Arrange: the blacklist masks genomic position 1, but this left end only validates the
     // aligned-overlapping suffix at position 2. The clipped-only prefix must not trigger skipping.
     let inside_radix_spec = spec_for_k(2);
-    let inside_spec = EndMotifHalfSpec::from_radix5(inside_radix_spec);
+    let inside_spec = SelectedMotifHalfSpec::from_radix5(inside_radix_spec);
     let mut reference_bases = b"ACGTAC".to_vec();
     let blacklist = [Interval::new(1_u64, 2_u64).expect("valid blacklist")];
     apply_blacklist_mask_to_seq(&mut reference_bases, &blacklist, 0);

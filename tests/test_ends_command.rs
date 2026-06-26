@@ -3553,7 +3553,7 @@ fn grouped_motifs_file_dense_output_writes_group_labels_without_motif_ascii() ->
     assert_eq!(end_motif_axis_kind(out_dir.path())?, "motif_group");
     assert!(!store_path.join("motif_ascii").exists());
     assert!(!store_path.join("motif_byte").exists());
-    assert_eq!(groups, vec!["group.two", "group-one", "unused_group"]);
+    assert_eq!(groups, vec!["group-one", "group.two", "unused_group"]);
     assert_eq!(matrix.shape(), &[1, 3]);
     assert_eq!(motif_count(&matrix, &groups, 0, "group.two"), 1.0);
     assert_eq!(motif_count(&matrix, &groups, 0, "group-one"), 1.0);

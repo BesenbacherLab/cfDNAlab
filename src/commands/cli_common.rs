@@ -557,6 +557,37 @@ impl FromStr for WindowAssigner {
     }
 }
 
+/// Return the overlap-fraction threshold for shared window lookup.
+///
+/// `find_overlapping_windows` measures overlap as `overlap_bases / query_interval.len()`.
+/// `max_assignment_span` must be at least as large as every unprojected assignment interval the
+/// caller can query. `Any` and `CountOverlap` use `1 / (max_assignment_span + 1)`, which is below
+/// the smallest nonzero overlap fraction for any interval up to that span. `All` uses
+/// `max_assignment_span / (max_assignment_span + 1)`, which is above every partial-overlap
+/// fraction for intervals up to that span.
+///
+/// `Midpoint` callers first project the assignment interval to the single midpoint base. The same
+/// threshold as `All` then accepts windows that cover that projected base.
+pub(crate) fn min_overlap_fraction_for_window_assignment(
+    assign_by: WindowAssigner,
+    max_assignment_span: u64,
+) -> f64 {
+    assert!(
+        max_assignment_span > 0,
+        "window assignment span must be positive"
+    );
+
+    match assign_by {
+        WindowAssigner::Any | WindowAssigner::CountOverlap => {
+            1.0 / (max_assignment_span as f64 + 1.0)
+        }
+        WindowAssigner::All | WindowAssigner::Midpoint => {
+            1.0 - (1.0 / (max_assignment_span as f64 + 1.0))
+        }
+        WindowAssigner::Proportion(threshold) => threshold,
+    }
+}
+
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AssignToWindowArgs {

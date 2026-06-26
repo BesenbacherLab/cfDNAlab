@@ -1,11 +1,20 @@
 use super::{
     ApplyGCArgFileOnly, ApplyGCArgs, ChromosomeArgs, ContigSource, FragmentLengthArgs,
-    parse_length_bins, parse_output_prefix, parse_sam_aux_tag_name, resolve_length_bin_edges,
+    WindowAssigner, min_overlap_fraction_for_window_assignment, parse_length_bins,
+    parse_output_prefix, parse_sam_aux_tag_name, resolve_length_bin_edges,
     validate_max_soft_clips, validate_output_prefix,
 };
 use crate::shared::constants::{MAX_MAX_SOFT_CLIPS, MAX_SUPPORTED_FRAGMENT_LENGTH};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+
+fn assert_close(actual: f64, expected: f64) {
+    let delta = (actual - expected).abs();
+    assert!(
+        delta <= 1e-12,
+        "expected {expected}, got {actual}, delta {delta}"
+    );
+}
 
 #[test]
 fn fragment_length_args_rejects_inverted_range() {
@@ -67,6 +76,50 @@ fn validate_max_soft_clips_rejects_values_above_configured_limit() {
         )),
         "unexpected error: {message}"
     );
+}
+
+#[test]
+fn min_overlap_fraction_for_window_assignment_uses_any_overlap_thresholds() {
+    let span = 4;
+
+    let count_overlap =
+        min_overlap_fraction_for_window_assignment(WindowAssigner::CountOverlap, span);
+    let any = min_overlap_fraction_for_window_assignment(WindowAssigner::Any, span);
+
+    // One base of overlap across a 4 bp assignment interval is 1/4. A threshold of 1/5 is lower
+    // than the smallest nonzero overlap fraction, so both modes keep every nonzero overlap.
+    assert_close(count_overlap, 1.0 / 5.0);
+    assert_close(any, 1.0 / 5.0);
+}
+
+#[test]
+fn min_overlap_fraction_for_window_assignment_uses_full_overlap_thresholds() {
+    let span = 4;
+
+    let all = min_overlap_fraction_for_window_assignment(WindowAssigner::All, span);
+    let midpoint = min_overlap_fraction_for_window_assignment(WindowAssigner::Midpoint, span);
+
+    // For full-span assignment, three of four bases is 3/4 and full overlap is 1. A threshold of
+    // 4/5 rejects every partial 4 bp overlap and keeps full containment. Midpoint callers project
+    // to a 1 bp interval separately, where a covered midpoint has overlap fraction 1.
+    assert_close(all, 4.0 / 5.0);
+    assert_close(midpoint, 4.0 / 5.0);
+}
+
+#[test]
+fn min_overlap_fraction_for_window_assignment_preserves_proportion_threshold() {
+    let threshold = 0.375;
+
+    let actual =
+        min_overlap_fraction_for_window_assignment(WindowAssigner::Proportion(threshold), 4);
+
+    assert_close(actual, threshold);
+}
+
+#[test]
+#[should_panic(expected = "window assignment span must be positive")]
+fn min_overlap_fraction_for_window_assignment_rejects_zero_span() {
+    min_overlap_fraction_for_window_assignment(WindowAssigner::Any, 0);
 }
 
 #[test]

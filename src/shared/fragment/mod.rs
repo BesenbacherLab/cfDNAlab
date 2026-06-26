@@ -1,6 +1,10 @@
-#[cfg(any(feature = "cmd_ends", feature = "cmd_lengths"))]
+#[cfg(any(
+    feature = "cmd_ends",
+    feature = "cmd_lengths",
+    feature = "cmd_ref_kmers"
+))]
 pub(crate) mod cigar_counts;
-#[cfg(feature = "cmd_ends")]
+#[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
 pub(crate) mod ends_fragment;
 #[cfg(feature = "cmd_bam_to_frag")]
 pub(crate) mod frag_file_fragment;

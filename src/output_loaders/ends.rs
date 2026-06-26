@@ -45,8 +45,9 @@ use crate::{
     output_loaders::{
         OutputLoaderError, OutputLoaderResult,
         common::{
-            DenseMatrix, WindowRow, contiguous_index_span, ensure_unique_indices,
-            ensure_unique_labels, resolve_row_indices, validate_zarr_public_label,
+            DenseMatrix, WindowRow, build_selection_index_map, contiguous_index_span,
+            ensure_unique_indices, ensure_unique_labels, resolve_row_indices,
+            validate_zarr_public_label,
         },
     },
     shared::zarr::read_zarr_root_attributes,
@@ -1475,38 +1476,6 @@ fn resolve_group_name_indices<S: AsRef<str>>(
                 .map_err(anyhow::Error::from)
         })
         .collect()
-}
-
-/// Build a reverse lookup from source-axis index to selected-axis position.
-///
-/// The returned vector has one slot for every row or motif in the source
-/// sparse matrix. A selected source index maps to `Some(selected_position)`.
-/// A source index that was not requested stays `None`, so sparse selection can
-/// skip stored entries outside the selected rows or motifs in constant time.
-///
-/// Parameters
-/// ----------
-/// - `selected_indices`:
-///   Source-axis indices requested by the selection, in selected output
-///   order.
-/// - `source_axis_len`:
-///   Number of rows or motifs on the source axis before selection.
-/// - `index_label`:
-///   Axis name used in out-of-bounds error messages.
-fn build_selection_index_map(
-    selected_indices: &[usize],
-    source_axis_len: usize,
-    index_label: &str,
-) -> Result<Vec<Option<usize>>> {
-    let mut index_map = vec![None; source_axis_len];
-    for (selected_position, &source_index) in selected_indices.iter().enumerate() {
-        ensure!(
-            source_index < source_axis_len,
-            "{index_label} index {source_index} is outside 0..{source_axis_len}"
-        );
-        index_map[source_index] = Some(selected_position);
-    }
-    Ok(index_map)
 }
 
 /// Parser for a `cfdna ends` Zarr store.

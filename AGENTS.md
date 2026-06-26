@@ -32,6 +32,8 @@ Spellings:
  - "data frame", not "data-frame".
  - Use "a"/"an" instead of "one" unless the count is relevant. It is more natural.
 
+ - Do not use words like "geometry" and "payload" instead of more specific explanations. Be specific.
+
 Always read [.AI/collaboration.md](/Users/au547627/Documents/Development/rust/cfDNAlab/.AI/collaboration.md) to avoid annoying sycophanting. I want truth not praise.
 
 ## Read These Files When Relevant

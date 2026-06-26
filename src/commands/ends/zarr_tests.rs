@@ -1,5 +1,5 @@
 use super::*;
-use crate::commands::ends::counting::EndMotifColumnKind;
+use crate::shared::kmers::motifs_file::SelectedMotifColumnKind;
 use crate::shared::bed::GroupedWindows;
 use serde_json::Value;
 use std::sync::Arc;
@@ -39,7 +39,7 @@ fn dense_end_motif_zarr_writes_counts_motifs_and_window_metadata() {
         "sample",
         &bins,
         &motifs,
-        EndMotifColumnKind::Motif,
+        SelectedMotifColumnKind::Motif,
         EndMotifRowMetadata::Windows {
             bin_info: &bin_info,
             row_mode: EndWindowRowMode::Bed,
@@ -114,7 +114,7 @@ fn sparse_end_motif_zarr_writes_sorted_coo_arrays() {
         "sample",
         &bins,
         &motifs,
-        EndMotifColumnKind::Motif,
+        SelectedMotifColumnKind::Motif,
         EndMotifRowMetadata::Global,
         false,
     )
@@ -161,7 +161,7 @@ fn motif_group_zarr_writes_json_labels_without_motif_ascii() {
         "sample",
         &bins,
         &motif_groups,
-        EndMotifColumnKind::MotifGroup,
+        SelectedMotifColumnKind::MotifGroup,
         EndMotifRowMetadata::Global,
         false,
     )
@@ -205,7 +205,7 @@ fn selected_motif_zarr_writes_motif_ascii_labels_in_supplied_order() {
         "sample",
         &bins,
         &motifs,
-        EndMotifColumnKind::Motif,
+        SelectedMotifColumnKind::Motif,
         EndMotifRowMetadata::Global,
         false,
     )
@@ -251,7 +251,7 @@ fn dense_motif_group_zarr_writes_json_labels_and_counts_without_motif_ascii() {
         "sample",
         &bins,
         &motif_groups,
-        EndMotifColumnKind::MotifGroup,
+        SelectedMotifColumnKind::MotifGroup,
         EndMotifRowMetadata::Global,
         true,
     )
@@ -326,7 +326,7 @@ fn sparse_end_motif_zarr_round_trips_to_dense_matrix_and_metadata() {
         "sample",
         &bins,
         &motifs,
-        EndMotifColumnKind::Motif,
+        SelectedMotifColumnKind::Motif,
         EndMotifRowMetadata::Windows {
             bin_info: &bin_info,
             row_mode: EndWindowRowMode::Size,
@@ -410,7 +410,7 @@ fn sparse_end_motif_zarr_allows_no_observed_motifs() {
         "empty",
         &bins,
         &motifs,
-        EndMotifColumnKind::Motif,
+        SelectedMotifColumnKind::Motif,
         EndMotifRowMetadata::Global,
         false,
     )
@@ -466,7 +466,7 @@ fn grouped_end_motif_zarr_writes_group_metadata_and_dense_counts() {
         "sample",
         &bins,
         &motifs,
-        EndMotifColumnKind::Motif,
+        SelectedMotifColumnKind::Motif,
         EndMotifRowMetadata::Groups(groups),
         true,
     )
@@ -517,7 +517,7 @@ fn end_motif_zarr_rejects_control_characters_in_public_labels() {
         "bad_motif",
         &bins,
         &bad_motifs,
-        EndMotifColumnKind::Motif,
+        SelectedMotifColumnKind::Motif,
         EndMotifRowMetadata::Global,
         false,
     )
@@ -547,7 +547,7 @@ fn end_motif_zarr_rejects_control_characters_in_public_labels() {
         "bad_chromosome",
         &good_bins,
         &good_motifs,
-        EndMotifColumnKind::Motif,
+        SelectedMotifColumnKind::Motif,
         EndMotifRowMetadata::Windows {
             bin_info: &bin_info,
             row_mode: EndWindowRowMode::Bed,
@@ -578,7 +578,7 @@ fn end_motif_zarr_rejects_control_characters_in_public_labels() {
         "bad_group",
         &good_bins,
         &good_motifs,
-        EndMotifColumnKind::Motif,
+        SelectedMotifColumnKind::Motif,
         EndMotifRowMetadata::Groups(bad_groups),
         false,
     )
@@ -680,7 +680,7 @@ fn motif_metadata_rejects_variable_width_or_non_ascii_labels() {
         "variable_width",
         &bins,
         &["_AA".to_string(), "_AAAA".to_string()],
-        EndMotifColumnKind::Motif,
+        SelectedMotifColumnKind::Motif,
         EndMotifRowMetadata::Global,
         false,
     )
@@ -696,7 +696,7 @@ fn motif_metadata_rejects_variable_width_or_non_ascii_labels() {
         "non_ascii",
         &bins,
         &["_ÅA".to_string()],
-        EndMotifColumnKind::Motif,
+        SelectedMotifColumnKind::Motif,
         EndMotifRowMetadata::Global,
         false,
     )

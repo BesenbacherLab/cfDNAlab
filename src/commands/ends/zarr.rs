@@ -11,20 +11,18 @@
 //! Low-level details such as writing `zarr.json`, applying zstd, V3 dimension names, and chunk
 //! serialization are delegated to `zarrs`.
 
-use crate::{
-    commands::ends::counting::EndMotifColumnKind,
-    shared::{
-        bed::GroupedWindows,
-        blacklist::compute_blacklist_overlap,
-        interval::Interval,
-        io::dot_join,
-        windowing::WindowBinInfo,
-        zarr::{
-            ZARR_ASCII_FILL_VALUE, ZARR_FLOAT64_FILL_VALUE, ZARR_INT32_FILL_VALUE,
-            ZARR_INT64_FILL_VALUE, checked_i32, checked_i64, checked_index_axis, create_zarr_array,
-            create_zarr_store, validate_zarr_label, write_single_chunk_zarr_array,
-            write_zarr_group_metadata, write_zarr_root_metadata,
-        },
+use crate::shared::{
+    bed::GroupedWindows,
+    blacklist::compute_blacklist_overlap,
+    interval::Interval,
+    io::dot_join,
+    kmers::motifs_file::SelectedMotifColumnKind,
+    windowing::WindowBinInfo,
+    zarr::{
+        ZARR_ASCII_FILL_VALUE, ZARR_FLOAT64_FILL_VALUE, ZARR_INT32_FILL_VALUE,
+        ZARR_INT64_FILL_VALUE, checked_i32, checked_i64, checked_index_axis, create_zarr_array,
+        create_zarr_store, validate_zarr_label, write_single_chunk_zarr_array,
+        write_zarr_group_metadata, write_zarr_root_metadata,
     },
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -124,7 +122,7 @@ pub(crate) fn write_end_motif_zarr(
     prefix: &str,
     bins: &[FxHashMap<u32, f64>],
     column_labels: &[String],
-    column_kind: EndMotifColumnKind,
+    column_kind: SelectedMotifColumnKind,
     row_metadata: EndMotifRowMetadata<'_>,
     write_dense_output: bool,
 ) -> Result<PathBuf> {
@@ -304,7 +302,7 @@ fn write_root_metadata(
     store: Arc<FilesystemStore>,
     storage_mode: &str,
     row_mode: &str,
-    column_kind: EndMotifColumnKind,
+    column_kind: SelectedMotifColumnKind,
 ) -> Result<()> {
     let mut attributes = json!({
         "cfdnalab_schema": "end_motif_counts",
@@ -330,10 +328,10 @@ fn write_root_metadata(
 ///
 /// This attribute tells downstream readers whether `motif_index` labels should be exposed as
 /// motifs or motif groups.
-fn end_motif_column_kind_name(column_kind: EndMotifColumnKind) -> &'static str {
+fn end_motif_column_kind_name(column_kind: SelectedMotifColumnKind) -> &'static str {
     match column_kind {
-        EndMotifColumnKind::Motif => "motif",
-        EndMotifColumnKind::MotifGroup => "motif_group",
+        SelectedMotifColumnKind::Motif => "motif",
+        SelectedMotifColumnKind::MotifGroup => "motif_group",
     }
 }
 
@@ -358,11 +356,11 @@ fn end_motif_column_kind_name(column_kind: EndMotifColumnKind) -> &'static str {
 fn write_motif_metadata(
     store: Arc<FilesystemStore>,
     labels: &[String],
-    column_kind: EndMotifColumnKind,
+    column_kind: SelectedMotifColumnKind,
 ) -> Result<()> {
     match column_kind {
-        EndMotifColumnKind::Motif => write_motif_label_metadata(store, labels),
-        EndMotifColumnKind::MotifGroup => write_motif_group_metadata(store, labels),
+        SelectedMotifColumnKind::Motif => write_motif_label_metadata(store, labels),
+        SelectedMotifColumnKind::MotifGroup => write_motif_group_metadata(store, labels),
     }
 }
 

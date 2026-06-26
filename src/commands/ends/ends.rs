@@ -12,16 +12,15 @@ use crate::{
             config::EndsConfig,
             config_structs::{ClipStrategy, KmerSource, WindowMotifAssigner},
             counting::{
-                EndCountsByWindow, EndMotifColumnKind, EndMotifHalfSpec, SelectedEndCountsByWindow,
-                SelectedEndMotifLookup, decode_end_motif_counts,
+                EndCountsByWindow, EndMotifCounts, SelectedEndCountsByWindow,
+                decode_end_motif_counts,
             },
             motifs::{
-                CountedEndFlags, build_optional_kmer_spec, build_tile_motif_context,
-                count_fragment_in_window, count_selected_fragment_in_window,
+                CountedEndFlags, build_tile_motif_context, count_fragment_in_window,
+                count_selected_fragment_in_window,
                 motif_extraction_ref_2bit_requirement_message, motif_extraction_requires_reference,
                 motif_reference_span_for_tile,
             },
-            motifs_file::{parse_selected_end_motifs_file, postprocess_selected_end_motif_counts},
             output::{
                 build_all_end_motif_order, collect_end_motif_order,
                 ensure_all_motifs_enumeration_size, ensure_dense_end_motif_output_size,
@@ -55,6 +54,14 @@ use crate::{
         fragment_iterators::fragments_with_ends_from_bam,
         interval::{IndexedInterval, Interval},
         io::{FinalOutputFiles, dot_join},
+        kmers::{
+            kmer_codec::build_optional_kmer_spec,
+            motifs_file::{
+                SelectedMotifColumnKind, SelectedMotifHalfSpec, SelectedMotifLookup,
+                parse_selected_end_motifs_file,
+            },
+            process_counts::postprocess_selected_motif_counts,
+        },
         midpoint::midpoint_random_even_for_fragment,
         overlaps::find_overlapping_windows,
         progress::ProgressFactory,
@@ -413,7 +420,7 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
     // Tile counting needs an encoder for each enabled motif half. Without a motifs file this is
     // always the full radix-5 codec. With a motifs file, halves up to the radix-5 limit still use
     // full radix-5 codes, while larger halves use byte-backed selected subspaces. Cloning
-    // `EndMotifHalfSpec` only clones Arc handles to codec metadata, never per-tile reference-code
+    // `SelectedMotifHalfSpec` only clones Arc handles to codec metadata, never per-tile reference-code
     // arrays.
     let (inside_counting_spec, outside_counting_spec) = match selected_motifs.as_ref() {
         Some(lookup) => (lookup.inside_spec.clone(), lookup.outside_spec.clone()),
@@ -421,11 +428,11 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
             inside_decode_spec
                 .as_ref()
                 .cloned()
-                .map(EndMotifHalfSpec::from_radix5),
+                .map(SelectedMotifHalfSpec::from_radix5),
             outside_decode_spec
                 .as_ref()
                 .cloned()
-                .map(EndMotifHalfSpec::from_radix5),
+                .map(SelectedMotifHalfSpec::from_radix5),
         ),
     };
 
@@ -646,7 +653,7 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
                 prefix,
                 &indexed_bins,
                 &motif_order,
-                EndMotifColumnKind::Motif,
+                SelectedMotifColumnKind::Motif,
                 row_metadata,
                 write_dense_output,
             )?
@@ -659,11 +666,13 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
                     deserialize_selected_tile_counts(&tile_result.counts_path)?,
                 )?;
             }
-            let (indexed_bins, motif_order) = postprocess_selected_end_motif_counts(
+            let (indexed_bins, motif_order) = postprocess_selected_motif_counts(
                 reduced_counts,
                 total_windows as usize,
-                lookup,
+                &lookup.labels,
                 opt.all_motifs,
+                EndMotifCounts::should_store_weight,
+                ensure_dense_end_motif_output_size,
             )?;
 
             write_end_motif_zarr(
@@ -863,9 +872,9 @@ fn process_tile(
     temp_dir: &Path,
     counts_prefix: &str,
     temp_chrom_name_map: &TempChromNameMap,
-    inside_spec: Option<&crate::commands::ends::counting::EndMotifHalfSpec>,
-    outside_spec: Option<&crate::commands::ends::counting::EndMotifHalfSpec>,
-    selected_motifs: Option<&SelectedEndMotifLookup>,
+    inside_spec: Option<&SelectedMotifHalfSpec>,
+    outside_spec: Option<&SelectedMotifHalfSpec>,
+    selected_motifs: Option<&SelectedMotifLookup>,
 ) -> Result<Option<TileResult>> {
     let fetch_window_opt = window_opt.as_fetch_window_spec();
     // One BAM reader per tile

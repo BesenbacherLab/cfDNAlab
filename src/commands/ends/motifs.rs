@@ -9,15 +9,17 @@ use crate::{
         config::EndsConfig,
         config_structs::{ClipStrategy, KmerSource, WindowMotifAssigner},
         counting::{
-            EncodedEndMotifKey, EndCountsByWindow, EndMotifCounts, EndMotifHalfSpec,
-            SelectedEndCountsByWindow, SelectedEndMotifLookup,
+            EndCountsByWindow, EndMotifCounts, SelectedEndCountsByWindow,
         },
     },
     shared::{
         blacklist::{apply_blacklist_mask_to_seq, apply_mask::BLACKLIST_BYTE},
         fragment::ends_fragment::{FragmentWithEnds, ResolvedFragmentEnd},
         interval::Interval,
-        kmers::kmer_codec::{KmerCodes, KmerSpec, build_kmer_specs},
+        kmers::{
+            kmer_codec::KmerCodes,
+            motifs_file::{EncodedMotifKey, SelectedMotifHalfSpec, SelectedMotifLookup},
+        },
         reference::read_seq_in_range,
         tiled_run::Tile,
     },
@@ -37,9 +39,9 @@ pub(crate) struct TileMotifContext<'a> {
     /// Tile reference bases, already blacklist-masked when needed
     reference_bases: Option<Vec<u8>>,
     /// Spec for the inside half, if `k_inside > 0`
-    inside_spec: Option<EndMotifHalfSpec>,
+    inside_spec: Option<SelectedMotifHalfSpec>,
     /// Spec for the outside half, if `k_outside > 0`
-    outside_spec: Option<EndMotifHalfSpec>,
+    outside_spec: Option<SelectedMotifHalfSpec>,
     /// Precomputed masked-reference codes for inside lookups
     inside_codes: Option<Arc<KmerCodes>>,
     /// Precomputed masked-reference codes for outside lookups
@@ -102,31 +104,6 @@ impl CountedEndFlags {
     pub(crate) fn counted_motif_total(self) -> u64 {
         self.left_counted as u64 + self.right_counted as u64
     }
-}
-
-/// Build an optional k-mer spec, treating `k=0` as an empty motif half.
-///
-/// Parameters
-/// ----------
-/// - `k`:
-///   Requested k-mer size for one motif half
-/// - `label`:
-///   User-readable side name used in error messages
-///
-/// Returns
-/// -------
-/// - `Result<Option<KmerSpec>>`:
-///   `None` when `k=0`, otherwise the radix-5 codec spec for that half
-pub(crate) fn build_optional_kmer_spec(k: usize, label: &str) -> Result<Option<KmerSpec>> {
-    if k == 0 {
-        return Ok(None);
-    }
-
-    let k_u8: u8 = k
-        .try_into()
-        .with_context(|| format!("{label} k-mer size {k} does not fit in u8"))?;
-    let mut specs = build_kmer_specs(&[k_u8])?;
-    Ok(specs.remove(&k_u8))
 }
 
 /// Return whether `ends` needs reference access to validate or encode motifs.
@@ -204,8 +181,8 @@ pub(crate) fn build_tile_motif_context<'a>(
     reference_span: Interval<u64>,
     chrom_len: u64,
     blacklist_intervals: &'a [Interval<u64>],
-    inside_spec: Option<&EndMotifHalfSpec>,
-    outside_spec: Option<&EndMotifHalfSpec>,
+    inside_spec: Option<&SelectedMotifHalfSpec>,
+    outside_spec: Option<&SelectedMotifHalfSpec>,
 ) -> Result<TileMotifContext<'a>> {
     let inside_spec = inside_spec.cloned();
     let outside_spec = outside_spec.cloned();
@@ -280,7 +257,7 @@ pub(crate) fn build_tile_motif_context<'a>(
 
 /// Precompute one tile-local reference-code vector for a single motif half.
 ///
-/// `EndMotifHalfSpec` owns the storage choice. Full-space radix-5 specs build packed radix-5
+/// `SelectedMotifHalfSpec` owns the storage choice. Full-space radix-5 specs build packed radix-5
 /// arrays, while selected-subspace specs build compact byte-backed arrays over the requested motif
 /// halves. The selected-subspace case is used by `ends --motifs-file` only for halves above the
 /// radix-5 limit. Keeping that dispatch behind the spec prevents the tile code from rebuilding
@@ -298,7 +275,7 @@ pub(crate) fn build_tile_motif_context<'a>(
 /// - `Option<Arc<KmerCodes>>`:
 ///   Shared per-position codes for that `k`, or `None` when the half is empty
 fn build_precomputed_reference_codes(
-    spec: Option<&EndMotifHalfSpec>,
+    spec: Option<&SelectedMotifHalfSpec>,
     reference_bases: &[u8],
 ) -> Option<Arc<KmerCodes>> {
     let spec = spec?;
@@ -398,7 +375,7 @@ pub(crate) fn count_fragment_in_window(
 ///   Which fragment ends contributed at least one selected motif count in this window
 pub(crate) fn count_selected_fragment_in_window(
     counts_by_window: &mut SelectedEndCountsByWindow,
-    selected_motifs: &SelectedEndMotifLookup,
+    selected_motifs: &SelectedMotifLookup,
     original_idx: u64,
     window_interval: Interval<u64>,
     fragment: &FragmentWithEnds,
@@ -447,7 +424,7 @@ fn count_encoded_fragment_ends_in_window(
     motif_context: &TileMotifContext<'_>,
     source_inside: KmerSource,
     assign_by: WindowMotifAssigner,
-    mut record_encoded_end_count: impl FnMut(EndSide, EncodedEndMotifKey, f64) -> Result<bool>,
+    mut record_encoded_end_count: impl FnMut(EndSide, EncodedMotifKey, f64) -> Result<bool>,
 ) -> Result<CountedEndFlags> {
     let mut counted_end_flags = CountedEndFlags::default();
     if !EndMotifCounts::should_store_weight(weight)? {
@@ -528,14 +505,14 @@ fn end_is_selected_by_window(
 ///
 /// Returns
 /// -------
-/// - `Result<Option<EncodedEndMotifKey>>`:
+/// - `Result<Option<EncodedMotifKey>>`:
 ///   The encoded motif key for a kept end, or `None` when the end should be skipped
 fn maybe_encode_end_motif_key(
     end: &ResolvedFragmentEnd,
     end_side: EndSide,
     motif_context: &TileMotifContext<'_>,
     source_inside: KmerSource,
-) -> Result<Option<EncodedEndMotifKey>> {
+) -> Result<Option<EncodedMotifKey>> {
     let inside_code = encode_inside_code(end, end_side, motif_context, source_inside)?;
     let outside_code = encode_outside_code(end.boundary_pos as u64, end_side, motif_context)?;
     if motif_code_is_invalid(inside_code, motif_context.inside_spec.as_ref())
@@ -544,7 +521,7 @@ fn maybe_encode_end_motif_key(
         return Ok(None);
     }
 
-    Ok(Some(EncodedEndMotifKey {
+    Ok(Some(EncodedMotifKey {
         inside_code,
         outside_code,
         reverse_on_decode: matches!(end_side, EndSide::Right),
@@ -565,7 +542,7 @@ fn maybe_encode_end_motif_key(
 /// - `bool`:
 ///   `true` when the code is a sentinel and the end should be skipped
 #[inline]
-fn motif_code_is_invalid(code: u64, spec: Option<&EndMotifHalfSpec>) -> bool {
+fn motif_code_is_invalid(code: u64, spec: Option<&SelectedMotifHalfSpec>) -> bool {
     let Some(spec) = spec else {
         return false;
     };
@@ -663,7 +640,7 @@ fn encode_inside_code(
 fn validate_blacklist_for_read_inside_code(
     end: &ResolvedFragmentEnd,
     end_side: EndSide,
-    spec: &EndMotifHalfSpec,
+    spec: &SelectedMotifHalfSpec,
     motif_context: &TileMotifContext<'_>,
 ) -> Result<Option<u64>> {
     if motif_context.blacklist_intervals.is_empty() {
@@ -700,7 +677,7 @@ fn validate_blacklist_for_read_inside_code(
 fn masked_reference_span_is_valid(
     start_pos: u64,
     span_bp: usize,
-    spec: &EndMotifHalfSpec,
+    spec: &SelectedMotifHalfSpec,
     motif_context: &TileMotifContext<'_>,
 ) -> Result<bool> {
     if start_pos + span_bp as u64 > motif_context.chrom_len {
@@ -786,7 +763,7 @@ fn encode_outside_code(
 ///   Encoded reference-backed motif code or an invalid sentinel
 fn get_reference_code(
     start_pos: u64,
-    spec: &EndMotifHalfSpec,
+    spec: &SelectedMotifHalfSpec,
     precomputed_codes: Option<&KmerCodes>,
     motif_context: &TileMotifContext<'_>,
 ) -> Result<u64> {

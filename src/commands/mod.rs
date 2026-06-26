@@ -6,7 +6,7 @@ pub(crate) mod cli_common;
 mod counters;
 #[cfg(feature = "cmd_coverage_weights")]
 pub(crate) mod coverage_weights;
-#[cfg(feature = "cmd_ends")]
+#[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
 pub(crate) mod ends;
 #[cfg(feature = "cmd_fcoverage")]
 pub(crate) mod fcoverage;
@@ -26,6 +26,8 @@ pub(crate) mod midpoints;
 pub(crate) mod prepare_windows;
 #[cfg(feature = "cmd_gc_bias")]
 pub(crate) mod ref_gc_bias;
+#[cfg(feature = "cmd_ref_kmers")]
+pub(crate) mod ref_kmers;
 mod run_statistics;
 #[cfg(feature = "cmd_transitions")]
 pub(crate) mod transitions;

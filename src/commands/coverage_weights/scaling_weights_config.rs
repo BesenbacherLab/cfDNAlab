@@ -42,7 +42,7 @@ pub struct ScalingWeightsArgs {
         clap(long, default_value = "10000000", value_parser = clap::value_parser!(u32).range(1000000..), help_heading="Core"))]
     pub tile_size: u32,
 
-    /// Size (bp) of the stride bins [integer]
+    /// Size (bp) of the stride bins `[integer]`
     ///
     /// **NOTE**: `--bin-size` must be divisible by `stride`. I.e., `--bin-size % stride` == 0`.
     ///
@@ -57,7 +57,7 @@ pub struct ScalingWeightsArgs {
         clap(long, default_value = "500000", value_parser = clap::value_parser!(u32).range(1..), help_heading="Core"))]
     pub stride: u32,
 
-    /// Size (bp) of the large genomic bins used to build the triangularly weighted average [integer]
+    /// Size (bp) of the large genomic bins used to build the triangularly weighted average `[integer]`
     ///
     /// Each stride bin is smoothed based on all large genomic bins that overlap it.
     /// Larger values lead to more smoothing across the genome as each
@@ -73,7 +73,7 @@ pub struct ScalingWeightsArgs {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub fragment_lengths: FragmentLengthArgs,
 
-    /// Minimum mapping quality to include [integer]
+    /// Minimum mapping quality to include `[integer]`
     #[cfg_attr(
         feature = "cli",
         clap(long, alias = "mq", default_value = "30", value_parser = clap::value_parser!(u8).range(0..), help_heading="Filtering"))]
