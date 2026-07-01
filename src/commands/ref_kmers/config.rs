@@ -1,5 +1,6 @@
 use crate::commands::cli_common::*;
 use crate::{ToCliCommand, cli_command::helpers::*};
+use anyhow::{Result, ensure};
 use std::path::PathBuf;
 
 const DEFAULT_TILE_SIZE: u32 = 10_000_000;
@@ -85,7 +86,7 @@ pub struct RefKmersConfig {
         clap(
             short = 'k',
             long,
-            value_parser,
+            value_parser = clap::value_parser!(u8).range(1..),
             required = true,
             help_heading = "Core"
         )
@@ -190,6 +191,30 @@ pub struct RefKmersConfig {
 }
 
 impl RefKmersConfig {
+    /// Validate settings that can be checked before reading inputs.
+    pub(crate) fn validate(&self) -> Result<()> {
+        validate_output_prefix(self.output_prefix.trim())?;
+
+        let window_opt = self.windows.resolve_windows();
+        if let DistributionWindowSpec::Size(window_bp) = &window_opt {
+            ensure!(*window_bp > 0, "`--by-size` must be greater than 0");
+        }
+        ensure!(self.kmer_size > 0, "`--kmer-size` must be greater than 0");
+        ensure!(
+            !matches!(self.assign_by, WindowAssigner::Midpoint) || self.kmer_size % 2 == 1,
+            "`--assign-by midpoint` requires an odd `--kmer-size`"
+        );
+        ensure!(
+            self.motifs_file.is_some()
+                || usize::from(self.kmer_size)
+                    <= crate::shared::kmers::kmer_codec::MAX_RADIX5_KMER_SIZE,
+            "`--kmer-size` > {} requires `--motifs-file`",
+            crate::shared::kmers::kmer_codec::MAX_RADIX5_KMER_SIZE
+        );
+
+        Ok(())
+    }
+
     /// Build a `ref-kmers` config with the same defaults used by the CLI.
     pub fn new(
         ref_2bit: PathBuf,

@@ -311,7 +311,7 @@ pub struct WindowsArgs {
         feature = "cli",
         clap(
             long,
-            value_parser,
+            value_parser = clap::value_parser!(u64).range(1..),
             group = "windows",
             help_heading = "Windows (select max. one arg.)"
         )
@@ -375,7 +375,7 @@ pub struct DistributionWindowsArgs {
         feature = "cli",
         clap(
             long,
-            value_parser,
+            value_parser = clap::value_parser!(u64).range(1..),
             group = "windows",
             help_heading = "Windows (select max. one arg.)"
         )
@@ -463,7 +463,7 @@ pub struct GCWindowsArgs {
         feature = "cli",
         clap(
             long,
-            value_parser,
+            value_parser = clap::value_parser!(u64).range(1..),
             group = "gc_windows",
             help_heading = "Windows (select max. one arg.)"
         )

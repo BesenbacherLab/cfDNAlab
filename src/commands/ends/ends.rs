@@ -17,9 +17,8 @@ use crate::{
             },
             motifs::{
                 CountedEndFlags, build_tile_motif_context, count_fragment_in_window,
-                count_selected_fragment_in_window,
-                motif_extraction_ref_2bit_requirement_message, motif_extraction_requires_reference,
-                motif_reference_span_for_tile,
+                count_selected_fragment_in_window, motif_extraction_ref_2bit_requirement_message,
+                motif_extraction_requires_reference, motif_reference_span_for_tile,
             },
             output::{
                 build_all_end_motif_order, collect_end_motif_order,

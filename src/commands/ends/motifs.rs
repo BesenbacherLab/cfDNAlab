@@ -8,9 +8,7 @@ use crate::{
     commands::ends::{
         config::EndsConfig,
         config_structs::{ClipStrategy, KmerSource, WindowMotifAssigner},
-        counting::{
-            EndCountsByWindow, EndMotifCounts, SelectedEndCountsByWindow,
-        },
+        counting::{EndCountsByWindow, EndMotifCounts, SelectedEndCountsByWindow},
     },
     shared::{
         blacklist::{apply_blacklist_mask_to_seq, apply_mask::BLACKLIST_BYTE},
