@@ -172,7 +172,7 @@ pub struct RefKmersConfig {
     /// selected-target count total, so reconstructed counts are selected k-mer or group counts.
     ///
     /// Specifying the allowed subset of motifs beforehand enables counting of much
-    /// larger k-mers without enumerating the full k-mer universe.
+    /// larger k-mers without enumerating every A/C/G/T k-mer of that length.
     #[cfg_attr(feature = "cli", clap(long, value_parser, help_heading = "Motifs"))]
     pub motifs_file: Option<PathBuf>,
 

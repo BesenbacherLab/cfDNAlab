@@ -328,6 +328,8 @@ Reference k-mer stores can be dense or sparse. They store row-wise frequencies p
 
 For `ref-kmers` outputs written with `--motifs-file`, frequencies are normalized over the selected motifs or motif groups from that file. Unlisted k-mers are not part of the denominator, and the row scaling factor reconstructs selected k-mer or group counts.
 
+With `--all-motifs`, the motif axis also keeps targets whose stored frequency is zero. Without a motifs file, those targets are all A/C/G/T k-mers for the configured `k`. With a motifs file, they are the motifs or motif groups listed in that file.
+
 ```rust
 use cfdnalab::output_loaders::{
     load_ref_kmers_output,
@@ -338,7 +340,7 @@ fn main() -> anyhow::Result<()> {
     // Load output file and check the available metadata
     let ref_kmers = load_ref_kmers_output("hg38.ref_kmer_counts.zarr")?;
     ref_kmers.ensure_reference_2bit_matches("hg38.2bit")?;
-    println!("{:?}", ref_kmers.output_metadata());
+    println!("{}", ref_kmers.output_metadata());
 
     // Reconstruct a count from one frequency and its row scaling factor
     let motif_index = ref_kmers.motif_index("ACGT")?;

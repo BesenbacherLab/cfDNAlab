@@ -146,8 +146,8 @@ pub(crate) struct RefKmerZarrPackage<'a> {
 /// where those internal keys become output motif labels, then output column indices, then
 /// row-normalized frequencies. It preserves the final output row IDs assigned before tiling.
 ///
-/// The motif axis has two modes. With `all_motifs`, the axis is the complete A/C/G/T universe for
-/// the requested k and missing motifs are represented as zeroes in dense output. Without
+/// The motif axis has two modes. With `all_motifs`, the axis contains every A/C/G/T k-mer for the
+/// requested k and missing motifs are represented as zeroes in dense output. Without
 /// `all_motifs`, the axis contains only motifs that were observed after filtering and optional
 /// canonicalization, sorted deterministically for stable output.
 ///
@@ -167,7 +167,7 @@ pub(crate) struct RefKmerZarrPackage<'a> {
 /// - `canonical`:
 ///   Whether to collapse each motif with its reverse complement before output
 /// - `all_motifs`:
-///   Whether to retain the complete motif universe instead of only observed motifs
+///   Whether to retain all A/C/G/T k-mers instead of only observed motifs
 ///
 /// Returns
 /// -------
@@ -335,11 +335,11 @@ pub(crate) fn normalize_count_bins_to_frequencies(
     })
 }
 
-/// Return whether the final motif axis already has the complete k-mer universe size.
+/// Return whether the final motif axis already has every expected k-mer label.
 ///
 /// Concrete motif labels are validated by package validation before writing. This helper only
 /// answers whether a valid concrete motif axis has the mathematical size of the non-canonical or
-/// canonical universe, without generating every motif just to decide the storage mode.
+/// canonical k-mer set, without generating every motif just to decide the storage mode.
 ///
 /// Grouped motifs from a motifs file can never be treated as a complete k-mer axis because a
 /// column may represent more than one motif.
@@ -355,7 +355,7 @@ pub(crate) fn ref_kmer_axis_is_complete(
     }
     let Some(expected_num_labels) = complete_ref_kmer_axis_len(usize::from(kmer_size), canonical)
     else {
-        // Invalid or oversized universes should stay on the sparse path
+        // Invalid or oversized all-motif axes should stay on the sparse path
         return false;
     };
     if motif_labels.len() != expected_num_labels {
@@ -423,9 +423,9 @@ pub(crate) fn collect_ref_kmer_order(bins: &[FxHashMap<String, f64>]) -> Vec<Str
     motifs.into_iter().collect()
 }
 
-/// Build the full dense reference k-mer universe for `--all-motifs`.
+/// Build the full dense reference k-mer axis for `--all-motifs`.
 ///
-/// The full universe is generated from the same `KmerSpec` used to decode observed counts so label
+/// The full motif set is generated from the same `KmerSpec` used to decode observed counts so label
 /// spelling stays consistent across observed-only and all-motif output. Canonical output keeps only
 /// unique reverse-complement representatives and does not allocate the pre-collapse motif vector.
 pub(crate) fn build_all_ref_kmer_order(
@@ -445,7 +445,7 @@ pub(crate) fn build_all_ref_kmer_order(
 
     let motif_count = 4_u64
         .checked_pow(kmer_spec.k as u32)
-        .context("all reference k-mer universe overflows u64")?;
+        .context("all reference k-mer set overflows u64")?;
     let mut canonical_motifs = BTreeSet::new();
     for radix4_code in 0..motif_count {
         let motif = kmer_spec.decode_kmer(acgt_radix5_code_from_radix4(radix4_code, kmer_spec.k));
@@ -454,7 +454,7 @@ pub(crate) fn build_all_ref_kmer_order(
     Ok(canonical_motifs.into_iter().collect())
 }
 
-/// Guard full-universe dense output before counting starts.
+/// Guard all-motif dense output before counting starts.
 ///
 /// This uses the final public motif axis size. Canonical output therefore checks the number of
 /// reverse-complement classes, not the larger pre-canonical `4^k` motif count.
@@ -464,7 +464,7 @@ pub(crate) fn ensure_all_ref_kmers_output_size(
     n_windows: usize,
 ) -> Result<()> {
     let n_motifs = complete_ref_kmer_axis_len(kmer_size, canonical)
-        .context("all reference k-mer universe does not fit in usize")?;
+        .context("all reference k-mer set does not fit in usize")?;
 
     ensure_dense_ref_kmer_output_size(n_windows, n_motifs).with_context(|| {
         format!("refusing to output all reference k-mers for kmer_size={kmer_size}")

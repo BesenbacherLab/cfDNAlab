@@ -21,6 +21,7 @@ use crate::{
             validate_zarr_public_label,
         },
     },
+    shared::base::make_canonical,
     shared::reference::{ContigFootprintEntry, twobit_contig_footprint},
     shared::zarr::read_zarr_root_attributes,
 };
@@ -28,7 +29,7 @@ use anyhow::{Context, Result, bail, ensure};
 use fxhash::FxHashMap;
 use serde_json::Value;
 use std::{
-    fs,
+    fmt, fs,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -102,7 +103,11 @@ impl RefKmersOutput {
         self.canonical
     }
 
-    /// Return whether the command requested all possible motifs on the output axis.
+    /// Return whether zero-frequency motif targets were kept in the stored motif axis.
+    ///
+    /// Without `--motifs-file`, this means the complete A/C/G/T k-mer list for the configured
+    /// `k`. With `--motifs-file`, this means all listed motifs or motif groups were kept, even
+    /// when their frequency was zero.
     pub fn all_motifs(&self) -> bool {
         self.all_motifs
     }
@@ -808,7 +813,11 @@ impl RefKmerFrequencySelection {
         self.canonical
     }
 
-    /// Return whether the source output included every possible motif before this selection.
+    /// Return whether the source output kept zero-frequency motif targets before this selection.
+    ///
+    /// Without `--motifs-file`, this means the complete A/C/G/T k-mer list for the configured
+    /// `k`. With `--motifs-file`, this means all listed motifs or motif groups were kept, even
+    /// when their frequency was zero.
     pub fn source_all_motifs(&self) -> bool {
         self.source_all_motifs
     }
@@ -982,6 +991,25 @@ pub struct RefKmerOutputMetadata {
     pub reference_contig_footprint: Vec<ContigFootprintEntry>,
 }
 
+impl fmt::Display for RefKmerOutputMetadata {
+    /// Render one-line output context for logs or interactive inspection.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "storage_mode={}, row_mode={}, motif_axis={}, row_count={}, motif_count={}, kmer_size={}, canonical={}, all_motifs={}, assign_by={}",
+            describe_ref_kmer_storage_mode(self.storage_mode),
+            describe_ref_kmer_row_mode(self.row_mode),
+            describe_ref_kmer_motif_axis_kind(self.motif_axis_kind),
+            self.row_count,
+            self.motif_count,
+            self.kmer_size,
+            self.canonical,
+            self.all_motifs,
+            self.assign_by
+        )
+    }
+}
+
 /// Reference k-mer frequency storage mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefKmerStorageMode {
@@ -1011,6 +1039,29 @@ pub enum RefKmerMotifAxisKind {
     Motif,
     /// Motif-group labels from `--motifs-file`.
     MotifGroup,
+}
+
+fn describe_ref_kmer_storage_mode(storage_mode: RefKmerStorageMode) -> &'static str {
+    match storage_mode {
+        RefKmerStorageMode::Dense => "dense",
+        RefKmerStorageMode::SparseCoo => "sparse COO",
+    }
+}
+
+fn describe_ref_kmer_row_mode(row_mode: RefKmerRowMode) -> &'static str {
+    match row_mode {
+        RefKmerRowMode::Global => "global",
+        RefKmerRowMode::SizeWindows => "size windows",
+        RefKmerRowMode::BedWindows => "BED windows",
+        RefKmerRowMode::Groups => "groups",
+    }
+}
+
+fn describe_ref_kmer_motif_axis_kind(axis_kind: RefKmerMotifAxisKind) -> &'static str {
+    match axis_kind {
+        RefKmerMotifAxisKind::Motif => "motifs",
+        RefKmerMotifAxisKind::MotifGroup => "motif groups",
+    }
 }
 
 /// Source of window rows in a reference k-mer output.
@@ -1114,6 +1165,21 @@ impl RefKmerFrequencyData {
 }
 
 /// Sparse COO reference k-mer frequency entries.
+///
+/// COO stores explicit coordinates and their frequencies. The returned slices are index-matched:
+/// `frequencies()[entry_index]` belongs at
+/// `(row_indices()[entry_index], motif_indices()[entry_index])`.
+/// For entry `entry_index`, the row, motif, and frequency are:
+///
+/// ```text
+/// row_indices()[entry_index], motif_indices()[entry_index], frequencies()[entry_index]
+/// ```
+///
+/// Coordinates are sorted by `(row, motif)`. Missing in-bounds coordinates are implicit zero
+/// frequencies. Use this representation when iterating stored entries or keeping sparse memory
+/// use. Use `to_dense_matrix()` when downstream code needs dense row and column operations. Use
+/// `to_lookup_index()` when downstream code needs many arbitrary `frequency(row, motif)` lookups
+/// without densifying.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RefKmerSparseFrequencies {
     row_count: usize,
@@ -1140,11 +1206,23 @@ impl RefKmerSparseFrequencies {
     }
 
     /// Return stored frequencies in COO entry order.
+    ///
+    /// `frequencies()[entry_index]` belongs at
+    /// `(row_indices()[entry_index], motif_indices()[entry_index])`. Coordinates not present in
+    /// these slices are implicit zero frequencies, as long as they are inside `shape()`.
+    ///
+    /// Prefer `entries()` when iterating stored entries in ordinary Rust code. Calling
+    /// `frequency()` repeatedly performs one binary search per point lookup. Use
+    /// `to_lookup_index()` for many arbitrary point lookups without dense matrix allocation. Use
+    /// `to_dense_matrix()` when the downstream work needs dense row or column access.
     pub fn frequencies(&self) -> &[f64] {
         &self.frequencies
     }
 
     /// Return stored frequencies as `(row, motif, frequency)` entries.
+    ///
+    /// Use this when downstream code only needs stored entries. Missing in-bounds coordinates are
+    /// not yielded, because they are implicit zero frequencies.
     pub fn entries(&self) -> impl ExactSizeIterator<Item = RefKmerSparseFrequencyEntry> + '_ {
         self.row_indices
             .iter()
@@ -1168,10 +1246,25 @@ impl RefKmerSparseFrequencies {
     /// Return one frequency value, if both indices are in bounds.
     ///
     /// Missing in-bounds sparse coordinates are zero frequencies.
+    ///
+    /// **NOTE**: This method does one binary search per call over the sorted COO entries. For
+    /// repeated arbitrary cell lookups, build `to_lookup_index()` once. Use `entries()` for
+    /// stored-entry iteration, or `to_dense_matrix()` when dense access is needed.
+    ///
+    /// Parameters
+    /// ----------
+    /// - `row_index`:
+    ///   Zero-based row index in the dense matrix represented by this sparse object.
+    /// - `motif_index`:
+    ///   Zero-based motif index in the dense matrix represented by this sparse object.
     pub fn frequency(&self, row_index: usize, motif_index: usize) -> Option<f64> {
         if row_index >= self.row_count || motif_index >= self.motif_count {
             return None;
         }
+        // Sparse COO entries are validated as sorted by `(row, motif)` when the store is loaded.
+        // Binary search avoids scanning every stored entry for each lookup. The left and right
+        // bounds form a half-open range of candidate COO entry indices, and the middle entry is
+        // the coordinate used to decide which half can still contain the requested frequency
         let mut left_entry_index = 0;
         let mut right_entry_index = self.frequencies.len();
         while left_entry_index < right_entry_index {
@@ -1187,6 +1280,25 @@ impl RefKmerSparseFrequencies {
             }
         }
         Some(0.0)
+    }
+
+    /// Build an `FxHashMap`-backed lookup index for repeated point queries.
+    ///
+    /// This copies the stored entries into an `FxHashMap` keyed by `(row_index, motif_index)`. It
+    /// uses more memory than sorted COO, but `RefKmerSparseFrequencyLookup::frequency()` avoids
+    /// the per-lookup binary search done by `RefKmerSparseFrequencies::frequency()`. Use this for
+    /// repeated arbitrary cell lookups when a dense matrix would be too large.
+    pub fn to_lookup_index(&self) -> RefKmerSparseFrequencyLookup {
+        let mut frequencies_by_coordinate =
+            FxHashMap::with_capacity_and_hasher(self.frequencies.len(), Default::default());
+        for entry in self.entries() {
+            frequencies_by_coordinate.insert((entry.row_index, entry.motif_index), entry.frequency);
+        }
+        RefKmerSparseFrequencyLookup {
+            row_count: self.row_count,
+            motif_count: self.motif_count,
+            frequencies_by_coordinate,
+        }
     }
 
     /// Reconstruct a dense frequency matrix from the stored COO entries.
@@ -1331,6 +1443,49 @@ pub struct RefKmerSparseFrequencyEntry {
     pub motif_index: usize,
     /// Stored frequency for `(row_index, motif_index)`.
     pub frequency: f64,
+}
+
+/// `FxHashMap`-backed lookup index for sparse reference k-mer frequencies.
+///
+/// Build this with `RefKmerSparseFrequencies::to_lookup_index()` when downstream code needs many
+/// arbitrary point lookups. This stores one `FxHashMap` entry per stored sparse frequency, so it
+/// uses more memory than sorted COO but keeps missing in-bounds coordinates as implicit zero
+/// frequencies.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RefKmerSparseFrequencyLookup {
+    row_count: usize,
+    motif_count: usize,
+    frequencies_by_coordinate: FxHashMap<(usize, usize), f64>,
+}
+
+impl RefKmerSparseFrequencyLookup {
+    /// Return the dense shape represented by this lookup index.
+    pub fn shape(&self) -> (usize, usize) {
+        (self.row_count, self.motif_count)
+    }
+
+    /// Return one frequency value, if both indices are in bounds.
+    ///
+    /// Missing in-bounds coordinates are zero frequencies. This method uses a hash map lookup
+    /// instead of binary search over the COO entries.
+    ///
+    /// Parameters
+    /// ----------
+    /// - `row_index`:
+    ///   Zero-based row index in the represented dense matrix.
+    /// - `motif_index`:
+    ///   Zero-based motif index in the represented dense matrix.
+    pub fn frequency(&self, row_index: usize, motif_index: usize) -> Option<f64> {
+        if row_index >= self.row_count || motif_index >= self.motif_count {
+            return None;
+        }
+        Some(
+            self.frequencies_by_coordinate
+                .get(&(row_index, motif_index))
+                .copied()
+                .unwrap_or(0.0),
+        )
+    }
 }
 
 /// One reconstructed count entry from sparse reference k-mer COO frequencies.
@@ -1512,6 +1667,8 @@ impl RefKmersParser {
             store.clone(),
             root_metadata.motif_axis_kind,
             motif_index.len(),
+            root_metadata.kmer_size,
+            root_metadata.canonical,
         )?;
         ensure_unique_labels(&motif_labels, "motif_labels")?;
         let mut motif_label_indices =
@@ -1590,6 +1747,11 @@ impl RefKmerRootMetadata {
         ensure!(
             string_attr(attributes, "row_scaling_factor_array")? == "row_scaling_factor",
             "reference k-mer Zarr row_scaling_factor_array must be row_scaling_factor"
+        );
+        ensure!(
+            string_attr(attributes, "count_reconstruction")?
+                == "reference_kmer_count = frequency * row_scaling_factor[row]",
+            "reference k-mer Zarr count_reconstruction must be reference_kmer_count = frequency * row_scaling_factor[row]"
         );
 
         let storage_mode = match string_attr(attributes, "storage_mode")? {
@@ -1692,16 +1854,25 @@ fn read_motif_labels(
     store: Arc<FilesystemStore>,
     motif_axis_kind: RefKmerMotifAxisKind,
     motif_count: usize,
+    kmer_size: u8,
+    canonical: bool,
 ) -> Result<Vec<String>> {
     match motif_axis_kind {
-        RefKmerMotifAxisKind::Motif => read_motif_ascii_labels(store, motif_count),
+        RefKmerMotifAxisKind::Motif => {
+            read_motif_ascii_labels(store, motif_count, kmer_size, canonical)
+        }
         RefKmerMotifAxisKind::MotifGroup => {
             read_zarr_labels(root_path, "motif_index", "motif_group", motif_count)
         }
     }
 }
 
-fn read_motif_ascii_labels(store: Arc<FilesystemStore>, motif_count: usize) -> Result<Vec<String>> {
+fn read_motif_ascii_labels(
+    store: Arc<FilesystemStore>,
+    motif_count: usize,
+    kmer_size: u8,
+    canonical: bool,
+) -> Result<Vec<String>> {
     let motif_byte = read_zarr_array1::<i32>(store.clone(), "/motif_byte")?;
     validate_zero_based_axis(&motif_byte, "motif_byte")?;
     let motif_width = motif_byte.len();
@@ -1709,6 +1880,13 @@ fn read_motif_ascii_labels(store: Arc<FilesystemStore>, motif_count: usize) -> R
         motif_width > 0 || motif_count == 0,
         "motif_ascii cannot decode non-empty motif axis with zero motif_byte width"
     );
+    if motif_count > 0 {
+        let expected_width = usize::from(kmer_size);
+        ensure!(
+            motif_width == expected_width,
+            "motif_ascii width {motif_width} did not match kmer_size {kmer_size}"
+        );
+    }
 
     let (bytes, shape) = read_zarr_array_values::<u8>(store, "/motif_ascii")?;
     ensure!(
@@ -1729,9 +1907,49 @@ fn read_motif_ascii_labels(store: Arc<FilesystemStore>, motif_count: usize) -> R
                 motif_bytes.is_ascii(),
                 "motif_ascii row {motif_index} contains non-ASCII motif bytes"
             );
-            String::from_utf8(motif_bytes.to_vec()).context("motif_ascii contains invalid UTF-8")
+            let motif = String::from_utf8(motif_bytes.to_vec())
+                .context("motif_ascii contains invalid UTF-8")?;
+            validate_concrete_ref_kmer_motif_label(&motif, kmer_size, canonical, motif_index)?;
+            Ok(motif)
         })
         .collect()
+}
+
+fn validate_concrete_ref_kmer_motif_label(
+    motif: &str,
+    kmer_size: u8,
+    canonical: bool,
+    motif_index: usize,
+) -> Result<()> {
+    let expected_len = usize::from(kmer_size);
+    ensure!(
+        motif.len() == expected_len,
+        "reference k-mer motif label `{}` at motif index {} has length {}, expected {}",
+        motif,
+        motif_index,
+        motif.len(),
+        expected_len
+    );
+    for base in motif.bytes() {
+        ensure!(
+            matches!(base, b'A' | b'C' | b'G' | b'T'),
+            "reference k-mer motif label `{}` at motif index {} contains invalid base `{}`",
+            motif,
+            motif_index,
+            char::from(base)
+        );
+    }
+    if canonical {
+        let canonical_motif = make_canonical(motif.to_string(), true, true);
+        ensure!(
+            canonical_motif == motif,
+            "canonical reference k-mer motif label `{}` at motif index {} should be represented as `{}`",
+            motif,
+            motif_index,
+            canonical_motif
+        );
+    }
+    Ok(())
 }
 
 fn read_row_metadata(

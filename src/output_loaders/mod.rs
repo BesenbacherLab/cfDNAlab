@@ -77,6 +77,6 @@ pub use midpoints::{
 pub use ref_kmers::{
     RefKmerFrequencyData, RefKmerFrequencySelection, RefKmerGroupRow, RefKmerMotifAxisKind,
     RefKmerOutputMetadata, RefKmerRowMetadata, RefKmerRowMode, RefKmerSparseCountEntry,
-    RefKmerSparseFrequencies, RefKmerSparseFrequencyEntry, RefKmerStorageMode, RefKmerWindowMode,
-    RefKmersOutput, RefKmersSelector, load_ref_kmers_output,
+    RefKmerSparseFrequencies, RefKmerSparseFrequencyEntry, RefKmerSparseFrequencyLookup,
+    RefKmerStorageMode, RefKmerWindowMode, RefKmersOutput, RefKmersSelector, load_ref_kmers_output,
 };

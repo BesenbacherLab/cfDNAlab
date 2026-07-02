@@ -4,7 +4,7 @@ Python helpers for loading [**cfDNAlab**](https://github.com/BesenbacherLab/cfDN
 
 This package does not install or run the cfDNAlab command-line tool. The CLI is distributed separately as the Rust `cfdna` binary. Use this Python package after running cfDNAlab to load and analyze output files.
 
-Supported output types are midpoint and end-motif Zarr outputs plus length-count TSV outputs: `<prefix>.midpoint_profiles.zarr`, `<prefix>.end_motifs.zarr`, and `<prefix>.length_counts.tsv.zst`.
+Supported output types are midpoint, end-motif, and reference k-mer Zarr outputs plus length-count TSV outputs: `<prefix>.midpoint_profiles.zarr`, `<prefix>.end_motifs.zarr`, `<prefix>.ref_kmer_counts.zarr`, and `<prefix>.length_counts.tsv.zst`.
 
 NOTE: While the main CLI tool is highly tested and validated, this Python package is currently being built and may have bugs or use too AI'ish language in the documentation. The core functions should work and we are actively improving it over the coming weeks. We decided to share it early to help you use the outputs of the main tool.
 
@@ -185,6 +185,70 @@ filtered_motif_counts = ends.data_frame(
 ```
 
 For sparse stores, prefer `data_frame(densify=False)` and `sparse_counts_matrix()` when working with large end-motif outputs. Use `densify=True` only when the dense result is small enough to fit comfortably in memory.
+
+<br>
+
+## Load Reference K-Mer Frequencies
+
+```python
+import cfdnalab as cfl
+
+ref_kmers = cfl.read_ref_kmers("sample.ref_kmer_counts.zarr")
+```
+
+Reference k-mer stores contain row-wise frequencies. Counts are reconstructed by multiplying each row by its `row_scaling_factor`.
+
+```python
+ref_kmers.motifs_metadata()
+ref_kmers.row_scaling_factors()
+ref_kmers.dense_frequencies_array(allow_densify=True)
+ref_kmers.dense_counts_array(allow_densify=True)
+```
+
+Sparse output stays sparse unless you opt into densification:
+
+```python
+frequency_matrix = ref_kmers.sparse_frequencies_matrix()
+count_matrix = ref_kmers.sparse_counts_matrix()
+rows = ref_kmers.data_frame(densify=False)
+```
+
+Use `motifs` for k-mer or k-mer-group labels and `motif_idxs` for zero-based
+motif indices. `data_frame()` includes both `frequency` and reconstructed
+`count`.
+
+```python
+selected_kmers = ref_kmers.data_frame(motifs=["ACGT", "TGCA"])
+selected_kmer_counts = ref_kmers.dense_counts_array(
+    motifs=["ACGT", "TGCA"],
+    allow_densify=True,
+)
+```
+
+Windowed output has `window_metadata()` and supports `window_idxs` selectors:
+
+```python
+windows = ref_kmers.window_metadata()
+window_rows = ref_kmers.data_frame(
+    window_idxs=[0, 5, 6],
+    motifs=["ACGT", "TGCA"],
+    densify=True,
+    max_blacklisted_fraction=0.1,
+)
+```
+
+Grouped output has `group_metadata()`, `group_idx()`, `groups`, and
+`group_idxs`:
+
+```python
+groups = ref_kmers.group_metadata()
+group_idx = ref_kmers.group_idx("promoters")
+group_counts = ref_kmers.sparse_counts_matrix(
+    groups=["promoters", "enhancers"],
+    motifs=["ACGT", "TGCA"],
+)
+group_rows = ref_kmers.data_frame(groups="promoters", densify=True)
+```
 
 <br>
 

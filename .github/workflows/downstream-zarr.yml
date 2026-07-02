@@ -10,6 +10,8 @@ on:
       - "src/commands/midpoints/**"
       - "src/commands/ends/**"
       - "src/commands/lengths/**"
+      - "src/commands/ref_kmers/**"
+      - "src/output_loaders/**"
       - "src/shared/io.rs"
       - "src/shared/io_tests.rs"
       - "src/shared/zarr.rs"
@@ -44,12 +46,12 @@ jobs:
       - name: Generate downstream fixtures with cfDNAlab
         env:
           CFDNALAB_DOWNSTREAM_FIXTURE_DIR: ${{ github.workspace }}/downstream_tests/tmp
-        run: cargo test --no-default-features --features cmd_midpoints,cmd_ends,cmd_lengths,testing --test generate_downstream_zarr_fixtures -- --ignored
+        run: cargo test --no-default-features --features cmd_midpoints,cmd_ends,cmd_lengths,cmd_ref_kmers,testing --test generate_downstream_zarr_fixtures -- --ignored
 
       - name: Run Rust output loader downstream tests
         env:
           CFDNALAB_DOWNSTREAM_FIXTURE_DIR: ${{ github.workspace }}/downstream_tests/tmp
-        run: cargo test --manifest-path downstream_tests/rust/Cargo.toml --no-default-features --features cmd_midpoints,cmd_ends,cmd_lengths,testing --test test_downstream_rust_loaders -- --ignored
+        run: cargo test --manifest-path downstream_tests/rust/Cargo.toml --no-default-features --features cmd_midpoints,cmd_ends,cmd_lengths,cmd_ref_kmers,testing --test test_downstream_rust_loaders -- --ignored
 
       - name: Upload downstream fixtures
         uses: actions/upload-artifact@v4
@@ -101,6 +103,10 @@ jobs:
           CFDNALAB_ENDS_SPARSE_GROUPED_ZARR: downstream_tests/tmp/tiny_sparse_grouped.end_motifs.zarr
           CFDNALAB_ENDS_SPARSE_GROUPED_MOTIF_GROUP_ZARR: downstream_tests/tmp/tiny_sparse_grouped_motif_groups.end_motifs.zarr
           CFDNALAB_ENDS_SPARSE_GROUPED_WIDE_MOTIF_GROUP_ZARR: downstream_tests/tmp/tiny_sparse_grouped_wide_motif_groups.end_motifs.zarr
+          CFDNALAB_REF_KMERS_DENSE_GLOBAL_ZARR: downstream_tests/tmp/tiny_ref_kmers_dense_global.ref_kmer_counts.zarr
+          CFDNALAB_REF_KMERS_SPARSE_WINDOWED_ZARR: downstream_tests/tmp/tiny_ref_kmers_sparse_windowed.ref_kmer_counts.zarr
+          CFDNALAB_REF_KMERS_SPARSE_GROUPED_ZARR: downstream_tests/tmp/tiny_ref_kmers_sparse_grouped.ref_kmer_counts.zarr
+          CFDNALAB_REF_KMERS_DENSE_GROUPED_MOTIF_GROUP_ZARR: downstream_tests/tmp/tiny_ref_kmers_dense_grouped_motif_groups.ref_kmer_counts.zarr
           CFDNALAB_LENGTHS_GLOBAL_TSV: downstream_tests/tmp/tiny_lengths_global.length_counts.tsv.zst
           CFDNALAB_LENGTHS_WINDOWED_TSV: downstream_tests/tmp/tiny_lengths_windowed.length_counts.tsv.zst
           CFDNALAB_LENGTHS_GROUPED_TSV: downstream_tests/tmp/tiny_lengths_grouped.length_counts.tsv.zst
@@ -146,6 +152,10 @@ jobs:
           CFDNALAB_ENDS_SPARSE_GROUPED_ZARR: downstream_tests/tmp/tiny_sparse_grouped.end_motifs.zarr
           CFDNALAB_ENDS_SPARSE_GROUPED_MOTIF_GROUP_ZARR: downstream_tests/tmp/tiny_sparse_grouped_motif_groups.end_motifs.zarr
           CFDNALAB_ENDS_SPARSE_GROUPED_WIDE_MOTIF_GROUP_ZARR: downstream_tests/tmp/tiny_sparse_grouped_wide_motif_groups.end_motifs.zarr
+          CFDNALAB_REF_KMERS_DENSE_GLOBAL_ZARR: downstream_tests/tmp/tiny_ref_kmers_dense_global.ref_kmer_counts.zarr
+          CFDNALAB_REF_KMERS_SPARSE_WINDOWED_ZARR: downstream_tests/tmp/tiny_ref_kmers_sparse_windowed.ref_kmer_counts.zarr
+          CFDNALAB_REF_KMERS_SPARSE_GROUPED_ZARR: downstream_tests/tmp/tiny_ref_kmers_sparse_grouped.ref_kmer_counts.zarr
+          CFDNALAB_REF_KMERS_DENSE_GROUPED_MOTIF_GROUP_ZARR: downstream_tests/tmp/tiny_ref_kmers_dense_grouped_motif_groups.ref_kmer_counts.zarr
           CFDNALAB_LENGTHS_GLOBAL_TSV: downstream_tests/tmp/tiny_lengths_global.length_counts.tsv.zst
           CFDNALAB_LENGTHS_WINDOWED_TSV: downstream_tests/tmp/tiny_lengths_windowed.length_counts.tsv.zst
           CFDNALAB_LENGTHS_GROUPED_TSV: downstream_tests/tmp/tiny_lengths_grouped.length_counts.tsv.zst
@@ -165,6 +175,10 @@ jobs:
           CFDNALAB_ENDS_SPARSE_GROUPED_ZARR: downstream_tests/tmp/tiny_sparse_grouped.end_motifs.zarr
           CFDNALAB_ENDS_SPARSE_GROUPED_MOTIF_GROUP_ZARR: downstream_tests/tmp/tiny_sparse_grouped_motif_groups.end_motifs.zarr
           CFDNALAB_ENDS_SPARSE_GROUPED_WIDE_MOTIF_GROUP_ZARR: downstream_tests/tmp/tiny_sparse_grouped_wide_motif_groups.end_motifs.zarr
+          CFDNALAB_REF_KMERS_DENSE_GLOBAL_ZARR: downstream_tests/tmp/tiny_ref_kmers_dense_global.ref_kmer_counts.zarr
+          CFDNALAB_REF_KMERS_SPARSE_WINDOWED_ZARR: downstream_tests/tmp/tiny_ref_kmers_sparse_windowed.ref_kmer_counts.zarr
+          CFDNALAB_REF_KMERS_SPARSE_GROUPED_ZARR: downstream_tests/tmp/tiny_ref_kmers_sparse_grouped.ref_kmer_counts.zarr
+          CFDNALAB_REF_KMERS_DENSE_GROUPED_MOTIF_GROUP_ZARR: downstream_tests/tmp/tiny_ref_kmers_dense_grouped_motif_groups.ref_kmer_counts.zarr
           CFDNALAB_LENGTHS_GLOBAL_TSV: downstream_tests/tmp/tiny_lengths_global.length_counts.tsv.zst
           CFDNALAB_LENGTHS_WINDOWED_TSV: downstream_tests/tmp/tiny_lengths_windowed.length_counts.tsv.zst
           CFDNALAB_LENGTHS_GROUPED_TSV: downstream_tests/tmp/tiny_lengths_grouped.length_counts.tsv.zst

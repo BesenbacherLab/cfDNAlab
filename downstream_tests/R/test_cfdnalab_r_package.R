@@ -234,6 +234,194 @@ test_that("R helper package reads sparse grouped wide motif-group end motifs", {
   )
 })
 
+test_that("R helper package reads dense global reference k-mers", {
+  ref_kmers <- read_ref_kmers(dense_global_ref_kmer_zarr_path())
+
+  expect_s3_class(ref_kmers, "cfdnalab_global_ref_kmer_frequencies")
+  expect_identical(schema_version(ref_kmers), 1L)
+  expect_identical(storage_mode(ref_kmers), "dense")
+  expect_identical(row_mode(ref_kmers), "global")
+  expect_identical(motif_axis_kind(ref_kmers), "motif")
+  expect_identical(kmer_size(ref_kmers), 3L)
+  expect_true(canonical(ref_kmers))
+  expect_true(all_motifs(ref_kmers))
+  expect_identical(assign_by(ref_kmers), "count-overlap")
+  expect_identical(length(motifs(ref_kmers)$motif), 32L)
+  expect_identical(head(motifs(ref_kmers)$motif, 4L), c("AAA", "AAC", "AAG", "AAT"))
+  expect_identical(tail(motifs(ref_kmers)$motif, 4L), c("TCA", "TCC", "TCG", "TCT"))
+  expect_equal(
+    dense_frequencies_matrix(ref_kmers, motifs = c("AAA", "ACG", "TAC", "CAT")),
+    matrix(c(4 / 36, 7 / 36, 6 / 36, 0), nrow = 1L),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    dense_counts_matrix(ref_kmers, motifs = c("AAA", "ACG", "TAC", "CAT")),
+    matrix(c(4, 7, 6, 0), nrow = 1L),
+    tolerance = 1e-8
+  )
+  expect_equal(row_scaling_factors(ref_kmers)$row_scaling_factor, 36, tolerance = 1e-8)
+  expect_equal(
+    ref_kmer_data_frame(ref_kmers, motifs = c("TAC", "AAA")),
+    data.frame(
+      row_label = c("global", "global"),
+      motif_idx = c(26L, 1L),
+      motif = c("TAC", "AAA"),
+      frequency = c(6 / 36, 4 / 36),
+      count = c(6, 4),
+      stringsAsFactors = FALSE
+    ),
+    tolerance = 1e-8,
+    ignore_attr = TRUE
+  )
+})
+
+test_that("R helper package reads sparse windowed reference k-mers", {
+  ref_kmers <- read_ref_kmers(sparse_windowed_ref_kmer_zarr_path())
+
+  expect_s3_class(ref_kmers, "cfdnalab_windowed_ref_kmer_frequencies")
+  expect_identical(storage_mode(ref_kmers), "sparse_coo")
+  expect_identical(row_mode(ref_kmers), "bed")
+  expect_identical(motifs(ref_kmers)$motif, c("CGT", "AAA", "TAC", "CCC", "GGG", "ACG", "GTA"))
+  expect_false(has_motif(ref_kmers, "TTT"))
+  expect_error(dense_frequencies_matrix(ref_kmers), "Use sparse_frequencies_matrix")
+  expect_equal(
+    dense_counts_matrix(ref_kmers, allow_densify = TRUE),
+    matrix(
+      c(
+        0, 1, 0, 1, 1, 0, 0,
+        1, 0, 4 / 3, 0, 1 / 3, 1, 2 / 3,
+        2 / 3, 0, 0, 1, 1 / 3, 0, 1 / 3,
+        5 / 3, 0, 1, 0, 0, 1, 2
+      ),
+      nrow = 4L,
+      byrow = TRUE
+    ),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    row_scaling_factors(ref_kmers)$row_scaling_factor,
+    c(3, 13 / 3, 7 / 3, 17 / 3),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    window_metadata(ref_kmers),
+    data.frame(
+      window_idx = 1:4,
+      chrom = c("chr1", "chr1", "chr2", "chr2"),
+      start = c(0L, 8L, 2L, 12L),
+      end = c(9L, 16L, 13L, 20L),
+      blacklisted_fraction = c(0, 1 / 8, 2 / 11, 0),
+      stringsAsFactors = FALSE
+    ),
+    ignore_attr = TRUE
+  )
+  expect_equal(
+    ref_kmer_data_frame(
+      ref_kmers,
+      window_idxs = c(4L, 1L),
+      motifs = c("GTA", "AAA"),
+      densify = TRUE
+    ),
+    data.frame(
+      window_idx = c(4L, 4L, 1L, 1L),
+      chrom = c("chr2", "chr2", "chr1", "chr1"),
+      start = c(12L, 12L, 0L, 0L),
+      end = c(20L, 20L, 9L, 9L),
+      blacklisted_fraction = c(0, 0, 0, 0),
+      motif_idx = c(7L, 2L, 7L, 2L),
+      motif = c("GTA", "AAA", "GTA", "AAA"),
+      frequency = c(6 / 17, 0, 0, 1 / 3),
+      count = c(2, 0, 0, 1),
+      stringsAsFactors = FALSE
+    ),
+    tolerance = 1e-8,
+    ignore_attr = TRUE
+  )
+})
+
+test_that("R helper package reads sparse grouped reference k-mers", {
+  ref_kmers <- read_ref_kmers(sparse_grouped_ref_kmer_zarr_path())
+
+  expect_s3_class(ref_kmers, "cfdnalab_grouped_ref_kmer_frequencies")
+  expect_identical(storage_mode(ref_kmers), "sparse_coo")
+  expect_identical(row_mode(ref_kmers), "grouped_bed")
+  expect_identical(group_idx(ref_kmers, "alpha"), 2L)
+  expect_identical(motifs(ref_kmers)$motif, c("CGT", "AAA", "TAC", "CCC", "GGG", "ACG", "GTA"))
+  expect_equal(
+    group_metadata(ref_kmers),
+    data.frame(
+      group_idx = c(1L, 2L),
+      group_name = c("beta", "alpha"),
+      eligible_windows = c(2L, 2L),
+      blacklisted_fraction = c(0.1, 1 / 16),
+      stringsAsFactors = FALSE
+    ),
+    ignore_attr = TRUE
+  )
+  expect_equal(
+    as.matrix(sparse_counts_matrix(
+      ref_kmers,
+      groups = c("alpha", "beta"),
+      motifs = c("GTA", "AAA")
+    )),
+    matrix(c(8 / 3, 0, 1 / 3, 1), nrow = 2L, byrow = TRUE),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    ref_kmer_data_frame(ref_kmers),
+    data.frame(
+      group_idx = c(rep(1L, 5L), rep(2L, 5L)),
+      group_name = c(rep("beta", 5L), rep("alpha", 5L)),
+      eligible_windows = rep(2L, 10L),
+      blacklisted_fraction = c(rep(0.1, 5L), rep(1 / 16, 5L)),
+      motif_idx = c(1L, 2L, 4L, 5L, 7L, 1L, 3L, 5L, 6L, 7L),
+      motif = c("CGT", "AAA", "CCC", "GGG", "GTA", "CGT", "TAC", "GGG", "ACG", "GTA"),
+      frequency = c(1 / 8, 3 / 16, 3 / 8, 1 / 4, 1 / 16, 4 / 15, 7 / 30, 1 / 30, 1 / 5, 4 / 15),
+      count = c(2 / 3, 1, 2, 4 / 3, 1 / 3, 8 / 3, 7 / 3, 1 / 3, 2, 8 / 3),
+      stringsAsFactors = FALSE
+    ),
+    tolerance = 1e-8,
+    ignore_attr = TRUE
+  )
+})
+
+test_that("R helper package reads dense grouped motif-group reference k-mers", {
+  ref_kmers <- read_ref_kmers(dense_grouped_motif_group_ref_kmer_zarr_path())
+
+  expect_s3_class(ref_kmers, "cfdnalab_grouped_ref_kmer_frequencies")
+  expect_identical(storage_mode(ref_kmers), "dense")
+  expect_identical(row_mode(ref_kmers), "grouped_bed")
+  expect_identical(motif_axis_kind(ref_kmers), "motif_group")
+  expect_true(all_motifs(ref_kmers))
+  expect_identical(motifs(ref_kmers)$motif, c("absent", "edge", "gc_rich", "homopolymer", "transition"))
+  expect_equal(
+    dense_counts_matrix(ref_kmers),
+    matrix(c(0, 1 / 3, 10 / 3, 1, 2 / 3, 0, 5, 1 / 3, 0, 14 / 3), nrow = 2L, byrow = TRUE),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    dense_counts_matrix(ref_kmers, groups = c("alpha", "beta"), motifs = c("edge", "absent")),
+    matrix(c(5, 0, 1 / 3, 0), nrow = 2L, byrow = TRUE),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    ref_kmer_data_frame(ref_kmers, groups = c("alpha", "beta"), motifs = c("edge", "absent")),
+    data.frame(
+      group_idx = c(2L, 2L, 1L, 1L),
+      group_name = c("alpha", "alpha", "beta", "beta"),
+      eligible_windows = c(2L, 2L, 2L, 2L),
+      blacklisted_fraction = c(1 / 16, 1 / 16, 0.1, 0.1),
+      motif_idx = c(2L, 1L, 2L, 1L),
+      motif = c("edge", "absent", "edge", "absent"),
+      frequency = c(1 / 2, 0, 1 / 16, 0),
+      count = c(5, 0, 1 / 3, 0),
+      stringsAsFactors = FALSE
+    ),
+    tolerance = 1e-8,
+    ignore_attr = TRUE
+  )
+})
+
 test_that("R helper package reads global length counts", {
   lengths <- read_lengths(global_length_counts_path())
 

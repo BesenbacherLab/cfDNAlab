@@ -6,7 +6,8 @@
 #' @noRd
 CFDNALAB_SCHEMA_VERSION_RANGES <- list(
   midpoint_profiles = c(min = 1L, max = 1L),
-  end_motif_counts = c(min = 1L, max = 2L)
+  end_motif_counts = c(min = 1L, max = 2L),
+  ref_kmer_frequencies = c(min = 1L, max = 1L)
 )
 
 #' Validate a cfDNAlab Zarr store path.

@@ -70,6 +70,42 @@ def sparse_grouped_wide_motif_group_end_zarr_path() -> Path:
 
 
 @pytest.fixture(scope="session")
+def dense_global_ref_kmer_zarr_path() -> Path:
+    return _fixture_path(
+        "CFDNALAB_REF_KMERS_DENSE_GLOBAL_ZARR",
+        "tiny_ref_kmers_dense_global.ref_kmer_counts.zarr",
+        "dense global reference k-mer",
+    )
+
+
+@pytest.fixture(scope="session")
+def sparse_windowed_ref_kmer_zarr_path() -> Path:
+    return _fixture_path(
+        "CFDNALAB_REF_KMERS_SPARSE_WINDOWED_ZARR",
+        "tiny_ref_kmers_sparse_windowed.ref_kmer_counts.zarr",
+        "sparse windowed reference k-mer",
+    )
+
+
+@pytest.fixture(scope="session")
+def sparse_grouped_ref_kmer_zarr_path() -> Path:
+    return _fixture_path(
+        "CFDNALAB_REF_KMERS_SPARSE_GROUPED_ZARR",
+        "tiny_ref_kmers_sparse_grouped.ref_kmer_counts.zarr",
+        "sparse grouped reference k-mer",
+    )
+
+
+@pytest.fixture(scope="session")
+def dense_grouped_motif_group_ref_kmer_zarr_path() -> Path:
+    return _fixture_path(
+        "CFDNALAB_REF_KMERS_DENSE_GROUPED_MOTIF_GROUP_ZARR",
+        "tiny_ref_kmers_dense_grouped_motif_groups.ref_kmer_counts.zarr",
+        "dense grouped motif-group reference k-mer",
+    )
+
+
+@pytest.fixture(scope="session")
 def global_length_counts_path() -> Path:
     return _fixture_path(
         "CFDNALAB_LENGTHS_GLOBAL_TSV",

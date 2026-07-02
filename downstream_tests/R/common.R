@@ -54,6 +54,38 @@ sparse_grouped_wide_motif_group_end_zarr_path <- function() {
   )
 }
 
+dense_global_ref_kmer_zarr_path <- function() {
+  fixture_path(
+    "CFDNALAB_REF_KMERS_DENSE_GLOBAL_ZARR",
+    "tiny_ref_kmers_dense_global.ref_kmer_counts.zarr",
+    "dense global reference k-mer"
+  )
+}
+
+sparse_windowed_ref_kmer_zarr_path <- function() {
+  fixture_path(
+    "CFDNALAB_REF_KMERS_SPARSE_WINDOWED_ZARR",
+    "tiny_ref_kmers_sparse_windowed.ref_kmer_counts.zarr",
+    "sparse windowed reference k-mer"
+  )
+}
+
+sparse_grouped_ref_kmer_zarr_path <- function() {
+  fixture_path(
+    "CFDNALAB_REF_KMERS_SPARSE_GROUPED_ZARR",
+    "tiny_ref_kmers_sparse_grouped.ref_kmer_counts.zarr",
+    "sparse grouped reference k-mer"
+  )
+}
+
+dense_grouped_motif_group_ref_kmer_zarr_path <- function() {
+  fixture_path(
+    "CFDNALAB_REF_KMERS_DENSE_GROUPED_MOTIF_GROUP_ZARR",
+    "tiny_ref_kmers_dense_grouped_motif_groups.ref_kmer_counts.zarr",
+    "dense grouped motif-group reference k-mer"
+  )
+}
+
 global_length_counts_path <- function() {
   fixture_file_path(
     "CFDNALAB_LENGTHS_GLOBAL_TSV",
