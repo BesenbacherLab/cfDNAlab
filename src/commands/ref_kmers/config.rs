@@ -167,6 +167,10 @@ pub struct RefKmersConfig {
     /// In grouped mode, the output motif axis contains one entry per distinct group name,
     /// ordered alphabetically by group name.
     ///
+    /// Frequencies are normalized over the selected motifs or groups in this file.
+    /// Unlisted k-mers are not part of the denominator. The row scaling factor stores the
+    /// selected-target count total, so reconstructed counts are selected k-mer or group counts.
+    ///
     /// Specifying the allowed subset of motifs beforehand enables counting of much
     /// larger k-mers without enumerating the full k-mer universe.
     #[cfg_attr(feature = "cli", clap(long, value_parser, help_heading = "Motifs"))]
@@ -193,7 +197,7 @@ pub struct RefKmersConfig {
 impl RefKmersConfig {
     /// Validate settings that can be checked before reading inputs.
     pub(crate) fn validate(&self) -> Result<()> {
-        validate_output_prefix(self.output_prefix.trim())?;
+        validate_output_prefix(&self.output_prefix)?;
 
         let window_opt = self.windows.resolve_windows();
         if let DistributionWindowSpec::Size(window_bp) = &window_opt {

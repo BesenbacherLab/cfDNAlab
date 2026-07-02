@@ -326,6 +326,8 @@ Grouped fcoverage TSV files store numeric `group_idx` values. Use `load_fcoverag
 
 Reference k-mer stores can be dense or sparse. They store row-wise frequencies plus a row scaling factor that reconstructs counts.
 
+For `ref-kmers` outputs written with `--motifs-file`, frequencies are normalized over the selected motifs or motif groups from that file. Unlisted k-mers are not part of the denominator, and the row scaling factor reconstructs selected k-mer or group counts.
+
 ```rust
 use cfdnalab::output_loaders::{
     load_ref_kmers_output,
@@ -335,6 +337,7 @@ use cfdnalab::output_loaders::{
 fn main() -> anyhow::Result<()> {
     // Load output file and check the available metadata
     let ref_kmers = load_ref_kmers_output("hg38.ref_kmer_counts.zarr")?;
+    ref_kmers.ensure_reference_2bit_matches("hg38.2bit")?;
     println!("{:?}", ref_kmers.output_metadata());
 
     // Reconstruct a count from one frequency and its row scaling factor

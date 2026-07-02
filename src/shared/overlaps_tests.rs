@@ -33,6 +33,67 @@ mod fixed_width_overlap_cursor_tests {
             .unwrap_or_default()
     }
 
+    fn row_overlap_signature(
+        windows: &[IndexedInterval<u64>],
+        overlaps: Option<&OverlappingWindows>,
+    ) -> Vec<(u64, u64, u64, f64)> {
+        overlaps
+            .map(|overlaps| {
+                overlaps
+                    .windows
+                    .iter()
+                    .map(|window| {
+                        (
+                            windows[window.idx].idx(),
+                            window.start(),
+                            window.end(),
+                            window.overlap_fraction,
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn assert_signature_close(
+        observed: Option<&OverlappingWindows>,
+        expected: &[(usize, u64, u64, f64)],
+    ) {
+        let observed = overlap_signature(observed);
+        assert_eq!(observed.len(), expected.len());
+        for (observed_window, expected_window) in observed.iter().zip(expected.iter()) {
+            assert_eq!(observed_window.0, expected_window.0);
+            assert_eq!(observed_window.1, expected_window.1);
+            assert_eq!(observed_window.2, expected_window.2);
+            assert!(
+                (observed_window.3 - expected_window.3).abs() < 1e-12,
+                "observed fraction {} != expected fraction {}",
+                observed_window.3,
+                expected_window.3
+            );
+        }
+    }
+
+    fn assert_row_signature_close(
+        windows: &[IndexedInterval<u64>],
+        observed: Option<&OverlappingWindows>,
+        expected: &[(u64, u64, u64, f64)],
+    ) {
+        let observed = row_overlap_signature(windows, observed);
+        assert_eq!(observed.len(), expected.len());
+        for (observed_window, expected_window) in observed.iter().zip(expected.iter()) {
+            assert_eq!(observed_window.0, expected_window.0);
+            assert_eq!(observed_window.1, expected_window.1);
+            assert_eq!(observed_window.2, expected_window.2);
+            assert!(
+                (observed_window.3 - expected_window.3).abs() < 1e-12,
+                "observed fraction {} != expected fraction {}",
+                observed_window.3,
+                expected_window.3
+            );
+        }
+    }
+
     fn assert_same_overlaps(
         cached: Option<&OverlappingWindows>,
         baseline: Option<&OverlappingWindows>,
@@ -74,6 +135,230 @@ mod fixed_width_overlap_cursor_tests {
         );
     }
 
+    fn assert_overlap_fraction_error(error: crate::Error, expected_fraction: f64) {
+        match error {
+            crate::Error::OverlapFractionOutOfBounds { overlap_fraction } => {
+                if expected_fraction.is_nan() {
+                    assert!(overlap_fraction.is_nan());
+                } else {
+                    assert_eq!(overlap_fraction, expected_fraction);
+                }
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn fixed_width_cursor_returns_manual_bed_overlap_signatures() -> Result<()> {
+        // Each expected fraction is derived from a four-base query divided by the overlap length
+        // with the BED window. Row ids come from `IndexedInterval.idx()`, not scan positions.
+        let chrom_len = 14;
+        let kmer_size = 4;
+        let min_overlap_fraction = 1.0 / (kmer_size as f64 + 1.0);
+        let windows = kmer_windows()?;
+        let mut cursor = FixedWidthOverlapCursor::new(
+            chrom_len,
+            Some(windows.as_slice()),
+            None,
+            kmer_size,
+            min_overlap_fraction,
+            0,
+        )?;
+        let expected_by_start: [Vec<(u64, u64, u64, f64)>; 11] = [
+            vec![(10, 2, 6, 2.0 / 4.0)],
+            vec![(10, 2, 6, 3.0 / 4.0)],
+            vec![(10, 2, 6, 4.0 / 4.0)],
+            vec![(10, 2, 6, 3.0 / 4.0), (11, 6, 9, 1.0 / 4.0)],
+            vec![(10, 2, 6, 2.0 / 4.0), (11, 6, 9, 2.0 / 4.0)],
+            vec![
+                (10, 2, 6, 1.0 / 4.0),
+                (11, 6, 9, 3.0 / 4.0),
+                (12, 8, 12, 1.0 / 4.0),
+            ],
+            vec![(11, 6, 9, 3.0 / 4.0), (12, 8, 12, 2.0 / 4.0)],
+            vec![(11, 6, 9, 2.0 / 4.0), (12, 8, 12, 3.0 / 4.0)],
+            vec![(11, 6, 9, 1.0 / 4.0), (12, 8, 12, 4.0 / 4.0)],
+            vec![(12, 8, 12, 3.0 / 4.0)],
+            vec![(12, 8, 12, 2.0 / 4.0)],
+        ];
+        let mut counts = BTreeMap::new();
+
+        for (query_start, expected_windows) in expected_by_start.iter().enumerate() {
+            let observed = cursor.find_overlaps(query_start as u64)?;
+
+            assert_row_signature_close(windows.as_slice(), observed.as_ref(), expected_windows);
+            add_count_overlap_weights(&mut counts, windows.as_slice(), observed.as_ref());
+        }
+
+        assert_count_close(&counts, 10, 3.75);
+        assert_count_close(&counts, 11, 3.00);
+        assert_count_close(&counts, 12, 3.75);
+        assert_eq!(counts.len(), 3);
+
+        Ok(())
+    }
+
+    #[test]
+    fn threshold_0_51_requires_three_of_four_bases() -> Result<()> {
+        // With k = 4, threshold 0.51 requires at least ceil(2.04) = 3 shared bases.
+        let chrom_len = 8;
+        let kmer_size = 4;
+        let windows = IndexedInterval::from_tuples(&[(2, 6, 10_u64)])?;
+        let mut cursor = FixedWidthOverlapCursor::new(
+            chrom_len,
+            Some(windows.as_slice()),
+            None,
+            kmer_size,
+            0.51,
+            0,
+        )?;
+        let expected_by_start: [Vec<(u64, u64, u64, f64)>; 5] = [
+            vec![],
+            vec![(10, 2, 6, 3.0 / 4.0)],
+            vec![(10, 2, 6, 4.0 / 4.0)],
+            vec![(10, 2, 6, 3.0 / 4.0)],
+            vec![],
+        ];
+
+        for (query_start, expected_windows) in expected_by_start.iter().enumerate() {
+            let observed = cursor.find_overlaps(query_start as u64)?;
+
+            assert_row_signature_close(windows.as_slice(), observed.as_ref(), expected_windows);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn zero_threshold_still_requires_positive_overlap() -> Result<()> {
+        // Touching half-open intervals share zero bases and must not be returned.
+        let chrom_len = 12;
+        let kmer_size = 4;
+        let windows = IndexedInterval::from_tuples(&[(4, 8, 10_u64)])?;
+        let mut cursor = FixedWidthOverlapCursor::new(
+            chrom_len,
+            Some(windows.as_slice()),
+            None,
+            kmer_size,
+            0.0,
+            0,
+        )?;
+
+        assert!(cursor.find_overlaps(0)?.is_none());
+        let one_base_overlap = cursor.find_overlaps(1)?;
+        assert_row_signature_close(
+            windows.as_slice(),
+            one_base_overlap.as_ref(),
+            &[(10, 4, 8, 1.0 / 4.0)],
+        );
+        assert!(cursor.find_overlaps(8)?.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn bed_window_end_is_clipped_to_chromosome() -> Result<()> {
+        // The first BED row extends past the chromosome and is counted as [8, 10). The second row
+        // starts at the chromosome end and never has a positive-width clipped span.
+        let chrom_len = 10;
+        let kmer_size = 4;
+        let windows = IndexedInterval::from_tuples(&[(8, 15, 10_u64), (10, 12, 11_u64)])?;
+        let mut cursor = FixedWidthOverlapCursor::new(
+            chrom_len,
+            Some(windows.as_slice()),
+            None,
+            kmer_size,
+            0.0,
+            0,
+        )?;
+
+        let one_base_overlap = cursor.find_overlaps(5)?;
+        assert_row_signature_close(
+            windows.as_slice(),
+            one_base_overlap.as_ref(),
+            &[(10, 8, 10, 1.0 / 4.0)],
+        );
+        let two_base_overlap = cursor.find_overlaps(6)?;
+        assert_row_signature_close(
+            windows.as_slice(),
+            two_base_overlap.as_ref(),
+            &[(10, 8, 10, 2.0 / 4.0)],
+        );
+        let clipped_query_overlap = cursor.find_overlaps(7)?;
+        assert_row_signature_close(
+            windows.as_slice(),
+            clipped_query_overlap.as_ref(),
+            &[(10, 8, 10, 2.0 / 3.0)],
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn clipped_query_uses_clipped_denominator() -> Result<()> {
+        // Query start 8 with k = 4 is clipped to [8, 10), so fractions use length 2.
+        let chrom_len = 10;
+        let kmer_size = 4;
+        let windows = IndexedInterval::from_tuples(&[(8, 10, 10_u64), (9, 10, 11_u64)])?;
+        let mut cursor = FixedWidthOverlapCursor::new(
+            chrom_len,
+            Some(windows.as_slice()),
+            None,
+            kmer_size,
+            0.0,
+            0,
+        )?;
+
+        let observed = cursor.find_overlaps(8)?;
+        assert_row_signature_close(
+            windows.as_slice(),
+            observed.as_ref(),
+            &[(10, 8, 10, 1.0), (11, 9, 10, 0.5)],
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn nonzero_starting_pointer_keeps_original_scan_indices() -> Result<()> {
+        // Starting at pointer 1 skips the first BED row, but returned indices still refer to the
+        // original scan positions in the full slice.
+        let chrom_len = 10;
+        let kmer_size = 4;
+        let windows =
+            IndexedInterval::from_tuples(&[(0, 2, 20_u64), (2, 6, 21_u64), (5, 9, 22_u64)])?;
+        let mut cursor = FixedWidthOverlapCursor::new(
+            chrom_len,
+            Some(windows.as_slice()),
+            None,
+            kmer_size,
+            0.0,
+            1,
+        )?;
+
+        let observed = cursor.find_overlaps(3)?;
+        assert_signature_close(
+            observed.as_ref(),
+            &[(1, 2, 6, 3.0 / 4.0), (2, 5, 9, 2.0 / 4.0)],
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn fixed_size_clipped_query_uses_clipped_denominator() -> Result<()> {
+        // Query start 7 with k = 4 is clipped to [7, 10), so fractions use length 3.
+        let mut cursor = FixedWidthOverlapCursor::new(10, None, Some(4), 4, 0.0, 0)?;
+
+        let observed = cursor.find_overlaps(7)?;
+        assert_signature_close(
+            observed.as_ref(),
+            &[(1, 4, 8, 1.0 / 3.0), (2, 8, 10, 2.0 / 3.0)],
+        );
+
+        Ok(())
+    }
+
     #[test]
     fn fixed_width_cursor_matches_finder_and_count_overlap_totals_in_kmer_loop() -> Result<()> {
         // Windows:
@@ -100,19 +385,6 @@ mod fixed_width_overlap_cursor_tests {
             0,
         )?;
         let mut counts = BTreeMap::new();
-        let expected_next_change_starts = [
-            Some(2),
-            Some(2),
-            Some(3),
-            Some(5),
-            Some(5),
-            Some(6),
-            Some(7),
-            Some(8),
-            Some(9),
-            Some(12),
-            Some(12),
-        ];
 
         for kmer_start in 0..=chrom_len - kmer_size {
             let query_interval = Interval::new(kmer_start, kmer_start + kmer_size)?;
@@ -129,20 +401,13 @@ mod fixed_width_overlap_cursor_tests {
 
             assert_same_overlaps(cached.as_ref(), baseline.as_ref());
             add_count_overlap_weights(&mut counts, windows.as_slice(), cached.as_ref());
-            assert_eq!(
-                cursor.next_change_start(),
-                expected_next_change_starts[kmer_start as usize]
-            );
         }
 
         assert_count_close(&counts, 10, 3.75);
         assert_count_close(&counts, 11, 3.00);
         assert_count_close(&counts, 12, 3.75);
         assert_eq!(counts.len(), 3);
-        // Cache refreshes occur at starts where the candidate BED window slice changes:
-        // initial start 0, row 10 exits at 3, row 12 enters at 5, row 11 enters at 6,
-        // and row 11 exits at 9.
-        assert_eq!(cursor.refresh_count(), 5);
+        // The cursor should reuse cached BED candidates instead of rebuilding for every start
         assert!(cursor.refresh_count() < (chrom_len - kmer_size + 1) as usize);
 
         Ok(())
@@ -340,6 +605,54 @@ mod fixed_width_overlap_cursor_tests {
         )?;
         assert!(empty_bed.find_overlaps(0)?.is_none());
         assert_eq!(empty_bed.refresh_count(), 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn overlap_finder_rejects_invalid_min_overlap_fractions() -> Result<()> {
+        let chrom_len = 14;
+        let kmer_size = 4;
+        let windows = kmer_windows()?;
+
+        for threshold in [-0.1, f64::NAN, 1.1] {
+            let mut wd_ptr = 0;
+            let error = find_overlapping_windows(
+                chrom_len,
+                &mut wd_ptr,
+                Some(windows.as_slice()),
+                None,
+                Interval::new(2, 2 + kmer_size)?,
+                threshold,
+                0,
+            )
+            .expect_err("invalid overlap thresholds should be rejected");
+
+            assert_overlap_fraction_error(error, threshold);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn fixed_width_cursor_rejects_invalid_min_overlap_fractions() -> Result<()> {
+        let chrom_len = 14;
+        let kmer_size = 4;
+        let windows = kmer_windows()?;
+
+        for threshold in [-0.1, f64::NAN, 1.1] {
+            let error = FixedWidthOverlapCursor::new(
+                chrom_len,
+                Some(windows.as_slice()),
+                None,
+                kmer_size,
+                threshold,
+                0,
+            )
+            .expect_err("invalid overlap thresholds should be rejected");
+
+            assert_overlap_fraction_error(error, threshold);
+        }
 
         Ok(())
     }

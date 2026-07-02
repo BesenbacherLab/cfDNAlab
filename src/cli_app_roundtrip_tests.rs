@@ -477,6 +477,48 @@ fn fragment_kmers_config_roundtrips_through_rendered_cli() {
     assert_config_roundtrips!(config, FragmentKmers, "fragment-kmers");
 }
 
+#[cfg(feature = "cmd_ref_kmers")]
+#[test]
+fn ref_kmers_config_roundtrips_through_rendered_cli() {
+    use crate::{
+        commands::{
+            cli_common::{DistributionWindowsArgs, WindowAssigner},
+            ref_kmers::config::RefKmersConfig,
+        },
+        shared::logging::{LogSpec, LoggingArgs},
+    };
+
+    let mut config = RefKmersConfig::new(
+        PathBuf::from("ref.2bit"),
+        PathBuf::from("out"),
+        4,
+        ChromosomeArgs {
+            chromosomes: None,
+            chromosomes_file: Some(PathBuf::from("chromosomes.txt")),
+        },
+    );
+    config.set_output_prefix("hg38");
+    config.set_n_threads(2);
+    config.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(PathBuf::from("groups.bed")),
+    });
+    config.set_assign_by(WindowAssigner::Proportion(0.5));
+    config.set_blacklist(Some(vec![
+        PathBuf::from("blacklist-a.bed"),
+        PathBuf::from("blacklist-b.bed"),
+    ]));
+    config.set_all_motifs(true);
+    config.set_motifs_file(Some(PathBuf::from("motifs.tsv")));
+    config.set_tile_size(2_000_000);
+    config.set_logging(LoggingArgs {
+        log: LogSpec::File(Some(PathBuf::from("logs/ref-kmers.log"))),
+    });
+
+    assert_config_roundtrips!(config, RefKmers, "ref-kmers");
+}
+
 #[cfg(feature = "cmd_transitions")]
 #[test]
 fn transitions_config_roundtrips_through_rendered_cli() {
