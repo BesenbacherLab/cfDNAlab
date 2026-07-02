@@ -39,6 +39,7 @@ default = [
     "cmd_gc_bias",
     "cmd_lengths",
     "cmd_midpoints",
+    "cmd_ref_kmers",
 ]
 cli = ["clap"]
 docs_gen = []

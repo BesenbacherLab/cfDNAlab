@@ -80,7 +80,7 @@ Then, you can add blacklist filtering, GC correction and more. See the [examples
 
 The following commands are currently available:
 
-`cfdna fcoverage`, `cfdna midpoints`, `cfdna ends`, `cfdna lengths`, `cfdna gc-bias`, `cfdna ref-gc-bias`, `cfdna fragment-count-weights`, `cfdna coverage-weights`, `cfdna bam-to-bam`, `cfdna bam-to-frag`, `cfdna frag-to-bam`.
+`cfdna fcoverage`, `cfdna midpoints`, `cfdna ends`, `cfdna lengths`, `cfdna gc-bias`, `cfdna ref-gc-bias`, `cfdna fragment-count-weights`, `cfdna coverage-weights`, `cfdna ref-kmers`, `cfdna bam-to-bam`, `cfdna bam-to-frag`, `cfdna frag-to-bam`.
 
 <p align="center">
   <img src="cfdnalab_command_overview.png" width="100%" alt="Overview of main commands" />
@@ -133,7 +133,7 @@ Extract fragmentomics features:
 
 ### Normalization
 
-Precompute GC-bias correction and genomic smoothing scaling factors:
+Precompute GC-bias correction, genomic smoothing scaling factors, and reference k-mer counts:
 
 <dl>
   <hr>
@@ -164,6 +164,15 @@ Precompute GC-bias correction and genomic smoothing scaling factors:
   width="245"
 /></dt>
   <dd>Calculate fragment coverage-based scaling factors for normalizing/smoothing coverage across the genome.</dd>
+  <hr>
+  <hr>
+
+  <dt><img
+  src="https://img.shields.io/badge/%24-cfdna%20ref--kmers-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
+  alt="cfdna ref-kmers"
+  width="245"
+/></dt>
+  <dd>Count k-mers in the reference genome for manual correction of end-motif counts.</dd>
   <hr>
 </dl>
 
