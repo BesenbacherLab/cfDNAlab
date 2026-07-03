@@ -7,26 +7,41 @@
 \alias{end_motif_data_frame}
 \title{Return end-motif counts as a data frame.}
 \usage{
-\method{end_motif_data_frame}{cfdnalab_global_end_motif_counts}(x, densify = FALSE, motifs = NULL, motif_idxs = NULL, ...)
+\method{end_motif_data_frame}{cfdnalab_global_end_motif_counts}(
+  x,
+  ref_kmers = NULL,
+  densify = FALSE,
+  motifs = NULL,
+  motif_idxs = NULL,
+  use_global_bias = FALSE,
+  unsupported_motifs = "error",
+  ...
+)
 
 \method{end_motif_data_frame}{cfdnalab_windowed_end_motif_counts}(
   x,
+  ref_kmers = NULL,
   window_idxs = NULL,
   densify = FALSE,
   motifs = NULL,
   motif_idxs = NULL,
   max_blacklisted_fraction = 1,
+  use_global_bias = FALSE,
+  unsupported_motifs = "error",
   ...
 )
 
 \method{end_motif_data_frame}{cfdnalab_grouped_end_motif_counts}(
   x,
+  ref_kmers = NULL,
   groups = NULL,
   group_idxs = NULL,
   densify = FALSE,
   motifs = NULL,
   motif_idxs = NULL,
   max_blacklisted_fraction = 1,
+  use_global_bias = FALSE,
+  unsupported_motifs = "error",
   ...
 )
 
@@ -35,6 +50,9 @@ end_motif_data_frame(x, ...)
 \arguments{
 \item{x}{A cfDNAlab end-motif object.}
 
+\item{ref_kmers}{Optional reference k-mer object used to add corrected
+counts.}
+
 \item{densify}{If \code{TRUE}, sparse outputs add explicit zero-count rows for
 selected observed motifs. Dense outputs ignore this option.}
 
@@ -42,6 +60,12 @@ selected observed motifs. Dense outputs ignore this option.}
 \code{motif_idxs}, not both.}
 
 \item{motif_idxs}{Optional one-based motif index vector.}
+
+\item{use_global_bias}{Whether a global reference k-mer output may be
+applied to every end-motif row.}
+
+\item{unsupported_motifs}{What to do with positive counts that have no
+positive reference frequency. Use \code{"error"}, \code{"drop"}, or \code{"keep_na"}.}
 
 \item{...}{Method-specific selection arguments.}
 
@@ -63,4 +87,8 @@ A data frame containing row metadata, motif metadata, and counts.
 Sparse outputs return stored non-zero rows unless the method explicitly
 receives \code{densify = TRUE}. Densifying adds explicit zero-count rows for
 selected observed motifs. Dense outputs always include zero counts.
+}
+\details{
+End-motif methods can receive \code{ref_kmers} to add reference-corrected counts
+without manually joining the sample and reference data frames.
 }

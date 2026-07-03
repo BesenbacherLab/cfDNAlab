@@ -308,6 +308,24 @@ dense_counts_matrix <- function(x, ...) {
   UseMethod("dense_counts_matrix")
 }
 
+#' Return reference-corrected counts as a dense matrix.
+#'
+#' These methods divide counts by the matching reference k-mer frequency scale.
+#' Sparse end-motif output is not densified unless the method explicitly
+#' receives `allow_densify = TRUE`. Dense matrices have a fixed row and motif
+#' shape, so `unsupported_motifs = "drop"` is not supported here. Use
+#' `end_motif_data_frame(..., ref_kmers = ref_kmers,
+#' unsupported_motifs = "drop")` when unsupported motifs should be omitted.
+#'
+#' @param x A cfDNAlab end-motif object.
+#' @param ... Method-specific arguments.
+#'
+#' @return A dense numeric matrix.
+#' @export
+dense_corrected_counts_matrix <- function(x, ...) {
+  UseMethod("dense_corrected_counts_matrix")
+}
+
 #' Return global counts as a named vector.
 #'
 #' Sparse output stores only non-zero values. These methods do not create a
@@ -362,6 +380,9 @@ dense_frequencies_vector <- function(x, ...) {
 #' receives `densify = TRUE`. Densifying adds explicit zero-count rows for
 #' selected observed motifs. Dense outputs always include zero counts.
 #'
+#' End-motif methods can receive `ref_kmers` to add reference-corrected counts
+#' without manually joining the sample and reference data frames.
+#'
 #' @param x A cfDNAlab end-motif object.
 #' @param ... Method-specific selection arguments.
 #'
@@ -403,6 +424,24 @@ ref_kmer_data_frame <- function(x, ...) {
 #' @export
 sparse_counts_matrix <- function(x, ...) {
   UseMethod("sparse_counts_matrix")
+}
+
+#' Return reference-corrected counts as a sparse matrix.
+#'
+#' Sparse output is returned without building a zero-filled dense matrix. Dense
+#' output is read into memory before conversion to a sparse matrix. Sparse
+#' matrices have a fixed row and motif shape, so `unsupported_motifs = "drop"`
+#' is not supported here. Use
+#' `end_motif_data_frame(..., ref_kmers = ref_kmers,
+#' unsupported_motifs = "drop")` when unsupported motifs should be omitted.
+#'
+#' @param x A cfDNAlab end-motif object.
+#' @param ... Method-specific arguments.
+#'
+#' @return A `Matrix` sparse matrix.
+#' @export
+sparse_corrected_counts_matrix <- function(x, ...) {
+  UseMethod("sparse_corrected_counts_matrix")
 }
 
 #' Return reference k-mer frequencies as a sparse matrix.

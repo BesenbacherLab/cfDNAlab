@@ -227,21 +227,24 @@ add_ref_kmer_motif_axis <- function(zarr_store, store_path, motifs) {
 add_ref_kmer_window_metadata <- function(
   zarr_store,
   store_path,
+  chromosome_names = c("chr2", "chr10"),
   row_chromosome = c(0L, 1L),
   row_start_bp = c(10L, 40L),
   row_end_bp = c(20L, 60L),
   blacklisted_fraction = c(0.25, 0)
 ) {
-  add_fixture_array(zarr_store, store_path, "/", "row", 0:1, "int32", "row")
+  row_idx0 <- seq_along(row_start_bp) - 1L
+  chromosome_idx0 <- seq_along(chromosome_names) - 1L
+  add_fixture_array(zarr_store, store_path, "/", "row", row_idx0, "int32", "row")
   add_fixture_array(
     zarr_store,
     store_path,
     "/",
     "chromosome",
-    0:1,
+    chromosome_idx0,
     "int32",
     "chromosome",
-    list(label_field = "chromosome_name", labels = list("chr2", "chr10"))
+    list(label_field = "chromosome_name", labels = as.list(chromosome_names))
   )
   add_fixture_array(
     zarr_store,
@@ -706,6 +709,7 @@ make_dense_windowed_ref_kmer_zarr_fixture <- function(
   canonical = FALSE,
   frequencies = matrix(c(0.25, 0, 0.75, 0.5, 0.5, 0), nrow = 2L, byrow = TRUE),
   row_scaling_factor = c(4, 2),
+  chromosome_names = c("chr2", "chr10"),
   row_chromosome = c(0L, 1L),
   row_start_bp = c(10L, 40L),
   row_end_bp = c(20L, 60L),
@@ -730,6 +734,7 @@ make_dense_windowed_ref_kmer_zarr_fixture <- function(
   add_ref_kmer_window_metadata(
     zarr_store,
     store_path,
+    chromosome_names = chromosome_names,
     row_chromosome = row_chromosome,
     row_start_bp = row_start_bp,
     row_end_bp = row_end_bp,
@@ -743,18 +748,20 @@ make_dense_windowed_ref_kmer_zarr_fixture <- function(
 }
 
 make_sparse_grouped_ref_kmer_zarr_fixture <- function(
+  motifs = c("AA", "AC", "GT"),
   sparse_row = c(0L, 0L, 1L),
   sparse_motif = c(0L, 2L, 1L),
   sparse_frequency = c(0.25, 0.75, 1),
-  row_scaling_factor = c(4, 2, 0),
   group_labels = list("A", "long_group", "empty"),
+  sparse_shape = c(length(group_labels), length(motifs)),
+  row_scaling_factor = c(4, 2, 0),
   eligible_windows = c(1L, 2L, 0L),
   blacklisted_fraction = c(0, 0.125, 0),
-  sparse_dimension_labels = list("row", "motif"),
-  sparse_shape = c(3L, 3L)
+  sparse_dimension_labels = list("row", "motif")
 ) {
   testthat::skip_if_not_installed("zarr")
 
+  row_idx0 <- seq_along(group_labels) - 1L
   store_path <- local_zarr_store_path("r-sparse-grouped-ref-kmer-fixture")
   zarr_store <- zarr::create_zarr(store_path)
   zarr_store$add_group("/", "sparse")
@@ -762,18 +769,19 @@ make_sparse_grouped_ref_kmer_zarr_fixture <- function(
     store_path,
     attributes = ref_kmer_root_attributes(
       storage_mode = "sparse_coo",
-      row_mode = "grouped_bed"
+      row_mode = "grouped_bed",
+      kmer_size = nchar(motifs[[1L]], type = "bytes")
     )
   )
 
-  add_ref_kmer_motif_axis(zarr_store, store_path, c("AA", "AC", "GT"))
-  add_fixture_array(zarr_store, store_path, "/", "row", 0:2, "int32", "row")
+  add_ref_kmer_motif_axis(zarr_store, store_path, motifs)
+  add_fixture_array(zarr_store, store_path, "/", "row", row_idx0, "int32", "row")
   add_fixture_array(
     zarr_store,
     store_path,
     "/",
     "group",
-    0:2,
+    row_idx0,
     "int32",
     "row",
     list(label_field = "group_name", labels = group_labels)
@@ -812,6 +820,42 @@ make_sparse_grouped_ref_kmer_zarr_fixture <- function(
     "sparse_dimension",
     list(label_field = "sparse_dimension_name", labels = sparse_dimension_labels)
   )
+
+  store_path
+}
+
+make_dense_global_ref_kmer_zarr_fixture <- function(
+  motifs = c("A", "G", "T"),
+  frequencies = matrix(c(1 / 3, 1 / 6, 1 / 2), nrow = 1L),
+  row_scaling_factor = 6
+) {
+  testthat::skip_if_not_installed("zarr")
+
+  store_path <- local_zarr_store_path("r-dense-global-ref-kmer-fixture")
+  zarr_store <- zarr::create_zarr(store_path)
+  patch_zarr_metadata(
+    store_path,
+    attributes = ref_kmer_root_attributes(
+      storage_mode = "dense",
+      row_mode = "global",
+      kmer_size = nchar(motifs[[1L]], type = "bytes")
+    )
+  )
+
+  add_ref_kmer_motif_axis(zarr_store, store_path, motifs)
+  add_fixture_array(
+    zarr_store,
+    store_path,
+    "/",
+    "row",
+    0L,
+    "int32",
+    "row",
+    list(label_field = "row_label", labels = list("global"))
+  )
+  add_fixture_array(zarr_store, store_path, "/", "row_scaling_factor", row_scaling_factor, "float64", "row")
+  add_reference_contig_footprint_array(zarr_store, store_path)
+  add_fixture_array(zarr_store, store_path, "/", "frequencies", frequencies, "float64", c("row", "motif"))
 
   store_path
 }

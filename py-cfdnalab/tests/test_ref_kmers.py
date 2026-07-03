@@ -177,7 +177,7 @@ def test_sparse_grouped_ref_kmers_reconstruct_dense_counts_and_metadata(
             }
         ),
     )
-    with pytest.raises(ValueError, match="would densify a sparse reference k-mer store"):
+    with pytest.raises(ValueError, match="would turn sparse reference k-mer output"):
         ref_kmers.dense_frequencies_array()
     np.testing.assert_allclose(
         ref_kmers.dense_frequencies_array(allow_densify=True),

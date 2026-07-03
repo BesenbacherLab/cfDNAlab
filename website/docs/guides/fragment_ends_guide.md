@@ -185,3 +185,64 @@ if (storage_mode(ends) == "sparse_coo") {
 }
 ```
 
+## Correct reference k-mers bias
+
+The end-motif frequencies reflect the reference sequence composition in the regions you count. To make regions more comparable in enrichment analyses, you can correct it by dividing the end-motif counts by the reference sequence composition.
+
+First precompute matching reference k-mer frequencies with `cfdna ref-kmers`, then load the sample end motifs and reference k-mers in Python or R and pass the reference k-mers to the usual end-motif output loaders.
+
+You only need to run `cfdna ref-kmers` once per reference setup. That means once per reference genome, blacklist, k-mer size, etc. You do not need to run it once per sample.
+
+Use `--kmer-size` equal to `--k-outside + --k-inside`. For `--k-outside 2 --k-inside 2`, use `--kmer-size 4`:
+
+```bash
+cfdna ref-kmers \
+  --ref-2bit <path>/hg38.2bit \
+  --output-dir <reference_directory>/ref_kmers \
+  --output-prefix hg38.k4 \
+  --n-threads 12 \
+  --blacklist <path>/hg38-blacklist.v2.bed \
+  --kmer-size 4 \
+  --all-motifs
+```
+
+If the `cfdna ends` call used `--by-size`, `--by-bed`, or `--by-grouped-bed`, pass the same windowing or grouping option to `cfdna ref-kmers`. If the end-motif run used `--motifs-file`, pass the same motifs file to `cfdna ref-kmers`. `ref-kmers` accepts end-motif labels such as `AT_CG` and treats them as the reference k-mer `ATCG`.
+
+Both outputs use **forward-oriented** motif labels only. `cfdna ends` reverse-complements right-end motifs before writing them, and `cfdna ref-kmers` counts reference k-mers left-to-right. For ungrouped motif labels, match them by removing the underscore, for example `AT_CG -> ATCG`, `_AA -> AA`, and `AA_ -> AA`. For grouped motifs-file output, both outputs use the group names directly.
+
+In Python:
+
+```python
+import cfdnalab as cfl
+
+ends = cfl.read_end_motifs("<sample_id>.end_motifs.zarr")
+ref_kmers = cfl.read_ref_kmers("<reference>.ref_kmer_counts.zarr")
+
+corrected = ends.data_frame(ref_kmers=ref_kmers)
+
+# Drop or NA motifs that are only present in the sample (can happen with large k-mers)
+corrected_without_unsupported = ends.data_frame(
+  ref_kmers=ref_kmers,
+  unsupported_motifs="drop",
+)
+```
+
+In R:
+
+```r
+library(cfdnalab)
+
+ends <- read_end_motifs("<sample_id>.end_motifs.zarr")
+ref_kmers <- read_ref_kmers("<reference>.ref_kmer_counts.zarr")
+
+corrected <- end_motif_data_frame(ends, ref_kmers = ref_kmers)
+
+# Drop or NA motifs that are only present in the sample (can happen with large k-mers)
+corrected_without_unsupported <- end_motif_data_frame(
+  ends,
+  ref_kmers = ref_kmers,
+  unsupported_motifs = "drop"
+)
+```
+
+The loaders handle dense and sparse outputs without manually joining the data frames. By default they stop if the sample has positive-count motifs with no positive reference frequency. Use `unsupported_motifs = "drop"` to omit those rows, or `unsupported_motifs = "keep_na"` to keep them with undefined corrected counts.

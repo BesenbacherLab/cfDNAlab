@@ -22,6 +22,7 @@ from ._helpers import (
     resolve_unique_match,
     validate_scalar_bool,
 )
+from .ref_kmers import RefKmerFrequencies
 
 END_MOTIF_MIN_SUPPORTED_SCHEMA_VERSION = 1
 END_MOTIF_MAX_SUPPORTED_SCHEMA_VERSION = 2
@@ -459,6 +460,113 @@ class EndMotifCounts:
             row_indices, motif_indices, densify
         )
 
+    def _data_frame_with_optional_reference_correction(
+        self,
+        *,
+        ref_kmers: RefKmerFrequencies | None = None,
+        densify: bool = False,
+        window_idxs: int | Sequence[int] | None = None,
+        groups: str | Sequence[str] | None = None,
+        group_idxs: int | Sequence[int] | None = None,
+        motifs: str | Sequence[str] | None = None,
+        motif_idxs: int | Sequence[int] | None = None,
+        max_blacklisted_fraction: float = 1.0,
+        use_global_bias: bool = False,
+        unsupported_motifs: str = "error",
+    ) -> pd.DataFrame:
+        """
+        Return raw or reference-corrected data frame rows.
+        """
+        if ref_kmers is None:
+            return self._data_frame(
+                densify=densify,
+                window_idxs=window_idxs,
+                groups=groups,
+                group_idxs=group_idxs,
+                motifs=motifs,
+                motif_idxs=motif_idxs,
+                max_blacklisted_fraction=max_blacklisted_fraction,
+            )
+        from .reference_correction import _reference_corrected_data_frame
+
+        return _reference_corrected_data_frame(
+            self,
+            ref_kmers,
+            window_idxs=window_idxs,
+            groups=groups,
+            group_idxs=group_idxs,
+            densify=densify,
+            motifs=motifs,
+            motif_idxs=motif_idxs,
+            max_blacklisted_fraction=max_blacklisted_fraction,
+            use_global_bias=use_global_bias,
+            unsupported_motifs=unsupported_motifs,
+        )
+
+    def _corrected_counts_array(
+        self,
+        ref_kmers: RefKmerFrequencies,
+        *,
+        window_idxs: int | Sequence[int] | None = None,
+        groups: str | Sequence[str] | None = None,
+        group_idxs: int | Sequence[int] | None = None,
+        motifs: str | Sequence[str] | None = None,
+        motif_idxs: int | Sequence[int] | None = None,
+        allow_densify: bool = False,
+        max_blacklisted_fraction: float = 1.0,
+        use_global_bias: bool = False,
+        unsupported_motifs: str = "error",
+    ) -> np.ndarray:
+        """
+        Return corrected counts as a dense NumPy array.
+        """
+        from .reference_correction import _reference_corrected_counts_array
+
+        return _reference_corrected_counts_array(
+            self,
+            ref_kmers,
+            window_idxs=window_idxs,
+            groups=groups,
+            group_idxs=group_idxs,
+            motifs=motifs,
+            motif_idxs=motif_idxs,
+            allow_densify=allow_densify,
+            max_blacklisted_fraction=max_blacklisted_fraction,
+            use_global_bias=use_global_bias,
+            unsupported_motifs=unsupported_motifs,
+        )
+
+    def _sparse_corrected_counts_matrix(
+        self,
+        ref_kmers: RefKmerFrequencies,
+        *,
+        window_idxs: int | Sequence[int] | None = None,
+        groups: str | Sequence[str] | None = None,
+        group_idxs: int | Sequence[int] | None = None,
+        motifs: str | Sequence[str] | None = None,
+        motif_idxs: int | Sequence[int] | None = None,
+        max_blacklisted_fraction: float = 1.0,
+        use_global_bias: bool = False,
+        unsupported_motifs: str = "error",
+    ) -> sparse.coo_matrix:
+        """
+        Return corrected counts as a SciPy COO matrix.
+        """
+        from .reference_correction import _sparse_reference_corrected_counts_matrix
+
+        return _sparse_reference_corrected_counts_matrix(
+            self,
+            ref_kmers,
+            window_idxs=window_idxs,
+            groups=groups,
+            group_idxs=group_idxs,
+            motifs=motifs,
+            motif_idxs=motif_idxs,
+            max_blacklisted_fraction=max_blacklisted_fraction,
+            use_global_bias=use_global_bias,
+            unsupported_motifs=unsupported_motifs,
+        )
+
     def dense_counts_zarr_array(self) -> zarr.Array:
         """
         Return the lazy Zarr counts array for dense output.
@@ -708,19 +816,25 @@ class GlobalEndMotifCounts(EndMotifCounts):
     def data_frame(
         self,
         *,
+        ref_kmers: RefKmerFrequencies | None = None,
         densify: bool = False,
         motifs: str | Sequence[str] | None = None,
         motif_idxs: int | Sequence[int] | None = None,
+        use_global_bias: bool = False,
+        unsupported_motifs: str = "error",
     ) -> pd.DataFrame:
         """
         Create a pandas DataFrame for global end-motif counts.
 
         Sparse outputs return stored non-zero motif counts unless
         `densify=True`. Densifying adds explicit zero-count rows for selected
-        observed motifs. Dense outputs always include zero counts.
+        observed motifs. Dense outputs always include zero counts. Pass
+        `ref_kmers` to add reference-corrected counts.
 
         Parameters
         ----------
+        ref_kmers
+            Optional loaded reference k-mer output used for correction.
         densify
             If `True`, sparse outputs add explicit zero-count rows for selected
             observed motifs. Dense outputs ignore this option.
@@ -728,16 +842,25 @@ class GlobalEndMotifCounts(EndMotifCounts):
             Motif label or labels. Use either `motifs` or `motif_idxs`, not both.
         motif_idxs
             Motif index or indices. Use either `motifs` or `motif_idxs`, not both.
+        use_global_bias
+            Whether a global reference k-mer output may be applied to every row.
+        unsupported_motifs
+            What to do with positive counts that have no positive reference
+            frequency. Use `"error"`, `"drop"`, or `"keep_na"`.
 
         Returns
         -------
         pandas.DataFrame
-            Global row metadata, motif metadata, and `count`.
+            Global row metadata, motif metadata, and `count`. If `ref_kmers`
+            is passed, also includes reference correction columns.
         """
-        return self._data_frame(
+        return self._data_frame_with_optional_reference_correction(
+            ref_kmers=ref_kmers,
             densify=densify,
             motifs=motifs,
             motif_idxs=motif_idxs,
+            use_global_bias=use_global_bias,
+            unsupported_motifs=unsupported_motifs,
         )
 
     def dense_counts_array(
@@ -803,6 +926,67 @@ class GlobalEndMotifCounts(EndMotifCounts):
             motif_idxs=motif_idxs,
         )
 
+    def corrected_counts_array(
+        self,
+        ref_kmers: RefKmerFrequencies,
+        *,
+        motifs: str | Sequence[str] | None = None,
+        motif_idxs: int | Sequence[int] | None = None,
+        allow_densify: bool = False,
+        use_global_bias: bool = False,
+        unsupported_motifs: str = "error",
+    ) -> np.ndarray:
+        """
+        Return global reference-corrected end-motif counts as a dense array.
+
+        The result has the same shape as `dense_counts_array()`. Counts are
+        divided by the matching reference k-mer frequency scale. Sparse
+        end-motif stores are not densified unless `allow_densify=True`; use
+        `sparse_corrected_counts_matrix()` to keep a sparse result.
+
+        `unsupported_motifs="drop"` is not allowed because arrays have a fixed
+        row and motif shape. Use
+        `data_frame(ref_kmers=..., unsupported_motifs="drop")` when
+        unsupported motifs should be omitted.
+        """
+        return self._corrected_counts_array(
+            ref_kmers,
+            motifs=motifs,
+            motif_idxs=motif_idxs,
+            allow_densify=allow_densify,
+            use_global_bias=use_global_bias,
+            unsupported_motifs=unsupported_motifs,
+        )
+
+    def sparse_corrected_counts_matrix(
+        self,
+        ref_kmers: RefKmerFrequencies,
+        *,
+        motifs: str | Sequence[str] | None = None,
+        motif_idxs: int | Sequence[int] | None = None,
+        use_global_bias: bool = False,
+        unsupported_motifs: str = "error",
+    ) -> sparse.coo_matrix:
+        """
+        Return global reference-corrected end-motif counts as a sparse matrix.
+
+        The result has the same shape as `sparse_counts_matrix()`. Corrected
+        zeroes are not stored. Corrected `NaN` values from
+        `unsupported_motifs="keep_na"` are stored so they remain visible.
+
+        `unsupported_motifs="drop"` is not allowed because sparse matrices
+        still have a fixed row and motif shape. Use
+        `data_frame(ref_kmers=..., unsupported_motifs="drop")` when
+        unsupported motifs should be omitted.
+        """
+        return self._sparse_corrected_counts_matrix(
+            ref_kmers,
+            motifs=motifs,
+            motif_idxs=motif_idxs,
+            use_global_bias=use_global_bias,
+            unsupported_motifs=unsupported_motifs,
+        )
+
 
 class WindowedEndMotifCounts(EndMotifCounts):
     """End-motif counts for fixed-size or BED-window output."""
@@ -810,11 +994,14 @@ class WindowedEndMotifCounts(EndMotifCounts):
     def data_frame(
         self,
         *,
+        ref_kmers: RefKmerFrequencies | None = None,
         window_idxs: int | Sequence[int] | None = None,
         densify: bool = False,
         motifs: str | Sequence[str] | None = None,
         motif_idxs: int | Sequence[int] | None = None,
         max_blacklisted_fraction: float = 1.0,
+        use_global_bias: bool = False,
+        unsupported_motifs: str = "error",
     ) -> pd.DataFrame:
         """
         Create a pandas DataFrame of end-motif counts for genomic windows.
@@ -823,10 +1010,12 @@ class WindowedEndMotifCounts(EndMotifCounts):
         `motif_idxs` to keep only selected motifs. Sparse outputs return stored
         non-zero rows unless `densify=True`. Densifying adds explicit
         zero-count rows for selected observed motifs. Dense outputs always
-        include zero counts.
+        include zero counts. Pass `ref_kmers` to add reference-corrected counts.
 
         Parameters
         ----------
+        ref_kmers
+            Optional loaded reference k-mer output used for correction.
         window_idxs
             `None` for all windows, one window index, or a sequence of window
             indices.
@@ -840,18 +1029,27 @@ class WindowedEndMotifCounts(EndMotifCounts):
         max_blacklisted_fraction
             Maximum row `blacklisted_fraction` in 0..1 to retain before counts
             are returned. The default `1.0` keeps all selected windows.
+        use_global_bias
+            Whether a global reference k-mer output may be applied to every row.
+        unsupported_motifs
+            What to do with positive counts that have no positive reference
+            frequency. Use `"error"`, `"drop"`, or `"keep_na"`.
 
         Returns
         -------
         pandas.DataFrame
-            Window metadata, motif metadata, and `count`.
+            Window metadata, motif metadata, and `count`. If `ref_kmers` is
+            passed, also includes reference correction columns.
         """
-        return self._data_frame(
+        return self._data_frame_with_optional_reference_correction(
+            ref_kmers=ref_kmers,
             densify=densify,
             window_idxs=window_idxs,
             motifs=motifs,
             motif_idxs=motif_idxs,
             max_blacklisted_fraction=max_blacklisted_fraction,
+            use_global_bias=use_global_bias,
+            unsupported_motifs=unsupported_motifs,
         )
 
     def window_metadata(self) -> pd.DataFrame:
@@ -942,6 +1140,77 @@ class WindowedEndMotifCounts(EndMotifCounts):
             motif_idxs=motif_idxs,
         )
 
+    def corrected_counts_array(
+        self,
+        ref_kmers: RefKmerFrequencies,
+        *,
+        window_idxs: int | Sequence[int] | None = None,
+        motifs: str | Sequence[str] | None = None,
+        motif_idxs: int | Sequence[int] | None = None,
+        allow_densify: bool = False,
+        max_blacklisted_fraction: float = 1.0,
+        use_global_bias: bool = False,
+        unsupported_motifs: str = "error",
+    ) -> np.ndarray:
+        """
+        Return windowed reference-corrected end-motif counts as a dense array.
+
+        The result has the same shape as `dense_counts_array()` for the
+        selected windows and motifs. Counts are divided by the matching
+        reference k-mer frequency scale. Sparse end-motif stores are not
+        densified unless `allow_densify=True`; use
+        `sparse_corrected_counts_matrix()` to keep a sparse result.
+
+        `unsupported_motifs="drop"` is not allowed because arrays have a fixed
+        row and motif shape. Use
+        `data_frame(ref_kmers=..., unsupported_motifs="drop")` when
+        unsupported motifs should be omitted.
+        """
+        return self._corrected_counts_array(
+            ref_kmers,
+            window_idxs=window_idxs,
+            motifs=motifs,
+            motif_idxs=motif_idxs,
+            allow_densify=allow_densify,
+            max_blacklisted_fraction=max_blacklisted_fraction,
+            use_global_bias=use_global_bias,
+            unsupported_motifs=unsupported_motifs,
+        )
+
+    def sparse_corrected_counts_matrix(
+        self,
+        ref_kmers: RefKmerFrequencies,
+        *,
+        window_idxs: int | Sequence[int] | None = None,
+        motifs: str | Sequence[str] | None = None,
+        motif_idxs: int | Sequence[int] | None = None,
+        max_blacklisted_fraction: float = 1.0,
+        use_global_bias: bool = False,
+        unsupported_motifs: str = "error",
+    ) -> sparse.coo_matrix:
+        """
+        Return windowed reference-corrected end-motif counts as a sparse matrix.
+
+        The result has the same shape as `sparse_counts_matrix()` for the
+        selected windows and motifs. Corrected zeroes are not stored. Corrected
+        `NaN` values from `unsupported_motifs="keep_na"` are stored so they
+        remain visible.
+
+        `unsupported_motifs="drop"` is not allowed because sparse matrices
+        still have a fixed row and motif shape. Use
+        `data_frame(ref_kmers=..., unsupported_motifs="drop")` when
+        unsupported motifs should be omitted.
+        """
+        return self._sparse_corrected_counts_matrix(
+            ref_kmers,
+            window_idxs=window_idxs,
+            motifs=motifs,
+            motif_idxs=motif_idxs,
+            max_blacklisted_fraction=max_blacklisted_fraction,
+            use_global_bias=use_global_bias,
+            unsupported_motifs=unsupported_motifs,
+        )
+
 
 class GroupedEndMotifCounts(EndMotifCounts):
     """End-motif counts for grouped BED output."""
@@ -949,12 +1218,15 @@ class GroupedEndMotifCounts(EndMotifCounts):
     def data_frame(
         self,
         *,
+        ref_kmers: RefKmerFrequencies | None = None,
         groups: str | Sequence[str] | None = None,
         group_idxs: int | Sequence[int] | None = None,
         densify: bool = False,
         motifs: str | Sequence[str] | None = None,
         motif_idxs: int | Sequence[int] | None = None,
         max_blacklisted_fraction: float = 1.0,
+        use_global_bias: bool = False,
+        unsupported_motifs: str = "error",
     ) -> pd.DataFrame:
         """
         Create a pandas DataFrame of end-motif counts for grouped BED rows.
@@ -963,10 +1235,12 @@ class GroupedEndMotifCounts(EndMotifCounts):
         or `motif_idxs` to keep only selected motifs. Sparse outputs return
         stored non-zero rows unless `densify=True`. Densifying adds explicit
         zero-count rows for selected observed motifs. Dense outputs always
-        include zero counts.
+        include zero counts. Pass `ref_kmers` to add reference-corrected counts.
 
         Parameters
         ----------
+        ref_kmers
+            Optional loaded reference k-mer output used for correction.
         groups
             `None` for all groups, one group name, or a sequence of group names.
             Use either `groups` or `group_idxs`, not both.
@@ -983,19 +1257,28 @@ class GroupedEndMotifCounts(EndMotifCounts):
         max_blacklisted_fraction
             Maximum row `blacklisted_fraction` in 0..1 to retain before counts
             are returned. The default `1.0` keeps all selected groups.
+        use_global_bias
+            Whether a global reference k-mer output may be applied to every row.
+        unsupported_motifs
+            What to do with positive counts that have no positive reference
+            frequency. Use `"error"`, `"drop"`, or `"keep_na"`.
 
         Returns
         -------
         pandas.DataFrame
-            Group metadata, motif metadata, and `count`.
+            Group metadata, motif metadata, and `count`. If `ref_kmers` is
+            passed, also includes reference correction columns.
         """
-        return self._data_frame(
+        return self._data_frame_with_optional_reference_correction(
+            ref_kmers=ref_kmers,
             densify=densify,
             groups=groups,
             group_idxs=group_idxs,
             motifs=motifs,
             motif_idxs=motif_idxs,
             max_blacklisted_fraction=max_blacklisted_fraction,
+            use_global_bias=use_global_bias,
+            unsupported_motifs=unsupported_motifs,
         )
 
     def group_metadata(self) -> pd.DataFrame:
@@ -1112,6 +1395,81 @@ class GroupedEndMotifCounts(EndMotifCounts):
             group_idxs=group_idxs,
             motifs=motifs,
             motif_idxs=motif_idxs,
+        )
+
+    def corrected_counts_array(
+        self,
+        ref_kmers: RefKmerFrequencies,
+        *,
+        groups: str | Sequence[str] | None = None,
+        group_idxs: int | Sequence[int] | None = None,
+        motifs: str | Sequence[str] | None = None,
+        motif_idxs: int | Sequence[int] | None = None,
+        allow_densify: bool = False,
+        max_blacklisted_fraction: float = 1.0,
+        use_global_bias: bool = False,
+        unsupported_motifs: str = "error",
+    ) -> np.ndarray:
+        """
+        Return grouped reference-corrected end-motif counts as a dense array.
+
+        The result has the same shape as `dense_counts_array()` for the
+        selected groups and motifs. Counts are divided by the matching
+        reference k-mer frequency scale. Sparse end-motif stores are not
+        densified unless `allow_densify=True`; use
+        `sparse_corrected_counts_matrix()` to keep a sparse result.
+
+        `unsupported_motifs="drop"` is not allowed because arrays have a fixed
+        row and motif shape. Use
+        `data_frame(ref_kmers=..., unsupported_motifs="drop")` when
+        unsupported motifs should be omitted.
+        """
+        return self._corrected_counts_array(
+            ref_kmers,
+            groups=groups,
+            group_idxs=group_idxs,
+            motifs=motifs,
+            motif_idxs=motif_idxs,
+            allow_densify=allow_densify,
+            max_blacklisted_fraction=max_blacklisted_fraction,
+            use_global_bias=use_global_bias,
+            unsupported_motifs=unsupported_motifs,
+        )
+
+    def sparse_corrected_counts_matrix(
+        self,
+        ref_kmers: RefKmerFrequencies,
+        *,
+        groups: str | Sequence[str] | None = None,
+        group_idxs: int | Sequence[int] | None = None,
+        motifs: str | Sequence[str] | None = None,
+        motif_idxs: int | Sequence[int] | None = None,
+        max_blacklisted_fraction: float = 1.0,
+        use_global_bias: bool = False,
+        unsupported_motifs: str = "error",
+    ) -> sparse.coo_matrix:
+        """
+        Return grouped reference-corrected end-motif counts as a sparse matrix.
+
+        The result has the same shape as `sparse_counts_matrix()` for the
+        selected groups and motifs. Corrected zeroes are not stored. Corrected
+        `NaN` values from `unsupported_motifs="keep_na"` are stored so they
+        remain visible.
+
+        `unsupported_motifs="drop"` is not allowed because sparse matrices
+        still have a fixed row and motif shape. Use
+        `data_frame(ref_kmers=..., unsupported_motifs="drop")` when
+        unsupported motifs should be omitted.
+        """
+        return self._sparse_corrected_counts_matrix(
+            ref_kmers,
+            groups=groups,
+            group_idxs=group_idxs,
+            motifs=motifs,
+            motif_idxs=motif_idxs,
+            max_blacklisted_fraction=max_blacklisted_fraction,
+            use_global_bias=use_global_bias,
+            unsupported_motifs=unsupported_motifs,
         )
 
 

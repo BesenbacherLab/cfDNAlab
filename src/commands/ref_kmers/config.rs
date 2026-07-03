@@ -11,7 +11,7 @@ const DEFAULT_TILE_SIZE: u32 = 10_000_000;
 /// It writes row-wise frequencies plus a row scaling factor
 /// for reconstructing counts downstream.
 ///
-/// K-mers are counted left-to-right and only contains the forward-oriented motifs
+/// K-mers are counted **left-to-right** and only contains the forward-oriented motifs
 /// from eligible positions (non-blacklisted regions).
 /// Downstream applications needing the reverse-oriented motifs would need to
 /// reverse-complement the motifs.

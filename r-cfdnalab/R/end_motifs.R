@@ -639,6 +639,194 @@ cf_dense_end_motif_matrix_for_indices <- function(
 }
 
 #' @export
+#' @rdname dense_corrected_counts_matrix
+#' @param ref_kmers Reference k-mer object used for correction.
+#' @param motifs Optional motif label vector. Use either `motifs` or
+#'   `motif_idxs`, not both.
+#' @param motif_idxs Optional one-based motif index vector.
+#' @param allow_densify If `TRUE`, allow sparse stores to be converted to a dense
+#'   in-memory matrix. Sparse stores error by default.
+#' @param use_global_bias Whether a global reference k-mer output may be
+#'   applied to every end-motif row.
+#' @param unsupported_motifs What to do with positive counts that have no
+#'   positive reference frequency. Use `"error"`, `"drop"`, or `"keep_na"`.
+dense_corrected_counts_matrix.cfdnalab_global_end_motif_counts <- function(
+  x,
+  ref_kmers,
+  allow_densify = FALSE,
+  motifs = NULL,
+  motif_idxs = NULL,
+  use_global_bias = FALSE,
+  unsupported_motifs = "error",
+  ...
+) {
+  cf_reject_unused_arguments(...)
+  cf_reference_corrected_counts_matrix(
+    x,
+    ref_kmers,
+    motifs = motifs,
+    motif_idxs = motif_idxs,
+    allow_densify = allow_densify,
+    use_global_bias = use_global_bias,
+    unsupported_motifs = unsupported_motifs
+  )
+}
+
+#' @export
+#' @rdname dense_corrected_counts_matrix
+#' @param window_idxs Optional one-based window index vector for windowed output.
+#' @param max_blacklisted_fraction Maximum row `blacklisted_fraction` in 0..1
+#'   to retain before returning counts.
+dense_corrected_counts_matrix.cfdnalab_windowed_end_motif_counts <- function(
+  x,
+  ref_kmers,
+  allow_densify = FALSE,
+  window_idxs = NULL,
+  motifs = NULL,
+  motif_idxs = NULL,
+  max_blacklisted_fraction = 1.0,
+  use_global_bias = FALSE,
+  unsupported_motifs = "error",
+  ...
+) {
+  cf_reject_unused_arguments(...)
+  cf_reference_corrected_counts_matrix(
+    x,
+    ref_kmers,
+    window_idxs = window_idxs,
+    motifs = motifs,
+    motif_idxs = motif_idxs,
+    allow_densify = allow_densify,
+    max_blacklisted_fraction = max_blacklisted_fraction,
+    use_global_bias = use_global_bias,
+    unsupported_motifs = unsupported_motifs
+  )
+}
+
+#' @export
+#' @rdname dense_corrected_counts_matrix
+#' @param groups Optional group name vector for grouped output. Use either
+#'   `groups` or `group_idxs`, not both.
+#' @param group_idxs Optional one-based group index vector for grouped output.
+dense_corrected_counts_matrix.cfdnalab_grouped_end_motif_counts <- function(
+  x,
+  ref_kmers,
+  allow_densify = FALSE,
+  groups = NULL,
+  group_idxs = NULL,
+  motifs = NULL,
+  motif_idxs = NULL,
+  max_blacklisted_fraction = 1.0,
+  use_global_bias = FALSE,
+  unsupported_motifs = "error",
+  ...
+) {
+  cf_reject_unused_arguments(...)
+  cf_reference_corrected_counts_matrix(
+    x,
+    ref_kmers,
+    groups = groups,
+    group_idxs = group_idxs,
+    motifs = motifs,
+    motif_idxs = motif_idxs,
+    allow_densify = allow_densify,
+    max_blacklisted_fraction = max_blacklisted_fraction,
+    use_global_bias = use_global_bias,
+    unsupported_motifs = unsupported_motifs
+  )
+}
+
+#' @export
+#' @rdname sparse_corrected_counts_matrix
+#' @param ref_kmers Reference k-mer object used for correction.
+#' @param motifs Optional motif label vector. Use either `motifs` or
+#'   `motif_idxs`, not both.
+#' @param motif_idxs Optional one-based motif index vector.
+#' @param use_global_bias Whether a global reference k-mer output may be
+#'   applied to every end-motif row.
+#' @param unsupported_motifs What to do with positive counts that have no
+#'   positive reference frequency. Use `"error"`, `"drop"`, or `"keep_na"`.
+sparse_corrected_counts_matrix.cfdnalab_global_end_motif_counts <- function(
+  x,
+  ref_kmers,
+  motifs = NULL,
+  motif_idxs = NULL,
+  use_global_bias = FALSE,
+  unsupported_motifs = "error",
+  ...
+) {
+  cf_reject_unused_arguments(...)
+  cf_sparse_reference_corrected_counts_matrix(
+    x,
+    ref_kmers,
+    motifs = motifs,
+    motif_idxs = motif_idxs,
+    use_global_bias = use_global_bias,
+    unsupported_motifs = unsupported_motifs
+  )
+}
+
+#' @export
+#' @rdname sparse_corrected_counts_matrix
+#' @param window_idxs Optional one-based window index vector for windowed output.
+#' @param max_blacklisted_fraction Maximum row `blacklisted_fraction` in 0..1
+#'   to retain before returning counts.
+sparse_corrected_counts_matrix.cfdnalab_windowed_end_motif_counts <- function(
+  x,
+  ref_kmers,
+  window_idxs = NULL,
+  motifs = NULL,
+  motif_idxs = NULL,
+  max_blacklisted_fraction = 1.0,
+  use_global_bias = FALSE,
+  unsupported_motifs = "error",
+  ...
+) {
+  cf_reject_unused_arguments(...)
+  cf_sparse_reference_corrected_counts_matrix(
+    x,
+    ref_kmers,
+    window_idxs = window_idxs,
+    motifs = motifs,
+    motif_idxs = motif_idxs,
+    max_blacklisted_fraction = max_blacklisted_fraction,
+    use_global_bias = use_global_bias,
+    unsupported_motifs = unsupported_motifs
+  )
+}
+
+#' @export
+#' @rdname sparse_corrected_counts_matrix
+#' @param groups Optional group name vector for grouped output. Use either
+#'   `groups` or `group_idxs`, not both.
+#' @param group_idxs Optional one-based group index vector for grouped output.
+sparse_corrected_counts_matrix.cfdnalab_grouped_end_motif_counts <- function(
+  x,
+  ref_kmers,
+  groups = NULL,
+  group_idxs = NULL,
+  motifs = NULL,
+  motif_idxs = NULL,
+  max_blacklisted_fraction = 1.0,
+  use_global_bias = FALSE,
+  unsupported_motifs = "error",
+  ...
+) {
+  cf_reject_unused_arguments(...)
+  cf_sparse_reference_corrected_counts_matrix(
+    x,
+    ref_kmers,
+    groups = groups,
+    group_idxs = group_idxs,
+    motifs = motifs,
+    motif_idxs = motif_idxs,
+    max_blacklisted_fraction = max_blacklisted_fraction,
+    use_global_bias = use_global_bias,
+    unsupported_motifs = unsupported_motifs
+  )
+}
+
+#' @export
 #' @rdname dense_counts_vector
 #' @param allow_densify If `TRUE`, allow sparse stores to be converted to dense
 #'   in memory before returning the vector.
@@ -654,19 +842,39 @@ dense_counts_vector.cfdnalab_global_end_motif_counts <- function(
 
 #' @export
 #' @rdname end_motif_data_frame
+#' @param ref_kmers Optional reference k-mer object used to add corrected
+#'   counts.
 #' @param densify If `TRUE`, sparse outputs add explicit zero-count rows for
 #'   selected observed motifs. Dense outputs ignore this option.
 #' @param motifs Optional motif label vector. Use either `motifs` or
 #'   `motif_idxs`, not both.
 #' @param motif_idxs Optional one-based motif index vector.
+#' @param use_global_bias Whether a global reference k-mer output may be
+#'   applied to every end-motif row.
+#' @param unsupported_motifs What to do with positive counts that have no
+#'   positive reference frequency. Use `"error"`, `"drop"`, or `"keep_na"`.
 end_motif_data_frame.cfdnalab_global_end_motif_counts <- function(
   x,
+  ref_kmers = NULL,
   densify = FALSE,
   motifs = NULL,
   motif_idxs = NULL,
+  use_global_bias = FALSE,
+  unsupported_motifs = "error",
   ...
 ) {
   cf_reject_unused_arguments(...)
+  if (!is.null(ref_kmers)) {
+    return(cf_reference_corrected_end_motif_data_frame(
+      x,
+      ref_kmers,
+      densify = densify,
+      motifs = motifs,
+      motif_idxs = motif_idxs,
+      use_global_bias = use_global_bias,
+      unsupported_motifs = unsupported_motifs
+    ))
+  }
   cf_end_motif_data_frame(
     x,
     row_indices = seq_len(length(x$row_idx0)),
@@ -684,14 +892,30 @@ end_motif_data_frame.cfdnalab_global_end_motif_counts <- function(
 #'   rows.
 end_motif_data_frame.cfdnalab_windowed_end_motif_counts <- function(
   x,
+  ref_kmers = NULL,
   window_idxs = NULL,
   densify = FALSE,
   motifs = NULL,
   motif_idxs = NULL,
   max_blacklisted_fraction = 1.0,
+  use_global_bias = FALSE,
+  unsupported_motifs = "error",
   ...
 ) {
   cf_reject_unused_arguments(...)
+  if (!is.null(ref_kmers)) {
+    return(cf_reference_corrected_end_motif_data_frame(
+      x,
+      ref_kmers,
+      window_idxs = window_idxs,
+      densify = densify,
+      motifs = motifs,
+      motif_idxs = motif_idxs,
+      max_blacklisted_fraction = max_blacklisted_fraction,
+      use_global_bias = use_global_bias,
+      unsupported_motifs = unsupported_motifs
+    ))
+  }
   cf_end_motif_data_frame(
     x,
     row_indices = cf_resolve_end_motif_window_indices(x, window_idxs),
@@ -708,15 +932,32 @@ end_motif_data_frame.cfdnalab_windowed_end_motif_counts <- function(
 #' @param group_idxs Optional one-based group index vector for grouped output.
 end_motif_data_frame.cfdnalab_grouped_end_motif_counts <- function(
   x,
+  ref_kmers = NULL,
   groups = NULL,
   group_idxs = NULL,
   densify = FALSE,
   motifs = NULL,
   motif_idxs = NULL,
   max_blacklisted_fraction = 1.0,
+  use_global_bias = FALSE,
+  unsupported_motifs = "error",
   ...
 ) {
   cf_reject_unused_arguments(...)
+  if (!is.null(ref_kmers)) {
+    return(cf_reference_corrected_end_motif_data_frame(
+      x,
+      ref_kmers,
+      groups = groups,
+      group_idxs = group_idxs,
+      densify = densify,
+      motifs = motifs,
+      motif_idxs = motif_idxs,
+      max_blacklisted_fraction = max_blacklisted_fraction,
+      use_global_bias = use_global_bias,
+      unsupported_motifs = unsupported_motifs
+    ))
+  }
   row_indices <- cf_resolve_end_motif_group_indices(x, groups, group_idxs)
   cf_end_motif_data_frame(
     x,
