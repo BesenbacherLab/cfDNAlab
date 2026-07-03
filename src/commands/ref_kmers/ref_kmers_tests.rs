@@ -120,18 +120,9 @@ fn manualish_example() -> anyhow::Result<()> {
     let bed_ends = vec![13, 32, 50, 68]; // exclusive
     let bed_groups = vec!["A", "A", "B", "B"];
 
-    // Normal bedfile
-    // TODO: Run ref-kmers with 2-mers with --all-motifs, using same window coordinates per chrom
-    // Expectations (not considering count-overlap though)
-    // win1: GT:2, TG:1, GC:1, CA:1, AA:1, AC: 1, CC:1, CG:1, GG:1, TT:0
-    // win2: GC:2, CC:1, CA:1, AG:2, GA:2, AT:3 TA:2, TC:1, CG:1, CT:1
-    // Etc.
-
-    // TODO: Run as grouped bed and check output is just the windows combined per group
-
-    // TODO: Then run with by-size=10 and global and ensure overall both give the same result
-
-    // Make a small blacklist of 3 bases here and there and show the effect
+    // This fixture checks BED, grouped BED, fixed-size, global, canonical, motifs-file, and
+    // blacklist output from the same small reference. The expected counts below are hand-derived in
+    // motif-axis order.
     let assert_close = |observed: f64, expected: f64| {
         assert!(
             (observed - expected).abs() < 1e-12,
@@ -210,6 +201,9 @@ fn manualish_example() -> anyhow::Result<()> {
         "TG".to_string(),
         "TT".to_string(),
     ];
+    // Count-overlap uses half-open k-mer intervals. In the final chr1 row [50,68), CC gets 0.5
+    // from start 49 and 1.0 from starts 50, 56, 57, and 58. No start 67 is counted because
+    // [67,69) crosses the chromosome end.
     let expected_bed_counts: [[f64; 16]; 8] = [
         [
             1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.5, 0.0, 0.0, 1.0, 1.0, 2.0, 0.0, 0.0, 1.0, 0.5,
@@ -221,7 +215,7 @@ fn manualish_example() -> anyhow::Result<()> {
             2.0, 1.0, 0.5, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 2.0, 1.0, 1.0, 0.0, 0.0, 2.0,
         ],
         [
-            3.0, 1.0, 0.0, 0.0, 1.0, 3.5, 0.0, 1.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 1.0, 4.0,
+            3.0, 1.0, 0.0, 0.0, 1.0, 4.5, 0.0, 1.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 1.0, 3.0,
         ],
         [
             1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.5, 1.0, 0.0, 0.0, 1.5, 1.0,
@@ -233,7 +227,7 @@ fn manualish_example() -> anyhow::Result<()> {
             2.0, 1.0, 0.0, 0.0, 0.5, 2.0, 0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 0.0, 0.0, 0.0,
         ],
         [
-            3.0, 1.0, 0.0, 0.0, 1.5, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 4.0,
+            3.0, 1.0, 0.0, 0.0, 1.5, 1.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 3.0,
         ],
     ];
     let expected_bed_scaling = [11.0, 17.0, 10.0, 17.5, 11.0, 17.0, 8.0, 13.5];
@@ -331,8 +325,10 @@ fn manualish_example() -> anyhow::Result<()> {
 
     /* --by-size vs global */
 
+    // Global counts skip only 2-mers that include an N. For chr2 this removes starts 41, 42, 55,
+    // 56, 62, and 63. Starts 54=CC, 61=TG, and 66=CA remain valid.
     let expected_global_counts = [
-        14.0, 9.0, 6.0, 6.0, 9.0, 12.0, 7.0, 4.0, 4.0, 7.0, 12.0, 8.0, 8.0, 4.0, 6.0, 12.0,
+        14.0, 9.0, 6.0, 6.0, 9.0, 14.0, 7.0, 4.0, 4.0, 7.0, 12.0, 8.0, 8.0, 4.0, 6.0, 10.0,
     ];
     let sum_count_rows = |counts: &crate::output_loaders::DenseMatrix<f64>| -> Vec<f64> {
         let mut totals = vec![0.0; counts.column_count()];
@@ -396,12 +392,12 @@ fn manualish_example() -> anyhow::Result<()> {
     assert!(canonical_output.canonical());
     // Canonical 2-mers are the lexicographically smaller member of each reverse-complement pair.
     // The expected counts come from `expected_global_counts` in `expected_motif_labels` order:
-    // AA = AA + TT = 14 + 12 = 26
+    // AA = AA + TT = 14 + 10 = 24
     // AC = AC + GT = 9 + 8 = 17
     // AG = AG + CT = 6 + 4 = 10
     // AT = AT = 6
     // CA = CA + TG = 9 + 6 = 15
-    // CC = CC + GG = 12 + 12 = 24
+    // CC = CC + GG = 14 + 12 = 26
     // CG = CG = 7
     // GA = GA + TC = 4 + 4 = 8
     // GC = GC = 7
@@ -423,7 +419,7 @@ fn manualish_example() -> anyhow::Result<()> {
     );
     assert_eq!(canonical_output.row_scaling_factors(), &[128.0]);
     let canonical_counts = canonical_output.to_dense_count_matrix()?;
-    let expected_canonical_counts = [26.0, 17.0, 10.0, 6.0, 15.0, 24.0, 7.0, 8.0, 7.0, 8.0];
+    let expected_canonical_counts = [24.0, 17.0, 10.0, 6.0, 15.0, 26.0, 7.0, 8.0, 7.0, 8.0];
     assert_counts_close(
         canonical_counts
             .row(0)
@@ -488,11 +484,11 @@ fn manualish_example() -> anyhow::Result<()> {
         [3.0, 2.0, 1.5],
         [0.0, 1.5, 0.0],
         [2.0, 2.5, 4.0],
-        [1.0, 6.5, 7.0],
+        [1.0, 7.5, 6.0],
         [2.0, 2.5, 2.0],
         [0.5, 0.5, 0.0],
         [2.0, 2.5, 2.0],
-        [1.0, 1.0, 7.0],
+        [1.0, 2.0, 6.0],
     ];
     for (row_index, expected_counts) in expected_motifs_file_counts.iter().enumerate() {
         let observed_counts = motifs_counts
@@ -525,7 +521,7 @@ fn manualish_example() -> anyhow::Result<()> {
     assert_eq!(blacklist_output.row_mode(), RefKmerRowMode::Global);
     assert_eq!(blacklist_output.row_scaling_factors(), &[122.0]);
     let expected_blacklisted_global_counts = [
-        13.0, 9.0, 5.0, 6.0, 7.0, 12.0, 7.0, 4.0, 4.0, 6.0, 11.0, 8.0, 8.0, 4.0, 6.0, 12.0,
+        13.0, 9.0, 5.0, 6.0, 7.0, 14.0, 7.0, 4.0, 4.0, 6.0, 11.0, 8.0, 8.0, 4.0, 6.0, 10.0,
     ];
     let blacklist_counts = blacklist_output.to_dense_count_matrix()?;
     assert_counts_close(
