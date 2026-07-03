@@ -37,6 +37,9 @@ mod midpoints;
 #[cfg(feature = "cmd_ref_kmers")]
 mod ref_kmers;
 
+#[cfg(all(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
+mod reference_correction;
+
 pub use common::{DenseMatrix, LengthBin, WindowRow};
 pub use error::{OutputLoaderError, OutputLoaderResult};
 
@@ -80,3 +83,6 @@ pub use ref_kmers::{
     RefKmerSparseFrequencies, RefKmerSparseFrequencyEntry, RefKmerSparseFrequencyLookup,
     RefKmerStorageMode, RefKmerWindowMode, RefKmersOutput, RefKmersSelector, load_ref_kmers_output,
 };
+
+#[cfg(all(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
+pub use reference_correction::{CorrectedEndMotifCountsSelector, UnsupportedReferencePolicy};

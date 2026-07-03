@@ -168,6 +168,40 @@ Windowed outputs provide `window_metadata()`, and you can select window rows wit
 
 Sparse stores keep missing in-bounds cells as implicit zero counts. Use `sparse_counts()?.to_lookup_index()` for repeated random access or `to_dense_matrix()` only when the selected matrix is small enough to hold in memory.
 
+Reference correction is available when the `cmd_ends` and `cmd_ref_kmers` features are both enabled. Load a reference k-mer store once for the same k-mer size, windowing or grouping, motif settings, and reference genome, then pass it to `select_corrected_counts()`.
+
+```rust
+use cfdnalab::output_loaders::{
+    load_ends_output,
+    load_ref_kmers_output,
+    UnsupportedReferencePolicy,
+};
+
+fn main() -> anyhow::Result<()> {
+    let ends = load_ends_output("sample.end_motifs.zarr")?;
+    let ref_kmers = load_ref_kmers_output("hg38.ref_kmers.zarr")?;
+
+    let corrected = ends
+        .select_corrected_counts(&ref_kmers)
+        .motifs_by_label(&["_AA", "_GG"])
+        .unsupported_reference_policy(UnsupportedReferencePolicy::KeepNaN)
+        .read()?;
+
+    let corrected_counts = corrected.to_dense_matrix()?;
+    for row in corrected_counts.rows() {
+        println!("{row:?}");
+    }
+
+    Ok(())
+}
+```
+
+Each corrected count is divided by `reference_frequency * correction_motif_count`. The correction motif count is computed separately for each matched reference row from all motifs with positive reference frequency in that row. It is not recalculated from the motifs observed in the sample or the motifs selected by the loader, so selecting one motif gives the same corrected value as selecting all motifs and filtering afterward.
+
+Concrete end-motif labels are matched to reference k-mers by removing `_`, for example `AT_CG` -> `ATCG`. Motif-group outputs are matched by group label. Both commands write forward-oriented motif labels, including right-end motifs from `cfdna ends`.
+
+By default, end-motif and reference k-mer rows must match exactly. A global reference k-mer store can be applied to every windowed or grouped end-motif row only when `.use_global_bias(true)` is set. That option requires a global reference store and is unnecessary when both outputs are global. Positive end-motif counts with zero or missing reference frequency are errors by default. Use `UnsupportedReferencePolicy::KeepNaN` to keep the selected shape and mark those cells as `NaN`.
+
 <br>
 
 ## Length Counts

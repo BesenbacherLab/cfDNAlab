@@ -341,6 +341,19 @@ impl EndsOutput {
         EndsSelector::new(self)
     }
 
+    /// Start a reference-corrected count selection.
+    ///
+    /// This is available when both `cmd_ends` and `cmd_ref_kmers` features are
+    /// enabled. The selector mirrors `select()` and returns corrected counts in
+    /// the same dense or sparse shape as an ordinary end-motif count selection.
+    #[cfg(feature = "cmd_ref_kmers")]
+    pub fn select_corrected_counts<'a>(
+        &'a self,
+        ref_kmers: &'a crate::output_loaders::RefKmersOutput,
+    ) -> crate::output_loaders::CorrectedEndMotifCountsSelector<'a> {
+        crate::output_loaders::CorrectedEndMotifCountsSelector::new(self, ref_kmers)
+    }
+
     /// Return selected rows and motifs while preserving the output storage mode.
     ///
     /// Passing `None` for `row_indices` selects all rows. Passing `None` for
@@ -954,6 +967,14 @@ impl EndMotifCountsData {
             Self::Sparse(_) => EndMotifStorageMode::SparseCoo,
         }
     }
+
+    /// Return the dense shape represented by this storage.
+    pub(crate) fn shape(&self) -> (usize, usize) {
+        match self {
+            Self::Dense(counts) => counts.shape(),
+            Self::Sparse(sparse) => sparse.shape(),
+        }
+    }
 }
 
 /// Selected end-motif counts with row and motif-axis metadata.
@@ -971,6 +992,23 @@ pub struct EndMotifCountSelection {
 }
 
 impl EndMotifCountSelection {
+    /// Replace only the count storage while keeping selected metadata.
+    ///
+    /// Reference correction first uses the ordinary selector, so row metadata,
+    /// selected source row indices, motif indices, and motif labels all come
+    /// from the same path as uncorrected counts. This helper swaps in corrected
+    /// dense or sparse counts after checking that the replacement storage has
+    /// the same `(row, motif)` shape as the selection metadata.
+    pub(crate) fn with_data(self, data: EndMotifCountsData) -> Result<Self> {
+        ensure!(
+            data.shape() == self.shape(),
+            "replacement end-motif count storage shape {:?} does not match selection shape {:?}",
+            data.shape(),
+            self.shape()
+        );
+        Ok(Self { data, ..self })
+    }
+
     /// Return how selected counts are stored.
     pub fn storage_mode(&self) -> EndMotifStorageMode {
         self.data.storage_mode()
@@ -1122,6 +1160,38 @@ pub struct EndMotifSparseCounts {
 }
 
 impl EndMotifSparseCounts {
+    /// Build sparse counts from corrected entries and a dense shape.
+    ///
+    /// This is an internal constructor for reference-correction results. The
+    /// entries are produced from an already loaded sparse selection, so this is
+    /// not user-input validation. The caller supplies the selected matrix shape
+    /// and entries whose coordinates belong to that shape. This function sorts
+    /// the entries to preserve the sparse COO ordering contract.
+    pub(crate) fn from_entries(
+        row_count: usize,
+        motif_count: usize,
+        mut entries: Vec<EndMotifSparseEntry>,
+    ) -> Self {
+        entries.sort_by_key(|entry| (entry.row_index, entry.motif_index));
+
+        let mut row_indices = Vec::with_capacity(entries.len());
+        let mut motif_indices = Vec::with_capacity(entries.len());
+        let mut counts = Vec::with_capacity(entries.len());
+        for entry in entries {
+            row_indices.push(entry.row_index);
+            motif_indices.push(entry.motif_index);
+            counts.push(entry.count);
+        }
+
+        Self {
+            row_count,
+            motif_count,
+            row_indices,
+            motif_indices,
+            counts,
+        }
+    }
+
     /// Return the dense shape represented by the sparse entries.
     pub fn shape(&self) -> (usize, usize) {
         (self.row_count, self.motif_count)
