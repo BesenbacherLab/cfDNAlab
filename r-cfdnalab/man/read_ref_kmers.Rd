@@ -15,10 +15,19 @@ One of \code{cfdnalab_global_ref_kmer_frequencies},
 \code{cfdnalab_grouped_ref_kmer_frequencies}, depending on the row mode.
 }
 \description{
-Loads a \verb{<prefix>.ref_kmer_counts.zarr} store created with the
+Loads a \verb{<prefix>.ref_kmer_counts.zarr} output directory created with the
 \code{cfdna ref-kmers} CLI tool from the main \code{cfDNAlab} rust package.
-It validates the cfDNAlab schema, row metadata, motif metadata, frequency
-layout, and the metadata needed to reconstruct counts from row frequencies.
+The directory is a Zarr store on disk, but ordinary workflows can use the
+data frame and matrix helpers without working with Zarr directly.
+}
+\details{
+Reference k-mer outputs store frequencies. Count helpers reconstruct counts
+by multiplying each frequency row by its \code{row_scaling_factor}. A row can
+describe the whole reference, a genomic window, a BED interval, or a grouped
+BED entry depending on how the command was run.
+
+The loader validates the cfDNAlab schema, row metadata, motif metadata,
+frequency layout, and the metadata needed to reconstruct counts.
 }
 \examples{
 \dontrun{

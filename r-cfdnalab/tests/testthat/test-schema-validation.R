@@ -159,3 +159,24 @@ test_that("label reader rejects non-character labels", {
     fixed = TRUE
   )
 })
+
+test_that("label reader rejects control characters", {
+  store_path <- tempfile(fileext = ".zarr")
+  write_json(
+    file.path(store_path, "group", "zarr.json"),
+    list(
+      node_type = "array",
+      dimension_names = list("group"),
+      attributes = list(
+        label_field = "group_name",
+        labels = list("alpha", "bad\nlabel")
+      )
+    )
+  )
+
+  expect_error(
+    cf_read_labels(store_path, "group", "group_name", 2L),
+    "labels must not contain control characters",
+    fixed = TRUE
+  )
+})

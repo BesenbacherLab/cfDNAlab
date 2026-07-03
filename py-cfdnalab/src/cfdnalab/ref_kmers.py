@@ -4,12 +4,14 @@ Load cfDNAlab reference k-mer Zarr outputs.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import copy
 from dataclasses import dataclass
 import json
 import numbers
 import pathlib
-from typing import Any, Sequence
+import unicodedata
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -71,7 +73,20 @@ class LoadedRefKmers:
 
 
 class RefKmerFrequencies:
-    """Common API for global, windowed, and grouped reference k-mer outputs."""
+    """
+    Common API for global, windowed, and grouped reference k-mer outputs.
+
+    A reference k-mer output describes the expected background k-mer
+    composition for one or more rows. A row can be the whole reference, a
+    genomic window, a BED interval, or a grouped BED entry.
+
+    The file stores frequencies. Count helpers reconstruct comparable counts as
+    `frequency * row_scaling_factor[row]`, where the scaling factor is the
+    number of reference k-mer positions represented by that row.
+
+    Public Python selectors use zero-based indices. For example, `motif_idxs=0`
+    selects the first motif in `motifs_metadata()`.
+    """
 
     def __init__(
         self,
@@ -79,7 +94,11 @@ class RefKmerFrequencies:
         loaded_ref_kmers: LoadedRefKmers | None = None,
     ) -> None:
         """
-        Load a reference k-mer frequency Zarr store.
+        Load a reference k-mer frequency output directory.
+
+        The directory is a Zarr store on disk, but most users can work through
+        the data frame, NumPy array, and SciPy sparse matrix methods without
+        using Zarr directly.
 
         Parameters
         ----------
@@ -136,6 +155,7 @@ class RefKmerFrequencies:
         motif_axis_kind = metadata["motif_axis_kind"]
         _validate_required_arrays(store, storage_mode, row_mode, motif_axis_kind)
 
+        _validate_array_dimensions(store["motif_index"], ("motif",), "motif_index")
         motif_index = _read_array(store, "motif_index")
         _validate_axis(motif_index, "motif_index")
         if motif_axis_kind == "motif":
@@ -154,6 +174,7 @@ class RefKmerFrequencies:
             )
             _validate_unique_labels(motif_names, "reference k-mer motif-group")
 
+        _validate_array_dimensions(store["row"], ("row",), "row")
         row = _read_array(store, "row")
         _validate_axis(row, "row")
 
@@ -206,7 +227,7 @@ class RefKmerFrequencies:
             row_labels = _read_labels(store["row"], "row_label", len(row), "row")
             if len(row) != 1 or row_labels.tolist() != ["global"]:
                 raise ValueError(
-                    "global reference k-mer stores must contain exactly one row "
+                    "global reference k-mer output must contain exactly one row "
                     "labeled 'global'"
                 )
         elif row_mode in {"size", "bed"}:
@@ -221,6 +242,19 @@ class RefKmerFrequencies:
             row_start_bp = _read_array(store, "row_start_bp")
             row_end_bp = _read_array(store, "row_end_bp")
             blacklisted_fraction = _read_array(store, "blacklisted_fraction")
+            _validate_array_dimensions(
+                store["chromosome"], ("chromosome",), "chromosome"
+            )
+            _validate_array_dimensions(
+                store["row_chromosome"], ("row",), "row_chromosome"
+            )
+            _validate_array_dimensions(
+                store["row_start_bp"], ("row",), "row_start_bp"
+            )
+            _validate_array_dimensions(store["row_end_bp"], ("row",), "row_end_bp")
+            _validate_array_dimensions(
+                store["blacklisted_fraction"], ("row",), "blacklisted_fraction"
+            )
             _validate_axis(chromosome, "chromosome")
             _validate_same_length(row_chromosome, row, "row_chromosome", "row")
             _validate_same_length(row_start_bp, row, "row_start_bp", "row")
@@ -228,11 +262,11 @@ class RefKmerFrequencies:
             _validate_same_length(
                 blacklisted_fraction, row, "blacklisted_fraction", "row"
             )
-            _validate_integer_values(row_chromosome, "row_chromosome")
-            if np.any(row_chromosome < 0) or np.any(row_chromosome >= len(chromosome)):
-                raise ValueError(
-                    "row_chromosome contains an index outside the chromosome axis"
-                )
+            _validate_index_values(row_chromosome, len(chromosome), "row_chromosome")
+            _validate_half_open_intervals(
+                row_start_bp, row_end_bp, "row_start_bp", "row_end_bp"
+            )
+            _validate_fraction_values(blacklisted_fraction, "blacklisted_fraction")
         elif row_mode == "grouped_bed":
             group_idx = _read_array(store, "group")
             group_names = _read_labels(
@@ -240,6 +274,13 @@ class RefKmerFrequencies:
             )
             eligible_windows = _read_array(store, "eligible_windows")
             blacklisted_fraction = _read_array(store, "blacklisted_fraction")
+            _validate_array_dimensions(store["group"], ("row",), "group")
+            _validate_array_dimensions(
+                store["eligible_windows"], ("row",), "eligible_windows"
+            )
+            _validate_array_dimensions(
+                store["blacklisted_fraction"], ("row",), "blacklisted_fraction"
+            )
             _validate_same_length(group_idx, row, "group", "row")
             _validate_same_length(group_names, row, "group_name labels", "row")
             _validate_same_length(eligible_windows, row, "eligible_windows", "row")
@@ -247,6 +288,8 @@ class RefKmerFrequencies:
                 blacklisted_fraction, row, "blacklisted_fraction", "row"
             )
             _validate_axis(group_idx, "group")
+            _validate_nonnegative_integer_values(eligible_windows, "eligible_windows")
+            _validate_fraction_values(blacklisted_fraction, "blacklisted_fraction")
 
         return LoadedRefKmers(
             store=store,
@@ -281,19 +324,25 @@ class RefKmerFrequencies:
 
     def storage_mode(self) -> str:
         """
-        Return how reference k-mer frequencies are stored on disk.
+        Return whether the output is saved as dense values or sparse values.
+
+        Dense output has a value for every row and motif. Sparse output stores
+        only non-zero values and is usually better for large outputs.
         """
         return self.ref_kmers.storage_mode
 
     def row_mode(self) -> str:
         """
         Return what each reference k-mer frequency row represents.
+
+        `global` has one row for the whole reference. `size` and `bed` rows are
+        genomic windows. `grouped_bed` rows are BED groups.
         """
         return self.ref_kmers.row_mode
 
     def motif_axis_kind(self) -> str:
         """
-        Return whether the motif axis contains motifs or motif groups.
+        Return whether columns represent concrete k-mers or motif groups.
         """
         return self.ref_kmers.motif_axis_kind
 
@@ -311,7 +360,11 @@ class RefKmerFrequencies:
 
     def all_motifs(self) -> bool:
         """
-        Return whether the command was asked to keep all possible motif targets.
+        Return whether the command kept every requested motif target.
+
+        For full k-mer output, this means every A/C/G/T k-mer for the
+        requested k. For motifs-file output, this means every target from the
+        motifs file.
         """
         return self.ref_kmers.all_motifs
 
@@ -323,16 +376,26 @@ class RefKmerFrequencies:
 
     def reference_contig_footprint(self) -> Any:
         """
-        Return the JSON-decoded reference contig footprint metadata.
+        Return which reference contigs contributed to the output.
+
+        The result is decoded metadata from the output file. It is useful for
+        checking that the reference used for loading matches the expected
+        genome or contig subset.
         """
         return copy.deepcopy(self.ref_kmers.reference_contig_footprint)
 
     def motifs_metadata(self) -> pd.DataFrame:
         """
-        Return motif-axis labels and motif indices available in this output.
+        Return the k-mer labels and motif indices available in this output.
 
         For grouped motifs-file output, the `motif` labels are the motif-group
-        names used during counting.
+        names used during counting. The returned `motif_index` values are
+        zero-based and can be passed to `motif_idxs`.
+
+        If `all_motifs()` is false, the motif axis is the combined set of
+        motifs or motifs-file targets observed anywhere in the output.
+        Densifying sparse output fills zeroes only across this listed axis. It
+        does not add every possible k-mer.
         """
         return pd.DataFrame(
             {
@@ -343,7 +406,7 @@ class RefKmerFrequencies:
 
     def motif_idx(self, motif: str) -> int:
         """
-        Find the motif-axis index for a motif label.
+        Find the zero-based motif-axis index for a motif label.
         """
         return self._resolve_motif(motif)
 
@@ -351,8 +414,8 @@ class RefKmerFrequencies:
         """
         Return whether a motif label exists in this output.
 
-        Sparse observed-only output can omit unobserved motifs, so an unobserved
-        motif can return `False` even when it is a valid A/C/G/T k-mer.
+        Observed-only output can omit motifs that were not observed anywhere in
+        the output, so this can return `False` even for a valid A/C/G/T k-mer.
         """
         return bool(np.any(self.ref_kmers.motif_names == motif))
 
@@ -360,8 +423,8 @@ class RefKmerFrequencies:
         """
         Return row metadata and factors used to reconstruct k-mer counts.
 
-        Counts are reconstructed as `frequency * row_scaling_factor` for the
-        corresponding row.
+        Frequencies are fractions. Multiplying a row's frequency by its
+        `row_scaling_factor` gives the reconstructed count for that row.
         """
         data_frame = self._row_metadata_data_frame().copy()
         data_frame["row_scaling_factor"] = self.ref_kmers.row_scaling_factor
@@ -369,7 +432,17 @@ class RefKmerFrequencies:
 
     def dense_frequencies_zarr_array(self) -> zarr.Array:
         """
-        Return the lazy Zarr frequency array for dense output.
+        Return the on-disk frequency array for advanced dense-output workflows.
+
+        Most users should use `dense_frequencies_array()`, which returns a
+        NumPy array, or `data_frame()`, which returns a pandas data frame. This
+        method returns the underlying Zarr array so advanced users can slice it
+        without first reading the whole array into memory.
+
+        This is only available for dense output. Sparse output does not have an
+        on-disk dense frequency array. Use `sparse_frequencies_matrix()` for
+        sparse output, or call a dense helper with `allow_densify=True` when the
+        full selected result is small enough to hold in memory.
         """
         if self.ref_kmers.storage_mode != "dense":
             raise ValueError(
@@ -851,7 +924,14 @@ class GlobalRefKmerFrequencies(RefKmerFrequencies):
         motif_idxs: int | Sequence[int] | None = None,
     ) -> pd.DataFrame:
         """
-        Create a pandas DataFrame for global reference k-mer frequencies.
+        Create a pandas data frame for global reference k-mer frequencies.
+
+        The data frame contains one row per selected motif with `frequency` and
+        reconstructed `count`. Sparse output returns only non-zero stored values
+        unless `densify=True`, which adds zero-frequency rows for the selected
+        motifs in `motifs_metadata()`. For observed-only output, those selected
+        labels are the combined set observed anywhere in the output. Densifying
+        does not add every possible k-mer unless `all_motifs()` is true.
         """
         return self._data_frame(
             densify=densify,
@@ -868,6 +948,10 @@ class GlobalRefKmerFrequencies(RefKmerFrequencies):
     ) -> np.ndarray:
         """
         Return global reference k-mer frequencies as a dense NumPy array.
+
+        Sparse output requires `allow_densify=True` because the method creates
+        an in-memory array with one value for every selected motif in
+        `motifs_metadata()`, including zeroes that were not stored on disk.
         """
         return self._dense_frequencies_array(
             motifs=motifs,
@@ -884,6 +968,11 @@ class GlobalRefKmerFrequencies(RefKmerFrequencies):
     ) -> np.ndarray:
         """
         Return reconstructed global reference k-mer counts as a dense array.
+
+        Counts are reconstructed from frequencies with the global row scaling
+        factor. Sparse output requires `allow_densify=True` because the method
+        creates an in-memory array with explicit zeroes for selected motifs in
+        `motifs_metadata()`.
         """
         return self._dense_counts_array(
             motifs=motifs,
@@ -912,7 +1001,7 @@ class GlobalRefKmerFrequencies(RefKmerFrequencies):
         motif_idxs: int | Sequence[int] | None = None,
     ) -> sparse.coo_matrix:
         """
-        Return reconstructed global reference k-mer counts as a SciPy matrix.
+        Return reconstructed global reference k-mer counts as a SciPy sparse matrix.
         """
         return self._sparse_counts_matrix(
             motifs=motifs,
@@ -933,7 +1022,18 @@ class WindowedRefKmerFrequencies(RefKmerFrequencies):
         max_blacklisted_fraction: float = 1.0,
     ) -> pd.DataFrame:
         """
-        Create a pandas DataFrame for windowed reference k-mer frequencies.
+        Create a pandas data frame for windowed reference k-mer frequencies.
+
+        `window_idxs` and `motif_idxs` are zero-based indices. The data frame
+        includes window metadata, motif metadata, `frequency`, and reconstructed
+        `count`.
+
+        Sparse output returns only non-zero stored values unless `densify=True`,
+        which adds zero-frequency rows for the selected windows and the
+        selected motifs in `motifs_metadata()`. For observed-only output, those
+        selected labels are the combined set observed anywhere in the output.
+        Densifying does not add every possible k-mer unless `all_motifs()` is
+        true.
         """
         return self._data_frame(
             densify=densify,
@@ -946,6 +1046,9 @@ class WindowedRefKmerFrequencies(RefKmerFrequencies):
     def window_metadata(self) -> pd.DataFrame:
         """
         Return genomic window metadata for this reference k-mer output.
+
+        `window_idx` is the zero-based row index accepted by window selectors.
+        `start` and `end` are half-open genomic coordinates.
         """
         return self._row_metadata_data_frame()
 
@@ -959,6 +1062,11 @@ class WindowedRefKmerFrequencies(RefKmerFrequencies):
     ) -> np.ndarray:
         """
         Return windowed reference k-mer frequencies as a dense NumPy array.
+
+        Sparse output requires `allow_densify=True` because the method creates
+        an in-memory array with one value for every selected window and every
+        selected motif in `motifs_metadata()`, including zeroes that were not
+        stored on disk.
         """
         return self._dense_frequencies_array(
             window_idxs=window_idxs,
@@ -977,6 +1085,11 @@ class WindowedRefKmerFrequencies(RefKmerFrequencies):
     ) -> np.ndarray:
         """
         Return reconstructed windowed reference k-mer counts as a dense array.
+
+        Counts are reconstructed row-wise from frequencies and
+        `row_scaling_factor`. Sparse output requires `allow_densify=True`
+        because the method creates an in-memory array with explicit zeroes for
+        selected motifs in `motifs_metadata()`.
         """
         return self._dense_counts_array(
             window_idxs=window_idxs,
@@ -1009,7 +1122,7 @@ class WindowedRefKmerFrequencies(RefKmerFrequencies):
         motif_idxs: int | Sequence[int] | None = None,
     ) -> sparse.coo_matrix:
         """
-        Return reconstructed windowed reference k-mer counts as a SciPy matrix.
+        Return reconstructed windowed reference k-mer counts as a SciPy sparse matrix.
         """
         return self._sparse_counts_matrix(
             window_idxs=window_idxs,
@@ -1032,7 +1145,17 @@ class GroupedRefKmerFrequencies(RefKmerFrequencies):
         max_blacklisted_fraction: float = 1.0,
     ) -> pd.DataFrame:
         """
-        Create a pandas DataFrame for grouped reference k-mer frequencies.
+        Create a pandas data frame for grouped reference k-mer frequencies.
+
+        `group_idxs` and `motif_idxs` are zero-based indices. `groups` selects
+        rows by group name. The data frame includes group metadata, motif
+        metadata, `frequency`, and reconstructed `count`.
+
+        Sparse output returns only non-zero stored values unless `densify=True`,
+        which adds zero-frequency rows for the selected groups and the selected
+        motifs in `motifs_metadata()`. For observed-only output, those selected
+        labels are the combined set observed anywhere in the output. Densifying
+        does not add every possible k-mer unless `all_motifs()` is true.
         """
         return self._data_frame(
             densify=densify,
@@ -1046,12 +1169,14 @@ class GroupedRefKmerFrequencies(RefKmerFrequencies):
     def group_metadata(self) -> pd.DataFrame:
         """
         Return grouped BED metadata for this reference k-mer output.
+
+        `group_idx` is the zero-based row index accepted by group selectors.
         """
         return self._row_metadata_data_frame()
 
     def group_idx(self, group_name: str) -> int:
         """
-        Find the reference k-mer row index for a group name.
+        Find the zero-based reference k-mer row index for a group name.
         """
         group_names = _required(self.ref_kmers.group_names, "group_name")
         return resolve_unique_match(
@@ -1073,6 +1198,11 @@ class GroupedRefKmerFrequencies(RefKmerFrequencies):
     ) -> np.ndarray:
         """
         Return grouped reference k-mer frequencies as a dense NumPy array.
+
+        Sparse output requires `allow_densify=True` because the method creates
+        an in-memory array with one value for every selected group and every
+        selected motif in `motifs_metadata()`, including zeroes that were not
+        stored on disk.
         """
         return self._dense_frequencies_array(
             groups=groups,
@@ -1093,6 +1223,11 @@ class GroupedRefKmerFrequencies(RefKmerFrequencies):
     ) -> np.ndarray:
         """
         Return reconstructed grouped reference k-mer counts as a dense array.
+
+        Counts are reconstructed row-wise from frequencies and
+        `row_scaling_factor`. Sparse output requires `allow_densify=True`
+        because the method creates an in-memory array with explicit zeroes for
+        selected motifs in `motifs_metadata()`.
         """
         return self._dense_counts_array(
             groups=groups,
@@ -1129,7 +1264,7 @@ class GroupedRefKmerFrequencies(RefKmerFrequencies):
         motif_idxs: int | Sequence[int] | None = None,
     ) -> sparse.coo_matrix:
         """
-        Return reconstructed grouped reference k-mer counts as a SciPy matrix.
+        Return reconstructed grouped reference k-mer counts as a SciPy sparse matrix.
         """
         return self._sparse_counts_matrix(
             groups=groups,
@@ -1147,7 +1282,7 @@ def read_ref_kmers(
     | GroupedRefKmerFrequencies
 ):
     """
-    Open a cfDNAlab reference k-mer frequency Zarr store.
+    Open a cfDNAlab reference k-mer frequency output directory.
     """
     path = pathlib.Path(path)
     loaded = RefKmerFrequencies._load_zarr(path)
@@ -1467,9 +1602,13 @@ def _read_motif_ascii_labels(store: Any, expected_len: int) -> np.ndarray:
     """
     Decode fixed-width ASCII motif labels into Python strings.
     """
+    _validate_array_dimensions(store["motif_byte"], ("motif_byte",), "motif_byte")
     motif_byte = _read_array(store, "motif_byte")
     _validate_axis(motif_byte, "motif_byte")
 
+    _validate_array_dimensions(
+        store["motif_ascii"], ("motif", "motif_byte"), "motif_ascii"
+    )
     motif_ascii = _read_array(store, "motif_ascii")
     if motif_ascii.ndim != 2:
         raise ValueError(f"motif_ascii must have rank 2, found rank {motif_ascii.ndim}")
@@ -1506,13 +1645,26 @@ def _read_labels(
     labels = array.attrs.get("labels")
     if labels is None:
         raise ValueError(f"{array_name} array is missing labels")
-    labels = np.asarray(labels, dtype=str)
-    if len(labels) != expected_len:
+    if isinstance(labels, (str, bytes)) or not isinstance(labels, Sequence):
+        raise ValueError(f"{array_name} labels must be a list of character strings")
+
+    validated_labels: list[str] = []
+    for label in labels:
+        if not isinstance(label, str):
+            raise ValueError(f"{array_name} labels must be character strings")
+        if _contains_control_character(label):
+            raise ValueError(
+                f"{array_name} labels must not contain control characters"
+            )
+        validated_labels.append(label)
+
+    label_array = np.asarray(validated_labels, dtype=str)
+    if len(label_array) != expected_len:
         raise ValueError(
-            f"{array_name} labels length ({len(labels)}) does not match "
+            f"{array_name} labels length ({len(label_array)}) does not match "
             f"axis length ({expected_len})"
         )
-    return labels
+    return label_array
 
 
 def _validate_axis(values: np.ndarray, name: str) -> None:
@@ -1531,6 +1683,37 @@ def _validate_integer_values(values: np.ndarray, name: str) -> None:
     """
     if not np.issubdtype(values.dtype, np.integer):
         raise ValueError(f"{name} must contain integer values")
+
+
+def _validate_nonnegative_integer_values(values: np.ndarray, name: str) -> None:
+    """
+    Require an array to contain non-negative integer values.
+    """
+    _validate_integer_values(values, name)
+    if np.any(values < 0):
+        raise ValueError(f"{name} must contain non-negative integer values")
+
+
+def _validate_index_values(values: np.ndarray, axis_length: int, name: str) -> None:
+    """
+    Require an array to contain valid zero-based indices into an axis.
+    """
+    _validate_nonnegative_integer_values(values, name)
+    if np.any(values >= axis_length):
+        raise ValueError(f"{name} contains an index outside the referenced axis")
+
+
+def _validate_half_open_intervals(
+    starts: np.ndarray, ends: np.ndarray, start_name: str, end_name: str
+) -> None:
+    """
+    Require paired start and end arrays to contain non-empty half-open intervals.
+    """
+    _validate_nonnegative_integer_values(starts, start_name)
+    _validate_nonnegative_integer_values(ends, end_name)
+    _validate_same_length(starts, ends, start_name, end_name)
+    if np.any(starts >= ends):
+        raise ValueError(f"{start_name} must be smaller than {end_name}")
 
 
 def _validate_same_length(
@@ -1552,8 +1735,22 @@ def _validate_frequency_values(values: np.ndarray, name: str) -> None:
     """
     if values.size == 0:
         return
+    if not np.issubdtype(values.dtype, np.number):
+        raise ValueError(f"{name} must contain finite frequency values in 0..1")
     if np.any(~np.isfinite(values)) or np.any(values < 0.0) or np.any(values > 1.0):
         raise ValueError(f"{name} must contain finite frequency values in 0..1")
+
+
+def _validate_fraction_values(values: np.ndarray, name: str) -> None:
+    """
+    Require values to be finite fractions in 0..1.
+    """
+    if values.size == 0:
+        return
+    if not np.issubdtype(values.dtype, np.number):
+        raise ValueError(f"{name} must contain finite fractions in 0..1")
+    if np.any(~np.isfinite(values)) or np.any(values < 0.0) or np.any(values > 1.0):
+        raise ValueError(f"{name} must contain finite fractions in 0..1")
 
 
 def _validate_row_scaling_factors(values: np.ndarray) -> None:
@@ -1562,6 +1759,10 @@ def _validate_row_scaling_factors(values: np.ndarray) -> None:
     """
     if values.size == 0:
         return
+    if not np.issubdtype(values.dtype, np.number):
+        raise ValueError(
+            "row_scaling_factor must contain finite non-negative values"
+        )
     if np.any(~np.isfinite(values)) or np.any(values < 0.0):
         raise ValueError(
             "row_scaling_factor must contain finite non-negative values"
@@ -1610,6 +1811,13 @@ def _validate_unique_labels(labels: np.ndarray, label_name: str) -> None:
         seen.add(str(label))
 
 
+def _contains_control_character(label: str) -> bool:
+    """
+    Return whether a label contains a Unicode control character.
+    """
+    return any(unicodedata.category(character) == "Cc" for character in label)
+
+
 def _canonical_ref_kmer(motif: str) -> str:
     """
     Return the canonical label used by cfDNAlab reference k-mer output.
@@ -1636,7 +1844,8 @@ def _require_densify(allow_densify: bool, method_name: str) -> None:
     """
     if not allow_densify:
         raise ValueError(
-            f"{method_name}() would densify a sparse reference k-mer store. "
+            f"{method_name}() would turn sparse reference k-mer output into "
+            "a dense in-memory array. "
             "Use sparse_frequencies_matrix(), sparse_counts_matrix(), "
             "or pass allow_densify=True."
         )

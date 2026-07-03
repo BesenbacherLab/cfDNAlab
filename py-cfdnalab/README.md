@@ -196,7 +196,7 @@ import cfdnalab as cfl
 ref_kmers = cfl.read_ref_kmers("sample.ref_kmer_counts.zarr")
 ```
 
-Reference k-mer stores contain row-wise frequencies. Counts are reconstructed by multiplying each row by its `row_scaling_factor`.
+Reference k-mer outputs contain row-wise frequencies. Each row is the whole reference, a genomic window, or a BED group depending on how `cfdna ref-kmers` was run. Counts are reconstructed by multiplying each row by its `row_scaling_factor`.
 
 ```python
 ref_kmers.motifs_metadata()
@@ -205,7 +205,7 @@ ref_kmers.dense_frequencies_array(allow_densify=True)
 ref_kmers.dense_counts_array(allow_densify=True)
 ```
 
-Sparse output stays sparse unless you opt into densification:
+Sparse output stores only non-zero values. It stays sparse unless you ask for an in-memory dense array or a zero-filled data frame. For observed-only output, zero filling covers the motif axis present in `motifs_metadata()`: the combined set of motifs or motifs-file targets observed anywhere in the output. It does not add every possible k-mer unless `all_motifs()` is true.
 
 ```python
 frequency_matrix = ref_kmers.sparse_frequencies_matrix()

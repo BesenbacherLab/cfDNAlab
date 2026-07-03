@@ -18,5 +18,6 @@ all_motifs(x, ...)
 A scalar logical.
 }
 \description{
-Return whether all requested reference k-mer motifs were kept.
+For full k-mer output, this means every A/C/G/T k-mer for the requested k.
+For motifs-file output, this means every target from the motifs file.
 }

@@ -37,8 +37,11 @@ ref_kmer_data_frame(x, ...)
 
 \item{...}{Method-specific selection arguments.}
 
-\item{densify}{If \code{TRUE}, sparse outputs add explicit zero-frequency rows
-for selected observed motifs. Dense outputs ignore this option.}
+\item{densify}{If \code{TRUE}, sparse output adds explicit zero-frequency rows
+for selected motifs in \code{motifs(x)}. For observed-only output, this is the
+combined set observed anywhere in the output. Densifying does not add
+every possible k-mer unless \code{all_motifs(x)} is \code{TRUE}. Dense outputs
+ignore this option.}
 
 \item{motifs}{Optional motif label vector. Use either \code{motifs} or
 \code{motif_idxs}, not both.}
@@ -61,7 +64,11 @@ A data frame containing row metadata, motif metadata, \code{frequency},
 and reconstructed \code{count}.
 }
 \description{
-Sparse outputs return stored non-zero frequency rows unless the method
-explicitly receives \code{densify = TRUE}. Densifying adds explicit zero-frequency
-rows for selected observed motifs. Dense outputs always include zeroes.
+Sparse output stores only non-zero frequencies. By default, sparse output
+returns those stored rows only. With \code{densify = TRUE}, the data frame also
+includes zero-frequency rows for the selected rows and the selected motifs
+returned by \code{motifs(x)}. For observed-only output, those selected labels are
+the combined set observed anywhere in the output. Densifying does not add
+every possible k-mer unless \code{all_motifs(x)} is \code{TRUE}. Dense output always
+includes zeroes.
 }

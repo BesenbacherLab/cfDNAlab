@@ -106,7 +106,9 @@ length_bin_idx <- function(x, ...) {
 #' For ordinary end-motif stores, the `motif` column contains concrete motif
 #' labels. For grouped motifs-file output, the same column contains user-defined
 #' group names from the motif axis. Reference k-mer stores use the same column
-#' for concrete k-mers or k-mer group names.
+#' for concrete k-mers or k-mer group names. For observed-only reference k-mer
+#' output, this is the combined set of motifs or motifs-file targets observed
+#' anywhere in the output.
 #'
 #' @param x A cfDNAlab object with a motif axis.
 #' @param ... Reserved for future methods.
@@ -174,6 +176,9 @@ canonical <- function(x, ...) {
 
 #' Return whether all requested reference k-mer motifs were kept.
 #'
+#' For full k-mer output, this means every A/C/G/T k-mer for the requested k.
+#' For motifs-file output, this means every target from the motifs file.
+#'
 #' @param x A cfDNAlab reference k-mer object.
 #' @param ... Reserved for future methods.
 #'
@@ -207,8 +212,8 @@ reference_contig_footprint <- function(x, ...) {
 
 #' Return reference k-mer row scaling factors.
 #'
-#' Counts are reconstructed as `frequency * row_scaling_factor` for the
-#' corresponding row.
+#' Reference k-mer outputs store frequencies. Multiplying a row's frequency by
+#' its `row_scaling_factor` gives the reconstructed count for that row.
 #'
 #' @param x A cfDNAlab reference k-mer object.
 #' @param ... Reserved for future methods.
@@ -289,8 +294,10 @@ length_data_frame <- function(x, ...) {
 
 #' Return counts as a dense matrix.
 #'
-#' Sparse stores are not densified unless the method explicitly receives
-#' `allow_densify = TRUE`.
+#' Sparse output stores only non-zero values. These methods do not create a
+#' zero-filled dense matrix from sparse output unless they explicitly receive
+#' `allow_densify = TRUE`. For objects with a motif axis, densifying fills
+#' zeroes only across the labels returned by `motifs(x)`.
 #'
 #' @param x A cfDNAlab object with count values or reconstructable counts.
 #' @param ... Method-specific arguments.
@@ -303,8 +310,10 @@ dense_counts_matrix <- function(x, ...) {
 
 #' Return global counts as a named vector.
 #'
-#' Sparse stores are not densified unless the method explicitly receives
-#' `allow_densify = TRUE`.
+#' Sparse output stores only non-zero values. These methods do not create a
+#' zero-filled dense vector from sparse output unless they explicitly receive
+#' `allow_densify = TRUE`. For objects with a motif axis, densifying fills
+#' zeroes only across the labels returned by `motifs(x)`.
 #'
 #' @param x A cfDNAlab global object with count values or reconstructable counts.
 #' @param ... Method-specific arguments.
@@ -317,8 +326,10 @@ dense_counts_vector <- function(x, ...) {
 
 #' Return reference k-mer frequencies as a dense matrix.
 #'
-#' Sparse stores are not densified unless the method explicitly receives
-#' `allow_densify = TRUE`.
+#' Sparse output stores only non-zero frequencies. This method does not create
+#' a zero-filled dense matrix from sparse output unless it explicitly receives
+#' `allow_densify = TRUE`. Densifying fills zeroes only across the motif axis
+#' returned by `motifs(x)`.
 #'
 #' @param x A cfDNAlab reference k-mer object.
 #' @param ... Method-specific arguments.
@@ -331,8 +342,10 @@ dense_frequencies_matrix <- function(x, ...) {
 
 #' Return global reference k-mer frequencies as a named vector.
 #'
-#' Sparse stores are not densified unless the method explicitly receives
-#' `allow_densify = TRUE`.
+#' Sparse output stores only non-zero frequencies. This method does not create
+#' a zero-filled dense vector from sparse output unless it explicitly receives
+#' `allow_densify = TRUE`. Densifying fills zeroes only across the motif axis
+#' returned by `motifs(x)`.
 #'
 #' @param x A cfDNAlab global reference k-mer object.
 #' @param ... Method-specific arguments.
@@ -360,9 +373,13 @@ end_motif_data_frame <- function(x, ...) {
 
 #' Return reference k-mer frequencies and reconstructed counts as a data frame.
 #'
-#' Sparse outputs return stored non-zero frequency rows unless the method
-#' explicitly receives `densify = TRUE`. Densifying adds explicit zero-frequency
-#' rows for selected observed motifs. Dense outputs always include zeroes.
+#' Sparse output stores only non-zero frequencies. By default, sparse output
+#' returns those stored rows only. With `densify = TRUE`, the data frame also
+#' includes zero-frequency rows for the selected rows and the selected motifs
+#' returned by `motifs(x)`. For observed-only output, those selected labels are
+#' the combined set observed anywhere in the output. Densifying does not add
+#' every possible k-mer unless `all_motifs(x)` is `TRUE`. Dense output always
+#' includes zeroes.
 #'
 #' @param x A cfDNAlab reference k-mer object.
 #' @param ... Method-specific selection arguments.
@@ -376,8 +393,8 @@ ref_kmer_data_frame <- function(x, ...) {
 
 #' Return counts as a sparse matrix.
 #'
-#' Sparse stores are converted directly from their stored COO arrays. Dense
-#' stores are read into memory before conversion.
+#' Sparse output is returned without building a zero-filled dense matrix. Dense
+#' output is read into memory before conversion to a sparse matrix.
 #'
 #' @param x A cfDNAlab object with count values or reconstructable counts.
 #' @param ... Reserved for future methods.
@@ -390,8 +407,8 @@ sparse_counts_matrix <- function(x, ...) {
 
 #' Return reference k-mer frequencies as a sparse matrix.
 #'
-#' Sparse stores are converted directly from their stored COO arrays. Dense
-#' stores are read into memory before conversion.
+#' Sparse output is returned without building a zero-filled dense matrix. Dense
+#' output is read into memory before conversion to a sparse matrix.
 #'
 #' @param x A cfDNAlab reference k-mer object.
 #' @param ... Method-specific arguments.

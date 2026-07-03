@@ -19,10 +19,18 @@ REF_KMER_VALID_AXIS_KINDS <- c("motif", "motif_group")
 
 #' Read cfDNAlab reference k-mer frequencies.
 #'
-#' Loads a `<prefix>.ref_kmer_counts.zarr` store created with the
+#' Loads a `<prefix>.ref_kmer_counts.zarr` output directory created with the
 #' \code{cfdna ref-kmers} CLI tool from the main \code{cfDNAlab} rust package.
-#' It validates the cfDNAlab schema, row metadata, motif metadata, frequency
-#' layout, and the metadata needed to reconstruct counts from row frequencies.
+#' The directory is a Zarr store on disk, but ordinary workflows can use the
+#' data frame and matrix helpers without working with Zarr directly.
+#'
+#' Reference k-mer outputs store frequencies. Count helpers reconstruct counts
+#' by multiplying each frequency row by its `row_scaling_factor`. A row can
+#' describe the whole reference, a genomic window, a BED interval, or a grouped
+#' BED entry depending on how the command was run.
+#'
+#' The loader validates the cfDNAlab schema, row metadata, motif metadata,
+#' frequency layout, and the metadata needed to reconstruct counts.
 #'
 #' @param path Path to a cfDNAlab reference k-mer `.zarr` directory.
 #'
@@ -87,7 +95,7 @@ read_ref_kmers <- function(path) {
   cf_validate_axis(motif_axis, "motif_index")
   cf_validate_axis(row, "row")
   if (identical(row_mode, "global") && length(row) != 1L) {
-    stop("global reference k-mer stores must contain exactly one row", call. = FALSE)
+    stop("global reference k-mer output must contain exactly one row", call. = FALSE)
   }
 
   cf_validate_dimension_names(path, "row_scaling_factor", "row")
@@ -329,7 +337,7 @@ cf_read_ref_kmer_row_metadata <- function(path, store, row, row_mode) {
   if (identical(row_mode, "global")) {
     labels <- cf_read_labels(path, "row", "row_label", length(row))
     if (!identical(labels, "global")) {
-      stop("global reference k-mer stores must contain exactly one row labeled 'global'", call. = FALSE)
+      stop("global reference k-mer output must contain exactly one row labeled 'global'", call. = FALSE)
     }
     return(data.frame(row_label = labels, stringsAsFactors = FALSE))
   }
@@ -855,8 +863,10 @@ cf_sparse_ref_kmer_count_matrix_for_indices <- function(x, row_indices, motif_in
 
 #' @export
 #' @rdname dense_frequencies_matrix
-#' @param allow_densify If `TRUE`, allow sparse stores to be converted to dense
-#'   in memory. Sparse stores error by default.
+#' @param allow_densify If `TRUE`, allow sparse output to be converted to a
+#'   zero-filled dense matrix in memory. Zero filling uses the selected motifs
+#'   from `motifs(x)`, not every possible k-mer unless `all_motifs(x)` is
+#'   `TRUE`. Sparse output errors by default.
 #' @param motifs Optional motif label vector. Use either `motifs` or
 #'   `motif_idxs`, not both.
 #' @param motif_idxs Optional one-based motif index vector.
@@ -924,7 +934,7 @@ dense_frequencies_matrix.cfdnalab_grouped_ref_kmer_frequencies <- function(
 #' @param x Reference k-mer object.
 #' @param row_indices One-based row indices.
 #' @param motif_indices One-based motif indices.
-#' @param allow_densify Whether to allow sparse-store densification.
+#' @param allow_densify Whether to allow sparse output to become a dense matrix.
 #'
 #' @return A dense numeric matrix.
 #' @noRd
@@ -939,7 +949,7 @@ cf_dense_ref_kmer_frequency_matrix_for_indices <- function(
   }
   if (!isTRUE(allow_densify)) {
     stop(
-      "This reference k-mer store is sparse. Use sparse_frequencies_matrix() or set allow_densify = TRUE.",
+      "This reference k-mer output is sparse. Use sparse_frequencies_matrix() or set allow_densify = TRUE.",
       call. = FALSE
     )
   }
@@ -1026,7 +1036,7 @@ dense_counts_matrix.cfdnalab_grouped_ref_kmer_frequencies <- function(
 #' @param x Reference k-mer object.
 #' @param row_indices One-based row indices.
 #' @param motif_indices One-based motif indices.
-#' @param allow_densify Whether to allow sparse-store densification.
+#' @param allow_densify Whether to allow sparse output to become a dense matrix.
 #'
 #' @return A dense numeric matrix.
 #' @noRd
@@ -1052,8 +1062,9 @@ cf_dense_ref_kmer_count_matrix_for_indices <- function(
 
 #' @export
 #' @rdname dense_frequencies_vector
-#' @param allow_densify If `TRUE`, allow sparse stores to be converted to dense
-#'   in memory before returning the vector.
+#' @param allow_densify If `TRUE`, allow sparse output to be converted to a
+#'   zero-filled dense vector in memory. Zero filling uses the motif axis from
+#'   `motifs(x)`, not every possible k-mer unless `all_motifs(x)` is `TRUE`.
 dense_frequencies_vector.cfdnalab_global_ref_kmer_frequencies <- function(
   x,
   allow_densify = FALSE,
@@ -1078,8 +1089,11 @@ dense_counts_vector.cfdnalab_global_ref_kmer_frequencies <- function(
 
 #' @export
 #' @rdname ref_kmer_data_frame
-#' @param densify If `TRUE`, sparse outputs add explicit zero-frequency rows
-#'   for selected observed motifs. Dense outputs ignore this option.
+#' @param densify If `TRUE`, sparse output adds explicit zero-frequency rows
+#'   for selected motifs in `motifs(x)`. For observed-only output, this is the
+#'   combined set observed anywhere in the output. Densifying does not add
+#'   every possible k-mer unless `all_motifs(x)` is `TRUE`. Dense outputs
+#'   ignore this option.
 #' @param motifs Optional motif label vector. Use either `motifs` or
 #'   `motif_idxs`, not both.
 #' @param motif_idxs Optional one-based motif index vector.
@@ -1155,7 +1169,7 @@ ref_kmer_data_frame.cfdnalab_grouped_ref_kmer_frequencies <- function(
 #' @param x Reference k-mer object.
 #' @param row_indices One-based row indices.
 #' @param motif_indices One-based motif indices.
-#' @param densify Whether to densify sparse stores.
+#' @param densify Whether to add explicit zero-frequency rows for sparse output.
 #' @param max_blacklisted_fraction Maximum blacklist fraction.
 #'
 #' @return A data frame.
@@ -1289,7 +1303,7 @@ cf_resolve_ref_kmer_motif_indices <- function(x, motifs, motif_idxs) {
 #' @param x Reference k-mer object.
 #' @param row_indices One-based row indices.
 #' @param motif_indices One-based motif indices.
-#' @param densify Whether to allow sparse-store densification.
+#' @param densify Whether to add explicit zero-frequency rows for sparse output.
 #'
 #' @return A data frame with one row per selected row and motif.
 #' @noRd

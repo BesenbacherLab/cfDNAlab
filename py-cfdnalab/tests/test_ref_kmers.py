@@ -310,6 +310,22 @@ def test_ref_kmer_loader_rejects_schema_and_shape_problems(tmp_path: Path) -> No
         tmp_path / "wrong_dimensions.ref_kmer_counts.zarr",
         frequencies_dimension_names=("motif", "row"),
     )
+    wrong_motif_axis_dimensions = _write_dense_window_store(
+        tmp_path / "wrong_motif_axis_dimensions.ref_kmer_counts.zarr",
+    )
+    _patch_array_metadata(
+        wrong_motif_axis_dimensions,
+        "motif_index",
+        dimension_names=("row",),
+    )
+    wrong_window_metadata_dimensions = _write_dense_window_store(
+        tmp_path / "wrong_window_metadata_dimensions.ref_kmer_counts.zarr",
+    )
+    _patch_array_metadata(
+        wrong_window_metadata_dimensions,
+        "row_start_bp",
+        dimension_names=("motif",),
+    )
     shape_mismatch = _write_sparse_grouped_store(
         tmp_path / "shape_mismatch.ref_kmer_counts.zarr",
         sparse_shape=np.array([3, 2], dtype=np.int32),
@@ -341,6 +357,10 @@ def test_ref_kmer_loader_rejects_schema_and_shape_problems(tmp_path: Path) -> No
         cfdnalab.read_ref_kmers(missing_array)
     with pytest.raises(ValueError, match="dense frequencies dimensions must be"):
         cfdnalab.read_ref_kmers(wrong_dimensions)
+    with pytest.raises(ValueError, match="motif_index dimensions must be"):
+        cfdnalab.read_ref_kmers(wrong_motif_axis_dimensions)
+    with pytest.raises(ValueError, match="row_start_bp dimensions must be"):
+        cfdnalab.read_ref_kmers(wrong_window_metadata_dimensions)
     with pytest.raises(ValueError, match="sparse/shape does not match"):
         cfdnalab.read_ref_kmers(shape_mismatch)
     with pytest.raises(ValueError, match="sorted and unique"):
@@ -414,6 +434,94 @@ def test_ref_kmer_loader_rejects_invalid_values_and_motifs(tmp_path: Path) -> No
         ref_kmers.dense_frequencies_array()
 
 
+def test_ref_kmer_loader_rejects_invalid_row_metadata(tmp_path: Path) -> None:
+    bad_interval = _write_dense_window_store(
+        tmp_path / "bad_interval.ref_kmer_counts.zarr",
+        row_start_bp=np.array([10, 60], dtype=np.int64),
+        row_end_bp=np.array([20, 40], dtype=np.int64),
+    )
+    bad_window_fraction = _write_dense_window_store(
+        tmp_path / "bad_window_fraction.ref_kmer_counts.zarr",
+        blacklisted_fraction=np.array([0.25, 1.25], dtype=np.float64),
+    )
+    bad_chromosome_index = _write_dense_window_store(
+        tmp_path / "bad_chromosome_index.ref_kmer_counts.zarr",
+        row_chromosome=np.array([0, 2], dtype=np.int32),
+    )
+    bad_eligible_windows = _write_sparse_grouped_store(
+        tmp_path / "bad_eligible_windows.ref_kmer_counts.zarr",
+        eligible_windows=np.array([1, -1, 0], dtype=np.int32),
+    )
+    bad_group_fraction = _write_sparse_grouped_store(
+        tmp_path / "bad_group_fraction.ref_kmer_counts.zarr",
+        blacklisted_fraction=np.array([0.0, np.nan, 0.0], dtype=np.float64),
+    )
+
+    with pytest.raises(
+        ValueError, match="row_start_bp must be smaller than row_end_bp"
+    ):
+        cfdnalab.read_ref_kmers(bad_interval)
+    with pytest.raises(ValueError, match="blacklisted_fraction"):
+        cfdnalab.read_ref_kmers(bad_window_fraction)
+    with pytest.raises(ValueError, match="row_chromosome contains an index outside"):
+        cfdnalab.read_ref_kmers(bad_chromosome_index)
+    with pytest.raises(ValueError, match="eligible_windows"):
+        cfdnalab.read_ref_kmers(bad_eligible_windows)
+    with pytest.raises(ValueError, match="blacklisted_fraction"):
+        cfdnalab.read_ref_kmers(bad_group_fraction)
+
+
+def test_ref_kmer_loader_rejects_invalid_json_labels(tmp_path: Path) -> None:
+    numeric_group_labels = _write_dense_global_motif_group_store(
+        tmp_path / "numeric_group_labels.ref_kmer_counts.zarr"
+    )
+    _patch_array_metadata(
+        numeric_group_labels,
+        "motif_index",
+        attributes={"label_field": "motif_group", "labels": [1, 2]},
+    )
+    control_character_label = _write_sparse_grouped_store(
+        tmp_path / "control_character_label.ref_kmer_counts.zarr",
+        group_names=["A", "bad\nlabel", "empty"],
+    )
+
+    with pytest.raises(ValueError, match="labels must be character strings"):
+        cfdnalab.read_ref_kmers(numeric_group_labels)
+    with pytest.raises(ValueError, match="labels must not contain control characters"):
+        cfdnalab.read_ref_kmers(control_character_label)
+
+
+def test_sparse_ref_kmers_allow_empty_stored_coordinates(tmp_path: Path) -> None:
+    store_path = _write_sparse_grouped_store(
+        tmp_path / "empty_sparse.ref_kmer_counts.zarr",
+        sparse_row=np.asarray([], dtype=np.int32),
+        sparse_motif=np.asarray([], dtype=np.int32),
+        sparse_frequency=np.asarray([], dtype=np.float64),
+    )
+
+    ref_kmers = cfdnalab.read_ref_kmers(store_path)
+
+    stored = ref_kmers.data_frame()
+    assert list(stored.columns) == [
+        "group_idx",
+        "group_name",
+        "eligible_windows",
+        "blacklisted_fraction",
+        "motif_index",
+        "motif",
+        "frequency",
+        "count",
+    ]
+    assert len(stored) == 0
+    coo = ref_kmers.sparse_frequencies_matrix()
+    assert coo.shape == (3, 3)
+    assert coo.nnz == 0
+    np.testing.assert_allclose(
+        ref_kmers.dense_counts_array(allow_densify=True),
+        np.zeros((3, 3), dtype=np.float64),
+    )
+
+
 def _write_dense_window_store(
     path: Path,
     *,
@@ -428,6 +536,10 @@ def _write_dense_window_store(
     canonical: bool = False,
     frequencies: np.ndarray | None = None,
     row_scaling_factor: np.ndarray | None = None,
+    row_chromosome: np.ndarray | None = None,
+    row_start_bp: np.ndarray | None = None,
+    row_end_bp: np.ndarray | None = None,
+    blacklisted_fraction: np.ndarray | None = None,
     omit: set[str] | None = None,
     frequencies_dimension_names: tuple[str, str] = ("row", "motif"),
 ) -> Path:
@@ -452,22 +564,64 @@ def _write_dense_window_store(
     )
 
     _create_motif_axis(root, motif_names)
-    _create_array(root, "row", np.array([0, 1], dtype=np.int32), chunks=(2,))
+    _create_array(
+        root,
+        "row",
+        np.array([0, 1], dtype=np.int32),
+        chunks=(2,),
+        dimension_names=("row",),
+    )
     _create_labeled_axis(
         root,
         "chromosome",
         np.array([0, 1], dtype=np.int32),
         "chromosome_name",
         np.array(["chr2", "chr10"], dtype=object),
+        dimension_names=("chromosome",),
     )
-    _create_array(root, "row_chromosome", np.array([0, 1], dtype=np.int32), chunks=(2,))
-    _create_array(root, "row_start_bp", np.array([10, 40], dtype=np.int64), chunks=(2,))
-    _create_array(root, "row_end_bp", np.array([20, 60], dtype=np.int64), chunks=(2,))
+    _create_array(
+        root,
+        "row_chromosome",
+        (
+            row_chromosome
+            if row_chromosome is not None
+            else np.array([0, 1], dtype=np.int32)
+        ),
+        chunks=(2,),
+        dimension_names=("row",),
+    )
+    _create_array(
+        root,
+        "row_start_bp",
+        (
+            row_start_bp
+            if row_start_bp is not None
+            else np.array([10, 40], dtype=np.int64)
+        ),
+        chunks=(2,),
+        dimension_names=("row",),
+    )
+    _create_array(
+        root,
+        "row_end_bp",
+        (
+            row_end_bp
+            if row_end_bp is not None
+            else np.array([20, 60], dtype=np.int64)
+        ),
+        chunks=(2,),
+        dimension_names=("row",),
+    )
     _create_array(
         root,
         "blacklisted_fraction",
-        np.array([0.25, 0.0], dtype=np.float64),
+        (
+            blacklisted_fraction
+            if blacklisted_fraction is not None
+            else np.array([0.25, 0.0], dtype=np.float64)
+        ),
         chunks=(2,),
+        dimension_names=("row",),
     )
     _create_array(
         root,
@@ -515,6 +669,9 @@ def _write_sparse_grouped_store(
     sparse_shape: np.ndarray = np.array([3, 3], dtype=np.int32),
     sparse_frequency: np.ndarray = np.array([0.25, 0.75, 1.0], dtype=np.float64),
     sparse_dimension_labels: np.ndarray = np.array(["row", "motif"], dtype=object),
+    group_names: list[str] | None = None,
+    eligible_windows: np.ndarray = np.array([1, 2, 0], dtype=np.int32),
+    blacklisted_fraction: np.ndarray = np.array([0.0, 0.125, 0.0], dtype=np.float64),
 ) -> Path:
     root = zarr.open_group(str(path), mode="w", zarr_format=3)
     _set_ref_kmer_root_attrs(
@@ -526,25 +683,34 @@ def _write_sparse_grouped_store(
     )
 
     _create_motif_axis(root, MOTIF_NAMES)
-    _create_array(root, "row", np.array([0, 1, 2], dtype=np.int32), chunks=(3,))
+    _create_array(
+        root,
+        "row",
+        np.array([0, 1, 2], dtype=np.int32),
+        chunks=(3,),
+        dimension_names=("row",),
+    )
     _create_labeled_axis(
         root,
         "group",
         np.array([0, 1, 2], dtype=np.int32),
         "group_name",
-        np.array(["A", "long_group", "empty"], dtype=object),
+        group_names if group_names is not None else ["A", "long_group", "empty"],
+        dimension_names=("row",),
     )
     _create_array(
         root,
         "eligible_windows",
-        np.array([1, 2, 0], dtype=np.int32),
+        eligible_windows,
         chunks=(3,),
+        dimension_names=("row",),
     )
     _create_array(
         root,
         "blacklisted_fraction",
-        np.array([0.0, 0.125, 0.0], dtype=np.float64),
+        blacklisted_fraction,
         chunks=(3,),
+        dimension_names=("row",),
     )
     _create_array(
         root,
@@ -613,6 +779,7 @@ def _write_dense_global_motif_group_store(path: Path) -> Path:
         np.array([0], dtype=np.int32),
         "row_label",
         np.array(["global"], dtype=object),
+        dimension_names=("row",),
     )
     _create_array(
         root,
@@ -692,7 +859,9 @@ def _create_labeled_axis(
     )
     axis.attrs["label_field"] = label_field
     if labels is not None:
-        axis.attrs["labels"] = labels.tolist() if isinstance(labels, np.ndarray) else labels
+        axis.attrs["labels"] = (
+            labels.tolist() if isinstance(labels, np.ndarray) else labels
+        )
     return axis
 
 
@@ -702,6 +871,7 @@ def _create_motif_axis(root: zarr.Group, labels: np.ndarray) -> None:
         "motif_index",
         np.arange(len(labels), dtype=np.int32),
         chunks=(max(len(labels), 1),),
+        dimension_names=("motif",),
     )
     motif_width = len(labels[0]) if len(labels) else 0
     _create_array(
@@ -709,6 +879,7 @@ def _create_motif_axis(root: zarr.Group, labels: np.ndarray) -> None:
         "motif_byte",
         np.arange(motif_width, dtype=np.int32),
         chunks=(max(motif_width, 1),),
+        dimension_names=("motif_byte",),
     )
     motif_ascii = np.frombuffer("".join(labels.tolist()).encode("ascii"), dtype=np.uint8)
     motif_ascii = motif_ascii.reshape((len(labels), motif_width))
@@ -717,6 +888,7 @@ def _create_motif_axis(root: zarr.Group, labels: np.ndarray) -> None:
         "motif_ascii",
         motif_ascii,
         chunks=(max(len(labels), 1), max(motif_width, 1)),
+        dimension_names=("motif", "motif_byte"),
     )
 
 
@@ -756,6 +928,22 @@ def _create_array(
         chunks=chunks,
         dimension_names=dimension_names,
     )
+
+
+def _patch_array_metadata(
+    store_path: Path,
+    array_name: str,
+    *,
+    dimension_names: tuple[str, ...] | None = None,
+    attributes: dict[str, object] | None = None,
+) -> None:
+    metadata_path = store_path.joinpath(*array_name.split("/"), "zarr.json")
+    metadata = json.loads(metadata_path.read_text())
+    if dimension_names is not None:
+        metadata["dimension_names"] = list(dimension_names)
+    if attributes is not None:
+        metadata["attributes"] = attributes
+    metadata_path.write_text(json.dumps(metadata))
 
 
 def _delete_array(root: zarr.Group, name: str) -> None:

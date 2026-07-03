@@ -944,13 +944,22 @@ cf_read_labels <- function(path, array_name, expected_field, expected_length) {
   if (is.null(attrs$labels)) {
     stop(array_name, " metadata is missing labels", call. = FALSE)
   }
-  labels <- if (length(attrs$labels) == 0L) {
+  raw_labels <- attrs$labels
+  labels <- if (length(raw_labels) == 0L) {
     character()
   } else {
-    unlist(attrs$labels, use.names = FALSE)
+    valid_labels <- vapply(
+      raw_labels,
+      function(label) is.character(label) && length(label) == 1L && !is.na(label),
+      logical(1L)
+    )
+    if (!is.list(raw_labels) || !all(valid_labels)) {
+      stop(array_name, " labels must be character strings", call. = FALSE)
+    }
+    vapply(raw_labels, identity, character(1L), USE.NAMES = FALSE)
   }
-  if (!is.character(labels)) {
-    stop(array_name, " labels must be character strings", call. = FALSE)
+  if (any(grepl("[[:cntrl:]]", labels))) {
+    stop(array_name, " labels must not contain control characters", call. = FALSE)
   }
   if (length(labels) != expected_length) {
     stop(

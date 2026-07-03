@@ -238,6 +238,10 @@ test_that("reference k-mer loader rejects schema and shape problems", {
   unlink(file.path(missing_scaling, "row_scaling_factor"), recursive = TRUE)
   wrong_dimensions <- make_dense_windowed_ref_kmer_zarr_fixture()
   patch_zarr_metadata(wrong_dimensions, "frequencies", dimension_names = c("motif", "row"))
+  wrong_motif_axis_dimensions <- make_dense_windowed_ref_kmer_zarr_fixture()
+  patch_zarr_metadata(wrong_motif_axis_dimensions, "motif_index", dimension_names = "row")
+  wrong_row_metadata_dimensions <- make_dense_windowed_ref_kmer_zarr_fixture()
+  patch_zarr_metadata(wrong_row_metadata_dimensions, "row_start_bp", dimension_names = "motif")
   shape_mismatch <- make_sparse_grouped_ref_kmer_zarr_fixture(sparse_shape = c(3L, 2L))
   duplicate_sparse_coordinate <- make_sparse_grouped_ref_kmer_zarr_fixture(
     sparse_row = c(0L, 0L, 0L),
@@ -255,6 +259,14 @@ test_that("reference k-mer loader rejects schema and shape problems", {
   expect_error(read_ref_kmers(wrong_version), "Unsupported reference k-mer schema version")
   expect_error(read_ref_kmers(missing_scaling), "missing arrays: row_scaling_factor")
   expect_error(read_ref_kmers(wrong_dimensions), "frequencies dimensions must be")
+  expect_error(
+    read_ref_kmers(wrong_motif_axis_dimensions),
+    "motif_index dimensions must be"
+  )
+  expect_error(
+    read_ref_kmers(wrong_row_metadata_dimensions),
+    "row_start_bp dimensions must be"
+  )
   expect_error(read_ref_kmers(shape_mismatch), "sparse/shape does not match")
   expect_error(read_ref_kmers(duplicate_sparse_coordinate), "sorted and unique")
   expect_error(read_ref_kmers(unsorted_sparse_coordinate), "sorted and unique")
@@ -316,4 +328,53 @@ test_that("reference k-mer loader rejects invalid values and motif labels", {
 
   ref_kmers <- read_ref_kmers(bad_dense_frequency)
   expect_error(dense_frequencies_matrix(ref_kmers), "frequencies")
+})
+
+test_that("reference k-mer loader rejects invalid row metadata", {
+  bad_interval <- make_dense_windowed_ref_kmer_zarr_fixture(
+    row_start_bp = c(10L, 60L),
+    row_end_bp = c(20L, 40L)
+  )
+  bad_window_fraction <- make_dense_windowed_ref_kmer_zarr_fixture(
+    blacklisted_fraction = c(0.25, 1.25)
+  )
+  bad_chromosome_index <- make_dense_windowed_ref_kmer_zarr_fixture(
+    row_chromosome = c(0L, 2L)
+  )
+  bad_eligible_windows <- make_sparse_grouped_ref_kmer_zarr_fixture(
+    eligible_windows = c(1L, -1L, 0L)
+  )
+  bad_group_fraction <- make_sparse_grouped_ref_kmer_zarr_fixture(
+    blacklisted_fraction = c(0, NaN, 0)
+  )
+
+  expect_error(
+    read_ref_kmers(bad_interval),
+    "row_start_bp must be smaller than row_end_bp"
+  )
+  expect_error(read_ref_kmers(bad_window_fraction), "blacklisted_fraction")
+  expect_error(
+    read_ref_kmers(bad_chromosome_index),
+    "row_chromosome contains an index outside"
+  )
+  expect_error(read_ref_kmers(bad_eligible_windows), "eligible_windows")
+  expect_error(read_ref_kmers(bad_group_fraction), "blacklisted_fraction")
+})
+
+test_that("reference k-mer loader rejects invalid JSON labels", {
+  numeric_group_labels <- make_dense_global_ref_kmer_group_zarr_fixture()
+  patch_zarr_metadata(
+    numeric_group_labels,
+    "motif_index",
+    attributes = list(label_field = "motif_group", labels = list(1L, 2L))
+  )
+  control_character_label <- make_sparse_grouped_ref_kmer_zarr_fixture(
+    group_labels = list("A", "bad\nlabel", "empty")
+  )
+
+  expect_error(read_ref_kmers(numeric_group_labels), "labels must be character strings")
+  expect_error(
+    read_ref_kmers(control_character_label),
+    "labels must not contain control characters"
+  )
 })

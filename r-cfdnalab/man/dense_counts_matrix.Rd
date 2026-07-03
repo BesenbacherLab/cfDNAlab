@@ -90,6 +90,8 @@ in-memory matrix. Sparse stores error by default.}
 A dense numeric matrix.
 }
 \description{
-Sparse stores are not densified unless the method explicitly receives
-\code{allow_densify = TRUE}.
+Sparse output stores only non-zero values. These methods do not create a
+zero-filled dense matrix from sparse output unless they explicitly receive
+\code{allow_densify = TRUE}. For objects with a motif axis, densifying fills
+zeroes only across the labels returned by \code{motifs(x)}.
 }

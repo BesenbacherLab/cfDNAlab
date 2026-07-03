@@ -14,13 +14,16 @@ dense_frequencies_vector(x, ...)
 
 \item{...}{Method-specific arguments.}
 
-\item{allow_densify}{If \code{TRUE}, allow sparse stores to be converted to dense
-in memory before returning the vector.}
+\item{allow_densify}{If \code{TRUE}, allow sparse output to be converted to a
+zero-filled dense vector in memory. Zero filling uses the motif axis from
+\code{motifs(x)}, not every possible k-mer unless \code{all_motifs(x)} is \code{TRUE}.}
 }
 \value{
 A named numeric vector with one value per motif.
 }
 \description{
-Sparse stores are not densified unless the method explicitly receives
-\code{allow_densify = TRUE}.
+Sparse output stores only non-zero frequencies. This method does not create
+a zero-filled dense vector from sparse output unless it explicitly receives
+\code{allow_densify = TRUE}. Densifying fills zeroes only across the motif axis
+returned by \code{motifs(x)}.
 }

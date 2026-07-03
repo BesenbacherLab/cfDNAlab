@@ -71,6 +71,6 @@ sparse_counts_matrix(x, ...)
 A \code{Matrix} sparse matrix.
 }
 \description{
-Sparse stores are converted directly from their stored COO arrays. Dense
-stores are read into memory before conversion.
+Sparse output is returned without building a zero-filled dense matrix. Dense
+output is read into memory before conversion to a sparse matrix.
 }

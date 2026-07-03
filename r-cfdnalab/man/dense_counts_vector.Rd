@@ -24,6 +24,8 @@ in memory before returning the vector.}
 A named numeric vector with one value per motif.
 }
 \description{
-Sparse stores are not densified unless the method explicitly receives
-\code{allow_densify = TRUE}.
+Sparse output stores only non-zero values. These methods do not create a
+zero-filled dense vector from sparse output unless they explicitly receive
+\code{allow_densify = TRUE}. For objects with a motif axis, densifying fills
+zeroes only across the labels returned by \code{motifs(x)}.
 }

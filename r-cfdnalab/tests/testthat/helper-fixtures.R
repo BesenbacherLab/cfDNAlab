@@ -224,7 +224,14 @@ add_ref_kmer_motif_axis <- function(zarr_store, store_path, motifs) {
   add_fixture_array(zarr_store, store_path, "/", "motif_ascii", motif_ascii_matrix(motifs), "uint8", c("motif", "motif_byte"))
 }
 
-add_ref_kmer_window_metadata <- function(zarr_store, store_path) {
+add_ref_kmer_window_metadata <- function(
+  zarr_store,
+  store_path,
+  row_chromosome = c(0L, 1L),
+  row_start_bp = c(10L, 40L),
+  row_end_bp = c(20L, 60L),
+  blacklisted_fraction = c(0.25, 0)
+) {
   add_fixture_array(zarr_store, store_path, "/", "row", 0:1, "int32", "row")
   add_fixture_array(
     zarr_store,
@@ -236,10 +243,26 @@ add_ref_kmer_window_metadata <- function(zarr_store, store_path) {
     "chromosome",
     list(label_field = "chromosome_name", labels = list("chr2", "chr10"))
   )
-  add_fixture_array(zarr_store, store_path, "/", "row_chromosome", c(0L, 1L), "int32", "row")
-  add_fixture_array(zarr_store, store_path, "/", "row_start_bp", c(10L, 40L), "int32", "row")
-  add_fixture_array(zarr_store, store_path, "/", "row_end_bp", c(20L, 60L), "int32", "row")
-  add_fixture_array(zarr_store, store_path, "/", "blacklisted_fraction", c(0.25, 0), "float64", "row")
+  add_fixture_array(
+    zarr_store,
+    store_path,
+    "/",
+    "row_chromosome",
+    row_chromosome,
+    "int32",
+    "row"
+  )
+  add_fixture_array(zarr_store, store_path, "/", "row_start_bp", row_start_bp, "int32", "row")
+  add_fixture_array(zarr_store, store_path, "/", "row_end_bp", row_end_bp, "int32", "row")
+  add_fixture_array(
+    zarr_store,
+    store_path,
+    "/",
+    "blacklisted_fraction",
+    blacklisted_fraction,
+    "float64",
+    "row"
+  )
 }
 
 make_midpoint_zarr_fixture <- function() {
@@ -683,6 +706,10 @@ make_dense_windowed_ref_kmer_zarr_fixture <- function(
   canonical = FALSE,
   frequencies = matrix(c(0.25, 0, 0.75, 0.5, 0.5, 0), nrow = 2L, byrow = TRUE),
   row_scaling_factor = c(4, 2),
+  row_chromosome = c(0L, 1L),
+  row_start_bp = c(10L, 40L),
+  row_end_bp = c(20L, 60L),
+  blacklisted_fraction = c(0.25, 0),
   root_attributes = NULL
 ) {
   testthat::skip_if_not_installed("zarr")
@@ -700,7 +727,14 @@ make_dense_windowed_ref_kmer_zarr_fixture <- function(
   patch_zarr_metadata(store_path, attributes = root_attributes)
 
   add_ref_kmer_motif_axis(zarr_store, store_path, motifs)
-  add_ref_kmer_window_metadata(zarr_store, store_path)
+  add_ref_kmer_window_metadata(
+    zarr_store,
+    store_path,
+    row_chromosome = row_chromosome,
+    row_start_bp = row_start_bp,
+    row_end_bp = row_end_bp,
+    blacklisted_fraction = blacklisted_fraction
+  )
   add_fixture_array(zarr_store, store_path, "/", "row_scaling_factor", row_scaling_factor, "float64", "row")
   add_reference_contig_footprint_array(zarr_store, store_path)
   add_fixture_array(zarr_store, store_path, "/", "frequencies", frequencies, "float64", c("row", "motif"))
@@ -713,6 +747,9 @@ make_sparse_grouped_ref_kmer_zarr_fixture <- function(
   sparse_motif = c(0L, 2L, 1L),
   sparse_frequency = c(0.25, 0.75, 1),
   row_scaling_factor = c(4, 2, 0),
+  group_labels = list("A", "long_group", "empty"),
+  eligible_windows = c(1L, 2L, 0L),
+  blacklisted_fraction = c(0, 0.125, 0),
   sparse_dimension_labels = list("row", "motif"),
   sparse_shape = c(3L, 3L)
 ) {
@@ -739,10 +776,26 @@ make_sparse_grouped_ref_kmer_zarr_fixture <- function(
     0:2,
     "int32",
     "row",
-    list(label_field = "group_name", labels = list("A", "long_group", "empty"))
+    list(label_field = "group_name", labels = group_labels)
   )
-  add_fixture_array(zarr_store, store_path, "/", "eligible_windows", c(1L, 2L, 0L), "int32", "row")
-  add_fixture_array(zarr_store, store_path, "/", "blacklisted_fraction", c(0, 0.125, 0), "float64", "row")
+  add_fixture_array(
+    zarr_store,
+    store_path,
+    "/",
+    "eligible_windows",
+    eligible_windows,
+    "int32",
+    "row"
+  )
+  add_fixture_array(
+    zarr_store,
+    store_path,
+    "/",
+    "blacklisted_fraction",
+    blacklisted_fraction,
+    "float64",
+    "row"
+  )
   add_fixture_array(zarr_store, store_path, "/", "row_scaling_factor", row_scaling_factor, "float64", "row")
   add_reference_contig_footprint_array(zarr_store, store_path)
   add_fixture_array(zarr_store, store_path, "/sparse", "row", sparse_row, "int32", "nnz")

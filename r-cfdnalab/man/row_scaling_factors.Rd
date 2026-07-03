@@ -18,6 +18,6 @@ row_scaling_factors(x, ...)
 A data frame with row metadata and \code{row_scaling_factor}.
 }
 \description{
-Counts are reconstructed as \code{frequency * row_scaling_factor} for the
-corresponding row.
+Reference k-mer outputs store frequencies. Multiplying a row's frequency by
+its \code{row_scaling_factor} gives the reconstructed count for that row.
 }

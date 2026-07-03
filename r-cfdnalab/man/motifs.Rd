@@ -24,5 +24,7 @@ A data frame with one row per motif-axis label.
 For ordinary end-motif stores, the \code{motif} column contains concrete motif
 labels. For grouped motifs-file output, the same column contains user-defined
 group names from the motif axis. Reference k-mer stores use the same column
-for concrete k-mers or k-mer group names.
+for concrete k-mers or k-mer group names. For observed-only reference k-mer
+output, this is the combined set of motifs or motifs-file targets observed
+anywhere in the output.
 }

@@ -135,7 +135,7 @@ group_idx_counts <- end_motif_data_frame(ends, group_idxs = c(1L, 3L), motif_idx
 
 ## Reference K-Mers
 
-Reference k-mer stores contain row-wise frequencies. Counts are reconstructed by multiplying each row by its `row_scaling_factor`.
+Reference k-mer outputs contain row-wise frequencies. Each row is the whole reference, a genomic window, or a BED group depending on how `cfdna ref-kmers` was run. Counts are reconstructed by multiplying each row by its `row_scaling_factor`.
 
 ```r
 ref_kmers <- read_ref_kmers("sample.ref_kmer_counts.zarr")
@@ -150,7 +150,7 @@ counts <- sparse_counts_matrix(ref_kmers)
 rows <- ref_kmer_data_frame(ref_kmers)
 ```
 
-Dense helpers do not silently convert sparse stores. If you want a dense matrix from sparse output, pass `allow_densify = TRUE`.
+Sparse output stores only non-zero values. Dense helpers do not silently create a zero-filled matrix from sparse output. If you want a dense matrix from sparse output, pass `allow_densify = TRUE`. For observed-only output, zero filling covers the motif axis returned by `motifs(ref_kmers)`: the combined set of motifs or motifs-file targets observed anywhere in the output. It does not add every possible k-mer unless `all_motifs(ref_kmers)` is `TRUE`.
 
 ```r
 dense_frequencies_matrix(ref_kmers, allow_densify = TRUE)
