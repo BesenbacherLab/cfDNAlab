@@ -9,6 +9,7 @@ import pytest
 import cfdnalab
 from test_ends import (
     _write_dense_global_store,
+    _write_dense_grouped_store,
     _write_dense_window_store,
     _write_reference_correction_ref_kmer_store,
     _write_sparse_window_store,
@@ -481,3 +482,70 @@ def test_reference_corrected_end_motifs_can_use_global_reference_bias(
             groups="A",
             use_global_bias=True,
         )
+
+
+def test_reference_corrected_end_motifs_rejects_global_bias_for_matched_reference(
+    tmp_path: Path,
+) -> None:
+    # Arrange: The reference already has rows matching the end output. The
+    # global-bias flag would be misleading because there is no global reference
+    # row to broadcast.
+    end_path = _write_dense_window_store(tmp_path / "sample.end_motifs.zarr")
+    ref_path = _write_reference_correction_ref_kmer_store(
+        tmp_path / "hg38.ref_kmer_counts.zarr"
+    )
+    ends = cfdnalab.read_end_motifs(end_path)
+    ref_kmers = cfdnalab.read_ref_kmers(ref_path)
+
+    # Act / Assert
+    with pytest.raises(
+        ValueError,
+        match="use_global_bias=True requires a global reference k-mer output",
+    ):
+        ends.data_frame(ref_kmers=ref_kmers, use_global_bias=True)
+
+
+def test_reference_corrected_group_indices_match_reference_rows_by_group_name(
+    tmp_path: Path,
+) -> None:
+    # Arrange: `group_idxs=1` selects `long_group` in the end output. The
+    # reference has the same group names in a different order, so correction
+    # must map by group name before reading reference motif rows.
+    end_path = _write_dense_grouped_store(tmp_path / "sample.end_motifs.zarr")
+    ref_path = _write_reference_correction_ref_kmer_store(
+        tmp_path / "hg38.ref_kmer_counts.zarr",
+        frequencies=np.array(
+            [
+                [1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0],
+                [0.5, 0.25, 0.25],
+                [1.0, 0.0, 0.0],
+            ],
+            dtype=np.float64,
+        ),
+        group_names=np.array(["long_group", "A", "mid"], dtype=object),
+        row_mode="grouped_bed",
+    )
+    ends = cfdnalab.read_end_motifs(end_path)
+    ref_kmers = cfdnalab.read_ref_kmers(ref_path)
+
+    # Act
+    corrected = ends.data_frame(
+        ref_kmers=ref_kmers,
+        group_idxs=1,
+        motifs="_CC",
+    )
+
+    # Assert
+    assert corrected["group_name"].tolist() == ["long_group"]
+    np.testing.assert_allclose(
+        corrected["reference_frequency"].to_numpy(),
+        np.array([1.0 / 3.0], dtype=np.float64),
+    )
+    np.testing.assert_array_equal(
+        corrected["correction_motif_count"].to_numpy(),
+        np.array([3], dtype=np.int64),
+    )
+    np.testing.assert_allclose(
+        corrected["reference_corrected_count"].to_numpy(),
+        np.array([4.25], dtype=np.float64),
+    )

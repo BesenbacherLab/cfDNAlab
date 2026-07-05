@@ -996,6 +996,15 @@ cf_decode_motif_ascii <- function(bytes, n_motifs, motif_width) {
   ) {
     stop("motif_ascii must contain ASCII byte values in 0..127", call. = FALSE)
   }
+  if (n_motifs > 0L && motif_width == 0L) {
+    stop(
+      "motif_ascii cannot decode non-empty motif axis with zero motif_byte width",
+      call. = FALSE
+    )
+  }
+  if (any(bytes < 32L | bytes == 127L)) {
+    stop("motif_ascii must not contain ASCII control bytes", call. = FALSE)
+  }
   if (nrow(bytes) != n_motifs) {
     stop(
       "motif_ascii row count (",
@@ -1016,10 +1025,11 @@ cf_decode_motif_ascii <- function(bytes, n_motifs, motif_width) {
       call. = FALSE
     )
   }
+  if (n_motifs == 0L) {
+    return(character())
+  }
   unname(apply(bytes, 1L, function(row) {
-    row <- as.integer(row)
-    row <- row[row != 0L]
-    rawToChar(as.raw(row))
+    rawToChar(as.raw(as.integer(row)))
   }))
 }
 

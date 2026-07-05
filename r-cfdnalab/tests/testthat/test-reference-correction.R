@@ -257,6 +257,35 @@ test_that("reference correction uses row sparse reference support", {
   expect_equal(corrected$reference_corrected_count, c(1.5, 0, 3.75, 0, 0, 0))
 })
 
+test_that("reference correction maps selected grouped rows by group name", {
+  end_path <- make_dense_grouped_end_motif_zarr_fixture()
+  ref_path <- make_sparse_grouped_ref_kmer_zarr_fixture(
+    motifs = c("A", "C", "G"),
+    sparse_row = c(1L, 1L),
+    sparse_motif = c(0L, 2L),
+    sparse_frequency = c(0.5, 0.5),
+    group_labels = list("beta", "alpha"),
+    sparse_shape = c(2L, 3L),
+    row_scaling_factor = c(0, 2),
+    eligible_windows = c(0L, 2L),
+    blacklisted_fraction = c(0, 0.125)
+  )
+  ends <- read_end_motifs(end_path)
+  ref_kmers <- read_ref_kmers(ref_path)
+
+  corrected <- end_motif_data_frame(
+    ends,
+    ref_kmers = ref_kmers,
+    group_idxs = 1L
+  )
+
+  expect_equal(corrected$group_name, c("alpha", "alpha", "alpha"))
+  expect_equal(corrected$reference_frequency, c(0.5, 0, 0.5))
+  expect_equal(corrected$correction_motif_count, c(2L, 2L, 2L))
+  expect_equal(corrected$reference_scale, c(1, 0, 1))
+  expect_equal(corrected$reference_corrected_count, c(1, 0, 5))
+})
+
 test_that("reference correction rejects missing reference motifs by default", {
   end_path <- make_dense_windowed_end_motif_zarr_fixture()
   ref_path <- make_dense_windowed_ref_kmer_zarr_fixture(
@@ -368,6 +397,19 @@ test_that("reference correction requires opt-in for global reference bias", {
   expect_error(
     end_motif_data_frame(ends, ref_kmers = ref_kmers),
     "use_global_bias = TRUE",
+    fixed = TRUE
+  )
+})
+
+test_that("reference correction rejects global-bias flag for matched reference rows", {
+  end_path <- make_dense_windowed_end_motif_zarr_fixture()
+  ref_path <- make_dense_windowed_ref_kmer_zarr_fixture()
+  ends <- read_end_motifs(end_path)
+  ref_kmers <- read_ref_kmers(ref_path)
+
+  expect_error(
+    end_motif_data_frame(ends, ref_kmers = ref_kmers, use_global_bias = TRUE),
+    "use_global_bias = TRUE requires a global reference k-mer output",
     fixed = TRUE
   )
 })

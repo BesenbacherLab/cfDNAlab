@@ -89,6 +89,7 @@ read_end_motifs <- function(path) {
   } else {
     motif <- cf_read_labels(path, "motif_index", "motif_group", length(motif_axis))
   }
+  cf_validate_unique_axis_labels(motif, "end-motif")
 
   cf_validate_axis(motif_axis, "motif_index")
   cf_validate_axis(row, "row")
@@ -314,6 +315,12 @@ cf_read_end_motif_row_metadata <- function(path, store, row, row_mode) {
   if (identical(row_mode, "global")) {
     cf_validate_dimension_names(path, "row", "row")
     labels <- cf_read_labels(path, "row", "row_label", length(row))
+    if (!identical(labels, "global")) {
+      stop(
+        "global end-motif output must contain exactly one row labeled 'global'",
+        call. = FALSE
+      )
+    }
     return(data.frame(row_label = labels, stringsAsFactors = FALSE))
   }
 
@@ -648,7 +655,7 @@ cf_dense_end_motif_matrix_for_indices <- function(
 #'   in-memory matrix. Sparse stores error by default.
 #' @param use_global_bias Whether a global reference k-mer output may be
 #'   applied to every end-motif row.
-#' @param unsupported_motifs What to do with positive counts that have no
+#' @param unsupported_motifs What to do when an observed sample motif has no
 #'   positive reference frequency. Use `"error"`, `"drop"`, or `"keep_na"`.
 dense_corrected_counts_matrix.cfdnalab_global_end_motif_counts <- function(
   x,
@@ -744,7 +751,7 @@ dense_corrected_counts_matrix.cfdnalab_grouped_end_motif_counts <- function(
 #' @param motif_idxs Optional one-based motif index vector.
 #' @param use_global_bias Whether a global reference k-mer output may be
 #'   applied to every end-motif row.
-#' @param unsupported_motifs What to do with positive counts that have no
+#' @param unsupported_motifs What to do when an observed sample motif has no
 #'   positive reference frequency. Use `"error"`, `"drop"`, or `"keep_na"`.
 sparse_corrected_counts_matrix.cfdnalab_global_end_motif_counts <- function(
   x,
@@ -851,7 +858,7 @@ dense_counts_vector.cfdnalab_global_end_motif_counts <- function(
 #' @param motif_idxs Optional one-based motif index vector.
 #' @param use_global_bias Whether a global reference k-mer output may be
 #'   applied to every end-motif row.
-#' @param unsupported_motifs What to do with positive counts that have no
+#' @param unsupported_motifs What to do when an observed sample motif has no
 #'   positive reference frequency. Use `"error"`, `"drop"`, or `"keep_na"`.
 end_motif_data_frame.cfdnalab_global_end_motif_counts <- function(
   x,

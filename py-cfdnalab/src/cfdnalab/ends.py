@@ -143,6 +143,7 @@ class EndMotifCounts:
                 len(motif_index),
                 "motif_index",
             )
+        _validate_unique_labels(motif_names, "end-motif")
         row = _read_array(store, "row")
         _validate_axis(motif_index, "motif_index")
         _validate_axis(row, "row")
@@ -190,6 +191,11 @@ class EndMotifCounts:
         # Row-mode metadata determines which subclass read_end_motifs returns
         if row_mode == "global":
             row_labels = _read_labels(store["row"], "row_label", len(row), "row")
+            if len(row) != 1 or row_labels.tolist() != ["global"]:
+                raise ValueError(
+                    "global end-motif output must contain exactly one row "
+                    "labeled 'global'"
+                )
         elif row_mode in {"size", "bed"}:
             chromosome = _read_array(store, "chromosome")
             chromosome_names = _read_labels(
@@ -845,7 +851,7 @@ class GlobalEndMotifCounts(EndMotifCounts):
         use_global_bias
             Whether a global reference k-mer output may be applied to every row.
         unsupported_motifs
-            What to do with positive counts that have no positive reference
+            What to do when an observed sample motif has no positive reference
             frequency. Use `"error"`, `"drop"`, or `"keep_na"`.
 
         Returns
@@ -1032,7 +1038,7 @@ class WindowedEndMotifCounts(EndMotifCounts):
         use_global_bias
             Whether a global reference k-mer output may be applied to every row.
         unsupported_motifs
-            What to do with positive counts that have no positive reference
+            What to do when an observed sample motif has no positive reference
             frequency. Use `"error"`, `"drop"`, or `"keep_na"`.
 
         Returns
@@ -1260,7 +1266,7 @@ class GroupedEndMotifCounts(EndMotifCounts):
         use_global_bias
             Whether a global reference k-mer output may be applied to every row.
         unsupported_motifs
-            What to do with positive counts that have no positive reference
+            What to do when an observed sample motif has no positive reference
             frequency. Use `"error"`, `"drop"`, or `"keep_na"`.
 
         Returns
@@ -1777,6 +1783,10 @@ def _read_motif_ascii_labels(store: Any, expected_len: int) -> np.ndarray:
     """
     motif_byte = _read_array(store, "motif_byte")
     _validate_axis(motif_byte, "motif_byte")
+    if expected_len > 0 and len(motif_byte) == 0:
+        raise ValueError(
+            "motif_ascii cannot decode non-empty motif axis with zero motif_byte width"
+        )
 
     motif_ascii = _read_array(store, "motif_ascii")
     if motif_ascii.ndim != 2:
@@ -1797,7 +1807,30 @@ def _read_motif_ascii_labels(store: Any, expected_len: int) -> np.ndarray:
         labels = [bytes(row).decode("ascii") for row in motif_ascii]
     except UnicodeDecodeError as error:
         raise ValueError("motif_ascii contains non-ASCII bytes") from error
+    for motif_index, label in enumerate(labels):
+        if _contains_control_character(label):
+            raise ValueError(
+                f"motif_ascii row {motif_index} contains a control character"
+            )
     return np.asarray(labels, dtype=str)
+
+
+def _validate_unique_labels(labels: np.ndarray, label_name: str) -> None:
+    """
+    Reject duplicate labels on a public selector axis.
+    """
+    if len(set(labels)) != len(labels):
+        raise ValueError(f"duplicate {label_name} label")
+
+
+def _contains_control_character(label: str) -> bool:
+    """
+    Return whether a label contains a Unicode control character.
+    """
+    return any(
+        ord(character) < 32 or 0x7F <= ord(character) <= 0x9F
+        for character in label
+    )
 
 
 def _read_labels(
@@ -1815,13 +1848,24 @@ def _read_labels(
     labels = array.attrs.get("labels")
     if labels is None:
         raise ValueError(f"{array_name} array is missing labels")
-    labels = np.asarray(labels, dtype=str)
-    if len(labels) != expected_len:
+    if isinstance(labels, (str, bytes)) or not isinstance(labels, Sequence):
+        raise ValueError(f"{array_name} labels must be a list of character strings")
+
+    validated_labels: list[str] = []
+    for label in labels:
+        if not isinstance(label, str):
+            raise ValueError(f"{array_name} labels must be character strings")
+        if _contains_control_character(label):
+            raise ValueError(f"{array_name} labels must not contain control characters")
+        validated_labels.append(label)
+
+    label_array = np.asarray(validated_labels, dtype=str)
+    if len(label_array) != expected_len:
         raise ValueError(
-            f"{array_name} labels length ({len(labels)}) does not match "
+            f"{array_name} labels length ({len(label_array)}) does not match "
             f"axis length ({expected_len})"
         )
-    return labels
+    return label_array
 
 
 def _validate_axis(values: np.ndarray, name: str) -> None:

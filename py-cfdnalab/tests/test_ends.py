@@ -566,6 +566,20 @@ def test_end_motif_loader_rejects_schema_and_shape_problems(tmp_path: Path) -> N
         tmp_path / "missing_motif_ascii.end_motifs.zarr",
         omit={"motif_ascii"},
     )
+    wrong_global_label = _write_dense_global_store(
+        tmp_path / "wrong_global_label.end_motifs.zarr"
+    )
+    zarr.open_group(str(wrong_global_label), mode="a")["row"].attrs["labels"] = [
+        "not_global"
+    ]
+    duplicate_motif = _write_dense_window_store(
+        tmp_path / "duplicate_motif.end_motifs.zarr",
+        motif_names=np.array(["_AA", "_AA", "_GG"], dtype=object),
+    )
+    control_motif = _write_dense_window_store(
+        tmp_path / "control_motif.end_motifs.zarr",
+        motif_names=np.array(["_\nA", "_CC", "_GG"], dtype=object),
+    )
 
     with pytest.raises(ValueError, match="Expected cfdnalab_schema"):
         cfdnalab.read_end_motifs(wrong_schema)
@@ -585,6 +599,12 @@ def test_end_motif_loader_rejects_schema_and_shape_problems(tmp_path: Path) -> N
         cfdnalab.read_end_motifs(empty_sparse_counts)
     with pytest.raises(ValueError, match="missing arrays: \\['motif_ascii'\\]"):
         cfdnalab.read_end_motifs(missing_motif_ascii)
+    with pytest.raises(ValueError, match="exactly one row labeled 'global'"):
+        cfdnalab.read_end_motifs(wrong_global_label)
+    with pytest.raises(ValueError, match="duplicate end-motif label"):
+        cfdnalab.read_end_motifs(duplicate_motif)
+    with pytest.raises(ValueError, match="contains a control character"):
+        cfdnalab.read_end_motifs(control_motif)
 
 
 def _write_dense_window_store(
@@ -593,15 +613,18 @@ def _write_dense_window_store(
     schema: str = "end_motif_counts",
     schema_version: int = 1,
     omit: set[str] | None = None,
+    motif_names: np.ndarray | None = None,
     counts_dimension_names: tuple[str, str] = ("row", "motif"),
 ) -> Path:
+    if motif_names is None:
+        motif_names = MOTIF_NAMES
     root = zarr.open_group(str(path), mode="w", zarr_format=3)
     root.attrs["cfdnalab_schema"] = schema
     root.attrs["cfdnalab_schema_version"] = schema_version
     root.attrs["storage_mode"] = "dense"
     root.attrs["row_mode"] = "bed"
 
-    _create_motif_axis(root, MOTIF_NAMES)
+    _create_motif_axis(root, motif_names)
     _create_array(root, "row", np.array([0, 1], dtype=np.int32), chunks=(2,))
     _create_labeled_axis(
         root,
@@ -644,6 +667,7 @@ def _write_reference_correction_ref_kmer_store(
     motifs: np.ndarray | None = None,
     frequencies: np.ndarray | None = None,
     blacklisted_fraction: np.ndarray | None = None,
+    group_names: np.ndarray | None = None,
     storage_mode: str = "dense",
     row_mode: str = "bed",
 ) -> Path:
@@ -704,6 +728,45 @@ def _write_reference_correction_ref_kmer_store(
             np.array([0], dtype=np.int32),
             "row_label",
             np.array(["global"], dtype=object),
+            dimension_names=("row",),
+        )
+    elif row_mode == "grouped_bed":
+        if group_names is None:
+            group_names = np.asarray(
+                [f"group_{row_index}" for row_index in range(number_of_rows)],
+                dtype=object,
+            )
+        group_names = np.asarray(group_names, dtype=object)
+        if len(group_names) != number_of_rows:
+            raise ValueError("group_names length must match frequencies rows")
+        row_index = np.arange(number_of_rows, dtype=np.int32)
+        _create_array(
+            root,
+            "row",
+            row_index,
+            chunks=(number_of_rows,),
+            dimension_names=("row",),
+        )
+        _create_labeled_axis(
+            root,
+            "group",
+            row_index,
+            "group_name",
+            group_names,
+            dimension_names=("row",),
+        )
+        _create_array(
+            root,
+            "eligible_windows",
+            np.repeat(1, number_of_rows).astype(np.int32),
+            chunks=(number_of_rows,),
+            dimension_names=("row",),
+        )
+        _create_array(
+            root,
+            "blacklisted_fraction",
+            blacklisted_fraction,
+            chunks=(number_of_rows,),
             dimension_names=("row",),
         )
     else:

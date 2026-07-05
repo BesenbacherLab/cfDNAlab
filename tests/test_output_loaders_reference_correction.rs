@@ -127,6 +127,58 @@ fn sparse_corrected_counts_use_positive_reference_support_per_row() -> anyhow::R
     Ok(())
 }
 
+/// Verify grouped selectors match reference rows by group name, not row index.
+#[test]
+fn corrected_counts_map_selected_group_rows_by_key() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    let ends_path = temp.path().join("sample.end_motifs.zarr");
+    let ref_path = temp.path().join("reference.ref_kmers.zarr");
+
+    let ends_store = create_store(
+        &ends_path,
+        end_root_attributes(FixtureStorage::Dense, "grouped_bed"),
+    )?;
+    write_motif_axis(&ends_store, &["_A", "_C"])?;
+    write_group_rows(&ends_store, &["alpha", "beta"])?;
+    write_end_counts(
+        &ends_store,
+        FixtureStorage::Dense,
+        2,
+        2,
+        &[2.0, 0.0, 0.0, 4.0],
+    )?;
+
+    let ref_store = create_store(
+        &ref_path,
+        ref_root_attributes(FixtureStorage::Dense, "grouped_bed", &["A", "C"]),
+    )?;
+    write_motif_axis(&ref_store, &["A", "C"])?;
+    write_group_rows(&ref_store, &["beta", "alpha"])?;
+    write_row_scaling_factors(&ref_store, 2)?;
+    write_reference_footprint(&ref_store)?;
+    write_ref_frequencies(
+        &ref_store,
+        FixtureStorage::Dense,
+        2,
+        2,
+        &[0.5, 0.5, 0.25, 0.75],
+    )?;
+
+    let ends = load_ends_output(&ends_path)?;
+    let ref_kmers = load_ref_kmers_output(&ref_path)?;
+
+    let corrected = ends
+        .select_corrected_counts(&ref_kmers)
+        .groups(&[1])
+        .motifs_by_label(&["_C"])
+        .read()?;
+
+    assert_eq!(corrected.row_indices(), &[1]);
+    assert_eq!(corrected.motif_labels(), &["_C".to_string()]);
+    assert_close(corrected.count(0, 0).unwrap(), 4.0);
+    Ok(())
+}
+
 /// Verify global reference correction is explicit for non-global end motifs.
 #[test]
 fn corrected_counts_require_global_bias_opt_in() -> anyhow::Result<()> {
@@ -623,6 +675,41 @@ fn write_window_rows(store: &Arc<FilesystemStore>) -> anyhow::Result<()> {
         &[2],
         &["row"],
         &[0.0, 0.0],
+        json!({}),
+    )
+}
+
+fn write_group_rows(store: &Arc<FilesystemStore>, group_labels: &[&str]) -> anyhow::Result<()> {
+    let row_count = group_labels.len();
+    let row = (0..row_count)
+        .map(|row_index| i32::try_from(row_index).expect("test row index should fit i32"))
+        .collect::<Vec<_>>();
+    write_i32_array(store, "row", &[row_count], &["row"], &row, json!({}))?;
+    write_i32_array(
+        store,
+        "group",
+        &[row_count],
+        &["row"],
+        &row,
+        json!({
+            "label_field": "group_name",
+            "labels": group_labels,
+        }),
+    )?;
+    write_i32_array(
+        store,
+        "eligible_windows",
+        &[row_count],
+        &["row"],
+        &vec![1; row_count],
+        json!({}),
+    )?;
+    write_f64_array(
+        store,
+        "blacklisted_fraction",
+        &[row_count],
+        &["row"],
+        &vec![0.0; row_count],
         json!({}),
     )
 }

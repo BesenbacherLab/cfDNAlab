@@ -309,7 +309,10 @@ make_midpoint_zarr_fixture <- function() {
   store_path
 }
 
-make_dense_global_end_motif_zarr_fixture <- function() {
+make_dense_global_end_motif_zarr_fixture <- function(
+  motifs = c("_A", "_C", "_G", "_T"),
+  counts = matrix(c(1, 0, 2.5, 0), nrow = 1L)
+) {
   testthat::skip_if_not_installed("zarr")
 
   store_path <- local_zarr_store_path("r-dense-global-end-fixture")
@@ -324,9 +327,16 @@ make_dense_global_end_motif_zarr_fixture <- function() {
     )
   )
 
-  motifs <- c("_A", "_C", "_G", "_T")
-  add_fixture_array(zarr_store, store_path, "/", "motif_index", 0:3, "int32", "motif")
-  add_fixture_array(zarr_store, store_path, "/", "motif_byte", c(0L, 1L), "int32", "motif_byte")
+  add_fixture_array(zarr_store, store_path, "/", "motif_index", seq_along(motifs) - 1L, "int32", "motif")
+  add_fixture_array(
+    zarr_store,
+    store_path,
+    "/",
+    "motif_byte",
+    seq_len(nchar(motifs[[1L]], type = "bytes")) - 1L,
+    "int32",
+    "motif_byte"
+  )
   add_fixture_array(zarr_store, store_path, "/", "motif_ascii", motif_ascii_matrix(motifs), "uint8", c("motif", "motif_byte"))
   add_fixture_array(
     zarr_store,
@@ -338,7 +348,7 @@ make_dense_global_end_motif_zarr_fixture <- function() {
     "row",
     list(label_field = "row_label", labels = list("global"))
   )
-  add_fixture_array(zarr_store, store_path, "/", "counts", matrix(c(1, 0, 2.5, 0), nrow = 1L), "float64", c("row", "motif"))
+  add_fixture_array(zarr_store, store_path, "/", "counts", counts, "float64", c("row", "motif"))
 
   store_path
 }

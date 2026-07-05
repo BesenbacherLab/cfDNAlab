@@ -1775,7 +1775,10 @@ fn read_motif_ascii_labels(store: Arc<FilesystemStore>, motif_count: usize) -> R
                 motif_bytes.is_ascii(),
                 "motif_ascii row {motif_index} contains non-ASCII motif bytes"
             );
-            String::from_utf8(motif_bytes.to_vec()).context("motif_ascii contains invalid UTF-8")
+            let motif = String::from_utf8(motif_bytes.to_vec())
+                .context("motif_ascii contains invalid UTF-8")?;
+            validate_zarr_public_label(&motif, "motif")?;
+            Ok(motif)
         })
         .collect()
 }

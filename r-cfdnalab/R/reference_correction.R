@@ -13,8 +13,9 @@
 #' Reference k-mer output is read without densifying. For sparse reference
 #' output, omitted row/motif pairs are treated as zero frequency.
 #'
-#' Positive end-motif counts with zero or missing reference frequency cannot be
-#' divided by a reference bias. By default this is an error. Set
+#' Sample-observed motifs can be absent from the reference genome or have zero
+#' reference frequency in a row. Positive end-motif counts for those motifs
+#' cannot be divided by a reference bias. By default this is an error. Set
 #' `unsupported_motifs = "drop"` to omit those rows, or
 #' `unsupported_motifs = "keep_na"` to keep them with `NA` corrected counts.
 #'
@@ -52,8 +53,8 @@
 #'   file's blacklist fractions.
 #' @param use_global_bias Whether a global reference k-mer output may be applied
 #'   to every non-global end-motif row.
-#' @param unsupported_motifs What to do with positive end-motif counts that have
-#'   no positive reference frequency. Use `"error"`, `"drop"`, or `"keep_na"`.
+#' @param unsupported_motifs What to do when an observed sample motif has no
+#'   positive reference frequency. Use `"error"`, `"drop"`, or `"keep_na"`.
 #'
 #' @return An end-motif data frame with `reference_motif`,
 #'   `reference_frequency`, `correction_motif_count`, `reference_scale`, and
@@ -85,6 +86,12 @@ cf_reference_corrected_end_motif_data_frame <- function(
   }
   cf_validate_scalar_logical(densify, "densify")
   cf_validate_scalar_logical(use_global_bias, "use_global_bias")
+  if (isTRUE(use_global_bias) && !identical(ref_kmers$row_mode, "global")) {
+    stop(
+      "use_global_bias = TRUE requires a global reference k-mer output",
+      call. = FALSE
+    )
+  }
   if (!identical(ends$row_mode, ref_kmers$row_mode)) {
     if (
       identical(ref_kmers$row_mode, "global") &&
@@ -130,13 +137,6 @@ cf_reference_corrected_end_motif_data_frame <- function(
     groups,
     group_idxs
   )
-  ref_row_indices <- cf_reference_correction_ref_row_indices(
-    ref_kmers,
-    window_idxs,
-    groups,
-    group_idxs,
-    use_global_bias
-  )
   end_motif_indices <- cf_resolve_end_motif_indices(ends, motifs, motif_idxs)
 
   end_rows <- cf_end_motif_data_frame(
@@ -150,6 +150,11 @@ cf_reference_corrected_end_motif_data_frame <- function(
     return(cf_add_empty_reference_correction_columns(end_rows))
   }
 
+  ref_row_indices <- cf_reference_correction_ref_row_indices_from_end_rows(
+    ref_kmers,
+    end_rows,
+    reference_row_columns
+  )
   ref_rows <- cf_ref_kmer_data_frame(
     ref_kmers,
     row_indices = ref_row_indices,
@@ -483,43 +488,33 @@ cf_reference_correction_end_row_indices <- function(ends, window_idxs, groups, g
   seq_len(length(ends$row_idx0))
 }
 
-#' Resolve reference row selectors for reference correction.
+#' Resolve reference row indices from selected end-motif row keys.
 #'
 #' @param ref_kmers Reference k-mer object.
-#' @param window_idxs Optional one-based window indices.
-#' @param groups Optional group names.
-#' @param group_idxs Optional one-based group indices.
-#' @param use_global_bias Whether a global reference may be applied to every
-#'   end-motif row.
+#' @param end_rows Selected end-motif rows.
+#' @param reference_row_columns Reference row-key columns.
 #'
 #' @return One-based row indices for `cf_ref_kmer_data_frame()`.
 #' @noRd
-cf_reference_correction_ref_row_indices <- function(
+cf_reference_correction_ref_row_indices_from_end_rows <- function(
   ref_kmers,
-  window_idxs,
-  groups,
-  group_idxs,
-  use_global_bias
+  end_rows,
+  reference_row_columns
 ) {
-  if (isTRUE(use_global_bias) && identical(ref_kmers$row_mode, "global")) {
+  if (length(reference_row_columns) == 0L) {
     return(seq_len(length(ref_kmers$row_idx0)))
   }
-  if (identical(ref_kmers$row_mode, "bed") || identical(ref_kmers$row_mode, "size")) {
-    if (!is.null(groups) || !is.null(group_idxs)) {
-      stop("Grouped selectors can only be used with grouped output", call. = FALSE)
-    }
-    return(cf_resolve_ref_kmer_window_indices(ref_kmers, window_idxs))
+
+  reference_keys <- cf_reference_correction_row_keys(
+    ref_kmers$row_metadata,
+    reference_row_columns
+  )
+  selected_keys <- unique(cf_reference_correction_row_keys(end_rows, reference_row_columns))
+  matched_rows <- match(selected_keys, reference_keys)
+  if (anyNA(matched_rows)) {
+    stop("Selected end-motif row has no matching reference k-mer row", call. = FALSE)
   }
-  if (identical(ref_kmers$row_mode, "grouped_bed")) {
-    if (!is.null(window_idxs)) {
-      stop("window_idxs can only be used with windowed output", call. = FALSE)
-    }
-    return(cf_resolve_ref_kmer_group_indices(ref_kmers, groups, group_idxs))
-  }
-  if (!is.null(window_idxs) || !is.null(groups) || !is.null(group_idxs)) {
-    stop("Row selectors cannot be used with global output", call. = FALSE)
-  }
-  seq_len(length(ref_kmers$row_idx0))
+  as.integer(matched_rows)
 }
 
 #' Validate motif axes for reference correction.

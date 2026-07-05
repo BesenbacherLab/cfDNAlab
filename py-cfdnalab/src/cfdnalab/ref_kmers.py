@@ -1804,11 +1804,8 @@ def _validate_unique_labels(labels: np.ndarray, label_name: str) -> None:
     """
     Reject duplicate labels on a public axis.
     """
-    seen: set[str] = set()
-    for label in labels:
-        if str(label) in seen:
-            raise ValueError(f"duplicate {label_name} label: {label!r}")
-        seen.add(str(label))
+    if len(set(labels)) != len(labels):
+        raise ValueError(f"duplicate {label_name} label")
 
 
 def _contains_control_character(label: str) -> bool:

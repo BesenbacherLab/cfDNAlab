@@ -43,10 +43,12 @@ def _reference_corrected_data_frame(
     Reference k-mer output is read without densifying. For sparse reference
     output, omitted row/motif pairs are treated as zero frequency.
 
-    Positive end-motif counts with zero or missing reference frequency cannot
-    be divided by a reference bias. By default this is an error. Set
-    `unsupported_motifs="drop"` to omit those rows, or
-    `unsupported_motifs="keep_na"` to keep them with `NaN` corrected counts.
+    Sample motifs can be absent from the reference genome, or can have zero
+    reference frequency in the matched row. Positive end-motif counts for those
+    motifs cannot be divided by a reference bias. By default this is an error.
+    Set `unsupported_motifs="drop"` to omit rows whose reference motif has no
+    positive reference frequency, or `unsupported_motifs="keep_na"` to keep
+    them with `NaN` corrected counts.
 
     By default, end-motif and reference k-mer rows must match exactly. If
     `ref_kmers` is global and `ends` is windowed or grouped, pass
@@ -94,8 +96,8 @@ def _reference_corrected_data_frame(
         Whether a global reference k-mer output may be applied to every
         non-global end-motif row.
     unsupported_motifs
-        What to do with positive end-motif counts that have no positive
-        reference frequency. Use `"error"`, `"drop"`, or `"keep_na"`.
+        What to do when an observed sample motif has no positive reference
+        frequency. Use `"error"`, `"drop"`, or `"keep_na"`.
 
     Returns
     -------
@@ -127,16 +129,15 @@ def _reference_corrected_data_frame(
     if end_rows.empty:
         return _add_empty_reference_correction_columns(end_rows)
 
-    if reference_row_columns:
-        ref_rows = ref_kmers._data_frame(
-            densify=False,
-            window_idxs=window_idxs,
-            groups=groups,
-            group_idxs=group_idxs,
-            max_blacklisted_fraction=1.0,
-        )
-    else:
-        ref_rows = ref_kmers._data_frame(densify=False)
+    ref_row_indices = _reference_row_indices_for_end_rows(
+        ref_kmers,
+        end_rows,
+        reference_row_columns,
+    )
+    ref_rows = _reference_rows_for_indices(
+        ref_kmers,
+        ref_row_indices,
+    )
 
     end_rows = end_rows.copy()
     ref_rows = ref_rows.copy()
@@ -428,6 +429,10 @@ def _validate_reference_correction_inputs(
         raise TypeError("ends must be an EndMotifCounts object")
     if not isinstance(ref_kmers, RefKmerFrequencies):
         raise TypeError("ref_kmers must be a RefKmerFrequencies object")
+    if use_global_bias and ref_kmers.row_mode() != "global":
+        raise ValueError(
+            "use_global_bias=True requires a global reference k-mer output"
+        )
     if ends.row_mode() != ref_kmers.row_mode():
         if ref_kmers.row_mode() == "global" and ends.row_mode() != "global":
             if not use_global_bias:
@@ -483,9 +488,9 @@ def _validate_matching_rows(
         .reset_index(drop=True)
     )
     ref_row_keys = (
-        ref_kmers._row_metadata_data_frame()[row_columns]
+        ref_kmers._row_metadata_data_frame()[reference_row_columns]
         .drop_duplicates()
-        .sort_values(row_columns)
+        .sort_values(reference_row_columns)
         .reset_index(drop=True)
     )
     if len(end_row_keys) != len(ends._row_metadata_data_frame()):
@@ -523,6 +528,49 @@ def _reference_correction_reference_row_columns(
     ):
         return []
     return _reference_correction_row_columns(ref_kmers.row_mode())
+
+
+def _reference_row_indices_for_end_rows(
+    ref_kmers: RefKmerFrequencies,
+    end_rows: pd.DataFrame,
+    reference_row_columns: list[str],
+) -> np.ndarray:
+    if not reference_row_columns:
+        return np.arange(len(ref_kmers._row_metadata_data_frame()), dtype=np.int64)
+
+    reference_metadata = ref_kmers._row_metadata_data_frame()
+    reference_indices_by_key = {
+        row_key: row_index
+        for row_index, row_key in enumerate(
+            _row_key_tuples(reference_metadata, reference_row_columns)
+        )
+    }
+    selected_row_keys = dict.fromkeys(
+        _row_key_tuples(end_rows, reference_row_columns)
+    )
+    try:
+        return np.asarray(
+            [reference_indices_by_key[row_key] for row_key in selected_row_keys],
+            dtype=np.int64,
+        )
+    except KeyError as error:
+        raise ValueError(
+            "Selected end-motif row has no matching reference k-mer row"
+        ) from error
+
+
+def _reference_rows_for_indices(
+    ref_kmers: RefKmerFrequencies,
+    row_indices: np.ndarray,
+) -> pd.DataFrame:
+    motif_indices = np.arange(len(ref_kmers.motifs_metadata()), dtype=np.int64)
+    if ref_kmers.storage_mode() == "sparse_coo":
+        return ref_kmers._stored_data_frame_for_indices(row_indices, motif_indices)
+    return ref_kmers._complete_data_frame_for_indices(
+        row_indices,
+        motif_indices,
+        densify=False,
+    )
 
 
 def _reference_support_counts(
