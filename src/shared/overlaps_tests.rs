@@ -34,12 +34,17 @@ fn mixed_covering_broad_narrow_windows() -> Result<Vec<IndexedInterval<u64>>> {
 }
 
 mod fixed_width_overlap_cursor_tests {
-    use super::super::{FixedWidthOverlapCursor, OverlappingWindows, find_overlapping_windows};
+    use super::super::{
+        ChromosomeBedWindows, DEFAULT_BROAD_WINDOW_MIN_BP, FixedWidthOverlapCursor,
+        FixedWidthWindowSource, OverlappingWindows, TileBedWindowView, TileBedWindowSpans,
+        find_overlapping_windows,
+    };
     use super::{
         Interval, MIXED_COVERING_BROAD_NARROW_QUERY_STARTS, Result,
         mixed_covering_broad_narrow_windows,
     };
     use crate::shared::interval::IndexedInterval;
+    use crate::shared::tiled_run::TileWindowSpan;
     use std::collections::BTreeMap;
 
     fn kmer_windows() -> Result<Vec<IndexedInterval<u64>>> {
@@ -48,6 +53,63 @@ mod fixed_width_overlap_cursor_tests {
             (6, 9, 11_u64),
             (8, 12, 12_u64),
         ])
+    }
+
+    fn full_span<T>(windows: &[T]) -> Option<TileWindowSpan> {
+        (!windows.is_empty()).then_some(TileWindowSpan {
+            first_idx: 0,
+            last_idx_exclusive: windows.len(),
+        })
+    }
+
+    fn full_bed_spans(chromosome_windows: &ChromosomeBedWindows) -> TileBedWindowSpans {
+        TileBedWindowSpans {
+            all_windows_span: full_span(chromosome_windows.all_windows.as_slice()),
+            tier_spans: chromosome_windows
+                .tiers
+                .iter()
+                .map(|tier| full_span(tier.windows.as_slice()))
+                .collect(),
+        }
+    }
+
+    fn fixed_width_bed_source(
+        chrom_len: u64,
+        windows: &[IndexedInterval<u64>],
+    ) -> Result<FixedWidthWindowSource> {
+        fixed_width_bed_source_for_envelope(chrom_len, windows, Interval::new(0, chrom_len)?)
+    }
+
+    fn fixed_width_bed_source_for_envelope(
+        chrom_len: u64,
+        windows: &[IndexedInterval<u64>],
+        tile_assignment_envelope: Interval<u64>,
+    ) -> Result<FixedWidthWindowSource> {
+        let chromosome_windows =
+            ChromosomeBedWindows::from_indexed_windows(windows, DEFAULT_BROAD_WINDOW_MIN_BP);
+        let spans = full_bed_spans(&chromosome_windows);
+        FixedWidthWindowSource::bed_from_tile_view(
+            chrom_len,
+            TileBedWindowView {
+                chromosome_windows: &chromosome_windows,
+                spans: &spans,
+            },
+            tile_assignment_envelope,
+        )
+    }
+
+    fn fixed_width_bed_cursor(
+        chrom_len: u64,
+        windows: &[IndexedInterval<u64>],
+        query_width: u64,
+        min_overlap_fraction: f64,
+    ) -> Result<FixedWidthOverlapCursor> {
+        FixedWidthOverlapCursor::new(
+            chrom_len,
+            fixed_width_bed_source(chrom_len, windows)?,
+            query_width,
+            min_overlap_fraction,
+        )
     }
 
     fn overlap_signature(overlaps: Option<&OverlappingWindows>) -> Vec<(usize, u64, u64, f64)> {
@@ -368,13 +430,11 @@ mod fixed_width_overlap_cursor_tests {
         let kmer_size = 4;
         let min_overlap_fraction = 1.0 / (kmer_size as f64 + 1.0);
         let windows = kmer_windows()?;
-        let mut cursor = FixedWidthOverlapCursor::new(
+        let mut cursor = fixed_width_bed_cursor(
             chrom_len,
-            Some(windows.as_slice()),
-            None,
+            windows.as_slice(),
             kmer_size,
             min_overlap_fraction,
-            0,
         )?;
         let expected_by_start: [Vec<(u64, u64, u64, f64)>; 11] = [
             vec![(10, 2, 6, 2.0 / 4.0)],
@@ -418,14 +478,8 @@ mod fixed_width_overlap_cursor_tests {
         let chrom_len = 4_000_000;
         let query_width = 1_000;
         let windows = mixed_covering_broad_narrow_windows()?;
-        let mut cursor = FixedWidthOverlapCursor::new(
-            chrom_len,
-            Some(windows.as_slice()),
-            None,
-            query_width,
-            0.0,
-            0,
-        )?;
+        let mut cursor =
+            fixed_width_bed_cursor(chrom_len, windows.as_slice(), query_width, 0.0)?;
         let expected_by_query_start: [Vec<(u64, u64, u64, f64)>; 8] = [
             // [1000000,1001000): covering rows 900 and 901 are full, and row 902 contributes
             // [1000500,1000800), so 300 / 1000 = 0.300.
@@ -556,14 +610,8 @@ mod fixed_width_overlap_cursor_tests {
         let first_query_start = 1_250_745;
         let last_query_start = 1_250_805;
         let windows = mixed_covering_broad_narrow_windows()?;
-        let mut cursor = FixedWidthOverlapCursor::new(
-            chrom_len,
-            Some(windows.as_slice()),
-            None,
-            query_width,
-            0.0,
-            0,
-        )?;
+        let mut cursor =
+            fixed_width_bed_cursor(chrom_len, windows.as_slice(), query_width, 0.0)?;
         let mut counts = BTreeMap::new();
 
         for query_start in first_query_start..=last_query_start {
@@ -671,14 +719,8 @@ mod fixed_width_overlap_cursor_tests {
         let first_query_start = 2_749_995;
         let last_query_start = 2_750_505;
         let windows = mixed_covering_broad_narrow_windows()?;
-        let mut cursor = FixedWidthOverlapCursor::new(
-            chrom_len,
-            Some(windows.as_slice()),
-            None,
-            query_width,
-            0.0,
-            0,
-        )?;
+        let mut cursor =
+            fixed_width_bed_cursor(chrom_len, windows.as_slice(), query_width, 0.0)?;
         let mut counts = BTreeMap::new();
 
         for query_start in first_query_start..=last_query_start {
@@ -780,14 +822,7 @@ mod fixed_width_overlap_cursor_tests {
         let chrom_len = 8;
         let kmer_size = 4;
         let windows = IndexedInterval::from_tuples(&[(2, 6, 10_u64)])?;
-        let mut cursor = FixedWidthOverlapCursor::new(
-            chrom_len,
-            Some(windows.as_slice()),
-            None,
-            kmer_size,
-            0.51,
-            0,
-        )?;
+        let mut cursor = fixed_width_bed_cursor(chrom_len, windows.as_slice(), kmer_size, 0.51)?;
         let expected_by_start: [Vec<(u64, u64, u64, f64)>; 5] = [
             vec![],
             vec![(10, 2, 6, 3.0 / 4.0)],
@@ -811,14 +846,7 @@ mod fixed_width_overlap_cursor_tests {
         let chrom_len = 12;
         let kmer_size = 4;
         let windows = IndexedInterval::from_tuples(&[(4, 8, 10_u64)])?;
-        let mut cursor = FixedWidthOverlapCursor::new(
-            chrom_len,
-            Some(windows.as_slice()),
-            None,
-            kmer_size,
-            0.0,
-            0,
-        )?;
+        let mut cursor = fixed_width_bed_cursor(chrom_len, windows.as_slice(), kmer_size, 0.0)?;
 
         assert!(cursor.find_overlaps(0)?.is_none());
         let one_base_overlap = cursor.find_overlaps(1)?;
@@ -839,14 +867,7 @@ mod fixed_width_overlap_cursor_tests {
         let chrom_len = 10;
         let kmer_size = 4;
         let windows = IndexedInterval::from_tuples(&[(8, 15, 10_u64), (10, 12, 11_u64)])?;
-        let mut cursor = FixedWidthOverlapCursor::new(
-            chrom_len,
-            Some(windows.as_slice()),
-            None,
-            kmer_size,
-            0.0,
-            0,
-        )?;
+        let mut cursor = fixed_width_bed_cursor(chrom_len, windows.as_slice(), kmer_size, 0.0)?;
 
         let one_base_overlap = cursor.find_overlaps(5)?;
         assert_row_signature_close(
@@ -876,14 +897,7 @@ mod fixed_width_overlap_cursor_tests {
         let chrom_len = 10;
         let kmer_size = 4;
         let windows = IndexedInterval::from_tuples(&[(8, 10, 10_u64), (9, 10, 11_u64)])?;
-        let mut cursor = FixedWidthOverlapCursor::new(
-            chrom_len,
-            Some(windows.as_slice()),
-            None,
-            kmer_size,
-            0.0,
-            0,
-        )?;
+        let mut cursor = fixed_width_bed_cursor(chrom_len, windows.as_slice(), kmer_size, 0.0)?;
 
         let observed = cursor.find_overlaps(8)?;
         assert_row_signature_close(
@@ -896,21 +910,14 @@ mod fixed_width_overlap_cursor_tests {
     }
 
     #[test]
-    fn nonzero_starting_pointer_keeps_original_scan_indices() -> Result<()> {
-        // Starting at pointer 1 skips the first BED row, but returned indices still refer to the
-        // original scan positions in the full slice.
+    fn fixed_width_cursor_keeps_original_scan_indices_for_bed_source() -> Result<()> {
+        // The first BED row sits left of this query and is not emitted. Returned indices still
+        // refer to the original chromosome-local scan positions in the full slice.
         let chrom_len = 10;
         let kmer_size = 4;
         let windows =
             IndexedInterval::from_tuples(&[(0, 2, 20_u64), (2, 6, 21_u64), (5, 9, 22_u64)])?;
-        let mut cursor = FixedWidthOverlapCursor::new(
-            chrom_len,
-            Some(windows.as_slice()),
-            None,
-            kmer_size,
-            0.0,
-            1,
-        )?;
+        let mut cursor = fixed_width_bed_cursor(chrom_len, windows.as_slice(), kmer_size, 0.0)?;
 
         let observed = cursor.find_overlaps(3)?;
         assert_signature_close(
@@ -922,9 +929,40 @@ mod fixed_width_overlap_cursor_tests {
     }
 
     #[test]
+    fn fixed_width_cursor_carries_bed_output_idx_for_always_hit_and_cached_rows() -> Result<()> {
+        // The broad row contains the tile assignment envelope and is emitted through the always-hit
+        // path. The short row only overlaps the current query and is emitted through the tier cache.
+        // Both paths must carry the BED output identity, because ref-kmers BED and grouped-BED
+        // counting no longer maps rows back through the original window slice.
+        let chrom_len = 200_000;
+        let kmer_size = 4;
+        let windows = IndexedInterval::from_tuples(&[(0, 200_000, 90_u64), (12, 16, 91_u64)])?;
+        let source = fixed_width_bed_source_for_envelope(
+            chrom_len,
+            windows.as_slice(),
+            Interval::new(10, 20)?,
+        )?;
+        let mut cursor = FixedWidthOverlapCursor::new(chrom_len, source, kmer_size, 0.0)?;
+
+        let observed = cursor
+            .find_overlaps(12)?
+            .expect("query should hit the always-hit row and the cached row");
+        let mut observed_identity: Vec<_> = observed
+            .windows
+            .iter()
+            .map(|window| (window.idx, window.output_idx))
+            .collect();
+        observed_identity.sort_by_key(|(idx, _)| *idx);
+
+        assert_eq!(observed_identity, vec![(0, Some(90)), (1, Some(91))]);
+        Ok(())
+    }
+
+    #[test]
     fn fixed_size_clipped_query_uses_clipped_denominator() -> Result<()> {
         // Query start 7 with k = 4 is clipped to [7, 10), so fractions use length 3.
-        let mut cursor = FixedWidthOverlapCursor::new(10, None, Some(4), 4, 0.0, 0)?;
+        let mut cursor =
+            FixedWidthOverlapCursor::new(10, FixedWidthWindowSource::FixedSize(4), 4, 0.0)?;
 
         let observed = cursor.find_overlaps(7)?;
         assert_signature_close(
@@ -952,13 +990,11 @@ mod fixed_width_overlap_cursor_tests {
         let min_overlap_fraction = 1.0 / (kmer_size as f64 + 1.0);
         let windows = kmer_windows()?;
         let mut baseline_wd_ptr = 0;
-        let mut cursor = FixedWidthOverlapCursor::new(
+        let mut cursor = fixed_width_bed_cursor(
             chrom_len,
-            Some(windows.as_slice()),
-            None,
+            windows.as_slice(),
             kmer_size,
             min_overlap_fraction,
-            0,
         )?;
         let mut counts = BTreeMap::new();
 
@@ -1010,13 +1046,11 @@ mod fixed_width_overlap_cursor_tests {
             (8, 12, 20_u64),
         ])?;
         let mut baseline_wd_ptr = 0;
-        let mut cursor = FixedWidthOverlapCursor::new(
+        let mut cursor = fixed_width_bed_cursor(
             chrom_len,
-            Some(grouped_windows.as_slice()),
-            None,
+            grouped_windows.as_slice(),
             kmer_size,
             min_overlap_fraction,
-            0,
         )?;
         let mut group_counts = BTreeMap::new();
 
@@ -1056,14 +1090,7 @@ mod fixed_width_overlap_cursor_tests {
         let chrom_len = 14;
         let kmer_size = 4;
         let windows = kmer_windows()?;
-        let mut cursor = FixedWidthOverlapCursor::new(
-            chrom_len,
-            Some(windows.as_slice()),
-            None,
-            kmer_size,
-            0.75,
-            0,
-        )?;
+        let mut cursor = fixed_width_bed_cursor(chrom_len, windows.as_slice(), kmer_size, 0.75)?;
         let expected_hits_by_start: [Vec<usize>; 11] = [
             vec![],
             vec![0],
@@ -1104,14 +1131,7 @@ mod fixed_width_overlap_cursor_tests {
         let chrom_len = 14;
         let kmer_size = 4;
         let windows = kmer_windows()?;
-        let mut cursor = FixedWidthOverlapCursor::new(
-            chrom_len,
-            Some(windows.as_slice()),
-            None,
-            kmer_size,
-            1.0,
-            0,
-        )?;
+        let mut cursor = fixed_width_bed_cursor(chrom_len, windows.as_slice(), kmer_size, 1.0)?;
         let expected_hits_by_start: [Vec<usize>; 11] = [
             vec![],
             vec![],
@@ -1146,7 +1166,8 @@ mod fixed_width_overlap_cursor_tests {
 
     #[test]
     fn fixed_width_cursor_handles_size_global_and_empty_bed_edges() -> Result<()> {
-        let mut by_size = FixedWidthOverlapCursor::new(10, None, Some(5), 4, 0.0, 0)?;
+        let mut by_size =
+            FixedWidthOverlapCursor::new(10, FixedWidthWindowSource::FixedSize(5), 4, 0.0)?;
         let split_window = by_size
             .find_overlaps(3)?
             .expect("query [3, 7) should hit both fixed windows");
@@ -1161,7 +1182,8 @@ mod fixed_width_overlap_cursor_tests {
         assert_eq!(overlap_signature(Some(&right_window)), vec![(1, 5, 10, 1.0)]);
         assert!(by_size.find_overlaps(10)?.is_none());
 
-        let mut global = FixedWidthOverlapCursor::new(10, None, None, 4, 0.0, 0)?;
+        let mut global =
+            FixedWidthOverlapCursor::new(10, FixedWidthWindowSource::Global, 4, 0.0)?;
         let clipped_global = global
             .find_overlaps(8)?
             .expect("query [8, 10) should hit the chromosome-wide window");
@@ -1171,16 +1193,10 @@ mod fixed_width_overlap_cursor_tests {
         );
 
         let empty_windows = Vec::new();
-        let mut empty_bed = FixedWidthOverlapCursor::new(
-            10,
-            Some(empty_windows.as_slice()),
-            None,
-            4,
-            0.0,
-            0,
-        )?;
+        let mut empty_bed =
+            fixed_width_bed_cursor(10, empty_windows.as_slice(), 4, 0.0)?;
         assert!(empty_bed.find_overlaps(0)?.is_none());
-        assert_eq!(empty_bed.refresh_count(), 1);
+        assert_eq!(empty_bed.refresh_count(), 0);
 
         Ok(())
     }
@@ -1219,11 +1235,9 @@ mod fixed_width_overlap_cursor_tests {
         for threshold in [-0.1, f64::NAN, 1.1] {
             let error = FixedWidthOverlapCursor::new(
                 chrom_len,
-                Some(windows.as_slice()),
-                None,
+                fixed_width_bed_source(chrom_len, windows.as_slice())?,
                 kmer_size,
                 threshold,
-                0,
             )
             .expect_err("invalid overlap thresholds should be rejected");
 
@@ -1236,8 +1250,8 @@ mod fixed_width_overlap_cursor_tests {
 
 mod tile_bed_overlap_context_tests {
     use super::super::{
-        ChromosomeBedWindows, OverlappingWindows, TileBedOverlapContext, TileBedWindowSpans,
-        find_overlapping_windows,
+        BedWindowTierKind, ChromosomeBedWindows, OverlappingWindows, TileBedOverlapContext,
+        TileBedWindowSpans, find_overlapping_windows,
     };
     use super::{
         MIXED_COVERING_BROAD_NARROW_QUERY_STARTS, mixed_covering_broad_narrow_windows,
@@ -1615,7 +1629,7 @@ mod tile_bed_overlap_context_tests {
     }
 
     #[test]
-    fn narrow_window_containing_tile_envelope_still_matches_generic_finder() -> Result<()> {
+    fn narrow_window_containing_tile_range_is_scanned_not_always_hit() -> Result<()> {
         let chrom_len = 1_000;
         let broad_window_min_bp = 10_000;
         let windows = IndexedInterval::from_tuples(&[(0, 1_000, 70_u64)])?;
@@ -1623,8 +1637,18 @@ mod tile_bed_overlap_context_tests {
             windows.as_slice(),
             broad_window_min_bp,
         );
-        assert!(chromosome_windows.tiers[0].windows.is_empty());
-        assert_eq!(chromosome_windows.tiers[1].windows.len(), 1);
+        let broad_tier = chromosome_windows
+            .tiers
+            .iter()
+            .find(|tier| tier.kind == BedWindowTierKind::Broad)
+            .expect("broad tier should exist");
+        let narrow_tier = chromosome_windows
+            .tiers
+            .iter()
+            .find(|tier| tier.kind == BedWindowTierKind::Narrow)
+            .expect("narrow tier should exist");
+        assert!(broad_tier.windows.is_empty());
+        assert_eq!(narrow_tier.windows.len(), 1);
         let spans = full_bed_spans(&chromosome_windows);
         let mut context = TileBedOverlapContext::new(
             chrom_len,
@@ -1632,6 +1656,13 @@ mod tile_bed_overlap_context_tests {
             &spans,
             Interval::new(100, 200)?,
         )?;
+        assert!(context.always_hit_windows.is_empty());
+        let scanned_window_count: usize = context
+            .tier_cursors
+            .iter()
+            .map(|tier_cursor| tier_cursor.windows.len())
+            .sum();
+        assert_eq!(scanned_window_count, 1);
         let query_interval = Interval::new(120, 130)?;
         let mut baseline_wd_ptr = 0;
 

@@ -4,10 +4,15 @@ use crate::{
     shared::{
         interval::IndexedInterval,
         kmers::kmer_codec::{build_kmer_specs, build_left_aligned_codes_for_spec, KmerSpec},
+        overlaps::{
+            ChromosomeBedWindows, DEFAULT_BROAD_WINDOW_MIN_BP, TileBedWindowView,
+            TileBedWindowSpans,
+        },
+        tiled_run::TileWindowSpan,
         windowing::DistributionWindowContext,
     },
 };
-use std::path::PathBuf;
+use std::{ops::Range, path::PathBuf};
 
 struct CountFixture {
     kmer_size: u8,
@@ -34,6 +39,67 @@ fn build_count_fixture(sequence: &[u8], kmer_size: u8) -> Result<CountFixture> {
     })
 }
 
+fn full_span<T>(items: &[T]) -> Option<TileWindowSpan> {
+    (!items.is_empty()).then_some(TileWindowSpan {
+        first_idx: 0,
+        last_idx_exclusive: items.len(),
+    })
+}
+
+fn full_bed_spans(chromosome_windows: &ChromosomeBedWindows) -> TileBedWindowSpans {
+    TileBedWindowSpans {
+        all_windows_span: full_span(chromosome_windows.all_windows.as_slice()),
+        tier_spans: chromosome_windows
+            .tiers
+            .iter()
+            .map(|tier| full_span(tier.windows.as_slice()))
+            .collect(),
+    }
+}
+
+fn bed_view_storage_for_test(
+    windows: &[IndexedInterval<u64>],
+    window_spec: &DistributionWindowSpec,
+) -> Option<(ChromosomeBedWindows, TileBedWindowSpans)> {
+    if windows.is_empty()
+        || !matches!(
+            window_spec,
+            DistributionWindowSpec::Bed(_) | DistributionWindowSpec::GroupedBed(_)
+        )
+    {
+        return None;
+    }
+
+    let chromosome_windows =
+        ChromosomeBedWindows::from_indexed_windows(windows, DEFAULT_BROAD_WINDOW_MIN_BP);
+    let spans = full_bed_spans(&chromosome_windows);
+    Some((chromosome_windows, spans))
+}
+
+fn prepare_window_source_for_count_test(
+    window_context: &DistributionWindowContext<'_>,
+    bed_view_storage: Option<&(ChromosomeBedWindows, TileBedWindowSpans)>,
+    owned_starts: Range<u64>,
+    chrom_len: u64,
+    kmer_size: u8,
+    assign_by: WindowAssigner,
+) -> Result<Option<FixedWidthWindowSource>> {
+    let bed_window_view =
+        bed_view_storage.map(|(chromosome_windows, spans)| TileBedWindowView {
+            chromosome_windows,
+            spans,
+        });
+    prepare_ref_kmer_window_source(
+        window_context,
+        bed_window_view,
+        owned_starts,
+        0,
+        chrom_len,
+        kmer_size as u64,
+        assign_by,
+    )
+}
+
 fn run_count(
     fixture: &CountFixture,
     windows: &[IndexedInterval<u64>],
@@ -50,24 +116,34 @@ fn run_count(
     };
     let window_context = DistributionWindowContext {
         spec: window_spec,
-        windows: (!windows.is_empty()).then_some(windows),
         chr_idx_offset,
     };
+    let bed_view_storage = bed_view_storage_for_test(windows, window_spec);
+    let owned_starts = 0..chrom_len;
     let mut counts_by_window = KmerCountsByWindow::default();
     let mut selected_counts_by_window = SelectedKmerCountsByWindow::default();
-    let mut window_pointer = 0usize;
-    count_kmers_by_window(
-        &mut counts_by_window,
-        &mut selected_counts_by_window,
-        &enc,
+    let window_source = prepare_window_source_for_count_test(
         &window_context,
-        &mut window_pointer,
-        0..chrom_len,
-        0,
+        bed_view_storage.as_ref(),
+        owned_starts.clone(),
         chrom_len,
+        fixture.kmer_size,
         assign_by,
-        None,
     )?;
+    if let Some(window_source) = window_source {
+        count_kmers_by_window(
+            &mut counts_by_window,
+            &mut selected_counts_by_window,
+            &enc,
+            &window_context,
+            window_source,
+            owned_starts,
+            0,
+            chrom_len,
+            assign_by,
+            None,
+        )?;
+    }
     assert!(
         selected_counts_by_window.is_empty(),
         "unselected count path should not fill selected counts"
@@ -309,38 +385,20 @@ fn midpoint_requires_odd_kmer_size_and_counts_center_base_window() -> Result<()>
     let mut specs = build_kmer_specs(&[3])?;
     let spec = specs.remove(&3).expect("spec exists for k = 3");
     let kmer = forward_kmer(3, spec.encode_kmer_bytes(b"ACG"));
-    let enc = Enc {
-        k: 3,
-        codes: &fixture.codes,
-        none: fixture.none,
-        n: fixture.n,
-    };
     let windows = IndexedInterval::from_tuples(&[(1, 2, 11_u64)])?;
     let window_spec = DistributionWindowSpec::Bed(PathBuf::from("windows.bed"));
-    let window_context = DistributionWindowContext {
-        spec: &window_spec,
-        windows: Some(windows.as_slice()),
-        chr_idx_offset: 0,
-    };
-    let mut counts_by_window = KmerCountsByWindow::default();
-    let mut selected_counts_by_window = SelectedKmerCountsByWindow::default();
-    let mut window_pointer = 0usize;
 
-    count_kmers_by_window(
-        &mut counts_by_window,
-        &mut selected_counts_by_window,
-        &enc,
-        &window_context,
-        &mut window_pointer,
-        0..6,
+    let counts = run_count(
+        &fixture,
+        windows.as_slice(),
+        &window_spec,
         0,
         6,
         WindowAssigner::Midpoint,
-        None,
     )?;
 
-    assert_close(observed_weight(&counts_by_window, 11, kmer), 1.0);
-    assert_eq!(counts_by_window.len(), 1);
+    assert_close(observed_weight(&counts, 11, kmer), 1.0);
+    assert_eq!(counts.len(), 1);
     Ok(())
 }
 
@@ -351,32 +409,14 @@ fn midpoint_rejects_even_kmer_size() -> Result<()> {
     let fixture = build_count_fixture(b"ACGT", 4)?;
     let windows = IndexedInterval::from_tuples(&[(1, 3, 11_u64)])?;
     let window_spec = DistributionWindowSpec::Bed(PathBuf::from("windows.bed"));
-    let mut counts_by_window = KmerCountsByWindow::default();
-    let mut selected_counts_by_window = SelectedKmerCountsByWindow::default();
-    let mut window_pointer = 0usize;
-    let enc = Enc {
-        k: 4,
-        codes: &fixture.codes,
-        none: fixture.none,
-        n: fixture.n,
-    };
-    let window_context = DistributionWindowContext {
-        spec: &window_spec,
-        windows: Some(windows.as_slice()),
-        chr_idx_offset: 0,
-    };
 
-    let error = count_kmers_by_window(
-        &mut counts_by_window,
-        &mut selected_counts_by_window,
-        &enc,
-        &window_context,
-        &mut window_pointer,
-        0..4,
+    let error = run_count(
+        &fixture,
+        windows.as_slice(),
+        &window_spec,
         0,
         4,
         WindowAssigner::Midpoint,
-        None,
     )
     .expect_err("even k-mer midpoint assignment should fail");
 
@@ -384,8 +424,6 @@ fn midpoint_rejects_even_kmer_size() -> Result<()> {
         error.to_string().contains("requires an odd `--kmer-size`"),
         "unexpected error: {error:#}"
     );
-    assert!(counts_by_window.is_empty());
-    assert!(selected_counts_by_window.is_empty());
     Ok(())
 }
 

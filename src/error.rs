@@ -37,6 +37,11 @@ pub enum Error {
         end: usize,
         len: usize,
     },
+    /// Cached BED tier span storage did not match the chromosome tier count.
+    InvalidBedWindowTierSpanCount {
+        tier_count: usize,
+        span_count: usize,
+    },
     /// An overlap fraction fell outside the inclusive range `[0.0, 1.0]`.
     OverlapFractionOutOfBounds { overlap_fraction: f64 },
     /// A tile fetch range did not fully cover the tile core.
@@ -96,6 +101,15 @@ impl Display for Error {
                 write!(
                     formatter,
                     "cached {split_name} BED split-window span [{start}, {end}) is outside source array length {len}"
+                )
+            }
+            Error::InvalidBedWindowTierSpanCount {
+                tier_count,
+                span_count,
+            } => {
+                write!(
+                    formatter,
+                    "cached BED tier span count ({span_count}) is smaller than chromosome BED tier count ({tier_count})"
                 )
             }
             Error::OverlapFractionOutOfBounds { overlap_fraction } => {

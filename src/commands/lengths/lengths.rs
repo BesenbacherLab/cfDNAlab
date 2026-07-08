@@ -35,7 +35,7 @@ use crate::{
         io::{FinalOutputFiles, dot_join},
         midpoint::midpoint_random_even_for_fragment,
         overlaps::{
-            DEFAULT_BROAD_WINDOW_MIN_BP, TileBedOverlapContext, TileBedWindowInputs,
+            DEFAULT_BROAD_WINDOW_MIN_BP, TileBedOverlapContext, TileBedWindowView,
             build_bed_windows_by_chr, find_overlapping_windows, precompute_tile_bed_window_spans,
         },
         progress::ProgressFactory,
@@ -405,11 +405,11 @@ pub fn run_lengths(opt: &LengthsConfig, options: RunOptions) -> Result<LengthsRu
         .par_iter()
         .enumerate()
         .map(|(tile_idx, tile)| -> Result<TileOutputs> {
-            let bed_window_inputs = match (
+            let bed_window_view = match (
                 bed_windows_by_chr.as_ref().and_then(|m| m.get(&tile.chr)),
                 tile_bed_window_spans_for_threads.as_ref(),
             ) {
-                (Some(chromosome_windows), Some(spans)) => Some(TileBedWindowInputs {
+                (Some(chromosome_windows), Some(spans)) => Some(TileBedWindowView {
                     chromosome_windows,
                     spans: &spans[tile_idx],
                 }),
@@ -427,7 +427,7 @@ pub fn run_lengths(opt: &LengthsConfig, options: RunOptions) -> Result<LengthsRu
             let counter = process_tile(
                 opt,
                 tile,
-                bed_window_inputs,
+                bed_window_view,
                 &window_opt,
                 blacklist_chr,
                 scaling_chr,
@@ -450,7 +450,7 @@ pub fn run_lengths(opt: &LengthsConfig, options: RunOptions) -> Result<LengthsRu
         pb.finish_and_clear();
     }
 
-    // Release per-tile inputs before merging outputs
+    // Release per-tile views before merging outputs
     drop(tile_bed_window_spans_for_threads);
     drop(tile_bed_window_spans);
     drop(tiles);
@@ -752,7 +752,7 @@ pub fn run_lengths(opt: &LengthsConfig, options: RunOptions) -> Result<LengthsRu
 fn process_tile(
     opt: &LengthsConfig,
     tile: &Tile,
-    bed_window_inputs: Option<TileBedWindowInputs<'_>>,
+    bed_window_view: Option<TileBedWindowView<'_>>,
     window_opt: &DistributionWindowSpec,
     blacklist_intervals: &[Interval<u64>],
     scaling_chr: &[ScalingBin],
@@ -794,13 +794,13 @@ fn process_tile(
     // reference reach used for tile halos.
     let fetch_span = match window_opt {
         DistributionWindowSpec::Bed(_) | DistributionWindowSpec::GroupedBed(_) => {
-            let Some(bed_window_inputs) = bed_window_inputs else {
+            let Some(bed_window_view) = bed_window_view else {
                 return Ok(empty_tile_output(counter, tile));
             };
             fetch_span_for_bed_candidates(
                 tile,
-                bed_window_inputs.spans.all_windows_span.as_ref(),
-                bed_window_inputs.chromosome_windows.all_windows.as_slice(),
+                bed_window_view.spans.all_windows_span.as_ref(),
+                bed_window_view.chromosome_windows.all_windows.as_slice(),
                 chrom_len,
                 max_fragment_reach_bp,
             )?
@@ -889,12 +889,12 @@ fn process_tile(
         // BED mode: reuse the precomputed span and skip only windows that still sit fully outside
         // the clip-adjusted left reach
         DistributionWindowSpec::Bed(_) => {
-            let bed_window_inputs =
-                bed_window_inputs.context("BED length counting requires tile BED window inputs")?;
-            let span = bed_window_inputs.spans.all_windows_span.context(
+            let bed_window_view =
+                bed_window_view.context("BED length counting requires tile BED window view")?;
+            let span = bed_window_view.spans.all_windows_span.context(
                 "BED length counting requires a cached tile window span after fetch-span selection",
             )?;
-            let all_windows = bed_window_inputs.chromosome_windows.all_windows.as_slice();
+            let all_windows = bed_window_view.chromosome_windows.all_windows.as_slice();
             let span_len = span.last_idx_exclusive.saturating_sub(span.first_idx);
             let mut counts = Vec::with_capacity(span_len);
             for idx in span.first_idx..span.last_idx_exclusive {
@@ -932,12 +932,12 @@ fn process_tile(
                 leftmost_reachable_start,
                 (tile.core_end() as u64).saturating_add(max_fragment_reach_bp),
             )?;
-            let bed_window_inputs =
-                bed_window_inputs.context("BED length counting requires tile BED window inputs")?;
+            let bed_window_view =
+                bed_window_view.context("BED length counting requires tile BED window view")?;
             Some(TileBedOverlapContext::new(
                 chrom_len,
-                bed_window_inputs.chromosome_windows,
-                bed_window_inputs.spans,
+                bed_window_view.chromosome_windows,
+                bed_window_view.spans,
                 tile_assignment_envelope,
             )?)
         }

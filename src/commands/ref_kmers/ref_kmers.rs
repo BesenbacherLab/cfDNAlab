@@ -21,6 +21,7 @@ use crate::{
             config::RefKmersConfig,
             counting::{
                 Enc, KmerCountsByWindow, SelectedKmerCountsByWindow, count_kmers_by_window,
+                prepare_ref_kmer_window_source,
             },
             tiling::{
                 TileResult, build_selected_tile_count_records, build_tile_count_records,
@@ -45,13 +46,15 @@ use crate::{
                 SelectedMotifHalfSpec, SelectedMotifLookup, parse_selected_ref_kmers_file,
             },
         },
+        overlaps::{
+            DEFAULT_BROAD_WINDOW_MIN_BP, TileBedWindowView, build_bed_windows_by_chr,
+            precompute_tile_bed_window_spans,
+        },
         progress::ProgressFactory,
         reference::{read_seq_in_range, twobit_contig_footprint, twobit_contig_lengths},
         temp_chrom_names::TempChromNameMap,
         thread_pool::init_global_pool,
-        tiled_run::{
-            TempDirGuard, Tile, TileWindowSpan, build_tiles, precompute_tile_window_spans,
-        },
+        tiled_run::{TempDirGuard, Tile, build_tiles},
         windowing::{
             DistributionWindowContext, build_bin_info, compute_window_offsets,
             ensure_plain_bed_windows_not_empty,
@@ -240,26 +243,17 @@ pub fn run_ref_kmers(opt: &RefKmersConfig, options: RunOptions) -> Result<RefKme
     let progress = ProgressFactory::with_enabled(options.show_progress);
     let pb = Arc::new(progress.default_bar(tiles.len() as u64));
 
-    let windows_lookup = indexed_windows_map.as_ref();
-    let tile_window_spans = Arc::new(precompute_tile_window_spans(
-        &tiles,
-        |chr| {
-            windows_lookup
-                .and_then(|windows_by_chromosome| {
-                    windows_by_chromosome
-                        .get(chr)
-                        .map(|windows| windows.as_slice())
-                })
-                .unwrap_or(&[])
-        },
-        0,
-        halo_bp as u64,
-    ));
+    let bed_windows_by_chr = indexed_windows_map
+        .as_ref()
+        .map(|windows| build_bed_windows_by_chr(windows, DEFAULT_BROAD_WINDOW_MIN_BP));
+    let tile_bed_window_spans = Arc::new(bed_windows_by_chr.as_ref().map(|bed_windows| {
+        precompute_tile_bed_window_spans(&tiles, bed_windows, 0, halo_bp as u64)
+    }));
 
     // Configure global thread‐pool size
     init_global_pool(opt.n_threads)?;
 
-    let tile_window_spans_for_threads = tile_window_spans.clone();
+    let tile_bed_window_spans_for_threads = tile_bed_window_spans.clone();
 
     // DistributionWindowSpec preserves grouped BED row identity for output, while WindowSpec is the
     // plain coordinate view used for fetch narrowing and fixed-size offset calculation.
@@ -342,14 +336,6 @@ pub fn run_ref_kmers(opt: &RefKmersConfig, options: RunOptions) -> Result<RefKme
         .enumerate()
         .map(|(tile_idx, tile)| {
             let chr = tile.chr.as_str();
-            let tile_span = tile_window_spans_for_threads[tile_idx];
-            let windows_chr: Option<&[IndexedInterval<u64>]> = indexed_windows_map
-                .as_ref()
-                .and_then(|windows_by_chromosome| {
-                    windows_by_chromosome
-                        .get(&tile.chr)
-                        .map(|windows| windows.as_slice())
-                });
             let blacklist_chr: &[Interval<u64>] = blacklist_map
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
@@ -357,14 +343,29 @@ pub fn run_ref_kmers(opt: &RefKmersConfig, options: RunOptions) -> Result<RefKme
             let chr_len = *chrom_lengths
                 .get(chr)
                 .ok_or_else(|| anyhow::anyhow!("missing chromosome length for {}", chr))?;
+            let tile_bed_window_view = match bed_windows_by_chr
+                .as_ref()
+                .and_then(|windows_by_chromosome| windows_by_chromosome.get(&tile.chr))
+            {
+                Some(chromosome_windows) => {
+                    let spans = tile_bed_window_spans_for_threads
+                        .as_ref()
+                        .as_ref()
+                        .context("BED reference k-mer counting requires tile BED window spans")?;
+                    Some(TileBedWindowView {
+                        chromosome_windows,
+                        spans: &spans[tile_idx],
+                    })
+                }
+                None => None,
+            };
 
             // Count k-mers that start in the tile core. The k-mer span may extend into the halo.
             let tile_result = process_tile(
                 opt,
                 tile,
-                tile_span.as_ref(),
+                tile_bed_window_view,
                 chr_len as u64,
-                windows_chr,
                 *chr_offsets_for_threads.get(&tile.chr).unwrap_or(&0),
                 &window_opt,
                 blacklist_chr,
@@ -388,10 +389,11 @@ pub fn run_ref_kmers(opt: &RefKmersConfig, options: RunOptions) -> Result<RefKme
         pb.finish_and_clear();
     }
 
-    // Release tile-level inputs before global aggregation
-    drop(tile_window_spans_for_threads);
-    drop(tile_window_spans);
+    // Release tile-level views before global aggregation
+    drop(tile_bed_window_spans_for_threads);
+    drop(tile_bed_window_spans);
     drop(tiles);
+    drop(bed_windows_by_chr);
     drop(indexed_windows_map);
 
     status_info!(options, target: COMMAND_TARGET, "Processing counts");
@@ -503,9 +505,8 @@ pub fn run_ref_kmers(opt: &RefKmersConfig, options: RunOptions) -> Result<RefKme
 fn process_tile(
     opt: &RefKmersConfig,
     tile: &Tile,
-    tile_window_span: Option<&TileWindowSpan>,
+    tile_bed_window_view: Option<TileBedWindowView<'_>>,
     chrom_len: u64,
-    windows_chr: Option<&[IndexedInterval<u64>]>,
     chr_window_idx_offset: u64,
     window_opt: &DistributionWindowSpec,
     blacklist_intervals: &[Interval<u64>],
@@ -558,24 +559,32 @@ fn process_tile(
     let owned_end = core_end.min(seq_end).saturating_sub(seq_start);
     let window_context = DistributionWindowContext {
         spec: window_opt,
-        windows: windows_chr,
         chr_idx_offset: chr_window_idx_offset,
     };
-    let mut window_pointer = tile_window_span
-        .and_then(|span| (!span.is_empty()).then_some(span.first_idx))
-        .unwrap_or(0);
-    count_kmers_by_window(
-        &mut counts_by_window,
-        &mut selected_counts_by_window,
-        &enc,
+    let owned_starts = owned_start..owned_end;
+    let window_source = prepare_ref_kmer_window_source(
         &window_context,
-        &mut window_pointer,
-        owned_start..owned_end,
+        tile_bed_window_view,
+        owned_starts.clone(),
         seq_start,
         chrom_len,
+        k as u64,
         opt.assign_by,
-        selected_motifs,
     )?;
+    if let Some(window_source) = window_source {
+        count_kmers_by_window(
+            &mut counts_by_window,
+            &mut selected_counts_by_window,
+            &enc,
+            &window_context,
+            window_source,
+            owned_starts,
+            seq_start,
+            chrom_len,
+            opt.assign_by,
+            selected_motifs,
+        )?;
+    }
 
     if selected_motifs.is_some() {
         let count_records = build_selected_tile_count_records(selected_counts_by_window);

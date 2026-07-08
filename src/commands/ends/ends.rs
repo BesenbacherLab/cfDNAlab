@@ -63,7 +63,7 @@ use crate::{
         },
         midpoint::midpoint_random_even_for_fragment,
         overlaps::{
-            DEFAULT_BROAD_WINDOW_MIN_BP, TileBedOverlapContext, TileBedWindowInputs,
+            DEFAULT_BROAD_WINDOW_MIN_BP, TileBedOverlapContext, TileBedWindowView,
             build_bed_windows_by_chr, find_overlapping_windows, precompute_tile_bed_window_spans,
         },
         progress::ProgressFactory,
@@ -448,11 +448,11 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
         .par_iter()
         .enumerate()
         .map(|(tile_idx, tile)| -> Result<Option<TileResult>> {
-            let bed_window_inputs = match (
+            let bed_window_view = match (
                 bed_windows_by_chr.as_ref().and_then(|m| m.get(&tile.chr)),
                 tile_bed_window_spans_for_threads.as_ref(),
             ) {
-                (Some(chromosome_windows), Some(spans)) => Some(TileBedWindowInputs {
+                (Some(chromosome_windows), Some(spans)) => Some(TileBedWindowView {
                     chromosome_windows,
                     spans: &spans[tile_idx],
                 }),
@@ -473,7 +473,7 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
             let tile_result = process_tile(
                 opt,
                 tile,
-                bed_window_inputs,
+                bed_window_view,
                 chr_window_idx_offset,
                 &window_opt,
                 blacklist_chr,
@@ -501,7 +501,7 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
         pb.finish_and_clear();
     }
 
-    // Release per-tile inputs before merging outputs
+    // Release per-tile views before merging outputs
     drop(chr_offsets_for_threads);
     drop(tile_bed_window_spans_for_threads);
     drop(tile_bed_window_spans);
@@ -835,8 +835,8 @@ fn record_counted_fragment_stats(counter: &mut EndsCounters, counted_end_flags: 
 ///   Full command configuration
 /// - `tile`:
 ///   Tile currently being processed
-/// - `bed_window_inputs`:
-///   BED-like source and tier window inputs for this tile, when BED-like windows are active
+/// - `bed_window_view`:
+///   BED-like source and tier window view for this tile, when BED-like windows are active
 /// - `chr_window_idx_offset`:
 ///   Per-chromosome row offset for fixed-size windows
 /// - `window_opt`:
@@ -865,7 +865,7 @@ fn record_counted_fragment_stats(counter: &mut EndsCounters, counted_end_flags: 
 fn process_tile(
     opt: &EndsConfig,
     tile: &Tile,
-    bed_window_inputs: Option<TileBedWindowInputs<'_>>,
+    bed_window_view: Option<TileBedWindowView<'_>>,
     chr_window_idx_offset: u64,
     window_opt: &DistributionWindowSpec,
     blacklist_intervals: &[Interval<u64>],
@@ -921,13 +921,13 @@ fn process_tile(
     let bed_fetch_halo_bp = opt.fragment_lengths.max_fragment_length as u64;
     let fetch_span = match window_opt {
         DistributionWindowSpec::Bed(_) | DistributionWindowSpec::GroupedBed(_) => {
-            let Some(bed_window_inputs) = bed_window_inputs else {
+            let Some(bed_window_view) = bed_window_view else {
                 return Ok(None);
             };
             fetch_span_for_bed_candidates(
                 tile,
-                bed_window_inputs.spans.all_windows_span.as_ref(),
-                bed_window_inputs.chromosome_windows.all_windows.as_slice(),
+                bed_window_view.spans.all_windows_span.as_ref(),
+                bed_window_view.chromosome_windows.all_windows.as_slice(),
                 chrom_len,
                 bed_fetch_halo_bp,
             )?
@@ -1001,12 +1001,12 @@ fn process_tile(
                 (tile.core_start() as u64).saturating_sub(left_assignment_reach_bp),
                 (tile.core_end() as u64).saturating_add(max_fragment_length as u64),
             )?;
-            let bed_window_inputs =
-                bed_window_inputs.context("BED end counting requires tile BED window inputs")?;
+            let bed_window_view =
+                bed_window_view.context("BED end counting requires tile BED window view")?;
             Some(TileBedOverlapContext::new(
                 chrom_len,
-                bed_window_inputs.chromosome_windows,
-                bed_window_inputs.spans,
+                bed_window_view.chromosome_windows,
+                bed_window_view.spans,
                 tile_assignment_envelope,
             )?)
         }

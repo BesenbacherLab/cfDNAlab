@@ -228,9 +228,20 @@ impl AsRef<Interval<u64>> for BedWindowEntry {
     }
 }
 
+/// Size class for a BED window tier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BedWindowTierKind {
+    /// Windows with length greater than or equal to `broad_window_min_bp`.
+    Broad,
+    /// Windows shorter than `broad_window_min_bp`.
+    Narrow,
+}
+
 /// One start-sorted BED window tier used by the tile-local overlap finder.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub(crate) struct BedWindowTier {
+    /// Size class used for tier-specific fast paths.
+    pub(crate) kind: BedWindowTierKind,
     pub(crate) windows: Vec<BedWindowEntry>,
 }
 
@@ -238,9 +249,10 @@ pub(crate) struct BedWindowTier {
 ///
 /// `all_windows` stores the full chromosome-local, start-sorted BED window list used for count
 /// arrays and fetch narrowing. `tiers` stores split views of the same entries in independent
-/// start-sorted scan lists: currently broad windows and narrow windows. Entries inside the tiers
-/// keep their `all_windows_idx`, so overlap results can be mapped back to the full list even though
-/// each tier advances through its own pointer.
+/// start-sorted scan lists: currently broad windows and narrow windows. Each tier carries its size
+/// class, so fast paths can depend on `BedWindowTierKind` rather than a vector position. Entries
+/// inside the tiers keep their `all_windows_idx`, so overlap results can be mapped back to the full
+/// list even though each tier advances through its own pointer.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ChromosomeBedWindows {
     pub(crate) all_windows: Vec<BedWindowEntry>,
@@ -250,8 +262,10 @@ pub(crate) struct ChromosomeBedWindows {
 impl ChromosomeBedWindows {
     /// Build the current broad/narrow tier views from start-sorted BED-like windows.
     ///
-    /// The broad tier is stored before the narrow tier so long always-hit windows are emitted
-    /// before the shorter scanned windows, matching the existing layered finder.
+    /// `broad_window_min_bp` is the length threshold for the size tiers. Windows with length
+    /// greater than or equal to this threshold go into the broad tier. Shorter windows go into the
+    /// narrow tier. Later tile-local splitting reuses these tiers and does not check the threshold
+    /// again.
     pub(crate) fn from_indexed_windows(
         windows: &[IndexedInterval<u64>],
         broad_window_min_bp: u64,
@@ -268,6 +282,7 @@ impl ChromosomeBedWindows {
         let mut broad_windows = Vec::new();
         let mut narrow_windows = Vec::new();
         for window in all_windows.iter().copied() {
+            // This is the broad/narrow threshold check for BED tiering
             if window.len() >= broad_window_min_bp {
                 broad_windows.push(window);
             } else {
@@ -279,9 +294,11 @@ impl ChromosomeBedWindows {
             all_windows,
             tiers: vec![
                 BedWindowTier {
+                    kind: BedWindowTierKind::Broad,
                     windows: broad_windows,
                 },
                 BedWindowTier {
+                    kind: BedWindowTierKind::Narrow,
                     windows: narrow_windows,
                 },
             ],
@@ -314,10 +331,13 @@ pub(crate) struct TileBedWindowSpans {
     pub(crate) tier_spans: Vec<Option<TileWindowSpan>>,
 }
 
-/// Borrowed BED window inputs for one tile.
+/// Tile-local view of chromosome BED windows.
+///
+/// The windows stay in chromosome-level storage. The spans select the `all_windows` and tier
+/// ranges that can matter for one tile.
 #[cfg(uses_tile_window_helpers)]
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct TileBedWindowInputs<'a> {
+pub(crate) struct TileBedWindowView<'a> {
     pub(crate) chromosome_windows: &'a ChromosomeBedWindows,
     pub(crate) spans: &'a TileBedWindowSpans,
 }
@@ -384,6 +404,106 @@ struct TileBedTierCursor {
     wd_ptr: usize,
 }
 
+/// Tile-local BED candidates split into always-hit windows and scanned windows.
+///
+/// `always_hit_windows` contains broad BED rows whose clipped interval covers the full tile
+/// assignment range. Every query assigned to the tile lies inside that range, so these broad
+/// windows do not need per-query scanning. `scanned_windows_by_size_tier` contains all other
+/// candidates, still grouped by the broad/narrow size tier chosen by `broad_window_min_bp`.
+#[cfg(uses_tile_window_helpers)]
+#[derive(Debug)]
+struct TileBedWindowSplit {
+    always_hit_windows: Vec<BedWindowEntry>,
+    scanned_windows_by_size_tier: Vec<Vec<BedWindowEntry>>,
+}
+
+/// Split already-tiered tile candidates into always-hit windows and windows to scan.
+///
+/// Only broad windows are checked for the always-hit path. In production tile runs, narrow windows
+/// are not expected to cover the full tile assignment range, so testing every narrow candidate for
+/// that condition is dead work. Narrow tiers are copied directly into
+/// `scanned_windows_by_size_tier`.
+///
+/// Empty size tiers are valid and remain empty in `scanned_windows_by_size_tier`. A broad row is
+/// moved to `always_hit_windows` only after its end has been clipped to `chrom_len`, because
+/// overlap rows must never expose bases beyond the chromosome.
+#[cfg(uses_tile_window_helpers)]
+fn split_tile_bed_candidates_into_always_hit_and_scanned<'a, I>(
+    chrom_len: u64,
+    windows_by_size_tier: I,
+    tile_assignment_envelope: Interval<u64>,
+) -> Result<TileBedWindowSplit>
+where
+    I: IntoIterator<Item = (BedWindowTierKind, &'a [BedWindowEntry])>,
+{
+    let mut always_hit_windows = Vec::new();
+    let mut scanned_windows_by_size_tier = Vec::new();
+
+    for (tier_kind, windows_in_size_tier) in windows_by_size_tier {
+        if tier_kind != BedWindowTierKind::Broad {
+            scanned_windows_by_size_tier.push(windows_in_size_tier.to_vec());
+            continue;
+        }
+
+        let mut scanned_windows = Vec::with_capacity(windows_in_size_tier.len());
+        for window in windows_in_size_tier {
+            let Some(clipped_window_interval) = clamp_bed_window_to_chrom(*window, chrom_len)?
+            else {
+                continue;
+            };
+            if clipped_window_interval.contains_interval(tile_assignment_envelope) {
+                // This window contains every query assigned to the tile
+                always_hit_windows.push(window.with_interval(clipped_window_interval));
+            } else {
+                // Keep original bounds so pointer retirement matches the generic BED finder
+                scanned_windows.push(*window);
+            }
+        }
+
+        scanned_windows_by_size_tier.push(scanned_windows);
+    }
+
+    Ok(TileBedWindowSplit {
+        always_hit_windows,
+        scanned_windows_by_size_tier,
+    })
+}
+
+/// Split tile-local BED candidates once so overlap finders can share the same tier selection.
+///
+/// `spans.tier_spans` must have an entry for every chromosome BED tier. An entry may be `None`,
+/// which means that tier has no candidate windows for this tile. A missing entry would silently
+/// drop a whole tier, so it is treated as an internal span-cache error.
+#[cfg(uses_tile_window_helpers)]
+fn split_tile_bed_windows(
+    chrom_len: u64,
+    chromosome_windows: &ChromosomeBedWindows,
+    spans: &TileBedWindowSpans,
+    tile_assignment_envelope: Interval<u64>,
+) -> Result<TileBedWindowSplit> {
+    if spans.tier_spans.len() < chromosome_windows.tiers.len() {
+        return Err(Error::InvalidBedWindowTierSpanCount {
+            tier_count: chromosome_windows.tiers.len(),
+            span_count: spans.tier_spans.len(),
+        });
+    }
+
+    let mut windows_by_size_tier = Vec::with_capacity(chromosome_windows.tiers.len());
+    for (tier_idx, tier) in chromosome_windows.tiers.iter().enumerate() {
+        let candidate_span = spans.tier_spans.get(tier_idx).copied().flatten();
+        windows_by_size_tier.push((
+            tier.kind,
+            span_slice(tier.windows.as_slice(), candidate_span, "BED size tier")?,
+        ));
+    }
+
+    split_tile_bed_candidates_into_always_hit_and_scanned(
+        chrom_len,
+        windows_by_size_tier,
+        tile_assignment_envelope,
+    )
+}
+
 /// Tile-local BED overlap finder with independent tier pointers.
 ///
 /// Use this only for BED-like count windows. It returns the same candidate windows as the generic
@@ -407,43 +527,30 @@ impl TileBedOverlapContext {
     /// Build the tile-local overlap context from tiered BED-like windows.
     ///
     /// `tile_assignment_envelope` must contain every query interval that can be submitted to this
-    /// context for the tile. Candidate windows that contain that full envelope are stored as
-    /// always-hit windows and are not scanned per fragment.
+    /// context for the tile. Broad candidate windows that contain the full range are stored as
+    /// always-hit windows and are not scanned per fragment. Narrow candidates are scanned directly,
+    /// because they are not expected to cover full tile assignment ranges in production tile runs.
     pub(crate) fn new(
         chrom_len: u64,
         chromosome_windows: &ChromosomeBedWindows,
         spans: &TileBedWindowSpans,
         tile_assignment_envelope: Interval<u64>,
     ) -> Result<Self> {
-        let mut always_hit_windows = Vec::new();
-        let mut tier_cursors = Vec::with_capacity(chromosome_windows.tiers.len());
-
-        for (tier_idx, tier) in chromosome_windows.tiers.iter().enumerate() {
-            let tier_span = spans.tier_spans.get(tier_idx).copied().flatten();
-            let tier_candidates = span_slice(tier.windows.as_slice(), tier_span, "tier")?;
-            let mut scanned_windows = Vec::with_capacity(tier_candidates.len());
-
-            for window in tier_candidates {
-                let Some(window_interval) = clamp_bed_window_to_chrom(*window, chrom_len)? else {
-                    continue;
-                };
-                if window_interval.contains_interval(tile_assignment_envelope) {
-                    always_hit_windows.push(window.with_interval(window_interval));
-                } else {
-                    // Keep original bounds so pointer retirement matches the generic BED finder.
-                    scanned_windows.push(*window);
-                }
-            }
-
-            tier_cursors.push(TileBedTierCursor {
-                windows: scanned_windows,
-                wd_ptr: 0,
-            });
-        }
+        let split = split_tile_bed_windows(
+            chrom_len,
+            chromosome_windows,
+            spans,
+            tile_assignment_envelope,
+        )?;
+        let tier_cursors = split
+            .scanned_windows_by_size_tier
+            .into_iter()
+            .map(|windows| TileBedTierCursor { windows, wd_ptr: 0 })
+            .collect();
 
         Ok(Self {
             chrom_len,
-            always_hit_windows,
+            always_hit_windows: split.always_hit_windows,
             tier_cursors,
         })
     }
@@ -748,99 +855,275 @@ pub fn find_overlapping_windows(
     Ok(Some(overlaps))
 }
 
-/// Find window overlaps for many same-width intervals on one chromosome.
+/// Source of windows for repeated fixed-width overlap lookups.
 ///
-/// Each lookup asks for the windows touched by `[query_start, query_start + query_width)`, clipped
-/// to `chrom_len`. This is useful when scanning k-mer starts or other fixed-width intervals in
-/// nondecreasing coordinate order.
-///
-/// Global and fixed-size windows are handled directly. BED mode gives the same answers as
-/// [`find_overlapping_windows`] with `look_back = 0`, but keeps a small cache for adjacent query
-/// starts. The cache is valid until a BED window enters or leaves the candidate set. Each cached
-/// candidate is still rechecked for the current query start, because its overlap fraction can change
-/// while the candidate set stays the same. BED-mode callers must provide query starts in
-/// nondecreasing order.
-///
-/// For full-width cached BED queries, a window passes when its overlapping bases meet the requested
-/// fraction of `query_width`. A threshold of `0.0` means any actual overlap. Zero-overlap windows
-/// are never returned. Queries clipped at the chromosome end use the generic overlap finder so
-/// their fractions are measured against the clipped query length.
-#[cfg(any(feature = "cmd_ref_kmers", test))]
+/// The cursor owns this source so BED mode can keep cache state next to the tier it describes.
+/// Global and fixed-size sources do not need cache state. BED sources are built from tile-local
+/// BED window views, which keeps the ref-kmers hot loop from rescanning chromosome-wide background
+/// windows for every k-mer start.
+#[cfg(feature = "cmd_ref_kmers")]
 #[derive(Debug)]
-pub(crate) struct FixedWidthOverlapCursor<'a> {
-    /// Chromosome length used to clip query intervals and BED window ends.
-    chrom_len: u64,
-    /// Optional sorted BED-like windows for BED mode.
+pub(crate) enum FixedWidthWindowSource {
+    /// One chromosome-wide output row.
     ///
-    /// The slice must use chromosome coordinates. In BED mode, returned `OverlappingWindow.idx`
-    /// values are scan positions in this slice, matching [`find_overlapping_windows`].
-    windows: Option<&'a [IndexedInterval<u64>]>,
-    /// Optional fixed window size for size mode.
+    /// Every non-empty query interval maps to row 0 with overlap fraction `1.0`.
+    Global,
+    /// Fixed-size chromosome-local bins.
     ///
-    /// When this is present, the cursor does not use the BED cache. Fixed-size windows can be found
-    /// directly from the query interval.
-    by_size: Option<u64>,
-    /// Width of the unclipped query interval.
+    /// Bin indices are chromosome-local. Callers add the chromosome row offset when converting
+    /// overlaps into output rows.
+    FixedSize(u64),
+    /// BED-like windows split into always-hit rows and independently cached size tiers.
     ///
-    /// Ref-kmers uses this as the k-mer size. Caching is only used when the clipped query still has
-    /// this full width.
-    query_width: u64,
-    /// Minimum overlap fraction used to decide whether a window is returned.
+    /// `always_hit_windows` contains broad tile-local BED windows that fully contain the tile
+    /// assignment envelope, so every query submitted to this cursor intersects them. `tiers`
+    /// contains the remaining tile-local BED windows split by size, with one forward pointer and
+    /// cache per tier.
+    Bed {
+        /// Broad BED windows that contain every query interval assigned to this tile.
+        always_hit_windows: Vec<BedWindowEntry>,
+        /// Start-sorted scanned tiers, each with its own cache.
+        tiers: Vec<FixedWidthBedTier>,
+    },
+}
+
+#[cfg(feature = "cmd_ref_kmers")]
+impl FixedWidthWindowSource {
+    /// Build a BED source from the tile-local tier spans precomputed by the command runner.
     ///
-    /// This is the one-way fraction of the query covered by a window, not the fraction of the
-    /// window covered by the query. Cached full-width BED queries compare
-    /// `overlap_bases / query_width`. Clipped queries and fixed-size windows use the current query
-    /// interval length, matching [`find_overlapping_windows`].
-    min_overlap_fraction: f64,
-    /// Forward scan pointer into `windows` for BED mode.
+    /// `tile_assignment_envelope` must contain every query interval that can be submitted to the
+    /// returned source. Broad BED windows containing that whole range are moved to the always-hit
+    /// list. Narrow windows and non-covering broad windows stay in their size tier and are scanned
+    /// through that tier's independent cache. This avoids checking narrow windows for a full-range
+    /// condition they are not expected to satisfy in production tile runs.
+    #[cfg(uses_tile_window_helpers)]
+    pub(crate) fn bed_from_tile_view(
+        chrom_len: u64,
+        bed_window_view: TileBedWindowView<'_>,
+        tile_assignment_envelope: Interval<u64>,
+    ) -> Result<Self> {
+        let split = split_tile_bed_windows(
+            chrom_len,
+            bed_window_view.chromosome_windows,
+            bed_window_view.spans,
+            tile_assignment_envelope,
+        )?;
+        Ok(Self::from_bed_split(split))
+    }
+
+    fn from_bed_split(split: TileBedWindowSplit) -> Self {
+        Self::Bed {
+            always_hit_windows: split.always_hit_windows,
+            tiers: split
+                .scanned_windows_by_size_tier
+                .into_iter()
+                .filter(|windows| !windows.is_empty())
+                .map(FixedWidthBedTier::new)
+                .collect(),
+        }
+    }
+}
+
+#[cfg(feature = "cmd_ref_kmers")]
+#[derive(Debug)]
+pub(crate) struct FixedWidthBedTier {
+    /// Tile-local BED windows for this size tier, sorted by start coordinate.
+    windows: Vec<BedWindowEntry>,
+    /// Forward pointer and cached candidate windows for this tier.
+    cache: FixedWidthBedCache,
+}
+
+#[cfg(feature = "cmd_ref_kmers")]
+impl FixedWidthBedTier {
+    fn new(windows: Vec<BedWindowEntry>) -> Self {
+        Self {
+            windows,
+            cache: FixedWidthBedCache::new(),
+        }
+    }
+}
+
+#[cfg(feature = "cmd_ref_kmers")]
+#[derive(Debug, Default)]
+struct FixedWidthBedCache {
+    /// Forward scan pointer into the tier's start-sorted BED windows.
     ///
-    /// This is the first BED window not known to end before the current query start. It only moves
+    /// This is the first window not known to end before the current query start. It only moves
     /// forward, so BED-mode query starts must be requested in nondecreasing order.
     wd_ptr: usize,
-    /// Whether `cached_windows` and `next_candidate_change_query_start` describe the current BED
-    /// window slice.
+    /// Whether `cached_windows` and `next_candidate_change_query_start` describe this tier.
     cache_ready: bool,
     /// Candidate BED windows for the current query-start range.
     ///
     /// Each cached window stores the query-start ranges where it passes the overlap threshold and
     /// where its overlap length is constant.
     cached_windows: Vec<CachedFixedWidthWindow>,
-    /// First query start where the BED candidate slice may change.
+    /// First query start where the tier candidate slice may change.
     ///
     /// This is a query-start coordinate, not a genomic window coordinate. The cache is valid while
     /// `query_start < next_candidate_change_query_start`. At this boundary, a BED window may enter
-    /// or leave the candidate slice, so the cursor must rescan with `wd_ptr`.
+    /// or leave the candidate slice, so this tier must rescan from `wd_ptr`.
     next_candidate_change_query_start: u64,
-    /// Number of BED cache refreshes, used by tests to verify cache reuse.
+    /// Number of cache refreshes, used by tests to verify cache reuse.
     refresh_count: usize,
 }
 
-#[cfg(any(feature = "cmd_ref_kmers", test))]
-impl<'a> FixedWidthOverlapCursor<'a> {
-    /// Create a cursor for fixed-width overlap queries.
+#[cfg(feature = "cmd_ref_kmers")]
+impl FixedWidthBedCache {
+    fn new() -> Self {
+        Self {
+            next_candidate_change_query_start: u64::MAX,
+            ..Self::default()
+        }
+    }
+
+    /// Mark the candidate cache stale without moving the forward pointer.
     ///
-    /// `starting_wd_ptr` has the same meaning as the `wd_ptr` argument to
-    /// [`find_overlapping_windows`]. BED-mode query starts must be requested in nondecreasing
-    /// coordinate order because the cursor uses a forward-only window pointer.
+    /// Clipped queries use a direct tier scan so their fractions use the clipped query length as
+    /// the denominator. The next full-width query rebuilds the cache from the current pointer.
+    fn invalidate(&mut self) {
+        self.cache_ready = false;
+        self.cached_windows.clear();
+        self.next_candidate_change_query_start = u64::MAX;
+    }
+
+    /// Return whether the current tier cache can answer a query beginning at `query_start`.
+    ///
+    /// `next_candidate_change_query_start` uses the same coordinate system as `query_start`. The
+    /// query end does not take part in this check because the cache boundary has already been
+    /// converted to the first query start where the candidate slice can change.
+    fn cache_valid_for_query_start(&self, query_start: u64) -> bool {
+        self.cache_ready && query_start < self.next_candidate_change_query_start
+    }
+
+    /// Rebuild cached BED candidates for one tier and the current query-start range.
+    ///
+    /// This advances the tier's forward pointer, collects windows that overlap the current
+    /// full-width query, and precomputes the query-start ranges where each candidate passes the
+    /// overlap threshold.
+    fn refresh(
+        &mut self,
+        chrom_len: u64,
+        windows: &[BedWindowEntry],
+        query_interval: Interval<u64>,
+        query_width: u64,
+        min_overlap_fraction: f64,
+    ) -> Result<()> {
+        // Drop windows that cannot overlap this query or any later query start
+        while self.wd_ptr < windows.len() && windows[self.wd_ptr].end() <= query_interval.start() {
+            self.wd_ptr += 1;
+        }
+
+        // Keep all windows whose start is before the current query end. Together with `wd_ptr`,
+        // this makes the half-open candidate slice `[wd_ptr, candidate_end_idx)`
+        let mut candidate_end_idx = self.wd_ptr;
+        while candidate_end_idx < windows.len()
+            && windows[candidate_end_idx].start() < query_interval.end()
+        {
+            candidate_end_idx += 1;
+        }
+
+        self.cached_windows.clear();
+        let required_overlap = required_overlap_bases(query_width, min_overlap_fraction);
+        // Convert the next unseen BED start into the first query start that can reach it. If there
+        // is no unseen window, the sentinel keeps this out of the minimum
+        let mut next_candidate_change_query_start = first_query_start_reaching_window(
+            windows
+                .get(candidate_end_idx)
+                .map(BedWindowEntry::start)
+                .unwrap_or(u64::MAX),
+            query_width,
+        );
+
+        for window in &windows[self.wd_ptr..candidate_end_idx] {
+            // Existing candidates leave the slice when the query start reaches their clipped end.
+            // The cache is valid only until the earliest candidate entry or exit query start
+            next_candidate_change_query_start = next_candidate_change_query_start.min(
+                later_query_start_or_never(window.end().min(chrom_len), query_interval.start()),
+            );
+
+            // Convert this BED window into query-start ranges that can be reused while the
+            // candidate slice is unchanged. Windows too short for the threshold are excluded here
+            if let Some(cached_window) = CachedFixedWidthWindow::new(
+                window.all_windows_idx,
+                Some(window.output_idx),
+                window.start(),
+                window.end(),
+                chrom_len,
+                query_width,
+                required_overlap,
+            )? {
+                self.cached_windows.push(cached_window);
+            }
+        }
+
+        self.next_candidate_change_query_start = next_candidate_change_query_start;
+        self.cache_ready = true;
+        self.refresh_count += 1;
+        Ok(())
+    }
+}
+
+/// Find window overlaps for many same-width intervals on one chromosome.
+///
+/// Each lookup asks for the windows touched by `[query_start, query_start + query_width)`, clipped
+/// to `chrom_len`. This is useful when scanning k-mer starts or other fixed-width intervals in
+/// nondecreasing coordinate order.
+///
+/// Global and fixed-size sources are handled directly. BED mode gives the same overlap set as
+/// [`find_overlapping_windows`] with `look_back = 0`, but the source is split before scanning:
+/// broad windows covering the full tile assignment envelope are emitted from an always-hit list,
+/// and the remaining windows keep independent caches for each size tier. That prevents broad
+/// background windows from pinning the pointer for shorter nested windows. BED-mode callers must
+/// provide query starts in nondecreasing order.
+///
+/// For full-width cached BED queries, a window passes when its overlapping bases meet the requested
+/// fraction of `query_width`. A threshold of `0.0` means any actual overlap. Zero-overlap windows
+/// are never returned. Queries clipped at the chromosome end scan the same tiers without using the
+/// cache so their fractions are measured against the clipped query length. BED overlaps carry
+/// `output_idx`, which is the original BED row id for ordinary BED input and the group index for
+/// grouped BED input.
+#[cfg(feature = "cmd_ref_kmers")]
+#[derive(Debug)]
+pub(crate) struct FixedWidthOverlapCursor {
+    /// Chromosome length used to clip query intervals and BED window ends.
+    chrom_len: u64,
+    /// Window source for this cursor.
+    ///
+    /// The source owns any BED tier caches needed by the cursor. Global and fixed-size modes keep
+    /// no mutable source state.
+    source: FixedWidthWindowSource,
+    /// Width of the unclipped query interval.
+    ///
+    /// Ref-kmers uses this as the k-mer assignment width. Caching is only used when the clipped
+    /// query still has this full width.
+    query_width: u64,
+    /// Minimum one-way overlap fraction used to decide whether a window is returned.
+    ///
+    /// This is the fraction of the query covered by a window, not the fraction of the window
+    /// covered by the query. Cached full-width BED queries compare `overlap_bases / query_width`.
+    /// Clipped queries and fixed-size windows use the current query interval length, matching
+    /// [`find_overlapping_windows`].
+    min_overlap_fraction: f64,
+}
+
+#[cfg(feature = "cmd_ref_kmers")]
+impl FixedWidthOverlapCursor {
+    /// Create a cursor for fixed-width overlap queries.
     ///
     /// Parameters
     /// ----------
     /// - `chrom_len`:
     ///   Chromosome length used to clip query intervals and BED window ends.
-    /// - `windows`:
-    ///   Optional sorted BED-like windows in chromosome coordinates. Use `None` for global or
-    ///   fixed-size mode.
-    /// - `by_size`:
-    ///   Fixed window size for size mode. Use `None` for BED or global mode.
+    /// - `source`:
+    ///   Global, fixed-size, or prepared tile-local BED window source.
     /// - `query_width`:
-    ///   Width of each unclipped query interval. Ref-kmers passes the k-mer size here.
+    ///   Width of each unclipped query interval. Ref-kmers passes the k-mer assignment width here.
     /// - `min_overlap_fraction`:
     ///   Minimum one-way overlap fraction for keeping a window. Full-width cached BED queries
     ///   measure this as `overlap_bases / query_width`. Clipped queries measure it against the
     ///   clipped query length. This is not the fraction of the window covered by the query. Must be
     ///   in `[0.0, 1.0]`.
-    /// - `starting_wd_ptr`:
-    ///   Initial BED scan position, usually the first window precomputed for the current tile.
     ///
     /// Returns
     /// -------
@@ -848,11 +1131,9 @@ impl<'a> FixedWidthOverlapCursor<'a> {
     ///   Cursor initialized for repeated fixed-width overlap lookups.
     pub(crate) fn new(
         chrom_len: u64,
-        windows: Option<&'a [IndexedInterval<u64>]>,
-        by_size: Option<u64>,
+        source: FixedWidthWindowSource,
         query_width: u64,
         min_overlap_fraction: f64,
-        starting_wd_ptr: usize,
     ) -> Result<Self> {
         Interval::new(0, query_width)?;
         if !(0.0..=1.0).contains(&min_overlap_fraction) {
@@ -860,23 +1141,19 @@ impl<'a> FixedWidthOverlapCursor<'a> {
                 overlap_fraction: min_overlap_fraction,
             });
         }
-        if let Some(bin_size) = by_size {
-            if bin_size == 0 {
-                return Err(Error::InvalidBinSize { bin_size });
+        if let FixedWidthWindowSource::FixedSize(bin_size) = &source {
+            if *bin_size == 0 {
+                return Err(Error::InvalidBinSize {
+                    bin_size: *bin_size,
+                });
             }
         }
 
         Ok(Self {
             chrom_len,
-            windows,
-            by_size,
+            source,
             query_width,
             min_overlap_fraction,
-            wd_ptr: starting_wd_ptr,
-            cache_ready: false,
-            cached_windows: Vec::new(),
-            next_candidate_change_query_start: u64::MAX,
-            refresh_count: 0,
         })
     }
 
@@ -898,15 +1175,26 @@ impl<'a> FixedWidthOverlapCursor<'a> {
             return Ok(None);
         };
 
-        if let Some(bin_size) = self.by_size {
-            return self.find_by_size(query_interval, bin_size);
+        match &mut self.source {
+            FixedWidthWindowSource::Global => Self::find_global(self.chrom_len, query_interval),
+            FixedWidthWindowSource::FixedSize(bin_size) => Self::find_by_size(
+                self.chrom_len,
+                self.min_overlap_fraction,
+                query_interval,
+                *bin_size,
+            ),
+            FixedWidthWindowSource::Bed {
+                always_hit_windows,
+                tiers,
+            } => Self::find_bed(
+                self.chrom_len,
+                self.query_width,
+                self.min_overlap_fraction,
+                always_hit_windows,
+                tiers,
+                query_interval,
+            ),
         }
-
-        if let Some(windows) = self.windows {
-            return self.find_bed(query_interval, windows);
-        }
-
-        self.find_global(query_interval)
     }
 
     /// Return how many times the BED cache has been rebuilt.
@@ -915,7 +1203,12 @@ impl<'a> FixedWidthOverlapCursor<'a> {
     /// cache.
     #[cfg(test)]
     pub(crate) fn refresh_count(&self) -> usize {
-        self.refresh_count
+        match &self.source {
+            FixedWidthWindowSource::Bed { tiers, .. } => {
+                tiers.iter().map(|tier| tier.cache.refresh_count).sum()
+            }
+            FixedWidthWindowSource::Global | FixedWidthWindowSource::FixedSize(_) => 0,
+        }
     }
 
     /// Build the checked query interval for a requested start.
@@ -939,7 +1232,8 @@ impl<'a> FixedWidthOverlapCursor<'a> {
     /// Fixed-size bins are computed directly from the query interval, so this path does not use the
     /// BED cache. Overlap fractions are measured as `overlap_bases / query_interval.len()`.
     fn find_by_size(
-        &self,
+        chrom_len: u64,
+        min_overlap_fraction: f64,
         query_interval: Interval<u64>,
         bin_size: u64,
     ) -> Result<Option<OverlappingWindows>> {
@@ -947,13 +1241,13 @@ impl<'a> FixedWidthOverlapCursor<'a> {
 
         for bin_idx in create_overlapping_bins_by_size(query_interval, bin_size)? {
             let window_start = bin_idx * bin_size;
-            let window_end = (bin_idx * bin_size + bin_size).min(self.chrom_len);
+            let window_end = (bin_idx * bin_size + bin_size).min(chrom_len);
             if window_end <= window_start {
                 continue;
             }
             let window_interval = Interval::new(window_start, window_end)?;
             let overlap_fraction = fraction_overlap_of_a(query_interval, window_interval);
-            if overlap_fraction < self.min_overlap_fraction {
+            if overlap_fraction < min_overlap_fraction {
                 continue;
             }
             overlaps.windows.push(OverlappingWindow::new(
@@ -972,50 +1266,74 @@ impl<'a> FixedWidthOverlapCursor<'a> {
 
     /// Find overlaps against explicit BED-like windows.
     ///
-    /// Full-width queries use cached candidate windows. Clipped queries delegate to
-    /// [`find_overlapping_windows`] so their overlap fraction uses the clipped query length as the
-    /// denominator.
+    /// Full-width queries use cached candidate windows. Clipped queries scan the tier windows
+    /// directly so their overlap fraction uses the clipped query length as the denominator.
     fn find_bed(
-        &mut self,
+        chrom_len: u64,
+        query_width: u64,
+        min_overlap_fraction: f64,
+        always_hit_windows: &[BedWindowEntry],
+        tiers: &mut [FixedWidthBedTier],
         query_interval: Interval<u64>,
-        windows: &[IndexedInterval<u64>],
     ) -> Result<Option<OverlappingWindows>> {
-        if query_interval.len() != self.query_width {
-            let mut wd_ptr = self.wd_ptr;
-            return find_overlapping_windows(
-                self.chrom_len,
-                &mut wd_ptr,
-                Some(windows),
-                None,
-                query_interval,
-                self.min_overlap_fraction,
-                0,
-            );
-        }
-
-        if !self.cache_valid_for_query_start(query_interval.start()) {
-            self.refresh_bed_cache(query_interval, windows)?;
-        }
-
-        // Build this query's result from the reusable candidate windows. The cache tells us which
-        // BED windows can matter in this query-start range. It does not decide whether each window
-        // passes the threshold at this exact start.
         let mut overlaps = OverlappingWindows::new(query_interval);
-        for cached_window in &self.cached_windows {
-            // Cached windows are candidates for this query-start range, not guaranteed hits for
-            // every start in the range. Re-check the accepted range for the current start
-            let Some(overlap_bases) = cached_window.overlap_bases_at(query_interval.start()) else {
-                continue;
-            };
+        Self::append_always_hit_windows(
+            always_hit_windows,
+            query_interval,
+            min_overlap_fraction,
+            &mut overlaps,
+        )?;
 
-            // Full-width cached BED queries use `query_width` as the denominator. Clipped queries
-            // use the generic finder above, so they do not reach this branch
-            let overlap_fraction = overlap_bases as f64 / self.query_width as f64;
-            overlaps.windows.push(OverlappingWindow::new(
-                cached_window.idx,
-                cached_window.interval,
-                overlap_fraction,
-            )?);
+        if query_interval.len() != query_width {
+            for tier in tiers {
+                tier.cache.invalidate();
+                append_bed_window_tier_overlaps(
+                    chrom_len,
+                    &mut tier.cache.wd_ptr,
+                    tier.windows.as_slice(),
+                    query_interval,
+                    min_overlap_fraction,
+                    0,
+                    &mut overlaps,
+                )?;
+            }
+            return if overlaps.windows.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(overlaps))
+            };
+        }
+
+        for tier in tiers {
+            if !tier
+                .cache
+                .cache_valid_for_query_start(query_interval.start())
+            {
+                tier.cache.refresh(
+                    chrom_len,
+                    tier.windows.as_slice(),
+                    query_interval,
+                    query_width,
+                    min_overlap_fraction,
+                )?;
+            }
+
+            for cached_window in &tier.cache.cached_windows {
+                let Some(overlap_bases) = cached_window.overlap_bases_at(query_interval.start())
+                else {
+                    continue;
+                };
+
+                let overlap_fraction = overlap_bases as f64 / query_width as f64;
+                overlaps
+                    .windows
+                    .push(OverlappingWindow::new_with_output_idx(
+                        cached_window.idx,
+                        cached_window.interval,
+                        overlap_fraction,
+                        cached_window.output_idx,
+                    )?);
+            }
         }
 
         if overlaps.windows.is_empty() {
@@ -1025,93 +1343,47 @@ impl<'a> FixedWidthOverlapCursor<'a> {
         }
     }
 
+    fn append_always_hit_windows(
+        always_hit_windows: &[BedWindowEntry],
+        query_interval: Interval<u64>,
+        min_overlap_fraction: f64,
+        overlaps: &mut OverlappingWindows,
+    ) -> Result<()> {
+        for window in always_hit_windows {
+            if !query_interval.intersects(window.interval) {
+                continue;
+            }
+            let overlap_fraction = fraction_overlap_of_a(query_interval, window.interval);
+            if overlap_fraction < min_overlap_fraction {
+                continue;
+            }
+            overlaps
+                .windows
+                .push(OverlappingWindow::new_with_output_idx(
+                    window.all_windows_idx,
+                    window.interval,
+                    overlap_fraction,
+                    Some(window.output_idx),
+                )?);
+        }
+        Ok(())
+    }
+
     /// Return the chromosome-wide window hit for global mode.
     ///
     /// Global mode has a single row for the whole chromosome, so every non-empty query interval
     /// contributes with overlap fraction `1.0`.
-    fn find_global(&self, query_interval: Interval<u64>) -> Result<Option<OverlappingWindows>> {
+    fn find_global(
+        chrom_len: u64,
+        query_interval: Interval<u64>,
+    ) -> Result<Option<OverlappingWindows>> {
         let mut overlaps = OverlappingWindows::new(query_interval);
         overlaps.windows.push(OverlappingWindow::new(
             0,
-            Interval::new(0, self.chrom_len)?,
+            Interval::new(0, chrom_len)?,
             1.0,
         )?);
         Ok(Some(overlaps))
-    }
-
-    /// Return whether the current BED cache can answer a query beginning at `query_start`.
-    ///
-    /// `next_candidate_change_query_start` uses the same coordinate system as `query_start`. The
-    /// query end does not take part in this check because the cache boundary has already been
-    /// converted to the first query start where the candidate slice can change.
-    fn cache_valid_for_query_start(&self, query_start: u64) -> bool {
-        self.cache_ready && query_start < self.next_candidate_change_query_start
-    }
-
-    /// Rebuild cached BED candidates for the current query-start range.
-    ///
-    /// This advances the forward BED pointer, collects windows that overlap the current query, and
-    /// precomputes the query-start ranges where each candidate passes the overlap threshold.
-    fn refresh_bed_cache(
-        &mut self,
-        query_interval: Interval<u64>,
-        windows: &[IndexedInterval<u64>],
-    ) -> Result<()> {
-        // Drop windows that cannot overlap this query or any later query start
-        while self.wd_ptr < windows.len() && windows[self.wd_ptr].end() <= query_interval.start() {
-            self.wd_ptr += 1;
-        }
-
-        // Keep all windows whose start is before the current query end. Together with `wd_ptr`,
-        // this makes the half-open candidate slice `[wd_ptr, candidate_end_idx)`
-        let mut candidate_end_idx = self.wd_ptr;
-        while candidate_end_idx < windows.len()
-            && windows[candidate_end_idx].start() < query_interval.end()
-        {
-            candidate_end_idx += 1;
-        }
-
-        self.cached_windows.clear();
-        let required_overlap = required_overlap_bases(self.query_width, self.min_overlap_fraction);
-
-        // Convert the next unseen BED start into the first query start that can reach it. If there
-        // is no unseen window, the sentinel keeps this out of the minimum
-        let mut next_candidate_change_query_start = first_query_start_reaching_window(
-            windows
-                .get(candidate_end_idx)
-                .map(IndexedInterval::start)
-                .unwrap_or(u64::MAX),
-            self.query_width,
-        );
-
-        for window_idx in self.wd_ptr..candidate_end_idx {
-            let window = windows[window_idx];
-
-            // Existing candidates leave the slice when the query start reaches their clipped end
-            // The cache is valid only until the earliest candidate entry or exit query start
-            next_candidate_change_query_start =
-                next_candidate_change_query_start.min(later_query_start_or_never(
-                    window.end().min(self.chrom_len),
-                    query_interval.start(),
-                ));
-
-            // Convert this BED window into query-start ranges that can be reused while the
-            // candidate slice is unchanged. Windows too short for the threshold are excluded here
-            if let Some(cached_window) = CachedFixedWidthWindow::new(
-                window_idx,
-                window,
-                self.chrom_len,
-                self.query_width,
-                required_overlap,
-            )? {
-                self.cached_windows.push(cached_window);
-            }
-        }
-
-        self.next_candidate_change_query_start = next_candidate_change_query_start;
-        self.cache_ready = true;
-        self.refresh_count += 1;
-        Ok(())
     }
 }
 
@@ -1120,10 +1392,11 @@ impl<'a> FixedWidthOverlapCursor<'a> {
 /// The accepted range controls whether this window can be returned for a query start. The
 /// constant-overlap range records the starts where the overlap length is unchanged. Outside that
 /// range, moving the query by one base changes the overlap by one base.
-#[cfg(any(feature = "cmd_ref_kmers", test))]
+#[cfg(feature = "cmd_ref_kmers")]
 #[derive(Debug, Clone, Copy)]
 struct CachedFixedWidthWindow {
     idx: usize,
+    output_idx: Option<u64>,
     interval: Interval<u64>,
     query_width: u64,
     /// First query start whose overlap reaches the configured minimum.
@@ -1141,7 +1414,7 @@ struct CachedFixedWidthWindow {
     constant_overlap_bases: u64,
 }
 
-#[cfg(any(feature = "cmd_ref_kmers", test))]
+#[cfg(feature = "cmd_ref_kmers")]
 impl CachedFixedWidthWindow {
     /// Precompute query-start ranges for a candidate BED window.
     ///
@@ -1149,13 +1422,14 @@ impl CachedFixedWidthWindow {
     /// full-width query. Empty or chromosome-clipped-away windows return `None`.
     fn new(
         idx: usize,
-        window: IndexedInterval<u64>,
+        output_idx: Option<u64>,
+        window_start: u64,
+        window_end: u64,
         chrom_len: u64,
         query_width: u64,
         required_overlap: u64,
     ) -> Result<Option<Self>> {
-        let window_start = window.start();
-        let window_end = window.end().min(chrom_len);
+        let window_end = window_end.min(chrom_len);
         if window_end <= window_start {
             return Ok(None);
         }
@@ -1183,6 +1457,7 @@ impl CachedFixedWidthWindow {
 
         Ok(Some(Self {
             idx,
+            output_idx,
             interval: Interval::new(window_start, window_end)?,
             query_width,
             accepted_start,
@@ -1222,7 +1497,7 @@ impl CachedFixedWidthWindow {
 ///
 /// A threshold of `0.0` means any actual overlap. Other values are expected to have already been
 /// validated as finite values in `(0.0, 1.0]`.
-#[cfg(any(feature = "cmd_ref_kmers", test))]
+#[cfg(feature = "cmd_ref_kmers")]
 fn required_overlap_bases(query_width: u64, min_overlap_fraction: f64) -> u64 {
     if min_overlap_fraction == 0.0 {
         return 1;
@@ -1237,7 +1512,7 @@ fn required_overlap_bases(query_width: u64, min_overlap_fraction: f64) -> u64 {
 /// `window_start` first overlaps when `query_start + query_width > window_start`. Solving that
 /// inequality gives `window_start - query_width + 1`, saturated at zero. `u64::MAX` is used as the
 /// no-future-window sentinel.
-#[cfg(any(feature = "cmd_ref_kmers", test))]
+#[cfg(feature = "cmd_ref_kmers")]
 fn first_query_start_reaching_window(window_start: u64, query_width: u64) -> u64 {
     if window_start == u64::MAX {
         u64::MAX
@@ -1250,7 +1525,7 @@ fn first_query_start_reaching_window(window_start: u64, query_width: u64) -> u64
 ///
 /// Candidate changes at or before the current start have already happened for this lookup and are
 /// ignored by returning `u64::MAX`.
-#[cfg(any(feature = "cmd_ref_kmers", test))]
+#[cfg(feature = "cmd_ref_kmers")]
 fn later_query_start_or_never(candidate_change_query_start: u64, current_query_start: u64) -> u64 {
     if candidate_change_query_start > current_query_start {
         candidate_change_query_start

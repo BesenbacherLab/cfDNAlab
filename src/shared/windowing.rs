@@ -124,39 +124,15 @@ mod window_context {
     #[cfg(feature = "cmd_ref_kmers")]
     pub(crate) struct DistributionWindowContext<'a> {
         pub(crate) spec: &'a DistributionWindowSpec,
-        pub(crate) windows: Option<&'a [IndexedInterval<u64>]>,
         pub(crate) chr_idx_offset: u64,
     }
 
     #[cfg(feature = "cmd_ref_kmers")]
     impl<'a> DistributionWindowContext<'a> {
-        /// Return the per-chromosome windows slice when operating in BED-like mode.
-        #[inline]
-        pub(crate) fn windows_slice(&self) -> Option<&'a [IndexedInterval<u64>]> {
-            self.windows
-        }
-
-        /// Return the fixed window size when operating in size mode.
-        #[inline]
-        pub(crate) fn by_size(&self) -> Option<u64> {
-            match self.spec {
-                DistributionWindowSpec::Size(window_bp) => Some(*window_bp),
-                DistributionWindowSpec::Global
-                | DistributionWindowSpec::Bed(_)
-                | DistributionWindowSpec::GroupedBed(_) => None,
-            }
-        }
-
-        /// Return whether this windowing mode requires explicit BED-like windows.
-        #[inline]
-        pub(crate) fn requires_windows(&self) -> bool {
-            matches!(
-                self.spec,
-                DistributionWindowSpec::Bed(_) | DistributionWindowSpec::GroupedBed(_)
-            )
-        }
-
         /// Map a chromosome-local overlap index to the global output row.
+        ///
+        /// BED-like ref-kmers overlaps carry their output row id directly, because grouped BED rows
+        /// are not derivable from a fixed chromosome offset.
         #[inline]
         pub(crate) fn original_idx(&self, chrom_window_idx: usize) -> u64 {
             match self.spec {
@@ -165,10 +141,9 @@ mod window_context {
                     .chr_idx_offset
                     .checked_add(chrom_window_idx as u64)
                     .expect("window index overflow for size-based windows"),
-                DistributionWindowSpec::Bed(_) | DistributionWindowSpec::GroupedBed(_) => self
-                    .windows
-                    .expect("windows slice required for BED-like mode")[chrom_window_idx]
-                    .idx(),
+                DistributionWindowSpec::Bed(_) | DistributionWindowSpec::GroupedBed(_) => {
+                    panic!("BED-like ref-kmers overlaps carry output row ids directly")
+                }
             }
         }
     }
