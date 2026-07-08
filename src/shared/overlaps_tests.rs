@@ -152,6 +152,29 @@ mod fixed_width_overlap_cursor_tests {
         }
     }
 
+    fn assert_row_signature_close_unordered(
+        windows: &[IndexedInterval<u64>],
+        observed: Option<&OverlappingWindows>,
+        expected: &[(u64, u64, u64, f64)],
+    ) {
+        let mut observed = row_overlap_signature(windows, observed);
+        let mut expected = expected.to_vec();
+        observed.sort_by_key(|window| (window.0, window.1, window.2));
+        expected.sort_by_key(|window| (window.0, window.1, window.2));
+        assert_eq!(observed.len(), expected.len());
+        for (observed_window, expected_window) in observed.iter().zip(expected.iter()) {
+            assert_eq!(observed_window.0, expected_window.0);
+            assert_eq!(observed_window.1, expected_window.1);
+            assert_eq!(observed_window.2, expected_window.2);
+            assert!(
+                (observed_window.3 - expected_window.3).abs() < 1e-12,
+                "observed fraction {} != expected fraction {}",
+                observed_window.3,
+                expected_window.3
+            );
+        }
+    }
+
     fn assert_same_overlaps(
         cached: Option<&OverlappingWindows>,
         baseline: Option<&OverlappingWindows>,
@@ -383,6 +406,370 @@ mod fixed_width_overlap_cursor_tests {
         assert_count_close(&counts, 11, 3.00);
         assert_count_close(&counts, 12, 3.75);
         assert_eq!(counts.len(), 3);
+
+        Ok(())
+    }
+
+    #[test]
+    fn fixed_width_cursor_returns_manual_mixed_size_bed_overlap_signatures() -> Result<()> {
+        // These are the same mixed-size windows used by the lengths and ends mixed-window tests.
+        // The query starts stand in for eight 1000 bp fixed-width windows. Expected fractions are
+        // overlap_bp / 1000, with half-open boundary touches excluded.
+        let chrom_len = 4_000_000;
+        let query_width = 1_000;
+        let windows = mixed_covering_broad_narrow_windows()?;
+        let mut cursor = FixedWidthOverlapCursor::new(
+            chrom_len,
+            Some(windows.as_slice()),
+            None,
+            query_width,
+            0.0,
+            0,
+        )?;
+        let expected_by_query_start: [Vec<(u64, u64, u64, f64)>; 8] = [
+            // [1000000,1001000): covering rows 900 and 901 are full, and row 902 contributes
+            // [1000500,1000800), so 300 / 1000 = 0.300.
+            vec![
+                (900, 0, 4_000_000, 1.0),
+                (901, 999_000, 2_001_000, 1.0),
+                (902, 1_000_500, 1_000_800, 0.300),
+            ],
+            // [1125000,1126000): rows 900 and 901 are full. Row 903 overlaps
+            // [1125000,1125500), so 500 / 1000 = 0.500.
+            vec![
+                (900, 0, 4_000_000, 1.0),
+                (901, 999_000, 2_001_000, 1.0),
+                (903, 1_124_500, 1_125_500, 0.500),
+            ],
+            // [1250000,1251000): rows 904 and 905 cover the full query. Row 906 starts at
+            // 1250750, so 250 / 1000 = 0.250. Row 907 starts at 1250800, so 200 / 1000 = 0.200.
+            vec![
+                (900, 0, 4_000_000, 1.0),
+                (901, 999_000, 2_001_000, 1.0),
+                (904, 1_200_000, 1_300_000, 1.0),
+                (905, 1_200_001, 1_300_000, 1.0),
+                (906, 1_250_750, 1_350_750, 0.250),
+                (907, 1_250_800, 1_350_799, 0.200),
+            ],
+            // [1500000,1501000): row 908 covers the query because it spans [1499000,1501000).
+            // Row 909 contributes [1500250,1500750), so 500 / 1000 = 0.500.
+            vec![
+                (900, 0, 4_000_000, 1.0),
+                (901, 999_000, 2_001_000, 1.0),
+                (908, 1_499_000, 1_501_000, 1.0),
+                (909, 1_500_250, 1_500_750, 0.500),
+            ],
+            // [1875000,1876000): rows 900, 901, and 910 cover the query. Row 911 contributes
+            // [1875900,1876000), and row 912 contributes [1875901,1876000).
+            vec![
+                (900, 0, 4_000_000, 1.0),
+                (901, 999_000, 2_001_000, 1.0),
+                (910, 1_874_000, 2_001_000, 1.0),
+                (911, 1_875_900, 1_975_900, 0.100),
+                (912, 1_875_901, 1_975_900, 0.099),
+            ],
+            // [2000000,2001000): rows 901, 910, and 914 end exactly at 2001000, so all three
+            // cover the full half-open query. Row 913 also fully covers it.
+            vec![
+                (900, 0, 4_000_000, 1.0),
+                (901, 999_000, 2_001_000, 1.0),
+                (910, 1_874_000, 2_001_000, 1.0),
+                (913, 1_999_000, 3_001_000, 1.0),
+                (914, 2_000_000, 2_001_000, 1.0),
+            ],
+            // [2250000,2251000): row 901 has ended, rows 900 and 913 cover the query, and
+            // row 915 contributes [2250500,2250700), so 200 / 1000 = 0.200.
+            vec![
+                (900, 0, 4_000_000, 1.0),
+                (913, 1_999_000, 3_001_000, 1.0),
+                (915, 2_250_500, 2_250_700, 0.200),
+            ],
+            // [2750000,2751000): rows 900 and 913 cover the query. Row 916 contributes its right
+            // half, row 917 contributes its left half, and row 918 starts at the query end.
+            vec![
+                (900, 0, 4_000_000, 1.0),
+                (913, 1_999_000, 3_001_000, 1.0),
+                (916, 2_749_500, 2_750_500, 0.500),
+                (917, 2_750_500, 2_850_500, 0.500),
+            ],
+        ];
+        let mut counts = BTreeMap::new();
+
+        for (query_start, expected_windows) in MIXED_COVERING_BROAD_NARROW_QUERY_STARTS
+            .iter()
+            .zip(expected_by_query_start.iter())
+        {
+            let observed = cursor.find_overlaps(*query_start)?;
+
+            assert_row_signature_close_unordered(
+                windows.as_slice(),
+                observed.as_ref(),
+                expected_windows,
+            );
+            add_count_overlap_weights(&mut counts, windows.as_slice(), observed.as_ref());
+        }
+
+        assert_counts_close(
+            &counts,
+            &[
+                (900, 8.0),    // covering_all: all eight query windows
+                (901, 6.0),    // covering_left: queries A through F
+                (902, 0.3),    // narrow_a_middle: 300 bp of query A
+                (903, 0.5),    // narrow_b_left_half: 500 bp of query B
+                (904, 1.0),    // broad_c_full: all of query C
+                (905, 1.0),    // narrow_c_full_99999: all of query C
+                (906, 0.25),   // broad_c_right_250: 250 bp of query C
+                (907, 0.2),    // narrow_c_right_200: 200 bp of query C
+                (908, 1.0),    // narrow_d_full_2kb: all of query D
+                (909, 0.5),    // narrow_d_middle: 500 bp of query D
+                (910, 2.0),    // broad_e_f: queries E and F
+                (911, 0.1),    // broad_e_right_100: 100 bp of query E
+                (912, 0.099),  // narrow_e_right_99: 99 bp of query E
+                (913, 3.0),    // covering_right: queries F, G, and H
+                (914, 1.0),    // narrow_f_full: all of query F
+                (915, 0.2),    // narrow_g_inside: 200 bp of query G
+                (916, 0.5),    // narrow_h_left_half: 500 bp of query H
+                (917, 0.5),    // broad_h_right_half: 500 bp of query H
+                (918, 0.0),    // touching_h_end: starts at query H end
+                (919, 0.0),    // after_all_queries: no query reaches it
+            ],
+        );
+        assert!((counts.values().copied().sum::<f64>() - 26.149).abs() < 1e-12);
+
+        Ok(())
+    }
+
+    #[test]
+    fn fixed_width_cursor_accumulates_dense_mixed_size_c_region_boundary_sweep() -> Result<()> {
+        // This dense sweep uses adjacent 1000 bp query starts from 1250745 through 1250805. It
+        // stresses the cache path while overlap fractions change at single-base resolution:
+        //
+        // - rows 900, 901, 904, and 905 cover every one of the 61 query starts
+        // - row 906 ramps from 995/1000 to 999/1000, then is full for 56 starts
+        // - row 907 ramps from 945/1000 to 999/1000, then is full for 6 starts
+        //
+        // The expected aggregate masses are:
+        //   row 906: (995 + 996 + 997 + 998 + 999 + 56 * 1000) / 1000 = 60.985
+        //   row 907: (945 + ... + 999 + 6 * 1000) / 1000 = 59.460
+        let chrom_len = 4_000_000;
+        let query_width = 1_000;
+        let first_query_start = 1_250_745;
+        let last_query_start = 1_250_805;
+        let windows = mixed_covering_broad_narrow_windows()?;
+        let mut cursor = FixedWidthOverlapCursor::new(
+            chrom_len,
+            Some(windows.as_slice()),
+            None,
+            query_width,
+            0.0,
+            0,
+        )?;
+        let mut counts = BTreeMap::new();
+
+        for query_start in first_query_start..=last_query_start {
+            let observed = cursor.find_overlaps(query_start)?;
+
+            match query_start {
+                1_250_745 => {
+                    // [1250745,1251745): rows 906 and 907 have not reached full overlap yet.
+                    assert_row_signature_close_unordered(
+                        windows.as_slice(),
+                        observed.as_ref(),
+                        &[
+                            (900, 0, 4_000_000, 1.0),
+                            (901, 999_000, 2_001_000, 1.0),
+                            (904, 1_200_000, 1_300_000, 1.0),
+                            (905, 1_200_001, 1_300_000, 1.0),
+                            (906, 1_250_750, 1_350_750, 0.995),
+                            (907, 1_250_800, 1_350_799, 0.945),
+                        ],
+                    );
+                }
+                1_250_750 => {
+                    // [1250750,1251750): row 906 starts exactly at the query start and becomes
+                    // full, while row 907 still has 950 / 1000 overlap.
+                    assert_row_signature_close_unordered(
+                        windows.as_slice(),
+                        observed.as_ref(),
+                        &[
+                            (900, 0, 4_000_000, 1.0),
+                            (901, 999_000, 2_001_000, 1.0),
+                            (904, 1_200_000, 1_300_000, 1.0),
+                            (905, 1_200_001, 1_300_000, 1.0),
+                            (906, 1_250_750, 1_350_750, 1.0),
+                            (907, 1_250_800, 1_350_799, 0.950),
+                        ],
+                    );
+                }
+                1_250_800 => {
+                    // [1250800,1251800): both nested C-region rows now cover the whole query.
+                    assert_row_signature_close_unordered(
+                        windows.as_slice(),
+                        observed.as_ref(),
+                        &[
+                            (900, 0, 4_000_000, 1.0),
+                            (901, 999_000, 2_001_000, 1.0),
+                            (904, 1_200_000, 1_300_000, 1.0),
+                            (905, 1_200_001, 1_300_000, 1.0),
+                            (906, 1_250_750, 1_350_750, 1.0),
+                            (907, 1_250_800, 1_350_799, 1.0),
+                        ],
+                    );
+                }
+                _ => {}
+            }
+
+            add_count_overlap_weights(&mut counts, windows.as_slice(), observed.as_ref());
+        }
+
+        assert_counts_close(
+            &counts,
+            &[
+                (900, 61.0),    // all 61 adjacent starts
+                (901, 61.0),    // all 61 adjacent starts
+                (902, 0.0),     // A-region row is far left of this sweep
+                (903, 0.0),     // B-region row is far left of this sweep
+                (904, 61.0),    // broad_c_full covers all 61 starts
+                (905, 61.0),    // narrow_c_full_99999 covers all 61 starts
+                (906, 60.985),  // 995 + 996 + 997 + 998 + 999 + 56 full starts
+                (907, 59.460),  // 945 through 999, plus 6 full starts
+                (908, 0.0),     // D-region row is far right of this sweep
+                (909, 0.0),     // D-region row is far right of this sweep
+                (910, 0.0),     // E/F row is far right of this sweep
+                (911, 0.0),     // E-region row is far right of this sweep
+                (912, 0.0),     // E-region row is far right of this sweep
+                (913, 0.0),     // right covering row starts after this sweep
+                (914, 0.0),     // F-region row is far right of this sweep
+                (915, 0.0),     // G-region row is far right of this sweep
+                (916, 0.0),     // H-region row is far right of this sweep
+                (917, 0.0),     // H-region row is far right of this sweep
+                (918, 0.0),     // H touch row is far right of this sweep
+                (919, 0.0),     // after-all row is far right of this sweep
+            ],
+        );
+        assert!((counts.values().copied().sum::<f64>() - 364.445).abs() < 1e-12);
+
+        Ok(())
+    }
+
+    #[test]
+    fn fixed_width_cursor_accumulates_dense_mixed_size_h_region_handoff_sweep() -> Result<()> {
+        // This dense sweep uses adjacent 1000 bp query starts from 2749995 through 2750505. It
+        // stresses three different half-open boundary transitions in one local scan:
+        //
+        // - row 916 decreases from 505/1000 to 1/1000, then drops out at start 2750500
+        // - row 917 increases from 495/1000 to 999/1000, then becomes full at start 2750500
+        // - row 918 has zero overlap at start 2750000, enters at 1/1000 at start 2750001, and
+        //   reaches its maximum possible 200/1000 overlap at start 2750200
+        //
+        // The expected aggregate masses are:
+        //   row 916: (1 + ... + 505) / 1000 = 127.765
+        //   row 917: (495 + ... + 999 + 6 * 1000) / 1000 = 383.235
+        //   row 918: (1 + ... + 200 + 305 * 200) / 1000 = 81.100
+        let chrom_len = 4_000_000;
+        let query_width = 1_000;
+        let first_query_start = 2_749_995;
+        let last_query_start = 2_750_505;
+        let windows = mixed_covering_broad_narrow_windows()?;
+        let mut cursor = FixedWidthOverlapCursor::new(
+            chrom_len,
+            Some(windows.as_slice()),
+            None,
+            query_width,
+            0.0,
+            0,
+        )?;
+        let mut counts = BTreeMap::new();
+
+        for query_start in first_query_start..=last_query_start {
+            let observed = cursor.find_overlaps(query_start)?;
+
+            match query_start {
+                2_749_995 => {
+                    // [2749995,2750995): row 918 has not been reached yet.
+                    assert_row_signature_close_unordered(
+                        windows.as_slice(),
+                        observed.as_ref(),
+                        &[
+                            (900, 0, 4_000_000, 1.0),
+                            (913, 1_999_000, 3_001_000, 1.0),
+                            (916, 2_749_500, 2_750_500, 0.505),
+                            (917, 2_750_500, 2_850_500, 0.495),
+                        ],
+                    );
+                }
+                2_750_000 => {
+                    // [2750000,2751000): row 918 touches the query end and is still excluded.
+                    assert_row_signature_close_unordered(
+                        windows.as_slice(),
+                        observed.as_ref(),
+                        &[
+                            (900, 0, 4_000_000, 1.0),
+                            (913, 1_999_000, 3_001_000, 1.0),
+                            (916, 2_749_500, 2_750_500, 0.500),
+                            (917, 2_750_500, 2_850_500, 0.500),
+                        ],
+                    );
+                }
+                2_750_001 => {
+                    // [2750001,2751001): row 918 now has its first positive base.
+                    assert_row_signature_close_unordered(
+                        windows.as_slice(),
+                        observed.as_ref(),
+                        &[
+                            (900, 0, 4_000_000, 1.0),
+                            (913, 1_999_000, 3_001_000, 1.0),
+                            (916, 2_749_500, 2_750_500, 0.499),
+                            (917, 2_750_500, 2_850_500, 0.501),
+                            (918, 2_751_000, 2_751_200, 0.001),
+                        ],
+                    );
+                }
+                2_750_500 => {
+                    // [2750500,2751500): row 916 only touches the query start and drops out.
+                    assert_row_signature_close_unordered(
+                        windows.as_slice(),
+                        observed.as_ref(),
+                        &[
+                            (900, 0, 4_000_000, 1.0),
+                            (913, 1_999_000, 3_001_000, 1.0),
+                            (917, 2_750_500, 2_850_500, 1.0),
+                            (918, 2_751_000, 2_751_200, 0.200),
+                        ],
+                    );
+                }
+                _ => {}
+            }
+
+            add_count_overlap_weights(&mut counts, windows.as_slice(), observed.as_ref());
+        }
+
+        assert_counts_close(
+            &counts,
+            &[
+                (900, 511.0),   // all 511 adjacent starts
+                (901, 0.0),     // left covering row ended before this sweep
+                (902, 0.0),     // A-region row is far left of this sweep
+                (903, 0.0),     // B-region row is far left of this sweep
+                (904, 0.0),     // C-region row is far left of this sweep
+                (905, 0.0),     // C-region row is far left of this sweep
+                (906, 0.0),     // C-region row is far left of this sweep
+                (907, 0.0),     // C-region row is far left of this sweep
+                (908, 0.0),     // D-region row is far left of this sweep
+                (909, 0.0),     // D-region row is far left of this sweep
+                (910, 0.0),     // E/F row ended before this sweep
+                (911, 0.0),     // E-region row is far left of this sweep
+                (912, 0.0),     // E-region row is far left of this sweep
+                (913, 511.0),   // right covering row covers all 511 starts
+                (914, 0.0),     // F-region row is far left of this sweep
+                (915, 0.0),     // G-region row is far left of this sweep
+                (916, 127.765), // 1 through 505 bp while the row exits
+                (917, 383.235), // 495 through 999 bp, plus 6 full starts
+                (918, 81.100),  // 1 through 200 bp, plus 305 starts at 200 bp
+                (919, 0.0),     // after-all row starts after this sweep
+            ],
+        );
+        assert!((counts.values().copied().sum::<f64>() - 1_614.100).abs() < 1e-12);
 
         Ok(())
     }

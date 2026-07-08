@@ -5,7 +5,7 @@ use cfdnalab::{
     RunOptions,
     output_loaders::{
         RefKmerFrequencyData, RefKmerMotifAxisKind, RefKmerRowMetadata, RefKmerRowMode,
-        RefKmerStorageMode, RefKmerWindowMode, load_ref_kmers_output,
+        RefKmerStorageMode, RefKmerWindowMode, RefKmersOutput, load_ref_kmers_output,
     },
     reference::twobit_contig_footprint,
     run_like_cli::{
@@ -54,6 +54,406 @@ fn assert_slice_close(observed: &[f64], expected: &[f64]) {
     assert_eq!(observed.len(), expected.len());
     for (observed_value, expected_value) in observed.iter().zip(expected.iter()) {
         assert_close(*observed_value, *expected_value);
+    }
+}
+
+mod mixed_size_overlap_assignment_tests {
+    use super::*;
+
+    const MIXED_REF_KMER_SIZE: u8 = 4;
+    const MIXED_REF_KMER: &str = "ACGT";
+    const MIXED_REF_CHROM_LEN: usize = 4_000_000;
+    // Each start creates one isolated valid k-mer span [start, start + 4). Surrounding bases are N,
+    // so adjacent starts do not accidentally create extra valid A/C/G/T k-mers.
+    const MIXED_REF_KMER_STARTS: [usize; 11] = [
+        1_000_798, 1_124_498, 1_250_000, 1_250_748, 1_250_798, 1_500_248, 1_875_898, 2_000_998,
+        2_250_698, 2_750_498, 2_750_996,
+    ];
+
+    const MIXED_REF_COUNT_OVERLAP_ROW_COUNTS: [f64; 20] = [
+        11.0, // covering_all: all eleven k-mers are fully inside the chromosome-wide row
+        7.5,  // covering_left: seven full k-mers plus 2/4 of the 2000998 k-mer
+        0.5,  // narrow_a_middle: 2/4 of the 1000798 k-mer, [1000798,1000802)
+        0.5,  // narrow_b_left_half: 2/4 of the 1124498 k-mer, [1124498,1124502)
+        3.0,  // broad_c_full: the 1250000, 1250748, and 1250798 k-mers are fully inside
+        3.0,  // narrow_c_full_99999: the same three C-region k-mers are fully inside
+        1.5,  // broad_c_right_250: 2/4 of 1250748 plus all of 1250798
+        0.5,  // narrow_c_right_200: 2/4 of 1250798
+        1.0,  // narrow_d_full_2kb: all of 1500248
+        0.5,  // narrow_d_middle: 2/4 of 1500248
+        1.5,  // broad_e_f: all of 1875898 plus 2/4 of 2000998
+        0.5,  // broad_e_right_100: 2/4 of 1875898
+        0.25, // narrow_e_right_99: 1/4 of 1875898
+        4.0,  // covering_right: the 2000998, 2250698, 2750498, and 2750996 k-mers
+        0.5,  // narrow_f_full: 2/4 of 2000998 before the row ends at 2001000
+        0.5,  // narrow_g_inside: 2/4 of 2250698 before the row ends at 2250700
+        0.5,  // narrow_h_left_half: 2/4 of 2750498 before the row ends at 2750500
+        1.5,  // broad_h_right_half: 2/4 of 2750498 plus all of 2750996
+        0.0,  // touching_h_end: starts at 2751000, exactly where the 2750996 k-mer ends
+        0.0,  // after_all_queries: starts after every valid k-mer span
+    ];
+    const MIXED_REF_ANY_ROW_COUNTS: [f64; 20] = [
+        11.0, // covering_all: every k-mer has positive overlap
+        8.0,  // covering_left: seven full k-mers plus the partially overlapping 2000998 k-mer
+        1.0,  // narrow_a_middle: 1000798 overlaps by two bases
+        1.0,  // narrow_b_left_half: 1124498 overlaps by two bases
+        3.0,  // broad_c_full: three C-region k-mers overlap
+        3.0,  // narrow_c_full_99999: the same three C-region k-mers overlap
+        2.0,  // broad_c_right_250: 1250748 and 1250798 overlap
+        1.0,  // narrow_c_right_200: 1250798 overlaps
+        1.0,  // narrow_d_full_2kb: 1500248 overlaps
+        1.0,  // narrow_d_middle: 1500248 overlaps by two bases
+        2.0,  // broad_e_f: 1875898 and 2000998 overlap
+        1.0,  // broad_e_right_100: 1875898 overlaps
+        1.0,  // narrow_e_right_99: 1875898 overlaps by one base
+        4.0,  // covering_right: four right-side k-mers overlap
+        1.0,  // narrow_f_full: 2000998 overlaps by two bases
+        1.0,  // narrow_g_inside: 2250698 overlaps by two bases
+        1.0,  // narrow_h_left_half: 2750498 overlaps by two bases
+        2.0,  // broad_h_right_half: 2750498 and 2750996 overlap
+        0.0,  // touching_h_end: touching boundary is not positive overlap
+        0.0,  // after_all_queries: no k-mer overlaps
+    ];
+    const MIXED_REF_ALL_ROW_COUNTS: [f64; 20] = [
+        11.0, // covering_all: all eleven k-mers are fully inside
+        7.0,  // covering_left: the first seven k-mers are full, 2000998 is clipped by two bases
+        0.0,  // narrow_a_middle: 1000798 is only 2/4 inside
+        0.0,  // narrow_b_left_half: 1124498 is only 2/4 inside
+        3.0,  // broad_c_full: all three C-region k-mers are full
+        3.0,  // narrow_c_full_99999: all three C-region k-mers are full
+        1.0,  // broad_c_right_250: only 1250798 is fully inside
+        0.0,  // narrow_c_right_200: 1250798 is only 2/4 inside
+        1.0,  // narrow_d_full_2kb: 1500248 is fully inside
+        0.0,  // narrow_d_middle: 1500248 is only 2/4 inside
+        1.0,  // broad_e_f: 1875898 is full, 2000998 is clipped by two bases
+        0.0,  // broad_e_right_100: 1875898 is only 2/4 inside
+        0.0,  // narrow_e_right_99: 1875898 is only 1/4 inside
+        4.0,  // covering_right: all four right-side k-mers are fully inside
+        0.0,  // narrow_f_full: 2000998 is only 2/4 inside
+        0.0,  // narrow_g_inside: 2250698 is only 2/4 inside
+        0.0,  // narrow_h_left_half: 2750498 is only 2/4 inside
+        1.0,  // broad_h_right_half: 2750996 is full, 2750498 is only 2/4 inside
+        0.0,  // touching_h_end: no full k-mer, only a boundary touch
+        0.0,  // after_all_queries: no k-mer overlaps
+    ];
+    const MIXED_REF_PROPORTION_HALF_ROW_COUNTS: [f64; 20] = [
+        11.0, // covering_all: every k-mer has at least 2/4 overlap
+        8.0,  // covering_left: seven full k-mers plus 2/4 of 2000998
+        1.0,  // narrow_a_middle: 2/4 of 1000798 passes
+        1.0,  // narrow_b_left_half: 2/4 of 1124498 passes
+        3.0,  // broad_c_full: three full C-region k-mers pass
+        3.0,  // narrow_c_full_99999: three full C-region k-mers pass
+        2.0,  // broad_c_right_250: 2/4 of 1250748 and all of 1250798 pass
+        1.0,  // narrow_c_right_200: 2/4 of 1250798 passes
+        1.0,  // narrow_d_full_2kb: 1500248 is full
+        1.0,  // narrow_d_middle: 2/4 of 1500248 passes
+        2.0,  // broad_e_f: all of 1875898 and 2/4 of 2000998 pass
+        1.0,  // broad_e_right_100: 2/4 of 1875898 passes
+        0.0,  // narrow_e_right_99: 1/4 of 1875898 fails the half-overlap threshold
+        4.0,  // covering_right: four full right-side k-mers pass
+        1.0,  // narrow_f_full: 2/4 of 2000998 passes
+        1.0,  // narrow_g_inside: 2/4 of 2250698 passes
+        1.0,  // narrow_h_left_half: 2/4 of 2750498 passes
+        2.0,  // broad_h_right_half: 2/4 of 2750498 and all of 2750996 pass
+        0.0,  // touching_h_end: zero overlap fails
+        0.0,  // after_all_queries: no k-mer overlaps
+    ];
+
+    const MIXED_REF_COUNT_OVERLAP_GROUP_COUNTS: [f64; 5] = [
+        22.5, // covering: rows 0 + 1 + 13 = 11.0 + 7.5 + 4.0
+        7.75, // narrow: 0.5 + 0.5 + 3.0 + 0.5 + 1.0 + 0.5 + 0.25 + 0.5 + 0.5 + 0.5
+        8.0,  // broad: rows 4 + 6 + 10 + 11 + 17 = 3.0 + 1.5 + 1.5 + 0.5 + 1.5
+        0.0,  // touching: row 18 has only a boundary touch
+        0.0,  // empty: row 19 is after all valid k-mers
+    ];
+    const MIXED_REF_ANY_GROUP_COUNTS: [f64; 5] = [
+        23.0, // covering: rows 0 + 1 + 13 = 11 + 8 + 4
+        12.0, // narrow: 1 + 1 + 3 + 1 + 1 + 1 + 1 + 1 + 1 + 1
+        10.0, // broad: rows 4 + 6 + 10 + 11 + 17 = 3 + 2 + 2 + 1 + 2
+        0.0,  // touching: row 18 has no positive overlap
+        0.0,  // empty: row 19 has no positive overlap
+    ];
+    const MIXED_REF_ALL_GROUP_COUNTS: [f64; 5] = [
+        22.0, // covering: rows 0 + 1 + 13 = 11 + 7 + 4
+        4.0,  // narrow: rows 5 + 8 = 3 + 1, all other narrow rows are partial only
+        6.0,  // broad: rows 4 + 6 + 10 + 17 = 3 + 1 + 1 + 1
+        0.0,  // touching: no k-mer is fully inside
+        0.0,  // empty: no k-mer is fully inside
+    ];
+    const MIXED_REF_PROPORTION_HALF_GROUP_COUNTS: [f64; 5] = [
+        23.0, // covering: rows 0 + 1 + 13 = 11 + 8 + 4
+        11.0, // narrow: 1 + 1 + 3 + 1 + 1 + 1 + 0 + 1 + 1 + 1
+        10.0, // broad: rows 4 + 6 + 10 + 11 + 17 = 3 + 2 + 2 + 1 + 2
+        0.0,  // touching: zero overlap fails
+        0.0,  // empty: no overlap fails
+    ];
+
+    fn mixed_size_ref_kmer_sequence() -> String {
+        let mut sequence = vec![b'N'; MIXED_REF_CHROM_LEN];
+        for kmer_start in MIXED_REF_KMER_STARTS {
+            sequence[kmer_start..kmer_start + MIXED_REF_KMER.len()]
+                .copy_from_slice(MIXED_REF_KMER.as_bytes());
+        }
+        String::from_utf8(sequence).expect("reference fixture should contain ASCII bases")
+    }
+
+    fn mixed_size_overlap_windows() -> Vec<Bed4Row> {
+        vec![
+            Bed4Row::new("chr1", 0, 4_000_000, "covering_all"),
+            Bed4Row::new("chr1", 999_000, 2_001_000, "covering_left"),
+            Bed4Row::new("chr1", 1_000_500, 1_000_800, "narrow_a_middle"),
+            Bed4Row::new("chr1", 1_124_500, 1_125_500, "narrow_b_left_half"),
+            Bed4Row::new("chr1", 1_200_000, 1_300_000, "broad_c_full"),
+            Bed4Row::new("chr1", 1_200_001, 1_300_000, "narrow_c_full_99999"),
+            Bed4Row::new("chr1", 1_250_750, 1_350_750, "broad_c_right_250"),
+            Bed4Row::new("chr1", 1_250_800, 1_350_799, "narrow_c_right_200"),
+            Bed4Row::new("chr1", 1_499_000, 1_501_000, "narrow_d_full_2kb"),
+            Bed4Row::new("chr1", 1_500_250, 1_500_750, "narrow_d_middle"),
+            Bed4Row::new("chr1", 1_874_000, 2_001_000, "broad_e_f"),
+            Bed4Row::new("chr1", 1_875_900, 1_975_900, "broad_e_right_100"),
+            Bed4Row::new("chr1", 1_875_901, 1_975_900, "narrow_e_right_99"),
+            Bed4Row::new("chr1", 1_999_000, 3_001_000, "covering_right"),
+            Bed4Row::new("chr1", 2_000_000, 2_001_000, "narrow_f_full"),
+            Bed4Row::new("chr1", 2_250_500, 2_250_700, "narrow_g_inside"),
+            Bed4Row::new("chr1", 2_749_500, 2_750_500, "narrow_h_left_half"),
+            Bed4Row::new("chr1", 2_750_500, 2_850_500, "broad_h_right_half"),
+            Bed4Row::new("chr1", 2_751_000, 2_751_200, "touching_h_end"),
+            Bed4Row::new("chr1", 3_100_000, 3_200_000, "after_all_queries"),
+        ]
+    }
+
+    fn mixed_size_grouped_overlap_windows() -> Vec<Bed4Row> {
+        vec![
+            Bed4Row::new("chr1", 0, 4_000_000, "covering"),
+            Bed4Row::new("chr1", 999_000, 2_001_000, "covering"),
+            Bed4Row::new("chr1", 1_000_500, 1_000_800, "narrow"),
+            Bed4Row::new("chr1", 1_124_500, 1_125_500, "narrow"),
+            Bed4Row::new("chr1", 1_200_000, 1_300_000, "broad"),
+            Bed4Row::new("chr1", 1_200_001, 1_300_000, "narrow"),
+            Bed4Row::new("chr1", 1_250_750, 1_350_750, "broad"),
+            Bed4Row::new("chr1", 1_250_800, 1_350_799, "narrow"),
+            Bed4Row::new("chr1", 1_499_000, 1_501_000, "narrow"),
+            Bed4Row::new("chr1", 1_500_250, 1_500_750, "narrow"),
+            Bed4Row::new("chr1", 1_874_000, 2_001_000, "broad"),
+            Bed4Row::new("chr1", 1_875_900, 1_975_900, "broad"),
+            Bed4Row::new("chr1", 1_875_901, 1_975_900, "narrow"),
+            Bed4Row::new("chr1", 1_999_000, 3_001_000, "covering"),
+            Bed4Row::new("chr1", 2_000_000, 2_001_000, "narrow"),
+            Bed4Row::new("chr1", 2_250_500, 2_250_700, "narrow"),
+            Bed4Row::new("chr1", 2_749_500, 2_750_500, "narrow"),
+            Bed4Row::new("chr1", 2_750_500, 2_850_500, "broad"),
+            Bed4Row::new("chr1", 2_751_000, 2_751_200, "touching"),
+            Bed4Row::new("chr1", 3_100_000, 3_200_000, "empty"),
+        ]
+    }
+
+    fn assert_mixed_acgt_counts(output: &RefKmersOutput, expected: &[f64]) -> Result<()> {
+        assert_slice_close(output.row_scaling_factors(), expected);
+        for (row_index, expected_count) in expected.iter().copied().enumerate() {
+            assert_close(
+                output
+                    .count_for_motif(row_index, MIXED_REF_KMER)?
+                    .expect("ACGT motif should be present"),
+                expected_count,
+            );
+            let expected_frequency = if expected_count > 0.0 { 1.0 } else { 0.0 };
+            assert_close(
+                output
+                    .frequency_for_motif(row_index, MIXED_REF_KMER)?
+                    .expect("ACGT motif should be present"),
+                expected_frequency,
+            );
+        }
+        Ok(())
+    }
+
+    fn assert_mixed_window_metadata(output: &RefKmersOutput) -> Result<()> {
+        let expected_windows = mixed_size_overlap_windows();
+        let observed_windows = output.window_metadata()?;
+        assert_eq!(observed_windows.len(), expected_windows.len());
+        for (observed_window, expected_window) in
+            observed_windows.iter().zip(expected_windows.iter())
+        {
+            assert_eq!(observed_window.chrom, expected_window.chrom);
+            assert_eq!(
+                observed_window.interval.as_tuple(),
+                (expected_window.start, expected_window.end)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn ref_kmers_mixed_size_bed_windows_match_manual_assignment_counts() -> Result<()> {
+        // Arrange:
+        // The BED rows are the same mixed covering, broad, and narrow windows used by the lengths and
+        // ends mixed-window tests. The reference contains exactly eleven isolated ACGT k-mers in an
+        // N-filled chromosome, so every expected count below comes from these starts only:
+        //
+        //   1000798, 1124498, 1250000, 1250748, 1250798, 1500248, 1875898,
+        //   2000998, 2250698, 2750498, and 2750996.
+        //
+        // Intention checks behind the expected rows:
+        // - `covering_left` gets seven full k-mers plus two bases of the 2000998 k-mer, so its
+        //   count-overlap mass is 7.5 and its any/proportion mass is 8.
+        // - `narrow_e_right_99` gets one base of the 1875898 k-mer, so it contributes 0.25 for
+        //   count-overlap, passes any, and fails proportion=0.5.
+        // - `touching_h_end` starts exactly at the end of the 2750996 k-mer and must stay zero.
+        let reference = twobit_from_sequences(
+            "ref_kmers_mixed_size_bed_assignment",
+            vec![("chr1".to_string(), mixed_size_ref_kmer_sequence())],
+        )?;
+        let output_dir = TempDir::new()?;
+        let windows_bed = output_dir.path().join("mixed_size_windows.bed");
+        write_bed4(&windows_bed, mixed_size_overlap_windows().as_slice())?;
+        let cases: [(&str, WindowAssigner, &str, &[f64]); 4] = [
+            (
+                "count_overlap",
+                WindowAssigner::CountOverlap,
+                "count-overlap",
+                &MIXED_REF_COUNT_OVERLAP_ROW_COUNTS,
+            ),
+            ("any", WindowAssigner::Any, "any", &MIXED_REF_ANY_ROW_COUNTS),
+            ("all", WindowAssigner::All, "all", &MIXED_REF_ALL_ROW_COUNTS),
+            (
+                "proportion_half",
+                WindowAssigner::Proportion(0.5),
+                "proportion=0.5",
+                &MIXED_REF_PROPORTION_HALF_ROW_COUNTS,
+            ),
+        ];
+
+        for (case_name, assigner, expected_assign_by, expected_counts) in cases {
+            let output_prefix = format!("unit_mixed_size_bed_{case_name}_ref_kmers");
+            let mut config =
+                ref_kmers_config(&reference.path, output_dir.path(), MIXED_REF_KMER_SIZE);
+            config.set_output_prefix(output_prefix.as_str());
+            config.set_windows(DistributionWindowsArgs {
+                by_size: None,
+                by_bed: Some(windows_bed.clone()),
+                by_grouped_bed: None,
+            });
+            config.set_assign_by(assigner);
+            config.set_tile_size(1_000_000);
+
+            // Act
+            run(&config)?;
+
+            // Assert
+            let loaded = load_ref_kmers_output(
+                output_dir
+                    .path()
+                    .join(format!("{output_prefix}.ref_kmer_counts.zarr")),
+            )?;
+            assert_eq!(loaded.row_mode(), RefKmerRowMode::BedWindows);
+            assert_eq!(loaded.assign_by(), expected_assign_by);
+            assert_eq!(loaded.motif_labels(), &[MIXED_REF_KMER.to_string()]);
+            assert_mixed_window_metadata(&loaded)?;
+            assert_mixed_acgt_counts(&loaded, expected_counts)?;
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn ref_kmers_mixed_size_grouped_bed_windows_match_manual_assignment_counts() -> Result<()> {
+        // Arrange:
+        // This uses the same coordinates as the plain BED test, but groups rows into:
+        // covering = rows 0, 1, 13
+        // narrow   = rows 2, 3, 5, 7, 8, 9, 12, 14, 15, 16
+        // broad    = rows 4, 6, 10, 11, 17
+        // touching = row 18, which only touches a k-mer boundary
+        // empty    = row 19, which is after all valid k-mers
+        //
+        // The grouped expectations are sums of the row expectations in the plain BED test. For
+        // example, count-overlap for `narrow` is:
+        //   0.5 + 0.5 + 3.0 + 0.5 + 1.0 + 0.5 + 0.25 + 0.5 + 0.5 + 0.5 = 7.75.
+        let reference = twobit_from_sequences(
+            "ref_kmers_mixed_size_grouped_bed_assignment",
+            vec![("chr1".to_string(), mixed_size_ref_kmer_sequence())],
+        )?;
+        let output_dir = TempDir::new()?;
+        let grouped_bed = output_dir.path().join("mixed_size_grouped_windows.bed");
+        write_bed4(
+            &grouped_bed,
+            mixed_size_grouped_overlap_windows().as_slice(),
+        )?;
+        let cases: [(&str, WindowAssigner, &str, &[f64]); 4] = [
+            (
+                "count_overlap",
+                WindowAssigner::CountOverlap,
+                "count-overlap",
+                &MIXED_REF_COUNT_OVERLAP_GROUP_COUNTS,
+            ),
+            (
+                "any",
+                WindowAssigner::Any,
+                "any",
+                &MIXED_REF_ANY_GROUP_COUNTS,
+            ),
+            (
+                "all",
+                WindowAssigner::All,
+                "all",
+                &MIXED_REF_ALL_GROUP_COUNTS,
+            ),
+            (
+                "proportion_half",
+                WindowAssigner::Proportion(0.5),
+                "proportion=0.5",
+                &MIXED_REF_PROPORTION_HALF_GROUP_COUNTS,
+            ),
+        ];
+
+        for (case_name, assigner, expected_assign_by, expected_counts) in cases {
+            let output_prefix = format!("unit_mixed_size_grouped_bed_{case_name}_ref_kmers");
+            let mut config =
+                ref_kmers_config(&reference.path, output_dir.path(), MIXED_REF_KMER_SIZE);
+            config.set_output_prefix(output_prefix.as_str());
+            config.set_windows(DistributionWindowsArgs {
+                by_size: None,
+                by_bed: None,
+                by_grouped_bed: Some(grouped_bed.clone()),
+            });
+            config.set_assign_by(assigner);
+            config.set_tile_size(1_000_000);
+
+            // Act
+            run(&config)?;
+
+            // Assert
+            let loaded = load_ref_kmers_output(
+                output_dir
+                    .path()
+                    .join(format!("{output_prefix}.ref_kmer_counts.zarr")),
+            )?;
+            assert_eq!(loaded.row_mode(), RefKmerRowMode::Groups);
+            assert_eq!(loaded.assign_by(), expected_assign_by);
+            assert_eq!(loaded.motif_labels(), &[MIXED_REF_KMER.to_string()]);
+            assert_mixed_acgt_counts(&loaded, expected_counts)?;
+            assert_eq!(loaded.group_index("covering")?, 0);
+            assert_eq!(loaded.group_index("narrow")?, 1);
+            assert_eq!(loaded.group_index("broad")?, 2);
+            assert_eq!(loaded.group_index("touching")?, 3);
+            assert_eq!(loaded.group_index("empty")?, 4);
+            let group_summary = loaded
+                .group_metadata()?
+                .iter()
+                .map(|group| (group.name.as_str(), group.eligible_windows))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                group_summary,
+                vec![
+                    ("covering", 3),
+                    ("narrow", 10),
+                    ("broad", 5),
+                    ("touching", 1),
+                    ("empty", 1)
+                ]
+            );
+        }
+
+        Ok(())
     }
 }
 
