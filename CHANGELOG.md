@@ -9,14 +9,19 @@ This is the changelog for the main CLI tool. You can find the changelog for the 
 
 ## Unreleased
 
+**New command**:
+
+- Adds `cfdna ref-kmers` command for counting k-mers in the reference assembly for downstream normalization of k-mer counts.
+   - Adds loaders for `ref-kmers` output in R, Python and Rust.
+   - Adds reference k-mers correction to `ends` output loaders.
+
 **BREAKING CHANGES**:
+
 - Grouped motifs-file outputs now order motif groups alphabetically by group name.
 
 **Other changes**:
 
- - Adds `cfdna ref-kmers` command for counting k-mers in the reference assembly for downstream normalization of k-mer counts.
-   - Adds R and Python loaders for `ref-kmers` output.
-   - Library: Adds Rust loaders for `ref-kmers` output.
+ - Speeds up window overlap detection algorithm used in `lengths` and `ends` when the `--by-bed`/`--by-grouped-bed` contain both broad and narrow windows that are nested.
  - Adds minimal validation of BED files to catch obviously non-BED formats.
  - Library: The Rust `fcoverage` run result now includes grouped `group_index.tsv` filepaths in `output_files()` when they are written.
  - Library: Adds missing blacklist setters on the Rust `LengthsConfig` API.

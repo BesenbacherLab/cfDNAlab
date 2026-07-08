@@ -1,6 +1,16 @@
 use crate::shared::interval::IndexedInterval;
 use crate::shared::interval::Interval;
+#[cfg(uses_tile_window_helpers)]
+use crate::shared::tiled_run::{Tile, TileWindowSpan, precompute_tile_window_spans};
 use crate::{Error, Result};
+#[cfg(uses_tile_window_helpers)]
+use fxhash::FxHashMap;
+
+/// Default minimum length for treating a BED-like window as broad.
+///
+/// Broad windows get their own tile-local pointer so they cannot keep the narrow-window pointer
+/// pinned behind nested short intervals.
+pub(crate) const DEFAULT_BROAD_WINDOW_MIN_BP: u64 = 100_000;
 
 /// A single window hit for one queried interval.
 ///
@@ -8,10 +18,14 @@ use crate::{Error, Result};
 /// queried interval that fell inside that window. The `idx` field is the scan
 /// index used by the current window source, so it is useful for looking up
 /// per-window state but should not be treated as a stable genomic identifier.
+/// BED-like overlap finders also carry `output_idx`, which is the row identity
+/// used for output aggregation.
 #[derive(Debug)]
 pub struct OverlappingWindow {
-    /// Window index.
+    /// Source-window position or bin index used by the current window source.
     pub idx: usize,
+    /// Optional stable output identity for BED-like windows.
+    pub output_idx: Option<u64>,
     /// Window interval as a checked half-open span.
     pub interval: Interval<u64>,
     /// Overlap fraction (overlap_bp / fragment_length_bp)
@@ -38,11 +52,25 @@ impl OverlappingWindow {
     /// - `out`:
     ///   A validated overlap record.
     pub fn new(idx: usize, interval: Interval<u64>, overlap_fraction: f64) -> Result<Self> {
+        Self::new_with_output_idx(idx, interval, overlap_fraction, None)
+    }
+
+    /// Create one overlap record for a BED-like window hit with an output identity.
+    ///
+    /// `idx` stays the `all_windows` position used for local count arrays. `output_idx` is the
+    /// original BED row id for ordinary BED windows and the group index for grouped BED windows.
+    pub(crate) fn new_with_output_idx(
+        idx: usize,
+        interval: Interval<u64>,
+        overlap_fraction: f64,
+        output_idx: Option<u64>,
+    ) -> Result<Self> {
         if !(0.0..=1.0).contains(&overlap_fraction) {
             return Err(Error::OverlapFractionOutOfBounds { overlap_fraction });
         }
         Ok(Self {
             idx,
+            output_idx,
             interval,
             overlap_fraction,
         })
@@ -141,6 +169,404 @@ impl OverlappingWindows {
     pub fn query_end(&self) -> u64 {
         self.interval.end()
     }
+}
+
+/// One BED-like window with both local `all_windows` identity and output identity.
+///
+/// `all_windows_idx` is the position in the chromosome-local `all_windows` list. It is used for
+/// tile-local count arrays. `output_idx` is the identity carried by the original `IndexedInterval`:
+/// the BED row id for ordinary BED input and the group index for grouped BED.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BedWindowEntry {
+    pub(crate) interval: Interval<u64>,
+    pub(crate) all_windows_idx: usize,
+    pub(crate) output_idx: u64,
+}
+
+impl BedWindowEntry {
+    /// Build a BED entry from a window and its chromosome-local `all_windows` position.
+    #[inline]
+    pub(crate) fn from_indexed_interval(
+        all_windows_idx: usize,
+        window: IndexedInterval<u64>,
+    ) -> Self {
+        Self {
+            interval: window.interval,
+            all_windows_idx,
+            output_idx: window.idx(),
+        }
+    }
+
+    /// Return the inclusive start coordinate.
+    #[inline]
+    pub(crate) fn start(&self) -> u64 {
+        self.interval.start()
+    }
+
+    /// Return the exclusive end coordinate.
+    #[inline]
+    pub(crate) fn end(&self) -> u64 {
+        self.interval.end()
+    }
+
+    /// Return the window length in bases.
+    #[inline]
+    pub(crate) fn len(&self) -> u64 {
+        self.interval.len()
+    }
+
+    #[inline]
+    fn with_interval(self, interval: Interval<u64>) -> Self {
+        Self { interval, ..self }
+    }
+}
+
+impl AsRef<Interval<u64>> for BedWindowEntry {
+    #[inline]
+    fn as_ref(&self) -> &Interval<u64> {
+        &self.interval
+    }
+}
+
+/// One start-sorted BED window tier used by the tile-local overlap finder.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct BedWindowTier {
+    pub(crate) windows: Vec<BedWindowEntry>,
+}
+
+/// Chromosome-local BED windows used by `lengths` and `ends`.
+///
+/// `all_windows` stores the full chromosome-local, start-sorted BED window list used for count
+/// arrays and fetch narrowing. `tiers` stores split views of the same entries in independent
+/// start-sorted scan lists: currently broad windows and narrow windows. Entries inside the tiers
+/// keep their `all_windows_idx`, so overlap results can be mapped back to the full list even though
+/// each tier advances through its own pointer.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ChromosomeBedWindows {
+    pub(crate) all_windows: Vec<BedWindowEntry>,
+    pub(crate) tiers: Vec<BedWindowTier>,
+}
+
+impl ChromosomeBedWindows {
+    /// Build the current broad/narrow tier views from start-sorted BED-like windows.
+    ///
+    /// The broad tier is stored before the narrow tier so long always-hit windows are emitted
+    /// before the shorter scanned windows, matching the existing layered finder.
+    pub(crate) fn from_indexed_windows(
+        windows: &[IndexedInterval<u64>],
+        broad_window_min_bp: u64,
+    ) -> Self {
+        let all_windows: Vec<BedWindowEntry> = windows
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(all_windows_idx, window)| {
+                BedWindowEntry::from_indexed_interval(all_windows_idx, window)
+            })
+            .collect();
+
+        let mut broad_windows = Vec::new();
+        let mut narrow_windows = Vec::new();
+        for window in all_windows.iter().copied() {
+            if window.len() >= broad_window_min_bp {
+                broad_windows.push(window);
+            } else {
+                narrow_windows.push(window);
+            }
+        }
+
+        Self {
+            all_windows,
+            tiers: vec![
+                BedWindowTier {
+                    windows: broad_windows,
+                },
+                BedWindowTier {
+                    windows: narrow_windows,
+                },
+            ],
+        }
+    }
+}
+
+/// Build chromosome-local BED window collections for every chromosome with BED-like windows.
+#[cfg(uses_tile_window_helpers)]
+pub(crate) fn build_bed_windows_by_chr(
+    windows_by_chr: &FxHashMap<String, Vec<IndexedInterval<u64>>>,
+    broad_window_min_bp: u64,
+) -> FxHashMap<String, ChromosomeBedWindows> {
+    windows_by_chr
+        .iter()
+        .map(|(chr, windows)| {
+            (
+                chr.clone(),
+                ChromosomeBedWindows::from_indexed_windows(windows, broad_window_min_bp),
+            )
+        })
+        .collect()
+}
+
+/// Cached tile spans for `all_windows` and each tier.
+#[cfg(uses_tile_window_helpers)]
+#[derive(Clone, Debug)]
+pub(crate) struct TileBedWindowSpans {
+    pub(crate) all_windows_span: Option<TileWindowSpan>,
+    pub(crate) tier_spans: Vec<Option<TileWindowSpan>>,
+}
+
+/// Borrowed BED window inputs for one tile.
+#[cfg(uses_tile_window_helpers)]
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TileBedWindowInputs<'a> {
+    pub(crate) chromosome_windows: &'a ChromosomeBedWindows,
+    pub(crate) spans: &'a TileBedWindowSpans,
+}
+
+/// Precompute tile-local `all_windows` and tier spans for BED-like windows.
+#[cfg(uses_tile_window_helpers)]
+pub(crate) fn precompute_tile_bed_window_spans(
+    tiles: &[Tile],
+    bed_windows_by_chr: &FxHashMap<String, ChromosomeBedWindows>,
+    left_halo: u64,
+    right_halo: u64,
+) -> Vec<TileBedWindowSpans> {
+    let all_windows_spans = precompute_tile_window_spans(
+        tiles,
+        |chr| {
+            bed_windows_by_chr
+                .get(chr)
+                .map(|windows| windows.all_windows.as_slice())
+                .unwrap_or(&[])
+        },
+        left_halo,
+        right_halo,
+    );
+
+    let tier_count = bed_windows_by_chr
+        .values()
+        .map(|windows| windows.tiers.len())
+        .max()
+        .unwrap_or(0);
+
+    let mut tile_spans: Vec<TileBedWindowSpans> = all_windows_spans
+        .into_iter()
+        .map(|all_windows_span| TileBedWindowSpans {
+            all_windows_span,
+            tier_spans: vec![None; tier_count],
+        })
+        .collect();
+
+    for tier_idx in 0..tier_count {
+        let tier_spans = precompute_tile_window_spans(
+            tiles,
+            |chr| {
+                bed_windows_by_chr
+                    .get(chr)
+                    .and_then(|windows| windows.tiers.get(tier_idx))
+                    .map(|tier| tier.windows.as_slice())
+                    .unwrap_or(&[])
+            },
+            left_halo,
+            right_halo,
+        );
+
+        for (tile_span, tier_span) in tile_spans.iter_mut().zip(tier_spans) {
+            tile_span.tier_spans[tier_idx] = tier_span;
+        }
+    }
+
+    tile_spans
+}
+
+#[cfg(uses_tile_window_helpers)]
+struct TileBedTierCursor {
+    windows: Vec<BedWindowEntry>,
+    wd_ptr: usize,
+}
+
+/// Tile-local BED overlap finder with independent tier pointers.
+///
+/// Use this only for BED-like count windows. It returns the same candidate windows as the generic
+/// BED finder, but each tier is scanned through a separate pointer so long nested intervals do not
+/// pin unrelated windows. Returned `OverlappingWindow.idx` values are chromosome-local positions
+/// in `all_windows`. `OverlappingWindow.output_idx` carries the BED row id or grouped BED group
+/// index.
+///
+/// The returned window order is an implementation detail and may differ from
+/// [`find_overlapping_windows`]. Callers must treat overlap rows as a set keyed by `idx` plus
+/// interval, not as an ordered stream.
+#[cfg(uses_tile_window_helpers)]
+pub(crate) struct TileBedOverlapContext {
+    chrom_len: u64,
+    always_hit_windows: Vec<BedWindowEntry>,
+    tier_cursors: Vec<TileBedTierCursor>,
+}
+
+#[cfg(uses_tile_window_helpers)]
+impl TileBedOverlapContext {
+    /// Build the tile-local overlap context from tiered BED-like windows.
+    ///
+    /// `tile_assignment_envelope` must contain every query interval that can be submitted to this
+    /// context for the tile. Candidate windows that contain that full envelope are stored as
+    /// always-hit windows and are not scanned per fragment.
+    pub(crate) fn new(
+        chrom_len: u64,
+        chromosome_windows: &ChromosomeBedWindows,
+        spans: &TileBedWindowSpans,
+        tile_assignment_envelope: Interval<u64>,
+    ) -> Result<Self> {
+        let mut always_hit_windows = Vec::new();
+        let mut tier_cursors = Vec::with_capacity(chromosome_windows.tiers.len());
+
+        for (tier_idx, tier) in chromosome_windows.tiers.iter().enumerate() {
+            let tier_span = spans.tier_spans.get(tier_idx).copied().flatten();
+            let tier_candidates = span_slice(tier.windows.as_slice(), tier_span, "tier")?;
+            let mut scanned_windows = Vec::with_capacity(tier_candidates.len());
+
+            for window in tier_candidates {
+                let Some(window_interval) = clamp_bed_window_to_chrom(*window, chrom_len)? else {
+                    continue;
+                };
+                if window_interval.contains_interval(tile_assignment_envelope) {
+                    always_hit_windows.push(window.with_interval(window_interval));
+                } else {
+                    // Keep original bounds so pointer retirement matches the generic BED finder.
+                    scanned_windows.push(*window);
+                }
+            }
+
+            tier_cursors.push(TileBedTierCursor {
+                windows: scanned_windows,
+                wd_ptr: 0,
+            });
+        }
+
+        Ok(Self {
+            chrom_len,
+            always_hit_windows,
+            tier_cursors,
+        })
+    }
+
+    /// Find BED-like windows hit by one query interval.
+    pub(crate) fn find_overlapping_windows(
+        &mut self,
+        query_interval: Interval<u64>,
+        min_overlap_fraction: f64,
+        look_back: u64,
+    ) -> Result<Option<OverlappingWindows>> {
+        if !(0.0..=1.0).contains(&min_overlap_fraction) {
+            return Err(Error::OverlapFractionOutOfBounds {
+                overlap_fraction: min_overlap_fraction,
+            });
+        }
+
+        let mut overlaps = OverlappingWindows::new(query_interval);
+        for window in &self.always_hit_windows {
+            overlaps
+                .windows
+                .push(OverlappingWindow::new_with_output_idx(
+                    window.all_windows_idx,
+                    window.interval,
+                    1.0,
+                    Some(window.output_idx),
+                )?);
+        }
+
+        for tier_cursor in &mut self.tier_cursors {
+            append_bed_window_tier_overlaps(
+                self.chrom_len,
+                &mut tier_cursor.wd_ptr,
+                tier_cursor.windows.as_slice(),
+                query_interval,
+                min_overlap_fraction,
+                look_back,
+                &mut overlaps,
+            )?;
+        }
+
+        if overlaps.windows.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(overlaps))
+        }
+    }
+}
+
+#[cfg(uses_tile_window_helpers)]
+fn span_slice<'a>(
+    items: &'a [BedWindowEntry],
+    span: Option<TileWindowSpan>,
+    split_name: &'static str,
+) -> Result<&'a [BedWindowEntry]> {
+    let Some(span) = span else {
+        return Ok(&[]);
+    };
+    if span.first_idx > span.last_idx_exclusive || span.last_idx_exclusive > items.len() {
+        return Err(Error::InvalidBedWindowSplitSpan {
+            split_name,
+            start: span.first_idx,
+            end: span.last_idx_exclusive,
+            len: items.len(),
+        });
+    }
+    Ok(&items[span.first_idx..span.last_idx_exclusive])
+}
+
+#[cfg(uses_tile_window_helpers)]
+fn clamp_bed_window_to_chrom(
+    window: BedWindowEntry,
+    chrom_len: u64,
+) -> Result<Option<Interval<u64>>> {
+    let window_start = window.start();
+    let window_end = window.end().min(chrom_len);
+    if window_end <= window_start {
+        return Ok(None);
+    }
+    Ok(Some(Interval::new(window_start, window_end)?))
+}
+
+#[cfg(uses_tile_window_helpers)]
+fn append_bed_window_tier_overlaps(
+    chrom_len: u64,
+    wd_ptr: &mut usize,
+    windows: &[BedWindowEntry],
+    query_interval: Interval<u64>,
+    min_overlap_fraction: f64,
+    look_back: u64,
+    overlaps: &mut OverlappingWindows,
+) -> Result<()> {
+    while *wd_ptr < windows.len()
+        && windows[*wd_ptr].end() <= query_interval.start().saturating_sub(look_back)
+    {
+        *wd_ptr += 1;
+    }
+
+    let mut scan_window_idx = *wd_ptr;
+    while scan_window_idx < windows.len() && windows[scan_window_idx].start() < query_interval.end()
+    {
+        let window = windows[scan_window_idx];
+        let Some(window_interval) = clamp_bed_window_to_chrom(window, chrom_len)? else {
+            scan_window_idx += 1;
+            continue;
+        };
+        if query_interval.intersects(window_interval) {
+            let overlap_fraction = fraction_overlap_of_a(query_interval, window_interval);
+            if overlap_fraction >= min_overlap_fraction {
+                overlaps
+                    .windows
+                    .push(OverlappingWindow::new_with_output_idx(
+                        window.all_windows_idx,
+                        window_interval,
+                        overlap_fraction,
+                        Some(window.output_idx),
+                    )?);
+            }
+        }
+        scan_window_idx += 1;
+    }
+
+    Ok(())
 }
 
 /// Return the fixed-size bins touched by a queried interval.

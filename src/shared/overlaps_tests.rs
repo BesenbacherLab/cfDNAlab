@@ -1,9 +1,45 @@
+use crate::{
+    Result,
+    shared::interval::{IndexedInterval, Interval},
+};
+
+const MIXED_COVERING_BROAD_NARROW_QUERY_STARTS: [u64; 8] = [
+    1_000_000, 1_125_000, 1_250_000, 1_500_000, 1_875_000, 2_000_000, 2_250_000, 2_750_000,
+];
+
+// Shared mixed-size BED fixture for comparing the generic and tiered BED overlap finders.
+fn mixed_covering_broad_narrow_windows() -> Result<Vec<IndexedInterval<u64>>> {
+    IndexedInterval::from_tuples(&[
+        (0, 4_000_000, 900_u64),
+        (999_000, 2_001_000, 901_u64),
+        (1_000_500, 1_000_800, 902_u64),
+        (1_124_500, 1_125_500, 903_u64),
+        (1_200_000, 1_300_000, 904_u64),
+        (1_200_001, 1_300_000, 905_u64),
+        (1_250_750, 1_350_750, 906_u64),
+        (1_250_800, 1_350_799, 907_u64),
+        (1_499_000, 1_501_000, 908_u64),
+        (1_500_250, 1_500_750, 909_u64),
+        (1_874_000, 2_001_000, 910_u64),
+        (1_875_900, 1_975_900, 911_u64),
+        (1_875_901, 1_975_900, 912_u64),
+        (1_999_000, 3_001_000, 913_u64),
+        (2_000_000, 2_001_000, 914_u64),
+        (2_250_500, 2_250_700, 915_u64),
+        (2_749_500, 2_750_500, 916_u64),
+        (2_750_500, 2_850_500, 917_u64),
+        (2_751_000, 2_751_200, 918_u64),
+        (3_100_000, 3_200_000, 919_u64),
+    ])
+}
+
 mod fixed_width_overlap_cursor_tests {
     use super::super::{FixedWidthOverlapCursor, OverlappingWindows, find_overlapping_windows};
-    use crate::{
-        Result,
-        shared::interval::{IndexedInterval, Interval},
+    use super::{
+        Interval, MIXED_COVERING_BROAD_NARROW_QUERY_STARTS, Result,
+        mixed_covering_broad_narrow_windows,
     };
+    use crate::shared::interval::IndexedInterval;
     use std::collections::BTreeMap;
 
     fn kmer_windows() -> Result<Vec<IndexedInterval<u64>>> {
@@ -197,36 +233,11 @@ mod fixed_width_overlap_cursor_tests {
         // - narrow rows, including a 99,999 bp row
         // - rows that touch a query boundary or sit after all queries and must remain zero
         let chrom_len = 4_000_000;
-        let windows = IndexedInterval::from_tuples(&[
-            (0, 4_000_000, 900_u64),
-            (999_000, 2_001_000, 901_u64),
-            (1_000_500, 1_000_800, 902_u64),
-            (1_124_500, 1_125_500, 903_u64),
-            (1_200_000, 1_300_000, 904_u64),
-            (1_200_001, 1_300_000, 905_u64),
-            (1_250_750, 1_350_750, 906_u64),
-            (1_250_800, 1_350_799, 907_u64),
-            (1_499_000, 1_501_000, 908_u64),
-            (1_500_250, 1_500_750, 909_u64),
-            (1_874_000, 2_001_000, 910_u64),
-            (1_875_900, 1_975_900, 911_u64),
-            (1_875_901, 1_975_900, 912_u64),
-            (1_999_000, 3_001_000, 913_u64),
-            (2_000_000, 2_001_000, 914_u64),
-            (2_250_500, 2_250_700, 915_u64),
-            (2_749_500, 2_750_500, 916_u64),
-            (2_750_500, 2_850_500, 917_u64),
-            (2_751_000, 2_751_200, 918_u64),
-            (3_100_000, 3_200_000, 919_u64),
-        ])?;
-        let query_starts = [
-            1_000_000, 1_125_000, 1_250_000, 1_500_000, 1_875_000, 2_000_000,
-            2_250_000, 2_750_000,
-        ];
+        let windows = mixed_covering_broad_narrow_windows()?;
         let mut window_ptr = 0;
         let mut counts = BTreeMap::new();
 
-        for query_start in query_starts {
+        for query_start in MIXED_COVERING_BROAD_NARROW_QUERY_STARTS {
             let observed = find_overlapping_windows(
                 chrom_len,
                 &mut window_ptr,
@@ -831,6 +842,425 @@ mod fixed_width_overlap_cursor_tests {
 
             assert_overlap_fraction_error(error, threshold);
         }
+
+        Ok(())
+    }
+}
+
+mod tile_bed_overlap_context_tests {
+    use super::super::{
+        ChromosomeBedWindows, OverlappingWindows, TileBedOverlapContext, TileBedWindowSpans,
+        find_overlapping_windows,
+    };
+    use super::{
+        MIXED_COVERING_BROAD_NARROW_QUERY_STARTS, mixed_covering_broad_narrow_windows,
+    };
+    use crate::{
+        Result,
+        shared::interval::{IndexedInterval, Interval},
+        shared::tiled_run::TileWindowSpan,
+    };
+
+    fn full_span<T>(windows: &[T]) -> Option<TileWindowSpan> {
+        (!windows.is_empty()).then_some(TileWindowSpan {
+            first_idx: 0,
+            last_idx_exclusive: windows.len(),
+        })
+    }
+
+    fn full_bed_spans(chromosome_windows: &ChromosomeBedWindows) -> TileBedWindowSpans {
+        TileBedWindowSpans {
+            all_windows_span: full_span(chromosome_windows.all_windows.as_slice()),
+            tier_spans: chromosome_windows
+                .tiers
+                .iter()
+                .map(|tier| full_span(tier.windows.as_slice()))
+                .collect(),
+        }
+    }
+
+    fn sorted_overlap_signature(
+        overlaps: Option<&OverlappingWindows>,
+    ) -> Vec<(usize, u64, u64, f64)> {
+        let mut signature: Vec<_> = overlaps
+            .map(|overlaps| {
+                overlaps
+                    .windows
+                    .iter()
+                    .map(|window| {
+                        (
+                            window.idx,
+                            window.start(),
+                            window.end(),
+                            window.overlap_fraction,
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        signature.sort_by(|left_hit, right_hit| {
+            left_hit
+                .0
+                .cmp(&right_hit.0)
+                .then(left_hit.1.cmp(&right_hit.1))
+                .then(left_hit.2.cmp(&right_hit.2))
+        });
+        signature
+    }
+
+    fn sorted_context_bed_overlap_signature(
+        overlaps: Option<&OverlappingWindows>,
+    ) -> Vec<(usize, Option<u64>, u64, u64, f64)> {
+        let mut signature: Vec<_> = overlaps
+            .map(|overlaps| {
+                overlaps
+                    .windows
+                    .iter()
+                    .map(|window| {
+                        (
+                            window.idx,
+                            window.output_idx,
+                            window.start(),
+                            window.end(),
+                            window.overlap_fraction,
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        signature.sort_by(|left_hit, right_hit| {
+            left_hit
+                .0
+                .cmp(&right_hit.0)
+                .then(left_hit.1.cmp(&right_hit.1))
+                .then(left_hit.2.cmp(&right_hit.2))
+                .then(left_hit.3.cmp(&right_hit.3))
+        });
+        signature
+    }
+
+    fn sorted_generic_bed_overlap_signature(
+        all_windows: &[IndexedInterval<u64>],
+        overlaps: Option<&OverlappingWindows>,
+    ) -> Vec<(usize, Option<u64>, u64, u64, f64)> {
+        let mut signature: Vec<_> = overlaps
+            .map(|overlaps| {
+                overlaps
+                    .windows
+                    .iter()
+                    .map(|window| {
+                        (
+                            window.idx,
+                            Some(all_windows[window.idx].idx()),
+                            window.start(),
+                            window.end(),
+                            window.overlap_fraction,
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        signature.sort_by(|left_hit, right_hit| {
+            left_hit
+                .0
+                .cmp(&right_hit.0)
+                .then(left_hit.1.cmp(&right_hit.1))
+                .then(left_hit.2.cmp(&right_hit.2))
+                .then(left_hit.3.cmp(&right_hit.3))
+        });
+        signature
+    }
+
+    fn assert_overlap_sets_close(
+        observed: Option<&OverlappingWindows>,
+        expected: Option<&OverlappingWindows>,
+    ) {
+        let observed = sorted_overlap_signature(observed);
+        let expected = sorted_overlap_signature(expected);
+        assert_eq!(observed.len(), expected.len());
+        for (observed_hit, expected_hit) in observed.iter().zip(expected.iter()) {
+            assert_eq!(observed_hit.0, expected_hit.0);
+            assert_eq!(observed_hit.1, expected_hit.1);
+            assert_eq!(observed_hit.2, expected_hit.2);
+            assert!(
+                (observed_hit.3 - expected_hit.3).abs() < 1e-12,
+                "observed fraction {} != expected fraction {}",
+                observed_hit.3,
+                expected_hit.3
+            );
+        }
+    }
+
+    fn assert_bed_overlap_sets_close(
+        all_windows: &[IndexedInterval<u64>],
+        observed: Option<&OverlappingWindows>,
+        expected: Option<&OverlappingWindows>,
+    ) {
+        let observed = sorted_context_bed_overlap_signature(observed);
+        let expected = sorted_generic_bed_overlap_signature(all_windows, expected);
+        assert_eq!(observed.len(), expected.len());
+        for (observed_hit, expected_hit) in observed.iter().zip(expected.iter()) {
+            assert_eq!(observed_hit.0, expected_hit.0);
+            assert_eq!(observed_hit.1, expected_hit.1);
+            assert_eq!(observed_hit.2, expected_hit.2);
+            assert_eq!(observed_hit.3, expected_hit.3);
+            assert!(
+                (observed_hit.4 - expected_hit.4).abs() < 1e-12,
+                "observed fraction {} != expected fraction {}",
+                observed_hit.4,
+                expected_hit.4
+            );
+        }
+    }
+
+    fn assert_manual_signature_close(
+        observed: Option<&OverlappingWindows>,
+        expected: &[(usize, u64, u64, f64)],
+    ) {
+        let observed = sorted_overlap_signature(observed);
+        assert_eq!(observed.len(), expected.len());
+        for (observed_hit, expected_hit) in observed.iter().zip(expected.iter()) {
+            assert_eq!(observed_hit.0, expected_hit.0);
+            assert_eq!(observed_hit.1, expected_hit.1);
+            assert_eq!(observed_hit.2, expected_hit.2);
+            assert!(
+                (observed_hit.3 - expected_hit.3).abs() < 1e-12,
+                "observed fraction {} != expected fraction {}",
+                observed_hit.3,
+                expected_hit.3
+            );
+        }
+    }
+
+    #[test]
+    fn tiered_context_matches_generic_finder_for_mixed_covering_broad_and_narrow_windows(
+    ) -> Result<()> {
+        let chrom_len = 4_000_000;
+        let broad_window_min_bp = 100_000;
+        let windows = mixed_covering_broad_narrow_windows()?;
+        let chromosome_windows = ChromosomeBedWindows::from_indexed_windows(
+            windows.as_slice(),
+            broad_window_min_bp,
+        );
+        let spans = full_bed_spans(&chromosome_windows);
+        let min_overlap_fraction = 0.0;
+        let look_back = 1_000;
+        // The query groups emulate two 1 Mb tiles with 1 kb right reach. Each tile has a
+        // tile+reach covering window that should move into the context's always-hit set.
+        let tile_query_groups: [(Interval<u64>, &[u64]); 2] = [
+            (
+                Interval::new(999_000, 2_001_000)?,
+                &MIXED_COVERING_BROAD_NARROW_QUERY_STARTS[..5],
+            ),
+            (
+                Interval::new(1_999_000, 3_001_000)?,
+                &MIXED_COVERING_BROAD_NARROW_QUERY_STARTS[5..],
+            ),
+        ];
+
+        for (tile_assignment_envelope, query_starts) in tile_query_groups {
+            let mut context = TileBedOverlapContext::new(
+                chrom_len,
+                &chromosome_windows,
+                &spans,
+                tile_assignment_envelope,
+            )?;
+            let mut baseline_wd_ptr = 0;
+
+            for query_start in query_starts {
+                let query_interval = Interval::new(*query_start, *query_start + 1_000)?;
+                let baseline = find_overlapping_windows(
+                    chrom_len,
+                    &mut baseline_wd_ptr,
+                    Some(windows.as_slice()),
+                    None,
+                    query_interval,
+                    min_overlap_fraction,
+                    look_back,
+                )?;
+                let observed = context.find_overlapping_windows(
+                    query_interval,
+                    min_overlap_fraction,
+                    look_back,
+                )?;
+
+                assert_bed_overlap_sets_close(
+                    windows.as_slice(),
+                    observed.as_ref(),
+                    baseline.as_ref(),
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn tiered_context_matches_generic_finder_for_nested_mixed_windows() -> Result<()> {
+        let chrom_len = 10_000_000;
+        let broad_window_min_bp = 100_000;
+        let windows = IndexedInterval::from_tuples(&[
+            // These stored idx values mimic grouped-BED group ids. The tiered context must still
+            // return all_windows positions 0, 1, ... like the generic finder.
+            (0, 10_000_000, 900_u64),
+            (1_000_000, 1_100_005, 901_u64),
+            (1_150_000, 1_150_020, 902_u64),
+            (1_250_000, 2_000_000, 903_u64),
+            (1_250_010, 1_250_030, 904_u64),
+        ])?;
+        let chromosome_windows = ChromosomeBedWindows::from_indexed_windows(
+            windows.as_slice(),
+            broad_window_min_bp,
+        );
+        let spans = full_bed_spans(&chromosome_windows);
+        let tile_assignment_envelope = Interval::new(1_100_000, 1_300_000)?;
+        let mut context = TileBedOverlapContext::new(
+            chrom_len,
+            &chromosome_windows,
+            &spans,
+            tile_assignment_envelope,
+        )?;
+        let mut baseline_wd_ptr = 0;
+        let min_overlap_fraction = 1.0 / 201.0;
+        let look_back = 200_000;
+        let queries = [
+            Interval::new(1_100_000, 1_100_010)?,
+            Interval::new(1_150_000, 1_150_010)?,
+            Interval::new(1_250_000, 1_250_020)?,
+        ];
+
+        for query_interval in queries {
+            let baseline = find_overlapping_windows(
+                chrom_len,
+                &mut baseline_wd_ptr,
+                Some(windows.as_slice()),
+                None,
+                query_interval,
+                min_overlap_fraction,
+                look_back,
+            )?;
+            let observed =
+                context.find_overlapping_windows(query_interval, min_overlap_fraction, look_back)?;
+
+            assert_overlap_sets_close(observed.as_ref(), baseline.as_ref());
+        }
+
+        let last_observed = context.find_overlapping_windows(
+            Interval::new(1_250_010, 1_250_020)?,
+            min_overlap_fraction,
+            look_back,
+        )?;
+        assert_manual_signature_close(
+            last_observed.as_ref(),
+            &[
+                (0, 0, 10_000_000, 1.0),
+                (3, 1_250_000, 2_000_000, 1.0),
+                (4, 1_250_010, 1_250_030, 1.0),
+            ],
+        );
+        let mut output_signature: Vec<_> = last_observed
+            .as_ref()
+            .expect("last query should overlap windows")
+            .windows
+            .iter()
+            .map(|window| (window.idx, window.output_idx))
+            .collect();
+        output_signature.sort_by_key(|(idx, _)| *idx);
+        assert_eq!(
+            output_signature,
+            vec![(0, Some(900)), (3, Some(903)), (4, Some(904))]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn tiered_context_uses_look_back_for_broad_pointer_retirement() -> Result<()> {
+        let chrom_len = 300;
+        let broad_window_min_bp = 20;
+        let windows =
+            IndexedInterval::from_tuples(&[(100, 135, 40_u64), (160, 180, 41_u64)])?;
+        let chromosome_windows = ChromosomeBedWindows::from_indexed_windows(
+            windows.as_slice(),
+            broad_window_min_bp,
+        );
+        let spans = full_bed_spans(&chromosome_windows);
+        let mut context = TileBedOverlapContext::new(
+            chrom_len,
+            &chromosome_windows,
+            &spans,
+            Interval::new(0, 300)?,
+        )?;
+        let mut baseline_wd_ptr = 0;
+        let min_overlap_fraction = 1.0 / 11.0;
+        let look_back = 100;
+
+        let first_query = Interval::new(200, 210)?;
+        let baseline_first = find_overlapping_windows(
+            chrom_len,
+            &mut baseline_wd_ptr,
+            Some(windows.as_slice()),
+            None,
+            first_query,
+            min_overlap_fraction,
+            look_back,
+        )?;
+        let observed_first =
+            context.find_overlapping_windows(first_query, min_overlap_fraction, look_back)?;
+        assert_overlap_sets_close(observed_first.as_ref(), baseline_first.as_ref());
+
+        let second_query = Interval::new(130, 140)?;
+        let baseline_second = find_overlapping_windows(
+            chrom_len,
+            &mut baseline_wd_ptr,
+            Some(windows.as_slice()),
+            None,
+            second_query,
+            min_overlap_fraction,
+            look_back,
+        )?;
+        let observed_second =
+            context.find_overlapping_windows(second_query, min_overlap_fraction, look_back)?;
+        assert_overlap_sets_close(observed_second.as_ref(), baseline_second.as_ref());
+        assert_manual_signature_close(observed_second.as_ref(), &[(0, 100, 135, 0.5)]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn narrow_window_containing_tile_envelope_still_matches_generic_finder() -> Result<()> {
+        let chrom_len = 1_000;
+        let broad_window_min_bp = 10_000;
+        let windows = IndexedInterval::from_tuples(&[(0, 1_000, 70_u64)])?;
+        let chromosome_windows = ChromosomeBedWindows::from_indexed_windows(
+            windows.as_slice(),
+            broad_window_min_bp,
+        );
+        assert!(chromosome_windows.tiers[0].windows.is_empty());
+        assert_eq!(chromosome_windows.tiers[1].windows.len(), 1);
+        let spans = full_bed_spans(&chromosome_windows);
+        let mut context = TileBedOverlapContext::new(
+            chrom_len,
+            &chromosome_windows,
+            &spans,
+            Interval::new(100, 200)?,
+        )?;
+        let query_interval = Interval::new(120, 130)?;
+        let mut baseline_wd_ptr = 0;
+
+        let baseline = find_overlapping_windows(
+            chrom_len,
+            &mut baseline_wd_ptr,
+            Some(windows.as_slice()),
+            None,
+            query_interval,
+            1.0,
+            0,
+        )?;
+        let observed = context.find_overlapping_windows(query_interval, 1.0, 0)?;
+
+        assert_overlap_sets_close(observed.as_ref(), baseline.as_ref());
+        assert_manual_signature_close(observed.as_ref(), &[(0, 0, 1_000, 1.0)]);
 
         Ok(())
     }

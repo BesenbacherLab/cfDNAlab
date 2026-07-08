@@ -30,6 +30,13 @@ pub enum Error {
         start: u64,
         chrom_len: u64,
     },
+    /// An internally cached BED split-window span did not fit its source array.
+    InvalidBedWindowSplitSpan {
+        split_name: &'static str,
+        start: usize,
+        end: usize,
+        len: usize,
+    },
     /// An overlap fraction fell outside the inclusive range `[0.0, 1.0]`.
     OverlapFractionOutOfBounds { overlap_fraction: f64 },
     /// A tile fetch range did not fully cover the tile core.
@@ -78,6 +85,17 @@ impl Display for Error {
                 write!(
                     formatter,
                     "fixed-size window index {idx} starts at {start} beyond chromosome length {chrom_len}"
+                )
+            }
+            Error::InvalidBedWindowSplitSpan {
+                split_name,
+                start,
+                end,
+                len,
+            } => {
+                write!(
+                    formatter,
+                    "cached {split_name} BED split-window span [{start}, {end}) is outside source array length {len}"
                 )
             }
             Error::OverlapFractionOutOfBounds { overlap_fraction } => {

@@ -62,7 +62,10 @@ use crate::{
             process_counts::postprocess_selected_motif_counts,
         },
         midpoint::midpoint_random_even_for_fragment,
-        overlaps::find_overlapping_windows,
+        overlaps::{
+            DEFAULT_BROAD_WINDOW_MIN_BP, TileBedOverlapContext, TileBedWindowInputs,
+            build_bed_windows_by_chr, find_overlapping_windows, precompute_tile_bed_window_spans,
+        },
         progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq_in_range,
@@ -73,10 +76,8 @@ use crate::{
         },
         temp_chrom_names::TempChromNameMap,
         thread_pool::init_global_pool,
-        tiled_run::{
-            TempDirGuard, Tile, TileWindowSpan, build_tiles, precompute_tile_window_spans,
-        },
-        window_fetch::{BedFetchPolicy, fetch_span_for_tile},
+        tiled_run::{TempDirGuard, Tile, build_tiles},
+        window_fetch::{BedFetchPolicy, fetch_span_for_bed_candidates, fetch_span_for_tile},
         windowing::{
             WindowContext, build_bin_info, compute_window_offsets,
             ensure_plain_bed_windows_not_empty, write_bin_info_tsv,
@@ -311,6 +312,9 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
                     .collect()
             })
         };
+    let bed_windows_by_chr = indexed_windows_map
+        .as_ref()
+        .map(|windows_map| build_bed_windows_by_chr(windows_map, DEFAULT_BROAD_WINDOW_MIN_BP));
 
     // Load genomic scaling factors
     if opt.scale_genome.scaling_factors.is_some() {
@@ -359,19 +363,17 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
     };
     let tile_span_right_halo = opt.fragment_lengths.max_fragment_length as u64;
 
-    let windows_lookup = indexed_windows_map.as_ref();
-    let tile_window_spans = Arc::new(precompute_tile_window_spans(
-        &tiles,
-        |chr| {
-            windows_lookup
-                .and_then(|m| m.get(chr).map(|w| w.as_slice()))
-                .unwrap_or(&[])
-        },
-        tile_span_left_halo,
-        // We use fragments starting in a tile, so we need fragment-overlapping windows starting after the tile
-        tile_span_right_halo,
-    ));
-    let tile_window_spans_for_threads = tile_window_spans.clone();
+    let tile_bed_window_spans = bed_windows_by_chr.as_ref().map(|bed_windows_by_chr| {
+        Arc::new(precompute_tile_bed_window_spans(
+            &tiles,
+            bed_windows_by_chr,
+            tile_span_left_halo,
+            // We use fragments starting in a tile, so we need fragment-overlapping windows
+            // starting after the tile.
+            tile_span_right_halo,
+        ))
+    });
+    let tile_bed_window_spans_for_threads = tile_bed_window_spans.clone();
     let include_at_shifted_boundary_gc_length_warning_issued = Arc::new(AtomicBool::new(false));
 
     // TODO: Improve the below comments so it also explains the diff between DistributionWindowSpec and WindowSpec handling here (And improve it in general)
@@ -446,10 +448,16 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
         .par_iter()
         .enumerate()
         .map(|(tile_idx, tile)| -> Result<Option<TileResult>> {
-            let tile_span = tile_window_spans_for_threads[tile_idx];
-            let windows_chr: Option<&[IndexedInterval<u64>]> = indexed_windows_map
-                .as_ref()
-                .and_then(|m| m.get(&tile.chr).map(|v| v.as_slice()));
+            let bed_window_inputs = match (
+                bed_windows_by_chr.as_ref().and_then(|m| m.get(&tile.chr)),
+                tile_bed_window_spans_for_threads.as_ref(),
+            ) {
+                (Some(chromosome_windows), Some(spans)) => Some(TileBedWindowInputs {
+                    chromosome_windows,
+                    spans: &spans[tile_idx],
+                }),
+                _ => None,
+            };
             let blacklist_chr: &[Interval<u64>] = blacklist_map
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
@@ -465,8 +473,7 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
             let tile_result = process_tile(
                 opt,
                 tile,
-                tile_span.as_ref(),
-                windows_chr,
+                bed_window_inputs,
                 chr_window_idx_offset,
                 &window_opt,
                 blacklist_chr,
@@ -496,8 +503,8 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
 
     // Release per-tile inputs before merging outputs
     drop(chr_offsets_for_threads);
-    drop(tile_window_spans_for_threads);
-    drop(tile_window_spans);
+    drop(tile_bed_window_spans_for_threads);
+    drop(tile_bed_window_spans);
     drop(indexed_windows_map);
     drop(tiles);
     drop(inside_counting_spec);
@@ -828,10 +835,8 @@ fn record_counted_fragment_stats(counter: &mut EndsCounters, counted_end_flags: 
 ///   Full command configuration
 /// - `tile`:
 ///   Tile currently being processed
-/// - `tile_window_span`:
-///   Precomputed window span relevant to this tile, if any
-/// - `windows_chr`:
-///   Window intervals for this chromosome, when not in global mode
+/// - `bed_window_inputs`:
+///   BED-like source and tier window inputs for this tile, when BED-like windows are active
 /// - `chr_window_idx_offset`:
 ///   Per-chromosome row offset for fixed-size windows
 /// - `window_opt`:
@@ -860,8 +865,7 @@ fn record_counted_fragment_stats(counter: &mut EndsCounters, counted_end_flags: 
 fn process_tile(
     opt: &EndsConfig,
     tile: &Tile,
-    tile_window_span: Option<&TileWindowSpan>,
-    windows_chr: Option<&[IndexedInterval<u64>]>,
+    bed_window_inputs: Option<TileBedWindowInputs<'_>>,
     chr_window_idx_offset: u64,
     window_opt: &DistributionWindowSpec,
     blacklist_intervals: &[Interval<u64>],
@@ -915,17 +919,31 @@ fn process_tile(
     // windows. In global/by-size modes this stays equal/close to the tile fetch span; in BED
     // mode it can shrink substantially.
     let bed_fetch_halo_bp = opt.fragment_lengths.max_fragment_length as u64;
-    let Some(fetch_span) = fetch_span_for_tile(
-        tile,
-        tile_window_span,
-        windows_chr,
-        &fetch_window_opt,
-        chrom_len,
-        bed_fetch_halo_bp,
-        BedFetchPolicy::CandidateWindowExtent,
-    )?
-    else {
-        // Skip tiles with no relevant windows
+    let fetch_span = match window_opt {
+        DistributionWindowSpec::Bed(_) | DistributionWindowSpec::GroupedBed(_) => {
+            let Some(bed_window_inputs) = bed_window_inputs else {
+                return Ok(None);
+            };
+            fetch_span_for_bed_candidates(
+                tile,
+                bed_window_inputs.spans.all_windows_span.as_ref(),
+                bed_window_inputs.chromosome_windows.all_windows.as_slice(),
+                chrom_len,
+                bed_fetch_halo_bp,
+            )?
+        }
+        DistributionWindowSpec::Global | DistributionWindowSpec::Size(_) => fetch_span_for_tile(
+            tile,
+            None,
+            None,
+            &fetch_window_opt,
+            chrom_len,
+            bed_fetch_halo_bp,
+            BedFetchPolicy::CandidateWindowExtent,
+        )?,
+    };
+    let Some(fetch_span) = fetch_span else {
+        // Skip tiles with no relevant windows.
         return Ok(None);
     };
     let (fetch_from, fetch_to) = fetch_span.try_to_i64()?.as_tuple();
@@ -946,8 +964,10 @@ fn process_tile(
         outside_spec,
     )?;
     let window_context = WindowContext {
-        spec: &fetch_window_opt, // global / size / bed
-        windows: windows_chr,
+        // BED-like output rows use `OverlappingWindow.output_idx`
+        // This context maps global and fixed-size chromosome-local indices to output rows
+        spec: &fetch_window_opt,
+        windows: None,
         chr_idx_offset: chr_window_idx_offset,
     };
 
@@ -969,6 +989,28 @@ fn process_tile(
             1.0 - (1. / (max_fragment_length as f64 + 1.0))
         } // 1.0 but just below to avoid rounding errors
         WindowMotifAssigner::Proportion(p) => p,
+    };
+    let mut bed_overlap_context = match window_opt {
+        DistributionWindowSpec::Bed(_) | DistributionWindowSpec::GroupedBed(_) => {
+            let left_assignment_reach_bp = if opt.clip.clip_strategy.uses_shifted_boundary() {
+                opt.clip.max_soft_clips as u64
+            } else {
+                0
+            };
+            let tile_assignment_envelope = Interval::new(
+                (tile.core_start() as u64).saturating_sub(left_assignment_reach_bp),
+                (tile.core_end() as u64).saturating_add(max_fragment_length as u64),
+            )?;
+            let bed_window_inputs =
+                bed_window_inputs.context("BED end counting requires tile BED window inputs")?;
+            Some(TileBedOverlapContext::new(
+                chrom_len,
+                bed_window_inputs.chromosome_windows,
+                bed_window_inputs.spans,
+                tile_assignment_envelope,
+            )?)
+        }
+        DistributionWindowSpec::Global | DistributionWindowSpec::Size(_) => None,
     };
 
     // Convert `scaling_chr` into the checked interval shape required by the overlap finder.
@@ -1065,9 +1107,7 @@ fn process_tile(
 
     // Streaming pointers
     let mut bl_ptr = 0; // Blacklist interval
-    let mut wd_ptr = tile_window_span
-        .and_then(|span| (!span.is_empty()).then_some(span.first_idx))
-        .unwrap_or(0);
+    let mut wd_ptr = 0; // Note: Not used
     let mut sf_ptr = 0; // Scaling factor bin
 
     // Iterate fragments and add coverage
@@ -1117,15 +1157,22 @@ fn process_tile(
             DistributionWindowSpec::Size(bp) => Some(*bp),
             _ => None,
         };
-        let overlapping_windows = find_overlapping_windows(
-            chrom_len,
-            &mut wd_ptr,
-            windows_chr,
-            by_size,
-            window_selection_interval,
-            min_overlap_fraction,
-            max_fragment_length.into(),
-        )?;
+        let overlapping_windows = match bed_overlap_context.as_mut() {
+            Some(context) => context.find_overlapping_windows(
+                window_selection_interval,
+                min_overlap_fraction,
+                max_fragment_length.into(),
+            )?,
+            None => find_overlapping_windows(
+                chrom_len,
+                &mut wd_ptr,
+                None,
+                by_size,
+                window_selection_interval,
+                min_overlap_fraction,
+                max_fragment_length.into(),
+            )?,
+        };
         let overlapping_windows = if let Some(overlaps) = overlapping_windows {
             overlaps
         } else {
@@ -1261,7 +1308,13 @@ fn process_tile(
             // Count up the weight per overlapping count-window. `count_fragment_in_window(...)`
             // still decides whether each end is actually counted in the current window.
             for window_scaling in overlap_weights {
-                let original_idx = window_context.original_idx(window_scaling.window_idx);
+                let original_idx = output_idx_for_overlap(
+                    window_opt,
+                    &window_context,
+                    window_scaling.window_idx,
+                    window_scaling.output_idx,
+                    &tile.chr,
+                )?;
                 let count_weight = window_scaling.overlap_fraction_to_count
                     * window_scaling.scaling_weight
                     * gc_weight;
@@ -1294,7 +1347,13 @@ fn process_tile(
             // Without genomic scaling, each candidate window gets either weight 1.0 or the raw
             // overlap fraction, depending on the assignment mode.
             for overlapped_window in overlapping_windows.windows {
-                let original_idx = window_context.original_idx(overlapped_window.idx);
+                let original_idx = output_idx_for_overlap(
+                    window_opt,
+                    &window_context,
+                    overlapped_window.idx,
+                    overlapped_window.output_idx,
+                    &tile.chr,
+                )?;
                 let count_weight = match opt.window_assignment.assign_by {
                     WindowMotifAssigner::CountOverlap => overlapped_window.overlap_fraction,
                     _ => 1.0f64,
@@ -1344,6 +1403,27 @@ fn process_tile(
         counts_path,
         counter,
     }))
+}
+
+fn output_idx_for_overlap(
+    window_opt: &DistributionWindowSpec,
+    window_context: &WindowContext<'_>,
+    window_idx: usize,
+    output_idx: Option<u64>,
+    chr: &str,
+) -> Result<u64> {
+    match window_opt {
+        DistributionWindowSpec::Bed(_) | DistributionWindowSpec::GroupedBed(_) => output_idx
+            .with_context(|| {
+                format!(
+                    "missing BED output identity for all_windows index {} on {}",
+                    window_idx, chr
+                )
+            }),
+        DistributionWindowSpec::Global | DistributionWindowSpec::Size(_) => {
+            Ok(window_context.original_idx(window_idx))
+        }
+    }
 }
 
 #[cfg(test)]
