@@ -74,6 +74,28 @@ mod fixed_width_overlap_cursor_tests {
         }
     }
 
+    fn assert_signature_close_unordered(
+        observed: Option<&OverlappingWindows>,
+        expected: &[(usize, u64, u64, f64)],
+    ) {
+        let mut observed = overlap_signature(observed);
+        let mut expected = expected.to_vec();
+        observed.sort_by_key(|window| (window.0, window.1, window.2));
+        expected.sort_by_key(|window| (window.0, window.1, window.2));
+        assert_eq!(observed.len(), expected.len());
+        for (observed_window, expected_window) in observed.iter().zip(expected.iter()) {
+            assert_eq!(observed_window.0, expected_window.0);
+            assert_eq!(observed_window.1, expected_window.1);
+            assert_eq!(observed_window.2, expected_window.2);
+            assert!(
+                (observed_window.3 - expected_window.3).abs() < 1e-12,
+                "observed fraction {} != expected fraction {}",
+                observed_window.3,
+                expected_window.3
+            );
+        }
+    }
+
     fn assert_row_signature_close(
         windows: &[IndexedInterval<u64>],
         observed: Option<&OverlappingWindows>,
@@ -135,6 +157,19 @@ mod fixed_width_overlap_cursor_tests {
         );
     }
 
+    fn assert_counts_close(counts: &BTreeMap<u64, f64>, expected: &[(u64, f64)]) {
+        let expected_by_row: BTreeMap<u64, f64> = expected.iter().copied().collect();
+        for row_idx in counts.keys() {
+            assert!(
+                expected_by_row.contains_key(row_idx),
+                "unexpected observed row {row_idx}"
+            );
+        }
+        for &(row_idx, expected_count) in expected {
+            assert_count_close(counts, row_idx, expected_count);
+        }
+    }
+
     fn assert_overlap_fraction_error(error: crate::Error, expected_fraction: f64) {
         match error {
             crate::Error::OverlapFractionOutOfBounds { overlap_fraction } => {
@@ -146,6 +181,149 @@ mod fixed_width_overlap_cursor_tests {
             }
             other => panic!("unexpected error: {other}"),
         }
+    }
+
+    #[test]
+    fn finder_accumulates_mixed_covering_broad_and_narrow_window_hits() -> Result<()> {
+        // Eight query intervals stand in for 1000 bp paired-fragment spans:
+        // [1000000,1001000), [1125000,1126000), [1250000,1251000),
+        // [1500000,1501000), [1875000,1876000), [2000000,2001000),
+        // [2250000,2251000), and [2750000,2751000).
+        //
+        // The expected counts below are hand-derived as overlap_bp / 1000. They intentionally
+        // include:
+        // - covering rows that span multiple query intervals and tile+reach regions
+        // - broad rows with length exactly 100 kb and larger
+        // - narrow rows, including a 99,999 bp row
+        // - rows that touch a query boundary or sit after all queries and must remain zero
+        let chrom_len = 4_000_000;
+        let windows = IndexedInterval::from_tuples(&[
+            (0, 4_000_000, 900_u64),
+            (999_000, 2_001_000, 901_u64),
+            (1_000_500, 1_000_800, 902_u64),
+            (1_124_500, 1_125_500, 903_u64),
+            (1_200_000, 1_300_000, 904_u64),
+            (1_200_001, 1_300_000, 905_u64),
+            (1_250_750, 1_350_750, 906_u64),
+            (1_250_800, 1_350_799, 907_u64),
+            (1_499_000, 1_501_000, 908_u64),
+            (1_500_250, 1_500_750, 909_u64),
+            (1_874_000, 2_001_000, 910_u64),
+            (1_875_900, 1_975_900, 911_u64),
+            (1_875_901, 1_975_900, 912_u64),
+            (1_999_000, 3_001_000, 913_u64),
+            (2_000_000, 2_001_000, 914_u64),
+            (2_250_500, 2_250_700, 915_u64),
+            (2_749_500, 2_750_500, 916_u64),
+            (2_750_500, 2_850_500, 917_u64),
+            (2_751_000, 2_751_200, 918_u64),
+            (3_100_000, 3_200_000, 919_u64),
+        ])?;
+        let query_starts = [
+            1_000_000, 1_125_000, 1_250_000, 1_500_000, 1_875_000, 2_000_000,
+            2_250_000, 2_750_000,
+        ];
+        let mut window_ptr = 0;
+        let mut counts = BTreeMap::new();
+
+        for query_start in query_starts {
+            let observed = find_overlapping_windows(
+                chrom_len,
+                &mut window_ptr,
+                Some(windows.as_slice()),
+                None,
+                Interval::new(query_start, query_start + 1_000)?,
+                0.0,
+                1_000,
+            )?;
+            add_count_overlap_weights(&mut counts, windows.as_slice(), observed.as_ref());
+        }
+
+        assert_counts_close(
+            &counts,
+            &[
+                (900, 8.0),
+                (901, 6.0),
+                (902, 0.3),
+                (903, 0.5),
+                (904, 1.0),
+                (905, 1.0),
+                (906, 0.25),
+                (907, 0.2),
+                (908, 1.0),
+                (909, 0.5),
+                (910, 2.0),
+                (911, 0.1),
+                (912, 0.099),
+                (913, 3.0),
+                (914, 1.0),
+                (915, 0.2),
+                (916, 0.5),
+                (917, 0.5),
+                (918, 0.0),
+                (919, 0.0),
+            ],
+        );
+        assert!((counts.values().copied().sum::<f64>() - 26.149).abs() < 1e-12);
+
+        Ok(())
+    }
+
+    #[test]
+    fn finder_keeps_covering_broad_window_available_for_later_queries() -> Result<()> {
+        // The 2 Mb [0,2000000) row covers both queries. Later 200 kb, 2 kb, and 200 bp rows must
+        // not make the streaming pointer forget that covering row while moving between queries.
+        let chrom_len = 3_000_000;
+        let windows = IndexedInterval::from_tuples(&[
+            (0, 2_000_000, 500_u64),
+            (900_000, 1_100_000, 501_u64),
+            (999_500, 1_001_500, 502_u64),
+            (1_000_100, 1_000_300, 503_u64),
+            (1_400_000, 1_600_000, 504_u64),
+            (1_499_500, 1_501_500, 505_u64),
+            (1_500_100, 1_500_300, 506_u64),
+        ])?;
+        let mut window_ptr = 0;
+
+        let first_query = find_overlapping_windows(
+            chrom_len,
+            &mut window_ptr,
+            Some(windows.as_slice()),
+            None,
+            Interval::new(1_000_000, 1_001_000)?,
+            0.0,
+            0,
+        )?;
+        let second_query = find_overlapping_windows(
+            chrom_len,
+            &mut window_ptr,
+            Some(windows.as_slice()),
+            None,
+            Interval::new(1_500_000, 1_501_000)?,
+            0.0,
+            0,
+        )?;
+
+        assert_signature_close_unordered(
+            first_query.as_ref(),
+            &[
+                (0, 0, 2_000_000, 1.0),
+                (1, 900_000, 1_100_000, 1.0),
+                (2, 999_500, 1_001_500, 1.0),
+                (3, 1_000_100, 1_000_300, 0.2),
+            ],
+        );
+        assert_signature_close_unordered(
+            second_query.as_ref(),
+            &[
+                (0, 0, 2_000_000, 1.0),
+                (4, 1_400_000, 1_600_000, 1.0),
+                (5, 1_499_500, 1_501_500, 1.0),
+                (6, 1_500_100, 1_500_300, 0.2),
+            ],
+        );
+
+        Ok(())
     }
 
     #[test]
