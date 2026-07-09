@@ -1,10 +1,13 @@
+#[cfg(any(
+    feature = "cmd_fcoverage",
+    feature = "cmd_wps",
+    feature = "cmd_wps_peaks"
+))]
+use crate::shared::interval::IndexedInterval;
 #[cfg(uses_temp_dirs)]
 use crate::shared::io::dot_join;
 #[cfg(uses_tile_window_helpers)]
-use crate::shared::{
-    bam::Contigs,
-    interval::{IndexedInterval, Interval},
-};
+use crate::shared::{bam::Contigs, interval::Interval};
 #[cfg(checks_tile_bam_tid)]
 use anyhow::Context;
 #[cfg(uses_tile_window_helpers)]

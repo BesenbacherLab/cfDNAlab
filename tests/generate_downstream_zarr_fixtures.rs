@@ -635,9 +635,9 @@ fn generate_ref_kmer_zarr_fixtures_with_cfdnalab() -> Result<()> {
     assert_close(window_frequencies[(3, 2)], 3.0 / 17.0);
     assert_close(window_frequencies[(3, 5)], 3.0 / 17.0);
     assert_close(window_frequencies[(3, 6)], 6.0 / 17.0);
-    assert_eq!(
+    assert_vec_close(
         read_zarr_array::<f64>(&sparse_windowed_path, "/row_scaling_factor")?,
-        vec![3.0, 13.0 / 3.0, 7.0 / 3.0, 17.0 / 3.0]
+        &[3.0, 13.0 / 3.0, 7.0 / 3.0, 17.0 / 3.0],
     );
 
     let grouped_bed = output_dir.join("tiny_ref_kmers_grouped.bed");
@@ -682,9 +682,9 @@ fn generate_ref_kmer_zarr_fixtures_with_cfdnalab() -> Result<()> {
     assert_close(grouped_frequencies[(1, 4)], 1.0 / 30.0);
     assert_close(grouped_frequencies[(1, 5)], 1.0 / 5.0);
     assert_close(grouped_frequencies[(1, 6)], 4.0 / 15.0);
-    assert_eq!(
+    assert_vec_close(
         read_zarr_array::<f64>(&sparse_grouped_path, "/row_scaling_factor")?,
-        vec![16.0 / 3.0, 10.0]
+        &[16.0 / 3.0, 10.0],
     );
     let group_metadata: Value = serde_json::from_str(&std::fs::read_to_string(
         sparse_grouped_path.join("group/zarr.json"),
@@ -732,9 +732,9 @@ fn generate_ref_kmer_zarr_fixtures_with_cfdnalab() -> Result<()> {
     assert_close(motif_group_frequencies[(1, 2)], 1.0 / 30.0);
     assert_close(motif_group_frequencies[(1, 3)], 0.0);
     assert_close(motif_group_frequencies[(1, 4)], 7.0 / 15.0);
-    assert_eq!(
+    assert_vec_close(
         read_zarr_array::<f64>(&dense_grouped_motif_groups_path, "/row_scaling_factor")?,
-        vec![16.0 / 3.0, 10.0]
+        &[16.0 / 3.0, 10.0],
     );
 
     Ok(())
@@ -1072,6 +1072,16 @@ fn assert_close(observed: f64, expected: f64) {
         (observed - expected).abs() < 1e-12,
         "observed {observed}, expected {expected}"
     );
+}
+
+fn assert_vec_close(observed: Vec<f64>, expected: &[f64]) {
+    assert_eq!(observed.len(), expected.len());
+    for (idx, (observed, expected)) in observed.iter().zip(expected.iter()).enumerate() {
+        assert!(
+            (observed - expected).abs() < 1e-12,
+            "index {idx}: observed {observed}, expected {expected}"
+        );
+    }
 }
 
 fn read_sparse_end_counts(store_path: &Path) -> Result<(Vec<String>, Array2<f64>)> {
