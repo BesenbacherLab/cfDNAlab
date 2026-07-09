@@ -222,8 +222,8 @@ def test_python_zarr_reads_sparse_grouped_wide_motif_group_end_motif_schema(
     assert store.attrs["motif_axis_kind"] == "motif_group"
     assert "motif_ascii" not in store
     assert store["motif_index"].attrs["labels"] == [
-        "right-hit-wide",
         "left-hit-wide",
+        "right-hit-wide",
     ]
     np.testing.assert_array_equal(
         store["sparse/shape"][:],
@@ -235,9 +235,9 @@ def test_python_zarr_reads_sparse_grouped_wide_motif_group_end_motif_schema(
     )
     np.testing.assert_array_equal(
         store["sparse/motif"][:],
-        np.array([0, 1, 0], dtype=np.int32),
+        np.array([0, 1, 1], dtype=np.int32),
     )
     np.testing.assert_allclose(
         store["sparse/count"][:],
-        np.array([1.0, 2.0, 1.0], dtype=np.float64),
+        np.array([2.0, 1.0, 1.0], dtype=np.float64),
     )

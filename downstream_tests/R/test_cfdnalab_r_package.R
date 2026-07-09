@@ -205,15 +205,15 @@ test_that("R helper package reads sparse grouped wide motif-group end motifs", {
     motifs(motif_grouped),
     data.frame(
       motif_idx = c(1L, 2L),
-      motif = c("right-hit-wide", "left-hit-wide"),
+      motif = c("left-hit-wide", "right-hit-wide"),
       stringsAsFactors = FALSE
     ),
     ignore_attr = TRUE
   )
-  expect_equal(motif_idx(motif_grouped, "left-hit-wide"), 2L)
+  expect_equal(motif_idx(motif_grouped, "left-hit-wide"), 1L)
   expect_equal(
     as.matrix(sparse_counts_matrix(motif_grouped)),
-    matrix(c(1, 2, 1, 0, 0, 0), nrow = 3, byrow = TRUE)
+    matrix(c(2, 1, 0, 1, 0, 0), nrow = 3, byrow = TRUE)
   )
   expect_equal(
     as.matrix(sparse_counts_matrix(
@@ -225,8 +225,8 @@ test_that("R helper package reads sparse grouped wide motif-group end motifs", {
   )
 
   beta_dense <- end_motif_data_frame(motif_grouped, groups = "beta", densify = TRUE)
-  expect_equal(beta_dense$motif, c("right-hit-wide", "left-hit-wide"))
-  expect_equal(beta_dense$count, c(1, 2))
+  expect_equal(beta_dense$motif, c("left-hit-wide", "right-hit-wide"))
+  expect_equal(beta_dense$count, c(2, 1))
   expect_error(
     end_motif_data_frame(motif_grouped, motifs = "GT_AC"),
     "Unknown end-motif label",

@@ -312,14 +312,14 @@ def test_cfdnalab_package_reads_sparse_grouped_wide_motif_group_end_motifs(
         pd.DataFrame(
             {
                 "motif_index": np.array([0, 1], dtype=np.int32),
-                "motif": np.array(["right-hit-wide", "left-hit-wide"], dtype=object),
+                "motif": np.array(["left-hit-wide", "right-hit-wide"], dtype=object),
             }
         ),
     )
-    assert end_motifs.motif_idx("left-hit-wide") == 1
+    assert end_motifs.motif_idx("left-hit-wide") == 0
     np.testing.assert_allclose(
         end_motifs.dense_counts_array(allow_densify=True),
-        np.array([[1.0, 2.0], [1.0, 0.0], [0.0, 0.0]], dtype=np.float64),
+        np.array([[2.0, 1.0], [0.0, 1.0], [0.0, 0.0]], dtype=np.float64),
     )
     np.testing.assert_allclose(
         end_motifs.sparse_counts_matrix(
@@ -329,7 +329,7 @@ def test_cfdnalab_package_reads_sparse_grouped_wide_motif_group_end_motifs(
         np.array([[0.0, 1.0], [2.0, 1.0]], dtype=np.float64),
     )
     beta_frame = end_motifs.data_frame(groups="beta", densify=True)
-    assert beta_frame["motif"].tolist() == ["right-hit-wide", "left-hit-wide"]
-    assert beta_frame["count"].tolist() == [1.0, 2.0]
+    assert beta_frame["motif"].tolist() == ["left-hit-wide", "right-hit-wide"]
+    assert beta_frame["count"].tolist() == [2.0, 1.0]
     with pytest.raises(KeyError, match="Unknown end-motif label"):
         end_motifs.data_frame(motifs="GT_AC")

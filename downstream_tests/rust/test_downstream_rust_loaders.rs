@@ -699,11 +699,11 @@ fn check_sparse_grouped_wide_motif_groups() -> Result<()> {
     assert_eq!(ends.storage_mode(), EndMotifStorageMode::SparseCoo);
     assert_eq!(ends.row_mode(), EndMotifRowMode::Groups);
     assert_eq!(ends.motif_axis_kind(), EndMotifAxisKind::MotifGroup);
-    assert_eq!(ends.motif_labels(), &["right-hit-wide", "left-hit-wide"]);
-    assert_eq!(ends.motif_index("left-hit-wide")?, 1);
+    assert_eq!(ends.motif_labels(), &["left-hit-wide", "right-hit-wide"]);
+    assert_eq!(ends.motif_index("left-hit-wide")?, 0);
     assert_f64_slice_near(
         ends.sparse_counts()?.to_dense_matrix()?.values_row_major(),
-        &[1.0, 2.0, 1.0, 0.0, 0.0, 0.0],
+        &[2.0, 1.0, 0.0, 1.0, 0.0, 0.0],
     );
     assert_f64_slice_near(
         ends.select()
@@ -720,7 +720,7 @@ fn check_sparse_grouped_wide_motif_groups() -> Result<()> {
             .read()?
             .to_dense_matrix()?
             .values_row_major(),
-        &[1.0, 2.0],
+        &[2.0, 1.0],
     );
     assert!(ends.motif_index("GT_AC").is_err());
 
