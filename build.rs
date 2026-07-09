@@ -148,6 +148,17 @@ fn main() {
         ],
     );
     define_any_feature_cfg(
+        "uses_tile_window_iter",
+        &[
+            "cmd_fcoverage",
+            "cmd_fragment_kmers",
+            "cmd_gc_bias",
+            "cmd_midpoints",
+            "cmd_wps",
+            "cmd_wps_peaks",
+        ],
+    );
+    define_any_feature_cfg(
         "uses_bed_window_tier_helpers",
         &["cmd_ends", "cmd_lengths", "cmd_ref_kmers"],
     );

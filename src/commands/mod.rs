@@ -6,7 +6,7 @@ pub(crate) mod cli_common;
 mod counters;
 #[cfg(feature = "cmd_coverage_weights")]
 pub(crate) mod coverage_weights;
-#[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
+#[cfg(feature = "cmd_ends")]
 pub(crate) mod ends;
 #[cfg(feature = "cmd_fcoverage")]
 pub(crate) mod fcoverage;

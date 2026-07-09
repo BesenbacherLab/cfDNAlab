@@ -15,12 +15,11 @@
 //! sort group labels alphabetically. Counting can then do one hash lookup per observed motif and
 //! skip all unselected motifs without allocating motif strings.
 
-use crate::shared::{
-    base::rev_complement,
-    kmers::kmer_codec::{
-        KmerCodes, KmerSpec, MAX_RADIX5_KMER_SIZE, SubspaceKmerSpec,
-        build_left_aligned_codes_for_spec, build_optional_kmer_spec, build_subspace_kmer_spec,
-    },
+#[cfg(feature = "cmd_ends")]
+use crate::shared::base::rev_complement;
+use crate::shared::kmers::kmer_codec::{
+    KmerCodes, KmerSpec, MAX_RADIX5_KMER_SIZE, SubspaceKmerSpec, build_left_aligned_codes_for_spec,
+    build_optional_kmer_spec, build_subspace_kmer_spec,
 };
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::{FxHashMap, FxHashSet};
@@ -66,6 +65,13 @@ pub(crate) struct SelectedMotifLookup {
     /// Codec spec for the inside half, or the full ref-kmer, if present
     pub(crate) inside_spec: Option<SelectedMotifHalfSpec>,
     /// Codec spec for the outside half, if present
+    #[cfg_attr(
+        not(feature = "cmd_ends"),
+        allow(
+            dead_code,
+            reason = "ref-kmers-only builds share the lookup type but never read the end-motif outside half"
+        )
+    )]
     pub(crate) outside_spec: Option<SelectedMotifHalfSpec>,
     /// Encoded motif key to original target index in `labels`
     pub(crate) lookup: FxHashMap<EncodedMotifKey, u32>,
@@ -107,6 +113,7 @@ impl SelectedMotifHalfSpec {
     }
 
     /// Wrap a shared byte-backed selected-subspace spec in the selected motif codec enum.
+    #[cfg(feature = "cmd_ends")]
     pub(crate) fn from_shared_subspace(spec: Arc<SubspaceKmerSpec>) -> Self {
         SelectedMotifHalfSpec::Subspace(spec)
     }
@@ -169,6 +176,7 @@ impl SelectedMotifHalfSpec {
 
     /// Return whether two specs can share one precomputed reference-code vector.
     #[inline]
+    #[cfg(feature = "cmd_ends")]
     pub(crate) fn can_share_reference_codes_with(&self, other: &Self) -> bool {
         matches!(
             (self, other),
@@ -184,6 +192,7 @@ impl SelectedMotifHalfSpec {
 #[derive(Debug, Clone, Copy)]
 enum SelectedMotifsFileKind {
     /// End-motif labels with separated outside and inside halves.
+    #[cfg(feature = "cmd_ends")]
     EndMotifs {
         /// Expected inside motif length from `--k-inside`
         k_inside: usize,
@@ -202,6 +211,7 @@ impl SelectedMotifsFileKind {
     /// Return the user-facing noun used in diagnostics.
     fn item_name(self) -> &'static str {
         match self {
+            #[cfg(feature = "cmd_ends")]
             Self::EndMotifs { .. } => "motif",
             #[cfg(feature = "cmd_ref_kmers")]
             Self::RefKmers { .. } => "k-mer",
@@ -230,6 +240,13 @@ struct ParsedSelectedMotifLabel {
     /// Normalized public motif label
     label: String,
     /// Uppercase outside sequence, empty for ref-kmers and when `k_outside = 0`
+    #[cfg_attr(
+        not(feature = "cmd_ends"),
+        allow(
+            dead_code,
+            reason = "ref-kmers labels reuse the parsed motif shape but do not have an outside half"
+        )
+    )]
     outside: String,
     /// Uppercase inside sequence, or the full k-mer for ref-kmers
     inside: String,
@@ -260,6 +277,7 @@ struct ParsedMotifsFileRow {
 /// -------
 /// - `Result<SelectedMotifLookup>`:
 ///   Parsed output axis and encoded lookup ready for tile-local counting
+#[cfg(feature = "cmd_ends")]
 pub(crate) fn parse_selected_end_motifs_file(
     path: &Path,
     k_inside: usize,
@@ -300,6 +318,7 @@ pub(crate) fn parse_selected_ref_kmers_file(
     path: &Path,
     kmer_size: usize,
 ) -> Result<SelectedMotifLookup> {
+    ensure!(kmer_size > 0, "`--kmer-size` must be positive");
     let contents = fs::read_to_string(path)
         .with_context(|| format!("reading ref-kmers motifs file {}", path.display()))?;
     parse_selected_motifs(&contents, SelectedMotifsFileKind::RefKmers { kmer_size })
@@ -315,10 +334,6 @@ fn parse_selected_motifs(
         "--motifs-file must contain at least one {}",
         kind.item_name()
     );
-    #[cfg(feature = "cmd_ref_kmers")]
-    if let SelectedMotifsFileKind::RefKmers { kmer_size } = kind {
-        ensure!(kmer_size > 0, "`--kmer-size` must be positive");
-    }
 
     let mut mode = None;
     let mut seen_motif_labels = FxHashSet::default();
@@ -457,6 +472,7 @@ fn parse_motif_label(
     line_number: usize,
 ) -> Result<ParsedSelectedMotifLabel> {
     match kind {
+        #[cfg(feature = "cmd_ends")]
         SelectedMotifsFileKind::EndMotifs {
             k_inside,
             k_outside,
@@ -473,6 +489,7 @@ fn parse_motif_label(
 /// Input labels usually use `<outside>_<inside>`. The underscore may be omitted when exactly one
 /// side has length zero. Output labels are always normalized back to `<outside>_<inside>` so the
 /// writer and downstream readers see one stable representation.
+#[cfg(feature = "cmd_ends")]
 fn parse_end_motif_label(
     raw_label: &str,
     k_inside: usize,
@@ -548,6 +565,7 @@ fn parse_ref_kmer_label(
 ///
 /// This checks length and allowed bases before the k-mer codec is used. The later codec checks are
 /// still kept because they protect this module against future parser changes.
+#[cfg(feature = "cmd_ends")]
 fn validate_motif_half(
     value: &str,
     expected_len: usize,
@@ -619,6 +637,7 @@ fn build_selected_motif_half_specs(
     rows: &[ParsedMotifsFileRow],
 ) -> Result<(Option<SelectedMotifHalfSpec>, Option<SelectedMotifHalfSpec>)> {
     match kind {
+        #[cfg(feature = "cmd_ends")]
         SelectedMotifsFileKind::EndMotifs {
             k_inside,
             k_outside,
@@ -630,6 +649,7 @@ fn build_selected_motif_half_specs(
     }
 }
 
+#[cfg(feature = "cmd_ends")]
 fn build_selected_end_motif_half_specs(
     k_inside: usize,
     k_outside: usize,
@@ -667,6 +687,7 @@ fn build_selected_end_motif_half_specs(
     ))
 }
 
+#[cfg(feature = "cmd_ends")]
 fn build_optional_selected_motif_half_spec(
     k: usize,
     label: &str,
@@ -709,6 +730,7 @@ fn build_selected_ref_kmer_spec(
     Ok(SelectedMotifHalfSpec::from_subspace(spec))
 }
 
+#[cfg(feature = "cmd_ends")]
 fn collect_selected_half_states(selected_halves: &mut Vec<String>, half: &str) {
     selected_halves.push(half.to_string());
     selected_halves.push(rev_complement(half));
@@ -724,7 +746,11 @@ fn encoded_keys_for_motif(
     inside_spec: Option<&SelectedMotifHalfSpec>,
     outside_spec: Option<&SelectedMotifHalfSpec>,
 ) -> Result<Vec<EncodedMotifKey>> {
+    #[cfg(not(feature = "cmd_ends"))]
+    let _ = outside_spec;
+
     match kind {
+        #[cfg(feature = "cmd_ends")]
         SelectedMotifsFileKind::EndMotifs { .. } => {
             encoded_keys_for_end_motif(motif, inside_spec, outside_spec).map(Vec::from)
         }
@@ -747,6 +773,7 @@ fn encoded_keys_for_motif(
 /// The left key is the motif as written. The right key uses reverse complements for both halves and
 /// sets `reverse_on_decode = true`, matching the state produced by right-end counting. These two
 /// states must remain separate because users may assign them to different groups.
+#[cfg(feature = "cmd_ends")]
 fn encoded_keys_for_end_motif(
     motif: &ParsedSelectedMotifLabel,
     inside_spec: Option<&SelectedMotifHalfSpec>,

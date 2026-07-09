@@ -18,10 +18,7 @@ use anyhow::{Context, Result, ensure};
 use serde_json::{Map, Value};
 use std::{fs, path::Path, sync::Arc};
 use zarrs::{
-    array::{
-        ArrayBuilder, DataType, Element, FillValueMetadata, builder::ArrayBuilderFillValue,
-        codec::ZstdCodec,
-    },
+    array::{ArrayBuilder, DataType, Element, builder::ArrayBuilderFillValue, codec::ZstdCodec},
     filesystem::FilesystemStore,
     group::GroupBuilder,
 };
@@ -262,8 +259,9 @@ pub(crate) fn create_zarr_array_with_fill_value(
 }
 
 /// Return a Zarr metadata fill value for boolean arrays.
+#[cfg(feature = "cmd_gc_bias")]
 pub(crate) fn bool_fill_value(value: bool) -> ArrayBuilderFillValue {
-    FillValueMetadata::from(value).into()
+    zarrs::array::FillValueMetadata::from(value).into()
 }
 
 #[cfg(any(

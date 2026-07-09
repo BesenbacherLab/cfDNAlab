@@ -72,17 +72,20 @@ pub(crate) fn ensure_grouped_bed_windows_not_empty(
 mod window_context {
     #[cfg(feature = "cmd_ref_kmers")]
     use crate::commands::cli_common::DistributionWindowSpec;
+    #[cfg(any(feature = "cmd_ends", feature = "cmd_fragment_kmers"))]
     use crate::{commands::cli_common::WindowSpec, shared::interval::IndexedInterval};
 
     /// Lightweight view into the window configuration for a given tile.
     ///
     /// Stores the context needed to convert chromosome-local indices into global window ids for a tile.
+    #[cfg(any(feature = "cmd_ends", feature = "cmd_fragment_kmers"))]
     pub(crate) struct WindowContext<'a> {
         pub(crate) spec: &'a WindowSpec,
         pub(crate) windows: Option<&'a [IndexedInterval<u64>]>,
         pub(crate) chr_idx_offset: u64,
     }
 
+    #[cfg(any(feature = "cmd_ends", feature = "cmd_fragment_kmers"))]
     impl<'a> WindowContext<'a> {
         #[inline]
         /// Return the per-chromosome windows slice when operating in BED mode.

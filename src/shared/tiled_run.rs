@@ -155,7 +155,16 @@ pub(crate) struct TileWindowSpan {
     pub(crate) last_idx_exclusive: usize,
 }
 
-#[cfg(uses_tile_window_helpers)]
+#[cfg(any(
+    feature = "cmd_ends",
+    feature = "cmd_fcoverage",
+    feature = "cmd_fragment_kmers",
+    feature = "cmd_gc_bias",
+    feature = "cmd_lengths",
+    feature = "cmd_midpoints",
+    feature = "cmd_wps",
+    feature = "cmd_wps_peaks"
+))]
 impl TileWindowSpan {
     /// Reports whether the cached window span is empty.
     ///
@@ -266,7 +275,7 @@ where
 ///
 /// The underlying slice is filtered on-the-fly to skip windows whose span does not intersect the
 /// tile, so callers do not need to duplicate the overlap predicates.
-#[cfg(uses_tile_window_helpers)]
+#[cfg(uses_tile_window_iter)]
 pub(crate) struct TileWindowsIter<'a, T>
 where
     T: AsRef<Interval<u64>>,
@@ -278,7 +287,7 @@ where
     core_end: u64,
 }
 
-#[cfg(uses_tile_window_helpers)]
+#[cfg(uses_tile_window_iter)]
 impl<'a, T> TileWindowsIter<'a, T>
 where
     T: AsRef<Interval<u64>>,
@@ -308,7 +317,7 @@ where
     }
 }
 
-#[cfg(uses_tile_window_helpers)]
+#[cfg(uses_tile_window_iter)]
 impl<'a, T> Iterator for TileWindowsIter<'a, T>
 where
     T: AsRef<Interval<u64>>,
@@ -338,7 +347,7 @@ where
 ///
 /// # Returns
 /// A pair `(left, right)` giving the half-open window index range whose members may overlap.
-#[cfg(uses_tile_window_helpers)]
+#[cfg(uses_tile_window_iter)]
 fn span_bounds_without_cache<T>(windows: &[T], core_start: u64, core_end: u64) -> (usize, usize)
 where
     T: AsRef<Interval<u64>>,
@@ -414,7 +423,7 @@ where
 /// # Returns
 /// A `TileWindowsIter` positioned to stream overlapping windows. Commands that need source window
 /// indices can use the crate-local index method on the returned iterator.
-#[cfg(uses_tile_window_helpers)]
+#[cfg(uses_tile_window_iter)]
 pub(crate) fn overlapping_windows_for_tile<'a, T>(
     windows: &'a [T],
     tile: &Tile,
