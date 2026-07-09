@@ -1,9 +1,14 @@
 use super::{
     ApplyGCArgFileOnly, ApplyGCArgs, ChromosomeArgs, ContigSource, FragmentLengthArgs,
-    WindowAssigner, min_overlap_fraction_for_window_assignment, parse_length_bins,
-    parse_output_prefix, parse_sam_aux_tag_name, resolve_length_bin_edges,
+    parse_length_bins, parse_output_prefix, parse_sam_aux_tag_name, resolve_length_bin_edges,
     validate_max_soft_clips, validate_output_prefix,
 };
+#[cfg(any(
+    feature = "cmd_gc_bias",
+    feature = "cmd_lengths",
+    feature = "cmd_ref_kmers"
+))]
+use super::{WindowAssigner, min_overlap_fraction_for_window_assignment};
 use crate::shared::constants::{MAX_MAX_SOFT_CLIPS, MAX_SUPPORTED_FRAGMENT_LENGTH};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -79,6 +84,11 @@ fn validate_max_soft_clips_rejects_values_above_configured_limit() {
 }
 
 #[test]
+#[cfg(any(
+    feature = "cmd_gc_bias",
+    feature = "cmd_lengths",
+    feature = "cmd_ref_kmers"
+))]
 fn min_overlap_fraction_for_window_assignment_uses_any_overlap_thresholds() {
     let span = 4;
 
@@ -93,6 +103,11 @@ fn min_overlap_fraction_for_window_assignment_uses_any_overlap_thresholds() {
 }
 
 #[test]
+#[cfg(any(
+    feature = "cmd_gc_bias",
+    feature = "cmd_lengths",
+    feature = "cmd_ref_kmers"
+))]
 fn min_overlap_fraction_for_window_assignment_uses_full_overlap_thresholds() {
     let span = 4;
 
@@ -107,6 +122,11 @@ fn min_overlap_fraction_for_window_assignment_uses_full_overlap_thresholds() {
 }
 
 #[test]
+#[cfg(any(
+    feature = "cmd_gc_bias",
+    feature = "cmd_lengths",
+    feature = "cmd_ref_kmers"
+))]
 fn min_overlap_fraction_for_window_assignment_preserves_proportion_threshold() {
     let threshold = 0.375;
 
@@ -117,6 +137,11 @@ fn min_overlap_fraction_for_window_assignment_preserves_proportion_threshold() {
 }
 
 #[test]
+#[cfg(any(
+    feature = "cmd_gc_bias",
+    feature = "cmd_lengths",
+    feature = "cmd_ref_kmers"
+))]
 #[should_panic(expected = "window assignment span must be positive")]
 fn min_overlap_fraction_for_window_assignment_rejects_zero_span() {
     min_overlap_fraction_for_window_assignment(WindowAssigner::Any, 0);

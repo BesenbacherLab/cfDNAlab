@@ -568,6 +568,11 @@ impl FromStr for WindowAssigner {
 ///
 /// `Midpoint` callers first project the assignment interval to the single midpoint base. The same
 /// threshold as `All` then accepts windows that cover that projected base.
+#[cfg(any(
+    feature = "cmd_gc_bias",
+    feature = "cmd_lengths",
+    feature = "cmd_ref_kmers"
+))]
 pub(crate) fn min_overlap_fraction_for_window_assignment(
     assign_by: WindowAssigner,
     max_assignment_span: u64,
