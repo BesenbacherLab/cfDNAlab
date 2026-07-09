@@ -170,7 +170,7 @@ Precompute GC-bias correction, genomic smoothing scaling factors, and reference 
   <dt><img
   src="https://img.shields.io/badge/%24-cfdna%20ref--kmers-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna ref-kmers"
-  width="245"
+  width="185"
 /></dt>
   <dd>Count k-mers in the reference genome for manual correction of end-motif counts.</dd>
   <hr>
