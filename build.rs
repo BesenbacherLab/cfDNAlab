@@ -148,6 +148,14 @@ fn main() {
         ],
     );
     define_any_feature_cfg(
+        "uses_bed_window_tier_helpers",
+        &["cmd_ends", "cmd_lengths", "cmd_ref_kmers"],
+    );
+    define_any_feature_cfg(
+        "uses_tile_bed_overlap_context",
+        &["cmd_ends", "cmd_lengths"],
+    );
+    define_any_feature_cfg(
         "uses_temp_dirs",
         &[
             "cmd_bam_to_bam",

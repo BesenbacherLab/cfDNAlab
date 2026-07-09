@@ -1,15 +1,16 @@
 use crate::shared::interval::IndexedInterval;
 use crate::shared::interval::Interval;
-#[cfg(uses_tile_window_helpers)]
+#[cfg(uses_bed_window_tier_helpers)]
 use crate::shared::tiled_run::{Tile, TileWindowSpan, precompute_tile_window_spans};
 use crate::{Error, Result};
-#[cfg(uses_tile_window_helpers)]
+#[cfg(uses_bed_window_tier_helpers)]
 use fxhash::FxHashMap;
 
 /// Default minimum length for treating a BED-like window as broad.
 ///
 /// Broad windows get their own tile-local pointer so they cannot keep the narrow-window pointer
 /// pinned behind nested short intervals.
+#[cfg(uses_bed_window_tier_helpers)]
 pub(crate) const DEFAULT_BROAD_WINDOW_MIN_BP: u64 = 100_000;
 
 /// A single window hit for one queried interval.
@@ -176,6 +177,7 @@ impl OverlappingWindows {
 /// `all_windows_idx` is the position in the chromosome-local `all_windows` list. It is used for
 /// tile-local count arrays. `output_idx` is the identity carried by the original `IndexedInterval`:
 /// the BED row id for ordinary BED input and the group index for grouped BED.
+#[cfg(uses_bed_window_tier_helpers)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BedWindowEntry {
     pub(crate) interval: Interval<u64>,
@@ -183,6 +185,7 @@ pub(crate) struct BedWindowEntry {
     pub(crate) output_idx: u64,
 }
 
+#[cfg(uses_bed_window_tier_helpers)]
 impl BedWindowEntry {
     /// Build a BED entry from a window and its chromosome-local `all_windows` position.
     #[inline]
@@ -221,6 +224,7 @@ impl BedWindowEntry {
     }
 }
 
+#[cfg(uses_bed_window_tier_helpers)]
 impl AsRef<Interval<u64>> for BedWindowEntry {
     #[inline]
     fn as_ref(&self) -> &Interval<u64> {
@@ -229,6 +233,7 @@ impl AsRef<Interval<u64>> for BedWindowEntry {
 }
 
 /// Size class for a BED window tier.
+#[cfg(uses_bed_window_tier_helpers)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BedWindowTierKind {
     /// Windows with length greater than or equal to `broad_window_min_bp`.
@@ -238,6 +243,7 @@ pub(crate) enum BedWindowTierKind {
 }
 
 /// One start-sorted BED window tier used by the tile-local overlap finder.
+#[cfg(uses_bed_window_tier_helpers)]
 #[derive(Debug, Clone)]
 pub(crate) struct BedWindowTier {
     /// Size class used for tier-specific fast paths.
@@ -253,12 +259,14 @@ pub(crate) struct BedWindowTier {
 /// class, so fast paths can depend on `BedWindowTierKind` rather than a vector position. Entries
 /// inside the tiers keep their `all_windows_idx`, so overlap results can be mapped back to the full
 /// list even though each tier advances through its own pointer.
+#[cfg(uses_bed_window_tier_helpers)]
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ChromosomeBedWindows {
     pub(crate) all_windows: Vec<BedWindowEntry>,
     pub(crate) tiers: Vec<BedWindowTier>,
 }
 
+#[cfg(uses_bed_window_tier_helpers)]
 impl ChromosomeBedWindows {
     /// Build the current broad/narrow tier views from start-sorted BED-like windows.
     ///
@@ -307,7 +315,7 @@ impl ChromosomeBedWindows {
 }
 
 /// Build chromosome-local BED window collections for every chromosome with BED-like windows.
-#[cfg(uses_tile_window_helpers)]
+#[cfg(uses_bed_window_tier_helpers)]
 pub(crate) fn build_bed_windows_by_chr(
     windows_by_chr: &FxHashMap<String, Vec<IndexedInterval<u64>>>,
     broad_window_min_bp: u64,
@@ -324,9 +332,10 @@ pub(crate) fn build_bed_windows_by_chr(
 }
 
 /// Cached tile spans for `all_windows` and each tier.
-#[cfg(uses_tile_window_helpers)]
+#[cfg(uses_bed_window_tier_helpers)]
 #[derive(Clone, Debug)]
 pub(crate) struct TileBedWindowSpans {
+    #[cfg_attr(not(uses_tile_bed_overlap_context), allow(dead_code))]
     pub(crate) all_windows_span: Option<TileWindowSpan>,
     pub(crate) tier_spans: Vec<Option<TileWindowSpan>>,
 }
@@ -335,7 +344,7 @@ pub(crate) struct TileBedWindowSpans {
 ///
 /// The windows stay in chromosome-level storage. The spans select the `all_windows` and tier
 /// ranges that can matter for one tile.
-#[cfg(uses_tile_window_helpers)]
+#[cfg(uses_bed_window_tier_helpers)]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct TileBedWindowView<'a> {
     pub(crate) chromosome_windows: &'a ChromosomeBedWindows,
@@ -343,7 +352,7 @@ pub(crate) struct TileBedWindowView<'a> {
 }
 
 /// Precompute tile-local `all_windows` and tier spans for BED-like windows.
-#[cfg(uses_tile_window_helpers)]
+#[cfg(uses_bed_window_tier_helpers)]
 pub(crate) fn precompute_tile_bed_window_spans(
     tiles: &[Tile],
     bed_windows_by_chr: &FxHashMap<String, ChromosomeBedWindows>,
@@ -398,7 +407,7 @@ pub(crate) fn precompute_tile_bed_window_spans(
     tile_spans
 }
 
-#[cfg(uses_tile_window_helpers)]
+#[cfg(uses_tile_bed_overlap_context)]
 struct TileBedTierCursor {
     windows: Vec<BedWindowEntry>,
     wd_ptr: usize,
@@ -410,7 +419,7 @@ struct TileBedTierCursor {
 /// assignment range. Every query assigned to the tile lies inside that range, so these broad
 /// windows do not need per-query scanning. `scanned_windows_by_size_tier` contains all other
 /// candidates, still grouped by the broad/narrow size tier chosen by `broad_window_min_bp`.
-#[cfg(uses_tile_window_helpers)]
+#[cfg(uses_bed_window_tier_helpers)]
 #[derive(Debug)]
 struct TileBedWindowSplit {
     always_hit_windows: Vec<BedWindowEntry>,
@@ -427,7 +436,7 @@ struct TileBedWindowSplit {
 /// Empty size tiers are valid and remain empty in `scanned_windows_by_size_tier`. A broad row is
 /// moved to `always_hit_windows` only after its end has been clipped to `chrom_len`, because
 /// overlap rows must never expose bases beyond the chromosome.
-#[cfg(uses_tile_window_helpers)]
+#[cfg(uses_bed_window_tier_helpers)]
 fn split_tile_bed_candidates_into_always_hit_and_scanned<'a, I>(
     chrom_len: u64,
     windows_by_size_tier: I,
@@ -474,7 +483,7 @@ where
 /// `spans.tier_spans` must have an entry for every chromosome BED tier. An entry may be `None`,
 /// which means that tier has no candidate windows for this tile. A missing entry would silently
 /// drop a whole tier, so it is treated as an internal span-cache error.
-#[cfg(uses_tile_window_helpers)]
+#[cfg(uses_bed_window_tier_helpers)]
 fn split_tile_bed_windows(
     chrom_len: u64,
     chromosome_windows: &ChromosomeBedWindows,
@@ -515,14 +524,14 @@ fn split_tile_bed_windows(
 /// The returned window order is an implementation detail and may differ from
 /// [`find_overlapping_windows`]. Callers must treat overlap rows as a set keyed by `idx` plus
 /// interval, not as an ordered stream.
-#[cfg(uses_tile_window_helpers)]
+#[cfg(uses_tile_bed_overlap_context)]
 pub(crate) struct TileBedOverlapContext {
     chrom_len: u64,
     always_hit_windows: Vec<BedWindowEntry>,
     tier_cursors: Vec<TileBedTierCursor>,
 }
 
-#[cfg(uses_tile_window_helpers)]
+#[cfg(uses_tile_bed_overlap_context)]
 impl TileBedOverlapContext {
     /// Build the tile-local overlap context from tiered BED-like windows.
     ///
@@ -600,7 +609,7 @@ impl TileBedOverlapContext {
     }
 }
 
-#[cfg(uses_tile_window_helpers)]
+#[cfg(uses_bed_window_tier_helpers)]
 fn span_slice<'a>(
     items: &'a [BedWindowEntry],
     span: Option<TileWindowSpan>,
@@ -620,7 +629,7 @@ fn span_slice<'a>(
     Ok(&items[span.first_idx..span.last_idx_exclusive])
 }
 
-#[cfg(uses_tile_window_helpers)]
+#[cfg(uses_bed_window_tier_helpers)]
 fn clamp_bed_window_to_chrom(
     window: BedWindowEntry,
     chrom_len: u64,
@@ -633,7 +642,7 @@ fn clamp_bed_window_to_chrom(
     Ok(Some(Interval::new(window_start, window_end)?))
 }
 
-#[cfg(uses_tile_window_helpers)]
+#[cfg(uses_bed_window_tier_helpers)]
 fn append_bed_window_tier_overlaps(
     chrom_len: u64,
     wd_ptr: &mut usize,
@@ -896,7 +905,7 @@ impl FixedWidthWindowSource {
     /// list. Narrow windows and non-covering broad windows stay in their size tier and are scanned
     /// through that tier's independent cache. This avoids checking narrow windows for a full-range
     /// condition they are not expected to satisfy in production tile runs.
-    #[cfg(uses_tile_window_helpers)]
+    #[cfg(uses_bed_window_tier_helpers)]
     pub(crate) fn bed_from_tile_view(
         chrom_len: u64,
         bed_window_view: TileBedWindowView<'_>,
