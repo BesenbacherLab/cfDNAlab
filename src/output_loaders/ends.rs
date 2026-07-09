@@ -969,6 +969,7 @@ impl EndMotifCountsData {
     }
 
     /// Return the dense shape represented by this storage.
+    #[cfg(feature = "cmd_ref_kmers")]
     pub(crate) fn shape(&self) -> (usize, usize) {
         match self {
             Self::Dense(counts) => counts.shape(),
@@ -999,6 +1000,7 @@ impl EndMotifCountSelection {
     /// from the same path as uncorrected counts. This helper swaps in corrected
     /// dense or sparse counts after checking that the replacement storage has
     /// the same `(row, motif)` shape as the selection metadata.
+    #[cfg(feature = "cmd_ref_kmers")]
     pub(crate) fn with_data(self, data: EndMotifCountsData) -> Result<Self> {
         ensure!(
             data.shape() == self.shape(),
@@ -1167,6 +1169,7 @@ impl EndMotifSparseCounts {
     /// not user-input validation. The caller supplies the selected matrix shape
     /// and entries whose coordinates belong to that shape. This function sorts
     /// the entries to preserve the sparse COO ordering contract.
+    #[cfg(feature = "cmd_ref_kmers")]
     pub(crate) fn from_entries(
         row_count: usize,
         motif_count: usize,

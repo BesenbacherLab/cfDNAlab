@@ -83,7 +83,7 @@ def test_cfdnalab_package_reads_sparse_windowed_ref_kmers(
         "GTA",
     ]
     assert not ref_kmers.has_motif("TTT")
-    with pytest.raises(ValueError, match="would densify a sparse reference k-mer store"):
+    with pytest.raises(ValueError, match="would turn sparse reference k-mer output"):
         ref_kmers.dense_frequencies_array()
     np.testing.assert_allclose(
         ref_kmers.dense_counts_array(allow_densify=True),
