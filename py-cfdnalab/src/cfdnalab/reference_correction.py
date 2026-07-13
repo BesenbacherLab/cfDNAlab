@@ -1,16 +1,67 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 import scipy.sparse as sparse
 
-from ._helpers import filter_blacklisted_fraction, validate_scalar_bool
+from ._helpers import (
+    filter_blacklisted_fraction,
+    normalize_strings,
+    validate_scalar_bool,
+)
 from .ends import EndMotifCounts
 from .ref_kmers import RefKmerFrequencies
 
 UNSUPPORTED_MOTIF_POLICIES = {"error", "drop", "keep_na"}
+TWO_SIDED_CORRECTION_MODES = {"joint", "split", "outside", "inside"}
+
+
+@dataclass
+class _ReferenceCorrectionContext:
+    """Validated row and motif axes shared by all corrected output forms."""
+
+    correction_mode: dict[str, object]
+    row_columns: list[str]
+    reference_row_columns: list[str]
+    selected_mode_labels: list[str]
+
+
+def _prepare_reference_correction(
+    ends: EndMotifCounts,
+    ref_kmers: RefKmerFrequencies,
+    *,
+    motifs: str | Sequence[str] | None,
+    motif_idxs: int | Sequence[int] | None,
+    use_global_bias: bool,
+    two_sided_correction: str | None,
+) -> _ReferenceCorrectionContext:
+    """Validate correction inputs and resolve the output axes once."""
+    use_global_bias = validate_scalar_bool(use_global_bias, "use_global_bias")
+    two_sided_correction = _validate_two_sided_correction(two_sided_correction)
+    _validate_reference_correction_inputs(ends, ref_kmers, use_global_bias)
+    correction_mode = _resolve_correction_mode(ends, ref_kmers, two_sided_correction)
+    row_columns = _reference_correction_row_columns(ends.row_mode())
+    reference_row_columns = _reference_correction_reference_row_columns(
+        ends,
+        ref_kmers,
+        use_global_bias,
+    )
+    _validate_matching_rows(ends, ref_kmers, row_columns, reference_row_columns)
+    selected_mode_labels, _ = _selected_mode_axis(
+        ends,
+        correction_mode,
+        motifs=motifs,
+        motif_idxs=motif_idxs,
+    )
+    return _ReferenceCorrectionContext(
+        correction_mode=correction_mode,
+        row_columns=row_columns,
+        reference_row_columns=reference_row_columns,
+        selected_mode_labels=selected_mode_labels,
+    )
 
 
 def _reference_corrected_data_frame(
@@ -26,29 +77,97 @@ def _reference_corrected_data_frame(
     max_blacklisted_fraction: float = 1.0,
     use_global_bias: bool = False,
     unsupported_motifs: str = "error",
+    two_sided_correction: str | None = None,
 ) -> pd.DataFrame:
     """
     Correct end-motif counts for matching reference k-mer frequencies.
 
-    The returned data frame starts from `ends.data_frame()`. Each count is
-    divided by `reference_frequency * correction_motif_count`.
-    `correction_motif_count` is computed separately for each reference row from
-    motifs with positive reference frequency. A uniform reference within that
-    row leaves counts unchanged.
+    The returned data frame starts from `ends.data_frame()` and adds
+    `corrected_count` and `corrected_frequency`. Formula internals such as
+    reference frequencies and correction factors are not returned.
 
-    Concrete end-motif labels are matched to reference k-mers by removing the
-    `_` separator, for example `AT_CG -> ATCG`. Motif-group outputs are matched
-    directly by group label.
+    Motif labels are matched to reference k-mers by removing the `_` separator,
+    for example `AT_CG -> ATCG`. Motif-group outputs are matched directly by
+    group label.
 
     Reference k-mer output is read without densifying. For sparse reference
     output, omitted row/motif pairs are treated as zero frequency.
 
-    Sample motifs can be absent from the reference genome, or can have zero
-    reference frequency in the matched row. Positive end-motif counts for those
-    motifs cannot be divided by a reference bias. By default this is an error.
-    Set `unsupported_motifs="drop"` to omit rows whose reference motif has no
-    positive reference frequency, or `unsupported_motifs="keep_na"` to keep
-    them with `NaN` corrected counts.
+    Reference correction
+    --------------------
+    Reference correction divides each observed end-motif count by a
+    reference-based correction factor for the matched row. This factor is
+    computed from the motif frequencies in the reference k-mer output and
+    normalized so a uniform reference composition leaves counts unchanged.
+    Motifs that are common in the reference row are scaled down. Motifs that
+    are rare in the reference row are scaled up. Only motifs with a positive
+    reference frequency contribute to the row's correction support.
+
+    Two-sided correction modes
+    --------------------------
+    When motif labels contain both outside and inside bases, such as `"AC_GT"`,
+    `two_sided_correction` chooses both the motif labels in the result and the
+    correction factor used for each returned count.
+
+    - `"joint"` keeps full labels such as `"AC_GT"` and corrects each count
+      using the exact reference k-mer `"ACGT"`.
+
+    - `"split"` keeps full labels such as `"AC_GT"`, but calculates the
+      correction factor from the two sides separately. For `"AC_GT"`, separate
+      correction factors are calculated for outside label `"AC"` and inside
+      label `"GT"`. Those two correction factors are multiplied and applied to
+      the observed `"AC_GT"` count. Use this when you want full two-sided motif
+      labels in the result, but the exact full reference k-mers are too sparse
+      or you want the reference correction to treat outside and inside sequence
+      composition separately.
+
+    - `"outside"` returns outside labels such as `"AC_"`. For each outside
+      label, all full motif counts with that outside label are summed first.
+      For example, `"AC_AA"` and `"AC_GT"` both contribute to the `"AC_"`
+      count. That summed count is corrected using the outside label `"AC"`.
+
+    - `"inside"` returns inside labels such as `"_GT"`. For each inside label,
+      all full motif counts with that inside label are summed first. For
+      example, `"AA_GT"` and `"AC_GT"` both contribute to the `"_GT"` count.
+      That summed count is corrected using the inside label `"GT"`.
+
+    One-sided outputs do not accept an explicit mode.
+
+    Reference universe
+    ------------------
+    For `"split"`, `"outside"`, and `"inside"`, side-specific reference
+    frequencies are calculated from the loaded full-length reference k-mers.
+    For example, the outside frequency for `"AC"` is the sum of frequencies for
+    loaded k-mers with prefix `"AC"`, such as `"ACTG"` and `"ACAA"`. The inside
+    frequency for `"TG"` is the corresponding sum over loaded k-mers with suffix
+    `"TG"`. Separate shorter reference k-mer runs are not required.
+
+    A motifs file used for the reference output restricts these sums to the
+    k-mers in that file. Without a motifs file, all k-mers in the reference
+    output can contribute, including k-mers absent from the sample end-motif
+    output.
+
+    Corrected frequencies
+    ---------------------
+    `corrected_frequency` is `corrected_count` divided by the sum of corrected
+    counts for the same output row. The sum uses the full motif axis produced by
+    the selected correction mode. Motif selection is applied afterward, so a
+    selected subset keeps its full-axis frequencies and may sum to less than 1.
+
+    If the finite corrected-count total is zero, finite frequencies are zero.
+    Correction fails if dividing a finite count by its correction factor would
+    produce a non-finite corrected count.
+    With `unsupported_motifs="keep_na"`, one positive count without a positive
+    correction factor makes every corrected frequency in that output row
+    `NaN`, because the full corrected total is unknown. With
+    `unsupported_motifs="drop"`, unsupported units are removed before the total
+    is calculated.
+
+    An observed sample motif with a positive count is unsupported when it has no
+    positive correction factor under the selected mode. By default this is an
+    error. Set
+    `unsupported_motifs="drop"` to omit unsupported rows, or
+    `unsupported_motifs="keep_na"` to keep them with `NaN` corrected counts.
 
     By default, end-motif and reference k-mer rows must match exactly. If
     `ref_kmers` is global and `ends` is windowed or grouped, pass
@@ -60,8 +179,8 @@ def _reference_corrected_data_frame(
 
     Window, group, and motif selectors follow the same rules as
     `ends.data_frame()`. Motif selectors choose the returned end-motif rows.
-    They do not change the reference support used for scaling, so selecting a
-    motif gives the same corrected value as filtering the full corrected data
+    They do not change the reference support used for correction, so selecting
+    a motif gives the same corrected value as filtering the full corrected data
     frame afterward.
 
     Parameters
@@ -96,123 +215,134 @@ def _reference_corrected_data_frame(
         Whether a global reference k-mer output may be applied to every
         non-global end-motif row.
     unsupported_motifs
-        What to do when an observed sample motif has no positive reference
-        frequency. Use `"error"`, `"drop"`, or `"keep_na"`.
+        What to do when an observed sample motif has no positive correction
+        factor under the selected mode. Use `"error"`, `"drop"`, or `"keep_na"`.
+    two_sided_correction
+        Required for two-sided motif labels such as `"AC_GT"`. Use `"joint"`,
+        `"split"`, `"outside"`, or `"inside"`. Leave as `None` for one-sided
+        motifs or motif groups.
 
     Returns
     -------
     pandas.DataFrame
-        End-motif rows with `reference_motif`, `reference_frequency`,
-        `correction_motif_count`, `reference_scale`, and
-        `reference_corrected_count`.
+        End-motif rows with `corrected_count` and `corrected_frequency`.
     """
-    use_global_bias = validate_scalar_bool(use_global_bias, "use_global_bias")
     unsupported_motifs = _validate_unsupported_motifs(unsupported_motifs)
-    _validate_reference_correction_inputs(ends, ref_kmers, use_global_bias)
-    row_columns = _reference_correction_row_columns(ends.row_mode())
-    reference_row_columns = _reference_correction_reference_row_columns(
+    context = _prepare_reference_correction(
         ends,
         ref_kmers,
-        use_global_bias,
+        motifs=motifs,
+        motif_idxs=motif_idxs,
+        use_global_bias=use_global_bias,
+        two_sided_correction=two_sided_correction,
     )
-    _validate_matching_rows(ends, ref_kmers, row_columns, reference_row_columns)
+    return _reference_corrected_data_frame_from_context(
+        ends,
+        ref_kmers,
+        context,
+        window_idxs=window_idxs,
+        groups=groups,
+        group_idxs=group_idxs,
+        densify=densify,
+        max_blacklisted_fraction=max_blacklisted_fraction,
+        unsupported_motifs=unsupported_motifs,
+    )
+
+
+def _reference_corrected_data_frame_from_context(
+    ends: EndMotifCounts,
+    ref_kmers: RefKmerFrequencies,
+    context: _ReferenceCorrectionContext,
+    *,
+    window_idxs: int | Sequence[int] | None,
+    groups: str | Sequence[str] | None,
+    group_idxs: int | Sequence[int] | None,
+    densify: bool,
+    max_blacklisted_fraction: float,
+    unsupported_motifs: str,
+) -> pd.DataFrame:
+    """Calculate a corrected data frame from validated axes and options."""
 
     end_rows = ends._data_frame(
         densify=densify,
         window_idxs=window_idxs,
         groups=groups,
         group_idxs=group_idxs,
-        motifs=motifs,
-        motif_idxs=motif_idxs,
+        motifs=None,
+        motif_idxs=None,
         max_blacklisted_fraction=max_blacklisted_fraction,
     )
     if end_rows.empty:
         return _add_empty_reference_correction_columns(end_rows)
+    output_columns = end_rows.columns.tolist()
+    end_rows = end_rows.copy()
+    end_rows["_cfdnalab_row_order"] = _row_order_indices(
+        end_rows,
+        context.row_columns,
+    )
 
     ref_row_indices = _reference_row_indices_for_end_rows(
         ref_kmers,
         end_rows,
-        reference_row_columns,
+        context.reference_row_columns,
     )
     ref_rows = _reference_rows_for_indices(
         ref_kmers,
         ref_row_indices,
     )
 
-    end_rows = end_rows.copy()
-    ref_rows = ref_rows.copy()
-    if ends.end_motifs.motif_axis_kind == "motif_group":
-        end_rows["reference_motif"] = end_rows["motif"]
-    else:
-        end_rows["reference_motif"] = end_rows["motif"].str.replace(
-            "_", "", regex=False
-        )
-
-    ref_rows = ref_rows.rename(
-        columns={"motif": "reference_motif", "frequency": "reference_frequency"}
-    )
-    ref_columns = reference_row_columns + ["reference_motif", "reference_frequency"]
-    ref_rows = ref_rows[ref_columns]
-    ref_rows = _filter_reference_rows_to_end_rows(
+    ref_rows = _prepared_reference_rows(
         ref_rows,
         end_rows,
-        reference_row_columns,
+        context.reference_row_columns,
     )
-    merge_columns = reference_row_columns + ["reference_motif"]
-    duplicated_reference = ref_rows.duplicated(merge_columns)
-    if duplicated_reference.any():
-        raise ValueError("Reference k-mer rows are not unique for row and motif labels")
-    reference_support_counts = _reference_support_counts(
-        ref_rows,
-        reference_row_columns,
-    )
+    if context.correction_mode["mode"] == "exact":
+        corrected = _correct_exact_label_data_frame(
+            ends,
+            end_rows,
+            ref_rows,
+            context.reference_row_columns,
+            unsupported_motifs,
+        )
+    elif context.correction_mode["mode"] == "split":
+        corrected = _correct_split_data_frame(
+            end_rows,
+            ref_rows,
+            context.reference_row_columns,
+            context.correction_mode,
+            unsupported_motifs,
+        )
+    else:
+        corrected = _correct_side_data_frame(
+            end_rows,
+            ref_rows,
+            context.reference_row_columns,
+            context.correction_mode,
+            output_columns,
+            unsupported_motifs,
+        )
 
-    corrected = end_rows.merge(
-        ref_rows,
-        on=merge_columns,
-        how="left",
-        sort=False,
-    )
-    missing_reference = corrected["reference_frequency"].isna()
-    if missing_reference.any():
-        corrected.loc[missing_reference, "reference_frequency"] = 0.0
-
-    corrected = _add_correction_motif_count(
+    corrected = _add_corrected_frequency(
         corrected,
-        reference_support_counts,
-        reference_row_columns,
+        context.row_columns,
+        unsupported_motifs,
     )
-
-    unsupported_reference = corrected["reference_frequency"].le(0.0)
-    positive_unsupported_reference = unsupported_reference & corrected["count"].gt(0.0)
-    if positive_unsupported_reference.any() and unsupported_motifs == "error":
-        unsupported_labels = sorted(
-            corrected.loc[positive_unsupported_reference, "reference_motif"].unique()
+    corrected = corrected.loc[
+        corrected["motif"].isin(context.selected_mode_labels)
+    ].copy()
+    if context.selected_mode_labels:
+        motif_order = {
+            motif: index
+            for index, motif in enumerate(context.selected_mode_labels)
+        }
+        corrected["_cfdnalab_motif_order"] = corrected["motif"].map(motif_order)
+        corrected = corrected.sort_values(
+            ["_cfdnalab_row_order", "_cfdnalab_motif_order"],
+            kind="stable",
         )
-        raise ValueError(
-            "Positive-count end motifs have no positive reference frequency: "
-            f"{unsupported_labels!r}. Pass unsupported_motifs='drop' to omit "
-            "those rows, or unsupported_motifs='keep_na' to keep them with "
-            "NaN corrected counts."
-        )
-    if unsupported_motifs == "drop":
-        corrected = corrected.loc[~unsupported_reference].copy()
-
-    corrected["reference_scale"] = (
-        corrected["reference_frequency"] * corrected["correction_motif_count"]
-    )
-    corrected["reference_corrected_count"] = 0.0
-    supported_reference = corrected["reference_scale"].gt(0.0)
-    corrected.loc[supported_reference, "reference_corrected_count"] = (
-        corrected.loc[supported_reference, "count"]
-        / corrected.loc[supported_reference, "reference_scale"]
-    )
-    if unsupported_motifs == "keep_na":
-        corrected.loc[
-            positive_unsupported_reference.reindex(corrected.index, fill_value=False),
-            "reference_corrected_count",
-        ] = np.nan
-    return corrected
+        corrected = corrected.drop(columns=["_cfdnalab_motif_order"])
+    corrected_columns = output_columns + ["corrected_count", "corrected_frequency"]
+    return corrected[corrected_columns].reset_index(drop=True)
 
 
 def _reference_corrected_counts_array(
@@ -228,6 +358,7 @@ def _reference_corrected_counts_array(
     max_blacklisted_fraction: float = 1.0,
     use_global_bias: bool = False,
     unsupported_motifs: str = "error",
+    two_sided_correction: str | None = None,
 ) -> np.ndarray:
     """
     Return reference-corrected end-motif counts as a dense NumPy array.
@@ -243,30 +374,34 @@ def _reference_corrected_counts_array(
             "a dense in-memory array. Use sparse_corrected_counts_matrix() or "
             "pass allow_densify=True."
         )
-    row_indices, motif_indices = _selected_end_axes(
+    context = _prepare_reference_correction(
+        ends,
+        ref_kmers,
+        motifs=motifs,
+        motif_idxs=motif_idxs,
+        use_global_bias=use_global_bias,
+        two_sided_correction=two_sided_correction,
+    )
+    row_indices = _selected_rows(
         ends,
         window_idxs=window_idxs,
         groups=groups,
         group_idxs=group_idxs,
-        motifs=motifs,
-        motif_idxs=motif_idxs,
         max_blacklisted_fraction=max_blacklisted_fraction,
     )
-    corrected = _reference_corrected_data_frame(
+    corrected = _reference_corrected_data_frame_from_context(
         ends,
         ref_kmers,
+        context,
         window_idxs=window_idxs,
         groups=groups,
         group_idxs=group_idxs,
         densify=True,
-        motifs=motifs,
-        motif_idxs=motif_idxs,
         max_blacklisted_fraction=max_blacklisted_fraction,
-        use_global_bias=use_global_bias,
         unsupported_motifs=unsupported_motifs,
     )
-    return corrected["reference_corrected_count"].to_numpy(dtype=float).reshape(
-        (len(row_indices), len(motif_indices))
+    return corrected["corrected_count"].to_numpy(dtype=float).reshape(
+        (len(row_indices), len(context.selected_mode_labels))
     )
 
 
@@ -282,6 +417,7 @@ def _sparse_reference_corrected_counts_matrix(
     max_blacklisted_fraction: float = 1.0,
     use_global_bias: bool = False,
     unsupported_motifs: str = "error",
+    two_sided_correction: str | None = None,
 ) -> sparse.coo_matrix:
     """
     Return reference-corrected end-motif counts as a SciPy COO matrix.
@@ -290,59 +426,70 @@ def _sparse_reference_corrected_counts_matrix(
         unsupported_motifs,
         "sparse_corrected_counts_matrix",
     )
-    row_indices, motif_indices = _selected_end_axes(
+    context = _prepare_reference_correction(
+        ends,
+        ref_kmers,
+        motifs=motifs,
+        motif_idxs=motif_idxs,
+        use_global_bias=use_global_bias,
+        two_sided_correction=two_sided_correction,
+    )
+    row_indices = _selected_rows(
         ends,
         window_idxs=window_idxs,
         groups=groups,
         group_idxs=group_idxs,
-        motifs=motifs,
-        motif_idxs=motif_idxs,
         max_blacklisted_fraction=max_blacklisted_fraction,
     )
-    if len(row_indices) == 0 or len(motif_indices) == 0:
-        return sparse.coo_matrix((len(row_indices), len(motif_indices)))
+    if len(row_indices) == 0 or len(context.selected_mode_labels) == 0:
+        return sparse.coo_matrix(
+            (len(row_indices), len(context.selected_mode_labels))
+        )
 
-    corrected = _reference_corrected_data_frame(
+    corrected = _reference_corrected_data_frame_from_context(
         ends,
         ref_kmers,
+        context,
         window_idxs=window_idxs,
         groups=groups,
         group_idxs=group_idxs,
         densify=False,
-        motifs=motifs,
-        motif_idxs=motif_idxs,
         max_blacklisted_fraction=max_blacklisted_fraction,
-        use_global_bias=use_global_bias,
         unsupported_motifs=unsupported_motifs,
     )
     if corrected.empty:
-        return sparse.coo_matrix((len(row_indices), len(motif_indices)))
+        return sparse.coo_matrix(
+            (len(row_indices), len(context.selected_mode_labels))
+        )
 
     row_positions = _selected_row_positions(ends, row_indices)
-    row_columns = _reference_correction_row_columns(ends.row_mode())
-    motif_positions = _selected_motif_positions(ends, motif_indices)
-    corrected_values = corrected["reference_corrected_count"].to_numpy(dtype=float)
+    motif_positions = {
+        motif_label: position
+        for position, motif_label in enumerate(context.selected_mode_labels)
+    }
+    corrected_values = corrected["corrected_count"].to_numpy(dtype=float)
     stored = (corrected_values != 0.0) | np.isnan(corrected_values)
     if not np.any(stored):
-        return sparse.coo_matrix((len(row_indices), len(motif_indices)))
+        return sparse.coo_matrix(
+            (len(row_indices), len(context.selected_mode_labels))
+        )
 
     matrix_rows = np.asarray(
         [
-            _row_position_for_corrected_row(row_positions, row, row_columns)
-            for _, row in corrected.iterrows()
+            row_positions[row_key]
+            for row_key in _row_key_tuples(corrected, context.row_columns)
         ],
         dtype=np.int64,
     )[stored]
-    matrix_columns = np.asarray(
-        [motif_positions[row["motif"]] for _, row in corrected.iterrows()],
-        dtype=np.int64,
+    matrix_columns = corrected["motif"].map(motif_positions).to_numpy(
+        dtype=np.int64
     )[stored]
     return sparse.coo_matrix(
         (
             corrected_values[stored],
             (matrix_rows, matrix_columns),
         ),
-        shape=(len(row_indices), len(motif_indices)),
+        shape=(len(row_indices), len(context.selected_mode_labels)),
     )
 
 
@@ -367,24 +514,575 @@ def _validate_fixed_shape_unsupported_policy(value: str, method_name: str) -> No
         )
 
 
-def _selected_end_axes(
+def _validate_two_sided_correction(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError(
+            f"two_sided_correction must be a string or None, got {type(value).__name__}"
+        )
+    if value not in TWO_SIDED_CORRECTION_MODES:
+        choices = "', '".join(sorted(TWO_SIDED_CORRECTION_MODES))
+        raise ValueError(f"two_sided_correction must be one of '{choices}'")
+    return value
+
+
+def _resolve_correction_mode(
+    ends: EndMotifCounts,
+    ref_kmers: RefKmerFrequencies,
+    two_sided_correction: str | None,
+) -> dict[str, object]:
+    if ends.end_motifs.motif_axis_kind == "motif_group":
+        if two_sided_correction is not None:
+            raise ValueError(
+                "Motif-group end-motif outputs do not accept two_sided_correction"
+            )
+        return {"mode": "exact"}
+
+    motif_labels = ends.motifs_metadata()["motif"].astype(str).tolist()
+    if not motif_labels:
+        return {"mode": "exact"}
+
+    outside_width, inside_width = _infer_end_motif_side_widths(
+        motif_labels,
+        ref_kmers.kmer_size(),
+    )
+    _validate_reference_labels_split_cleanly(
+        ref_kmers.motifs_metadata()["motif"].astype(str),
+        outside_width,
+        inside_width,
+    )
+    if outside_width == 0 or inside_width == 0:
+        if two_sided_correction is not None:
+            raise ValueError(
+                "One-sided end-motif outputs do not accept two_sided_correction"
+            )
+        return {"mode": "exact"}
+    if two_sided_correction is None:
+        raise ValueError(
+            "two-sided end-motif labels with both outside and inside bases require two_sided_correction"
+        )
+    if two_sided_correction == "joint":
+        return {"mode": "exact"}
+    correction_mode = {
+        "mode": two_sided_correction,
+        "outside_width": outside_width,
+        "inside_width": inside_width,
+    }
+    if two_sided_correction in {"outside", "inside"}:
+        correction_mode["side_labels"] = _side_axis_labels(
+            motif_labels,
+            two_sided_correction,
+        )
+    return correction_mode
+
+
+def _infer_end_motif_side_widths(
+    motif_labels: Sequence[str],
+    reference_kmer_size: int,
+) -> tuple[int, int]:
+    inferred_widths: tuple[int, int] | None = None
+    for motif_label in motif_labels:
+        outside, inside = _split_end_motif_label(motif_label)
+        widths = (len(outside), len(inside))
+        if sum(widths) != reference_kmer_size:
+            raise ValueError(
+                "End-motif width must match reference k-mer size "
+                f"({reference_kmer_size}): {motif_label}"
+            )
+        if inferred_widths is None:
+            inferred_widths = widths
+        elif inferred_widths != widths:
+            raise ValueError(
+                "All end-motif labels must use the same outside and inside widths"
+            )
+    if inferred_widths is None:
+        raise ValueError("Cannot infer side widths from an empty motif axis")
+    return inferred_widths
+
+
+def _split_end_motif_label(motif_label: str) -> tuple[str, str]:
+    parts = motif_label.split("_")
+    if len(parts) != 2:
+        raise ValueError(
+            "End-motif label must contain exactly one '_' to separate "
+            f"outside and inside bases: {motif_label}"
+        )
+    return parts[0], parts[1]
+
+
+def _validate_reference_labels_split_cleanly(
+    reference_labels: Sequence[str],
+    outside_width: int,
+    inside_width: int,
+) -> None:
+    expected_width = outside_width + inside_width
+    for reference_label in reference_labels:
+        if len(reference_label) != expected_width:
+            raise ValueError(
+                "Reference motif label must split into outside width "
+                f"{outside_width} and inside width {inside_width}: {reference_label}"
+            )
+
+
+def _selected_mode_axis(
+    ends: EndMotifCounts,
+    correction_mode: dict[str, object],
+    *,
+    motifs: str | Sequence[str] | None,
+    motif_idxs: int | Sequence[int] | None,
+) -> tuple[list[str], np.ndarray]:
+    mode = correction_mode["mode"]
+    if mode in {"exact", "split"}:
+        motif_indices = ends._resolve_motif_selector(motifs, motif_idxs)
+        motif_labels = (
+            ends.motifs_metadata().iloc[motif_indices]["motif"].astype(str).tolist()
+        )
+        return motif_labels, motif_indices
+
+    if motif_idxs is not None:
+        raise ValueError(
+            "motif index selectors are not supported for outside or inside reference correction"
+        )
+    full_side_labels = _side_axis_labels(
+        ends.motifs_metadata()["motif"].astype(str).tolist(),
+        str(mode),
+    )
+    if motifs is None:
+        return full_side_labels, np.arange(len(full_side_labels), dtype=np.int64)
+    requested_labels = normalize_strings(motifs, name="motifs")
+    side_indices_by_label = {
+        label: index for index, label in enumerate(full_side_labels)
+    }
+    selected_indices: list[int] = []
+    for requested_label in requested_labels:
+        if requested_label not in side_indices_by_label:
+            raise ValueError(
+                f"Side-mode motif axis has no label {requested_label!r}"
+            )
+        selected_indices.append(side_indices_by_label[requested_label])
+    return requested_labels, np.asarray(selected_indices, dtype=np.int64)
+
+def _side_axis_labels(motif_labels: Sequence[str], side_mode: str) -> list[str]:
+    side_labels: list[str] = []
+    seen_labels: set[str] = set()
+    for motif_label in motif_labels:
+        outside, inside = _split_end_motif_label(motif_label)
+        side_label = f"{outside}_" if side_mode == "outside" else f"_{inside}"
+        if side_label not in seen_labels:
+            seen_labels.add(side_label)
+            side_labels.append(side_label)
+    return side_labels
+
+
+def _prepared_reference_rows(
+    ref_rows: pd.DataFrame,
+    end_rows: pd.DataFrame,
+    reference_row_columns: list[str],
+) -> pd.DataFrame:
+    ref_rows = ref_rows.copy()
+    ref_rows = ref_rows.rename(
+        columns={"motif": "reference_motif", "frequency": "reference_frequency"}
+    )
+    ref_columns = reference_row_columns + ["reference_motif", "reference_frequency"]
+    ref_rows = ref_rows[ref_columns]
+    return _filter_reference_rows_to_end_rows(
+        ref_rows,
+        end_rows,
+        reference_row_columns,
+    )
+
+
+def _correct_exact_label_data_frame(
+    ends: EndMotifCounts,
+    end_rows: pd.DataFrame,
+    ref_rows: pd.DataFrame,
+    reference_row_columns: list[str],
+    unsupported_motifs: str,
+) -> pd.DataFrame:
+    end_rows = end_rows.copy()
+    if ends.end_motifs.motif_axis_kind == "motif_group":
+        end_rows["reference_motif"] = end_rows["motif"]
+    else:
+        end_rows["reference_motif"] = end_rows["motif"].str.replace(
+            "_", "", regex=False
+        )
+    merge_columns = reference_row_columns + ["reference_motif"]
+    if ref_rows.duplicated(merge_columns).any():
+        raise ValueError("Reference k-mer rows are not unique for row and motif labels")
+    reference_support_counts = _reference_support_counts(
+        ref_rows,
+        reference_row_columns,
+    )
+    corrected = end_rows.merge(
+        ref_rows,
+        on=merge_columns,
+        how="left",
+        sort=False,
+    )
+    corrected["reference_frequency"] = corrected["reference_frequency"].fillna(0.0)
+    corrected = _add_correction_motif_count(
+        corrected,
+        reference_support_counts,
+        reference_row_columns,
+    )
+    corrected["reference_denominator"] = (
+        corrected["reference_frequency"] * corrected["correction_motif_count"]
+    )
+    return _apply_reference_denominator_policy(
+        corrected,
+        "reference_denominator",
+        unsupported_motifs,
+    )
+
+
+def _correct_split_data_frame(
+    end_rows: pd.DataFrame,
+    ref_rows: pd.DataFrame,
+    reference_row_columns: list[str],
+    correction_mode: dict[str, object],
+    unsupported_motifs: str,
+) -> pd.DataFrame:
+    outside_width = int(correction_mode["outside_width"])
+    inside_width = int(correction_mode["inside_width"])
+    end_rows = _add_end_sides(end_rows, outside_width, inside_width)
+    side_reference = _side_reference_denominators(
+        ref_rows,
+        reference_row_columns,
+        outside_width,
+        inside_width,
+    )
+    corrected = _merge_side_denominators(
+        end_rows,
+        side_reference,
+        reference_row_columns,
+    )
+    corrected["reference_denominator"] = (
+        corrected["outside_reference_denominator"]
+        * corrected["inside_reference_denominator"]
+    )
+    return _apply_reference_denominator_policy(
+        corrected,
+        "reference_denominator",
+        unsupported_motifs,
+    )
+
+
+def _correct_side_data_frame(
+    end_rows: pd.DataFrame,
+    ref_rows: pd.DataFrame,
+    reference_row_columns: list[str],
+    correction_mode: dict[str, object],
+    output_columns: list[str],
+    unsupported_motifs: str,
+) -> pd.DataFrame:
+    outside_width = int(correction_mode["outside_width"])
+    inside_width = int(correction_mode["inside_width"])
+    side_mode = str(correction_mode["mode"])
+    end_rows = _add_end_sides(end_rows, outside_width, inside_width)
+    side_column = "outside" if side_mode == "outside" else "inside"
+    end_rows["motif"] = (
+        end_rows["outside"] + "_" if side_mode == "outside" else "_" + end_rows["inside"]
+    )
+    side_axis = list(correction_mode["side_labels"])
+    side_index_by_label = {label: index for index, label in enumerate(side_axis)}
+    end_rows["motif_index"] = (
+        end_rows["motif"].map(side_index_by_label).astype(np.int64)
+    )
+    row_metadata_columns = [
+        column
+        for column in output_columns
+        if column not in {"motif_index", "motif", "count"}
+    ]
+    row_metadata = end_rows[
+        ["_cfdnalab_row_order"] + row_metadata_columns
+    ].drop_duplicates("_cfdnalab_row_order")
+    aggregated = (
+        end_rows.groupby(
+            ["_cfdnalab_row_order", "motif_index", "motif", side_column],
+            sort=False,
+        )["count"]
+        .sum()
+        .reset_index()
+    )
+    aggregated = aggregated.merge(
+        row_metadata,
+        on="_cfdnalab_row_order",
+        how="left",
+        sort=False,
+        validate="many_to_one",
+    )
+    side_reference = _side_reference_denominators(
+        ref_rows,
+        reference_row_columns,
+        outside_width,
+        inside_width,
+    )
+    corrected = _merge_single_side_denominator(
+        aggregated,
+        side_reference,
+        reference_row_columns,
+        side_column,
+    )
+    denominator_column = f"{side_column}_reference_denominator"
+    corrected["reference_denominator"] = corrected[denominator_column]
+    return _apply_reference_denominator_policy(
+        corrected,
+        "reference_denominator",
+        unsupported_motifs,
+    )
+
+
+def _add_end_sides(
+    end_rows: pd.DataFrame,
+    outside_width: int,
+    inside_width: int,
+) -> pd.DataFrame:
+    end_rows = end_rows.copy()
+    outside_inside = end_rows["motif"].map(_split_end_motif_label)
+    end_rows["outside"] = [outside for outside, _ in outside_inside]
+    end_rows["inside"] = [inside for _, inside in outside_inside]
+    invalid_width = (
+        end_rows["outside"].str.len().ne(outside_width)
+        | end_rows["inside"].str.len().ne(inside_width)
+    )
+    if invalid_width.any():
+        raise ValueError("End-motif label does not match inferred side widths")
+    return end_rows
+
+
+def _side_reference_denominators(
+    ref_rows: pd.DataFrame,
+    reference_row_columns: list[str],
+    outside_width: int,
+    inside_width: int,
+) -> dict[str, pd.DataFrame]:
+    ref_rows = ref_rows.copy()
+    ref_rows["outside"] = ref_rows["reference_motif"].str.slice(0, outside_width)
+    ref_rows["inside"] = ref_rows["reference_motif"].str.slice(
+        outside_width,
+        outside_width + inside_width,
+    )
+    outside = _side_denominator_table(
+        ref_rows,
+        reference_row_columns,
+        "outside",
+    )
+    inside = _side_denominator_table(
+        ref_rows,
+        reference_row_columns,
+        "inside",
+    )
+    return {"outside": outside, "inside": inside}
+
+
+def _side_denominator_table(
+    ref_rows: pd.DataFrame,
+    reference_row_columns: list[str],
+    side_column: str,
+) -> pd.DataFrame:
+    group_columns = reference_row_columns + [side_column]
+    side_frequencies = (
+        ref_rows.groupby(group_columns, sort=False)["reference_frequency"]
+        .sum()
+        .reset_index(name="side_reference_frequency")
+    )
+    if reference_row_columns:
+        support_counts = (
+            side_frequencies.loc[
+                side_frequencies["side_reference_frequency"].gt(0.0)
+            ]
+            .groupby(reference_row_columns, sort=False)
+            .size()
+            .reset_index(name="side_support_count")
+        )
+        side_frequencies = side_frequencies.merge(
+            support_counts,
+            on=reference_row_columns,
+            how="left",
+            sort=False,
+        )
+    else:
+        side_frequencies["side_support_count"] = int(
+            side_frequencies["side_reference_frequency"].gt(0.0).sum()
+        )
+    side_frequencies["side_support_count"] = (
+        side_frequencies["side_support_count"].fillna(0).astype(np.int64)
+    )
+    denominator_column = f"{side_column}_reference_denominator"
+    side_frequencies[denominator_column] = (
+        side_frequencies["side_reference_frequency"]
+        * side_frequencies["side_support_count"]
+    )
+    return side_frequencies[reference_row_columns + [side_column, denominator_column]]
+
+
+def _merge_side_denominators(
+    end_rows: pd.DataFrame,
+    side_reference: dict[str, pd.DataFrame],
+    reference_row_columns: list[str],
+) -> pd.DataFrame:
+    outside_columns = reference_row_columns + [
+        "outside",
+        "outside_reference_denominator",
+    ]
+    inside_columns = reference_row_columns + [
+        "inside",
+        "inside_reference_denominator",
+    ]
+    corrected = end_rows.merge(
+        side_reference["outside"][outside_columns],
+        on=reference_row_columns + ["outside"],
+        how="left",
+        sort=False,
+    )
+    corrected = corrected.merge(
+        side_reference["inside"][inside_columns],
+        on=reference_row_columns + ["inside"],
+        how="left",
+        sort=False,
+    )
+    return corrected
+
+
+def _merge_single_side_denominator(
+    end_rows: pd.DataFrame,
+    side_reference: dict[str, pd.DataFrame],
+    reference_row_columns: list[str],
+    side_column: str,
+) -> pd.DataFrame:
+    denominator_column = f"{side_column}_reference_denominator"
+    side_columns = reference_row_columns + [side_column, denominator_column]
+    return end_rows.merge(
+        side_reference[side_column][side_columns],
+        on=reference_row_columns + [side_column],
+        how="left",
+        sort=False,
+    )
+
+
+def _apply_reference_denominator_policy(
+    corrected: pd.DataFrame,
+    denominator_column: str,
+    unsupported_motifs: str,
+) -> pd.DataFrame:
+    corrected = corrected.copy()
+    corrected[denominator_column] = corrected[denominator_column].fillna(0.0)
+    unsupported_reference = corrected[denominator_column].le(0.0)
+    positive_unsupported_reference = unsupported_reference & corrected["count"].gt(0.0)
+    if positive_unsupported_reference.any() and unsupported_motifs == "error":
+        unsupported_labels = sorted(
+            corrected.loc[positive_unsupported_reference, "motif"].unique()
+        )
+        raise ValueError(
+            "Positive-count end motifs have no positive reference-based correction factor: "
+            f"{unsupported_labels!r}. Pass unsupported_motifs='drop' to omit "
+            "those rows, or unsupported_motifs='keep_na' to keep them with "
+            "NaN corrected counts."
+        )
+    if unsupported_motifs == "drop":
+        corrected = corrected.loc[~unsupported_reference].copy()
+        positive_unsupported_reference = positive_unsupported_reference.reindex(
+            corrected.index,
+            fill_value=False,
+        )
+    corrected["corrected_count"] = 0.0
+    supported_reference = corrected[denominator_column].gt(0.0)
+    with np.errstate(over="ignore", invalid="ignore"):
+        corrected_values = (
+            corrected.loc[supported_reference, "count"].to_numpy(dtype=float)
+            / corrected.loc[supported_reference, denominator_column].to_numpy(
+                dtype=float
+            )
+        )
+    if not np.isfinite(corrected_values).all():
+        non_finite_labels = sorted(
+            corrected.loc[
+                supported_reference,
+                "motif",
+            ]
+            .iloc[np.flatnonzero(~np.isfinite(corrected_values))]
+            .unique()
+        )
+        raise ValueError(
+            "Reference correction produced non-finite corrected counts for "
+            f"motifs {non_finite_labels!r}. Reference correction factors may "
+            "be too small for the observed counts."
+        )
+    corrected.loc[supported_reference, "corrected_count"] = corrected_values
+    if unsupported_motifs == "keep_na":
+        corrected.loc[
+            positive_unsupported_reference.reindex(corrected.index, fill_value=False),
+            "corrected_count",
+        ] = np.nan
+    return corrected
+
+
+def _add_corrected_frequency(
+    corrected: pd.DataFrame,
+    row_columns: list[str],
+    unsupported_motifs: str,
+) -> pd.DataFrame:
+    corrected = corrected.copy()
+    corrected["corrected_frequency"] = 0.0
+    if corrected.empty:
+        return corrected
+    row_groups = corrected.groupby(row_columns, sort=False, dropna=False)
+    row_maximum = row_groups["corrected_count"].transform("max")
+
+    # Scale by the row maximum before summing so finite corrected counts cannot
+    # overflow while being normalized
+    scaled_counts = pd.Series(0.0, index=corrected.index, dtype=float)
+    finite_positive_rows = row_maximum.gt(0.0) & corrected["corrected_count"].notna()
+    scaled_counts.loc[finite_positive_rows] = (
+        corrected.loc[finite_positive_rows, "corrected_count"]
+        / row_maximum.loc[finite_positive_rows]
+    )
+    corrected["_cfdnalab_scaled_count"] = scaled_counts
+    scaled_totals = corrected.groupby(
+        row_columns,
+        sort=False,
+        dropna=False,
+    )["_cfdnalab_scaled_count"].transform("sum")
+    normalizable = row_maximum.gt(0.0) & scaled_totals.gt(0.0)
+    corrected.loc[normalizable, "corrected_frequency"] = (
+        scaled_counts.loc[normalizable] / scaled_totals.loc[normalizable]
+    )
+
+    if unsupported_motifs == "keep_na":
+        corrected["_cfdnalab_count_is_na"] = corrected["corrected_count"].isna()
+        row_has_na = corrected.groupby(
+            row_columns,
+            sort=False,
+            dropna=False,
+        )["_cfdnalab_count_is_na"].transform("any")
+        corrected.loc[row_has_na, "corrected_frequency"] = np.nan
+        corrected = corrected.drop(columns=["_cfdnalab_count_is_na"])
+    return corrected.drop(columns=["_cfdnalab_scaled_count"])
+
+
+def _row_order_indices(data_frame: pd.DataFrame, row_columns: list[str]) -> np.ndarray:
+    row_keys = _row_key_tuples(data_frame, row_columns)
+    row_order_by_key = {
+        row_key: row_order for row_order, row_key in enumerate(dict.fromkeys(row_keys))
+    }
+    return np.asarray([row_order_by_key[row_key] for row_key in row_keys], dtype=np.int64)
+
+
+def _selected_rows(
     ends: EndMotifCounts,
     *,
     window_idxs: int | Sequence[int] | None,
     groups: str | Sequence[str] | None,
     group_idxs: int | Sequence[int] | None,
-    motifs: str | Sequence[str] | None,
-    motif_idxs: int | Sequence[int] | None,
     max_blacklisted_fraction: float,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> np.ndarray:
     row_indices = ends._resolve_row_selector(window_idxs, groups, group_idxs)
-    row_indices = filter_blacklisted_fraction(
+    return filter_blacklisted_fraction(
         ends._row_metadata_data_frame(),
         max_blacklisted_fraction,
         row_indices=row_indices,
     )
-    motif_indices = ends._resolve_motif_selector(motifs, motif_idxs)
-    return row_indices, motif_indices
 
 
 def _selected_row_positions(
@@ -396,28 +1094,9 @@ def _selected_row_positions(
         ends._row_metadata_data_frame().iloc[row_indices].reset_index(drop=True)
     )
     return {
-        tuple(row[column] for column in row_columns): position
-        for position, (_, row) in enumerate(row_metadata.iterrows())
+        row_key: position
+        for position, row_key in enumerate(_row_key_tuples(row_metadata, row_columns))
     }
-
-
-def _selected_motif_positions(
-    ends: EndMotifCounts,
-    motif_indices: np.ndarray,
-) -> dict[object, int]:
-    motif_metadata = ends.motifs_metadata().iloc[motif_indices].reset_index(drop=True)
-    return {
-        row["motif"]: position
-        for position, (_, row) in enumerate(motif_metadata.iterrows())
-    }
-
-
-def _row_position_for_corrected_row(
-    row_positions: dict[tuple[object, ...], int],
-    row: pd.Series,
-    row_columns: list[str],
-) -> int:
-    return row_positions[tuple(row[column] for column in row_columns)]
 
 
 def _validate_reference_correction_inputs(
@@ -446,6 +1125,10 @@ def _validate_reference_correction_inputs(
                 "End-motif and reference k-mer row modes must match: "
                 f"{ends.row_mode()!r} != {ref_kmers.row_mode()!r}"
             )
+    if ref_kmers.canonical():
+        raise ValueError(
+            "Reference correction requires non-canonical reference k-mer output"
+        )
     if ends.end_motifs.motif_axis_kind == "motif_group":
         if ref_kmers.motif_axis_kind() != "motif_group":
             raise ValueError(
@@ -455,13 +1138,9 @@ def _validate_reference_correction_inputs(
 
     if ref_kmers.motif_axis_kind() != "motif":
         raise ValueError(
-            "Concrete end-motif output requires concrete reference k-mer output"
+            "End-motif output with motif labels requires reference k-mer "
+            "output with motif labels"
         )
-    if ref_kmers.canonical():
-        raise ValueError(
-            "Reference correction requires non-canonical reference k-mer output"
-        )
-
     reference_motif_lengths = (
         ends.motifs_metadata()["motif"].str.replace("_", "", regex=False).str.len()
     )
@@ -640,9 +1319,6 @@ def _add_correction_motif_count(
 
 def _add_empty_reference_correction_columns(data_frame: pd.DataFrame) -> pd.DataFrame:
     data_frame = data_frame.copy()
-    data_frame["reference_motif"] = np.asarray([], dtype=object)
-    data_frame["reference_frequency"] = np.asarray([], dtype=float)
-    data_frame["correction_motif_count"] = np.asarray([], dtype=np.int64)
-    data_frame["reference_scale"] = np.asarray([], dtype=float)
-    data_frame["reference_corrected_count"] = np.asarray([], dtype=float)
+    data_frame["corrected_count"] = np.asarray([], dtype=float)
+    data_frame["corrected_frequency"] = np.asarray([], dtype=float)
     return data_frame

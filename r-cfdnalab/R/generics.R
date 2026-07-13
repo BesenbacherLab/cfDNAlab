@@ -103,10 +103,10 @@ length_bin_idx <- function(x, ...) {
 
 #' Return motif-axis metadata.
 #'
-#' For ordinary end-motif stores, the `motif` column contains concrete motif
+#' For ordinary end-motif stores, the `motif` column contains motif
 #' labels. For grouped motifs-file output, the same column contains user-defined
 #' group names from the motif axis. Reference k-mer stores use the same column
-#' for concrete k-mers or k-mer group names. For observed-only reference k-mer
+#' for k-mer labels or k-mer group names. For observed-only reference k-mer
 #' output, this is the combined set of motifs or motifs-file targets observed
 #' anywhere in the output.
 #'
@@ -310,12 +310,23 @@ dense_counts_matrix <- function(x, ...) {
 
 #' Return reference-corrected counts as a dense matrix.
 #'
-#' These methods divide counts by the matching reference k-mer frequency scale.
+#' These methods divide counts by reference-based correction factors. For a
+#' one-sided motif, and for `"joint"` two-sided correction, the factor comes
+#' from the matching full reference motif. `"split"` keeps each full two-sided
+#' label but calculates outside and inside factors independently and multiplies
+#' them. `"outside"` first sums counts over inside bases, divides each sum by
+#' its outside factor, and returns labels such as `"AC_"`. `"inside"` first
+#' sums over outside bases, divides by the inside factor, and returns labels
+#' such as `"_GT"`.
+#'
 #' Sparse end-motif output is not densified unless the method explicitly
 #' receives `allow_densify = TRUE`. Dense matrices have a fixed row and motif
 #' shape, so `unsupported_motifs = "drop"` is not supported here. Use
 #' `end_motif_data_frame(..., ref_kmers = ref_kmers,
 #' unsupported_motifs = "drop")` when unsupported motifs should be omitted.
+#' 
+#' When motif labels contain both outside and inside bases, such as `"AC_GT"`,
+#' `two_sided_correction` is required to choose among these four interpretations.
 #'
 #' @param x A cfDNAlab end-motif object.
 #' @param ... Method-specific arguments.
@@ -381,7 +392,15 @@ dense_frequencies_vector <- function(x, ...) {
 #' selected observed motifs. Dense outputs always include zero counts.
 #'
 #' End-motif methods can receive `ref_kmers` to add reference-corrected counts
-#' without manually joining the sample and reference data frames.
+#' without manually joining the sample and reference data frames. Corrected
+#' data frames add `corrected_count` and `corrected_frequency`. When labels have
+#' both outside and inside bases, `two_sided_correction` is required. `"joint"`
+#' corrects each full motif with its matching full reference motif. `"split"`
+#' preserves full labels but multiplies independently calculated outside and
+#' inside correction factors. `"outside"` aggregates sample counts by outside
+#' label before correction and returns labels such as `"AC_"`. `"inside"` does
+#' the corresponding aggregation by inside label and returns labels such as
+#' `"_GT"`.
 #'
 #' @param x A cfDNAlab end-motif object.
 #' @param ... Method-specific selection arguments.
@@ -428,12 +447,24 @@ sparse_counts_matrix <- function(x, ...) {
 
 #' Return reference-corrected counts as a sparse matrix.
 #'
+#' These methods divide counts by reference-based correction factors. For a
+#' one-sided motif, and for `"joint"` two-sided correction, the factor comes
+#' from the matching full reference motif. `"split"` keeps each full two-sided
+#' label but calculates outside and inside factors independently and multiplies
+#' them. `"outside"` first sums counts over inside bases, divides each sum by
+#' its outside factor, and returns labels such as `"AC_"`. `"inside"` first
+#' sums over outside bases, divides by the inside factor, and returns labels
+#' such as `"_GT"`.
+#'
 #' Sparse output is returned without building a zero-filled dense matrix. Dense
 #' output is read into memory before conversion to a sparse matrix. Sparse
 #' matrices have a fixed row and motif shape, so `unsupported_motifs = "drop"`
 #' is not supported here. Use
 #' `end_motif_data_frame(..., ref_kmers = ref_kmers,
 #' unsupported_motifs = "drop")` when unsupported motifs should be omitted.
+#' 
+#' When motif labels contain both outside and inside bases, such as `"AC_GT"`,
+#' `two_sided_correction` is required to choose among these four interpretations.
 #'
 #' @param x A cfDNAlab end-motif object.
 #' @param ... Method-specific arguments.

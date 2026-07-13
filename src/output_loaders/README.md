@@ -168,7 +168,7 @@ Windowed outputs provide `window_metadata()`, and you can select window rows wit
 
 Sparse stores keep missing in-bounds cells as implicit zero counts. Use `sparse_counts()?.to_lookup_index()` for repeated random access or `to_dense_matrix()` only when the selected matrix is small enough to hold in memory.
 
-Reference correction is available when the `cmd_ends` and `cmd_ref_kmers` features are both enabled. Load a reference k-mer store once for the same k-mer size, windowing or grouping, motif settings, and reference genome, then pass it to `select_corrected_counts()`.
+Reference correction is available when the `cmd_ends` and `cmd_ref_kmers` features are both enabled. Load a reference k-mer store for the same k-mer size, windowing or grouping, motif settings, and reference genome, then pass it to `select_corrected_counts()`.
 
 ```rust
 use cfdnalab::output_loaders::{
@@ -196,9 +196,24 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
-Each corrected count is divided by `reference_frequency * correction_motif_count`. The correction motif count is computed separately for each matched reference row from all motifs with positive reference frequency in that row. It is not recalculated from the motifs observed in the sample or the motifs selected by the loader, so selecting one motif gives the same corrected value as selecting all motifs and filtering afterward.
+Reference correction divides each observed end-motif count by a reference-based correction factor for the matched row. This factor is computed from the motif frequencies in the reference k-mer output and normalized so a uniform reference composition leaves counts unchanged. Motifs that are common in the reference row are scaled down. Motifs that are rare in the reference row are scaled up. Only motifs with a positive reference frequency contribute to the row's correction support.
 
-Concrete end-motif labels are matched to reference k-mers by removing `_`, for example `AT_CG` -> `ATCG`. Motif-group outputs are matched by group label. Both commands write forward-oriented motif labels, including right-end motifs from `cfdna ends`.
+When motif labels contain both outside and inside bases, such as `AC_TG`, call `.two_sided_correction(...)` and choose how the two sides should be handled:
+
+- `TwoSidedCorrectionMode::Joint` keeps full labels such as `AC_TG` and corrects each count with the matching reference k-mer, `ACTG`.
+- `TwoSidedCorrectionMode::Split` keeps full labels such as `AC_TG`, but calculates the correction factor from the two sides separately. For `AC_TG`, separate correction factors are calculated for outside label `AC` and inside label `TG`. Those two correction factors are multiplied and applied to the observed `AC_TG` count. Use this when full two-sided motif labels should remain in the result, but the exact full reference k-mers are too sparse or the correction should treat outside and inside sequence composition separately.
+- `TwoSidedCorrectionMode::Outside` returns outside labels such as `AC_`. For each outside label, all full motif counts with that outside label are summed first. For example, `AC_AA` and `AC_TG` both contribute to the `AC_` count. That summed count is corrected using the outside label `AC`.
+- `TwoSidedCorrectionMode::Inside` returns inside labels such as `_TG`. For each inside label, all full motif counts with that inside label are summed first. For example, `AA_TG` and `AC_TG` both contribute to the `_TG` count. That summed count is corrected using the inside label `TG`.
+
+For `Outside` and `Inside`, repeated side labels are deduplicated in their first loaded-motif occurrence order. The returned `EndMotifCountSelection::motif_labels()` and `motif_indices()` describe this corrected side axis, so use them to interpret matrix columns.
+
+One-sided outputs do not accept an explicit mode.
+
+Motif labels are matched to reference k-mers by removing `_`, for example `AT_CG` -> `ATCG`. Motif-group outputs are matched by group label. Both commands write forward-oriented motif labels, including right-end motifs from `cfdna ends`.
+
+For `Split`, `Outside`, and `Inside`, side-specific reference frequencies are calculated from the loaded full-length reference k-mers. For example, the outside frequency for `AC` is the sum of frequencies for loaded k-mers with prefix `AC`, such as `ACTG` and `ACAA`. The inside frequency for `TG` is the corresponding sum over loaded k-mers with suffix `TG`. Separate shorter reference k-mer runs are not required.
+
+A motifs file used for the reference output restricts these sums to the k-mers in that file. Without a motifs file, all k-mers in the reference output can contribute, including k-mers absent from the sample end-motif output.
 
 By default, end-motif and reference k-mer rows must match exactly. A global reference k-mer store can be applied to every windowed or grouped end-motif row only when `.use_global_bias(true)` is set. That option requires a global reference store and is unnecessary when both outputs are global. Sample-observed motifs can be absent from the reference genome or have zero reference frequency in a row. Positive end-motif counts for those motifs are errors by default. Use `UnsupportedReferencePolicy::KeepNaN` to keep the selected shape and mark those cells as `NaN`.
 

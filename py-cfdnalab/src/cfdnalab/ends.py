@@ -479,11 +479,20 @@ class EndMotifCounts:
         max_blacklisted_fraction: float = 1.0,
         use_global_bias: bool = False,
         unsupported_motifs: str = "error",
+        two_sided_correction: str | None = None,
     ) -> pd.DataFrame:
         """
-        Return raw or reference-corrected data frame rows.
+        Dispatch row-mode data frame methods to raw or corrected loading.
+
+        Without `ref_kmers`, this preserves the ordinary selectors and returns
+        raw rows. A two-sided correction choice is rejected on that path because
+        there is no reference to correct against. With `ref_kmers`, the same row,
+        motif, densification, and blacklist selectors are forwarded to the
+        reference-correction implementation.
         """
         if ref_kmers is None:
+            if two_sided_correction is not None:
+                raise ValueError("two_sided_correction requires ref_kmers")
             return self._data_frame(
                 densify=densify,
                 window_idxs=window_idxs,
@@ -507,6 +516,7 @@ class EndMotifCounts:
             max_blacklisted_fraction=max_blacklisted_fraction,
             use_global_bias=use_global_bias,
             unsupported_motifs=unsupported_motifs,
+            two_sided_correction=two_sided_correction,
         )
 
     def _corrected_counts_array(
@@ -522,9 +532,14 @@ class EndMotifCounts:
         max_blacklisted_fraction: float = 1.0,
         use_global_bias: bool = False,
         unsupported_motifs: str = "error",
+        two_sided_correction: str | None = None,
     ) -> np.ndarray:
         """
-        Return corrected counts as a dense NumPy array.
+        Forward dense corrected-count loading through the shared implementation.
+
+        Keeping this forwarding path shared across row modes ensures that row
+        and motif selectors, fixed-shape validation, densification rules, and
+        two-sided correction choices have the same behavior for every caller.
         """
         from .reference_correction import _reference_corrected_counts_array
 
@@ -540,6 +555,7 @@ class EndMotifCounts:
             max_blacklisted_fraction=max_blacklisted_fraction,
             use_global_bias=use_global_bias,
             unsupported_motifs=unsupported_motifs,
+            two_sided_correction=two_sided_correction,
         )
 
     def _sparse_corrected_counts_matrix(
@@ -554,9 +570,14 @@ class EndMotifCounts:
         max_blacklisted_fraction: float = 1.0,
         use_global_bias: bool = False,
         unsupported_motifs: str = "error",
+        two_sided_correction: str | None = None,
     ) -> sparse.coo_matrix:
         """
-        Return corrected counts as a SciPy COO matrix.
+        Forward sparse corrected-count loading through the shared implementation.
+
+        Keeping this forwarding path shared across row modes preserves selector
+        validation, the fixed motif axis, unsupported-reference handling, and
+        two-sided correction behavior without constructing a dense matrix.
         """
         from .reference_correction import _sparse_reference_corrected_counts_matrix
 
@@ -571,6 +592,86 @@ class EndMotifCounts:
             max_blacklisted_fraction=max_blacklisted_fraction,
             use_global_bias=use_global_bias,
             unsupported_motifs=unsupported_motifs,
+            two_sided_correction=two_sided_correction,
+        )
+
+    def corrected_motifs_metadata(
+        self,
+        ref_kmers: RefKmerFrequencies,
+        *,
+        motifs: str | Sequence[str] | None = None,
+        motif_idxs: int | Sequence[int] | None = None,
+        use_global_bias: bool = False,
+        two_sided_correction: str | None = None,
+    ) -> pd.DataFrame:
+        """
+        Return the motif axis used by reference-corrected matrices.
+
+        Use this method to interpret the columns returned by
+        `corrected_counts_array()` and `sparse_corrected_counts_matrix()`. Rows
+        are in matrix-column order. `matrix_column` is the zero-based
+        column in the returned matrix. `motif_index` is zero-based and refers to
+        the full correction-mode axis described by `motif`, not necessarily the
+        motif axis stored in the end-motif file.
+
+        For `"joint"`, `"split"`, and one-sided correction, this is the
+        selected stored motif axis. For `"outside"` and `"inside"`, repeated
+        side labels are deduplicated in their first stored-motif occurrence
+        order. Label selection returns labels in the requested order. Motif
+        index selection is not available for `"outside"` or `"inside"` because
+        those modes create a new axis.
+
+        Parameters
+        ----------
+        ref_kmers
+            Loaded reference k-mer output used for correction.
+        motifs
+            Motif label or labels on the correction-mode axis. Use either
+            `motifs` or `motif_idxs`, not both.
+        motif_idxs
+            Stored motif index or indices. This is only available for
+            `"joint"`, `"split"`, and one-sided correction.
+        use_global_bias
+            Whether a global reference k-mer output may be applied to a
+            non-global end-motif output.
+        two_sided_correction
+            Required for two-sided motif labels. Use `"joint"`, `"split"`,
+            `"outside"`, or `"inside"`. Leave as `None` for one-sided motifs
+            or motif groups.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Matrix-column metadata with `matrix_column`, `motif_index`, and
+            `motif` columns.
+        """
+        from .reference_correction import (
+            _resolve_correction_mode,
+            _selected_mode_axis,
+            _validate_reference_correction_inputs,
+            _validate_two_sided_correction,
+        )
+
+        two_sided_correction = _validate_two_sided_correction(two_sided_correction)
+        use_global_bias = validate_scalar_bool(use_global_bias, "use_global_bias")
+        _validate_reference_correction_inputs(self, ref_kmers, use_global_bias)
+        correction_mode = _resolve_correction_mode(
+            self,
+            ref_kmers,
+            two_sided_correction,
+        )
+        motif_labels, motif_indices = _selected_mode_axis(
+            self,
+            correction_mode,
+            motifs=motifs,
+            motif_idxs=motif_idxs,
+        )
+        return pd.DataFrame(
+            {
+                "matrix_column": np.arange(len(motif_labels), dtype=np.int64),
+                "motif_index": motif_indices,
+                "motif": motif_labels,
+            }
         )
 
     def dense_counts_zarr_array(self) -> zarr.Array:
@@ -828,6 +929,7 @@ class GlobalEndMotifCounts(EndMotifCounts):
         motif_idxs: int | Sequence[int] | None = None,
         use_global_bias: bool = False,
         unsupported_motifs: str = "error",
+        two_sided_correction: str | None = None,
     ) -> pd.DataFrame:
         """
         Create a pandas DataFrame for global end-motif counts.
@@ -836,6 +938,66 @@ class GlobalEndMotifCounts(EndMotifCounts):
         `densify=True`. Densifying adds explicit zero-count rows for selected
         observed motifs. Dense outputs always include zero counts. Pass
         `ref_kmers` to add reference-corrected counts.
+
+        Reference correction
+        --------------------
+        Reference correction divides each observed end-motif count by a
+        reference-based correction factor for the matched row. This factor is
+        computed from the motif frequencies in the reference k-mer output and
+        normalized so a uniform reference composition leaves counts unchanged.
+        Motifs that are common in the reference row are scaled down. Motifs
+        that are rare in the reference row are scaled up. Only motifs with a
+        positive reference frequency contribute to the row's correction
+        support.
+
+        Two-sided correction modes
+        --------------------------
+        When motif labels contain both outside and inside bases, such as
+        `"AC_GT"`, `two_sided_correction` chooses both the motif labels in the
+        result and the correction factor used for each returned count.
+
+        - `"joint"` keeps full labels such as `"AC_GT"` and corrects each
+          count using the exact reference k-mer `"ACGT"`.
+
+        - `"split"` keeps full labels such as `"AC_GT"`, but calculates the
+          correction factor from the two sides separately. For `"AC_GT"`,
+          separate correction factors are calculated for outside label `"AC"`
+          and inside label `"GT"`. Those two correction factors are multiplied
+          and applied to the observed `"AC_GT"` count. Use this when you want
+          full two-sided motif labels in the result, but the exact full
+          reference k-mers are too sparse or you want the reference correction
+          to treat outside and inside sequence composition separately.
+
+        - `"outside"` returns outside labels such as `"AC_"`. For each outside
+          label, all full motif counts with that outside label are summed first.
+          For example, `"AC_AA"` and `"AC_GT"` both contribute to the `"AC_"`
+          count. That summed count is corrected using the outside label `"AC"`.
+
+        - `"inside"` returns inside labels such as `"_GT"`. For each inside
+          label, all full motif counts with that inside label are summed first.
+          For example, `"AA_GT"` and `"AC_GT"` both contribute to the `"_GT"`
+          count. That summed count is corrected using the inside label `"GT"`.
+
+        For `"split"`, `"outside"`, and `"inside"`, side-specific reference
+        frequencies are calculated from the loaded full-length reference
+        k-mers. For example, the outside frequency for `"AC"` is the sum of
+        frequencies for loaded k-mers with prefix `"AC"`, such as `"ACTG"` and
+        `"ACAA"`. The inside frequency for `"TG"` is the corresponding sum over
+        loaded k-mers with suffix `"TG"`. Separate shorter reference k-mer runs
+        are not required.
+
+        A motifs file used for the reference output restricts these sums to the
+        k-mers in that file. Without a motifs file, all k-mers in the reference
+        output can contribute, including k-mers absent from the sample
+        end-motif output.
+
+        `corrected_frequency` is normalized from `corrected_count` over the full
+        correction-mode motif axis for each output row. Motif selection filters
+        those frequencies afterward and does not renormalize them. A selected
+        subset can therefore sum to less than 1. If the corrected total is
+        zero, finite frequencies are zero. With `unsupported_motifs="keep_na"`,
+        one undefined positive corrected count makes all frequencies in that
+        output row `NaN`.
 
         Parameters
         ----------
@@ -851,14 +1013,19 @@ class GlobalEndMotifCounts(EndMotifCounts):
         use_global_bias
             Whether a global reference k-mer output may be applied to every row.
         unsupported_motifs
-            What to do when an observed sample motif has no positive reference
-            frequency. Use `"error"`, `"drop"`, or `"keep_na"`.
+            What to do when an observed sample motif has no positive correction
+            factor under the selected mode. Use `"error"`, `"drop"`, or `"keep_na"`.
+        two_sided_correction
+            Required for two-sided motif labels such as `"AC_GT"` when
+            `ref_kmers` is passed. Use `"joint"`, `"split"`, `"outside"`, or
+            `"inside"`. Leave as `None` for one-sided motifs or motif groups.
 
         Returns
         -------
         pandas.DataFrame
             Global row metadata, motif metadata, and `count`. If `ref_kmers`
-            is passed, also includes reference correction columns.
+            is passed, also includes `corrected_count` and
+            `corrected_frequency`.
         """
         return self._data_frame_with_optional_reference_correction(
             ref_kmers=ref_kmers,
@@ -867,6 +1034,7 @@ class GlobalEndMotifCounts(EndMotifCounts):
             motif_idxs=motif_idxs,
             use_global_bias=use_global_bias,
             unsupported_motifs=unsupported_motifs,
+            two_sided_correction=two_sided_correction,
         )
 
     def dense_counts_array(
@@ -941,19 +1109,85 @@ class GlobalEndMotifCounts(EndMotifCounts):
         allow_densify: bool = False,
         use_global_bias: bool = False,
         unsupported_motifs: str = "error",
+        two_sided_correction: str | None = None,
     ) -> np.ndarray:
         """
         Return global reference-corrected end-motif counts as a dense array.
 
-        The result has the same shape as `dense_counts_array()`. Counts are
-        divided by the matching reference k-mer frequency scale. Sparse
-        end-motif stores are not densified unless `allow_densify=True`; use
-        `sparse_corrected_counts_matrix()` to keep a sparse result.
+        The result has one column per motif on the selected correction-mode
+        axis. `"joint"`, `"split"`, and one-sided correction retain the selected
+        stored motif axis. `"outside"` and `"inside"` replace it with a
+        deduplicated side axis, so the number of columns can differ from
+        `dense_counts_array()`. Use `corrected_motifs_metadata()` to inspect the
+        exact column labels and order.
+
+        Sparse end-motif stores are not densified unless
+        `allow_densify=True`. Use `sparse_corrected_counts_matrix()` to keep a
+        sparse result.
 
         `unsupported_motifs="drop"` is not allowed because arrays have a fixed
         row and motif shape. Use
         `data_frame(ref_kmers=..., unsupported_motifs="drop")` when
         unsupported motifs should be omitted.
+
+        Reference correction
+        --------------------
+        Reference correction divides each observed end-motif count by a
+        reference-based correction factor for the matched row. This factor is
+        computed from the motif frequencies in the reference k-mer output and
+        normalized so a uniform reference composition leaves counts unchanged.
+        Motifs that are common in the reference row are scaled down. Motifs
+        that are rare in the reference row are scaled up. Only motifs with a
+        positive reference frequency contribute to the row's correction
+        support.
+
+        Two-sided correction modes
+        --------------------------
+        When motif labels contain both outside and inside bases, such as
+        `"AC_GT"`, `two_sided_correction` chooses both the motif labels in the
+        result and the correction factor used for each returned count.
+
+        - `"joint"` keeps full labels such as `"AC_GT"` and corrects each
+          count using the exact reference k-mer `"ACGT"`.
+
+        - `"split"` keeps full labels such as `"AC_GT"`, but calculates the
+          correction factor from the two sides separately. For `"AC_GT"`,
+          separate correction factors are calculated for outside label `"AC"`
+          and inside label `"GT"`. Those two correction factors are multiplied
+          and applied to the observed `"AC_GT"` count. Use this when you want
+          full two-sided motif labels in the result, but the exact full
+          reference k-mers are too sparse or you want the reference correction
+          to treat outside and inside sequence composition separately.
+
+        - `"outside"` returns outside labels such as `"AC_"`. For each outside
+          label, all full motif counts with that outside label are summed first.
+          For example, `"AC_AA"` and `"AC_GT"` both contribute to the `"AC_"`
+          count. That summed count is corrected using the outside label `"AC"`.
+
+        - `"inside"` returns inside labels such as `"_GT"`. For each inside
+          label, all full motif counts with that inside label are summed first.
+          For example, `"AA_GT"` and `"AC_GT"` both contribute to the `"_GT"`
+          count. That summed count is corrected using the inside label `"GT"`.
+
+        For `"split"`, `"outside"`, and `"inside"`, side-specific reference
+        frequencies are calculated from the loaded full-length reference
+        k-mers. For example, the outside frequency for `"AC"` is the sum of
+        frequencies for loaded k-mers with prefix `"AC"`, such as `"ACTG"` and
+        `"ACAA"`. The inside frequency for `"TG"` is the corresponding sum over
+        loaded k-mers with suffix `"TG"`. Separate shorter reference k-mer runs
+        are not required.
+
+        A motifs file used for the reference output restricts these sums to the
+        k-mers in that file. Without a motifs file, all k-mers in the reference
+        output can contribute, including k-mers absent from the sample
+        end-motif output.
+
+        An observed sample motif with a positive count is unsupported when it
+        has no positive correction factor under the selected mode.
+        `unsupported_motifs="keep_na"` keeps
+        that matrix cell as `NaN`. The `"drop"` policy is unavailable for
+        matrices because it would change a fixed result axis.
+
         """
         return self._corrected_counts_array(
             ref_kmers,
@@ -962,6 +1196,7 @@ class GlobalEndMotifCounts(EndMotifCounts):
             allow_densify=allow_densify,
             use_global_bias=use_global_bias,
             unsupported_motifs=unsupported_motifs,
+            two_sided_correction=two_sided_correction,
         )
 
     def sparse_corrected_counts_matrix(
@@ -972,18 +1207,80 @@ class GlobalEndMotifCounts(EndMotifCounts):
         motif_idxs: int | Sequence[int] | None = None,
         use_global_bias: bool = False,
         unsupported_motifs: str = "error",
+        two_sided_correction: str | None = None,
     ) -> sparse.coo_matrix:
         """
         Return global reference-corrected end-motif counts as a sparse matrix.
 
-        The result has the same shape as `sparse_counts_matrix()`. Corrected
-        zeroes are not stored. Corrected `NaN` values from
+        The result has one column per motif on the selected correction-mode
+        axis. `"outside"` and `"inside"` can therefore have fewer columns than
+        `sparse_counts_matrix()`. Use `corrected_motifs_metadata()` to inspect
+        the exact column labels and order. Corrected zeroes are not stored.
+        Corrected `NaN` values from
         `unsupported_motifs="keep_na"` are stored so they remain visible.
 
         `unsupported_motifs="drop"` is not allowed because sparse matrices
         still have a fixed row and motif shape. Use
         `data_frame(ref_kmers=..., unsupported_motifs="drop")` when
         unsupported motifs should be omitted.
+
+        Reference correction
+        --------------------
+        Reference correction divides each observed end-motif count by a
+        reference-based correction factor for the matched row. This factor is
+        computed from the motif frequencies in the reference k-mer output and
+        normalized so a uniform reference composition leaves counts unchanged.
+        Motifs that are common in the reference row are scaled down. Motifs
+        that are rare in the reference row are scaled up. Only motifs with a
+        positive reference frequency contribute to the row's correction
+        support.
+
+        Two-sided correction modes
+        --------------------------
+        When motif labels contain both outside and inside bases, such as
+        `"AC_GT"`, `two_sided_correction` chooses both the motif labels in the
+        result and the correction factor used for each returned count.
+
+        - `"joint"` keeps full labels such as `"AC_GT"` and corrects each
+          count using the exact reference k-mer `"ACGT"`.
+
+        - `"split"` keeps full labels such as `"AC_GT"`, but calculates the
+          correction factor from the two sides separately. For `"AC_GT"`,
+          separate correction factors are calculated for outside label `"AC"`
+          and inside label `"GT"`. Those two correction factors are multiplied
+          and applied to the observed `"AC_GT"` count. Use this when you want
+          full two-sided motif labels in the result, but the exact full
+          reference k-mers are too sparse or you want the reference correction
+          to treat outside and inside sequence composition separately.
+
+        - `"outside"` returns outside labels such as `"AC_"`. For each outside
+          label, all full motif counts with that outside label are summed first.
+          For example, `"AC_AA"` and `"AC_GT"` both contribute to the `"AC_"`
+          count. That summed count is corrected using the outside label `"AC"`.
+
+        - `"inside"` returns inside labels such as `"_GT"`. For each inside
+          label, all full motif counts with that inside label are summed first.
+          For example, `"AA_GT"` and `"AC_GT"` both contribute to the `"_GT"`
+          count. That summed count is corrected using the inside label `"GT"`.
+
+        For `"split"`, `"outside"`, and `"inside"`, side-specific reference
+        frequencies are calculated from the loaded full-length reference
+        k-mers. For example, the outside frequency for `"AC"` is the sum of
+        frequencies for loaded k-mers with prefix `"AC"`, such as `"ACTG"` and
+        `"ACAA"`. The inside frequency for `"TG"` is the corresponding sum over
+        loaded k-mers with suffix `"TG"`. Separate shorter reference k-mer runs
+        are not required.
+
+        A motifs file used for the reference output restricts these sums to the
+        k-mers in that file. Without a motifs file, all k-mers in the reference
+        output can contribute, including k-mers absent from the sample
+        end-motif output.
+
+        An observed sample motif with a positive count is unsupported when it
+        has no positive correction factor under the selected mode.
+        `unsupported_motifs="keep_na"` keeps
+        that matrix cell as `NaN`. The `"drop"` policy is unavailable for
+        matrices because it would change a fixed result axis.
         """
         return self._sparse_corrected_counts_matrix(
             ref_kmers,
@@ -991,6 +1288,7 @@ class GlobalEndMotifCounts(EndMotifCounts):
             motif_idxs=motif_idxs,
             use_global_bias=use_global_bias,
             unsupported_motifs=unsupported_motifs,
+            two_sided_correction=two_sided_correction,
         )
 
 
@@ -1008,6 +1306,7 @@ class WindowedEndMotifCounts(EndMotifCounts):
         max_blacklisted_fraction: float = 1.0,
         use_global_bias: bool = False,
         unsupported_motifs: str = "error",
+        two_sided_correction: str | None = None,
     ) -> pd.DataFrame:
         """
         Create a pandas DataFrame of end-motif counts for genomic windows.
@@ -1017,6 +1316,66 @@ class WindowedEndMotifCounts(EndMotifCounts):
         non-zero rows unless `densify=True`. Densifying adds explicit
         zero-count rows for selected observed motifs. Dense outputs always
         include zero counts. Pass `ref_kmers` to add reference-corrected counts.
+
+        Reference correction
+        --------------------
+        Reference correction divides each observed end-motif count by a
+        reference-based correction factor for the matched row. This factor is
+        computed from the motif frequencies in the reference k-mer output and
+        normalized so a uniform reference composition leaves counts unchanged.
+        Motifs that are common in the reference row are scaled down. Motifs
+        that are rare in the reference row are scaled up. Only motifs with a
+        positive reference frequency contribute to the row's correction
+        support.
+
+        Two-sided correction modes
+        --------------------------
+        When motif labels contain both outside and inside bases, such as
+        `"AC_GT"`, `two_sided_correction` chooses both the motif labels in the
+        result and the correction factor used for each returned count.
+
+        - `"joint"` keeps full labels such as `"AC_GT"` and corrects each
+          count using the exact reference k-mer `"ACGT"`.
+
+        - `"split"` keeps full labels such as `"AC_GT"`, but calculates the
+          correction factor from the two sides separately. For `"AC_GT"`,
+          separate correction factors are calculated for outside label `"AC"`
+          and inside label `"GT"`. Those two correction factors are multiplied
+          and applied to the observed `"AC_GT"` count. Use this when you want
+          full two-sided motif labels in the result, but the exact full
+          reference k-mers are too sparse or you want the reference correction
+          to treat outside and inside sequence composition separately.
+
+        - `"outside"` returns outside labels such as `"AC_"`. For each outside
+          label, all full motif counts with that outside label are summed first.
+          For example, `"AC_AA"` and `"AC_GT"` both contribute to the `"AC_"`
+          count. That summed count is corrected using the outside label `"AC"`.
+
+        - `"inside"` returns inside labels such as `"_GT"`. For each inside
+          label, all full motif counts with that inside label are summed first.
+          For example, `"AA_GT"` and `"AC_GT"` both contribute to the `"_GT"`
+          count. That summed count is corrected using the inside label `"GT"`.
+
+        For `"split"`, `"outside"`, and `"inside"`, side-specific reference
+        frequencies are calculated from the loaded full-length reference
+        k-mers. For example, the outside frequency for `"AC"` is the sum of
+        frequencies for loaded k-mers with prefix `"AC"`, such as `"ACTG"` and
+        `"ACAA"`. The inside frequency for `"TG"` is the corresponding sum over
+        loaded k-mers with suffix `"TG"`. Separate shorter reference k-mer runs
+        are not required.
+
+        A motifs file used for the reference output restricts these sums to the
+        k-mers in that file. Without a motifs file, all k-mers in the reference
+        output can contribute, including k-mers absent from the sample
+        end-motif output.
+
+        `corrected_frequency` is normalized from `corrected_count` over the full
+        correction-mode motif axis for each output row. Motif selection filters
+        those frequencies afterward and does not renormalize them. A selected
+        subset can therefore sum to less than 1. If the corrected total is
+        zero, finite frequencies are zero. With `unsupported_motifs="keep_na"`,
+        one undefined positive corrected count makes all frequencies in that
+        output row `NaN`.
 
         Parameters
         ----------
@@ -1038,14 +1397,19 @@ class WindowedEndMotifCounts(EndMotifCounts):
         use_global_bias
             Whether a global reference k-mer output may be applied to every row.
         unsupported_motifs
-            What to do when an observed sample motif has no positive reference
-            frequency. Use `"error"`, `"drop"`, or `"keep_na"`.
+            What to do when an observed sample motif has no positive correction
+            factor under the selected mode. Use `"error"`, `"drop"`, or `"keep_na"`.
+        two_sided_correction
+            Required for two-sided motif labels such as `"AC_GT"` when
+            `ref_kmers` is passed. Use `"joint"`, `"split"`, `"outside"`, or
+            `"inside"`. Leave as `None` for one-sided motifs or motif groups.
 
         Returns
         -------
         pandas.DataFrame
             Window metadata, motif metadata, and `count`. If `ref_kmers` is
-            passed, also includes reference correction columns.
+            passed, also includes `corrected_count` and
+            `corrected_frequency`.
         """
         return self._data_frame_with_optional_reference_correction(
             ref_kmers=ref_kmers,
@@ -1056,6 +1420,7 @@ class WindowedEndMotifCounts(EndMotifCounts):
             max_blacklisted_fraction=max_blacklisted_fraction,
             use_global_bias=use_global_bias,
             unsupported_motifs=unsupported_motifs,
+            two_sided_correction=two_sided_correction,
         )
 
     def window_metadata(self) -> pd.DataFrame:
@@ -1157,20 +1522,82 @@ class WindowedEndMotifCounts(EndMotifCounts):
         max_blacklisted_fraction: float = 1.0,
         use_global_bias: bool = False,
         unsupported_motifs: str = "error",
+        two_sided_correction: str | None = None,
     ) -> np.ndarray:
         """
         Return windowed reference-corrected end-motif counts as a dense array.
 
-        The result has the same shape as `dense_counts_array()` for the
-        selected windows and motifs. Counts are divided by the matching
-        reference k-mer frequency scale. Sparse end-motif stores are not
-        densified unless `allow_densify=True`; use
+        The result has one row per selected window and one column per motif on
+        the selected correction-mode axis. `"outside"` and `"inside"` replace
+        the stored joint axis with a deduplicated side axis. Use
+        `corrected_motifs_metadata()` to inspect the exact column labels and
+        order. Sparse end-motif stores are not densified unless
+        `allow_densify=True`. Use
         `sparse_corrected_counts_matrix()` to keep a sparse result.
 
         `unsupported_motifs="drop"` is not allowed because arrays have a fixed
         row and motif shape. Use
         `data_frame(ref_kmers=..., unsupported_motifs="drop")` when
         unsupported motifs should be omitted.
+
+        Reference correction
+        --------------------
+        Reference correction divides each observed end-motif count by a
+        reference-based correction factor for the matched row. This factor is
+        computed from the motif frequencies in the reference k-mer output and
+        normalized so a uniform reference composition leaves counts unchanged.
+        Motifs that are common in the reference row are scaled down. Motifs
+        that are rare in the reference row are scaled up. Only motifs with a
+        positive reference frequency contribute to the row's correction
+        support.
+
+        Two-sided correction modes
+        --------------------------
+        When motif labels contain both outside and inside bases, such as
+        `"AC_GT"`, `two_sided_correction` chooses both the motif labels in the
+        result and the correction factor used for each returned count.
+
+        - `"joint"` keeps full labels such as `"AC_GT"` and corrects each
+          count using the exact reference k-mer `"ACGT"`.
+
+        - `"split"` keeps full labels such as `"AC_GT"`, but calculates the
+          correction factor from the two sides separately. For `"AC_GT"`,
+          separate correction factors are calculated for outside label `"AC"`
+          and inside label `"GT"`. Those two correction factors are multiplied
+          and applied to the observed `"AC_GT"` count. Use this when you want
+          full two-sided motif labels in the result, but the exact full
+          reference k-mers are too sparse or you want the reference correction
+          to treat outside and inside sequence composition separately.
+
+        - `"outside"` returns outside labels such as `"AC_"`. For each outside
+          label, all full motif counts with that outside label are summed first.
+          For example, `"AC_AA"` and `"AC_GT"` both contribute to the `"AC_"`
+          count. That summed count is corrected using the outside label `"AC"`.
+
+        - `"inside"` returns inside labels such as `"_GT"`. For each inside
+          label, all full motif counts with that inside label are summed first.
+          For example, `"AA_GT"` and `"AC_GT"` both contribute to the `"_GT"`
+          count. That summed count is corrected using the inside label `"GT"`.
+
+        For `"split"`, `"outside"`, and `"inside"`, side-specific reference
+        frequencies are calculated from the loaded full-length reference
+        k-mers. For example, the outside frequency for `"AC"` is the sum of
+        frequencies for loaded k-mers with prefix `"AC"`, such as `"ACTG"` and
+        `"ACAA"`. The inside frequency for `"TG"` is the corresponding sum over
+        loaded k-mers with suffix `"TG"`. Separate shorter reference k-mer runs
+        are not required.
+
+        A motifs file used for the reference output restricts these sums to the
+        k-mers in that file. Without a motifs file, all k-mers in the reference
+        output can contribute, including k-mers absent from the sample
+        end-motif output.
+
+        An observed sample motif with a positive count is unsupported when it
+        has no positive correction factor under the selected mode.
+        `unsupported_motifs="keep_na"` keeps
+        that matrix cell as `NaN`. The `"drop"` policy is unavailable for
+        matrices because it would change a fixed result axis.
+
         """
         return self._corrected_counts_array(
             ref_kmers,
@@ -1181,6 +1608,7 @@ class WindowedEndMotifCounts(EndMotifCounts):
             max_blacklisted_fraction=max_blacklisted_fraction,
             use_global_bias=use_global_bias,
             unsupported_motifs=unsupported_motifs,
+            two_sided_correction=two_sided_correction,
         )
 
     def sparse_corrected_counts_matrix(
@@ -1193,19 +1621,80 @@ class WindowedEndMotifCounts(EndMotifCounts):
         max_blacklisted_fraction: float = 1.0,
         use_global_bias: bool = False,
         unsupported_motifs: str = "error",
+        two_sided_correction: str | None = None,
     ) -> sparse.coo_matrix:
         """
         Return windowed reference-corrected end-motif counts as a sparse matrix.
 
-        The result has the same shape as `sparse_counts_matrix()` for the
-        selected windows and motifs. Corrected zeroes are not stored. Corrected
-        `NaN` values from `unsupported_motifs="keep_na"` are stored so they
-        remain visible.
+        The result has one row per selected window and one column per motif on
+        the selected correction-mode axis. `"outside"` and `"inside"` can have
+        fewer columns than `sparse_counts_matrix()`. Use
+        `corrected_motifs_metadata()` to inspect the exact column labels and
+        order. Corrected zeroes are not stored. Corrected `NaN` values from
+        `unsupported_motifs="keep_na"` are stored so they remain visible.
 
         `unsupported_motifs="drop"` is not allowed because sparse matrices
         still have a fixed row and motif shape. Use
         `data_frame(ref_kmers=..., unsupported_motifs="drop")` when
         unsupported motifs should be omitted.
+
+        Reference correction
+        --------------------
+        Reference correction divides each observed end-motif count by a
+        reference-based correction factor for the matched row. This factor is
+        computed from the motif frequencies in the reference k-mer output and
+        normalized so a uniform reference composition leaves counts unchanged.
+        Motifs that are common in the reference row are scaled down. Motifs
+        that are rare in the reference row are scaled up. Only motifs with a
+        positive reference frequency contribute to the row's correction
+        support.
+
+        Two-sided correction modes
+        --------------------------
+        When motif labels contain both outside and inside bases, such as
+        `"AC_GT"`, `two_sided_correction` chooses both the motif labels in the
+        result and the correction factor used for each returned count.
+
+        - `"joint"` keeps full labels such as `"AC_GT"` and corrects each
+          count using the exact reference k-mer `"ACGT"`.
+
+        - `"split"` keeps full labels such as `"AC_GT"`, but calculates the
+          correction factor from the two sides separately. For `"AC_GT"`,
+          separate correction factors are calculated for outside label `"AC"`
+          and inside label `"GT"`. Those two correction factors are multiplied
+          and applied to the observed `"AC_GT"` count. Use this when you want
+          full two-sided motif labels in the result, but the exact full
+          reference k-mers are too sparse or you want the reference correction
+          to treat outside and inside sequence composition separately.
+
+        - `"outside"` returns outside labels such as `"AC_"`. For each outside
+          label, all full motif counts with that outside label are summed first.
+          For example, `"AC_AA"` and `"AC_GT"` both contribute to the `"AC_"`
+          count. That summed count is corrected using the outside label `"AC"`.
+
+        - `"inside"` returns inside labels such as `"_GT"`. For each inside
+          label, all full motif counts with that inside label are summed first.
+          For example, `"AA_GT"` and `"AC_GT"` both contribute to the `"_GT"`
+          count. That summed count is corrected using the inside label `"GT"`.
+
+        For `"split"`, `"outside"`, and `"inside"`, side-specific reference
+        frequencies are calculated from the loaded full-length reference
+        k-mers. For example, the outside frequency for `"AC"` is the sum of
+        frequencies for loaded k-mers with prefix `"AC"`, such as `"ACTG"` and
+        `"ACAA"`. The inside frequency for `"TG"` is the corresponding sum over
+        loaded k-mers with suffix `"TG"`. Separate shorter reference k-mer runs
+        are not required.
+
+        A motifs file used for the reference output restricts these sums to the
+        k-mers in that file. Without a motifs file, all k-mers in the reference
+        output can contribute, including k-mers absent from the sample
+        end-motif output.
+
+        An observed sample motif with a positive count is unsupported when it
+        has no positive correction factor under the selected mode.
+        `unsupported_motifs="keep_na"` keeps
+        that matrix cell as `NaN`. The `"drop"` policy is unavailable for
+        matrices because it would change a fixed result axis.
         """
         return self._sparse_corrected_counts_matrix(
             ref_kmers,
@@ -1215,6 +1704,7 @@ class WindowedEndMotifCounts(EndMotifCounts):
             max_blacklisted_fraction=max_blacklisted_fraction,
             use_global_bias=use_global_bias,
             unsupported_motifs=unsupported_motifs,
+            two_sided_correction=two_sided_correction,
         )
 
 
@@ -1233,6 +1723,7 @@ class GroupedEndMotifCounts(EndMotifCounts):
         max_blacklisted_fraction: float = 1.0,
         use_global_bias: bool = False,
         unsupported_motifs: str = "error",
+        two_sided_correction: str | None = None,
     ) -> pd.DataFrame:
         """
         Create a pandas DataFrame of end-motif counts for grouped BED rows.
@@ -1242,6 +1733,66 @@ class GroupedEndMotifCounts(EndMotifCounts):
         stored non-zero rows unless `densify=True`. Densifying adds explicit
         zero-count rows for selected observed motifs. Dense outputs always
         include zero counts. Pass `ref_kmers` to add reference-corrected counts.
+
+        Reference correction
+        --------------------
+        Reference correction divides each observed end-motif count by a
+        reference-based correction factor for the matched row. This factor is
+        computed from the motif frequencies in the reference k-mer output and
+        normalized so a uniform reference composition leaves counts unchanged.
+        Motifs that are common in the reference row are scaled down. Motifs
+        that are rare in the reference row are scaled up. Only motifs with a
+        positive reference frequency contribute to the row's correction
+        support.
+
+        Two-sided correction modes
+        --------------------------
+        When motif labels contain both outside and inside bases, such as
+        `"AC_GT"`, `two_sided_correction` chooses both the motif labels in the
+        result and the correction factor used for each returned count.
+
+        - `"joint"` keeps full labels such as `"AC_GT"` and corrects each
+          count using the exact reference k-mer `"ACGT"`.
+
+        - `"split"` keeps full labels such as `"AC_GT"`, but calculates the
+          correction factor from the two sides separately. For `"AC_GT"`,
+          separate correction factors are calculated for outside label `"AC"`
+          and inside label `"GT"`. Those two correction factors are multiplied
+          and applied to the observed `"AC_GT"` count. Use this when you want
+          full two-sided motif labels in the result, but the exact full
+          reference k-mers are too sparse or you want the reference correction
+          to treat outside and inside sequence composition separately.
+
+        - `"outside"` returns outside labels such as `"AC_"`. For each outside
+          label, all full motif counts with that outside label are summed first.
+          For example, `"AC_AA"` and `"AC_GT"` both contribute to the `"AC_"`
+          count. That summed count is corrected using the outside label `"AC"`.
+
+        - `"inside"` returns inside labels such as `"_GT"`. For each inside
+          label, all full motif counts with that inside label are summed first.
+          For example, `"AA_GT"` and `"AC_GT"` both contribute to the `"_GT"`
+          count. That summed count is corrected using the inside label `"GT"`.
+
+        For `"split"`, `"outside"`, and `"inside"`, side-specific reference
+        frequencies are calculated from the loaded full-length reference
+        k-mers. For example, the outside frequency for `"AC"` is the sum of
+        frequencies for loaded k-mers with prefix `"AC"`, such as `"ACTG"` and
+        `"ACAA"`. The inside frequency for `"TG"` is the corresponding sum over
+        loaded k-mers with suffix `"TG"`. Separate shorter reference k-mer runs
+        are not required.
+
+        A motifs file used for the reference output restricts these sums to the
+        k-mers in that file. Without a motifs file, all k-mers in the reference
+        output can contribute, including k-mers absent from the sample
+        end-motif output.
+
+        `corrected_frequency` is normalized from `corrected_count` over the full
+        correction-mode motif axis for each output row. Motif selection filters
+        those frequencies afterward and does not renormalize them. A selected
+        subset can therefore sum to less than 1. If the corrected total is
+        zero, finite frequencies are zero. With `unsupported_motifs="keep_na"`,
+        one undefined positive corrected count makes all frequencies in that
+        output row `NaN`.
 
         Parameters
         ----------
@@ -1266,14 +1817,19 @@ class GroupedEndMotifCounts(EndMotifCounts):
         use_global_bias
             Whether a global reference k-mer output may be applied to every row.
         unsupported_motifs
-            What to do when an observed sample motif has no positive reference
-            frequency. Use `"error"`, `"drop"`, or `"keep_na"`.
+            What to do when an observed sample motif has no positive correction
+            factor under the selected mode. Use `"error"`, `"drop"`, or `"keep_na"`.
+        two_sided_correction
+            Required for two-sided motif labels such as `"AC_GT"` when
+            `ref_kmers` is passed. Use `"joint"`, `"split"`, `"outside"`, or
+            `"inside"`. Leave as `None` for one-sided motifs or motif groups.
 
         Returns
         -------
         pandas.DataFrame
             Group metadata, motif metadata, and `count`. If `ref_kmers` is
-            passed, also includes reference correction columns.
+            passed, also includes `corrected_count` and
+            `corrected_frequency`.
         """
         return self._data_frame_with_optional_reference_correction(
             ref_kmers=ref_kmers,
@@ -1285,6 +1841,7 @@ class GroupedEndMotifCounts(EndMotifCounts):
             max_blacklisted_fraction=max_blacklisted_fraction,
             use_global_bias=use_global_bias,
             unsupported_motifs=unsupported_motifs,
+            two_sided_correction=two_sided_correction,
         )
 
     def group_metadata(self) -> pd.DataFrame:
@@ -1415,20 +1972,81 @@ class GroupedEndMotifCounts(EndMotifCounts):
         max_blacklisted_fraction: float = 1.0,
         use_global_bias: bool = False,
         unsupported_motifs: str = "error",
+        two_sided_correction: str | None = None,
     ) -> np.ndarray:
         """
         Return grouped reference-corrected end-motif counts as a dense array.
 
-        The result has the same shape as `dense_counts_array()` for the
-        selected groups and motifs. Counts are divided by the matching
-        reference k-mer frequency scale. Sparse end-motif stores are not
-        densified unless `allow_densify=True`; use
+        The result has one row per selected group and one column per motif on
+        the selected correction-mode axis. `"outside"` and `"inside"` replace
+        the stored joint axis with a deduplicated side axis. Use
+        `corrected_motifs_metadata()` to inspect the exact column labels and
+        order. Sparse end-motif stores are not densified unless
+        `allow_densify=True`. Use
         `sparse_corrected_counts_matrix()` to keep a sparse result.
 
         `unsupported_motifs="drop"` is not allowed because arrays have a fixed
         row and motif shape. Use
         `data_frame(ref_kmers=..., unsupported_motifs="drop")` when
         unsupported motifs should be omitted.
+
+        Reference correction
+        --------------------
+        Reference correction divides each observed end-motif count by a
+        reference-based correction factor for the matched row. This factor is
+        computed from the motif frequencies in the reference k-mer output and
+        normalized so a uniform reference composition leaves counts unchanged.
+        Motifs that are common in the reference row are scaled down. Motifs
+        that are rare in the reference row are scaled up. Only motifs with a
+        positive reference frequency contribute to the row's correction
+        support.
+
+        Two-sided correction modes
+        --------------------------
+        When motif labels contain both outside and inside bases, such as
+        `"AC_GT"`, `two_sided_correction` chooses both the motif labels in the
+        result and the correction factor used for each returned count.
+
+        - `"joint"` keeps full labels such as `"AC_GT"` and corrects each
+          count using the exact reference k-mer `"ACGT"`.
+
+        - `"split"` keeps full labels such as `"AC_GT"`, but calculates the
+          correction factor from the two sides separately. For `"AC_GT"`,
+          separate correction factors are calculated for outside label `"AC"`
+          and inside label `"GT"`. Those two correction factors are multiplied
+          and applied to the observed `"AC_GT"` count. Use this when you want
+          full two-sided motif labels in the result, but the exact full
+          reference k-mers are too sparse or you want the reference correction
+          to treat outside and inside sequence composition separately.
+
+        - `"outside"` returns outside labels such as `"AC_"`. For each outside
+          label, all full motif counts with that outside label are summed first.
+          For example, `"AC_AA"` and `"AC_GT"` both contribute to the `"AC_"`
+          count. That summed count is corrected using the outside label `"AC"`.
+
+        - `"inside"` returns inside labels such as `"_GT"`. For each inside
+          label, all full motif counts with that inside label are summed first.
+          For example, `"AA_GT"` and `"AC_GT"` both contribute to the `"_GT"`
+          count. That summed count is corrected using the inside label `"GT"`.
+
+        For `"split"`, `"outside"`, and `"inside"`, side-specific reference
+        frequencies are calculated from the loaded full-length reference
+        k-mers. For example, the outside frequency for `"AC"` is the sum of
+        frequencies for loaded k-mers with prefix `"AC"`, such as `"ACTG"` and
+        `"ACAA"`. The inside frequency for `"TG"` is the corresponding sum over
+        loaded k-mers with suffix `"TG"`. Separate shorter reference k-mer runs
+        are not required.
+
+        A motifs file used for the reference output restricts these sums to the
+        k-mers in that file. Without a motifs file, all k-mers in the reference
+        output can contribute, including k-mers absent from the sample
+        end-motif output.
+
+        An observed sample motif with a positive count is unsupported when it
+        has no positive correction factor under the selected mode.
+        `unsupported_motifs="keep_na"` keeps
+        that matrix cell as `NaN`. The `"drop"` policy is unavailable for
+        matrices because it would change a fixed result axis.
         """
         return self._corrected_counts_array(
             ref_kmers,
@@ -1440,6 +2058,7 @@ class GroupedEndMotifCounts(EndMotifCounts):
             max_blacklisted_fraction=max_blacklisted_fraction,
             use_global_bias=use_global_bias,
             unsupported_motifs=unsupported_motifs,
+            two_sided_correction=two_sided_correction,
         )
 
     def sparse_corrected_counts_matrix(
@@ -1453,19 +2072,80 @@ class GroupedEndMotifCounts(EndMotifCounts):
         max_blacklisted_fraction: float = 1.0,
         use_global_bias: bool = False,
         unsupported_motifs: str = "error",
+        two_sided_correction: str | None = None,
     ) -> sparse.coo_matrix:
         """
         Return grouped reference-corrected end-motif counts as a sparse matrix.
 
-        The result has the same shape as `sparse_counts_matrix()` for the
-        selected groups and motifs. Corrected zeroes are not stored. Corrected
-        `NaN` values from `unsupported_motifs="keep_na"` are stored so they
-        remain visible.
+        The result has one row per selected group and one column per motif on
+        the selected correction-mode axis. `"outside"` and `"inside"` can have
+        fewer columns than `sparse_counts_matrix()`. Use
+        `corrected_motifs_metadata()` to inspect the exact column labels and
+        order. Corrected zeroes are not stored. Corrected `NaN` values from
+        `unsupported_motifs="keep_na"` are stored so they remain visible.
 
         `unsupported_motifs="drop"` is not allowed because sparse matrices
         still have a fixed row and motif shape. Use
         `data_frame(ref_kmers=..., unsupported_motifs="drop")` when
         unsupported motifs should be omitted.
+
+        Reference correction
+        --------------------
+        Reference correction divides each observed end-motif count by a
+        reference-based correction factor for the matched row. This factor is
+        computed from the motif frequencies in the reference k-mer output and
+        normalized so a uniform reference composition leaves counts unchanged.
+        Motifs that are common in the reference row are scaled down. Motifs
+        that are rare in the reference row are scaled up. Only motifs with a
+        positive reference frequency contribute to the row's correction
+        support.
+
+        Two-sided correction modes
+        --------------------------
+        When motif labels contain both outside and inside bases, such as
+        `"AC_GT"`, `two_sided_correction` chooses both the motif labels in the
+        result and the correction factor used for each returned count.
+
+        - `"joint"` keeps full labels such as `"AC_GT"` and corrects each
+          count using the exact reference k-mer `"ACGT"`.
+
+        - `"split"` keeps full labels such as `"AC_GT"`, but calculates the
+          correction factor from the two sides separately. For `"AC_GT"`,
+          separate correction factors are calculated for outside label `"AC"`
+          and inside label `"GT"`. Those two correction factors are multiplied
+          and applied to the observed `"AC_GT"` count. Use this when you want
+          full two-sided motif labels in the result, but the exact full
+          reference k-mers are too sparse or you want the reference correction
+          to treat outside and inside sequence composition separately.
+
+        - `"outside"` returns outside labels such as `"AC_"`. For each outside
+          label, all full motif counts with that outside label are summed first.
+          For example, `"AC_AA"` and `"AC_GT"` both contribute to the `"AC_"`
+          count. That summed count is corrected using the outside label `"AC"`.
+
+        - `"inside"` returns inside labels such as `"_GT"`. For each inside
+          label, all full motif counts with that inside label are summed first.
+          For example, `"AA_GT"` and `"AC_GT"` both contribute to the `"_GT"`
+          count. That summed count is corrected using the inside label `"GT"`.
+
+        For `"split"`, `"outside"`, and `"inside"`, side-specific reference
+        frequencies are calculated from the loaded full-length reference
+        k-mers. For example, the outside frequency for `"AC"` is the sum of
+        frequencies for loaded k-mers with prefix `"AC"`, such as `"ACTG"` and
+        `"ACAA"`. The inside frequency for `"TG"` is the corresponding sum over
+        loaded k-mers with suffix `"TG"`. Separate shorter reference k-mer runs
+        are not required.
+
+        A motifs file used for the reference output restricts these sums to the
+        k-mers in that file. Without a motifs file, all k-mers in the reference
+        output can contribute, including k-mers absent from the sample
+        end-motif output.
+
+        An observed sample motif with a positive count is unsupported when it
+        has no positive correction factor under the selected mode.
+        `unsupported_motifs="keep_na"` keeps
+        that matrix cell as `NaN`. The `"drop"` policy is unavailable for
+        matrices because it would change a fixed result axis.
         """
         return self._sparse_corrected_counts_matrix(
             ref_kmers,
@@ -1476,6 +2156,7 @@ class GroupedEndMotifCounts(EndMotifCounts):
             max_blacklisted_fraction=max_blacklisted_fraction,
             use_global_bias=use_global_bias,
             unsupported_motifs=unsupported_motifs,
+            two_sided_correction=two_sided_correction,
         )
 
 

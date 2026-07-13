@@ -1,21 +1,75 @@
 #' Correct end-motif counts for reference k-mer composition.
 #'
-#' This helper starts from `end_motif_data_frame()`. Each count is divided by
-#' `reference_frequency * correction_motif_count`.
-#' `correction_motif_count` is computed separately for each reference row from
-#' motifs with positive reference frequency. A uniform reference within that row
-#' leaves counts unchanged.
+#' This helper starts from `end_motif_data_frame()` and adds `corrected_count`
+#' and `corrected_frequency`. Formula internals such as reference frequencies
+#' and correction factors are not returned.
 #'
-#' Concrete end-motif labels are matched to reference k-mers by removing the
-#' `_` separator, for example `AT_CG -> ATCG`. Motif-group outputs are matched
-#' directly by group label.
+#' Motif labels are matched to reference k-mers by removing the `_` separator,
+#' for example `AT_CG -> ATCG`. Motif-group outputs are matched directly by
+#' group label.
 #'
 #' Reference k-mer output is read without densifying. For sparse reference
 #' output, omitted row/motif pairs are treated as zero frequency.
 #'
-#' Sample-observed motifs can be absent from the reference genome or have zero
-#' reference frequency in a row. Positive end-motif counts for those motifs
-#' cannot be divided by a reference bias. By default this is an error. Set
+#' Reference correction divides each observed end-motif count by a
+#' reference-based correction factor for the matched row. This factor is
+#' computed from the motif frequencies in the reference k-mer output and
+#' normalized so a uniform reference composition leaves counts unchanged.
+#' Motifs that are common in the reference row are scaled down. Motifs that are
+#' rare in the reference row are scaled up. Only motifs with a positive
+#' reference frequency contribute to the row's correction support.
+#'
+#' Two-sided correction modes:
+#'
+#' When motif labels contain both outside and inside bases, such as `"AC_GT"`,
+#' `two_sided_correction` chooses both the motif labels in the result and the
+#' correction factor used for each returned count.
+#'
+#' - `"joint"` keeps full labels such as `"AC_GT"` and corrects each count
+#'   using the exact reference k-mer `"ACGT"`.
+#'
+#' - `"split"` keeps full labels such as `"AC_GT"`, but calculates the
+#'   correction factor from the two sides separately. For `"AC_GT"`, separate
+#'   correction factors are calculated for outside label `"AC"` and inside
+#'   label `"GT"`. Those two correction factors are multiplied and applied to
+#'   the observed `"AC_GT"` count. Use this when you want full two-sided motif
+#'   labels in the result, but the exact full reference k-mers are too sparse or
+#'   you want the reference correction to treat outside and inside sequence
+#'   composition separately.
+#'
+#' - `"outside"` returns outside labels such as `"AC_"`. For each outside
+#'   label, all full motif counts with that outside label are summed first. For
+#'   example, `"AC_AA"` and `"AC_GT"` both contribute to the `"AC_"` count. That
+#'   summed count is corrected using the outside label `"AC"`.
+#'
+#' - `"inside"` returns inside labels such as `"_GT"`. For each inside label,
+#'   all full motif counts with that inside label are summed first. For example,
+#'   `"AA_GT"` and `"AC_GT"` both contribute to the `"_GT"` count. That summed
+#'   count is corrected using the inside label `"GT"`.
+#'
+#' One-sided outputs do not accept an explicit mode.
+#'
+#' For `"split"`, `"outside"`, and `"inside"`, side-specific reference frequencies
+#' are calculated from the loaded full-length reference k-mers. For example, the
+#' outside frequency for `"AC"` is the sum of frequencies for loaded k-mers with
+#' prefix `"AC"`, such as `"ACTG"` and `"ACAA"`. The inside frequency for `"TG"` is
+#' the corresponding sum over loaded k-mers with suffix `"TG"`. Separate shorter
+#' reference k-mer runs are not required.
+#'
+#' A motifs file used for the reference output restricts these sums to the k-mers
+#' in that file. Without a motifs file, all k-mers in the reference output can
+#' contribute, including k-mers absent from the sample end-motif output.
+#'
+#' `corrected_frequency` is normalized from `corrected_count` over the full
+#' correction-mode motif axis for each output row. Motif selection filters those
+#' frequencies afterward and does not renormalize them. With
+#' `unsupported_motifs = "keep_na"`, one undefined positive corrected count makes
+#' all frequencies in that output row `NA`. Correction fails if division by a
+#' positive reference factor would produce a non-finite corrected count.
+#'
+#' An observed sample motif with a positive count is unsupported when it has no
+#' positive correction factor under the selected mode. By default this is an
+#' error. Set
 #' `unsupported_motifs = "drop"` to omit those rows, or
 #' `unsupported_motifs = "keep_na"` to keep them with `NA` corrected counts.
 #'
@@ -29,7 +83,7 @@
 #'
 #' Window, group, and motif selectors follow the same rules as
 #' `end_motif_data_frame()`. Motif selectors choose the returned end-motif
-#' rows. They do not change the reference support used for scaling, so
+#' rows. They do not change the reference support used for correction, so
 #' selecting a motif gives the same corrected value as filtering the full
 #' corrected data frame afterward.
 #'
@@ -54,11 +108,15 @@
 #' @param use_global_bias Whether a global reference k-mer output may be applied
 #'   to every non-global end-motif row.
 #' @param unsupported_motifs What to do when an observed sample motif has no
-#'   positive reference frequency. Use `"error"`, `"drop"`, or `"keep_na"`.
+#'   positive correction factor under the selected mode. Use `"error"`,
+#'   `"drop"`, or `"keep_na"`.
+#' @param two_sided_correction Required when motif labels contain both outside
+#'   and inside bases, such as `"AC_GT"`. Use `"joint"`, `"split"`,
+#'   `"outside"`, or `"inside"`. Leave as `NULL` for one-sided motifs or motif
+#'   groups.
 #'
-#' @return An end-motif data frame with `reference_motif`,
-#'   `reference_frequency`, `correction_motif_count`, `reference_scale`, and
-#'   `reference_corrected_count`.
+#' @return An end-motif data frame with `corrected_count` and
+#'   `corrected_frequency`.
 #' @noRd
 cf_reference_corrected_end_motif_data_frame <- function(
   ends,
@@ -71,20 +129,56 @@ cf_reference_corrected_end_motif_data_frame <- function(
   motif_idxs = NULL,
   max_blacklisted_fraction = 1.0,
   use_global_bias = FALSE,
-  unsupported_motifs = "error"
+  unsupported_motifs = "error",
+  two_sided_correction = NULL
 ) {
   unsupported_motifs <- cf_match_exact_argument(
     unsupported_motifs,
     c("error", "drop", "keep_na"),
     "unsupported_motifs"
   )
+  cf_validate_scalar_logical(densify, "densify")
+  context <- cf_prepare_reference_correction(
+    ends,
+    ref_kmers,
+    motifs,
+    motif_idxs,
+    use_global_bias,
+    two_sided_correction
+  )
+  cf_reference_corrected_end_motif_data_frame_from_context(
+    ends = ends,
+    ref_kmers = ref_kmers,
+    context = context,
+    window_idxs = window_idxs,
+    groups = groups,
+    group_idxs = group_idxs,
+    densify = densify,
+    max_blacklisted_fraction = max_blacklisted_fraction,
+    unsupported_motifs = unsupported_motifs
+  )
+}
+
+#' Prepare and validate shared reference-correction state.
+#'
+#' @return A list containing the correction mode, row columns, reference row
+#'   columns, and selected output motif labels.
+#' @noRd
+cf_prepare_reference_correction <- function(
+  ends,
+  ref_kmers,
+  motifs,
+  motif_idxs,
+  use_global_bias,
+  two_sided_correction
+) {
+  two_sided_correction <- cf_validate_two_sided_correction(two_sided_correction)
   if (!inherits(ends, "cfdnalab_end_motif_counts")) {
     stop("ends must be a cfDNAlab end-motif object", call. = FALSE)
   }
   if (!inherits(ref_kmers, "cfdnalab_ref_kmer_frequencies")) {
     stop("ref_kmers must be a cfDNAlab reference k-mer object", call. = FALSE)
   }
-  cf_validate_scalar_logical(densify, "densify")
   cf_validate_scalar_logical(use_global_bias, "use_global_bias")
   if (isTRUE(use_global_bias) && !identical(ref_kmers$row_mode, "global")) {
     stop(
@@ -117,7 +211,11 @@ cf_reference_corrected_end_motif_data_frame <- function(
     }
   }
   cf_validate_reference_correction_motif_axes(ends, ref_kmers)
-
+  correction_mode <- cf_reference_correction_mode(
+    ends,
+    ref_kmers,
+    two_sided_correction
+  )
   row_columns <- cf_reference_correction_row_columns(ends$row_mode)
   reference_row_columns <- cf_reference_correction_reference_row_columns(
     ends,
@@ -131,29 +229,60 @@ cf_reference_corrected_end_motif_data_frame <- function(
     reference_row_columns
   )
 
+  list(
+    correction_mode = correction_mode,
+    row_columns = row_columns,
+    reference_row_columns = reference_row_columns,
+    selected_mode_labels = cf_selected_reference_correction_mode_labels(
+      ends,
+      correction_mode,
+      motifs,
+      motif_idxs
+    )
+  )
+}
+
+#' Build reference-corrected rows from validated shared state.
+#'
+#' @return A reference-corrected end-motif data frame.
+#' @noRd
+cf_reference_corrected_end_motif_data_frame_from_context <- function(
+  ends,
+  ref_kmers,
+  context,
+  window_idxs,
+  groups,
+  group_idxs,
+  densify,
+  max_blacklisted_fraction,
+  unsupported_motifs
+) {
   end_row_indices <- cf_reference_correction_end_row_indices(
     ends,
     window_idxs,
     groups,
     group_idxs
   )
-  end_motif_indices <- cf_resolve_end_motif_indices(ends, motifs, motif_idxs)
-
   end_rows <- cf_end_motif_data_frame(
     ends,
     row_indices = end_row_indices,
-    motif_indices = end_motif_indices,
+    motif_indices = seq_along(ends$motif_idx0),
     densify = densify,
     max_blacklisted_fraction = max_blacklisted_fraction
   )
   if (nrow(end_rows) == 0L) {
     return(cf_add_empty_reference_correction_columns(end_rows))
   }
+  output_columns <- names(end_rows)
+  end_rows$.cfdnalab_row_order <- cf_reference_correction_row_order(
+    end_rows,
+    context$row_columns
+  )
 
   ref_row_indices <- cf_reference_correction_ref_row_indices_from_end_rows(
     ref_kmers,
     end_rows,
-    reference_row_columns
+    context$reference_row_columns
   )
   ref_rows <- cf_ref_kmer_data_frame(
     ref_kmers,
@@ -163,87 +292,60 @@ cf_reference_corrected_end_motif_data_frame <- function(
     max_blacklisted_fraction = 1.0
   )
 
-  if (identical(ends$motif_axis_kind, "motif_group")) {
-    end_rows$reference_motif <- end_rows$motif
+  ref_rows <- cf_prepare_reference_correction_ref_rows(
+    ref_rows,
+    end_rows,
+    context$reference_row_columns
+  )
+  if (identical(context$correction_mode$mode, "exact")) {
+    corrected <- cf_exact_reference_corrected_rows(
+      ends,
+      end_rows,
+      ref_rows,
+      context$reference_row_columns,
+      unsupported_motifs
+    )
+  } else if (identical(context$correction_mode$mode, "split")) {
+    corrected <- cf_split_reference_corrected_rows(
+      end_rows,
+      ref_rows,
+      context$reference_row_columns,
+      context$correction_mode,
+      unsupported_motifs
+    )
   } else {
-    end_rows$reference_motif <- gsub("_", "", end_rows$motif, fixed = TRUE)
+    corrected <- cf_side_reference_corrected_rows(
+      end_rows,
+      ref_rows,
+      context$reference_row_columns,
+      context$correction_mode,
+      output_columns,
+      unsupported_motifs
+    )
   }
-  end_column_names <- names(end_rows)
-  names(ref_rows)[names(ref_rows) == "motif"] <- "reference_motif"
-  names(ref_rows)[names(ref_rows) == "frequency"] <- "reference_frequency"
-  ref_rows <- ref_rows[c(reference_row_columns, "reference_motif", "reference_frequency")]
-  ref_rows <- cf_reference_correction_filter_ref_rows(
-    ref_rows,
-    end_rows,
-    reference_row_columns
-  )
-
-  merge_columns <- c(reference_row_columns, "reference_motif")
-  if (any(duplicated(ref_rows[merge_columns]))) {
-    stop("Reference k-mer rows are not unique for row and motif labels", call. = FALSE)
-  }
-  reference_support_counts <- cf_reference_correction_support_counts(
-    ref_rows,
-    reference_row_columns
-  )
-
-  end_rows$.cfdnalab_order <- seq_len(nrow(end_rows))
-  corrected <- merge(
-    end_rows,
-    ref_rows,
-    by = merge_columns,
-    all.x = TRUE,
-    sort = FALSE
-  )
-  corrected <- corrected[order(corrected$.cfdnalab_order), , drop = FALSE]
-  corrected$.cfdnalab_order <- NULL
-  row.names(corrected) <- NULL
-
-  missing_reference <- is.na(corrected$reference_frequency)
-  if (any(missing_reference)) {
-    corrected$reference_frequency[missing_reference] <- 0
-  }
-  corrected <- cf_add_reference_correction_motif_count(
+  corrected <- cf_add_corrected_frequency(
     corrected,
-    reference_support_counts,
-    reference_row_columns
+    context$row_columns,
+    unsupported_motifs
   )
-
-  unsupported_reference <- corrected$reference_frequency <= 0
-  positive_unsupported_reference <- unsupported_reference & corrected$count > 0
-  if (any(positive_unsupported_reference) && identical(unsupported_motifs, "error")) {
-    unsupported_labels <- sort(unique(corrected$reference_motif[positive_unsupported_reference]))
-    stop(
-      "Positive-count end motifs have no positive reference frequency: ",
-      paste(unsupported_labels, collapse = ", "),
-      ". Pass unsupported_motifs = \"drop\" to omit those rows, or ",
-      "unsupported_motifs = \"keep_na\" to keep them with NA corrected counts.",
-      call. = FALSE
-    )
-  }
-  if (identical(unsupported_motifs, "drop")) {
-    corrected <- corrected[!unsupported_reference, , drop = FALSE]
-    positive_unsupported_reference <- positive_unsupported_reference[!unsupported_reference]
-  }
-
-  corrected$reference_scale <- corrected$reference_frequency * corrected$correction_motif_count
-  corrected$reference_corrected_count <- 0
-  supported_reference <- corrected$reference_scale > 0
-  corrected$reference_corrected_count[supported_reference] <- (
-    corrected$count[supported_reference] / corrected$reference_scale[supported_reference]
-  )
-  if (identical(unsupported_motifs, "keep_na")) {
-    corrected$reference_corrected_count[positive_unsupported_reference] <- NA_real_
-  }
-  corrected[
-    c(
-      end_column_names,
-      "reference_frequency",
-      "correction_motif_count",
-      "reference_scale",
-      "reference_corrected_count"
-    )
+  corrected <- corrected[
+    corrected$motif %in% context$selected_mode_labels,
+    ,
+    drop = FALSE
   ]
+  if (length(context$selected_mode_labels) > 0L && nrow(corrected) > 0L) {
+    corrected$.cfdnalab_motif_order <- match(
+      corrected$motif,
+      context$selected_mode_labels
+    )
+    corrected <- corrected[order(
+      corrected$.cfdnalab_row_order,
+      corrected$.cfdnalab_motif_order
+    ), , drop = FALSE]
+    corrected$.cfdnalab_motif_order <- NULL
+  }
+  row.names(corrected) <- NULL
+  corrected[c(output_columns, "corrected_count", "corrected_frequency")]
 }
 
 #' Return reference-corrected counts as a dense matrix.
@@ -259,6 +361,9 @@ cf_reference_corrected_end_motif_data_frame <- function(
 #' @param max_blacklisted_fraction Maximum blacklist fraction.
 #' @param use_global_bias Whether a global reference can be broadcast.
 #' @param unsupported_motifs Unsupported motif policy.
+#' @param two_sided_correction `NULL` for one-sided or motif-group axes.
+#'   For two-sided axes, one of `"joint"`, `"split"`, `"outside"`, or
+#'   `"inside"`, which determines both factor construction and the motif axis.
 #'
 #' @return A dense numeric matrix.
 #' @noRd
@@ -273,13 +378,22 @@ cf_reference_corrected_counts_matrix <- function(
   allow_densify = FALSE,
   max_blacklisted_fraction = 1.0,
   use_global_bias = FALSE,
-  unsupported_motifs = "error"
+  unsupported_motifs = "error",
+  two_sided_correction = NULL
 ) {
   cf_validate_fixed_shape_reference_correction_policy(
     unsupported_motifs,
     "dense_corrected_counts_matrix"
   )
   cf_validate_scalar_logical(allow_densify, "allow_densify")
+  context <- cf_prepare_reference_correction(
+    ends,
+    ref_kmers,
+    motifs,
+    motif_idxs,
+    use_global_bias,
+    two_sided_correction
+  )
   if (identical(ends$storage_mode, "sparse_coo") && !isTRUE(allow_densify)) {
     stop(
       "This end-motif store is sparse. Use sparse_corrected_counts_matrix() ",
@@ -289,26 +403,27 @@ cf_reference_corrected_counts_matrix <- function(
   }
   row_indices <- cf_reference_correction_end_row_indices(ends, window_idxs, groups, group_idxs)
   row_indices <- cf_apply_end_motif_blacklist_filter(ends, row_indices, max_blacklisted_fraction)
-  motif_indices <- cf_resolve_end_motif_indices(ends, motifs, motif_idxs)
-  corrected <- cf_reference_corrected_end_motif_data_frame(
-    ends,
-    ref_kmers,
+  corrected <- cf_reference_corrected_end_motif_data_frame_from_context(
+    ends = ends,
+    ref_kmers = ref_kmers,
+    context = context,
     window_idxs = window_idxs,
     groups = groups,
     group_idxs = group_idxs,
     densify = TRUE,
-    motifs = motifs,
-    motif_idxs = motif_idxs,
     max_blacklisted_fraction = max_blacklisted_fraction,
-    use_global_bias = use_global_bias,
     unsupported_motifs = unsupported_motifs
   )
-  matrix(
-    corrected$reference_corrected_count,
+  corrected_matrix <- matrix(
+    corrected$corrected_count,
     nrow = length(row_indices),
-    ncol = length(motif_indices),
+    ncol = length(context$selected_mode_labels),
     byrow = TRUE
   )
+  if (context$correction_mode$mode %in% c("outside", "inside")) {
+    colnames(corrected_matrix) <- context$selected_mode_labels
+  }
+  corrected_matrix
 }
 
 #' Return reference-corrected counts as a sparse matrix.
@@ -323,6 +438,9 @@ cf_reference_corrected_counts_matrix <- function(
 #' @param max_blacklisted_fraction Maximum blacklist fraction.
 #' @param use_global_bias Whether a global reference can be broadcast.
 #' @param unsupported_motifs Unsupported motif policy.
+#' @param two_sided_correction `NULL` for one-sided or motif-group axes.
+#'   For two-sided axes, one of `"joint"`, `"split"`, `"outside"`, or
+#'   `"inside"`, which determines both factor construction and the motif axis.
 #'
 #' @return A `Matrix` sparse matrix.
 #' @noRd
@@ -336,65 +454,108 @@ cf_sparse_reference_corrected_counts_matrix <- function(
   motif_idxs = NULL,
   max_blacklisted_fraction = 1.0,
   use_global_bias = FALSE,
-  unsupported_motifs = "error"
+  unsupported_motifs = "error",
+  two_sided_correction = NULL
 ) {
   cf_validate_fixed_shape_reference_correction_policy(
     unsupported_motifs,
     "sparse_corrected_counts_matrix"
   )
-  row_indices <- cf_reference_correction_end_row_indices(ends, window_idxs, groups, group_idxs)
-  row_indices <- cf_apply_end_motif_blacklist_filter(ends, row_indices, max_blacklisted_fraction)
-  motif_indices <- cf_resolve_end_motif_indices(ends, motifs, motif_idxs)
-  if (length(row_indices) == 0L || length(motif_indices) == 0L) {
-    return(Matrix::sparseMatrix(
-      i = integer(),
-      j = integer(),
-      dims = as.integer(c(length(row_indices), length(motif_indices)))
-    ))
-  }
-  corrected <- cf_reference_corrected_end_motif_data_frame(
+  context <- cf_prepare_reference_correction(
     ends,
     ref_kmers,
+    motifs,
+    motif_idxs,
+    use_global_bias,
+    two_sided_correction
+  )
+  row_indices <- cf_reference_correction_end_row_indices(ends, window_idxs, groups, group_idxs)
+  row_indices <- cf_apply_end_motif_blacklist_filter(ends, row_indices, max_blacklisted_fraction)
+  if (
+    length(row_indices) == 0L ||
+      length(context$selected_mode_labels) == 0L
+  ) {
+    return(cf_empty_sparse_reference_corrected_counts_matrix(
+      length(row_indices),
+      context$selected_mode_labels,
+      context$correction_mode
+    ))
+  }
+  corrected <- cf_reference_corrected_end_motif_data_frame_from_context(
+    ends = ends,
+    ref_kmers = ref_kmers,
+    context = context,
     window_idxs = window_idxs,
     groups = groups,
     group_idxs = group_idxs,
     densify = FALSE,
-    motifs = motifs,
-    motif_idxs = motif_idxs,
     max_blacklisted_fraction = max_blacklisted_fraction,
-    use_global_bias = use_global_bias,
     unsupported_motifs = unsupported_motifs
   )
   if (nrow(corrected) == 0L) {
-    return(Matrix::sparseMatrix(
-      i = integer(),
-      j = integer(),
-      dims = as.integer(c(length(row_indices), length(motif_indices)))
+    return(cf_empty_sparse_reference_corrected_counts_matrix(
+      length(row_indices),
+      context$selected_mode_labels,
+      context$correction_mode
     ))
   }
   row_positions <- cf_reference_correction_row_positions(ends, row_indices)
-  motif_positions <- stats::setNames(seq_along(motif_indices), ends$motif[motif_indices])
-  corrected_values <- corrected$reference_corrected_count
+  motif_positions <- stats::setNames(
+    seq_along(context$selected_mode_labels),
+    context$selected_mode_labels
+  )
+  corrected_values <- corrected$corrected_count
   stored <- corrected_values != 0 | is.na(corrected_values)
   if (!any(stored)) {
-    return(Matrix::sparseMatrix(
-      i = integer(),
-      j = integer(),
-      dims = as.integer(c(length(row_indices), length(motif_indices)))
+    return(cf_empty_sparse_reference_corrected_counts_matrix(
+      length(row_indices),
+      context$selected_mode_labels,
+      context$correction_mode
     ))
   }
   Matrix::sparseMatrix(
     i = unname(row_positions[cf_reference_correction_row_keys(
       corrected,
-      cf_reference_correction_row_columns(ends$row_mode)
+      context$row_columns
     )])[stored],
     j = unname(motif_positions[corrected$motif])[stored],
     x = corrected_values[stored],
-    dims = as.integer(c(length(row_indices), length(motif_indices)))
+    dims = as.integer(c(length(row_indices), length(context$selected_mode_labels))),
+    dimnames = if (context$correction_mode$mode %in% c("outside", "inside")) {
+      list(NULL, context$selected_mode_labels)
+    } else {
+      NULL
+    }
   )
 }
 
-#' Validate unsupported motif policy for fixed-shape outputs.
+#' Construct an empty fixed-shape sparse correction matrix.
+#'
+#' @return A sparse matrix with the requested dimensions.
+#' @noRd
+cf_empty_sparse_reference_corrected_counts_matrix <- function(
+  row_count,
+  mode_labels,
+  correction_mode
+) {
+  Matrix::sparseMatrix(
+    i = integer(),
+    j = integer(),
+    dims = as.integer(c(row_count, length(mode_labels))),
+    dimnames = if (correction_mode$mode %in% c("outside", "inside")) {
+      list(NULL, mode_labels)
+    } else {
+      NULL
+    }
+  )
+}
+
+#' Reject policies that would change a matrix axis.
+#'
+#' Dense and sparse corrected matrices have fixed row and motif dimensions, so
+#' they cannot represent `"drop"` without removing cells or columns. They accept
+#' `"error"` and `"keep_na"`. Data frame output remains the route for dropping
+#' unsupported motif rows.
 #'
 #' @param unsupported_motifs Unsupported motif policy.
 #' @param method_name Public method name.
@@ -417,6 +578,742 @@ cf_validate_fixed_shape_reference_correction_policy <- function(unsupported_moti
     )
   }
   invisible(TRUE)
+}
+
+#' Validate a nullable two-sided correction choice.
+#'
+#' `NULL` is retained for axes that do not need a two-sided choice. Non-null
+#' values must match `"joint"`, `"split"`, `"outside"`, or `"inside"`
+#' exactly.
+#'
+#' @param two_sided_correction User-supplied mode or `NULL`.
+#'
+#' @return `NULL` or the matched mode string.
+#' @noRd
+cf_validate_two_sided_correction <- function(two_sided_correction) {
+  if (is.null(two_sided_correction)) {
+    return(NULL)
+  }
+  cf_match_exact_argument(
+    two_sided_correction,
+    c("joint", "split", "outside", "inside"),
+    "two_sided_correction"
+  )
+}
+
+#' Resolve factor construction and the returned motif axis.
+#'
+#' Motif groups use exact matching and reject a two-sided choice. Empty motif
+#' axes return exact mode without needing side widths. One-sided motifs also use
+#' exact matching and reject a two-sided choice. A motif with bases on both
+#' sides requires an explicit choice. `"joint"` uses exact full labels,
+#' `"split"` records the inferred side widths while preserving full labels,
+#' and side modes additionally build the derived outside or inside label axis.
+#'
+#' @param ends End-motif object.
+#' @param ref_kmers Reference k-mer object.
+#' @param two_sided_correction Nullable public mode value.
+#'
+#' @return List describing the internal correction mode.
+#' @noRd
+cf_reference_correction_mode <- function(ends, ref_kmers, two_sided_correction) {
+  if (identical(ends$motif_axis_kind, "motif_group")) {
+    if (!is.null(two_sided_correction)) {
+      stop("Motif-group end-motif outputs do not accept two_sided_correction", call. = FALSE)
+    }
+    return(list(mode = "exact"))
+  }
+  if (length(ends$motif) == 0L) {
+    return(list(mode = "exact"))
+  }
+
+  widths <- cf_infer_end_motif_side_widths(ends$motif, ref_kmers$kmer_size)
+  cf_validate_reference_labels_split_cleanly(ref_kmers$motif, widths$outside, widths$inside)
+  if (widths$outside == 0L || widths$inside == 0L) {
+    if (!is.null(two_sided_correction)) {
+      stop("One-sided end-motif outputs do not accept two_sided_correction", call. = FALSE)
+    }
+    return(list(mode = "exact"))
+  }
+  if (is.null(two_sided_correction)) {
+    stop("two-sided end-motif labels with both outside and inside bases require two_sided_correction", call. = FALSE)
+  }
+  if (identical(two_sided_correction, "joint")) {
+    return(list(mode = "exact"))
+  }
+  mode <- list(
+    mode = two_sided_correction,
+    outside_width = widths$outside,
+    inside_width = widths$inside
+  )
+  if (two_sided_correction %in% c("outside", "inside")) {
+    mode$side_labels <- cf_side_axis_labels(ends$motif, two_sided_correction)
+  }
+  mode
+}
+
+#' Infer and validate the outside and inside motif widths.
+#'
+#' Each label is split at its underscore. Its outside and inside widths must
+#' sum to the reference k-mer size, and every loaded label must use the same
+#' pair of widths so reference prefixes and suffixes are unambiguous.
+#'
+#' @param motif_labels End-motif labels.
+#' @param reference_kmer_size Reference k-mer size.
+#'
+#' @return List with `outside` and `inside` widths.
+#' @noRd
+cf_infer_end_motif_side_widths <- function(motif_labels, reference_kmer_size) {
+  outside_width <- NULL
+  inside_width <- NULL
+  for (motif_label in motif_labels) {
+    parts <- cf_split_end_motif_label(motif_label)
+    widths <- c(nchar(parts$outside), nchar(parts$inside))
+    if (sum(widths) != reference_kmer_size) {
+      stop(
+        "End-motif width must match reference k-mer size (",
+        reference_kmer_size,
+        "): ",
+        motif_label,
+        call. = FALSE
+      )
+    }
+    if (is.null(outside_width)) {
+      outside_width <- widths[[1L]]
+      inside_width <- widths[[2L]]
+    } else if (!identical(c(outside_width, inside_width), widths)) {
+      stop(
+        "All end-motif labels must use the same outside and inside widths",
+        call. = FALSE
+      )
+    }
+  }
+  list(outside = outside_width, inside = inside_width)
+}
+
+#' Split an end-motif label at its single underscore.
+#'
+#' Exactly one underscore is required. An empty outside or inside component is
+#' valid, allowing one-sided labels such as `"_GT"` and `"AC_"`.
+#'
+#' @param motif_label End-motif label.
+#'
+#' @return List with `outside` and `inside`.
+#' @noRd
+cf_split_end_motif_label <- function(motif_label) {
+  separator_positions <- gregexpr("_", motif_label, fixed = TRUE)[[1L]]
+  if (
+    length(separator_positions) != 1L ||
+      separator_positions[[1L]] < 0L
+  ) {
+    stop(
+      "End-motif label must contain exactly one '_' to separate outside and inside bases: ",
+      motif_label,
+      call. = FALSE
+    )
+  }
+  separator_position <- separator_positions[[1L]]
+  motif_width <- nchar(motif_label)
+  outside <- if (separator_position == 1L) {
+    ""
+  } else {
+    substr(motif_label, 1L, separator_position - 1L)
+  }
+  inside <- if (separator_position == motif_width) {
+    ""
+  } else {
+    substr(motif_label, separator_position + 1L, motif_width)
+  }
+  list(outside = outside, inside = inside)
+}
+
+#' Require every reference label to cover the inferred two sides.
+#'
+#' A reference label has no underscore, so its length must equal
+#' `outside_width + inside_width` before it can be split by prefix and suffix.
+#'
+#' @param reference_labels Reference motif labels.
+#' @param outside_width Outside width.
+#' @param inside_width Inside width.
+#'
+#' @return Invisibly returns `TRUE`.
+#' @noRd
+cf_validate_reference_labels_split_cleanly <- function(
+  reference_labels,
+  outside_width,
+  inside_width
+) {
+  expected_width <- outside_width + inside_width
+  bad_labels <- reference_labels[nchar(reference_labels) != expected_width]
+  if (length(bad_labels) > 0L) {
+    stop(
+      "Reference motif label must split into outside width ",
+      outside_width,
+      " and inside width ",
+      inside_width,
+      ": ",
+      bad_labels[[1L]],
+      call. = FALSE
+    )
+  }
+  invisible(TRUE)
+}
+
+#' Build a derived side axis in loaded full-motif order.
+#'
+#' Outside mode converts each full label to forms such as `"AC_"`, while inside
+#' mode produces forms such as `"_GT"`. Repeated side labels are removed while
+#' preserving the first loaded full motif that introduced each label.
+#'
+#' @param motif_labels Concrete joint motif labels.
+#' @param side_mode `"outside"` or `"inside"`.
+#'
+#' @return Side labels.
+#' @noRd
+cf_side_axis_labels <- function(motif_labels, side_mode) {
+  motif_parts <- lapply(motif_labels, cf_split_end_motif_label)
+  side_labels <- if (identical(side_mode, "outside")) {
+    paste0(vapply(motif_parts, `[[`, character(1), "outside"), "_")
+  } else {
+    paste0("_", vapply(motif_parts, `[[`, character(1), "inside"))
+  }
+  unique(side_labels)
+}
+
+#' Resolve labels against the axis returned by the correction mode.
+#'
+#' Exact and split modes select from the stored full-motif axis. Outside and
+#' inside modes select from a derived side-label axis, reject source motif
+#' indices because they do not identify that axis, validate requested labels,
+#' and preserve the caller's requested label order.
+#'
+#' @param ends End-motif object.
+#' @param correction_mode Internal correction mode.
+#' @param motifs Optional motif labels.
+#' @param motif_idxs Optional motif indices.
+#'
+#' @return Selected mode labels.
+#' @noRd
+cf_selected_reference_correction_mode_labels <- function(
+  ends,
+  correction_mode,
+  motifs,
+  motif_idxs
+) {
+  if (correction_mode$mode %in% c("exact", "split")) {
+    return(ends$motif[cf_resolve_end_motif_indices(ends, motifs, motif_idxs)])
+  }
+  if (!is.null(motif_idxs)) {
+    stop(
+      "motif index selectors are not supported for outside or inside reference correction",
+      call. = FALSE
+    )
+  }
+  if (is.null(motifs)) {
+    return(correction_mode$side_labels)
+  }
+  if (!is.character(motifs) || anyNA(motifs)) {
+    stop("motifs must contain character strings", call. = FALSE)
+  }
+  if (any(duplicated(motifs))) {
+    stop("motifs contains duplicate values", call. = FALSE)
+  }
+  unknown <- setdiff(motifs, correction_mode$side_labels)
+  if (length(unknown) > 0L) {
+    stop("Side-mode motif axis has no label ", sQuote(unknown[[1L]]), call. = FALSE)
+  }
+  motifs
+}
+
+#' Prepare only the reference rows and columns needed for correction.
+#'
+#' Rename reference `motif` and `frequency` columns to avoid collisions with
+#' sample columns, retain the row-identifying join columns, and filter the
+#' reference rows to those needed by the selected sample rows.
+#'
+#' @param ref_rows Reference rows.
+#' @param end_rows Selected end rows.
+#' @param reference_row_columns Reference row columns.
+#'
+#' @return Filtered reference rows with correction column names.
+#' @noRd
+cf_prepare_reference_correction_ref_rows <- function(
+  ref_rows,
+  end_rows,
+  reference_row_columns
+) {
+  names(ref_rows)[names(ref_rows) == "motif"] <- "reference_motif"
+  names(ref_rows)[names(ref_rows) == "frequency"] <- "reference_frequency"
+  ref_rows <- ref_rows[c(reference_row_columns, "reference_motif", "reference_frequency")]
+  cf_reference_correction_filter_ref_rows(
+    ref_rows,
+    end_rows,
+    reference_row_columns
+  )
+}
+
+#' Correct each sample motif with its matching full reference label.
+#'
+#' Motif-group labels match directly. Sequence labels match after removing the
+#' underscore. For each reference row, the correction factor is the matching
+#' frequency times the number of positive reference motifs, which expresses the
+#' frequency relative to a uniform reference row. Each sample count is divided
+#' by that factor after applying the unsupported-reference policy.
+#'
+#' @return Corrected rows.
+#' @noRd
+cf_exact_reference_corrected_rows <- function(
+  ends,
+  end_rows,
+  ref_rows,
+  reference_row_columns,
+  unsupported_motifs
+) {
+  if (identical(ends$motif_axis_kind, "motif_group")) {
+    end_rows$reference_motif <- end_rows$motif
+  } else {
+    end_rows$reference_motif <- gsub("_", "", end_rows$motif, fixed = TRUE)
+  }
+  merge_columns <- c(reference_row_columns, "reference_motif")
+  if (any(duplicated(ref_rows[merge_columns]))) {
+    stop("Reference k-mer rows are not unique for row and motif labels", call. = FALSE)
+  }
+  reference_support_counts <- cf_reference_correction_support_counts(
+    ref_rows,
+    reference_row_columns
+  )
+  end_rows$.cfdnalab_order <- seq_len(nrow(end_rows))
+  corrected <- merge(
+    end_rows,
+    ref_rows,
+    by = merge_columns,
+    all.x = TRUE,
+    sort = FALSE
+  )
+  corrected <- corrected[order(corrected$.cfdnalab_order), , drop = FALSE]
+  corrected$.cfdnalab_order <- NULL
+  corrected$reference_frequency[is.na(corrected$reference_frequency)] <- 0
+  corrected <- cf_add_reference_correction_motif_count(
+    corrected,
+    reference_support_counts,
+    reference_row_columns
+  )
+  corrected$reference_denominator <- (
+    corrected$reference_frequency * corrected$correction_motif_count
+  )
+  cf_apply_reference_denominator_policy(
+    corrected,
+    "reference_denominator",
+    unsupported_motifs
+  )
+}
+
+#' Correct full motifs with independently calculated side factors.
+#'
+#' Parse each sample motif into its outside and inside labels, calculate factors
+#' from aggregated reference prefix and suffix frequencies, and join both factors
+#' to every sample row. The full motif axis is retained. Its correction factor is
+#' the product of the matching outside and inside factors.
+#'
+#' @return Corrected rows.
+#' @noRd
+cf_split_reference_corrected_rows <- function(
+  end_rows,
+  ref_rows,
+  reference_row_columns,
+  correction_mode,
+  unsupported_motifs
+) {
+  end_rows <- cf_add_end_motif_sides(
+    end_rows,
+    correction_mode$outside_width,
+    correction_mode$inside_width
+  )
+  side_denominators <- cf_side_reference_denominators(
+    ref_rows,
+    reference_row_columns,
+    correction_mode$outside_width,
+    correction_mode$inside_width
+  )
+  corrected <- cf_merge_side_denominators(
+    end_rows,
+    side_denominators,
+    reference_row_columns
+  )
+  corrected$reference_denominator <- (
+    corrected$outside_reference_denominator *
+      corrected$inside_reference_denominator
+  )
+  cf_apply_reference_denominator_policy(
+    corrected,
+    "reference_denominator",
+    unsupported_motifs
+  )
+}
+
+#' Aggregate sample counts to a side axis before correcting them.
+#'
+#' Relabel each full motif as an outside label such as `"AC_"` or an inside
+#' label such as `"_GT"`, then sum counts with the same selected-row metadata
+#' and side label. The returned motif axis is this derived side axis. Each
+#' aggregated count is divided by the matching side correction factor.
+#'
+#' @return Corrected rows.
+#' @noRd
+cf_side_reference_corrected_rows <- function(
+  end_rows,
+  ref_rows,
+  reference_row_columns,
+  correction_mode,
+  output_columns,
+  unsupported_motifs
+) {
+  end_rows <- cf_add_end_motif_sides(
+    end_rows,
+    correction_mode$outside_width,
+    correction_mode$inside_width
+  )
+  side_column <- if (identical(correction_mode$mode, "outside")) "outside" else "inside"
+  end_rows$motif <- if (identical(correction_mode$mode, "outside")) {
+    paste0(end_rows$outside, "_")
+  } else {
+    paste0("_", end_rows$inside)
+  }
+  end_rows$motif_idx <- match(end_rows$motif, correction_mode$side_labels)
+  row_metadata_columns <- setdiff(output_columns, c("motif_idx", "motif", "count"))
+  row_metadata <- unique(end_rows[c(".cfdnalab_row_order", row_metadata_columns)])
+  aggregate_columns <- c(".cfdnalab_row_order", "motif_idx", "motif", side_column)
+  aggregated <- stats::aggregate(
+    end_rows["count"],
+    by = end_rows[aggregate_columns],
+    FUN = sum
+  )
+  aggregated <- merge(
+    aggregated,
+    row_metadata,
+    by = ".cfdnalab_row_order",
+    all.x = TRUE,
+    sort = FALSE
+  )
+  aggregated <- aggregated[order(
+    aggregated$.cfdnalab_row_order,
+    aggregated$motif_idx
+  ), , drop = FALSE]
+  side_denominators <- cf_side_reference_denominators(
+    ref_rows,
+    reference_row_columns,
+    correction_mode$outside_width,
+    correction_mode$inside_width
+  )
+  corrected <- cf_merge_single_side_denominator(
+    aggregated,
+    side_denominators,
+    reference_row_columns,
+    side_column
+  )
+  denominator_column <- paste0(side_column, "_reference_denominator")
+  corrected$reference_denominator <- corrected[[denominator_column]]
+  cf_apply_reference_denominator_policy(
+    corrected,
+    "reference_denominator",
+    unsupported_motifs
+  )
+}
+
+#' Parse end-motif labels into validated outside and inside columns.
+#'
+#' The parsed components must match the widths inferred for the complete motif
+#' axis. This catches inconsistent labels before side aggregation or joins can
+#' silently assign them to the wrong reference prefix or suffix.
+#'
+#' @return End rows with side columns.
+#' @noRd
+cf_add_end_motif_sides <- function(end_rows, outside_width, inside_width) {
+  split_labels <- lapply(end_rows$motif, cf_split_end_motif_label)
+  end_rows$outside <- vapply(split_labels, `[[`, character(1), "outside")
+  end_rows$inside <- vapply(split_labels, `[[`, character(1), "inside")
+  invalid_width <- (
+    nchar(end_rows$outside) != outside_width |
+      nchar(end_rows$inside) != inside_width
+  )
+  if (any(invalid_width)) {
+    stop("End-motif label does not match inferred side widths", call. = FALSE)
+  }
+  end_rows
+}
+
+#' Build outside and inside reference correction-factor tables.
+#'
+#' Split each full reference label at the inferred widths, then construct
+#' independent prefix and suffix tables. Keeping the tables separate allows
+#' split mode to multiply factors and side modes to use only the requested side.
+#'
+#' @return List with outside and inside correction factor data frames.
+#' @noRd
+cf_side_reference_denominators <- function(
+  ref_rows,
+  reference_row_columns,
+  outside_width,
+  inside_width
+) {
+  ref_rows$outside <- substr(ref_rows$reference_motif, 1L, outside_width)
+  ref_rows$inside <- substr(
+    ref_rows$reference_motif,
+    outside_width + 1L,
+    outside_width + inside_width
+  )
+  list(
+    outside = cf_side_denominator_table(
+      ref_rows,
+      reference_row_columns,
+      "outside"
+    ),
+    inside = cf_side_denominator_table(
+      ref_rows,
+      reference_row_columns,
+      "inside"
+    )
+  )
+}
+
+#' Build correction factors from aggregated frequencies on one side.
+#'
+#' Sum full reference frequencies by side label. Within each reference row,
+#' count side labels with positive aggregated frequency. A side's correction
+#' factor is its aggregated frequency times that positive support count, meaning
+#' its frequency relative to a uniform distribution over supported side labels.
+#'
+#' @return Side correction factor table.
+#' @noRd
+cf_side_denominator_table <- function(
+  ref_rows,
+  reference_row_columns,
+  side_column
+) {
+  group_columns <- c(reference_row_columns, side_column)
+  frequency_column <- ".cfdnalab_side_reference_frequency"
+  support_column <- ".cfdnalab_side_support_count"
+  denominator_column <- paste0(side_column, "_reference_denominator")
+  if (nrow(ref_rows) == 0L) {
+    denominators <- ref_rows[integer(0), group_columns, drop = FALSE]
+    denominators[[denominator_column]] <- numeric()
+    return(denominators)
+  }
+  side_frequencies <- stats::aggregate(
+    ref_rows["reference_frequency"],
+    by = ref_rows[group_columns],
+    FUN = sum
+  )
+  names(side_frequencies)[ncol(side_frequencies)] <- frequency_column
+  if (length(reference_row_columns) == 0L) {
+    side_frequencies[[support_column]] <- sum(side_frequencies[[frequency_column]] > 0)
+  } else {
+    positive <- side_frequencies[side_frequencies[[frequency_column]] > 0, , drop = FALSE]
+    if (nrow(positive) == 0L) {
+      support_counts <- data.frame(
+        positive[reference_row_columns],
+        stringsAsFactors = FALSE
+      )
+      support_counts[[support_column]] <- integer()
+    } else {
+      support_counts <- stats::aggregate(
+        rep(1L, nrow(positive)),
+        by = positive[reference_row_columns],
+        FUN = sum
+      )
+      names(support_counts)[ncol(support_counts)] <- support_column
+    }
+    side_frequencies <- merge(
+      side_frequencies,
+      support_counts,
+      by = reference_row_columns,
+      all.x = TRUE,
+      sort = FALSE
+    )
+    side_frequencies[[support_column]][is.na(side_frequencies[[support_column]])] <- 0L
+  }
+  side_frequencies[[denominator_column]] <- (
+    side_frequencies[[frequency_column]] * side_frequencies[[support_column]]
+  )
+  side_frequencies[c(group_columns, denominator_column)]
+}
+
+#' Join both side factors to full-motif rows without changing their order.
+#'
+#' Left joins retain every selected sample row. The saved input position is
+#' restored after each join because base `merge()` may reorder rows. A missing
+#' outside or inside factor becomes zero so the unsupported policy handles it.
+#'
+#' @return End rows with side correction factor columns.
+#' @noRd
+cf_merge_side_denominators <- function(end_rows, side_denominators, reference_row_columns) {
+  end_rows$.cfdnalab_order <- seq_len(nrow(end_rows))
+  outside_columns <- c(reference_row_columns, "outside", "outside_reference_denominator")
+  inside_columns <- c(reference_row_columns, "inside", "inside_reference_denominator")
+  corrected <- merge(
+    end_rows,
+    side_denominators$outside[outside_columns],
+    by = c(reference_row_columns, "outside"),
+    all.x = TRUE,
+    sort = FALSE
+  )
+  corrected <- corrected[order(corrected$.cfdnalab_order), , drop = FALSE]
+  corrected <- merge(
+    corrected,
+    side_denominators$inside[inside_columns],
+    by = c(reference_row_columns, "inside"),
+    all.x = TRUE,
+    sort = FALSE
+  )
+  corrected <- corrected[order(corrected$.cfdnalab_order), , drop = FALSE]
+  corrected$.cfdnalab_order <- NULL
+  corrected$outside_reference_denominator[is.na(corrected$outside_reference_denominator)] <- 0
+  corrected$inside_reference_denominator[is.na(corrected$inside_reference_denominator)] <- 0
+  row.names(corrected) <- NULL
+  corrected
+}
+
+#' Join the selected side factor without changing aggregated-row order.
+#'
+#' A left join retains every aggregated sample row. The saved input position is
+#' restored after `merge()`, and a missing factor becomes zero so unsupported
+#' positive counts are handled by the selected policy.
+#'
+#' @return End rows with the selected side correction factor column.
+#' @noRd
+cf_merge_single_side_denominator <- function(
+  end_rows,
+  side_denominators,
+  reference_row_columns,
+  side_column
+) {
+  end_rows$.cfdnalab_order <- seq_len(nrow(end_rows))
+  denominator_column <- paste0(side_column, "_reference_denominator")
+  side_columns <- c(reference_row_columns, side_column, denominator_column)
+  corrected <- merge(
+    end_rows,
+    side_denominators[[side_column]][side_columns],
+    by = c(reference_row_columns, side_column),
+    all.x = TRUE,
+    sort = FALSE
+  )
+  corrected <- corrected[order(corrected$.cfdnalab_order), , drop = FALSE]
+  corrected$.cfdnalab_order <- NULL
+  corrected[[denominator_column]][is.na(corrected[[denominator_column]])] <- 0
+  row.names(corrected) <- NULL
+  corrected
+}
+
+#' Apply unsupported-reference policy and divide supported counts.
+#'
+#' A non-positive correction factor is unsupported. Under `"error"`, only an
+#' unsupported positive sample count is an error. `"drop"` removes every row
+#' lacking support, including zero-count rows. `"keep_na"` retains the axis and
+#' marks unsupported positive counts as `NA`, while unsupported zero counts
+#' remain zero. Supported counts are divided by their correction factor.
+#'
+#' @return Corrected rows with `corrected_count`.
+#' @noRd
+cf_apply_reference_denominator_policy <- function(
+  corrected,
+  denominator_column,
+  unsupported_motifs
+) {
+  corrected[[denominator_column]][is.na(corrected[[denominator_column]])] <- 0
+  unsupported_reference <- corrected[[denominator_column]] <= 0
+  positive_unsupported_reference <- unsupported_reference & corrected$count > 0
+  if (any(positive_unsupported_reference) && identical(unsupported_motifs, "error")) {
+    unsupported_labels <- sort(unique(corrected$motif[positive_unsupported_reference]))
+    stop(
+      "Positive-count end motifs have no positive reference-based correction factor: ",
+      paste(unsupported_labels, collapse = ", "),
+      ". Pass unsupported_motifs = \"drop\" to omit those rows, or ",
+      "unsupported_motifs = \"keep_na\" to keep them with NA corrected counts.",
+      call. = FALSE
+    )
+  }
+  if (identical(unsupported_motifs, "drop")) {
+    corrected <- corrected[!unsupported_reference, , drop = FALSE]
+    positive_unsupported_reference <- positive_unsupported_reference[!unsupported_reference]
+  }
+  corrected$corrected_count <- 0
+  supported_reference <- corrected[[denominator_column]] > 0
+  corrected_values <- (
+    corrected$count[supported_reference] / corrected[[denominator_column]][supported_reference]
+  )
+  if (any(!is.finite(corrected_values))) {
+    non_finite_labels <- sort(unique(
+      corrected$motif[supported_reference][!is.finite(corrected_values)]
+    ))
+    stop(
+      "Reference correction produced non-finite corrected counts for motifs: ",
+      paste(non_finite_labels, collapse = ", "),
+      call. = FALSE
+    )
+  }
+  corrected$corrected_count[supported_reference] <- corrected_values
+  if (identical(unsupported_motifs, "keep_na")) {
+    corrected$corrected_count[positive_unsupported_reference] <- NA_real_
+  }
+  corrected
+}
+
+#' Normalize corrected counts within each selected sample row.
+#'
+#' Counts are scaled by the largest corrected count in each row before summing,
+#' which preserves the normalized result without overflowing a finite total. A
+#' zero-total row remains all zero. Under `"keep_na"`, any unsupported positive
+#' count makes the entire row's corrected frequencies `NA`, because its
+#' normalized composition is not defined.
+#'
+#' @return Corrected rows with `corrected_frequency`.
+#' @noRd
+cf_add_corrected_frequency <- function(corrected, row_columns, unsupported_motifs) {
+  corrected$corrected_frequency <- 0
+  if (nrow(corrected) == 0L) {
+    return(corrected)
+  }
+  row_keys <- cf_reference_correction_row_keys(corrected, row_columns)
+  row_groups <- match(row_keys, unique(row_keys))
+  row_counts <- corrected$corrected_count
+  row_maximum <- stats::ave(
+    row_counts,
+    row_groups,
+    FUN = function(values) {
+      finite_values <- values[is.finite(values)]
+      if (length(finite_values) == 0L) NA_real_ else max(finite_values)
+    }
+  )
+  scaled_counts <- numeric(length(row_counts))
+  scalable <- !is.na(row_counts) & !is.na(row_maximum) & row_maximum > 0
+  scaled_counts[scalable] <- row_counts[scalable] / row_maximum[scalable]
+  scaled_totals <- stats::ave(scaled_counts, row_groups, FUN = sum)
+  normalizable <- scalable & scaled_totals > 0
+  corrected$corrected_frequency[normalizable] <- (
+    scaled_counts[normalizable] / scaled_totals[normalizable]
+  )
+  if (identical(unsupported_motifs, "keep_na")) {
+    row_has_na <- as.logical(stats::ave(
+      is.na(row_counts),
+      row_groups,
+      FUN = any
+    ))
+    corrected$corrected_frequency[row_has_na] <- NA_real_
+  }
+  corrected
+}
+
+#' Assign row-order indices from first occurrence of each selected row key.
+#'
+#' Repeated motif rows receive the same index. Unique row keys retain their
+#' first-occurrence order, allowing joins and aggregation to restore sample-row
+#' order independently of motif order.
+#'
+#' @return Integer row order vector.
+#' @noRd
+cf_reference_correction_row_order <- function(data_frame, row_columns) {
+  row_keys <- cf_reference_correction_row_keys(data_frame, row_columns)
+  match(row_keys, unique(row_keys))
 }
 
 #' Build row-position lookup for corrected sparse matrices.
@@ -525,6 +1422,9 @@ cf_reference_correction_ref_row_indices_from_end_rows <- function(
 #' @return Invisibly returns `TRUE`.
 #' @noRd
 cf_validate_reference_correction_motif_axes <- function(ends, ref_kmers) {
+  if (isTRUE(ref_kmers$canonical)) {
+    stop("Reference correction requires non-canonical reference k-mer output", call. = FALSE)
+  }
   if (identical(ends$motif_axis_kind, "motif_group")) {
     if (!identical(ref_kmers$motif_axis_kind, "motif_group")) {
       stop("Grouped end-motif output requires grouped reference k-mer output", call. = FALSE)
@@ -533,10 +1433,7 @@ cf_validate_reference_correction_motif_axes <- function(ends, ref_kmers) {
   }
 
   if (!identical(ref_kmers$motif_axis_kind, "motif")) {
-    stop("Concrete end-motif output requires concrete reference k-mer output", call. = FALSE)
-  }
-  if (isTRUE(ref_kmers$canonical)) {
-    stop("Reference correction requires non-canonical reference k-mer output", call. = FALSE)
+    stop("End-motif output with motif labels requires reference k-mer output with motif labels", call. = FALSE)
   }
 
   reference_motif_widths <- nchar(gsub("_", "", ends$motif, fixed = TRUE))
@@ -732,10 +1629,7 @@ cf_sorted_unique_rows <- function(data_frame) {
 #' @return Empty data frame with correction columns.
 #' @noRd
 cf_add_empty_reference_correction_columns <- function(data_frame) {
-  data_frame$reference_motif <- character()
-  data_frame$reference_frequency <- numeric()
-  data_frame$correction_motif_count <- integer()
-  data_frame$reference_scale <- numeric()
-  data_frame$reference_corrected_count <- numeric()
+  data_frame$corrected_count <- numeric()
+  data_frame$corrected_frequency <- numeric()
   data_frame
 }

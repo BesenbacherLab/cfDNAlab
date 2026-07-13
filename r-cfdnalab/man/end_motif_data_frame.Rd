@@ -15,6 +15,7 @@
   motif_idxs = NULL,
   use_global_bias = FALSE,
   unsupported_motifs = "error",
+  two_sided_correction = NULL,
   ...
 )
 
@@ -28,6 +29,7 @@
   max_blacklisted_fraction = 1,
   use_global_bias = FALSE,
   unsupported_motifs = "error",
+  two_sided_correction = NULL,
   ...
 )
 
@@ -42,6 +44,7 @@
   max_blacklisted_fraction = 1,
   use_global_bias = FALSE,
   unsupported_motifs = "error",
+  two_sided_correction = NULL,
   ...
 )
 
@@ -64,8 +67,14 @@ selected observed motifs. Dense outputs ignore this option.}
 \item{use_global_bias}{Whether a global reference k-mer output may be
 applied to every end-motif row.}
 
-\item{unsupported_motifs}{What to do with positive counts that have no
-positive reference frequency. Use \code{"error"}, \code{"drop"}, or \code{"keep_na"}.}
+\item{unsupported_motifs}{What to do when an observed sample motif has no
+positive correction factor under the selected mode. Use \code{"error"}, \code{"drop"}, or
+\code{"keep_na"}.}
+
+\item{two_sided_correction}{Required when motif labels contain both outside
+and inside bases, such as \code{"AC_GT"}, and \code{ref_kmers} is supplied. Use
+\code{"joint"}, \code{"split"}, \code{"outside"}, or \code{"inside"}. Leave as \code{NULL} for
+one-sided motifs or motif groups.}
 
 \item{...}{Method-specific selection arguments.}
 
@@ -90,5 +99,71 @@ selected observed motifs. Dense outputs always include zero counts.
 }
 \details{
 End-motif methods can receive \code{ref_kmers} to add reference-corrected counts
-without manually joining the sample and reference data frames.
+without manually joining the sample and reference data frames. Corrected
+data frames add \code{corrected_count} and \code{corrected_frequency}.
+
+Reference correction divides each observed end-motif count by a
+reference-based correction factor for the matched row. This factor is
+computed from the motif frequencies in the reference k-mer output and
+normalized so a uniform reference composition leaves counts unchanged.
+Motifs that are common in the reference row are scaled down. Motifs that are
+rare in the reference row are scaled up. Only motifs with a positive
+reference frequency contribute to the row's correction support.
+
+Two-sided correction modes:
+
+When motif labels contain both outside and inside bases, such as \code{"AC_GT"},
+\code{two_sided_correction} chooses both the motif labels in the result and the
+correction factor used for each returned count.
+\itemize{
+\item \code{"joint"} keeps full labels such as \code{"AC_GT"} and corrects each count
+using the exact reference k-mer \code{"ACGT"}.
+\item \code{"split"} keeps full labels such as \code{"AC_GT"}, but calculates the
+correction factor from the two sides separately. For \code{"AC_GT"}, separate
+correction factors are calculated for outside label \code{"AC"} and inside
+label \code{"GT"}. Those two correction factors are multiplied and applied to
+the observed \code{"AC_GT"} count. Use this when you want full two-sided motif
+labels in the result, but the exact full reference k-mers are too sparse or
+you want the reference correction to treat outside and inside sequence
+composition separately.
+\item \code{"outside"} returns outside labels such as \code{"AC_"}. For each outside
+label, all full motif counts with that outside label are summed first. For
+example, \code{"AC_AA"} and \code{"AC_GT"} both contribute to the \code{"AC_"} count. That
+summed count is corrected using the outside label \code{"AC"}.
+\item \code{"inside"} returns inside labels such as \code{"_GT"}. For each inside label,
+all full motif counts with that inside label are summed first. For example,
+\code{"AA_GT"} and \code{"AC_GT"} both contribute to the \code{"_GT"} count. That summed
+count is corrected using the inside label \code{"GT"}.
+}
+
+For \code{"split"}, \code{"outside"}, and \code{"inside"}, side-specific reference frequencies
+are calculated from the loaded full-length reference k-mers. For example, the
+outside frequency for \code{"AC"} is the sum of frequencies for loaded k-mers with
+prefix \code{"AC"}, such as \code{"ACTG"} and \code{"ACAA"}. The inside frequency for \code{"TG"} is
+the corresponding sum over loaded k-mers with suffix \code{"TG"}. Separate shorter
+reference k-mer runs are not required.
+
+A motifs file used for the reference output restricts these sums to the k-mers
+in that file. Without a motifs file, all k-mers in the reference output can
+contribute, including k-mers absent from the sample end-motif output.
+
+\code{corrected_frequency} is \code{corrected_count} divided by the sum of corrected
+counts over the full correction-mode motif axis for the same output row.
+Motif selection filters these frequencies afterward and does not renormalize
+them, so a selected subset can sum to less than 1. If the corrected total is
+zero, finite frequencies are zero. With \code{unsupported_motifs = "keep_na"}, one
+undefined positive corrected count makes all frequencies in that output row
+\code{NA}. Reference correction fails if division by a positive reference factor
+would produce a non-finite corrected count.
+
+End-motif methods can receive \code{ref_kmers} to add reference-corrected counts
+without manually joining the sample and reference data frames. Corrected
+data frames add \code{corrected_count} and \code{corrected_frequency}. When labels have
+both outside and inside bases, \code{two_sided_correction} is required. \code{"joint"}
+corrects each full motif with its matching full reference motif. \code{"split"}
+preserves full labels but multiplies independently calculated outside and
+inside correction factors. \code{"outside"} aggregates sample counts by outside
+label before correction and returns labels such as \code{"AC_"}. \code{"inside"} does
+the corresponding aggregation by inside label and returns labels such as
+\code{"_GT"}.
 }

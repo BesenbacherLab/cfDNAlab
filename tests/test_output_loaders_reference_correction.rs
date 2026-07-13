@@ -2,8 +2,8 @@
 //! Public API tests for Rust reference correction in end-motif output loaders.
 
 use cfdnalab::output_loaders::{
-    EndMotifSparseEntry, EndMotifStorageMode, UnsupportedReferencePolicy, load_ends_output,
-    load_ref_kmers_output,
+    EndMotifSparseEntry, EndMotifStorageMode, TwoSidedCorrectionMode, UnsupportedReferencePolicy,
+    load_ends_output, load_ref_kmers_output,
 };
 use serde_json::{Map, Value, json};
 use std::{fs, path::Path, sync::Arc};
@@ -218,6 +218,50 @@ fn corrected_counts_require_global_bias_opt_in() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Verify global reference broadcasting works for each two-sided correction mode.
+#[test]
+fn two_sided_correction_modes_allow_global_bias_opt_in() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    let ends_path = temp.path().join("sample.end_motifs.zarr");
+    let ref_path = temp.path().join("global.ref_kmers.zarr");
+
+    write_windowed_end_motif_store(
+        &ends_path,
+        FixtureStorage::Dense,
+        &["A_C", "A_G", "T_C", "T_G"],
+        &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+    )?;
+    write_global_ref_kmer_store(
+        &ref_path,
+        FixtureStorage::Dense,
+        &["AC", "AG", "TC", "TG"],
+        &[0.25, 0.25, 0.25, 0.25],
+    )?;
+
+    let ends = load_ends_output(&ends_path)?;
+    let ref_kmers = load_ref_kmers_output(&ref_path)?;
+    for (mode, expected) in [
+        (
+            TwoSidedCorrectionMode::Joint,
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+        ),
+        (
+            TwoSidedCorrectionMode::Split,
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+        ),
+        (TwoSidedCorrectionMode::Outside, vec![3.0, 7.0, 11.0, 15.0]),
+        (TwoSidedCorrectionMode::Inside, vec![4.0, 6.0, 12.0, 14.0]),
+    ] {
+        let corrected = ends
+            .select_corrected_counts(&ref_kmers)
+            .two_sided_correction(mode)
+            .use_global_bias(true)
+            .read()?;
+        assert_row_close(corrected.to_dense_matrix()?.values_row_major(), &expected);
+    }
+    Ok(())
+}
+
 /// Verify the global-bias option is rejected when the reference is not global.
 #[test]
 fn corrected_counts_reject_global_bias_option_for_non_global_reference() -> anyhow::Result<()> {
@@ -301,11 +345,9 @@ fn corrected_counts_can_keep_unsupported_positive_motifs_as_nan() -> anyhow::Res
         .select_corrected_counts(&ref_kmers)
         .read()
         .expect_err("positive missing reference motif should fail by default");
-    assert!(
-        error
-            .to_string()
-            .contains("positive-count end motifs have no positive reference frequency: CC")
-    );
+    let message = error.to_string();
+    assert!(message.contains("positive-count end motifs have no positive correction denominator"));
+    assert!(message.contains("_CC"));
 
     let corrected = ends
         .select_corrected_counts(&ref_kmers)
@@ -315,6 +357,32 @@ fn corrected_counts_can_keep_unsupported_positive_motifs_as_nan() -> anyhow::Res
     assert_eq!(values[0], 0.0);
     assert!(values[1].is_nan());
     assert_close(values[2], 2.0);
+    Ok(())
+}
+
+/// Verify finite inputs cannot silently produce infinite corrected counts.
+#[test]
+fn corrected_counts_reject_non_finite_results() -> anyhow::Result<()> {
+    for end_storage in [FixtureStorage::Dense, FixtureStorage::Sparse] {
+        for ref_storage in [FixtureStorage::Dense, FixtureStorage::Sparse] {
+            let temp = TempDir::new()?;
+            let ends_path = temp.path().join(format!("ends_{end_storage:?}.zarr"));
+            let ref_path = temp.path().join(format!("ref_{ref_storage:?}.zarr"));
+
+            write_global_end_motif_store(&ends_path, end_storage, &["_AA"], &[1.0])?;
+            write_global_ref_kmer_store(&ref_path, ref_storage, &["AA"], &[f64::from_bits(1)])?;
+
+            let ends = load_ends_output(&ends_path)?;
+            let ref_kmers = load_ref_kmers_output(&ref_path)?;
+            let error = ends
+                .select_corrected_counts(&ref_kmers)
+                .read()
+                .expect_err("an infinite corrected count should fail");
+            let message = error.to_string();
+            assert!(message.contains("non-finite corrected counts"));
+            assert!(message.contains("_AA"));
+        }
+    }
     Ok(())
 }
 
@@ -343,6 +411,21 @@ fn global_correction_rejects_grouped_motifs_with_concrete_reference() -> anyhow:
 
     let ends = load_ends_output(&ends_path)?;
     let ref_kmers = load_ref_kmers_output(&ref_path)?;
+    for mode in [
+        TwoSidedCorrectionMode::Joint,
+        TwoSidedCorrectionMode::Split,
+        TwoSidedCorrectionMode::Outside,
+        TwoSidedCorrectionMode::Inside,
+    ] {
+        let mode_error = ends
+            .select_corrected_counts(&ref_kmers)
+            .two_sided_correction(mode)
+            .use_global_bias(true)
+            .read()
+            .expect_err("motif-group outputs should reject explicit two-sided modes");
+        assert!(mode_error.to_string().contains("motif-group"));
+    }
+
     let error = ends
         .select_corrected_counts(&ref_kmers)
         .use_global_bias(true)
@@ -353,6 +436,415 @@ fn global_correction_rejects_grouped_motifs_with_concrete_reference() -> anyhow:
         error
             .to_string()
             .contains("grouped end-motif output requires grouped reference k-mer output")
+    );
+    Ok(())
+}
+
+/// Verify canonical reference k-mer outputs are rejected for correction.
+#[test]
+fn corrected_counts_reject_canonical_reference() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    let ends_path = temp.path().join("sample.end_motifs.zarr");
+    let ref_path = temp.path().join("canonical.ref_kmers.zarr");
+
+    write_windowed_end_motif_store(
+        &ends_path,
+        FixtureStorage::Dense,
+        &["_AA", "_CC", "_GG"],
+        &[1.0, 0.0, 2.5, 0.5, 4.0, 0.0],
+    )?;
+    let mut reference_attributes = ref_root_attributes(FixtureStorage::Dense, "bed", &["AA", "CC"]);
+    reference_attributes["canonical"] = json!(true);
+    let ref_store = create_store(&ref_path, reference_attributes)?;
+    write_motif_axis(&ref_store, &["AA", "CC"])?;
+    write_window_rows(&ref_store)?;
+    write_row_scaling_factors(&ref_store, 2)?;
+    write_reference_footprint(&ref_store)?;
+    write_ref_frequencies(
+        &ref_store,
+        FixtureStorage::Dense,
+        2,
+        2,
+        &[0.5, 0.5, 0.5, 0.5],
+    )?;
+
+    let ends = load_ends_output(&ends_path)?;
+    let ref_kmers = load_ref_kmers_output(&ref_path)?;
+    let error = ends
+        .select_corrected_counts(&ref_kmers)
+        .read()
+        .expect_err("canonical reference correction should fail");
+
+    assert!(error.to_string().contains("non-canonical"));
+    Ok(())
+}
+
+/// Verify two-sided outputs require a mode and joint mode uses full reference motifs.
+#[test]
+fn two_sided_correction_requires_mode_and_joint_uses_full_reference_motifs() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    let ends_path = temp.path().join("sample.end_motifs.zarr");
+    let ref_path = temp.path().join("reference.ref_kmers.zarr");
+
+    write_global_end_motif_store(
+        &ends_path,
+        FixtureStorage::Dense,
+        &["A_C", "A_G", "T_C", "T_G"],
+        &[1.0, 2.0, 3.0, 4.0],
+    )?;
+    write_global_ref_kmer_store(
+        &ref_path,
+        FixtureStorage::Dense,
+        &["AC", "AG", "TC", "TG"],
+        &[0.25, 0.25, 0.25, 0.25],
+    )?;
+
+    let ends = load_ends_output(&ends_path)?;
+    let ref_kmers = load_ref_kmers_output(&ref_path)?;
+    let error = ends
+        .select_corrected_counts(&ref_kmers)
+        .read()
+        .expect_err("two-sided correction should require an explicit mode");
+    assert!(error.to_string().contains("two-sided"));
+
+    let corrected = ends
+        .select_corrected_counts(&ref_kmers)
+        .two_sided_correction(TwoSidedCorrectionMode::Joint)
+        .read()?;
+
+    // Four positive joint motifs make the uniform baseline frequency 1/4.
+    // Every reference frequency is also 1/4, so every correction factor is 1.
+    assert_eq!(
+        corrected.motif_labels(),
+        &[
+            "A_C".to_string(),
+            "A_G".to_string(),
+            "T_C".to_string(),
+            "T_G".to_string(),
+        ]
+    );
+    assert_row_close(
+        corrected.dense_counts()?.values_row_major(),
+        &[1.0, 2.0, 3.0, 4.0],
+    );
+    Ok(())
+}
+
+/// Verify an empty loaded motif axis does not require side-width inference.
+#[test]
+fn empty_motif_axis_returns_empty_correction_for_any_explicit_mode() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    let ends_path = temp.path().join("empty.end_motifs.zarr");
+    let ref_path = temp.path().join("reference.ref_kmers.zarr");
+
+    write_global_end_motif_store(&ends_path, FixtureStorage::Dense, &[], &[])?;
+    write_global_ref_kmer_store(&ref_path, FixtureStorage::Dense, &["AA"], &[1.0])?;
+
+    let ends = load_ends_output(&ends_path)?;
+    let ref_kmers = load_ref_kmers_output(&ref_path)?;
+    for mode in [
+        TwoSidedCorrectionMode::Joint,
+        TwoSidedCorrectionMode::Split,
+        TwoSidedCorrectionMode::Outside,
+        TwoSidedCorrectionMode::Inside,
+    ] {
+        let corrected = ends
+            .select_corrected_counts(&ref_kmers)
+            .two_sided_correction(mode)
+            .read()?;
+        assert_eq!(corrected.shape(), (1, 0));
+        assert!(corrected.motif_labels().is_empty());
+    }
+    Ok(())
+}
+
+/// Verify every correction mode against the shared cross-language math fixture.
+#[test]
+fn correction_modes_match_shared_cross_language_expectations() -> anyhow::Result<()> {
+    for end_storage in [FixtureStorage::Dense, FixtureStorage::Sparse] {
+        for ref_storage in [FixtureStorage::Dense, FixtureStorage::Sparse] {
+            let temp = TempDir::new()?;
+            let ends_path = temp.path().join(format!("ends_{end_storage:?}.zarr"));
+            let ref_path = temp.path().join(format!("ref_{ref_storage:?}.zarr"));
+
+            write_global_end_motif_store(
+                &ends_path,
+                end_storage,
+                &["A_C", "A_G", "T_C", "T_G"],
+                &[2.0, 4.0, 6.0, 8.0],
+            )?;
+            write_global_ref_kmer_store(
+                &ref_path,
+                ref_storage,
+                &["AC", "AG", "TC", "TG"],
+                &[1.0 / 8.0, 1.0 / 8.0, 1.0 / 4.0, 1.0 / 2.0],
+            )?;
+
+            let ends = load_ends_output(&ends_path)?;
+            let ref_kmers = load_ref_kmers_output(&ref_path)?;
+            let joint = ends
+                .select_corrected_counts(&ref_kmers)
+                .two_sided_correction(TwoSidedCorrectionMode::Joint)
+                .read()?;
+            let split = ends
+                .select_corrected_counts(&ref_kmers)
+                .two_sided_correction(TwoSidedCorrectionMode::Split)
+                .read()?;
+            let outside = ends
+                .select_corrected_counts(&ref_kmers)
+                .two_sided_correction(TwoSidedCorrectionMode::Outside)
+                .read()?;
+            let inside = ends
+                .select_corrected_counts(&ref_kmers)
+                .two_sided_correction(TwoSidedCorrectionMode::Inside)
+                .read()?;
+
+            // Four positive reference motifs make the uniform frequency 1/4.
+            // Relative to uniform, frequencies [1/8, 1/8, 1/4, 1/2] give
+            // factors [1/2, 1/2, 1, 2] for [AC, AG, TC, TG]. Dividing counts
+            // [2, 4, 6, 8] by them gives corrected counts [4, 8, 6, 4].
+            assert_row_close(
+                joint.to_dense_matrix()?.values_row_major(),
+                &[4.0, 8.0, 6.0, 4.0],
+            );
+            // Each side has uniform frequency 1/2. Outside frequencies A=1/4
+            // and T=3/4 give factors 1/2 and 3/2. Inside frequencies C=3/8
+            // and G=5/8 give factors 3/4 and 5/4. For
+            // [A_C, A_G, T_C, T_G], split multiplies matching side factors to
+            // get [3/8, 5/8, 9/8, 15/8]. Dividing counts [2, 4, 6, 8] by them
+            // gives [16/3, 32/5, 16/3, 64/15].
+            assert_row_close(
+                split.to_dense_matrix()?.values_row_major(),
+                &[16.0 / 3.0, 32.0 / 5.0, 16.0 / 3.0, 64.0 / 15.0],
+            );
+            // Outside aggregates counts to [6, 14]. Relative to uniform 1/2,
+            // reference frequencies [1/4, 3/4] give factors [1/2, 3/2].
+            // Dividing the aggregated counts by them gives [12, 28/3].
+            assert_row_close(
+                outside.to_dense_matrix()?.values_row_major(),
+                &[12.0, 28.0 / 3.0],
+            );
+            // Inside aggregates counts to [8, 12]. Relative to uniform 1/2,
+            // reference frequencies [3/8, 5/8] give factors [3/4, 5/4].
+            // Dividing the aggregated counts by them gives [32/3, 48/5].
+            assert_row_close(
+                inside.to_dense_matrix()?.values_row_major(),
+                &[32.0 / 3.0, 48.0 / 5.0],
+            );
+            assert_eq!(
+                split.storage_mode(),
+                match end_storage {
+                    FixtureStorage::Dense => EndMotifStorageMode::Dense,
+                    FixtureStorage::Sparse => EndMotifStorageMode::SparseCoo,
+                }
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Verify side-mode aggregation cannot silently overflow finite input counts.
+#[test]
+fn side_correction_rejects_non_finite_aggregated_counts() -> anyhow::Result<()> {
+    for end_storage in [FixtureStorage::Dense, FixtureStorage::Sparse] {
+        let temp = TempDir::new()?;
+        let ends_path = temp.path().join(format!("ends_{end_storage:?}.zarr"));
+        let ref_path = temp.path().join("reference.ref_kmers.zarr");
+
+        write_global_end_motif_store(
+            &ends_path,
+            end_storage,
+            &["A_C", "A_G"],
+            &[f64::MAX, f64::MAX],
+        )?;
+        write_global_ref_kmer_store(&ref_path, FixtureStorage::Dense, &["AC", "AG"], &[0.5, 0.5])?;
+
+        let ends = load_ends_output(&ends_path)?;
+        let ref_kmers = load_ref_kmers_output(&ref_path)?;
+        let error = ends
+            .select_corrected_counts(&ref_kmers)
+            .two_sided_correction(TwoSidedCorrectionMode::Outside)
+            .read()
+            .expect_err("an infinite aggregated side count should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("side-mode aggregation produced non-finite count for motif 'A_'")
+        );
+    }
+    Ok(())
+}
+
+/// Verify unsupported-reference handling is applied after side aggregation.
+#[test]
+fn side_correction_applies_unsupported_policy_to_aggregated_counts() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    let ends_path = temp.path().join("sample.end_motifs.zarr");
+    let ref_path = temp.path().join("reference.ref_kmers.zarr");
+
+    write_global_end_motif_store(
+        &ends_path,
+        FixtureStorage::Dense,
+        &["A_C", "A_G"],
+        &[2.0, 4.0],
+    )?;
+    write_global_ref_kmer_store(&ref_path, FixtureStorage::Dense, &["AC"], &[1.0])?;
+
+    let ends = load_ends_output(&ends_path)?;
+    let ref_kmers = load_ref_kmers_output(&ref_path)?;
+    let error = ends
+        .select_corrected_counts(&ref_kmers)
+        .two_sided_correction(TwoSidedCorrectionMode::Inside)
+        .read()
+        .expect_err("positive aggregated side count without reference support should fail");
+    assert!(error.to_string().contains("_G"));
+
+    let corrected = ends
+        .select_corrected_counts(&ref_kmers)
+        .two_sided_correction(TwoSidedCorrectionMode::Inside)
+        .unsupported_reference_policy(UnsupportedReferencePolicy::KeepNaN)
+        .read()?;
+    assert_eq!(corrected.motif_labels(), &["_C", "_G"]);
+    let values = corrected.dense_counts()?.values_row_major();
+    assert_close(values[0], 2.0);
+    assert!(values[1].is_nan());
+    Ok(())
+}
+
+/// Verify side modes aggregate the loaded joint axis before side-label selection.
+#[test]
+fn side_correction_aggregates_joint_counts_in_loaded_axis_order() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    let ends_path = temp.path().join("sample.end_motifs.zarr");
+    let ref_path = temp.path().join("reference.ref_kmers.zarr");
+
+    write_global_end_motif_store(
+        &ends_path,
+        FixtureStorage::Dense,
+        &["T_G", "A_C", "T_C", "A_G"],
+        &[8.0, 2.0, 6.0, 4.0],
+    )?;
+    write_global_ref_kmer_store(
+        &ref_path,
+        FixtureStorage::Dense,
+        &["TG", "AC", "TC", "AG"],
+        &[0.25, 0.5, 0.25, 0.0],
+    )?;
+
+    let ends = load_ends_output(&ends_path)?;
+    let ref_kmers = load_ref_kmers_output(&ref_path)?;
+
+    let outside = ends
+        .select_corrected_counts(&ref_kmers)
+        .two_sided_correction(TwoSidedCorrectionMode::Outside)
+        .read()?;
+    assert_eq!(
+        outside.motif_labels(),
+        &["T_".to_string(), "A_".to_string()]
+    );
+    assert_eq!(outside.motif_indices(), &[0, 1]);
+    // The side axis follows first loaded occurrence: T_ before A_. The uniform
+    // outside baseline and both reference frequencies are 0.5, so both
+    // correction factors are 1 and corrected counts equal aggregated counts.
+    assert_row_close(outside.dense_counts()?.values_row_major(), &[14.0, 6.0]);
+
+    let selected_outside = ends
+        .select_corrected_counts(&ref_kmers)
+        .two_sided_correction(TwoSidedCorrectionMode::Outside)
+        .motifs_by_label(&["A_"])
+        .read()?;
+    assert_eq!(selected_outside.motif_labels(), &["A_".to_string()]);
+    assert_eq!(selected_outside.motif_indices(), &[1]);
+    assert_row_close(selected_outside.dense_counts()?.values_row_major(), &[6.0]);
+
+    let inside = ends
+        .select_corrected_counts(&ref_kmers)
+        .two_sided_correction(TwoSidedCorrectionMode::Inside)
+        .read()?;
+    assert_eq!(inside.motif_labels(), &["_G".to_string(), "_C".to_string()]);
+    // The selected side order is [_G, _C]. Relative to uniform frequency 0.5,
+    // reference frequencies G=0.25 and C=0.75 give factors 0.5 and 1.5.
+    // Dividing aggregated counts G=12 and C=8 gives 24 and 16/3.
+    assert_row_close(
+        inside.dense_counts()?.values_row_major(),
+        &[24.0, 16.0 / 3.0],
+    );
+    Ok(())
+}
+
+/// Verify mode validation keeps one-sided correction and side-mode selectors unambiguous.
+#[test]
+fn mode_validation_rejects_one_sided_modes_and_side_index_selectors() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    let one_sided_ends_path = temp.path().join("one_sided.end_motifs.zarr");
+    let one_sided_ref_path = temp.path().join("one_sided.ref_kmers.zarr");
+    let two_sided_ends_path = temp.path().join("two_sided.end_motifs.zarr");
+    let two_sided_ref_path = temp.path().join("two_sided.ref_kmers.zarr");
+
+    write_global_end_motif_store(
+        &one_sided_ends_path,
+        FixtureStorage::Dense,
+        &["_AA", "_CC"],
+        &[2.0, 4.0],
+    )?;
+    write_global_ref_kmer_store(
+        &one_sided_ref_path,
+        FixtureStorage::Dense,
+        &["AA", "CC"],
+        &[0.5, 0.5],
+    )?;
+    let one_sided_ends = load_ends_output(&one_sided_ends_path)?;
+    let one_sided_ref_kmers = load_ref_kmers_output(&one_sided_ref_path)?;
+    let exact = one_sided_ends
+        .select_corrected_counts(&one_sided_ref_kmers)
+        .read()?;
+    assert_row_close(exact.dense_counts()?.values_row_major(), &[2.0, 4.0]);
+    for mode in [
+        TwoSidedCorrectionMode::Joint,
+        TwoSidedCorrectionMode::Split,
+        TwoSidedCorrectionMode::Outside,
+        TwoSidedCorrectionMode::Inside,
+    ] {
+        let error = one_sided_ends
+            .select_corrected_counts(&one_sided_ref_kmers)
+            .two_sided_correction(mode)
+            .read()
+            .expect_err("one-sided output should reject explicit two-sided modes");
+        assert!(error.to_string().contains("one-sided"));
+    }
+
+    write_global_end_motif_store(
+        &two_sided_ends_path,
+        FixtureStorage::Dense,
+        &["A_C", "A_G"],
+        &[2.0, 4.0],
+    )?;
+    write_global_ref_kmer_store(
+        &two_sided_ref_path,
+        FixtureStorage::Dense,
+        &["AC", "AG"],
+        &[0.5, 0.5],
+    )?;
+    let two_sided_ends = load_ends_output(&two_sided_ends_path)?;
+    let two_sided_ref_kmers = load_ref_kmers_output(&two_sided_ref_path)?;
+    let index_error = two_sided_ends
+        .select_corrected_counts(&two_sided_ref_kmers)
+        .two_sided_correction(TwoSidedCorrectionMode::Outside)
+        .motifs(&[0])
+        .read()
+        .expect_err("side modes should reject motif index selectors");
+    assert!(index_error.to_string().contains("motif index selectors"));
+
+    let wrong_axis_error = two_sided_ends
+        .select_corrected_counts(&two_sided_ref_kmers)
+        .two_sided_correction(TwoSidedCorrectionMode::Outside)
+        .motifs_by_label(&["A_C"])
+        .read()
+        .expect_err("side modes should reject joint labels");
+    assert!(
+        wrong_axis_error
+            .to_string()
+            .contains("side-mode motif axis")
     );
     Ok(())
 }

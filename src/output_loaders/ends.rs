@@ -2,7 +2,7 @@
 //!
 //! End-motif outputs are Zarr stores with a row axis and a motif axis. Rows are
 //! global, genomic windows, or grouped-BED groups. The motif axis contains
-//! either concrete end motifs or motif-group labels from `--motifs-file`.
+//! either end-motif labels or motif-group labels from `--motifs-file`.
 //!
 //! The loader reads and validates the store metadata eagerly. Dense count
 //! stores are read into a `DenseMatrix<f64>`. Sparse stores are read as COO
@@ -126,7 +126,7 @@ impl EndsOutput {
         self.row_metadata.mode()
     }
 
-    /// Return whether motif-axis labels are concrete motifs or motif groups.
+    /// Return whether motif-axis labels are end motifs or motif groups.
     pub fn motif_axis_kind(&self) -> EndMotifAxisKind {
         self.motif_axis_kind
     }
@@ -865,7 +865,7 @@ pub enum EndMotifRowMode {
 /// Meaning of the motif axis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EndMotifAxisKind {
-    /// Concrete end-motif labels.
+    /// End-motif labels.
     Motif,
     /// Motif-group labels from `--motifs-file`.
     MotifGroup,
@@ -1009,6 +1009,39 @@ impl EndMotifCountSelection {
             self.shape()
         );
         Ok(Self { data, ..self })
+    }
+
+    /// Replace the motif axis and count storage while keeping selected rows.
+    ///
+    /// Outside and inside correction begin with the stored full two-sided motif
+    /// axis, sum counts into a derived side axis, and then replace the selection's
+    /// motif labels, motif indices, and count storage. Selected row metadata and
+    /// source row indices remain unchanged. The replacement must therefore have
+    /// the same row count as the source selection, and both motif metadata vectors
+    /// must match the replacement storage's column count.
+    #[cfg(feature = "cmd_ref_kmers")]
+    pub(crate) fn with_derived_motif_axis(
+        self,
+        motif_indices: Vec<usize>,
+        motif_labels: Vec<String>,
+        data: EndMotifCountsData,
+    ) -> Result<Self> {
+        let (row_count, motif_count) = data.shape();
+        ensure!(
+            row_count == self.row_count(),
+            "derived end-motif count storage row count {row_count} does not match selection row count {}",
+            self.row_count()
+        );
+        ensure!(
+            motif_indices.len() == motif_count && motif_labels.len() == motif_count,
+            "derived end-motif motif metadata length does not match count storage motif count {motif_count}"
+        );
+        Ok(Self {
+            motif_indices,
+            motif_labels,
+            data,
+            ..self
+        })
     }
 
     /// Return how selected counts are stored.

@@ -252,6 +252,47 @@ group_rows = ref_kmers.data_frame(groups="promoters", densify=True)
 
 <br>
 
+## Correct End-Motif Counts
+
+Pass a matching reference k-mer output to correct end-motif counts for reference sequence composition. The correction is normalized so that a uniform reference composition leaves counts unchanged. Motifs that are common in the reference are scaled down, while rare motifs are scaled up. Corrected data frames include both `corrected_count` and `corrected_frequency`.
+
+When both `--k-inside` and `--k-outside` was used, creating motif labels such as `"AC_GT"`, specify how the two sides are used in the correction via `two_sided_correction`:
+
+- `"joint"` keeps the full `"AC_GT"` label and corrects its count using the frequency of the exact reference k-mer `"ACGT"`. Use this when the full pairing of outside and inside bases is the quantity of interest.
+
+- `"split"` also keeps the full `"AC_GT"` label, but calculates separate correction factors for outside label `"AC"` and inside label `"GT"`, then multiplies them. Use this when full two-sided sample motifs should remain separate, but outside and inside reference composition should be modeled independently or exact full reference k-mers are too sparse.
+
+- `"outside"` combines sample counts that share the same outside bases before correction. For example, `"AC_AA"` and `"AC_GT"` both contribute to `"AC_"`. The result contains outside labels such as `"AC_"` and uses the summed reference frequency of full k-mers beginning with `"AC"`.
+
+- `"inside"` combines sample counts that share the same inside bases before correction. For example, `"AA_GT"` and `"AC_GT"` both contribute to `"_GT"`. The result contains inside labels such as `"_GT"` and uses the summed reference frequency of full k-mers ending with `"GT"`.
+
+For `"split"`, `"outside"`, and `"inside"`, these side frequencies are calculated from the loaded full-length reference k-mers. If the reference output was restricted by a motifs file, only k-mers in that file contribute to the correction.
+
+```python
+ends = cfl.read_end_motifs("sample.end_motifs.zarr")
+ref_kmers = cfl.read_ref_kmers("reference.ref_kmer_counts.zarr")
+
+corrected_rows = ends.data_frame(
+    ref_kmers=ref_kmers,
+    two_sided_correction="joint",
+)
+```
+
+The choice also determines the motif axis of corrected arrays and sparse matrices. `"joint"` and `"split"` retain the selected full-motif axis. `"outside"` and `"inside"` create a new axis after combining counts by side. Use `corrected_motifs_metadata()` with the same `two_sided_correction` and motif selection to interpret these columns. Each metadata row identifies the corresponding `matrix_column`.
+
+```python
+corrected_matrix = ends.corrected_counts_array(
+    ref_kmers,
+    two_sided_correction="outside",
+)
+corrected_motifs = ends.corrected_motifs_metadata(
+    ref_kmers,
+    two_sided_correction="outside",
+)
+```
+
+<br>
+
 ## Load Length Counts
 
 ```python

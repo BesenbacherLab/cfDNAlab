@@ -315,8 +315,43 @@ fn generate_end_motif_zarr_fixtures_with_cfdnalab() -> Result<()> {
     assert_eq!(window_counts[(2, 1)], 1.0);
     assert_eq!(window_counts.sum(), 3.0);
 
+    let two_sided_window_bed = output_dir.join("tiny_ends_two_sided_windows.bed");
+    write_bed4(
+        &two_sided_window_bed,
+        &[
+            Bed4Row::new("chr1", 8, 13, "left"),
+            Bed4Row::new("chr1", 19, 24, "right"),
+            Bed4Row::new("chr2", 8, 13, "chr2_left"),
+        ],
+    )?;
+
+    let sparse_windowed_two_sided_path = run_end_fixture(
+        &bam.bam,
+        &reference.path,
+        &output_dir,
+        "tiny_sparse_windowed_two_sided",
+        &["chr1", "chr2"],
+        2,
+        2,
+        false,
+        Some(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: Some(two_sided_window_bed.clone()),
+            by_grouped_bed: None,
+        }),
+        None,
+    )?;
+    let (two_sided_motifs, two_sided_counts) =
+        read_sparse_end_counts(&sparse_windowed_two_sided_path)?;
+    assert_eq!(two_sided_motifs, vec!["AC_GT", "GT_AC"]);
+    assert_eq!(two_sided_counts.shape(), &[3, 2]);
+    assert_eq!(two_sided_counts[(0, 0)], 1.0);
+    assert_eq!(two_sided_counts[(1, 1)], 1.0);
+    assert_eq!(two_sided_counts[(2, 0)], 1.0);
+    assert_eq!(two_sided_counts.sum(), 3.0);
+
     let selected_motifs_file = output_dir.join("tiny_ends_selected_motifs.tsv");
-    std::fs::write(&selected_motifs_file, "GT_AC\nAC_GT\nTT_TT\n")?;
+    std::fs::write(&selected_motifs_file, "GT_AC\nAC_GT\nGT_TT\nTT_TT\n")?;
     let sparse_windowed_selected_motifs_path = run_end_fixture(
         &bam.bam,
         &reference.path,
@@ -328,10 +363,10 @@ fn generate_end_motif_zarr_fixtures_with_cfdnalab() -> Result<()> {
         false,
         Some(DistributionWindowsArgs {
             by_size: None,
-            by_bed: Some(output_dir.join("tiny_ends_windows.bed")),
+            by_bed: Some(two_sided_window_bed.clone()),
             by_grouped_bed: None,
         }),
-        Some(selected_motifs_file),
+        Some(selected_motifs_file.clone()),
     )?;
     let (selected_motifs, selected_counts) =
         read_sparse_end_counts(&sparse_windowed_selected_motifs_path)?;
@@ -353,6 +388,93 @@ fn generate_end_motif_zarr_fixtures_with_cfdnalab() -> Result<()> {
         sparse_windowed_selected_motifs_path
             .join("motif_ascii")
             .is_dir()
+    );
+
+    let correction_chr1 = sequence_with_segments(256, &[(5, "ACGTACGTTTT"), (16, "ACGTACGTTTT")])?;
+    let correction_chr2 = sequence_with_segments(256, &[(5, "ACGTACGTTTT")])?;
+    let correction_reference = twobit_from_sequences(
+        "downstream_end_reference_correction",
+        vec![
+            ("chr1".to_string(), correction_chr1),
+            ("chr2".to_string(), correction_chr2),
+        ],
+    )?;
+
+    let unrestricted_ref_kmers_path = run_ref_kmer_fixture(
+        &correction_reference.path,
+        &output_dir,
+        "tiny_ref_kmers_sparse_windowed_end_motif",
+        4,
+        false,
+        false,
+        Some(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: Some(two_sided_window_bed.clone()),
+            by_grouped_bed: None,
+        }),
+        None,
+        None,
+    )?;
+    let unrestricted_ref_motifs = read_motif_labels(&unrestricted_ref_kmers_path)?;
+    let unrestricted_ref_frequencies = read_sparse_frequency_matrix(&unrestricted_ref_kmers_path)?;
+    assert_eq!(
+        unrestricted_ref_motifs,
+        vec!["ACGT", "CGTA", "CGTT", "GTAC", "GTTT", "TACG", "TTTT"]
+    );
+    assert_eq!(unrestricted_ref_frequencies.shape(), &[3, 7]);
+    for (motif, frequency) in [
+        ("ACGT", 1.0 / 4.0),
+        ("CGTA", 1.0 / 10.0),
+        ("CGTT", 3.0 / 20.0),
+        ("GTAC", 3.0 / 20.0),
+        ("GTTT", 1.0 / 10.0),
+        ("TACG", 1.0 / 5.0),
+        ("TTTT", 1.0 / 20.0),
+    ] {
+        let motif_index = unrestricted_ref_motifs
+            .iter()
+            .position(|label| label == motif)
+            .with_context(|| format!("missing reference motif {motif}"))?;
+        for row_index in 0..3 {
+            assert_close(
+                unrestricted_ref_frequencies[(row_index, motif_index)],
+                frequency,
+            );
+        }
+    }
+    assert_vec_close(
+        read_zarr_array::<f64>(&unrestricted_ref_kmers_path, "/row_scaling_factor")?,
+        &[5.0, 5.0, 5.0],
+    );
+
+    let selected_ref_kmers_path = run_ref_kmer_fixture(
+        &correction_reference.path,
+        &output_dir,
+        "tiny_ref_kmers_sparse_windowed_selected_end_motifs",
+        4,
+        false,
+        false,
+        Some(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: Some(two_sided_window_bed),
+            by_grouped_bed: None,
+        }),
+        Some(selected_motifs_file),
+        None,
+    )?;
+    let selected_ref_motifs = read_motif_labels(&selected_ref_kmers_path)?;
+    let selected_ref_frequencies = read_sparse_frequency_matrix(&selected_ref_kmers_path)?;
+    assert_eq!(selected_ref_motifs, vec!["GTAC", "ACGT", "GTTT", "TTTT"]);
+    assert_eq!(selected_ref_frequencies.shape(), &[3, 4]);
+    for row_index in 0..3 {
+        assert_close(selected_ref_frequencies[(row_index, 0)], 3.0 / 11.0);
+        assert_close(selected_ref_frequencies[(row_index, 1)], 5.0 / 11.0);
+        assert_close(selected_ref_frequencies[(row_index, 2)], 2.0 / 11.0);
+        assert_close(selected_ref_frequencies[(row_index, 3)], 1.0 / 11.0);
+    }
+    assert_vec_close(
+        read_zarr_array::<f64>(&selected_ref_kmers_path, "/row_scaling_factor")?,
+        &[2.75, 2.75, 2.75],
     );
 
     let sparse_grouped_bed = output_dir.join("tiny_ends_grouped.bed");
@@ -1088,6 +1210,20 @@ fn read_sparse_end_counts(store_path: &Path) -> Result<(Vec<String>, Array2<f64>
     let motifs = read_motif_labels(store_path)?;
     let matrix = read_sparse_count_matrix(store_path)?;
     Ok((motifs, matrix))
+}
+
+fn sequence_with_segments(length: usize, segments: &[(usize, &str)]) -> Result<String> {
+    let mut sequence = vec![b'A'; length];
+    for &(start, segment) in segments {
+        let end = start
+            .checked_add(segment.len())
+            .context("reference segment end coordinate overflowed")?;
+        let destination = sequence
+            .get_mut(start..end)
+            .with_context(|| format!("reference segment {start}..{end} is outside contig"))?;
+        destination.copy_from_slice(segment.as_bytes());
+    }
+    String::from_utf8(sequence).context("reference sequence must be valid UTF-8")
 }
 
 fn read_sparse_count_matrix(store_path: &Path) -> Result<Array2<f64>> {

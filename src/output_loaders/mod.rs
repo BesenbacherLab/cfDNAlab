@@ -85,4 +85,6 @@ pub use ref_kmers::{
 };
 
 #[cfg(all(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
-pub use reference_correction::{CorrectedEndMotifCountsSelector, UnsupportedReferencePolicy};
+pub use reference_correction::{
+    CorrectedEndMotifCountsSelector, TwoSidedCorrectionMode, UnsupportedReferencePolicy,
+};
