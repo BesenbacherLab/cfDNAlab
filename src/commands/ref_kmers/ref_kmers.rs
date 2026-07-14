@@ -69,7 +69,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-use tracing::info;
+use tracing::{info, warn};
 
 const COMMAND_TARGET: &str = "ref-kmers";
 
@@ -449,19 +449,26 @@ pub fn run_ref_kmers(opt: &RefKmersConfig, options: RunOptions) -> Result<RefKme
         opt.canonical,
         opt.all_motifs,
     )?;
-    let non_empty_rows = frequency_bins
+    let empty_rows = frequency_bins
         .frequency_bins
         .iter()
-        .filter(|row| !row.is_empty())
+        .filter(|row| row.is_empty())
         .count();
     status_info!(
         options,
         target: COMMAND_TARGET,
-        "Prepared reference k-mer frequencies for {} non-empty row(s) across {} output row(s) and {} motif column(s)",
-        non_empty_rows,
+        "Prepared reference k-mer frequencies with {} output row(s) and {} motif column(s)",
         total_windows,
         motif_order.len()
     );
+    if empty_rows > 0 {
+        warn!(
+            target: COMMAND_TARGET,
+            "{} output row(s) had no eligible reference k-mers and contain only zero frequencies",
+            empty_rows
+        );
+    }
+
     // Dense storage is forced by `--all-motifs`. It is also used when an observed or selected
     // motif axis is already complete, even if the user did not request `--all-motifs`
     let write_dense_output = opt.all_motifs
