@@ -404,7 +404,7 @@ fn dense_ref_kmer_zarr_writes_frequencies_scaling_and_window_metadata() -> Resul
     // Arrange: row 0 frequencies reconstruct counts 2 and 1 with scaling factor 3. Row 1 has one
     // motif with scaling factor 4. BED row metadata is already in output-row order.
     let temp = TempDir::new().expect("temp dir should be created");
-    let store_path = temp.path().join("sample.ref_kmer_counts.zarr");
+    let store_path = temp.path().join("sample.ref_kmers.zarr");
     let motif_labels = vec!["AC".to_string(), "GT".to_string()];
     let frequency_bins = vec![
         FxHashMap::from_iter([(0, 2.0 / 3.0), (1, 1.0 / 3.0)]),
@@ -504,7 +504,7 @@ fn sparse_ref_kmer_zarr_writes_sorted_frequency_coo_arrays() -> Result<()> {
     // Arrange: sparse entries are inserted out of column order, but COO arrays should be sorted by
     // row and motif. The stored values are frequencies; row_scaling_factor reconstructs counts.
     let temp = TempDir::new().expect("temp dir should be created");
-    let store_path = temp.path().join("sample.ref_kmer_counts.zarr");
+    let store_path = temp.path().join("sample.ref_kmers.zarr");
     let motif_labels = vec!["AA".to_string(), "CC".to_string()];
     let frequency_bins = vec![FxHashMap::from_iter([(1, 0.25), (0, 0.75)])];
     let scaling_factors = vec![4.0];
@@ -554,7 +554,7 @@ fn sparse_ref_kmer_zarr_writes_row_major_coo_and_omits_zero_frequencies() -> Res
     // insertion order. Exact zero frequencies are omitted, but empty rows still contribute to
     // sparse/shape and row_scaling_factor.
     let temp = TempDir::new().expect("temp dir should be created");
-    let store_path = temp.path().join("sample.ref_kmer_counts.zarr");
+    let store_path = temp.path().join("sample.ref_kmers.zarr");
     let motif_labels = vec!["A".to_string(), "C".to_string(), "G".to_string()];
     let frequency_bins: Vec<RefKmerFrequencyBin> = vec![
         FxHashMap::from_iter([(2, 0.5), (1, 0.0), (0, 0.5)]),
@@ -623,7 +623,7 @@ fn sparse_ref_kmer_zarr_writes_empty_coo_arrays_when_all_rows_are_empty() -> Res
     // empty COO arrays plus shape metadata so loaders can distinguish an empty matrix from a
     // malformed package.
     let temp = TempDir::new().expect("temp dir should be created");
-    let store_path = temp.path().join("sample.ref_kmer_counts.zarr");
+    let store_path = temp.path().join("sample.ref_kmers.zarr");
     let motif_labels = vec!["A".to_string(), "C".to_string()];
     let frequency_bins: Vec<RefKmerFrequencyBin> = vec![FxHashMap::default()];
     let scaling_factors = vec![0.0];
@@ -674,7 +674,7 @@ fn window_ref_kmer_zarr_rejects_out_of_order_output_indices() {
     // Arrange: window metadata rows are expected to already be sorted in output-row order. The writer
     // checks monotonic output_index values so swapped rows fail before a package can look valid.
     let temp = TempDir::new().expect("temp dir should be created");
-    let store_path = temp.path().join("sample.ref_kmer_counts.zarr");
+    let store_path = temp.path().join("sample.ref_kmers.zarr");
     let motif_labels = vec!["A".to_string()];
     let frequency_bins = vec![
         FxHashMap::from_iter([(0, 1.0)]),
@@ -735,7 +735,7 @@ fn motif_group_ref_kmer_zarr_writes_json_labels_without_motif_ascii() -> Result<
     // Arrange: motifs-file group labels can have variable width, so they live as JSON labels on the
     // motif_index axis rather than in motif_ascii.
     let temp = TempDir::new().expect("temp dir should be created");
-    let store_path = temp.path().join("sample.ref_kmer_counts.zarr");
+    let store_path = temp.path().join("sample.ref_kmers.zarr");
     let motif_labels = vec!["short".to_string(), "group-two".to_string()];
     let frequency_bins = vec![FxHashMap::from_iter([(0, 0.25), (1, 0.75)])];
     let scaling_factors = vec![8.0];
@@ -781,7 +781,7 @@ fn grouped_ref_kmer_zarr_writes_group_metadata_and_dense_frequencies() -> Result
     // Arrange: group rows are already count-row indices. Group 1 has no nonzero frequencies but still
     // keeps its metadata and scaling factor 0.
     let temp = TempDir::new().expect("temp dir should be created");
-    let store_path = temp.path().join("sample.ref_kmer_counts.zarr");
+    let store_path = temp.path().join("sample.ref_kmers.zarr");
     let motif_labels = vec!["A".to_string(), "C".to_string()];
     let frequency_bins = vec![FxHashMap::from_iter([(0, 1.0)]), FxHashMap::default()];
     let scaling_factors = vec![5.0, 0.0];
