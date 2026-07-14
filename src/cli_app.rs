@@ -327,11 +327,13 @@ pub(crate) fn build_terminal_command() -> clap::Command {
         .literal(AnsiColor::Blue.on_default().bold())
         .placeholder(AnsiColor::Cyan.on_default());
     command = command
-        .help_template("{name} {version}\n{about}\n\n{usage-heading} {usage}\n\n{all-args}\n")
+        .help_template(
+            "{before-help}{name} {version}\n{about}\n\n{usage-heading} {usage}\n\n{all-args}\n",
+        )
         .styles(styles);
     command = sanitize_command(command);
     let signature = terminal_signature();
-    add_signature(command, &signature)
+    add_signature(command, &signature, "cfdna")
 }
 
 /// Build docs-oriented clap command with raw help text
@@ -547,11 +549,19 @@ fn terminal_signature_with_bars(style_on: &str, style_off: &str) -> String {
     format!("\n{style_on}{bar1}\n\n  {title}\n\n{bar2}{style_off}\n")
 }
 
-/// Apply signature to command and all subcommands
-fn add_signature(mut command: clap::Command, signature: &str) -> clap::Command {
+/// Apply the branded help header to the command and all subcommands.
+///
+/// Each header includes the full command path so standalone help output identifies which command
+/// it describes. Building the path during recursion also keeps nested subcommands correct without
+/// requiring command-specific help configuration.
+fn add_signature(mut command: clap::Command, signature: &str, command_path: &str) -> clap::Command {
+    let help_header = format!(
+        "{signature}Command: {command_path}\n{}\n",
+        "─".repeat(CLI_SEPARATOR_WIDTH)
+    );
     command = command
-        .before_help(signature.to_string())
-        .before_long_help(signature.to_string());
+        .before_help(help_header.clone())
+        .before_long_help(help_header);
 
     let subcommand_names: Vec<String> = command
         .get_subcommands()
@@ -559,13 +569,9 @@ fn add_signature(mut command: clap::Command, signature: &str) -> clap::Command {
         .collect();
 
     for subcommand_name in subcommand_names {
+        let subcommand_path = format!("{command_path} {subcommand_name}");
         command = command.mut_subcommand(&subcommand_name, |subcommand| {
-            add_signature(
-                subcommand
-                    .before_help(signature.to_string())
-                    .before_long_help(signature.to_string()),
-                signature,
-            )
+            add_signature(subcommand, signature, &subcommand_path)
         });
     }
     command
@@ -574,3 +580,7 @@ fn add_signature(mut command: clap::Command, signature: &str) -> clap::Command {
 #[cfg(all(test, feature = "cli"))]
 #[path = "cli_app_roundtrip_tests.rs"]
 mod cli_app_roundtrip_tests;
+
+#[cfg(all(test, feature = "cli", feature = "cmd_ref_kmers"))]
+#[path = "cli_app_tests.rs"]
+mod cli_app_tests;
