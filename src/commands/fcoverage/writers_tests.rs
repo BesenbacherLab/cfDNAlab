@@ -58,9 +58,7 @@ fn grouped_layout_for_writer_tests() -> Result<GroupedCoverageLayout> {
         ]),
     );
 
-    let mut segment_idx_to_group_idx = FxHashMap::default();
-    segment_idx_to_group_idx.insert(0, 5);
-    segment_idx_to_group_idx.insert(1, 5);
+    let group_idx_by_segment_idx = vec![5, 5];
 
     let mut group_span_positions = FxHashMap::default();
     group_span_positions.insert(5, 20);
@@ -70,7 +68,7 @@ fn grouped_layout_for_writer_tests() -> Result<GroupedCoverageLayout> {
 
     Ok(GroupedCoverageLayout {
         segments_by_chr,
-        segment_idx_to_group_idx,
+        group_idx_by_segment_idx,
         group_span_positions,
         group_idx_to_name,
     })

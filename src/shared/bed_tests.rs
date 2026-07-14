@@ -101,9 +101,7 @@ mod tests_newest_bed_loaders {
             layout_segments_for_chr(&layout, "chr1"),
             vec![(10, 20, 0), (15, 25, 1), (40, 45, 2)]
         );
-        assert_eq!(layout.segment_idx_to_group_idx.get(&0), Some(&0));
-        assert_eq!(layout.segment_idx_to_group_idx.get(&1), Some(&0));
-        assert_eq!(layout.segment_idx_to_group_idx.get(&2), Some(&1));
+        assert_eq!(layout.group_idx_by_segment_idx, vec![0, 0, 1]);
         assert_eq!(layout.group_span_positions.get(&0), Some(&20));
         assert_eq!(layout.group_span_positions.get(&1), Some(&5));
         assert_eq!(
@@ -155,8 +153,7 @@ mod tests_newest_bed_loaders {
             layout_segments_for_chr(&layout, "chr1"),
             vec![(10, 30, 0), (40, 45, 1)]
         );
-        assert_eq!(layout.segment_idx_to_group_idx.get(&0), Some(&0));
-        assert_eq!(layout.segment_idx_to_group_idx.get(&1), Some(&1));
+        assert_eq!(layout.group_idx_by_segment_idx, vec![0, 1]);
         assert_eq!(layout.group_span_positions.get(&0), Some(&20));
         assert_eq!(layout.group_span_positions.get(&1), Some(&5));
         Ok(())
@@ -187,8 +184,7 @@ mod tests_newest_bed_loaders {
             layout_segments_for_chr(&layout, "chr1"),
             vec![(10, 20, 0), (15, 30, 1)]
         );
-        assert_eq!(layout.segment_idx_to_group_idx.get(&0), Some(&0));
-        assert_eq!(layout.segment_idx_to_group_idx.get(&1), Some(&1));
+        assert_eq!(layout.group_idx_by_segment_idx, vec![0, 1]);
         assert_eq!(layout.group_span_positions.get(&0), Some(&10));
         assert_eq!(layout.group_span_positions.get(&1), Some(&15));
         Ok(())
@@ -218,8 +214,7 @@ mod tests_newest_bed_loaders {
             layout_segments_for_chr(&layout, "chr1"),
             vec![(0, 5, 0), (10, 15, 1)]
         );
-        assert_eq!(layout.segment_idx_to_group_idx.get(&0), Some(&0));
-        assert_eq!(layout.segment_idx_to_group_idx.get(&1), Some(&0));
+        assert_eq!(layout.group_idx_by_segment_idx, vec![0, 0]);
         assert_eq!(layout.group_span_positions.get(&0), Some(&10));
         Ok(())
     }
@@ -247,8 +242,7 @@ mod tests_newest_bed_loaders {
         assert_eq!(layout_segments_for_chr(&layout, "chr3"), vec![(5, 10, 0)]);
         assert_eq!(layout_segments_for_chr(&layout, "chr1"), vec![(20, 30, 1)]);
         assert!(layout_segments_for_chr(&layout, "chr2").is_empty());
-        assert_eq!(layout.segment_idx_to_group_idx.get(&0), Some(&0));
-        assert_eq!(layout.segment_idx_to_group_idx.get(&1), Some(&1));
+        assert_eq!(layout.group_idx_by_segment_idx, vec![0, 1]);
         Ok(())
     }
 
@@ -285,9 +279,7 @@ mod tests_newest_bed_loaders {
             layout_segments_for_chr(&layout, "chr1"),
             vec![(10, 15, 0), (10, 20, 1), (12, 18, 2)]
         );
-        assert_eq!(layout.segment_idx_to_group_idx.get(&0), Some(&1));
-        assert_eq!(layout.segment_idx_to_group_idx.get(&1), Some(&0));
-        assert_eq!(layout.segment_idx_to_group_idx.get(&2), Some(&2));
+        assert_eq!(layout.group_idx_by_segment_idx, vec![1, 0, 2]);
         Ok(())
     }
 
@@ -310,7 +302,7 @@ mod tests_newest_bed_loaders {
 
         // Assert
         assert!(layout.segments_by_chr.is_empty());
-        assert!(layout.segment_idx_to_group_idx.is_empty());
+        assert!(layout.group_idx_by_segment_idx.is_empty());
         assert!(layout.group_span_positions.is_empty());
         assert_eq!(layout.group_idx_to_name, group_idx_to_name);
         Ok(())
@@ -370,8 +362,7 @@ mod tests_newest_bed_loaders {
         // Assert
         assert_eq!(layout_segments_for_chr(&layout, "chr1"), vec![(0, 10, 0)]);
         assert_eq!(layout_segments_for_chr(&layout, "chr2"), vec![(20, 25, 1)]);
-        assert_eq!(layout.segment_idx_to_group_idx.get(&0), Some(&0));
-        assert_eq!(layout.segment_idx_to_group_idx.get(&1), Some(&0));
+        assert_eq!(layout.group_idx_by_segment_idx, vec![0, 0]);
         assert_eq!(layout.group_span_positions.get(&0), Some(&15));
         Ok(())
     }

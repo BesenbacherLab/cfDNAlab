@@ -53,9 +53,10 @@ fn fold_reduced_segment_into_group(
     grouped_accums: &mut FxHashMap<u64, GroupedAggregateAccum>,
     row: ReducedAggregateRow,
 ) -> Result<()> {
-    let group_idx = *grouped_layout
-        .segment_idx_to_group_idx
-        .get(&row.idx)
+    let group_idx = usize::try_from(row.idx)
+        .ok()
+        .and_then(|segment_idx| grouped_layout.group_idx_by_segment_idx.get(segment_idx))
+        .copied()
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "grouped reducer is missing a group mapping for segment_idx {}",
