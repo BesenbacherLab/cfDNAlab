@@ -204,7 +204,7 @@ LOADER_PAGES = (
         title="Reference K-mer Frequencies",
         sidebar_label="Reference K-mers",
         cli_command="cfdna ref-kmers",
-        output_file="<prefix>.ref_kmer_counts.zarr",
+        output_file="<prefix>.ref_kmers.zarr",
         summary=(
             "Load reference k-mer frequency Zarr stores and extract frequency "
             "tables, dense arrays, sparse matrices, and reconstructed counts."
@@ -242,7 +242,7 @@ LOADER_PAGES = (
             """\
             import cfdnalab as cfl
 
-            ref_kmers = cfl.read_ref_kmers("sample.ref_kmer_counts.zarr")
+            ref_kmers = cfl.read_ref_kmers("sample.ref_kmers.zarr")
 
             motifs = ref_kmers.motifs_metadata()
             scaling = ref_kmers.row_scaling_factors()
@@ -255,7 +255,7 @@ LOADER_PAGES = (
             """\
             library(cfdnalab)
 
-            ref_kmers <- read_ref_kmers("sample.ref_kmer_counts.zarr")
+            ref_kmers <- read_ref_kmers("sample.ref_kmers.zarr")
 
             motif_table <- motifs(ref_kmers)
             scaling <- row_scaling_factors(ref_kmers)

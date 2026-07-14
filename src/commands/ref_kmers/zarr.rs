@@ -646,7 +646,7 @@ pub(crate) fn write_ref_kmer_zarr(
 
 /// Convenience path builder for callers that write into a temporary output directory.
 pub(crate) fn ref_kmer_zarr_path(output_dir: &Path, prefix: &str) -> PathBuf {
-    output_dir.join(dot_join(&[prefix, "ref_kmer_counts.zarr"]))
+    output_dir.join(dot_join(&[prefix, "ref_kmers.zarr"]))
 }
 
 fn decode_ref_kmer(kmer: Kmer, kmer_spec: &KmerSpec) -> String {

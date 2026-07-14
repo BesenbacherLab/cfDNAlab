@@ -1153,7 +1153,7 @@ fn run_ref_kmer_fixture(
     }
 
     run_ref_kmers(&config, RunOptions::new_quiet())?;
-    let zarr_path = output_dir.join(format!("{prefix}.ref_kmer_counts.zarr"));
+    let zarr_path = output_dir.join(format!("{prefix}.ref_kmers.zarr"));
     assert!(zarr_path.is_dir());
     Ok(zarr_path)
 }

@@ -41,15 +41,15 @@ sparse_grouped_end_fixture_path <- function() {
 }
 
 dense_global_ref_kmer_fixture_path <- function() {
-  fixture_path("tiny_ref_kmers_dense_global.ref_kmer_counts.zarr", "CFDNALAB_REF_KMERS_DENSE_GLOBAL_ZARR")
+  fixture_path("tiny_ref_kmers_dense_global.ref_kmers.zarr", "CFDNALAB_REF_KMERS_DENSE_GLOBAL_ZARR")
 }
 
 sparse_windowed_ref_kmer_fixture_path <- function() {
-  fixture_path("tiny_ref_kmers_sparse_windowed.ref_kmer_counts.zarr", "CFDNALAB_REF_KMERS_SPARSE_WINDOWED_ZARR")
+  fixture_path("tiny_ref_kmers_sparse_windowed.ref_kmers.zarr", "CFDNALAB_REF_KMERS_SPARSE_WINDOWED_ZARR")
 }
 
 sparse_grouped_ref_kmer_fixture_path <- function() {
-  fixture_path("tiny_ref_kmers_sparse_grouped.ref_kmer_counts.zarr", "CFDNALAB_REF_KMERS_SPARSE_GROUPED_ZARR")
+  fixture_path("tiny_ref_kmers_sparse_grouped.ref_kmers.zarr", "CFDNALAB_REF_KMERS_SPARSE_GROUPED_ZARR")
 }
 
 local_zarr_store_path <- function(name) {

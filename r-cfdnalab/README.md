@@ -4,7 +4,7 @@ R helpers for loading [cfDNAlab](https://github.com/BesenbacherLab/cfDNAlab) ana
 
 This package does not install or run the cfDNAlab command-line tool. The CLI is distributed separately as the Rust `cfdna` binary. Use this R package after running cfDNAlab to load, inspect, and reshape output files in R.
 
-This package supports midpoint, end-motif, and reference k-mer Zarr outputs plus length-count TSV outputs: `<prefix>.midpoint_profiles.zarr`, `<prefix>.end_motifs.zarr`, `<prefix>.ref_kmer_counts.zarr`, and `<prefix>.length_counts.tsv.zst`.
+This package supports midpoint, end-motif, and reference k-mer Zarr outputs plus length-count TSV outputs: `<prefix>.midpoint_profiles.zarr`, `<prefix>.end_motifs.zarr`, `<prefix>.ref_kmers.zarr`, and `<prefix>.length_counts.tsv.zst`.
 
 The helpers return base `data.frame` objects, R arrays, and `Matrix` sparse matrices. Convert data frames with `tibble::as_tibble()` or `data.table::as.data.table()` when you want those workflows.
 
@@ -138,7 +138,7 @@ group_idx_counts <- end_motif_data_frame(ends, group_idxs = c(1L, 3L), motif_idx
 Reference k-mer outputs contain row-wise frequencies. Each row is the whole reference, a genomic window, or a BED group depending on how `cfdna ref-kmers` was run. Counts are reconstructed by multiplying each row by its `row_scaling_factor`.
 
 ```r
-ref_kmers <- read_ref_kmers("sample.ref_kmer_counts.zarr")
+ref_kmers <- read_ref_kmers("sample.ref_kmers.zarr")
 
 storage_mode(ref_kmers)
 row_mode(ref_kmers)
@@ -218,7 +218,7 @@ For `"split"`, `"outside"`, and `"inside"`, these side frequencies are calculate
 
 ```r
 ends <- read_end_motifs("sample.end_motifs.zarr")
-ref_kmers <- read_ref_kmers("reference.ref_kmer_counts.zarr")
+ref_kmers <- read_ref_kmers("reference.ref_kmers.zarr")
 
 corrected_rows <- end_motif_data_frame(
   ends,

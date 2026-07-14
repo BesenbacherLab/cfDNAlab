@@ -21,7 +21,7 @@ REFERENCE_FOOTPRINT = [
 
 
 def test_dense_windowed_ref_kmers_load_metadata_and_arrays(tmp_path: Path) -> None:
-    store_path = _write_dense_window_store(tmp_path / "sample.ref_kmer_counts.zarr")
+    store_path = _write_dense_window_store(tmp_path / "sample.ref_kmers.zarr")
 
     ref_kmers = cfdnalab.read_ref_kmers(store_path)
 
@@ -98,7 +98,7 @@ def test_dense_windowed_ref_kmers_load_metadata_and_arrays(tmp_path: Path) -> No
 def test_dense_windowed_ref_kmer_selectors_return_expected_frames(
     tmp_path: Path,
 ) -> None:
-    store_path = _write_dense_window_store(tmp_path / "sample.ref_kmer_counts.zarr")
+    store_path = _write_dense_window_store(tmp_path / "sample.ref_kmers.zarr")
     ref_kmers = cfdnalab.read_ref_kmers(store_path)
 
     pd.testing.assert_frame_equal(
@@ -157,7 +157,7 @@ def test_dense_windowed_ref_kmer_selectors_return_expected_frames(
 def test_sparse_grouped_ref_kmers_reconstruct_dense_counts_and_metadata(
     tmp_path: Path,
 ) -> None:
-    store_path = _write_sparse_grouped_store(tmp_path / "sample.ref_kmer_counts.zarr")
+    store_path = _write_sparse_grouped_store(tmp_path / "sample.ref_kmers.zarr")
 
     ref_kmers = cfdnalab.read_ref_kmers(store_path)
 
@@ -207,7 +207,7 @@ def test_sparse_grouped_ref_kmers_reconstruct_dense_counts_and_metadata(
 def test_sparse_grouped_ref_kmer_frames_preserve_selected_order(
     tmp_path: Path,
 ) -> None:
-    store_path = _write_sparse_grouped_store(tmp_path / "sample.ref_kmer_counts.zarr")
+    store_path = _write_sparse_grouped_store(tmp_path / "sample.ref_kmers.zarr")
     ref_kmers = cfdnalab.read_ref_kmers(store_path)
 
     pd.testing.assert_frame_equal(
@@ -241,7 +241,7 @@ def test_sparse_grouped_ref_kmer_frames_preserve_selected_order(
 
 def test_dense_global_ref_kmers_support_motif_group_axis(tmp_path: Path) -> None:
     store_path = _write_dense_global_motif_group_store(
-        tmp_path / "sample.ref_kmer_counts.zarr"
+        tmp_path / "sample.ref_kmers.zarr"
     )
 
     ref_kmers = cfdnalab.read_ref_kmers(store_path)
@@ -279,7 +279,7 @@ def test_dense_global_ref_kmers_support_motif_group_axis(tmp_path: Path) -> None
 
 
 def test_ref_kmer_loader_rejects_invalid_paths(tmp_path: Path) -> None:
-    missing_path = tmp_path / "missing.ref_kmer_counts.zarr"
+    missing_path = tmp_path / "missing.ref_kmers.zarr"
     file_path = tmp_path / "not_a_directory.zarr"
     file_path.write_text("not a zarr store")
     wrong_suffix_path = tmp_path / "sample.not_zarr"
@@ -295,23 +295,23 @@ def test_ref_kmer_loader_rejects_invalid_paths(tmp_path: Path) -> None:
 
 def test_ref_kmer_loader_rejects_schema_and_shape_problems(tmp_path: Path) -> None:
     wrong_schema = _write_dense_window_store(
-        tmp_path / "wrong_schema.ref_kmer_counts.zarr",
+        tmp_path / "wrong_schema.ref_kmers.zarr",
         schema="other",
     )
     wrong_version = _write_dense_window_store(
-        tmp_path / "wrong_version.ref_kmer_counts.zarr",
+        tmp_path / "wrong_version.ref_kmers.zarr",
         schema_version=99,
     )
     missing_array = _write_dense_window_store(
-        tmp_path / "missing_array.ref_kmer_counts.zarr",
+        tmp_path / "missing_array.ref_kmers.zarr",
         omit={"row_scaling_factor"},
     )
     wrong_dimensions = _write_dense_window_store(
-        tmp_path / "wrong_dimensions.ref_kmer_counts.zarr",
+        tmp_path / "wrong_dimensions.ref_kmers.zarr",
         frequencies_dimension_names=("motif", "row"),
     )
     wrong_motif_axis_dimensions = _write_dense_window_store(
-        tmp_path / "wrong_motif_axis_dimensions.ref_kmer_counts.zarr",
+        tmp_path / "wrong_motif_axis_dimensions.ref_kmers.zarr",
     )
     _patch_array_metadata(
         wrong_motif_axis_dimensions,
@@ -319,7 +319,7 @@ def test_ref_kmer_loader_rejects_schema_and_shape_problems(tmp_path: Path) -> No
         dimension_names=("row",),
     )
     wrong_window_metadata_dimensions = _write_dense_window_store(
-        tmp_path / "wrong_window_metadata_dimensions.ref_kmer_counts.zarr",
+        tmp_path / "wrong_window_metadata_dimensions.ref_kmers.zarr",
     )
     _patch_array_metadata(
         wrong_window_metadata_dimensions,
@@ -327,25 +327,25 @@ def test_ref_kmer_loader_rejects_schema_and_shape_problems(tmp_path: Path) -> No
         dimension_names=("motif",),
     )
     shape_mismatch = _write_sparse_grouped_store(
-        tmp_path / "shape_mismatch.ref_kmer_counts.zarr",
+        tmp_path / "shape_mismatch.ref_kmers.zarr",
         sparse_shape=np.array([3, 2], dtype=np.int32),
     )
     duplicate_sparse_coordinate = _write_sparse_grouped_store(
-        tmp_path / "duplicate_sparse_coordinate.ref_kmer_counts.zarr",
+        tmp_path / "duplicate_sparse_coordinate.ref_kmers.zarr",
         sparse_row=np.array([0, 0, 0], dtype=np.int32),
         sparse_motif=np.array([0, 0, 2], dtype=np.int32),
     )
     unsorted_sparse_coordinate = _write_sparse_grouped_store(
-        tmp_path / "unsorted_sparse_coordinate.ref_kmer_counts.zarr",
+        tmp_path / "unsorted_sparse_coordinate.ref_kmers.zarr",
         sparse_row=np.array([0, 0, 0], dtype=np.int32),
         sparse_motif=np.array([2, 0, 1], dtype=np.int32),
     )
     float_sparse_coordinate = _write_sparse_grouped_store(
-        tmp_path / "float_sparse_coordinate.ref_kmer_counts.zarr",
+        tmp_path / "float_sparse_coordinate.ref_kmers.zarr",
         sparse_row=np.array([0.0, 0.0, 1.0], dtype=np.float64),
     )
     wrong_sparse_dimension_labels = _write_sparse_grouped_store(
-        tmp_path / "wrong_sparse_dimension_labels.ref_kmer_counts.zarr",
+        tmp_path / "wrong_sparse_dimension_labels.ref_kmers.zarr",
         sparse_dimension_labels=np.array(["motif", "row"], dtype=object),
     )
 
@@ -377,15 +377,15 @@ def test_ref_kmer_loader_rejects_metadata_that_changes_count_meaning(
     tmp_path: Path,
 ) -> None:
     wrong_units = _write_dense_window_store(
-        tmp_path / "wrong_units.ref_kmer_counts.zarr",
+        tmp_path / "wrong_units.ref_kmers.zarr",
         value_units="other",
     )
     wrong_count_reconstruction = _write_dense_window_store(
-        tmp_path / "wrong_reconstruction.ref_kmer_counts.zarr",
+        tmp_path / "wrong_reconstruction.ref_kmers.zarr",
         count_reconstruction="count = frequency",
     )
     wrong_scaling_array = _write_dense_window_store(
-        tmp_path / "wrong_scaling.ref_kmer_counts.zarr",
+        tmp_path / "wrong_scaling.ref_kmers.zarr",
         row_scaling_factor_array="other",
     )
 
@@ -399,24 +399,24 @@ def test_ref_kmer_loader_rejects_metadata_that_changes_count_meaning(
 
 def test_ref_kmer_loader_rejects_invalid_values_and_motifs(tmp_path: Path) -> None:
     bad_sparse_frequency = _write_sparse_grouped_store(
-        tmp_path / "bad_sparse_frequency.ref_kmer_counts.zarr",
+        tmp_path / "bad_sparse_frequency.ref_kmers.zarr",
         sparse_frequency=np.array([0.25, 1.25, 1.0], dtype=np.float64),
     )
     bad_scaling = _write_dense_window_store(
-        tmp_path / "bad_scaling.ref_kmer_counts.zarr",
+        tmp_path / "bad_scaling.ref_kmers.zarr",
         row_scaling_factor=np.array([4.0, np.nan], dtype=np.float64),
     )
     invalid_base = _write_dense_window_store(
-        tmp_path / "invalid_base.ref_kmer_counts.zarr",
+        tmp_path / "invalid_base.ref_kmers.zarr",
         motif_names=np.array(["AA", "AN"], dtype=object),
     )
     noncanonical = _write_dense_window_store(
-        tmp_path / "noncanonical.ref_kmer_counts.zarr",
+        tmp_path / "noncanonical.ref_kmers.zarr",
         motif_names=np.array(["AA", "GT"], dtype=object),
         canonical=True,
     )
     bad_dense_frequency = _write_dense_window_store(
-        tmp_path / "bad_dense_frequency.ref_kmer_counts.zarr",
+        tmp_path / "bad_dense_frequency.ref_kmers.zarr",
         frequencies=np.array([[0.25, 1.25, 0.0], [0.5, 0.5, 0.0]]),
     )
 
@@ -436,24 +436,24 @@ def test_ref_kmer_loader_rejects_invalid_values_and_motifs(tmp_path: Path) -> No
 
 def test_ref_kmer_loader_rejects_invalid_row_metadata(tmp_path: Path) -> None:
     bad_interval = _write_dense_window_store(
-        tmp_path / "bad_interval.ref_kmer_counts.zarr",
+        tmp_path / "bad_interval.ref_kmers.zarr",
         row_start_bp=np.array([10, 60], dtype=np.int64),
         row_end_bp=np.array([20, 40], dtype=np.int64),
     )
     bad_window_fraction = _write_dense_window_store(
-        tmp_path / "bad_window_fraction.ref_kmer_counts.zarr",
+        tmp_path / "bad_window_fraction.ref_kmers.zarr",
         blacklisted_fraction=np.array([0.25, 1.25], dtype=np.float64),
     )
     bad_chromosome_index = _write_dense_window_store(
-        tmp_path / "bad_chromosome_index.ref_kmer_counts.zarr",
+        tmp_path / "bad_chromosome_index.ref_kmers.zarr",
         row_chromosome=np.array([0, 2], dtype=np.int32),
     )
     bad_eligible_windows = _write_sparse_grouped_store(
-        tmp_path / "bad_eligible_windows.ref_kmer_counts.zarr",
+        tmp_path / "bad_eligible_windows.ref_kmers.zarr",
         eligible_windows=np.array([1, -1, 0], dtype=np.int32),
     )
     bad_group_fraction = _write_sparse_grouped_store(
-        tmp_path / "bad_group_fraction.ref_kmer_counts.zarr",
+        tmp_path / "bad_group_fraction.ref_kmers.zarr",
         blacklisted_fraction=np.array([0.0, np.nan, 0.0], dtype=np.float64),
     )
 
@@ -473,7 +473,7 @@ def test_ref_kmer_loader_rejects_invalid_row_metadata(tmp_path: Path) -> None:
 
 def test_ref_kmer_loader_rejects_invalid_json_labels(tmp_path: Path) -> None:
     numeric_group_labels = _write_dense_global_motif_group_store(
-        tmp_path / "numeric_group_labels.ref_kmer_counts.zarr"
+        tmp_path / "numeric_group_labels.ref_kmers.zarr"
     )
     _patch_array_metadata(
         numeric_group_labels,
@@ -481,7 +481,7 @@ def test_ref_kmer_loader_rejects_invalid_json_labels(tmp_path: Path) -> None:
         attributes={"label_field": "motif_group", "labels": [1, 2]},
     )
     control_character_label = _write_sparse_grouped_store(
-        tmp_path / "control_character_label.ref_kmer_counts.zarr",
+        tmp_path / "control_character_label.ref_kmers.zarr",
         group_names=["A", "bad\nlabel", "empty"],
     )
 
@@ -493,7 +493,7 @@ def test_ref_kmer_loader_rejects_invalid_json_labels(tmp_path: Path) -> None:
 
 def test_sparse_ref_kmers_allow_empty_stored_coordinates(tmp_path: Path) -> None:
     store_path = _write_sparse_grouped_store(
-        tmp_path / "empty_sparse.ref_kmer_counts.zarr",
+        tmp_path / "empty_sparse.ref_kmers.zarr",
         sparse_row=np.asarray([], dtype=np.int32),
         sparse_motif=np.asarray([], dtype=np.int32),
         sparse_frequency=np.asarray([], dtype=np.float64),

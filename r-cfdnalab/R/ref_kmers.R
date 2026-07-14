@@ -19,7 +19,7 @@ REF_KMER_VALID_AXIS_KINDS <- c("motif", "motif_group")
 
 #' Read cfDNAlab reference k-mer frequencies.
 #'
-#' Loads a `<prefix>.ref_kmer_counts.zarr` output directory created with the
+#' Loads a `<prefix>.ref_kmers.zarr` output directory created with the
 #' \code{cfdna ref-kmers} CLI tool from the main \code{cfDNAlab} rust package.
 #' The directory is a Zarr store on disk, but ordinary workflows can use the
 #' data frame and matrix helpers without working with Zarr directly.
@@ -41,7 +41,7 @@ REF_KMER_VALID_AXIS_KINDS <- c("motif", "motif_group")
 #'
 #' @examples
 #' \dontrun{
-#' ref_kmers <- read_ref_kmers("sample.ref_kmer_counts.zarr")
+#' ref_kmers <- read_ref_kmers("sample.ref_kmers.zarr")
 #' motifs(ref_kmers)
 #' sparse_frequencies_matrix(ref_kmers)
 #' }

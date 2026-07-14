@@ -206,7 +206,7 @@ fn rust_end_motif_loader_reads_downstream_fixtures() -> Result<()> {
 fn rust_ref_kmer_loader_reads_downstream_fixtures() -> Result<()> {
     let dense = load_ref_kmers_output(fixture_path(
         "CFDNALAB_REF_KMERS_DENSE_GLOBAL_ZARR",
-        "tiny_ref_kmers_dense_global.ref_kmer_counts.zarr",
+        "tiny_ref_kmers_dense_global.ref_kmers.zarr",
         FixtureKind::Directory,
     )?)?;
     assert_eq!(dense.storage_mode(), RefKmerStorageMode::Dense);
@@ -238,7 +238,7 @@ fn rust_ref_kmer_loader_reads_downstream_fixtures() -> Result<()> {
 
     let sparse_windowed = load_ref_kmers_output(fixture_path(
         "CFDNALAB_REF_KMERS_SPARSE_WINDOWED_ZARR",
-        "tiny_ref_kmers_sparse_windowed.ref_kmer_counts.zarr",
+        "tiny_ref_kmers_sparse_windowed.ref_kmers.zarr",
         FixtureKind::Directory,
     )?)?;
     assert_eq!(sparse_windowed.storage_mode(), RefKmerStorageMode::SparseCoo);
@@ -316,7 +316,7 @@ fn rust_ref_kmer_loader_reads_downstream_fixtures() -> Result<()> {
 
     let sparse_grouped = load_ref_kmers_output(fixture_path(
         "CFDNALAB_REF_KMERS_SPARSE_GROUPED_ZARR",
-        "tiny_ref_kmers_sparse_grouped.ref_kmer_counts.zarr",
+        "tiny_ref_kmers_sparse_grouped.ref_kmers.zarr",
         FixtureKind::Directory,
     )?)?;
     assert_eq!(sparse_grouped.storage_mode(), RefKmerStorageMode::SparseCoo);
@@ -355,7 +355,7 @@ fn rust_ref_kmer_loader_reads_downstream_fixtures() -> Result<()> {
 
     let dense_motif_groups = load_ref_kmers_output(fixture_path(
         "CFDNALAB_REF_KMERS_DENSE_GROUPED_MOTIF_GROUP_ZARR",
-        "tiny_ref_kmers_dense_grouped_motif_groups.ref_kmer_counts.zarr",
+        "tiny_ref_kmers_dense_grouped_motif_groups.ref_kmers.zarr",
         FixtureKind::Directory,
     )?)?;
     assert_eq!(dense_motif_groups.storage_mode(), RefKmerStorageMode::Dense);
@@ -582,7 +582,7 @@ fn check_reference_correction_without_same_motifs_file() -> Result<()> {
     )?)?;
     let ref_kmers = load_ref_kmers_output(fixture_path(
         "CFDNALAB_REF_KMERS_SPARSE_WINDOWED_END_MOTIF_ZARR",
-        "tiny_ref_kmers_sparse_windowed_end_motif.ref_kmer_counts.zarr",
+        "tiny_ref_kmers_sparse_windowed_end_motif.ref_kmers.zarr",
         FixtureKind::Directory,
     )?)?;
     // The stored columns are [AC_GT, GT_AC], and the three sample rows contain
@@ -681,7 +681,7 @@ fn check_reference_correction_with_same_motifs_file() -> Result<()> {
     )?)?;
     let ref_kmers = load_ref_kmers_output(fixture_path(
         "CFDNALAB_REF_KMERS_SPARSE_WINDOWED_SELECTED_END_MOTIFS_ZARR",
-        "tiny_ref_kmers_sparse_windowed_selected_end_motifs.ref_kmer_counts.zarr",
+        "tiny_ref_kmers_sparse_windowed_selected_end_motifs.ref_kmers.zarr",
         FixtureKind::Directory,
     )?)?;
     // The stored columns are [GT_AC, AC_GT], and the three sample rows contain

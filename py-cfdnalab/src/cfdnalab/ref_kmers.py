@@ -103,7 +103,7 @@ class RefKmerFrequencies:
         Parameters
         ----------
         path
-            Path to a `<prefix>.ref_kmer_counts.zarr` directory.
+            Path to a `<prefix>.ref_kmers.zarr` directory.
         loaded_ref_kmers
             Preloaded store data used by `read_ref_kmers`.
         """

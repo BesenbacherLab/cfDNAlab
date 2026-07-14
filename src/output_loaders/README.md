@@ -12,7 +12,7 @@ The loaders live under `cfdnalab::output_loaders` and are compiled with the matc
 | `cmd_ends`      | `load_ends_output()`      | `<prefix>.end_motifs.zarr`                               |
 | `cmd_lengths`   | `load_lengths_output()`   | `<prefix>.length_counts.tsv`, optionally `.gz` or `.zst` |
 | `cmd_fcoverage` | `load_fcoverage_output()` | non-positional aggregate `fcoverage` TSV outputs         |
-| `cmd_ref_kmers` | `load_ref_kmers_output()` | `<prefix>.ref_kmer_counts.zarr`                          |
+| `cmd_ref_kmers` | `load_ref_kmers_output()` | `<prefix>.ref_kmers.zarr`                          |
 
 <br>
 
@@ -387,7 +387,7 @@ use cfdnalab::output_loaders::{
 
 fn main() -> anyhow::Result<()> {
     // Load output file and check the available metadata
-    let ref_kmers = load_ref_kmers_output("hg38.ref_kmer_counts.zarr")?;
+    let ref_kmers = load_ref_kmers_output("hg38.ref_kmers.zarr")?;
     ref_kmers.ensure_reference_2bit_matches("hg38.2bit")?;
     println!("{}", ref_kmers.output_metadata());
 

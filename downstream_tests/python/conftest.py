@@ -82,7 +82,7 @@ def sparse_grouped_wide_motif_group_end_zarr_path() -> Path:
 def dense_global_ref_kmer_zarr_path() -> Path:
     return _fixture_path(
         "CFDNALAB_REF_KMERS_DENSE_GLOBAL_ZARR",
-        "tiny_ref_kmers_dense_global.ref_kmer_counts.zarr",
+        "tiny_ref_kmers_dense_global.ref_kmers.zarr",
         "dense global reference k-mer",
     )
 
@@ -91,7 +91,7 @@ def dense_global_ref_kmer_zarr_path() -> Path:
 def sparse_windowed_ref_kmer_zarr_path() -> Path:
     return _fixture_path(
         "CFDNALAB_REF_KMERS_SPARSE_WINDOWED_ZARR",
-        "tiny_ref_kmers_sparse_windowed.ref_kmer_counts.zarr",
+        "tiny_ref_kmers_sparse_windowed.ref_kmers.zarr",
         "sparse windowed reference k-mer",
     )
 
@@ -100,7 +100,7 @@ def sparse_windowed_ref_kmer_zarr_path() -> Path:
 def sparse_windowed_end_motif_ref_kmer_zarr_path() -> Path:
     return _fixture_path(
         "CFDNALAB_REF_KMERS_SPARSE_WINDOWED_END_MOTIF_ZARR",
-        "tiny_ref_kmers_sparse_windowed_end_motif.ref_kmer_counts.zarr",
+        "tiny_ref_kmers_sparse_windowed_end_motif.ref_kmers.zarr",
         "sparse windowed end-motif reference k-mer",
     )
 
@@ -109,7 +109,7 @@ def sparse_windowed_end_motif_ref_kmer_zarr_path() -> Path:
 def sparse_windowed_selected_end_motifs_ref_kmer_zarr_path() -> Path:
     return _fixture_path(
         "CFDNALAB_REF_KMERS_SPARSE_WINDOWED_SELECTED_END_MOTIFS_ZARR",
-        "tiny_ref_kmers_sparse_windowed_selected_end_motifs.ref_kmer_counts.zarr",
+        "tiny_ref_kmers_sparse_windowed_selected_end_motifs.ref_kmers.zarr",
         "sparse windowed selected end-motifs reference k-mer",
     )
 
@@ -118,7 +118,7 @@ def sparse_windowed_selected_end_motifs_ref_kmer_zarr_path() -> Path:
 def sparse_grouped_ref_kmer_zarr_path() -> Path:
     return _fixture_path(
         "CFDNALAB_REF_KMERS_SPARSE_GROUPED_ZARR",
-        "tiny_ref_kmers_sparse_grouped.ref_kmer_counts.zarr",
+        "tiny_ref_kmers_sparse_grouped.ref_kmers.zarr",
         "sparse grouped reference k-mer",
     )
 
@@ -127,7 +127,7 @@ def sparse_grouped_ref_kmer_zarr_path() -> Path:
 def dense_grouped_motif_group_ref_kmer_zarr_path() -> Path:
     return _fixture_path(
         "CFDNALAB_REF_KMERS_DENSE_GROUPED_MOTIF_GROUP_ZARR",
-        "tiny_ref_kmers_dense_grouped_motif_groups.ref_kmer_counts.zarr",
+        "tiny_ref_kmers_dense_grouped_motif_groups.ref_kmers.zarr",
         "dense grouped motif-group reference k-mer",
     )
 

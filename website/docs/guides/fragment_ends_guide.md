@@ -237,7 +237,7 @@ In Python:
 import cfdnalab as cfl
 
 ends = cfl.read_end_motifs("<sample_id>.end_motifs.zarr")
-ref_kmers = cfl.read_ref_kmers("<reference>.ref_kmer_counts.zarr")
+ref_kmers = cfl.read_ref_kmers("<reference>.ref_kmers.zarr")
 
 corrected = ends.data_frame(ref_kmers=ref_kmers, two_sided_correction="joint")
 
@@ -269,7 +269,7 @@ In R:
 library(cfdnalab)
 
 ends <- read_end_motifs("<sample_id>.end_motifs.zarr")
-ref_kmers <- read_ref_kmers("<reference>.ref_kmer_counts.zarr")
+ref_kmers <- read_ref_kmers("<reference>.ref_kmers.zarr")
 
 corrected <- end_motif_data_frame(
   ends,

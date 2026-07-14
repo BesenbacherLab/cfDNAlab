@@ -343,7 +343,7 @@ mod mixed_size_overlap_assignment_tests {
             let loaded = load_ref_kmers_output(
                 output_dir
                     .path()
-                    .join(format!("{output_prefix}.ref_kmer_counts.zarr")),
+                    .join(format!("{output_prefix}.ref_kmers.zarr")),
             )?;
             assert_eq!(loaded.row_mode(), RefKmerRowMode::BedWindows);
             assert_eq!(loaded.assign_by(), expected_assign_by);
@@ -425,7 +425,7 @@ mod mixed_size_overlap_assignment_tests {
             let loaded = load_ref_kmers_output(
                 output_dir
                     .path()
-                    .join(format!("{output_prefix}.ref_kmer_counts.zarr")),
+                    .join(format!("{output_prefix}.ref_kmers.zarr")),
             )?;
             assert_eq!(loaded.row_mode(), RefKmerRowMode::Groups);
             assert_eq!(loaded.assign_by(), expected_assign_by);
@@ -488,7 +488,7 @@ fn ref_kmers_by_size_writes_fractional_frequencies_and_scaling_factors() -> Resu
     // Assert
     let package_path = output_dir
         .path()
-        .join("unit_ref_kmers.ref_kmer_counts.zarr");
+        .join("unit_ref_kmers.ref_kmers.zarr");
     let metadata = read_json(&package_path.join("zarr.json"));
     assert_eq!(
         metadata["attributes"]["cfdnalab_schema"],
@@ -609,7 +609,7 @@ fn ref_kmers_motifs_file_groups_selected_targets_end_to_end() -> Result<()> {
     // Assert
     let package_path = output_dir
         .path()
-        .join("unit_grouped_ref_kmers.ref_kmer_counts.zarr");
+        .join("unit_grouped_ref_kmers.ref_kmers.zarr");
     let metadata = read_json(&package_path.join("zarr.json"));
     assert_eq!(metadata["attributes"]["storage_mode"], "sparse_coo");
     assert_eq!(metadata["attributes"]["row_mode"], "global");
@@ -683,7 +683,7 @@ fn ref_kmers_loader_exposes_sparse_windows_and_implicit_zero_cells() -> Result<(
     // Assert
     let package_path = output_dir
         .path()
-        .join("unit_sparse_loader_api.ref_kmer_counts.zarr");
+        .join("unit_sparse_loader_api.ref_kmers.zarr");
     let loaded = load_ref_kmers_output(&package_path)?;
     let metadata = loaded.output_metadata();
     assert_eq!(metadata.storage_mode, RefKmerStorageMode::SparseCoo);
@@ -869,7 +869,7 @@ fn ref_kmers_loader_exposes_grouped_bed_rows_by_name() -> Result<()> {
     // Assert
     let package_path = output_dir
         .path()
-        .join("unit_grouped_bed_loader_api.ref_kmer_counts.zarr");
+        .join("unit_grouped_bed_loader_api.ref_kmers.zarr");
     let loaded = load_ref_kmers_output(&package_path)?;
     assert_eq!(loaded.row_mode(), RefKmerRowMode::Groups);
     assert_eq!(loaded.motif_axis_kind(), RefKmerMotifAxisKind::Motif);
@@ -1002,7 +1002,7 @@ fn ref_kmers_grouped_bed_count_overlap_uses_manual_overlap_mass() -> Result<()> 
     let loaded = load_ref_kmers_output(
         output_dir
             .path()
-            .join("unit_grouped_bed_count_overlap_ref_kmers.ref_kmer_counts.zarr"),
+            .join("unit_grouped_bed_count_overlap_ref_kmers.ref_kmers.zarr"),
     )?;
     let alpha_idx = loaded.group_index("alpha")?;
     let beta_idx = loaded.group_index("beta")?;
@@ -1048,7 +1048,7 @@ fn ref_kmers_loader_reconstructs_dense_all_motifs_counts() -> Result<()> {
     // Assert
     let package_path = output_dir
         .path()
-        .join("unit_dense_ref_kmers.ref_kmer_counts.zarr");
+        .join("unit_dense_ref_kmers.ref_kmers.zarr");
     let loaded = load_ref_kmers_output(&package_path)?;
     assert_eq!(loaded.storage_mode(), RefKmerStorageMode::Dense);
     assert_eq!(loaded.row_mode(), RefKmerRowMode::Global);
@@ -1151,7 +1151,7 @@ fn ref_kmers_small_tiles_match_single_tile_counts() -> Result<()> {
         load_ref_kmers_output(
             output_dir
                 .path()
-                .join(format!("{output_prefix}.ref_kmer_counts.zarr")),
+                .join(format!("{output_prefix}.ref_kmers.zarr")),
         )
         .map_err(anyhow::Error::from)
     };
@@ -1201,7 +1201,7 @@ fn ref_kmers_loader_count_conversions_leave_frequency_values_unchanged() -> Resu
     let sparse_loaded = load_ref_kmers_output(
         sparse_output_dir
             .path()
-            .join("unit_sparse_conversion.ref_kmer_counts.zarr"),
+            .join("unit_sparse_conversion.ref_kmers.zarr"),
     )?;
     let sparse_stored_frequencies = sparse_loaded.sparse_frequencies()?.frequencies().to_vec();
 
@@ -1237,7 +1237,7 @@ fn ref_kmers_loader_count_conversions_leave_frequency_values_unchanged() -> Resu
     let dense_loaded = load_ref_kmers_output(
         dense_output_dir
             .path()
-            .join("unit_dense_conversion.ref_kmer_counts.zarr"),
+            .join("unit_dense_conversion.ref_kmers.zarr"),
     )?;
     let dense_stored_frequencies = dense_loaded
         .dense_frequencies()?
@@ -1322,7 +1322,7 @@ fn ref_kmers_bed_count_overlap_matches_manual_counts_across_tiles() -> Result<()
         load_ref_kmers_output(
             output_dir
                 .path()
-                .join(format!("{output_prefix}.ref_kmer_counts.zarr")),
+                .join(format!("{output_prefix}.ref_kmers.zarr")),
         )
         .map_err(anyhow::Error::from)
     };
@@ -1389,7 +1389,7 @@ fn ref_kmers_proportion_assignment_counts_each_passing_kmer_once() -> Result<()>
     let loaded = load_ref_kmers_output(
         output_dir
             .path()
-            .join("unit_proportion_ref_kmers.ref_kmer_counts.zarr"),
+            .join("unit_proportion_ref_kmers.ref_kmers.zarr"),
     )?;
     assert_eq!(loaded.row_scaling_factors(), &[2.0]);
     assert_close(loaded.count_for_motif(0, "ACG")?.unwrap(), 1.0);
@@ -1438,7 +1438,7 @@ fn ref_kmers_midpoint_assignment_uses_the_center_base() -> Result<()> {
     let loaded = load_ref_kmers_output(
         output_dir
             .path()
-            .join("unit_midpoint_ref_kmers.ref_kmer_counts.zarr"),
+            .join("unit_midpoint_ref_kmers.ref_kmers.zarr"),
     )?;
     assert_eq!(loaded.row_scaling_factors(), &[1.0, 2.0]);
     assert_close(loaded.count_for_motif(0, "ACG")?.unwrap(), 1.0);
@@ -1477,7 +1477,7 @@ fn ref_kmers_large_k_motifs_file_counts_selected_subspace() -> Result<()> {
     let loaded = load_ref_kmers_output(
         output_dir
             .path()
-            .join("unit_large_k_ref_kmers.ref_kmer_counts.zarr"),
+            .join("unit_large_k_ref_kmers.ref_kmers.zarr"),
     )?;
     assert_eq!(
         loaded.motif_labels(),
@@ -1529,7 +1529,7 @@ fn ref_kmers_blacklist_excludes_kmers_touching_masked_bases() -> Result<()> {
     let loaded = load_ref_kmers_output(
         output_dir
             .path()
-            .join("unit_blacklisted_ref_kmers.ref_kmer_counts.zarr"),
+            .join("unit_blacklisted_ref_kmers.ref_kmers.zarr"),
     )?;
     assert_eq!(loaded.row_scaling_factors(), &[3.0]);
     assert_close(loaded.count_for_motif(0, "AC")?.unwrap(), 2.0);
@@ -1581,7 +1581,7 @@ fn ref_kmers_selected_motifs_keep_empty_rows_without_unselected_denominator() ->
     let loaded = load_ref_kmers_output(
         output_dir
             .path()
-            .join("unit_empty_selected_row_ref_kmers.ref_kmer_counts.zarr"),
+            .join("unit_empty_selected_row_ref_kmers.ref_kmers.zarr"),
     )?;
     assert_eq!(loaded.motif_labels(), &["AC".to_string()]);
     assert_eq!(loaded.row_scaling_factors(), &[1.0, 0.0]);
@@ -1642,7 +1642,7 @@ fn ref_kmers_fixed_size_rows_are_offset_across_chromosomes() -> Result<()> {
     let loaded = load_ref_kmers_output(
         output_dir
             .path()
-            .join("unit_multi_contig_ref_kmers.ref_kmer_counts.zarr"),
+            .join("unit_multi_contig_ref_kmers.ref_kmers.zarr"),
     )?;
     assert_eq!(loaded.row_scaling_factors(), &[2.0, 2.0, 2.0, 2.0]);
     assert_close(loaded.count_for_motif(0, "A")?.unwrap(), 2.0);

@@ -645,7 +645,7 @@ pub struct ChromosomeArgs {
     ///
     /// When no chromosomes are specified, it defaults to `chr1..chr22`.
     ///
-    /// Specify `"all"` *as the only string* to use all chromosomes from the
+    /// Specify `"all"` (as the only string) to use all chromosomes from the
     /// command's configured contig source.
     #[cfg_attr(
         feature = "cli", clap(

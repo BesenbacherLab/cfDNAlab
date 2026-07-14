@@ -31,7 +31,7 @@ test_that("end-motif loader reports path problems before opening Zarr", {
 })
 
 test_that("reference k-mer loader reports path problems before opening Zarr", {
-  missing_path <- file.path(tempdir(), "missing.ref_kmer_counts.zarr")
+  missing_path <- file.path(tempdir(), "missing.ref_kmers.zarr")
   file_path <- tempfile(fileext = ".zarr")
   writeLines("not a directory", file_path)
   wrong_suffix_path <- tempfile(fileext = ".not_zarr")

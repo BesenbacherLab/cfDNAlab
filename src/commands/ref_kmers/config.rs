@@ -54,7 +54,7 @@ pub struct RefKmersConfig {
     /// E.g., to allow storing packages for multiple reference genomes in the same directory.
     ///
     /// Produces the file as:
-    ///   `<prefix>.ref_kmer_counts.zarr`
+    ///   `<prefix>.ref_kmers.zarr`
     #[cfg_attr(
         feature = "cli",
         clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, value_parser = crate::commands::cli_common::parse_output_prefix, help_heading = "Core")

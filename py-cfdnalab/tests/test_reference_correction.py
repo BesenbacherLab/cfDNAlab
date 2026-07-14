@@ -30,7 +30,7 @@ def test_reference_corrected_end_motifs_keep_count_scale(tmp_path: Path) -> None
     # scale 1 and leave counts unchanged.
     end_path = _write_dense_window_store(tmp_path / "sample.end_motifs.zarr")
     ref_path = _write_reference_correction_ref_kmer_store(
-        tmp_path / "hg38.ref_kmer_counts.zarr"
+        tmp_path / "hg38.ref_kmers.zarr"
     )
     ends = cfdnalab.read_end_motifs(end_path)
     ref_kmers = cfdnalab.read_ref_kmers(ref_path)
@@ -62,7 +62,7 @@ def test_motif_group_reference_correction_rejects_two_sided_mode(
         tmp_path / "sample.end_motifs.zarr"
     )
     ref_path = _write_dense_global_motif_group_ref_kmer_store(
-        tmp_path / "reference.ref_kmer_counts.zarr"
+        tmp_path / "reference.ref_kmers.zarr"
     )
     ends = cfdnalab.read_end_motifs(end_path)
     ref_kmers = cfdnalab.read_ref_kmers(ref_path)
@@ -77,7 +77,7 @@ def test_reference_corrected_end_motifs_rejects_canonical_reference(
 ) -> None:
     end_path = _write_dense_window_store(tmp_path / "sample.end_motifs.zarr")
     ref_path = _write_reference_correction_ref_kmer_store(
-        tmp_path / "reference.ref_kmer_counts.zarr",
+        tmp_path / "reference.ref_kmers.zarr",
         motifs=np.array(["AA", "CC"], dtype=object),
         frequencies=np.array([[0.5, 0.5], [0.5, 0.5]], dtype=np.float64),
     )
@@ -95,7 +95,7 @@ def test_one_sided_reference_correction_rejects_explicit_mode(
 ) -> None:
     end_path = _write_dense_window_store(tmp_path / "sample.end_motifs.zarr")
     ref_path = _write_reference_correction_ref_kmer_store(
-        tmp_path / "reference.ref_kmer_counts.zarr"
+        tmp_path / "reference.ref_kmers.zarr"
     )
     ends = cfdnalab.read_end_motifs(end_path)
     ref_kmers = cfdnalab.read_ref_kmers(ref_path)
@@ -112,7 +112,7 @@ def test_reference_corrected_end_motifs_selectors_match_filtered_full_correction
     # should therefore keep the same scale as it has in the full correction.
     end_path = _write_dense_window_store(tmp_path / "sample.end_motifs.zarr")
     ref_path = _write_reference_correction_ref_kmer_store(
-        tmp_path / "hg38.ref_kmer_counts.zarr"
+        tmp_path / "hg38.ref_kmers.zarr"
     )
     ends = cfdnalab.read_end_motifs(end_path)
     ref_kmers = cfdnalab.read_ref_kmers(ref_path)
@@ -144,7 +144,7 @@ def test_reference_corrected_end_motifs_blacklist_filter_uses_end_rows(
     # the reference blacklist independently would select the wrong row.
     end_path = _write_dense_window_store(tmp_path / "sample.end_motifs.zarr")
     ref_path = _write_reference_correction_ref_kmer_store(
-        tmp_path / "hg38.ref_kmer_counts.zarr",
+        tmp_path / "hg38.ref_kmers.zarr",
         blacklisted_fraction=np.array([0.0, 0.25], dtype=np.float64),
     )
     ends = cfdnalab.read_end_motifs(end_path)
@@ -175,7 +175,7 @@ def test_reference_corrected_end_motif_count_extractors_keep_selector_shape(
     # frame.
     end_path = _write_dense_window_store(tmp_path / "sample.end_motifs.zarr")
     ref_path = _write_reference_correction_ref_kmer_store(
-        tmp_path / "hg38.ref_kmer_counts.zarr"
+        tmp_path / "hg38.ref_kmers.zarr"
     )
     ends = cfdnalab.read_end_motifs(end_path)
     ref_kmers = cfdnalab.read_ref_kmers(ref_path)
@@ -208,7 +208,7 @@ def test_reference_corrected_global_end_motifs_keep_count_scale(
     # matched windowed and grouped references.
     end_path = _write_dense_global_store(tmp_path / "sample.end_motifs.zarr")
     ref_path = _write_reference_correction_ref_kmer_store(
-        tmp_path / "hg38.ref_kmer_counts.zarr",
+        tmp_path / "hg38.ref_kmers.zarr",
         frequencies=np.array([[1.0 / 3.0, 1.0 / 6.0, 1.0 / 2.0]], dtype=np.float64),
         row_mode="global",
     )
@@ -232,7 +232,7 @@ def test_sparse_reference_corrected_end_motif_matrix_uses_sparse_input(
     # end-motif store. It should still return the full selected matrix shape.
     end_path = _write_sparse_window_store(tmp_path / "sample.end_motifs.zarr")
     ref_path = _write_reference_correction_ref_kmer_store(
-        tmp_path / "hg38.ref_kmer_counts.zarr"
+        tmp_path / "hg38.ref_kmers.zarr"
     )
     ends = cfdnalab.read_end_motifs(end_path)
     ref_kmers = cfdnalab.read_ref_kmers(ref_path)
@@ -257,7 +257,7 @@ def test_sparse_reference_corrected_end_motif_matrix_uses_sparse_reference_suppo
     # scale unchanged for supported motifs.
     end_path = _write_sparse_window_store(tmp_path / "sample.end_motifs.zarr")
     ref_path = _write_reference_correction_ref_kmer_store(
-        tmp_path / "hg38.ref_kmer_counts.zarr",
+        tmp_path / "hg38.ref_kmers.zarr",
         frequencies=np.array(
             [[1.0 / 2.0, 0.0, 1.0 / 2.0], [1.0 / 2.0, 1.0 / 2.0, 0.0]],
             dtype=np.float64,
@@ -286,7 +286,7 @@ def test_reference_corrected_end_motifs_uses_row_sparse_reference_support(
     # uniform reference over that support should leave counts unchanged.
     end_path = _write_dense_window_store(tmp_path / "sample.end_motifs.zarr")
     ref_path = _write_reference_correction_ref_kmer_store(
-        tmp_path / "hg38.ref_kmer_counts.zarr",
+        tmp_path / "hg38.ref_kmers.zarr",
         frequencies=np.array(
             [[1.0 / 2.0, 0.0, 1.0 / 2.0], [1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0]],
             dtype=np.float64,
@@ -313,7 +313,7 @@ def test_reference_corrected_end_motifs_rejects_positive_count_at_zero_reference
     # frequency is zero. Dividing by zero would make the correction undefined.
     end_path = _write_dense_window_store(tmp_path / "sample.end_motifs.zarr")
     ref_path = _write_reference_correction_ref_kmer_store(
-        tmp_path / "hg38.ref_kmer_counts.zarr",
+        tmp_path / "hg38.ref_kmers.zarr",
         frequencies=np.array(
             [[1.0 / 3.0, 1.0 / 6.0, 1.0 / 2.0], [1.0 / 2.0, 0.0, 1.0 / 2.0]],
             dtype=np.float64,
@@ -339,7 +339,7 @@ def test_reference_corrected_end_motifs_rejects_non_finite_corrected_counts(
     end_path = _write_dense_window_store(tmp_path / "sample.end_motifs.zarr")
     smallest_positive_float = np.nextafter(0.0, 1.0)
     ref_path = _write_reference_correction_ref_kmer_store(
-        tmp_path / "hg38.ref_kmer_counts.zarr",
+        tmp_path / "hg38.ref_kmers.zarr",
         frequencies=np.array(
             [
                 [smallest_positive_float, 0.5, 0.5],
@@ -363,7 +363,7 @@ def test_reference_corrected_end_motifs_rejects_missing_reference_motif_by_defau
     # the reference motif axis. There is no reference frequency to divide by.
     end_path = _write_dense_window_store(tmp_path / "sample.end_motifs.zarr")
     ref_path = _write_reference_correction_ref_kmer_store(
-        tmp_path / "hg38.ref_kmer_counts.zarr",
+        tmp_path / "hg38.ref_kmers.zarr",
         motifs=np.array(["AA", "GG"], dtype=object),
         frequencies=np.array([[0.5, 0.5], [0.5, 0.5]], dtype=np.float64),
     )
@@ -385,7 +385,7 @@ def test_reference_corrected_end_motifs_can_drop_unsupported_motifs(
     # only motifs with a positive reference frequency in the matched row.
     end_path = _write_dense_window_store(tmp_path / "sample.end_motifs.zarr")
     ref_path = _write_reference_correction_ref_kmer_store(
-        tmp_path / "hg38.ref_kmer_counts.zarr",
+        tmp_path / "hg38.ref_kmers.zarr",
         motifs=np.array(["AA", "GG"], dtype=object),
         frequencies=np.array([[0.5, 0.5], [0.5, 0.5]], dtype=np.float64),
     )
@@ -417,7 +417,7 @@ def test_reference_corrected_end_motif_matrix_extractors_reject_drop_policy(
     # fixed-shape arrays and sparse matrices cannot represent.
     end_path = _write_dense_window_store(tmp_path / "sample.end_motifs.zarr")
     ref_path = _write_reference_correction_ref_kmer_store(
-        tmp_path / "hg38.ref_kmer_counts.zarr",
+        tmp_path / "hg38.ref_kmers.zarr",
         motifs=np.array(["AA", "GG"], dtype=object),
         frequencies=np.array([[0.5, 0.5], [0.5, 0.5]], dtype=np.float64),
     )
@@ -438,7 +438,7 @@ def test_reference_corrected_end_motifs_can_keep_unsupported_motifs_as_nan(
     # zero, while positive unsupported rows are marked as undefined.
     end_path = _write_dense_window_store(tmp_path / "sample.end_motifs.zarr")
     ref_path = _write_reference_correction_ref_kmer_store(
-        tmp_path / "hg38.ref_kmer_counts.zarr",
+        tmp_path / "hg38.ref_kmers.zarr",
         motifs=np.array(["AA", "GG"], dtype=object),
         frequencies=np.array([[0.5, 0.5], [0.5, 0.5]], dtype=np.float64),
     )
@@ -468,7 +468,7 @@ def test_reference_corrected_end_motifs_requires_opt_in_for_global_reference(
     # Arrange
     end_path = _write_dense_window_store(tmp_path / "sample.end_motifs.zarr")
     ref_path = _write_reference_correction_ref_kmer_store(
-        tmp_path / "hg38.ref_kmer_counts.zarr",
+        tmp_path / "hg38.ref_kmers.zarr",
         frequencies=np.array([[1.0 / 3.0, 1.0 / 6.0, 1.0 / 2.0]], dtype=np.float64),
         row_mode="global",
     )
@@ -488,7 +488,7 @@ def test_sparse_reference_correction_validates_rows_for_empty_motif_selection(
     # still has to validate the inputs before returning a 2-by-0 matrix.
     end_path = _write_dense_window_store(tmp_path / "sample.end_motifs.zarr")
     ref_path = _write_reference_correction_ref_kmer_store(
-        tmp_path / "hg38.ref_kmer_counts.zarr"
+        tmp_path / "hg38.ref_kmers.zarr"
     )
     ref_root = zarr.open_group(str(ref_path), mode="a", zarr_format=3)
     ref_root["row_start_bp"][:] = np.array([11, 40], dtype=np.int64)
@@ -506,7 +506,7 @@ def test_sparse_reference_correction_validates_global_bias_for_empty_selection(
     # Arrange
     end_path = _write_dense_window_store(tmp_path / "sample.end_motifs.zarr")
     ref_path = _write_reference_correction_ref_kmer_store(
-        tmp_path / "hg38.ref_kmer_counts.zarr"
+        tmp_path / "hg38.ref_kmers.zarr"
     )
     ends = cfdnalab.read_end_motifs(end_path)
     ref_kmers = cfdnalab.read_ref_kmers(ref_path)
@@ -527,7 +527,7 @@ def test_reference_corrected_end_motifs_can_use_global_reference_bias(
     # windows. With three reference motifs, the scales are 1, 0.5, and 1.5.
     end_path = _write_dense_window_store(tmp_path / "sample.end_motifs.zarr")
     ref_path = _write_reference_correction_ref_kmer_store(
-        tmp_path / "hg38.ref_kmer_counts.zarr",
+        tmp_path / "hg38.ref_kmers.zarr",
         frequencies=np.array([[1.0 / 3.0, 1.0 / 6.0, 1.0 / 2.0]], dtype=np.float64),
         row_mode="global",
     )
@@ -580,7 +580,7 @@ def test_reference_corrected_end_motifs_rejects_global_bias_for_matched_referenc
     # row to broadcast.
     end_path = _write_dense_window_store(tmp_path / "sample.end_motifs.zarr")
     ref_path = _write_reference_correction_ref_kmer_store(
-        tmp_path / "hg38.ref_kmer_counts.zarr"
+        tmp_path / "hg38.ref_kmers.zarr"
     )
     ends = cfdnalab.read_end_motifs(end_path)
     ref_kmers = cfdnalab.read_ref_kmers(ref_path)
@@ -601,7 +601,7 @@ def test_reference_corrected_group_indices_match_reference_rows_by_group_name(
     # must map by group name before reading reference motif rows.
     end_path = _write_dense_grouped_store(tmp_path / "sample.end_motifs.zarr")
     ref_path = _write_reference_correction_ref_kmer_store(
-        tmp_path / "hg38.ref_kmer_counts.zarr",
+        tmp_path / "hg38.ref_kmers.zarr",
         frequencies=np.array(
             [
                 [1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0],
@@ -639,7 +639,7 @@ def test_two_sided_reference_correction_modes_use_mode_axis(tmp_path: Path) -> N
         tmp_path / "sample.end_motifs.zarr"
     )
     ref_path = _write_reference_correction_ref_kmer_store(
-        tmp_path / "reference.ref_kmer_counts.zarr",
+        tmp_path / "reference.ref_kmers.zarr",
         motifs=np.array(["AC", "AG", "TC", "TG"], dtype=object),
         frequencies=np.array(
             [[1.0 / 8.0, 1.0 / 8.0, 1.0 / 4.0, 1.0 / 2.0]],
@@ -804,7 +804,7 @@ def test_side_correction_applies_unsupported_policy_after_aggregation(
         tmp_path / "sample.end_motifs.zarr"
     )
     ref_path = _write_reference_correction_ref_kmer_store(
-        tmp_path / "reference.ref_kmer_counts.zarr",
+        tmp_path / "reference.ref_kmers.zarr",
         motifs=np.array(["AC"], dtype=object),
         frequencies=np.array([[1.0]], dtype=np.float64),
         row_mode="global",
@@ -844,7 +844,7 @@ def test_corrected_frequencies_are_zero_when_corrected_total_is_zero(
         counts=np.zeros((1, 4), dtype=np.float64),
     )
     ref_path = _write_reference_correction_ref_kmer_store(
-        tmp_path / "reference.ref_kmer_counts.zarr",
+        tmp_path / "reference.ref_kmers.zarr",
         motifs=np.array(["AC", "AG", "TC", "TG"], dtype=object),
         frequencies=np.full((1, 4), 0.25, dtype=np.float64),
         row_mode="global",

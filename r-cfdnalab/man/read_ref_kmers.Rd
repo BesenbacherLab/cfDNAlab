@@ -15,7 +15,7 @@ One of \code{cfdnalab_global_ref_kmer_frequencies},
 \code{cfdnalab_grouped_ref_kmer_frequencies}, depending on the row mode.
 }
 \description{
-Loads a \verb{<prefix>.ref_kmer_counts.zarr} output directory created with the
+Loads a \verb{<prefix>.ref_kmers.zarr} output directory created with the
 \code{cfdna ref-kmers} CLI tool from the main \code{cfDNAlab} rust package.
 The directory is a Zarr store on disk, but ordinary workflows can use the
 data frame and matrix helpers without working with Zarr directly.
@@ -31,7 +31,7 @@ frequency layout, and the metadata needed to reconstruct counts.
 }
 \examples{
 \dontrun{
-ref_kmers <- read_ref_kmers("sample.ref_kmer_counts.zarr")
+ref_kmers <- read_ref_kmers("sample.ref_kmers.zarr")
 motifs(ref_kmers)
 sparse_frequencies_matrix(ref_kmers)
 }

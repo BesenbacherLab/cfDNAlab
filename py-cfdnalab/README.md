@@ -4,7 +4,7 @@ Python helpers for loading [**cfDNAlab**](https://github.com/BesenbacherLab/cfDN
 
 This package does not install or run the cfDNAlab command-line tool. The CLI is distributed separately as the Rust `cfdna` binary. Use this Python package after running cfDNAlab to load and analyze output files.
 
-Supported output types are midpoint, end-motif, and reference k-mer Zarr outputs plus length-count TSV outputs: `<prefix>.midpoint_profiles.zarr`, `<prefix>.end_motifs.zarr`, `<prefix>.ref_kmer_counts.zarr`, and `<prefix>.length_counts.tsv.zst`.
+Supported output types are midpoint, end-motif, and reference k-mer Zarr outputs plus length-count TSV outputs: `<prefix>.midpoint_profiles.zarr`, `<prefix>.end_motifs.zarr`, `<prefix>.ref_kmers.zarr`, and `<prefix>.length_counts.tsv.zst`.
 
 NOTE: While the main CLI tool is highly tested and validated, this Python package is currently being built and may have bugs or use too AI'ish language in the documentation. The core functions should work and we are actively improving it over the coming weeks. We decided to share it early to help you use the outputs of the main tool.
 
@@ -193,7 +193,7 @@ For sparse stores, prefer `data_frame(densify=False)` and `sparse_counts_matrix(
 ```python
 import cfdnalab as cfl
 
-ref_kmers = cfl.read_ref_kmers("sample.ref_kmer_counts.zarr")
+ref_kmers = cfl.read_ref_kmers("sample.ref_kmers.zarr")
 ```
 
 Reference k-mer outputs contain row-wise frequencies. Each row is the whole reference, a genomic window, or a BED group depending on how `cfdna ref-kmers` was run. Counts are reconstructed by multiplying each row by its `row_scaling_factor`.
@@ -270,7 +270,7 @@ For `"split"`, `"outside"`, and `"inside"`, these side frequencies are calculate
 
 ```python
 ends = cfl.read_end_motifs("sample.end_motifs.zarr")
-ref_kmers = cfl.read_ref_kmers("reference.ref_kmer_counts.zarr")
+ref_kmers = cfl.read_ref_kmers("reference.ref_kmers.zarr")
 
 corrected_rows = ends.data_frame(
     ref_kmers=ref_kmers,
