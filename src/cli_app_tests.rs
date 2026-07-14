@@ -9,10 +9,7 @@ fn subcommand_help_identifies_the_full_command_path() {
 
     let help = ref_kmers.render_long_help().to_string();
 
-    assert!(
-        help.lines()
-            .any(|line| line == "Command: cfdna ref-kmers")
-    );
+    assert!(help.lines().any(|line| line == "Command: cfdna ref-kmers"));
 }
 
 #[test]

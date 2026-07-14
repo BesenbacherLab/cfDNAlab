@@ -483,6 +483,12 @@ impl Windows {
     }
 }
 
+impl AsRef<[IndexedInterval<u64>]> for Windows {
+    fn as_ref(&self) -> &[IndexedInterval<u64>] {
+        self.as_slice()
+    }
+}
+
 fn is_sorted_by_start_indexed(ws: &[IndexedInterval<u64>]) -> bool {
     ws.windows(2)
         .all(|window_pair| window_pair[0].start() <= window_pair[1].start())
@@ -1132,6 +1138,13 @@ impl GroupedWindows {
     #[inline]
     pub(crate) fn has_strands(&self) -> bool {
         self.strands.is_some()
+    }
+}
+
+#[cfg(loads_grouped_bed)]
+impl AsRef<[IndexedInterval<u64>]> for GroupedWindows {
+    fn as_ref(&self) -> &[IndexedInterval<u64>] {
+        self.windows_as_slice()
     }
 }
 

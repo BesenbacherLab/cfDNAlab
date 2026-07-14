@@ -5,6 +5,8 @@ use crate::shared::tiled_run::{Tile, TileWindowSpan, precompute_tile_window_span
 use crate::{Error, Result};
 #[cfg(uses_bed_window_tier_helpers)]
 use fxhash::FxHashMap;
+#[cfg(uses_bed_window_tier_helpers)]
+use rayon::prelude::*;
 
 /// Default minimum length for treating a BED-like window as broad.
 ///
@@ -314,18 +316,25 @@ impl ChromosomeBedWindows {
     }
 }
 
-/// Build chromosome-local BED window collections for every chromosome with BED-like windows.
+/// Build chromosome-local BED window collections in parallel.
+///
+/// Each input value provides a sorted interval slice. Construction is independent by chromosome,
+/// so callers should initialize the shared Rayon pool with their requested thread count before
+/// calling this function.
 #[cfg(uses_bed_window_tier_helpers)]
-pub(crate) fn build_bed_windows_by_chr(
-    windows_by_chr: &FxHashMap<String, Vec<IndexedInterval<u64>>>,
+pub(crate) fn build_bed_windows_by_chr<T>(
+    windows_by_chr: &FxHashMap<String, T>,
     broad_window_min_bp: u64,
-) -> FxHashMap<String, ChromosomeBedWindows> {
+) -> FxHashMap<String, ChromosomeBedWindows>
+where
+    T: AsRef<[IndexedInterval<u64>]> + Sync,
+{
     windows_by_chr
-        .iter()
+        .par_iter()
         .map(|(chr, windows)| {
             (
                 chr.clone(),
-                ChromosomeBedWindows::from_indexed_windows(windows, broad_window_min_bp),
+                ChromosomeBedWindows::from_indexed_windows(windows.as_ref(), broad_window_min_bp),
             )
         })
         .collect()

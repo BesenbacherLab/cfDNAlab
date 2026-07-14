@@ -38,7 +38,7 @@ use crate::{
     shared::{
         bed::{load_grouped_windows_from_bed, load_windows_from_bed},
         blacklist::apply_blacklist_mask_to_seq,
-        interval::{IndexedInterval, Interval},
+        interval::Interval,
         io::{FinalOutputFiles, dot_join},
         kmers::{
             kmer_codec::build_optional_kmer_spec,
@@ -206,23 +206,6 @@ pub fn run_ref_kmers(opt: &RefKmersConfig, options: RunOptions) -> Result<RefKme
         }
         _ => (None, None),
     };
-    let indexed_windows_map: Option<FxHashMap<String, Vec<IndexedInterval<u64>>>> =
-        if let Some(windows_map) = windows_map.as_ref() {
-            Some(
-                windows_map
-                    .iter()
-                    .map(|(chr, windows)| (chr.clone(), windows.as_slice().to_vec()))
-                    .collect(),
-            )
-        } else {
-            grouped_windows_map.as_ref().map(|windows_map| {
-                windows_map
-                    .iter()
-                    .map(|(chr, windows)| (chr.clone(), windows.windows_as_slice().to_vec()))
-                    .collect()
-            })
-        };
-
     // Build chromosome lengths and contigs for tiling without opening BAMs
     let chrom_lengths = twobit_contig_lengths(opt.ref_genome.ref_2bit.clone(), &chromosomes)?;
     let contigs = {
@@ -243,15 +226,23 @@ pub fn run_ref_kmers(opt: &RefKmersConfig, options: RunOptions) -> Result<RefKme
     let progress = ProgressFactory::with_enabled(options.show_progress);
     let pb = Arc::new(progress.default_bar(tiles.len() as u64));
 
-    let bed_windows_by_chr = indexed_windows_map
-        .as_ref()
-        .map(|windows| build_bed_windows_by_chr(windows, DEFAULT_BROAD_WINDOW_MIN_BP));
+    // Configure global thread‐pool size
+    init_global_pool(opt.n_threads)?;
+
+    // Build chromosome-local overlap indexes in parallel using the initialized Rayon pool
+    let bed_windows_by_chr = if let Some(windows_map) = windows_map.as_ref() {
+        Some(build_bed_windows_by_chr(
+            windows_map,
+            DEFAULT_BROAD_WINDOW_MIN_BP,
+        ))
+    } else {
+        grouped_windows_map
+            .as_ref()
+            .map(|windows_map| build_bed_windows_by_chr(windows_map, DEFAULT_BROAD_WINDOW_MIN_BP))
+    };
     let tile_bed_window_spans = Arc::new(bed_windows_by_chr.as_ref().map(|bed_windows| {
         precompute_tile_bed_window_spans(&tiles, bed_windows, 0, halo_bp as u64)
     }));
-
-    // Configure global thread‐pool size
-    init_global_pool(opt.n_threads)?;
 
     let tile_bed_window_spans_for_threads = tile_bed_window_spans.clone();
 
@@ -394,7 +385,6 @@ pub fn run_ref_kmers(opt: &RefKmersConfig, options: RunOptions) -> Result<RefKme
     drop(tile_bed_window_spans);
     drop(tiles);
     drop(bed_windows_by_chr);
-    drop(indexed_windows_map);
 
     status_info!(options, target: COMMAND_TARGET, "Processing counts");
     let reference_contig_footprint = twobit_contig_footprint(&opt.ref_genome.ref_2bit)?;
@@ -436,6 +426,7 @@ pub fn run_ref_kmers(opt: &RefKmersConfig, options: RunOptions) -> Result<RefKme
             row_mode: RefKmerWindowRowMode::Bed,
         },
     };
+    drop(grouped_windows_map);
 
     let CollectedRefKmerFrequencies {
         frequency_bins,

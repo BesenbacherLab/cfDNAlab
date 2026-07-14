@@ -296,25 +296,21 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
         }
         _ => (None, None),
     };
-    let indexed_windows_map: Option<FxHashMap<String, Vec<IndexedInterval<u64>>>> =
-        if let Some(windows_map) = windows_map.as_ref() {
-            Some(
-                windows_map
-                    .iter()
-                    .map(|(chr, windows)| (chr.clone(), windows.as_slice().to_vec()))
-                    .collect(),
-            )
-        } else {
-            grouped_windows_map.as_ref().map(|windows_map| {
-                windows_map
-                    .iter()
-                    .map(|(chr, windows)| (chr.clone(), windows.windows_as_slice().to_vec()))
-                    .collect()
-            })
-        };
-    let bed_windows_by_chr = indexed_windows_map
-        .as_ref()
-        .map(|windows_map| build_bed_windows_by_chr(windows_map, DEFAULT_BROAD_WINDOW_MIN_BP));
+
+    // Configure global thread‐pool size
+    init_global_pool(opt.ioc.n_threads)?;
+
+    // Build chromosome-local overlap indexes in parallel using the initialized Rayon pool
+    let bed_windows_by_chr = if let Some(windows_map) = windows_map.as_ref() {
+        Some(build_bed_windows_by_chr(
+            windows_map,
+            DEFAULT_BROAD_WINDOW_MIN_BP,
+        ))
+    } else {
+        grouped_windows_map
+            .as_ref()
+            .map(|windows_map| build_bed_windows_by_chr(windows_map, DEFAULT_BROAD_WINDOW_MIN_BP))
+    };
 
     // Load genomic scaling factors
     if opt.scale_genome.scaling_factors.is_some() {
@@ -439,9 +435,6 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
 
     status_info!(options, target: COMMAND_TARGET, "Counting per tile");
 
-    // Configure global thread‐pool size
-    init_global_pool(opt.ioc.n_threads)?;
-
     pb.set_position(0);
 
     let tile_results: Vec<TileResult> = tiles
@@ -505,7 +498,6 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
     drop(chr_offsets_for_threads);
     drop(tile_bed_window_spans_for_threads);
     drop(tile_bed_window_spans);
-    drop(indexed_windows_map);
     drop(tiles);
     drop(inside_counting_spec);
     drop(outside_counting_spec);

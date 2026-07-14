@@ -294,25 +294,21 @@ pub fn run_lengths(opt: &LengthsConfig, options: RunOptions) -> Result<LengthsRu
         }
         _ => (None, None),
     };
-    let indexed_windows_map: Option<FxHashMap<String, Vec<IndexedInterval<u64>>>> =
-        if let Some(windows_map) = windows_map.as_ref() {
-            Some(
-                windows_map
-                    .iter()
-                    .map(|(chr, windows)| (chr.clone(), windows.as_slice().to_vec()))
-                    .collect(),
-            )
-        } else {
-            grouped_windows_map.as_ref().map(|windows_map| {
-                windows_map
-                    .iter()
-                    .map(|(chr, windows)| (chr.clone(), windows.windows_as_slice().to_vec()))
-                    .collect()
-            })
-        };
-    let bed_windows_by_chr = indexed_windows_map
-        .as_ref()
-        .map(|windows_map| build_bed_windows_by_chr(windows_map, DEFAULT_BROAD_WINDOW_MIN_BP));
+
+    // Configure global thread‐pool size
+    init_global_pool(opt.ioc.n_threads)?;
+
+    // Build chromosome-local overlap indexes in parallel using the initialized Rayon pool
+    let bed_windows_by_chr = if let Some(windows_map) = windows_map.as_ref() {
+        Some(build_bed_windows_by_chr(
+            windows_map,
+            DEFAULT_BROAD_WINDOW_MIN_BP,
+        ))
+    } else {
+        grouped_windows_map
+            .as_ref()
+            .map(|windows_map| build_bed_windows_by_chr(windows_map, DEFAULT_BROAD_WINDOW_MIN_BP))
+    };
 
     // Load genomic scaling factors
     if opt.scale_genome.scaling_factors.is_some() {
@@ -395,9 +391,6 @@ pub fn run_lengths(opt: &LengthsConfig, options: RunOptions) -> Result<LengthsRu
     let cross_prefix = &dot_join(&[prefix, "cross"]);
 
     status_info!(options, target: COMMAND_TARGET, "Counting per tile");
-
-    // Configure global thread‐pool size
-    init_global_pool(opt.ioc.n_threads)?;
 
     pb.set_position(0);
 

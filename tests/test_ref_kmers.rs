@@ -486,9 +486,7 @@ fn ref_kmers_by_size_writes_fractional_frequencies_and_scaling_factors() -> Resu
     run(&config)?;
 
     // Assert
-    let package_path = output_dir
-        .path()
-        .join("unit_ref_kmers.ref_kmers.zarr");
+    let package_path = output_dir.path().join("unit_ref_kmers.ref_kmers.zarr");
     let metadata = read_json(&package_path.join("zarr.json"));
     assert_eq!(
         metadata["attributes"]["cfdnalab_schema"],
