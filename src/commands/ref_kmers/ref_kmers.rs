@@ -457,11 +457,10 @@ pub fn run_ref_kmers(opt: &RefKmersConfig, options: RunOptions) -> Result<RefKme
     status_info!(
         options,
         target: COMMAND_TARGET,
-        "Prepared reference k-mer frequencies for {} non-empty row(s) across {} output row(s) and {} motif column(s); reference footprint has {} contig(s)",
+        "Prepared reference k-mer frequencies for {} non-empty row(s) across {} output row(s) and {} motif column(s)",
         non_empty_rows,
         total_windows,
-        motif_order.len(),
-        reference_contig_footprint.len()
+        motif_order.len()
     );
     // Dense storage is forced by `--all-motifs`. It is also used when an observed or selected
     // motif axis is already complete, even if the user did not request `--all-motifs`
