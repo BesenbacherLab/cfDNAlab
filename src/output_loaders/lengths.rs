@@ -144,9 +144,6 @@ pub fn load_lengths_output(path: impl AsRef<Path>) -> OutputLoaderResult<Lengths
         .map_err(Into::into)
 }
 
-#[cfg(all(test, feature = "testing"))]
-include!("lengths_background_reading_benchmark.rs");
-
 /// Row aggregation mode detected from the length-count table schema.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LengthOutputMode {

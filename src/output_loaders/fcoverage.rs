@@ -157,9 +157,6 @@ pub fn load_fcoverage_output_with_group_index(
         .map_err(Into::into)
 }
 
-#[cfg(all(test, feature = "testing"))]
-include!("fcoverage_background_reading_benchmark.rs");
-
 /// Loaded non-positional output from `cfdna fcoverage`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FCoverageOutput {

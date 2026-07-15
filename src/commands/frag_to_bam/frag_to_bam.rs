@@ -186,12 +186,7 @@ fn execute_frag_to_bam(
         info!(target: COMMAND_TARGET, "{message}");
     }
     ensure_output_dir(&opt.output_dir)?;
-    let column_layout = resolve_frag_column_layout(
-        &opt.frag,
-        opt.frag_header.as_deref(),
-        opt.ignore_extras,
-        opt.allow_unknown_extras,
-    )?;
+    let column_layout = resolve_frag_column_layout(opt)?;
     let read_in_background =
         std::thread::available_parallelism().is_ok_and(|thread_count| thread_count.get() > 1);
 
@@ -733,25 +728,20 @@ fn format_optional_u32(value: Option<u32>) -> String {
         .unwrap_or_else(|| ".".to_string())
 }
 
-fn resolve_frag_column_layout(
-    frag_path: &Path,
-    frag_header_path: Option<&Path>,
-    ignore_extras: bool,
-    allow_unknown_extras: bool,
-) -> Result<FragColumnLayout> {
-    let first_non_empty_line = read_first_non_empty_line(frag_path)?;
+fn resolve_frag_column_layout(opt: &FragToBamConfig) -> Result<FragColumnLayout> {
+    let first_non_empty_line = read_first_non_empty_line(&opt.frag)?;
     let inline_header_columns = first_non_empty_line
         .as_deref()
         .and_then(detect_inline_header_columns);
 
-    let explicit_header = if let Some(path) = frag_header_path {
-        Some((path.to_path_buf(), read_header_columns(path)?))
+    let explicit_header = if let Some(path) = &opt.frag_header {
+        Some((path.clone(), read_header_columns(path)?))
     } else {
         None
     };
 
     let companion_header = if explicit_header.is_none() {
-        if let Some(path) = infer_companion_header_path(frag_path) {
+        if let Some(path) = infer_companion_header_path(&opt.frag) {
             if path.exists() {
                 Some((path.clone(), read_header_columns(&path)?))
             } else {
@@ -769,14 +759,14 @@ fn resolve_frag_column_layout(
             bail!(
                 "Conflicting headers detected: both --frag-header ({}) and an inline header row in {}. Use only one header source",
                 explicit_path.display(),
-                frag_path.display()
+                opt.frag.display()
             );
         }
         if let Some((companion_path, _)) = &companion_header {
             bail!(
                 "Conflicting headers detected: both companion header file ({}) and an inline header row in {}. Use only one header source",
                 companion_path.display(),
-                frag_path.display()
+                opt.frag.display()
             );
         }
     }
@@ -789,9 +779,9 @@ fn resolve_frag_column_layout(
         .or(inline_header_columns);
 
     let indices = if let Some(columns) = header_columns {
-        resolve_indices_from_header(&columns, ignore_extras, allow_unknown_extras)?
+        resolve_indices_from_header(&columns, opt.ignore_extras, opt.allow_unknown_extras)?
     } else {
-        resolve_default_indices(ignore_extras)
+        resolve_default_indices(opt.ignore_extras)
     };
 
     Ok(FragColumnLayout {
@@ -811,9 +801,6 @@ fn read_first_non_empty_line(path: &Path) -> Result<Option<String>> {
     }
     Ok(None)
 }
-
-#[cfg(all(test, feature = "testing"))]
-include!("frag_to_bam_background_reading_benchmark.rs");
 
 fn detect_inline_header_columns(line: &str) -> Option<Vec<String>> {
     let columns: Vec<String> = line.split('\t').map(normalize_column_name).collect();

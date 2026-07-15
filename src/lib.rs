@@ -1,5 +1,3 @@
-#[cfg(all(test, feature = "testing"))]
-mod background_reading_benchmarks;
 #[cfg(feature = "cli")]
 pub(crate) mod cli_app;
 pub mod cli_command;
