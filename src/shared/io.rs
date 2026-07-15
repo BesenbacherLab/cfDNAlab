@@ -17,8 +17,8 @@ use zstd::Decoder as ZstdDecoder;
 use zstd::Encoder as ZstdEncoder;
 
 const BUF_CAP: usize = 1 << 20;
-const BACKGROUND_READ_CHUNK_SIZE: usize = 4 << 20;
-const BACKGROUND_READ_QUEUE_SIZE: usize = 2;
+const BACKGROUND_READ_CHUNK_SIZE: usize = 8 << 20;
+const BACKGROUND_READ_QUEUE_SIZE: usize = 4;
 #[cfg(writes_text_outputs)]
 const DEFAULT_ZSTD_LEVEL: i32 = 3;
 const REPLACEABLE_DIRECTORY_EXTENSIONS: &[&str] = &["zarr"];
@@ -76,7 +76,7 @@ pub(crate) fn open_text_reader_in_background(path: &Path) -> Result<Box<dyn BufR
 }
 
 enum BackgroundReadMessage {
-    Data(Vec<u8>),
+    Data { buffer: Vec<u8>, valid_bytes: usize },
     Error(io::Error),
     End,
 }
@@ -87,6 +87,7 @@ struct BackgroundTextReader {
     recycled_buffers: SyncSender<Vec<u8>>,
     current_buffer: Vec<u8>,
     current_position: usize,
+    current_valid_bytes: usize,
     reached_end: bool,
     worker: Option<JoinHandle<()>>,
 }
@@ -105,17 +106,17 @@ impl BackgroundTextReader {
                         Err(TryRecvError::Empty) => vec![0; BACKGROUND_READ_CHUNK_SIZE],
                         Err(TryRecvError::Disconnected) => return,
                     };
-                    buffer.resize(BACKGROUND_READ_CHUNK_SIZE, 0);
-
                     match source.read(&mut buffer) {
                         Ok(0) => {
                             let _ = message_sender.send(BackgroundReadMessage::End);
                             return;
                         }
                         Ok(bytes_read) => {
-                            buffer.truncate(bytes_read);
                             if message_sender
-                                .send(BackgroundReadMessage::Data(buffer))
+                                .send(BackgroundReadMessage::Data {
+                                    buffer,
+                                    valid_bytes: bytes_read,
+                                })
                                 .is_err()
                             {
                                 return;
@@ -135,6 +136,7 @@ impl BackgroundTextReader {
             recycled_buffers: recycled_buffer_sender,
             current_buffer: Vec::new(),
             current_position: 0,
+            current_valid_bytes: 0,
             reached_end: false,
             worker: Some(worker),
         })
@@ -145,6 +147,7 @@ impl BackgroundTextReader {
             let previous_buffer = std::mem::take(&mut self.current_buffer);
             let _ = self.recycled_buffers.try_send(previous_buffer);
             self.current_position = 0;
+            self.current_valid_bytes = 0;
         }
 
         let message = self
@@ -159,8 +162,12 @@ impl BackgroundTextReader {
                 )
             })?;
         match message {
-            BackgroundReadMessage::Data(buffer) => {
+            BackgroundReadMessage::Data {
+                buffer,
+                valid_bytes,
+            } => {
                 self.current_buffer = buffer;
+                self.current_valid_bytes = valid_bytes;
                 Ok(true)
             }
             BackgroundReadMessage::Error(error) => {
@@ -195,19 +202,19 @@ impl Read for BackgroundTextReader {
 impl BufRead for BackgroundTextReader {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
         if !self.reached_end
-            && self.current_position == self.current_buffer.len()
+            && self.current_position == self.current_valid_bytes
             && !self.receive_next_buffer()?
         {
             return Ok(&[]);
         }
-        Ok(&self.current_buffer[self.current_position..])
+        Ok(&self.current_buffer[self.current_position..self.current_valid_bytes])
     }
 
     fn consume(&mut self, amount: usize) {
         self.current_position = self
             .current_position
             .saturating_add(amount)
-            .min(self.current_buffer.len());
+            .min(self.current_valid_bytes);
     }
 }
 
