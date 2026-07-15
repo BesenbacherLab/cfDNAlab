@@ -42,23 +42,44 @@ pub(crate) fn open_text_reader(path: &Path) -> Result<Box<dyn BufRead>> {
         .extension()
         .and_then(|s| s.to_str())
         .map(|s| s.to_ascii_lowercase());
+    let file = File::open(path).with_context(|| format!("Opening {}", path.display()))?;
+
+    #[cfg(target_os = "linux")]
+    advise_sequential_access(&file, path);
 
     match ext.as_deref() {
         Some("gz") | Some("bgz") => {
-            let file = File::open(path).with_context(|| format!("Opening {}", path.display()))?;
             let decoder = MultiGzDecoder::new(file);
             Ok(Box::new(BufReader::with_capacity(BUF_CAP, decoder)))
         }
         Some("zst") | Some("zstd") => {
-            let file = File::open(path).with_context(|| format!("Opening {}", path.display()))?;
             let decoder = ZstdDecoder::new(file)
                 .with_context(|| format!("Opening zstd decoder for {}", path.display()))?;
             Ok(Box::new(BufReader::with_capacity(BUF_CAP, decoder)))
         }
-        _ => {
-            let file = File::open(path).with_context(|| format!("Opening {}", path.display()))?;
-            Ok(Box::new(BufReader::with_capacity(BUF_CAP, file)))
-        }
+        _ => Ok(Box::new(BufReader::with_capacity(BUF_CAP, file))),
+    }
+}
+
+/// Ask Linux to use a larger readahead window for a sequential text stream.
+///
+/// This is only a performance hint. A failure should not prevent the caller from reading an
+/// otherwise valid file, but it is reported so an unsupported or unexpected platform setup is
+/// visible to the user.
+#[cfg(target_os = "linux")]
+fn advise_sequential_access(file: &File, path: &Path) {
+    use std::os::fd::AsRawFd;
+
+    // posix_fadvise returns the error number directly instead of setting errno
+    let error_code =
+        unsafe { libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_SEQUENTIAL) };
+    if error_code != 0 {
+        let error = std::io::Error::from_raw_os_error(error_code);
+        tracing::warn!(
+            "Could not enable sequential file readahead for {}: {}",
+            path.display(),
+            error
+        );
     }
 }
 
