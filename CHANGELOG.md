@@ -23,7 +23,7 @@ This is the changelog for the main CLI tool. You can find the changelog for the 
 
  - Speeds up the window overlap detection algorithm used in `lengths` and `ends` when the `--by-bed`/`--by-grouped-bed` contain both broad and narrow windows that are nested.
  - Adds minimal validation of BED files to catch obviously non-BED formats.
- - Speeds up grouped BED window preparation using parallelization and reduced copying.
+ - Reduces memory use when preparing grouped BED windows.
  - Library: The Rust `fcoverage` run result now includes grouped `group_index.tsv` filepaths in `output_files()` when they are written.
  - Library: Adds missing blacklist setters on the Rust `LengthsConfig` API.
  
