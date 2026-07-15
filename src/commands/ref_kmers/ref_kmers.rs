@@ -197,6 +197,7 @@ pub fn run_ref_kmers(opt: &RefKmersConfig, options: RunOptions) -> Result<RefKme
                     false,
                     None,
                     None,
+                    opt.n_threads > 1,
                 )?;
             ensure!(
                 !group_idx_to_name.is_empty(),

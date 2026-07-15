@@ -287,6 +287,7 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
                     false,
                     None,
                     None,
+                    opt.ioc.n_threads > 1,
                 )?;
             ensure!(
                 !group_idx_to_name.is_empty(),

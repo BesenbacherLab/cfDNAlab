@@ -313,6 +313,7 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
                     false,
                     None,
                     None,
+                    opt.ioc.n_threads > 1,
                 )?;
             ensure_grouped_bed_windows_not_empty(&grouped_windows_by_chr)?;
 

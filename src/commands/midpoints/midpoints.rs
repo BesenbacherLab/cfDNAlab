@@ -161,6 +161,7 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
             true,
             None,
             None,
+            opt.ioc.n_threads > 1,
         )?;
     if let Some(strand_detection) = strand_detection {
         match strand_detection.column {

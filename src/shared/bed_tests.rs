@@ -62,6 +62,7 @@ mod tests_newest_bed_loaders {
             true,
             None,
             Some((GROUPED_BED_STRAND_SAMPLE_ROWS + 1) as u64),
+            false,
         )
         .expect_err("invalid strand after the sampling window should fail during parsing");
 
@@ -563,9 +564,18 @@ mod tests_bed_loader {
             "chr1\t10\t12\talpha",
             "chr2\t5\t8\talpha",
         ])?;
+        let read_in_background = std::thread::available_parallelism()
+            .is_ok_and(|available_threads| available_threads.get() > 1);
 
         let (map, group_idx_to_name, strand_detection) =
-            load_grouped_windows_from_bed(bed.path(), None, false, None, Some(4))?;
+            load_grouped_windows_from_bed(
+                bed.path(),
+                None,
+                false,
+                None,
+                Some(4),
+                read_in_background,
+            )?;
         assert!(
             strand_detection.is_none(),
             "strand detection should not run when read_strands is false"
@@ -606,7 +616,7 @@ mod tests_bed_loader {
         ])?;
 
         let (map, _group_idx_to_name, strand_detection) =
-            load_grouped_windows_from_bed(bed.path(), None, true, None, Some(3))?;
+            load_grouped_windows_from_bed(bed.path(), None, true, None, Some(3), false)?;
         let strand_detection = strand_detection.expect("strand detection should run");
         assert_eq!(
             strand_detection.column,
@@ -636,7 +646,7 @@ mod tests_bed_loader {
         let bed = write_bed(&["chr1\t10\t15\talpha\t+", "chr1\t20\t25\tbeta\t-"])?;
 
         let (map, _group_idx_to_name, strand_detection) =
-            load_grouped_windows_from_bed(bed.path(), None, true, None, Some(2))?;
+            load_grouped_windows_from_bed(bed.path(), None, true, None, Some(2), false)?;
         let strand_detection = strand_detection.expect("strand detection should run");
         assert_eq!(
             strand_detection.column,
@@ -667,7 +677,7 @@ mod tests_bed_loader {
         //   misplaced strand column, so the loader must not silently treat the file as unstranded.
         let bed = write_bed(&["chr1\t10\t15\talpha\t+\t0", "chr1\t20\t25\tbeta\t-\t0"])?;
 
-        let error = load_grouped_windows_from_bed(bed.path(), None, true, None, Some(2))
+        let error = load_grouped_windows_from_bed(bed.path(), None, true, None, Some(2), false)
             .expect_err("ambiguous strand columns should fail");
 
         assert!(
@@ -693,7 +703,7 @@ mod tests_bed_loader {
 
         // Act
         let (map, _group_idx_to_name, strand_detection) =
-            load_grouped_windows_from_bed(bed.path(), None, true, None, Some(2))?;
+            load_grouped_windows_from_bed(bed.path(), None, true, None, Some(2), false)?;
 
         // Assert
         let strand_detection = strand_detection.expect("strand detection should run");
@@ -764,6 +774,7 @@ mod tests_bed_loader {
             false,
             None,
             Some(3),
+            false,
         )?;
 
         assert_eq!(map.len(), 1);
@@ -785,7 +796,7 @@ mod tests_bed_loader {
     fn should_error_when_grouped_bed_is_missing_group_name() -> Result<()> {
         let bed = write_bed(&["chr1\t0\t10"])?;
 
-        let error = load_grouped_windows_from_bed(bed.path(), None, false, None, None)
+        let error = load_grouped_windows_from_bed(bed.path(), None, false, None, None, false)
             .expect_err("missing group name should fail");
 
         assert!(error.to_string().contains("missing group name"));

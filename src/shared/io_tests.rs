@@ -1,5 +1,5 @@
 use super::*;
-use std::fs;
+use std::{fs, io::Read};
 use tempfile::TempDir;
 
 fn sorted_entry_names(path: &Path) -> Result<Vec<String>> {
@@ -10,6 +10,24 @@ fn sorted_entry_names(path: &Path) -> Result<Vec<String>> {
         .collect::<std::io::Result<Vec<_>>>()?;
     names.sort();
     Ok(names)
+}
+
+#[test]
+fn background_text_reader_preserves_the_complete_input_stream() -> Result<()> {
+    // Arrange
+    let root = TempDir::new()?;
+    let input_path = root.path().join("windows.bed");
+    let expected = "chr1\t10\t20\tgroup_a\nchr2\t30\t40\tgroup_b\n";
+    fs::write(&input_path, expected)?;
+
+    // Act
+    let mut reader = open_text_reader_in_background(&input_path)?;
+    let mut observed = String::new();
+    reader.read_to_string(&mut observed)?;
+
+    // Assert
+    assert_eq!(observed, expected);
+    Ok(())
 }
 
 #[test]

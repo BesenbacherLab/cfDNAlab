@@ -4,7 +4,7 @@ use crate::shared::interval::Interval;
 use crate::shared::interval::{ScoredInterval, Span};
 #[cfg(feature = "cmd_fcoverage")]
 use crate::shared::interval::{TouchingMergePolicy, push_merged_interval};
-use crate::shared::io::open_text_reader;
+use crate::shared::io::{open_text_reader, open_text_reader_in_background};
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::{FxHashMap, FxHashSet};
 #[cfg(feature = "cmd_fcoverage")]
@@ -524,6 +524,8 @@ const GROUPED_BED_STRAND_SAMPLE_ROWS: usize = 200;
 ///  - exp_num_windows: Optional number of expected windows
 ///    in the BED file before filtering. Returns an error
 ///    if the incorrect number of windows are observed.
+///  - read_in_background: Run file reading and decompression on a background thread while the
+///    calling thread parses rows.
 ///
 /// Returns
 /// -------
@@ -539,6 +541,7 @@ pub(crate) fn load_grouped_windows_from_bed(
     read_strands: bool,
     filter_fn: Option<&dyn Fn(&str, u64, u64) -> bool>,
     exp_num_windows: Option<u64>,
+    read_in_background: bool,
 ) -> Result<(
     FxHashMap<String, GroupedWindows>,
     FxHashMap<u64, String>,
@@ -553,7 +556,11 @@ pub(crate) fn load_grouped_windows_from_bed(
     let detected_strand_column = strand_detection
         .as_ref()
         .and_then(|detection| detection.column);
-    let mut reader = open_text_reader(bed_path)?; // Works with &Path, PathBuf, &str
+    let mut reader = if read_in_background {
+        open_text_reader_in_background(bed_path)?
+    } else {
+        open_text_reader(bed_path)?
+    };
 
     // Initialize maps
     let mut grouped_windows_by_chromosome: FxHashMap<String, Vec<IndexedInterval<u64>>> =

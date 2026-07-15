@@ -285,6 +285,7 @@ pub fn run_lengths(opt: &LengthsConfig, options: RunOptions) -> Result<LengthsRu
                     false,
                     None,
                     None,
+                    opt.ioc.n_threads > 1,
                 )?;
             ensure!(
                 !group_idx_to_name.is_empty(),
