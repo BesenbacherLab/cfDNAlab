@@ -150,6 +150,7 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
         opt.blacklist_min_size,
         0,
         &chromosomes,
+        opt.ioc.n_threads > 1,
     )?;
 
     // Load grouped fixed-size windows from BED

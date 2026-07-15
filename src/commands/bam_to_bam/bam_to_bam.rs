@@ -151,6 +151,8 @@ fn execute_bam_to_bam(opt: &BamToBamConfig, options: RunOptions) -> Result<BamTo
     // BAM coordinate sorting follows header order, not chromosome-name string order.
     sort_chromosomes_by_bam_header_order(&mut chromosomes, &contigs)?;
     let window_opt = opt.resolve_windows();
+    let read_in_background =
+        std::thread::available_parallelism().is_ok_and(|thread_count| thread_count.get() > 1);
 
     // Create output directory
     let output_dir = opt
@@ -171,13 +173,20 @@ fn execute_bam_to_bam(opt: &BamToBamConfig, options: RunOptions) -> Result<BamTo
         opt.blacklist_min_size,
         0,
         &chromosomes,
+        read_in_background,
     )?;
 
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
             status_info!(options, target: COMMAND_TARGET, "Loading window coordinates");
-            let windows = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            let windows = load_windows_from_bed(
+                bed,
+                Some(chromosomes.as_slice()),
+                None,
+                None,
+                read_in_background,
+            )?;
             ensure_plain_bed_windows_not_empty(&windows)?;
             Some(windows)
         }

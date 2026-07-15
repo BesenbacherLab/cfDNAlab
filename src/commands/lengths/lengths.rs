@@ -263,13 +263,20 @@ pub fn run_lengths(opt: &LengthsConfig, options: RunOptions) -> Result<LengthsRu
         opt.blacklist_min_size,
         0,
         &chromosomes,
+        opt.ioc.n_threads > 1,
     )?;
 
     // Load windows from BED file
     let windows_map = match &window_opt {
         DistributionWindowSpec::Bed(bed) => {
             status_info!(options, target: COMMAND_TARGET, "Loading window coordinates");
-            let windows = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            let windows = load_windows_from_bed(
+                bed,
+                Some(chromosomes.as_slice()),
+                None,
+                None,
+                opt.ioc.n_threads > 1,
+            )?;
             ensure_plain_bed_windows_not_empty(&windows)?;
             Some(windows)
         }

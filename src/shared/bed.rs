@@ -34,6 +34,8 @@ const BED_FORMAT_SNIFF_ROWS: usize = 16;
 ///  - exp_num_windows: Optional number of expected windows
 ///    in the BED file before filtering. Returns an error
 ///    if the incorrect number of windows are observed.
+///  - read_in_background: Run file reading and decompression on a background thread while the
+///    calling thread parses rows.
 ///
 /// Returns
 /// -------
@@ -43,8 +45,13 @@ pub(crate) fn load_windows_from_bed(
     chromosomes: Option<&[String]>,
     filter_fn: Option<&dyn Fn(&str, u64, u64) -> bool>,
     exp_num_windows: Option<u64>,
+    read_in_background: bool,
 ) -> Result<FxHashMap<String, Windows>> {
-    let mut reader = open_text_reader(bed.as_ref())?;
+    let mut reader = if read_in_background {
+        open_text_reader_in_background(bed.as_ref())?
+    } else {
+        open_text_reader(bed.as_ref())?
+    };
 
     // Optional whitelist of chromosomes
     let mut windows_by_chromosome: FxHashMap<String, Vec<(u64, u64, u64)>> = FxHashMap::default();

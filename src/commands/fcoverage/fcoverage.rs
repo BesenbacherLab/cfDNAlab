@@ -215,7 +215,13 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
     if opt.blacklist.is_some() {
         status_info!(options, target: COMMAND_TARGET, "Loading blacklists");
     }
-    let blacklist_map = load_blacklist_map(opt.blacklist.as_ref(), 1, 0, &chromosomes)?;
+    let blacklist_map = load_blacklist_map(
+        opt.blacklist.as_ref(),
+        1,
+        0,
+        &chromosomes,
+        opt.ioc.n_threads > 1,
+    )?;
 
     let grouped_windowed = matches!(window_opt, DistributionWindowSpec::GroupedBed(_));
     let unique_base_grouped = opt.per_window.is_unique_base_grouped_action();
@@ -276,7 +282,13 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
     match &window_opt {
         DistributionWindowSpec::Bed(bed) => {
             status_info!(options, target: COMMAND_TARGET, "Loading window coordinates");
-            let wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            let wds = load_windows_from_bed(
+                bed,
+                Some(chromosomes.as_slice()),
+                None,
+                None,
+                opt.ioc.n_threads > 1,
+            )?;
             ensure_plain_bed_windows_not_empty(&wds)?;
             if matches!(
                 opt.per_window,

@@ -66,7 +66,7 @@ use crate::{
     },
     shared::{
         constants::{MAX_SUPPORTED_FRAGMENT_LENGTH, MIN_ACGT_BASES_FOR_GC_FRACTION},
-        io::open_text_reader,
+        io::{open_text_reader, open_text_reader_in_background},
     },
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -137,8 +137,15 @@ use std::{
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn load_lengths_output(path: impl AsRef<Path>) -> OutputLoaderResult<LengthsOutput> {
-    LengthsParser::new(path.as_ref()).load().map_err(Into::into)
+    let read_in_background =
+        std::thread::available_parallelism().is_ok_and(|thread_count| thread_count.get() > 1);
+    LengthsParser::new(path.as_ref(), read_in_background)
+        .load()
+        .map_err(Into::into)
 }
+
+#[cfg(all(test, feature = "testing"))]
+include!("lengths_background_reading_benchmark.rs");
 
 /// Row aggregation mode detected from the length-count table schema.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1034,20 +1041,26 @@ impl LengthCountSelection {
 /// `LengthsSchema::finish()` to build the public `LengthsOutput`.
 struct LengthsParser {
     path: PathBuf,
+    read_in_background: bool,
 }
 
 impl LengthsParser {
     /// Store the input path until `load()` opens it.
-    fn new(path: &Path) -> Self {
+    fn new(path: &Path, read_in_background: bool) -> Self {
         Self {
             path: path.to_path_buf(),
+            read_in_background,
         }
     }
 
     /// Read the TSV header, parse all data rows, and build a `LengthsOutput`.
     fn load(&self) -> Result<LengthsOutput> {
-        let mut reader = open_text_reader(&self.path)
-            .with_context(|| format!("open lengths output {}", self.path.display()))?;
+        let mut reader = if self.read_in_background {
+            open_text_reader_in_background(&self.path)
+        } else {
+            open_text_reader(&self.path)
+        }
+        .with_context(|| format!("open lengths output {}", self.path.display()))?;
         let mut header_line = String::new();
         ensure!(
             reader

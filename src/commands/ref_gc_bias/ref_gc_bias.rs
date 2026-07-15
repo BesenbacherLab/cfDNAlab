@@ -167,13 +167,25 @@ pub fn run_ref_gc_bias(opt: &RefGCBiasConfig, options: RunOptions) -> Result<Ref
     if opt.blacklist.is_some() {
         status_info!(options, target: COMMAND_TARGET, "Loading blacklists");
     }
-    let blacklist_map = load_blacklist_map(opt.blacklist.as_ref(), 1, 0, &chromosomes)?;
+    let blacklist_map = load_blacklist_map(
+        opt.blacklist.as_ref(),
+        1,
+        0,
+        &chromosomes,
+        opt.n_threads > 1,
+    )?;
 
     // Load windows from BED file and merge overlapping/touching intervals (unique positions)
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
             status_info!(options, target: COMMAND_TARGET, "Loading window coordinates");
-            let mut wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            let mut wds = load_windows_from_bed(
+                bed,
+                Some(chromosomes.as_slice()),
+                None,
+                None,
+                opt.n_threads > 1,
+            )?;
             ensure_plain_bed_windows_not_empty(&wds)?;
             status_info!(
                 options,

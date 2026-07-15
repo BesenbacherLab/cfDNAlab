@@ -417,7 +417,8 @@ mod tests_bed_loader {
         let whitelist = vec!["chr1".to_string()];
 
         // Act
-        let map = load_windows_from_bed(bed.path(), Some(whitelist.as_slice()), None, None)?;
+        let map =
+            load_windows_from_bed(bed.path(), Some(whitelist.as_slice()), None, None, false)?;
 
         // Assert
         let chr1 = map.get("chr1").expect("chr1 missing");
@@ -428,6 +429,7 @@ mod tests_bed_loader {
             Some(["chr3".to_string()].as_slice()),
             None,
             None,
+            false,
         )?;
         assert!(
             empty
@@ -447,7 +449,13 @@ mod tests_bed_loader {
         let whitelist = vec!["chr1".to_string()];
 
         // Act
-        let error = load_windows_from_bed(bed.path(), Some(whitelist.as_slice()), None, None)
+        let error = load_windows_from_bed(
+            bed.path(),
+            Some(whitelist.as_slice()),
+            None,
+            None,
+            false,
+        )
             .expect_err("malformed BED text should fail");
 
         // Assert
@@ -466,7 +474,13 @@ mod tests_bed_loader {
         let whitelist = vec!["chr1".to_string()];
 
         // Act
-        let error = load_windows_from_bed(bed.path(), Some(whitelist.as_slice()), None, None)
+        let error = load_windows_from_bed(
+            bed.path(),
+            Some(whitelist.as_slice()),
+            None,
+            None,
+            false,
+        )
             .expect_err("binary-looking BED input should fail");
 
         // Assert
@@ -484,7 +498,7 @@ mod tests_bed_loader {
         let keep_large = |_: &str, start: u64, end: u64| (end - start) >= 10;
 
         // Act
-        let map = load_windows_from_bed(bed.path(), None, Some(&keep_large), None)?;
+        let map = load_windows_from_bed(bed.path(), None, Some(&keep_large), None, false)?;
 
         // Assert
         let chr1 = map.get("chr1").expect("chr1 missing");
@@ -504,7 +518,9 @@ mod tests_bed_loader {
             encoder.finish()?;
         }
 
-        let map = load_windows_from_bed(gz.path(), None, None, None)?;
+        let read_in_background = std::thread::available_parallelism()
+            .is_ok_and(|available_threads| available_threads.get() > 1);
+        let map = load_windows_from_bed(gz.path(), None, None, None, read_in_background)?;
         let chr1 = map.get("chr1").expect("chr1 missing");
         assert_eq!(chr1.as_slice(), indexed_windows(&[(0, 5, 0), (10, 15, 1)]));
         Ok(())
@@ -517,14 +533,26 @@ mod tests_bed_loader {
         let whitelist = vec!["chr2".to_string()];
 
         // Act
-        let map = load_windows_from_bed(bed.path(), Some(whitelist.as_slice()), None, Some(3))?;
+        let map = load_windows_from_bed(
+            bed.path(),
+            Some(whitelist.as_slice()),
+            None,
+            Some(3),
+            false,
+        )?;
 
         // Assert: only the allowed chromosome is returned, but **original indices include skipped windows**
         let chr2 = map.get("chr2").expect("chr2 entry missing");
         assert_eq!(chr2.as_slice(), indexed_windows(&[(4, 8, 1), (8, 12, 2)]));
 
         // And mismatched expectations yield an error
-        let err = load_windows_from_bed(bed.path(), Some(whitelist.as_slice()), None, Some(2))
+        let err = load_windows_from_bed(
+            bed.path(),
+            Some(whitelist.as_slice()),
+            None,
+            Some(2),
+            false,
+        )
             .expect_err("expected incorrect exp_num_windows to error");
         assert!(
             err.to_string()
@@ -540,7 +568,7 @@ mod tests_bed_loader {
         let bed = write_bed(&["chr1\t0\t5", "chr1\t5\t4", "chr2\t10\t20"])?;
 
         // Act + Assert
-        let err = load_windows_from_bed(bed.path(), None, None, Some(3))
+        let err = load_windows_from_bed(bed.path(), None, None, Some(3), false)
             .expect_err("invalid window should fail loading");
         assert!(
             err.to_string()

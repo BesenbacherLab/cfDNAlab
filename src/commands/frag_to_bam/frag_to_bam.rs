@@ -13,7 +13,7 @@ use crate::{
             GC_WEIGHT_AUX_TAG,
         },
         interval::Interval,
-        io::{FinalOutputFiles, dot_join, open_text_reader},
+        io::{FinalOutputFiles, dot_join, open_text_reader, open_text_reader_in_background},
         reference::load_chrom_sizes_with_order,
         temp_chrom_names::TempChromNameMap,
         tiled_run::TempDirGuard,
@@ -186,7 +186,14 @@ fn execute_frag_to_bam(
         info!(target: COMMAND_TARGET, "{message}");
     }
     ensure_output_dir(&opt.output_dir)?;
-    let column_layout = resolve_frag_column_layout(opt)?;
+    let column_layout = resolve_frag_column_layout(
+        &opt.frag,
+        opt.frag_header.as_deref(),
+        opt.ignore_extras,
+        opt.allow_unknown_extras,
+    )?;
+    let read_in_background =
+        std::thread::available_parallelism().is_ok_and(|thread_count| thread_count.get() > 1);
 
     let (chrom_sizes_order, chrom_sizes) = load_chrom_sizes_with_order(&opt.chrom_sizes)
         .context("Loading chromosome sizes for BAM header")?;
@@ -214,6 +221,7 @@ fn execute_frag_to_bam(
         opt.blacklist_min_size,
         0,
         &chromosomes,
+        read_in_background,
     )
     .context("Loading blacklist intervals")?;
 
@@ -222,8 +230,12 @@ fn execute_frag_to_bam(
     let temp_dir = temp_dir_guard.path().to_path_buf();
     let mut final_outputs = FinalOutputFiles::new(temp_dir_guard.path())?;
 
-    let reader = open_text_reader(&opt.frag)
-        .with_context(|| format!("Opening fragment file {}", opt.frag.display()))?;
+    let reader = if read_in_background {
+        open_text_reader_in_background(&opt.frag)
+    } else {
+        open_text_reader(&opt.frag)
+    }
+    .with_context(|| format!("Opening fragment file {}", opt.frag.display()))?;
 
     let mut counters = FragToBamCounters::default();
     let mut current_chr: Option<String> = None;
@@ -721,20 +733,25 @@ fn format_optional_u32(value: Option<u32>) -> String {
         .unwrap_or_else(|| ".".to_string())
 }
 
-fn resolve_frag_column_layout(opt: &FragToBamConfig) -> Result<FragColumnLayout> {
-    let first_non_empty_line = read_first_non_empty_line(&opt.frag)?;
+fn resolve_frag_column_layout(
+    frag_path: &Path,
+    frag_header_path: Option<&Path>,
+    ignore_extras: bool,
+    allow_unknown_extras: bool,
+) -> Result<FragColumnLayout> {
+    let first_non_empty_line = read_first_non_empty_line(frag_path)?;
     let inline_header_columns = first_non_empty_line
         .as_deref()
         .and_then(detect_inline_header_columns);
 
-    let explicit_header = if let Some(path) = &opt.frag_header {
-        Some((path.clone(), read_header_columns(path)?))
+    let explicit_header = if let Some(path) = frag_header_path {
+        Some((path.to_path_buf(), read_header_columns(path)?))
     } else {
         None
     };
 
     let companion_header = if explicit_header.is_none() {
-        if let Some(path) = infer_companion_header_path(&opt.frag) {
+        if let Some(path) = infer_companion_header_path(frag_path) {
             if path.exists() {
                 Some((path.clone(), read_header_columns(&path)?))
             } else {
@@ -752,14 +769,14 @@ fn resolve_frag_column_layout(opt: &FragToBamConfig) -> Result<FragColumnLayout>
             bail!(
                 "Conflicting headers detected: both --frag-header ({}) and an inline header row in {}. Use only one header source",
                 explicit_path.display(),
-                opt.frag.display()
+                frag_path.display()
             );
         }
         if let Some((companion_path, _)) = &companion_header {
             bail!(
                 "Conflicting headers detected: both companion header file ({}) and an inline header row in {}. Use only one header source",
                 companion_path.display(),
-                opt.frag.display()
+                frag_path.display()
             );
         }
     }
@@ -772,9 +789,9 @@ fn resolve_frag_column_layout(opt: &FragToBamConfig) -> Result<FragColumnLayout>
         .or(inline_header_columns);
 
     let indices = if let Some(columns) = header_columns {
-        resolve_indices_from_header(&columns, opt.ignore_extras, opt.allow_unknown_extras)?
+        resolve_indices_from_header(&columns, ignore_extras, allow_unknown_extras)?
     } else {
-        resolve_default_indices(opt.ignore_extras)
+        resolve_default_indices(ignore_extras)
     };
 
     Ok(FragColumnLayout {
@@ -794,6 +811,9 @@ fn read_first_non_empty_line(path: &Path) -> Result<Option<String>> {
     }
     Ok(None)
 }
+
+#[cfg(all(test, feature = "testing"))]
+include!("frag_to_bam_background_reading_benchmark.rs");
 
 fn detect_inline_header_columns(line: &str) -> Option<Vec<String>> {
     let columns: Vec<String> = line.split('\t').map(normalize_column_name).collect();

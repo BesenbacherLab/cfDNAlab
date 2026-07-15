@@ -1194,6 +1194,7 @@ pub fn ensure_output_dir(path: &Path) -> Result<()> {
 /// - `beds`: Optional list of BED paths.
 /// - `min_size`: Minimum interval size (bp) to retain.
 /// - `chromosomes`: Chromosomes the command intends to process.
+/// - `read_in_background`: Whether file reading should overlap with BED parsing.
 ///
 /// Returns:
 /// - A map keyed by chromosome name containing sorted blacklist intervals.
@@ -1205,6 +1206,7 @@ pub fn load_blacklist_map(
     min_size: u64,
     halo_bp: u64,
     chromosomes: &Vec<String>,
+    read_in_background: bool,
 ) -> Result<fxhash::FxHashMap<String, Vec<crate::shared::interval::Interval<u64>>>> {
     if let Some(paths) = beds {
         crate::shared::blacklist::load_blacklists(
@@ -1212,6 +1214,7 @@ pub fn load_blacklist_map(
             min_size,
             halo_bp,
             Some(chromosomes.as_slice()),
+            read_in_background,
         )
     } else {
         Ok(fxhash::FxHashMap::default())
