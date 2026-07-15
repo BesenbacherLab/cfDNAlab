@@ -17,7 +17,7 @@ use zstd::Decoder as ZstdDecoder;
 use zstd::Encoder as ZstdEncoder;
 
 const BUF_CAP: usize = 1 << 20;
-const BACKGROUND_READ_CHUNK_SIZE: usize = 4 << 20;
+const BACKGROUND_READ_CHUNK_SIZE: usize = 8 << 20;
 const BACKGROUND_READ_QUEUE_SIZE: usize = 4;
 #[cfg(writes_text_outputs)]
 const DEFAULT_ZSTD_LEVEL: i32 = 3;
