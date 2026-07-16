@@ -133,7 +133,10 @@ pub struct CorrectedEndMotifCountsSelector<'a> {
 }
 
 impl<'a> CorrectedEndMotifCountsSelector<'a> {
-    /// Create a corrected selector that initially selects all rows and motifs.
+    /// Create a corrected selector over an end-motif and reference output pair.
+    ///
+    /// All rows and motifs are initially selected. Exact row matching and errors
+    /// for unsupported positive counts remain enabled until explicitly changed.
     pub(crate) fn new(ends: &'a EndsOutput, ref_kmers: &'a RefKmersOutput) -> Self {
         Self {
             ends,
@@ -147,7 +150,10 @@ impl<'a> CorrectedEndMotifCountsSelector<'a> {
         }
     }
 
-    /// Select generic output rows by zero-based row index.
+    /// Select output rows by zero-based index on the stored row axis.
+    ///
+    /// Row-mode validation and bounds checks are deferred to `read()`, matching
+    /// the behavior of the underlying end-motif selector.
     pub fn rows(mut self, row_indices: &[usize]) -> Self {
         self.ends_selector = self.ends_selector.rows(row_indices);
         self
@@ -178,7 +184,10 @@ impl<'a> CorrectedEndMotifCountsSelector<'a> {
         self
     }
 
-    /// Select motifs by zero-based motif index.
+    /// Select motifs by zero-based index on the stored motif axis.
+    ///
+    /// Indices are valid for exact and split correction. Side-only correction
+    /// rejects them because it constructs a different, aggregated motif axis.
     pub fn motifs(mut self, motif_indices: &[usize]) -> Self {
         self.set_motif_selector(
             CorrectedMotifSelector::Indices(motif_indices.to_vec()),
@@ -187,7 +196,10 @@ impl<'a> CorrectedEndMotifCountsSelector<'a> {
         self
     }
 
-    /// Select motifs by end-motif label or motif-group label.
+    /// Select motifs by label on the correction mode's output axis.
+    ///
+    /// Exact and split modes resolve stored end-motif or motif-group labels.
+    /// Side-only modes resolve the derived labels such as `AC_` or `_TG`.
     pub fn motifs_by_label<S: AsRef<str>>(mut self, motif_labels: &[S]) -> Self {
         self.set_motif_selector(
             CorrectedMotifSelector::Labels(
@@ -244,13 +256,20 @@ impl<'a> CorrectedEndMotifCountsSelector<'a> {
         self
     }
 
-    /// Set how unsupported positive end-motif counts are handled.
+    /// Set how positive counts without a positive reference denominator are handled.
+    ///
+    /// The default reports all affected motif labels as an error. The alternative
+    /// keeps those coordinates as `NaN` while unsupported zero counts remain zero.
     pub fn unsupported_reference_policy(mut self, policy: UnsupportedReferencePolicy) -> Self {
         self.unsupported_reference_policy = policy;
         self
     }
 
-    /// Read selected counts after applying reference correction.
+    /// Validate the configured axes and return reference-corrected counts.
+    ///
+    /// Correction mode determines whether full labels are matched directly,
+    /// corrected from separate side marginals, or aggregated onto a derived side
+    /// axis before correction. Row compatibility is checked before counts are read.
     pub fn read(self) -> OutputLoaderResult<EndMotifCountSelection> {
         let correction_mode =
             resolve_correction_mode(self.ends, self.ref_kmers, self.two_sided_correction_mode)?;
@@ -310,7 +329,11 @@ impl<'a> CorrectedEndMotifCountsSelector<'a> {
         Ok(selection.with_data(corrected_data)?)
     }
 
-    /// Read side-mode correction after aggregating the full two-sided motif axis.
+    /// Aggregate the full motif axis onto one side and correct those totals.
+    ///
+    /// Counts sharing a selected outside or inside label are summed per row. The
+    /// returned selection replaces the source motif axis with derived side labels
+    /// and uses matching marginal reference denominators.
     fn read_side_correction(
         self,
         shape: TwoSidedMotifShape,
@@ -361,7 +384,11 @@ impl<'a> CorrectedEndMotifCountsSelector<'a> {
         selector.read()
     }
 
-    /// Return side-mode label selection, rejecting index selectors for derived side axes.
+    /// Resolve the optional label selector used by a derived side axis.
+    ///
+    /// Label selection is copied for later side-axis construction. Stored motif
+    /// indices are rejected because they do not identify aggregated side columns,
+    /// and any earlier selector conflict is reported first.
     fn side_mode_motif_labels(&self) -> Result<Option<Vec<String>>> {
         self.ensure_no_motif_selection_conflict()?;
         match &self.motif_selector {
@@ -375,7 +402,10 @@ impl<'a> CorrectedEndMotifCountsSelector<'a> {
         }
     }
 
-    /// Report the first selector conflict deferred by a chaining builder method.
+    /// Report a motif-selector conflict recorded during method chaining.
+    ///
+    /// Builder methods cannot return a `Result`, so the first conflict is stored
+    /// and raised here before any output is read or corrected.
     fn ensure_no_motif_selection_conflict(&self) -> Result<()> {
         if let Some(selection_error) = &self.motif_selection_error {
             bail!("{selection_error}");
@@ -392,6 +422,10 @@ enum CorrectedMotifSelector {
 }
 
 impl CorrectedMotifSelector {
+    /// Return the builder method name represented by this selector.
+    ///
+    /// The name is used to explain conflicts between index- and label-based
+    /// motif selection. Selecting the full axis has no method name.
     fn selector_name(&self) -> Option<&'static str> {
         match self {
             Self::All => None,
@@ -419,6 +453,10 @@ enum ReferenceFrequencies<'a> {
 }
 
 impl<'a> ReferenceFrequencies<'a> {
+    /// Wrap dense or sparse reference frequencies behind a shared lookup API.
+    ///
+    /// Sparse output is indexed once here so correction code can use the same
+    /// coordinate lookup regardless of the stored representation.
     fn new(ref_kmers: &'a RefKmersOutput) -> Self {
         match ref_kmers.data() {
             RefKmerFrequencyData::Dense(frequencies) => Self::Dense(frequencies),
@@ -426,6 +464,10 @@ impl<'a> ReferenceFrequencies<'a> {
         }
     }
 
+    /// Return the frequency at a reference row and motif coordinate.
+    ///
+    /// Missing sparse coordinates and out-of-range dense coordinates return
+    /// `None`, allowing callers to treat absent reference support as zero.
     fn frequency(&self, row_index: usize, motif_index: usize) -> Option<f64> {
         match self {
             Self::Dense(frequencies) => frequencies.get(row_index, motif_index).copied(),
@@ -449,6 +491,9 @@ struct TwoSidedMotifShape {
 }
 
 impl TwoSidedMotifShape {
+    /// Return the reference k-mer width covered by both motif sides.
+    ///
+    /// This is the required width of an underscore-free reference motif label.
     fn combined_width(self) -> usize {
         self.outside_width + self.inside_width
     }
@@ -468,6 +513,10 @@ struct ParsedEndMotif {
 }
 
 impl ParsedEndMotif {
+    /// Format this motif for an outside- or inside-only output axis.
+    ///
+    /// The underscore is retained on the boundary so the derived label still
+    /// states which side of the fragment end it represents.
     fn side_label(&self, side_mode: SideMode) -> String {
         match side_mode {
             SideMode::Outside => format!("{}_", self.outside),
@@ -484,6 +533,11 @@ struct SideAxisSelection {
 }
 
 impl SideAxisSelection {
+    /// Build a selected side axis and map source motifs onto its columns.
+    ///
+    /// Full-motif labels that share a side are mapped to the same output column.
+    /// Optional label selection filters that derived axis without changing its
+    /// original indices or first-occurrence order.
     fn new(
         parsed_motifs: &[ParsedEndMotif],
         side_mode: SideMode,
@@ -524,6 +578,10 @@ struct SideReferenceCache {
 }
 
 impl SideReferenceCache {
+    /// Create empty side-frequency maps and support counts.
+    ///
+    /// Support counts remain zero until all full reference frequencies have
+    /// been accumulated and `finalize_support_counts` is called.
     fn new() -> Self {
         Self {
             outside_frequencies: BTreeMap::new(),
@@ -533,6 +591,10 @@ impl SideReferenceCache {
         }
     }
 
+    /// Add a full reference motif's frequency to both side marginals.
+    ///
+    /// The label must match the resolved combined width. Its prefix contributes
+    /// to the outside total and its suffix contributes to the inside total.
     fn add_frequency(
         &mut self,
         reference_motif_label: &str,
@@ -552,6 +614,10 @@ impl SideReferenceCache {
         Ok(())
     }
 
+    /// Count supported labels after all side frequencies are accumulated.
+    ///
+    /// Only strictly positive marginal frequencies define correction support,
+    /// matching the exact-label normalization rule.
     fn finalize_support_counts(&mut self) {
         self.outside_support_count = self
             .outside_frequencies
@@ -565,6 +631,11 @@ impl SideReferenceCache {
             .count();
     }
 
+    /// Return the selected side's reference correction denominator.
+    ///
+    /// The marginal frequency is multiplied by the number of positive-frequency
+    /// labels on that side, so uniform side composition has denominator one.
+    /// Missing labels have a zero denominator.
     fn denominator(&self, side_label: &str, side_mode: SideMode) -> f64 {
         match side_mode {
             SideMode::Outside => {
@@ -583,6 +654,10 @@ impl SideReferenceCache {
         }
     }
 
+    /// Return the split-mode denominator for a full motif.
+    ///
+    /// Outside and inside marginal frequencies are normalized independently,
+    /// then multiplied so the full motif axis can be retained.
     fn split_denominator(&self, parsed_motif: &ParsedEndMotif) -> f64 {
         let outside_denominator = self
             .outside_frequencies
@@ -600,6 +675,11 @@ impl SideReferenceCache {
     }
 }
 
+/// Validate the motif axes and resolve the requested correction strategy.
+///
+/// Grouped, empty, one-sided, and joint axes use exact-label correction.
+/// Other two-sided modes retain the inferred side widths needed to calculate
+/// separate or side-only reference denominators.
 fn resolve_correction_mode(
     ends: &EndsOutput,
     ref_kmers: &RefKmersOutput,
@@ -638,6 +718,11 @@ fn resolve_correction_mode(
     }
 }
 
+/// Ensure sample and reference motif axes can be used for correction.
+///
+/// Reference output must be non-canonical, grouped axes must match, and concrete
+/// end-motif labels must have the reference k-mer width. Two-sided mode options
+/// are rejected for grouped axes before any counts are read.
 fn validate_reference_correction_motif_axes(
     ends: &EndsOutput,
     ref_kmers: &RefKmersOutput,
@@ -672,6 +757,10 @@ fn validate_reference_correction_motif_axes(
     Ok(())
 }
 
+/// Infer the outside and inside widths shared by concrete motif labels.
+///
+/// Every label must contain one separator, have the reference k-mer's total
+/// width, and use the same split. An empty axis cannot define a shape.
 fn infer_concrete_motif_shape(
     motif_labels: &[String],
     reference_kmer_size: usize,
@@ -698,6 +787,10 @@ fn infer_concrete_motif_shape(
     inferred_shape.with_context(|| "cannot infer side widths from an empty motif axis")
 }
 
+/// Split an end-motif label at its outside/inside separator.
+///
+/// Exactly one underscore is required. Either returned side may be empty for a
+/// valid one-sided motif label.
 fn split_end_motif_label(motif_label: &str) -> Result<(&str, &str)> {
     let mut parts = motif_label.split('_');
     let outside = parts.next().with_context(|| {
@@ -713,6 +806,10 @@ fn split_end_motif_label(motif_label: &str) -> Result<(&str, &str)> {
     Ok((outside, inside))
 }
 
+/// Parse end-motif labels and verify that they match the inferred shape.
+///
+/// The returned values retain the original label and owned side strings so
+/// later aggregation does not need to split or validate labels again.
 fn parse_end_motif_labels(
     motif_labels: &[String],
     shape: TwoSidedMotifShape,
@@ -734,6 +831,10 @@ fn parse_end_motif_labels(
         .collect()
 }
 
+/// Ensure reference labels can be split using the resolved side widths.
+///
+/// Reference labels contain no underscore, so their byte length must equal the
+/// combined outside and inside width.
 fn validate_reference_labels_split_cleanly(
     ref_kmers: &RefKmersOutput,
     shape: TwoSidedMotifShape,
@@ -749,6 +850,10 @@ fn validate_reference_labels_split_cleanly(
     Ok(())
 }
 
+/// Build the full side-label axis and map each source motif onto it.
+///
+/// Labels are deduplicated in first-occurrence order. The parallel mapping says
+/// which derived side column receives each full-motif count.
 fn full_side_axis(
     parsed_motifs: &[ParsedEndMotif],
     side_mode: SideMode,
@@ -772,6 +877,10 @@ fn full_side_axis(
     (side_labels, source_motif_to_full_side_index)
 }
 
+/// Resolve requested side labels to full side-axis indices.
+///
+/// Requested order is preserved. Duplicate requests and labels absent from the
+/// derived axis are reported as errors instead of being silently ignored.
 fn resolve_side_label_indices(
     full_side_labels: &[String],
     requested_labels: &[String],
@@ -797,6 +906,11 @@ fn resolve_side_label_indices(
         .collect()
 }
 
+/// Validate that sample and reference rows can be matched for correction.
+///
+/// Without global broadcasting, row modes must agree and both complete key sets
+/// must be unique and identical. A global reference may be broadcast only when
+/// explicitly requested.
 fn validate_reference_correction_rows(
     ends: &EndsOutput,
     ref_kmers: &RefKmersOutput,
@@ -843,6 +957,10 @@ fn validate_reference_correction_rows(
     Ok(())
 }
 
+/// Ensure global-bias broadcasting is used only with a global reference.
+///
+/// This catches an invalid option even when the sample and reference row modes
+/// would otherwise happen to match.
 fn validate_global_bias_option(ref_kmers: &RefKmersOutput, use_global_bias: bool) -> Result<()> {
     ensure!(
         !use_global_bias || ref_kmers.row_mode() == RefKmerRowMode::Global,
@@ -851,6 +969,10 @@ fn validate_global_bias_option(ref_kmers: &RefKmersOutput, use_global_bias: bool
     Ok(())
 }
 
+/// Return whether the end and reference row modes describe the same row axis.
+///
+/// Window kinds are matched explicitly, so size windows and BED windows are not
+/// considered interchangeable even though both carry interval metadata.
 fn row_modes_match(end_row_mode: EndMotifRowMode, ref_row_mode: RefKmerRowMode) -> bool {
     matches!(
         (end_row_mode, ref_row_mode),
@@ -861,6 +983,10 @@ fn row_modes_match(end_row_mode: EndMotifRowMode, ref_row_mode: RefKmerRowMode) 
     )
 }
 
+/// Return whether one global reference row should be applied to every end row.
+///
+/// Broadcasting is active only for a non-global sample and an explicitly
+/// enabled global reference.
 fn use_global_reference_bias(
     ends: &EndsOutput,
     ref_kmers: &RefKmersOutput,
@@ -871,6 +997,11 @@ fn use_global_reference_bias(
         && ends.row_mode() != EndMotifRowMode::Global
 }
 
+/// Correct selected counts by matching full sample and reference motif labels.
+///
+/// The function resolves reference rows and motifs, counts positive reference
+/// support per row, and divides counts by frequency times support. The selected
+/// row and motif axes are preserved.
 fn correct_exact_label_selection(
     ends: &EndsOutput,
     ref_kmers: &RefKmersOutput,
@@ -895,6 +1026,10 @@ fn correct_exact_label_selection(
     Ok(selection.with_data(corrected_data)?)
 }
 
+/// Match selected end rows to corresponding reference row indices.
+///
+/// Global broadcasting repeats row zero. Keyed correction resolves every end
+/// row through its full correction key and fails if any reference row is absent.
 fn selected_reference_row_indices(
     ends: &EndsOutput,
     selection: &EndMotifCountSelection,
@@ -923,6 +1058,11 @@ fn selected_reference_row_indices(
         .collect()
 }
 
+/// Build side-frequency caches for requested reference rows.
+///
+/// Dense and sparse reference representations contribute the same prefix and
+/// suffix marginals. Positive support counts are finalized only after every
+/// frequency in a requested row has been accumulated.
 fn side_reference_caches(
     ref_kmers: &RefKmersOutput,
     reference_row_indices: &[usize],
@@ -983,6 +1123,11 @@ fn side_reference_caches(
     Ok(caches)
 }
 
+/// Correct full motifs using independently calculated side denominators.
+///
+/// Each motif keeps its original column. Its outside and inside marginal
+/// denominators are looked up from the matched reference row and multiplied
+/// before the unsupported-reference policy is applied.
 fn split_corrected_counts_data(
     selection: &EndMotifCountSelection,
     reference_row_indices: &[usize],
@@ -1017,6 +1162,10 @@ fn split_corrected_counts_data(
     )
 }
 
+/// Aggregate full-motif counts onto the selected side axis.
+///
+/// The dense or sparse representation is preserved while all source motifs
+/// mapped to the same selected side column are summed.
 fn aggregate_side_counts_data(
     selection: &EndMotifCountSelection,
     side_axis: &SideAxisSelection,
@@ -1031,6 +1180,11 @@ fn aggregate_side_counts_data(
     }
 }
 
+/// Sum dense full-motif counts into selected side-axis columns.
+///
+/// Every source coordinate contributes to its mapped side column unless that
+/// side label was not selected. The function checks index arithmetic and rejects
+/// non-finite aggregated counts.
 fn aggregate_dense_side_counts(
     counts: &DenseMatrix<f64>,
     side_axis: &SideAxisSelection,
@@ -1073,6 +1227,10 @@ fn aggregate_dense_side_counts(
     DenseMatrix::from_row_major(aggregated_values, row_count, selected_side_count)
 }
 
+/// Sum stored sparse counts into selected side-axis coordinates.
+///
+/// Coordinates mapped to the same row and side label are combined in a sorted
+/// map. Zero totals are omitted, preserving sparse storage and derived shape.
 fn aggregate_sparse_side_counts(
     counts: &EndMotifSparseCounts,
     side_axis: &SideAxisSelection,
@@ -1120,6 +1278,10 @@ fn aggregate_sparse_side_counts(
     ))
 }
 
+/// Correct aggregated side counts with matching marginal denominators.
+///
+/// Each derived side label is looked up in the cache for its matched reference
+/// row. The dense or sparse aggregated representation is retained.
 fn side_corrected_counts_data(
     aggregated_data: &EndMotifCountsData,
     reference_row_indices: &[usize],
@@ -1156,6 +1318,11 @@ fn side_corrected_counts_data(
     )
 }
 
+/// Match selected sample labels to optional reference motif indices.
+///
+/// Concrete labels lose their underscore before matching, while motif-group
+/// labels match directly. Missing labels remain `None` and therefore have zero
+/// reference support during correction.
 fn selected_reference_motif_indices(
     ends: &EndsOutput,
     ref_kmers: &RefKmersOutput,
@@ -1171,6 +1338,10 @@ fn selected_reference_motif_indices(
         .collect()
 }
 
+/// Count reference motifs used for uniform-support normalization per row.
+///
+/// Only strictly positive frequencies count as supported. Dense and sparse
+/// reference stores are handled without densifying sparse data.
 fn reference_support_counts(
     ref_kmers: &RefKmersOutput,
     reference_row_indices: &[usize],
@@ -1208,6 +1379,11 @@ fn reference_support_counts(
     Ok(support_counts)
 }
 
+/// Correct exact-label counts using relative reference motif frequencies.
+///
+/// For each coordinate, the denominator is the matched frequency multiplied by
+/// the number of positive-frequency motifs in that reference row. This makes a
+/// uniform reference composition leave counts unchanged.
 fn corrected_counts_data(
     selection: &EndMotifCountSelection,
     reference_row_indices: &[usize],
@@ -1244,6 +1420,10 @@ fn corrected_counts_data(
     )
 }
 
+/// Dispatch correction to the dense or sparse count representation.
+///
+/// Both paths use the same coordinate-specific denominator callback and
+/// unsupported-reference policy, so only storage mechanics differ.
 fn correct_counts_data(
     counts_data: &EndMotifCountsData,
     motif_labels: &[String],
@@ -1268,6 +1448,11 @@ fn correct_counts_data(
     }
 }
 
+/// Correct every coordinate in a dense count matrix.
+///
+/// The full matrix shape is preserved. Unsupported positive counts and
+/// non-finite results are collected across coordinates and reported after the
+/// complete pass, producing deterministic motif-level errors.
 fn correct_dense_counts<F>(
     counts: &DenseMatrix<f64>,
     motif_labels: &[String],
@@ -1312,6 +1497,10 @@ where
     DenseMatrix::from_row_major(corrected_values, row_count, motif_count)
 }
 
+/// Correct each stored coordinate in a sparse count matrix.
+///
+/// Implicit zeros remain implicit. Corrected zeros are omitted, while `NaN`
+/// values are stored so the keep-missing policy remains visible to callers.
 fn correct_sparse_counts<F>(
     counts: &EndMotifSparseCounts,
     motif_labels: &[String],
@@ -1368,6 +1557,11 @@ where
     ))
 }
 
+/// Apply a correction denominator to one count.
+///
+/// Finite counts with positive denominators are divided normally. Invalid
+/// arithmetic is recorded as non-finite, unsupported zero counts stay zero,
+/// and unsupported positive counts follow the configured error or `NaN` policy.
 fn correct_with_denominator(
     count: f64,
     denominator: f64,
@@ -1400,6 +1594,10 @@ fn correct_with_denominator(
     }
 }
 
+/// Fail when correction produced non-finite values for any motif.
+///
+/// Labels are collected in a sorted set during correction, so the final error
+/// reports every affected motif in deterministic order.
 fn ensure_no_non_finite_corrected_counts(non_finite_labels: &BTreeSet<String>) -> Result<()> {
     if non_finite_labels.is_empty() {
         return Ok(());
@@ -1412,6 +1610,10 @@ fn ensure_no_non_finite_corrected_counts(non_finite_labels: &BTreeSet<String>) -
     bail!("reference correction produced non-finite corrected counts for motifs: {labels}");
 }
 
+/// Fail when positive counts lack a correction denominator under error policy.
+///
+/// All affected labels are reported together after dense or sparse correction,
+/// rather than failing at the first unsupported coordinate.
 fn ensure_no_unsupported_positive_counts(
     unsupported_positive_labels: &BTreeSet<String>,
 ) -> Result<()> {
@@ -1428,6 +1630,10 @@ fn ensure_no_unsupported_positive_counts(
     );
 }
 
+/// Convert a sample motif label to its matching reference-axis label.
+///
+/// Concrete end motifs drop the outside/inside underscore. Motif-group labels
+/// are already shared between outputs and therefore remain unchanged.
 fn reference_motif_label(ends: &EndsOutput, end_motif_label: &str) -> String {
     match ends.motif_axis_kind() {
         EndMotifAxisKind::Motif => end_motif_label.replace('_', ""),
@@ -1435,6 +1641,10 @@ fn reference_motif_label(ends: &EndsOutput, end_motif_label: &str) -> String {
     }
 }
 
+/// Return correction keys for every end-motif row.
+///
+/// Global, windowed, and grouped metadata are converted to the same key type
+/// used for exact sample-to-reference row comparison.
 fn all_end_row_keys(ends: &EndsOutput) -> Result<Vec<CorrectionRowKey>> {
     match ends.row_metadata() {
         EndMotifRowMetadata::Global => Ok(vec![CorrectionRowKey::Global]),
@@ -1449,6 +1659,10 @@ fn all_end_row_keys(ends: &EndsOutput) -> Result<Vec<CorrectionRowKey>> {
     }
 }
 
+/// Return correction keys for every reference k-mer row.
+///
+/// Keys use the same representation as end-motif rows, allowing complete row
+/// sets to be compared independently of their storage types.
 fn all_reference_row_keys(ref_kmers: &RefKmersOutput) -> Result<Vec<CorrectionRowKey>> {
     match ref_kmers.row_metadata() {
         RefKmerRowMetadata::Global => Ok(vec![CorrectionRowKey::Global]),
@@ -1463,6 +1677,10 @@ fn all_reference_row_keys(ref_kmers: &RefKmersOutput) -> Result<Vec<CorrectionRo
     }
 }
 
+/// Resolve an end-motif row index to its correction key.
+///
+/// The index is checked against the row-mode-specific metadata. Window keys
+/// include index, chromosome, start, and end, while grouped keys use the name.
 fn end_row_key(ends: &EndsOutput, row_index: usize) -> Result<CorrectionRowKey> {
     match ends.row_metadata() {
         EndMotifRowMetadata::Global => {
@@ -1484,6 +1702,10 @@ fn end_row_key(ends: &EndsOutput, row_index: usize) -> Result<CorrectionRowKey> 
     }
 }
 
+/// Map each unique reference correction key to its row index.
+///
+/// Duplicate keys are rejected because they would make sample-to-reference row
+/// matching ambiguous.
 fn reference_indices_by_key(
     ref_kmers: &RefKmersOutput,
 ) -> Result<BTreeMap<CorrectionRowKey, usize>> {
@@ -1498,6 +1720,10 @@ fn reference_indices_by_key(
     Ok(indices_by_key)
 }
 
+/// Resolve a reference row index to its correction key.
+///
+/// The index is checked against the reference row metadata and converted to the
+/// same global, window, or group key used by end-motif rows.
 fn reference_row_key(ref_kmers: &RefKmersOutput, row_index: usize) -> Result<CorrectionRowKey> {
     match ref_kmers.row_metadata() {
         RefKmerRowMetadata::Global => {
@@ -1519,6 +1745,10 @@ fn reference_row_key(ref_kmers: &RefKmersOutput, row_index: usize) -> Result<Cor
     }
 }
 
+/// Convert window metadata into a shared correction row key.
+///
+/// The checked interval is represented by its `start` and `end` coordinates
+/// together with the stored window index and chromosome.
 fn window_row_key(window: &WindowRow) -> Result<CorrectionRowKey> {
     let (start, end) = window.interval.as_tuple();
     Ok(CorrectionRowKey::Window {
@@ -1529,6 +1759,10 @@ fn window_row_key(window: &WindowRow) -> Result<CorrectionRowKey> {
     })
 }
 
+/// Return a human-readable end-motif row-mode name for errors.
+///
+/// Keeping this mapping centralized makes row-mode mismatch messages precise
+/// without exposing enum debug names to users.
 fn describe_end_row_mode(row_mode: EndMotifRowMode) -> &'static str {
     match row_mode {
         EndMotifRowMode::Global => "global",
@@ -1538,6 +1772,10 @@ fn describe_end_row_mode(row_mode: EndMotifRowMode) -> &'static str {
     }
 }
 
+/// Return a human-readable reference row-mode name for errors.
+///
+/// The wording mirrors end-motif mode descriptions so mismatch errors compare
+/// equivalent concepts.
 fn describe_ref_row_mode(row_mode: RefKmerRowMode) -> &'static str {
     match row_mode {
         RefKmerRowMode::Global => "global",
