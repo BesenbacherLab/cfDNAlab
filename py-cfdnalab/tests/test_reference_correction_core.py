@@ -32,13 +32,16 @@ def _shared_reference_rows() -> pd.DataFrame:
     )
 
 
-def _mode(mode: str, side_labels: list[str] | None = None) -> dict[str, object]:
-    return {
-        "mode": mode,
-        "outside_width": 1,
-        "inside_width": 1,
-        "side_labels": [] if side_labels is None else side_labels,
-    }
+def _mode(
+    mode: str,
+    side_labels: list[str] | None = None,
+) -> reference_correction._ReferenceCorrectionMode:
+    return reference_correction._ReferenceCorrectionMode(
+        mode=mode,
+        outside_width=1,
+        inside_width=1,
+        side_labels=() if side_labels is None else tuple(side_labels),
+    )
 
 
 def _with_frequencies(corrected: pd.DataFrame) -> pd.DataFrame:

@@ -19,11 +19,21 @@ UNSUPPORTED_MOTIF_POLICIES = {"error", "drop", "keep_na"}
 TWO_SIDED_CORRECTION_MODES = {"joint", "split", "outside", "inside"}
 
 
+@dataclass(frozen=True)
+class _ReferenceCorrectionMode:
+    """Resolved correction strategy and its side-specific axis information."""
+
+    mode: str
+    outside_width: int = 0
+    inside_width: int = 0
+    side_labels: tuple[str, ...] = ()
+
+
 @dataclass
 class _ReferenceCorrectionContext:
     """Validated row and motif axes shared by all corrected output forms."""
 
-    correction_mode: dict[str, object]
+    correction_mode: _ReferenceCorrectionMode
     row_columns: list[str]
     reference_row_columns: list[str]
     selected_mode_labels: list[str]
@@ -296,7 +306,7 @@ def _reference_corrected_data_frame_from_context(
         end_rows,
         context.reference_row_columns,
     )
-    if context.correction_mode["mode"] == "exact":
+    if context.correction_mode.mode == "exact":
         corrected = _correct_exact_label_data_frame(
             ends,
             end_rows,
@@ -304,7 +314,7 @@ def _reference_corrected_data_frame_from_context(
             context.reference_row_columns,
             unsupported_motifs,
         )
-    elif context.correction_mode["mode"] == "split":
+    elif context.correction_mode.mode == "split":
         corrected = _correct_split_data_frame(
             end_rows,
             ref_rows,
@@ -526,17 +536,17 @@ def _resolve_correction_mode(
     ends: EndMotifCounts,
     ref_kmers: RefKmerFrequencies,
     two_sided_correction: str | None,
-) -> dict[str, object]:
+) -> _ReferenceCorrectionMode:
     if ends.end_motifs.motif_axis_kind == "motif_group":
         if two_sided_correction is not None:
             raise ValueError(
                 "Motif-group end-motif outputs do not accept two_sided_correction"
             )
-        return {"mode": "exact"}
+        return _ReferenceCorrectionMode(mode="exact")
 
     motif_labels = ends.motifs_metadata()["motif"].astype(str).tolist()
     if not motif_labels:
-        return {"mode": "exact"}
+        return _ReferenceCorrectionMode(mode="exact")
 
     outside_width, inside_width = _infer_end_motif_side_widths(
         motif_labels,
@@ -552,24 +562,24 @@ def _resolve_correction_mode(
             raise ValueError(
                 "One-sided end-motif outputs do not accept two_sided_correction"
             )
-        return {"mode": "exact"}
+        return _ReferenceCorrectionMode(mode="exact")
     if two_sided_correction is None:
         raise ValueError(
             "two-sided end-motif labels with both outside and inside bases require two_sided_correction"
         )
     if two_sided_correction == "joint":
-        return {"mode": "exact"}
-    correction_mode = {
-        "mode": two_sided_correction,
-        "outside_width": outside_width,
-        "inside_width": inside_width,
-    }
-    if two_sided_correction in {"outside", "inside"}:
-        correction_mode["side_labels"] = _side_axis_labels(
-            motif_labels,
-            two_sided_correction,
-        )
-    return correction_mode
+        return _ReferenceCorrectionMode(mode="exact")
+    side_labels = (
+        tuple(_side_axis_labels(motif_labels, two_sided_correction))
+        if two_sided_correction in {"outside", "inside"}
+        else ()
+    )
+    return _ReferenceCorrectionMode(
+        mode=two_sided_correction,
+        outside_width=outside_width,
+        inside_width=inside_width,
+        side_labels=side_labels,
+    )
 
 
 def _infer_end_motif_side_widths(
@@ -622,12 +632,12 @@ def _validate_reference_labels_split_cleanly(
 
 def _selected_mode_axis(
     ends: EndMotifCounts,
-    correction_mode: dict[str, object],
+    correction_mode: _ReferenceCorrectionMode,
     *,
     motifs: str | Sequence[str] | None,
     motif_idxs: int | Sequence[int] | None,
 ) -> tuple[list[str], np.ndarray]:
-    mode = correction_mode["mode"]
+    mode = correction_mode.mode
     if mode in {"exact", "split"}:
         motif_indices = ends._resolve_motif_selector(motifs, motif_idxs)
         motif_labels = (
@@ -639,10 +649,7 @@ def _selected_mode_axis(
         raise ValueError(
             "motif index selectors are not supported for outside or inside reference correction"
         )
-    full_side_labels = _side_axis_labels(
-        ends.motifs_metadata()["motif"].astype(str).tolist(),
-        str(mode),
-    )
+    full_side_labels = list(correction_mode.side_labels)
     if motifs is None:
         return full_side_labels, np.arange(len(full_side_labels), dtype=np.int64)
     requested_labels = normalize_strings(motifs, name="motifs")
@@ -734,11 +741,11 @@ def _correct_split_data_frame(
     end_rows: pd.DataFrame,
     ref_rows: pd.DataFrame,
     reference_row_columns: list[str],
-    correction_mode: dict[str, object],
+    correction_mode: _ReferenceCorrectionMode,
     unsupported_motifs: str,
 ) -> pd.DataFrame:
-    outside_width = int(correction_mode["outside_width"])
-    inside_width = int(correction_mode["inside_width"])
+    outside_width = correction_mode.outside_width
+    inside_width = correction_mode.inside_width
     end_rows = _add_end_sides(end_rows, outside_width, inside_width)
     side_reference = _side_reference_denominators(
         ref_rows,
@@ -766,13 +773,13 @@ def _correct_side_data_frame(
     end_rows: pd.DataFrame,
     ref_rows: pd.DataFrame,
     reference_row_columns: list[str],
-    correction_mode: dict[str, object],
+    correction_mode: _ReferenceCorrectionMode,
     output_columns: list[str],
     unsupported_motifs: str,
 ) -> pd.DataFrame:
-    outside_width = int(correction_mode["outside_width"])
-    inside_width = int(correction_mode["inside_width"])
-    side_mode = str(correction_mode["mode"])
+    outside_width = correction_mode.outside_width
+    inside_width = correction_mode.inside_width
+    side_mode = correction_mode.mode
     end_rows = _add_end_sides(end_rows, outside_width, inside_width)
     side_column = "outside" if side_mode == "outside" else "inside"
     end_rows["motif"] = (
@@ -780,7 +787,7 @@ def _correct_side_data_frame(
         if side_mode == "outside"
         else "_" + end_rows["inside"]
     )
-    side_axis = list(correction_mode["side_labels"])
+    side_axis = correction_mode.side_labels
     side_index_by_label = {label: index for index, label in enumerate(side_axis)}
     end_rows["motif_index"] = (
         end_rows["motif"].map(side_index_by_label).astype(np.int64)
