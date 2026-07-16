@@ -22,9 +22,17 @@ mod tests_load_blacklists {
         // Arrange
         let bed = write_bed(&["chr1\t0\t3", "chr1\t10\t20", "chr2\t5\t30"])?;
         let whitelist = vec!["chr1".to_string()];
+        let read_in_background = std::thread::available_parallelism()
+            .is_ok_and(|thread_count| thread_count.get() > 1);
 
         // Act
-        let map = load_blacklists(&[bed.path()], 5, 0, Some(whitelist.as_slice()))?;
+        let map = load_blacklists(
+            &[bed.path()],
+            5,
+            0,
+            Some(whitelist.as_slice()),
+            read_in_background,
+        )?;
 
         // Assert
         assert_eq!(
@@ -42,7 +50,7 @@ mod tests_load_blacklists {
         let whitelist = vec!["chr1".to_string()];
 
         // Act
-        let map = load_blacklists(&[bed.path()], 1, 0, Some(whitelist.as_slice()))?;
+        let map = load_blacklists(&[bed.path()], 1, 0, Some(whitelist.as_slice()), false)?;
 
         // Assert
         assert_eq!(
@@ -61,7 +69,7 @@ mod tests_load_blacklists {
         let whitelist = vec!["chr1".to_string()];
 
         // Act
-        let map = load_blacklists(&[bed.path()], 1, 0, Some(whitelist.as_slice()))?;
+        let map = load_blacklists(&[bed.path()], 1, 0, Some(whitelist.as_slice()), false)?;
 
         // Assert
         assert!(map.is_empty());
@@ -77,7 +85,7 @@ mod tests_load_blacklists {
         let whitelist = vec!["chr1".to_string()];
 
         // Act
-        let error = load_blacklists(&[bed.path()], 1, 0, Some(whitelist.as_slice()))
+        let error = load_blacklists(&[bed.path()], 1, 0, Some(whitelist.as_slice()), false)
             .expect_err("malformed blacklist input should fail");
 
         // Assert
@@ -92,7 +100,7 @@ mod tests_load_blacklists {
         let bed = write_bed(&["chrX\t100\t110", "chrX\t112\t120"])?;
 
         // Act
-        let map = load_blacklists(&[bed.path()], 1, 2, None)?;
+        let map = load_blacklists(&[bed.path()], 1, 2, None, false)?;
 
         // Assert
         assert_eq!(

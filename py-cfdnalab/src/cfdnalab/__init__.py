@@ -15,6 +15,13 @@ from .lengths import (
     read_lengths,
 )
 from .midpoints import MidpointProfiles, read_midpoints
+from .ref_kmers import (
+    GlobalRefKmerFrequencies,
+    GroupedRefKmerFrequencies,
+    RefKmerFrequencies,
+    WindowedRefKmerFrequencies,
+    read_ref_kmers,
+)
 
 
 def get_version():
@@ -30,14 +37,19 @@ __all__ = [
     "EndMotifCounts",
     "GlobalEndMotifCounts",
     "GlobalLengthCounts",
+    "GlobalRefKmerFrequencies",
     "GroupedEndMotifCounts",
     "GroupedLengthCounts",
+    "GroupedRefKmerFrequencies",
     "LengthCounts",
     "MidpointProfiles",
+    "RefKmerFrequencies",
     "WindowedEndMotifCounts",
     "WindowedLengthCounts",
+    "WindowedRefKmerFrequencies",
     "__version__",
     "read_end_motifs",
     "read_lengths",
     "read_midpoints",
+    "read_ref_kmers",
 ]

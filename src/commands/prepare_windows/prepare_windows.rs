@@ -371,6 +371,7 @@ pub fn run_prepare_windows(
             1,
             cfg.blacklist_halo as u64,
             chromosomes_for_blacklist,
+            cfg.n_threads > 1,
         )?;
         for (chrom, intervals) in loaded.into_iter() {
             blacklist_cursors.insert(

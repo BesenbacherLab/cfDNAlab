@@ -47,5 +47,8 @@ plans_and_specs/lionheart-main/
 other_software/
 
 downstream_tests/tmp/
+downstream_tests/rust/Cargo.lock
 .Rproj.user
 cfdnalab.Rcheck/
+
+r-cfdnalab.Rcheck/

@@ -101,9 +101,9 @@ stopifnot(identical(wide_motif_grouped_metadata$attributes$motif_axis_kind, "mot
 stopifnot(!dir.exists(file.path(wide_motif_grouped_path, "motif_ascii")))
 stopifnot(identical(
   labels_from_array_attributes(wide_motif_grouped_path, "motif_index", "motif_group"),
-  c("right-hit-wide", "left-hit-wide")
+  c("left-hit-wide", "right-hit-wide")
 ))
 stopifnot(identical(as.integer(read_cran_zarr_array(wide_motif_grouped_root, "sparse/shape")), c(3L, 2L)))
 stopifnot(identical(as.integer(read_cran_zarr_array(wide_motif_grouped_root, "sparse/row")), c(0L, 0L, 1L)))
-stopifnot(identical(as.integer(read_cran_zarr_array(wide_motif_grouped_root, "sparse/motif")), c(0L, 1L, 0L)))
-stopifnot(isTRUE(all.equal(read_cran_zarr_array(wide_motif_grouped_root, "sparse/count"), c(1, 2, 1))))
+stopifnot(identical(as.integer(read_cran_zarr_array(wide_motif_grouped_root, "sparse/motif")), c(0L, 1L, 1L)))
+stopifnot(isTRUE(all.equal(read_cran_zarr_array(wide_motif_grouped_root, "sparse/count"), c(2, 1, 1))))

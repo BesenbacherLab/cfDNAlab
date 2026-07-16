@@ -4,17 +4,21 @@ use flate2::read::MultiGzDecoder;
 use flate2::{Compression, write::GzEncoder};
 use fxhash::FxHashMap;
 #[cfg(writes_text_outputs)]
-use std::io::{self, BufWriter, Write};
+use std::io::{BufWriter, Write};
 use std::{
     fs::File,
-    io::{BufRead, BufReader},
+    io::{self, BufRead, BufReader, Read},
     path::{Path, PathBuf},
+    sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel},
+    thread::{self, JoinHandle},
 };
 use zstd::Decoder as ZstdDecoder;
 #[cfg(writes_text_outputs)]
 use zstd::Encoder as ZstdEncoder;
 
 const BUF_CAP: usize = 1 << 20;
+const BACKGROUND_READ_CHUNK_SIZE: usize = 8 << 20;
+const BACKGROUND_READ_QUEUE_SIZE: usize = 4;
 #[cfg(writes_text_outputs)]
 const DEFAULT_ZSTD_LEVEL: i32 = 3;
 const REPLACEABLE_DIRECTORY_EXTENSIONS: &[&str] = &["zarr"];
@@ -37,28 +41,215 @@ pub(crate) fn dot_join(parts: &[&str]) -> String {
 /// Open a text reader that transparently handles `.gz`, `.bgz`, `.zst`, or plain files.
 ///
 /// The caller is responsible for handling "-" or stdin separately.
-pub(crate) fn open_text_reader(path: &Path) -> Result<Box<dyn BufRead>> {
+pub(crate) fn open_text_reader(path: &Path) -> Result<Box<dyn BufRead + Send>> {
     let ext = path
         .extension()
         .and_then(|s| s.to_str())
         .map(|s| s.to_ascii_lowercase());
+    let file = File::open(path).with_context(|| format!("Opening {}", path.display()))?;
+
+    #[cfg(target_os = "linux")]
+    advise_sequential_access(&file, path);
 
     match ext.as_deref() {
         Some("gz") | Some("bgz") => {
-            let file = File::open(path).with_context(|| format!("Opening {}", path.display()))?;
             let decoder = MultiGzDecoder::new(file);
             Ok(Box::new(BufReader::with_capacity(BUF_CAP, decoder)))
         }
         Some("zst") | Some("zstd") => {
-            let file = File::open(path).with_context(|| format!("Opening {}", path.display()))?;
             let decoder = ZstdDecoder::new(file)
                 .with_context(|| format!("Opening zstd decoder for {}", path.display()))?;
             Ok(Box::new(BufReader::with_capacity(BUF_CAP, decoder)))
         }
-        _ => {
-            let file = File::open(path).with_context(|| format!("Opening {}", path.display()))?;
-            Ok(Box::new(BufReader::with_capacity(BUF_CAP, file)))
+        _ => Ok(Box::new(BufReader::with_capacity(BUF_CAP, file))),
+    }
+}
+
+/// Open a text reader that loads and decompresses bytes on a background thread.
+///
+/// The returned reader presents the same sequential byte stream as [`open_text_reader`]. A small
+/// bounded queue lets file reading and decompression overlap with parsing without allowing the
+/// reader to buffer the full input in memory.
+pub(crate) fn open_text_reader_in_background(path: &Path) -> Result<Box<dyn BufRead + Send>> {
+    let source = open_text_reader(path)?;
+    Ok(Box::new(BackgroundTextReader::new(source)?))
+}
+
+enum BackgroundReadMessage {
+    Data { buffer: Vec<u8>, valid_bytes: usize },
+    Error(io::Error),
+    End,
+}
+
+/// Sequential reader backed by a bounded queue filled from another thread.
+struct BackgroundTextReader {
+    messages: Option<Receiver<BackgroundReadMessage>>,
+    recycled_buffers: SyncSender<Vec<u8>>,
+    current_buffer: Vec<u8>,
+    current_position: usize,
+    current_valid_bytes: usize,
+    reached_end: bool,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl BackgroundTextReader {
+    fn new(mut source: Box<dyn BufRead + Send>) -> Result<Self> {
+        let (message_sender, message_receiver) = sync_channel(BACKGROUND_READ_QUEUE_SIZE);
+        let (recycled_buffer_sender, recycled_buffer_receiver) =
+            sync_channel(BACKGROUND_READ_QUEUE_SIZE);
+        let worker = thread::Builder::new()
+            .name("cfdnalab-text-reader".to_string())
+            .spawn(move || {
+                loop {
+                    let mut buffer = match recycled_buffer_receiver.try_recv() {
+                        Ok(buffer) => buffer,
+                        Err(TryRecvError::Empty) => vec![0; BACKGROUND_READ_CHUNK_SIZE],
+                        Err(TryRecvError::Disconnected) => return,
+                    };
+                    match source.read(&mut buffer) {
+                        Ok(0) => {
+                            let _ = message_sender.send(BackgroundReadMessage::End);
+                            return;
+                        }
+                        Ok(bytes_read) => {
+                            if message_sender
+                                .send(BackgroundReadMessage::Data {
+                                    buffer,
+                                    valid_bytes: bytes_read,
+                                })
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
+                        Err(error) => {
+                            let _ = message_sender.send(BackgroundReadMessage::Error(error));
+                            return;
+                        }
+                    }
+                }
+            })
+            .context("starting background text reader")?;
+
+        Ok(Self {
+            messages: Some(message_receiver),
+            recycled_buffers: recycled_buffer_sender,
+            current_buffer: Vec::new(),
+            current_position: 0,
+            current_valid_bytes: 0,
+            reached_end: false,
+            worker: Some(worker),
+        })
+    }
+
+    fn receive_next_buffer(&mut self) -> io::Result<bool> {
+        if !self.current_buffer.is_empty() {
+            let previous_buffer = std::mem::take(&mut self.current_buffer);
+            let _ = self.recycled_buffers.try_send(previous_buffer);
+            self.current_position = 0;
+            self.current_valid_bytes = 0;
         }
+
+        let message = self
+            .messages
+            .as_ref()
+            .expect("background reader message receiver missing")
+            .recv()
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "background text reader stopped before reporting end of input",
+                )
+            })?;
+        match message {
+            BackgroundReadMessage::Data {
+                buffer,
+                valid_bytes,
+            } => {
+                self.current_buffer = buffer;
+                self.current_valid_bytes = valid_bytes;
+                Ok(true)
+            }
+            BackgroundReadMessage::Error(error) => {
+                self.reached_end = true;
+                Err(error)
+            }
+            BackgroundReadMessage::End => {
+                self.reached_end = true;
+                Ok(false)
+            }
+        }
+    }
+}
+
+impl Read for BackgroundTextReader {
+    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        if output.is_empty() {
+            return Ok(0);
+        }
+
+        let bytes_to_copy = {
+            let available = self.fill_buf()?;
+            let bytes_to_copy = available.len().min(output.len());
+            output[..bytes_to_copy].copy_from_slice(&available[..bytes_to_copy]);
+            bytes_to_copy
+        };
+        self.consume(bytes_to_copy);
+        Ok(bytes_to_copy)
+    }
+}
+
+impl BufRead for BackgroundTextReader {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        if !self.reached_end
+            && self.current_position == self.current_valid_bytes
+            && !self.receive_next_buffer()?
+        {
+            return Ok(&[]);
+        }
+        Ok(&self.current_buffer[self.current_position..self.current_valid_bytes])
+    }
+
+    fn consume(&mut self, amount: usize) {
+        self.current_position = self
+            .current_position
+            .saturating_add(amount)
+            .min(self.current_valid_bytes);
+    }
+}
+
+impl Drop for BackgroundTextReader {
+    fn drop(&mut self) {
+        // Disconnect the queue before joining so a producer blocked on a full queue can stop
+        self.messages.take();
+        if let Some(worker) = self.worker.take()
+            && worker.join().is_err()
+            && !thread::panicking()
+        {
+            tracing::warn!("Background text reader thread panicked");
+        }
+    }
+}
+
+/// Ask Linux to use a larger readahead window for a sequential text stream.
+///
+/// This is only a performance hint. A failure should not prevent the caller from reading an
+/// otherwise valid file, but it is reported so an unsupported or unexpected platform setup is
+/// visible to the user.
+#[cfg(target_os = "linux")]
+fn advise_sequential_access(file: &File, path: &Path) {
+    use std::os::fd::AsRawFd;
+
+    // posix_fadvise returns the error number directly instead of setting errno
+    let error_code =
+        unsafe { libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_SEQUENTIAL) };
+    if error_code != 0 {
+        let error = std::io::Error::from_raw_os_error(error_code);
+        tracing::warn!(
+            "Could not enable sequential file readahead for {}: {}",
+            path.display(),
+            error
+        );
     }
 }
 

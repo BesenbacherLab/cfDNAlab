@@ -28,7 +28,7 @@ pub(crate) mod indel_mode;
 pub(crate) mod interval;
 pub(crate) mod io;
 pub(crate) mod iterator_counter;
-#[cfg(any(feature = "cmd_ends", feature = "cmd_fragment_kmers"))]
+#[cfg(uses_kmers)]
 pub(crate) mod kmers;
 #[cfg(any(feature = "cmd_lengths", feature = "cmd_midpoints"))]
 pub(crate) mod length_axis;
@@ -71,6 +71,7 @@ pub(crate) mod window_fetch;
     feature = "cmd_fragment_kmers",
     feature = "cmd_lengths",
     feature = "cmd_gc_bias",
+    feature = "cmd_ref_kmers",
     feature = "cmd_wps",
     feature = "cmd_wps_peaks"
 ))]
@@ -80,7 +81,8 @@ pub(crate) mod writers;
 #[cfg(any(
     feature = "cmd_ends",
     feature = "cmd_gc_bias",
-    feature = "cmd_midpoints"
+    feature = "cmd_midpoints",
+    feature = "cmd_ref_kmers"
 ))]
 pub(crate) mod zarr;
 // Plotting helpers gated behind the plotters feature

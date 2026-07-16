@@ -52,7 +52,7 @@ pub struct RefGCBiasConfig {
     )]
     pub output_prefix: String,
 
-    /// Number of threads to use (increases RAM usage) [integer]
+    /// Number of threads to use (increases RAM usage) `[integer]`
     ///
     /// Defaults to the number of available CPU cores (-1).
     #[cfg_attr(
@@ -66,7 +66,7 @@ pub struct RefGCBiasConfig {
     )]
     pub n_threads: usize,
 
-    /// Number of genomic starting positions to sample [integer]
+    /// Number of genomic starting positions to sample `[integer]`
     ///
     /// The positions are uniformly sampled across the chromosomes
     /// with the GC of each fragment length being counted from

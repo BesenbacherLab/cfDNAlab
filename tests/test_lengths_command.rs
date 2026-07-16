@@ -618,6 +618,575 @@ mod tests_lengths_command {
         Ok(())
     }
 
+    mod mixed_size_overlap_assignment_tests {
+        use super::*;
+
+        fn mixed_size_overlap_fragments() -> Result<Vec<FragmentSpec>> {
+            // Eight normal paired fragments, all with directional spans
+            // `[start, start + 1000)`. The starts cross multiple tile cores so
+            // covering windows need to stay visible while category-specific
+            // pointers advance.
+            Ok(vec![
+                PairedFragmentSpec::new(0, 1_000_000, 1_000, 100).build()?,
+                PairedFragmentSpec::new(0, 1_125_000, 1_000, 100).build()?,
+                PairedFragmentSpec::new(0, 1_250_000, 1_000, 100).build()?,
+                PairedFragmentSpec::new(0, 1_500_000, 1_000, 100).build()?,
+                PairedFragmentSpec::new(0, 1_875_000, 1_000, 100).build()?,
+                PairedFragmentSpec::new(0, 2_000_000, 1_000, 100).build()?,
+                PairedFragmentSpec::new(0, 2_250_000, 1_000, 100).build()?,
+                PairedFragmentSpec::new(0, 2_750_000, 1_000, 100).build()?,
+            ])
+        }
+
+        /// Return the BED rows used by the mixed-size overlap assignment tests.
+        ///
+        /// The letter in names such as `narrow_A_middle` maps to the paired fragments from
+        /// `mixed_size_overlap_fragments` in order:
+        /// A = 1,000,000, B = 1,125,000, C = 1,250,000, D = 1,500,000,
+        /// E = 1,875,000, F = 2,000,000, G = 2,250,000, H = 2,750,000.
+        /// Every fragment is 1000 bp, so these are also the fragment starts.
+        ///
+        /// Suffixes describe the expected overlap case. `full` covers the whole fragment,
+        /// `middle` covers an internal slice, `left_half` and `right_half` cover 500 bp,
+        /// and suffixes such as `right_250` name the expected count-overlap bases.
+        /// Rows named `covering` exercise windows that cover the tile plus reach, while
+        /// `broad` and `narrow` exercise the >=100 kb split boundary.
+        fn mixed_size_overlap_windows() -> Vec<Bed4Row> {
+            vec![
+                Bed4Row::new("chr1", 0, 4_000_000, "covering_all"),
+                Bed4Row::new("chr1", 999_000, 2_001_000, "covering_tile1_reach"),
+                Bed4Row::new("chr1", 1_000_500, 1_000_800, "narrow_A_middle"),
+                Bed4Row::new("chr1", 1_124_500, 1_125_500, "narrow_B_left_half"),
+                Bed4Row::new("chr1", 1_200_000, 1_300_000, "broad_100kb_C_full"),
+                Bed4Row::new("chr1", 1_200_001, 1_300_000, "narrow_99999_C_full"),
+                Bed4Row::new("chr1", 1_250_750, 1_350_750, "broad_C_right_250"),
+                Bed4Row::new("chr1", 1_250_800, 1_350_799, "narrow_C_right_200"),
+                Bed4Row::new("chr1", 1_499_000, 1_501_000, "narrow_D_full_2kb"),
+                Bed4Row::new("chr1", 1_500_250, 1_500_750, "narrow_D_middle"),
+                Bed4Row::new("chr1", 1_874_000, 2_001_000, "broad_E_F_full"),
+                Bed4Row::new("chr1", 1_875_900, 1_975_900, "broad_E_right_100"),
+                Bed4Row::new("chr1", 1_875_901, 1_975_900, "narrow_E_right_99"),
+                Bed4Row::new("chr1", 1_999_000, 3_001_000, "covering_tile2_reach"),
+                Bed4Row::new("chr1", 2_000_000, 2_001_000, "narrow_F_exact"),
+                Bed4Row::new("chr1", 2_250_500, 2_250_700, "narrow_G_middle"),
+                Bed4Row::new("chr1", 2_749_500, 2_750_500, "narrow_H_left_half"),
+                Bed4Row::new("chr1", 2_750_500, 2_850_500, "broad_H_right_half"),
+                Bed4Row::new("chr1", 2_751_000, 2_751_200, "touching_H_end"),
+                Bed4Row::new("chr1", 3_100_000, 3_200_000, "empty_broad_after"),
+            ]
+        }
+
+        fn mixed_size_overlap_grouped_windows() -> Vec<Bed4Row> {
+            vec![
+                Bed4Row::new("chr1", 0, 4_000_000, "covering"),
+                Bed4Row::new("chr1", 999_000, 2_001_000, "covering"),
+                Bed4Row::new("chr1", 1_000_500, 1_000_800, "narrow"),
+                Bed4Row::new("chr1", 1_124_500, 1_125_500, "narrow"),
+                Bed4Row::new("chr1", 1_200_000, 1_300_000, "broad"),
+                Bed4Row::new("chr1", 1_200_001, 1_300_000, "narrow"),
+                Bed4Row::new("chr1", 1_250_750, 1_350_750, "broad"),
+                Bed4Row::new("chr1", 1_250_800, 1_350_799, "narrow"),
+                Bed4Row::new("chr1", 1_499_000, 1_501_000, "narrow"),
+                Bed4Row::new("chr1", 1_500_250, 1_500_750, "narrow"),
+                Bed4Row::new("chr1", 1_874_000, 2_001_000, "broad"),
+                Bed4Row::new("chr1", 1_875_900, 1_975_900, "broad"),
+                Bed4Row::new("chr1", 1_875_901, 1_975_900, "narrow"),
+                Bed4Row::new("chr1", 1_999_000, 3_001_000, "covering"),
+                Bed4Row::new("chr1", 2_000_000, 2_001_000, "narrow"),
+                Bed4Row::new("chr1", 2_250_500, 2_250_700, "narrow"),
+                Bed4Row::new("chr1", 2_749_500, 2_750_500, "narrow"),
+                Bed4Row::new("chr1", 2_750_500, 2_850_500, "broad"),
+                Bed4Row::new("chr1", 2_751_000, 2_751_200, "touching"),
+                Bed4Row::new("chr1", 3_100_000, 3_200_000, "empty"),
+            ]
+        }
+
+        fn mixed_size_midpoint_windows() -> Vec<Bed4Row> {
+            vec![
+                Bed4Row::new("chr1", 0, 4_000_000, "covering_all"),
+                Bed4Row::new("chr1", 999_000, 2_001_000, "covering_tile1_reach"),
+                Bed4Row::new("chr1", 1_000_499, 1_000_501, "narrow_A_midpoint"),
+                Bed4Row::new("chr1", 1_200_000, 1_300_000, "broad_100kb_C_midpoint"),
+                Bed4Row::new("chr1", 1_200_001, 1_300_000, "narrow_99999_C_midpoint"),
+                Bed4Row::new("chr1", 1_500_000, 1_500_499, "narrow_D_before_midpoint"),
+                Bed4Row::new("chr1", 1_500_499, 1_500_501, "narrow_D_midpoint"),
+                Bed4Row::new("chr1", 1_875_900, 1_975_900, "broad_E_right_no_midpoint"),
+                Bed4Row::new("chr1", 1_999_000, 3_001_000, "covering_tile2_reach"),
+                Bed4Row::new("chr1", 2_750_499, 2_750_501, "narrow_H_midpoint"),
+                Bed4Row::new("chr1", 2_751_000, 2_751_200, "touching_H_end"),
+            ]
+        }
+
+        fn mixed_size_midpoint_grouped_windows() -> Vec<Bed4Row> {
+            vec![
+                Bed4Row::new("chr1", 0, 4_000_000, "covering"),
+                Bed4Row::new("chr1", 999_000, 2_001_000, "covering"),
+                Bed4Row::new("chr1", 1_000_499, 1_000_501, "narrow"),
+                Bed4Row::new("chr1", 1_200_000, 1_300_000, "broad"),
+                Bed4Row::new("chr1", 1_200_001, 1_300_000, "narrow"),
+                Bed4Row::new("chr1", 1_500_000, 1_500_499, "narrow"),
+                Bed4Row::new("chr1", 1_500_499, 1_500_501, "narrow"),
+                Bed4Row::new("chr1", 1_875_900, 1_975_900, "broad"),
+                Bed4Row::new("chr1", 1_999_000, 3_001_000, "covering"),
+                Bed4Row::new("chr1", 2_750_499, 2_750_501, "narrow"),
+                Bed4Row::new("chr1", 2_751_000, 2_751_200, "touching"),
+            ]
+        }
+
+        fn expected_mixed_size_overlap_counts() -> [f64; 20] {
+            [
+                8.0, 6.0, 0.3, 0.5, 1.0, 1.0, 0.25, 0.2, 1.0, 0.5, 2.0, 0.1, 0.099, 3.0, 1.0, 0.2,
+                0.5, 0.5, 0.0, 0.0,
+            ]
+        }
+
+        fn expected_mixed_size_any_counts() -> [f64; 20] {
+            [
+                8.0, 6.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0, 1.0, 1.0, 3.0, 1.0, 1.0,
+                1.0, 1.0, 0.0, 0.0,
+            ]
+        }
+
+        fn expected_mixed_size_all_counts() -> [f64; 20] {
+            [
+                8.0, 6.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 2.0, 0.0, 0.0, 3.0, 1.0, 0.0,
+                0.0, 0.0, 0.0, 0.0,
+            ]
+        }
+
+        fn expected_mixed_size_proportion_half_counts() -> [f64; 20] {
+            [
+                8.0, 6.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 2.0, 0.0, 0.0, 3.0, 1.0, 0.0,
+                1.0, 1.0, 0.0, 0.0,
+            ]
+        }
+
+        fn expected_mixed_size_midpoint_counts() -> [f64; 11] {
+            [8.0, 6.0, 1.0, 1.0, 1.0, 0.0, 1.0, 0.0, 3.0, 1.0, 0.0]
+        }
+
+        fn assert_length_count_column_close(arr: &Array2<f64>, expected_counts: &[f64]) {
+            assert_eq!(arr.shape(), &[expected_counts.len(), 1]);
+            for (row_index, expected_count) in expected_counts.iter().copied().enumerate() {
+                assert!(
+                    (arr[(row_index, 0)] - expected_count).abs() < 1e-12,
+                    "row {row_index}: observed {}, expected {expected_count}",
+                    arr[(row_index, 0)]
+                );
+            }
+        }
+
+        #[test]
+        fn bed_count_overlap_counts_mixed_covering_broad_and_narrow_windows() -> Result<()> {
+            // Arrange:
+            // - eight paired fragments span `[start, start + 1000)` across two tile cores
+            // - BED rows are deliberately mixed:
+            //   - covering rows span all fragments or whole tile+reach regions
+            //   - broad rows include exact 100 kb and larger spans
+            //   - narrow rows include 99,999 bp and much smaller spans
+            //   - touching and empty rows must stay zero
+            let bam = bam_from_fragments(
+                "lengths_mixed_broad_narrow_bed_windows",
+                vec![("chr1".to_string(), 4_000_000)],
+                mixed_size_overlap_fragments()?,
+                Vec::new(),
+            )?;
+            let out_dir = TempDir::new()?;
+            let bed_path = out_dir.path().join("mixed_broad_narrow_windows.bed");
+            let windows = mixed_size_overlap_windows();
+            write_bed4(&bed_path, &windows)?;
+
+            let mut cfg = LengthsConfig::new(
+                IOCArgs {
+                    bam: bam.bam.clone(),
+                    output_dir: out_dir.path().to_path_buf(),
+                    n_threads: 1,
+                },
+                base_chromosomes(&["chr1"]),
+            );
+            cfg.set_indel_mode(IndelMode::Ignore);
+            cfg.set_windows(DistributionWindowsArgs {
+                by_size: None,
+                by_bed: Some(bed_path),
+                by_grouped_bed: None,
+            });
+            cfg.set_window_assignment(AssignToWindowArgs {
+                assign_by: WindowAssigner::CountOverlap,
+            });
+            cfg.set_min_mapq(0);
+            cfg.set_require_proper_pair(false);
+            cfg.set_tile_size(1_000_000);
+            cfg.set_per_bp_length_bins(1_000, 1_000);
+
+            // Act
+            let result = run(&cfg)?;
+            let arr: Array2<f64> = read_length_counts_tsv(&result.length_counts_path)?;
+            let metadata =
+                parse_window_metadata_rows(&read_length_counts_text(&result.length_counts_path)?);
+
+            // Assert: count-overlap uses overlap_bp / fragment_length_bp, with half-open intervals.
+            assert_eq!(
+                metadata
+                    .into_iter()
+                    .map(|(chrom, start, end, _)| (chrom, start, end))
+                    .collect::<Vec<_>>(),
+                windows
+                    .iter()
+                    .map(|row| (row.chrom.clone(), row.start, row.end))
+                    .collect::<Vec<_>>()
+            );
+            let expected_counts = expected_mixed_size_overlap_counts();
+            assert_length_count_column_close(&arr, &expected_counts);
+            assert!((arr.sum() - 26.149).abs() < 1e-12);
+            Ok(())
+        }
+
+        #[test]
+        fn bed_mixed_size_windows_use_expected_non_weighted_assignment_modes() -> Result<()> {
+            // Arrange:
+            // - `any` accepts every row with at least one overlapping fragment base
+            // - `all` accepts only rows covering a full 1000 bp fragment span
+            // - `proportion=0.5` accepts rows covering at least half of a fragment
+            // Accepted rows count with full fragment weight in these modes.
+            let cases = [
+                (
+                    "any",
+                    WindowAssigner::Any,
+                    expected_mixed_size_any_counts(),
+                    33.0,
+                ),
+                (
+                    "all",
+                    WindowAssigner::All,
+                    expected_mixed_size_all_counts(),
+                    23.0,
+                ),
+                (
+                    "proportion_half",
+                    WindowAssigner::Proportion(0.5),
+                    expected_mixed_size_proportion_half_counts(),
+                    27.0,
+                ),
+            ];
+
+            for (case_name, assign_by, expected_counts, expected_sum) in cases {
+                let bam = bam_from_fragments(
+                    &format!("lengths_mixed_assignment_{case_name}"),
+                    vec![("chr1".to_string(), 4_000_000)],
+                    mixed_size_overlap_fragments()?,
+                    Vec::new(),
+                )?;
+                let out_dir = TempDir::new()?;
+                let bed_path = out_dir
+                    .path()
+                    .join(format!("mixed_assignment_{case_name}.bed"));
+                write_bed4(&bed_path, &mixed_size_overlap_windows())?;
+
+                let mut cfg = LengthsConfig::new(
+                    IOCArgs {
+                        bam: bam.bam.clone(),
+                        output_dir: out_dir.path().to_path_buf(),
+                        n_threads: 1,
+                    },
+                    base_chromosomes(&["chr1"]),
+                );
+                cfg.set_indel_mode(IndelMode::Ignore);
+                cfg.set_windows(DistributionWindowsArgs {
+                    by_size: None,
+                    by_bed: Some(bed_path),
+                    by_grouped_bed: None,
+                });
+                cfg.set_window_assignment(AssignToWindowArgs { assign_by });
+                cfg.set_min_mapq(0);
+                cfg.set_require_proper_pair(false);
+                cfg.set_tile_size(1_000_000);
+                cfg.set_per_bp_length_bins(1_000, 1_000);
+
+                // Act
+                let result = run(&cfg)?;
+                let arr: Array2<f64> = read_length_counts_tsv(&result.length_counts_path)?;
+
+                // Assert
+                assert_length_count_column_close(&arr, &expected_counts);
+                assert!(
+                    (arr.sum() - expected_sum).abs() < 1e-12,
+                    "{case_name}: observed total {}, expected {expected_sum}",
+                    arr.sum()
+                );
+            }
+
+            Ok(())
+        }
+
+        #[test]
+        fn bed_midpoint_uses_mixed_size_windows_with_expected_center_hits() -> Result<()> {
+            // Arrange: even-length fragments choose one of the two center bases, so rows intended to
+            // count a midpoint cover both possible center positions. Rows that overlap the fragment
+            // but miss both center positions must stay zero.
+            let bam = bam_from_fragments(
+                "lengths_mixed_midpoint_assignment",
+                vec![("chr1".to_string(), 4_000_000)],
+                mixed_size_overlap_fragments()?,
+                Vec::new(),
+            )?;
+            let out_dir = TempDir::new()?;
+            let bed_path = out_dir.path().join("mixed_midpoint_windows.bed");
+            write_bed4(&bed_path, &mixed_size_midpoint_windows())?;
+
+            let mut cfg = LengthsConfig::new(
+                IOCArgs {
+                    bam: bam.bam.clone(),
+                    output_dir: out_dir.path().to_path_buf(),
+                    n_threads: 1,
+                },
+                base_chromosomes(&["chr1"]),
+            );
+            cfg.set_indel_mode(IndelMode::Ignore);
+            cfg.set_windows(DistributionWindowsArgs {
+                by_size: None,
+                by_bed: Some(bed_path),
+                by_grouped_bed: None,
+            });
+            cfg.set_window_assignment(AssignToWindowArgs {
+                assign_by: WindowAssigner::Midpoint,
+            });
+            cfg.set_min_mapq(0);
+            cfg.set_require_proper_pair(false);
+            cfg.set_tile_size(1_000_000);
+            cfg.set_per_bp_length_bins(1_000, 1_000);
+
+            // Act
+            let result = run(&cfg)?;
+            let arr: Array2<f64> = read_length_counts_tsv(&result.length_counts_path)?;
+
+            // Assert
+            let expected_counts = expected_mixed_size_midpoint_counts();
+            assert_length_count_column_close(&arr, &expected_counts);
+            assert!((arr.sum() - 22.0).abs() < 1e-12);
+            Ok(())
+        }
+
+        #[test]
+        fn grouped_bed_count_overlap_counts_mixed_covering_broad_and_narrow_windows() -> Result<()>
+        {
+            // Arrange: this reuses the same spans as the windowed BED case, but groups rows by
+            // category. The expected grouped counts are direct sums of the row-level expectations:
+            // covering = 8 + 6 + 3 = 17
+            // narrow = 0.3 + 0.5 + 1 + 0.2 + 1 + 0.5 + 0.099 + 1 + 0.2 + 0.5 = 5.299
+            // broad = 1 + 0.25 + 2 + 0.1 + 0.5 = 3.85
+            let bam = bam_from_fragments(
+                "lengths_grouped_mixed_broad_narrow_bed_windows",
+                vec![("chr1".to_string(), 4_000_000)],
+                mixed_size_overlap_fragments()?,
+                Vec::new(),
+            )?;
+            let out_dir = TempDir::new()?;
+            let grouped_bed = out_dir
+                .path()
+                .join("mixed_broad_narrow_grouped_windows.bed");
+            write_bed4(&grouped_bed, &mixed_size_overlap_grouped_windows())?;
+
+            let mut cfg = LengthsConfig::new(
+                IOCArgs {
+                    bam: bam.bam.clone(),
+                    output_dir: out_dir.path().to_path_buf(),
+                    n_threads: 1,
+                },
+                base_chromosomes(&["chr1"]),
+            );
+            cfg.set_indel_mode(IndelMode::Ignore);
+            cfg.set_windows(DistributionWindowsArgs {
+                by_size: None,
+                by_bed: None,
+                by_grouped_bed: Some(grouped_bed),
+            });
+            cfg.set_window_assignment(AssignToWindowArgs {
+                assign_by: WindowAssigner::CountOverlap,
+            });
+            cfg.set_min_mapq(0);
+            cfg.set_require_proper_pair(false);
+            cfg.set_tile_size(1_000_000);
+            cfg.set_per_bp_length_bins(1_000, 1_000);
+
+            // Act
+            let result = run(&cfg)?;
+            let arr: Array2<f64> = read_length_counts_tsv(&result.length_counts_path)?;
+            let group_index = read_length_counts_text(&result.length_counts_path)?;
+
+            // Assert
+            assert_eq!(
+                parse_group_index_tsv(&group_index),
+                vec![
+                    (0, "covering".to_string()),
+                    (1, "narrow".to_string()),
+                    (2, "broad".to_string()),
+                    (3, "touching".to_string()),
+                    (4, "empty".to_string()),
+                ]
+            );
+            assert_eq!(arr.shape(), &[5, 1]);
+            let expected_group_counts = [17.0, 5.299, 3.85, 0.0, 0.0];
+            for (row_index, expected_count) in expected_group_counts.into_iter().enumerate() {
+                assert!(
+                    (arr[(row_index, 0)] - expected_count).abs() < 1e-12,
+                    "group row {row_index}: observed {}, expected {expected_count}",
+                    arr[(row_index, 0)]
+                );
+            }
+            assert!((arr.sum() - 26.149).abs() < 1e-12);
+            Ok(())
+        }
+
+        #[test]
+        fn grouped_bed_mixed_size_windows_use_expected_non_weighted_assignment_modes() -> Result<()>
+        {
+            // Arrange: grouped outputs should sum the same accepted window contributions by group
+            // without changing the assignment rule. The group order follows first occurrence in the
+            // grouped BED scan.
+            // Group order is covering, narrow, broad, touching, empty:
+            // any = (8 + 6 + 3), ten one-fragment narrow rows, and (1 + 1 + 2 + 1 + 1)
+            // broad rows.
+            // all = the same covering rows, narrow C/D/F full rows, and broad C plus E/F rows.
+            // proportion_half = the same covering rows, narrow B/C/D/D_middle/F/H rows, and
+            // broad C plus E/F plus H rows.
+            let cases = [
+                (
+                    "any",
+                    WindowAssigner::Any,
+                    [17.0, 10.0, 6.0, 0.0, 0.0],
+                    33.0,
+                ),
+                ("all", WindowAssigner::All, [17.0, 3.0, 3.0, 0.0, 0.0], 23.0),
+                (
+                    "proportion_half",
+                    WindowAssigner::Proportion(0.5),
+                    [17.0, 6.0, 4.0, 0.0, 0.0],
+                    27.0,
+                ),
+            ];
+
+            for (case_name, assign_by, expected_counts, expected_sum) in cases {
+                let bam = bam_from_fragments(
+                    &format!("lengths_grouped_mixed_assignment_{case_name}"),
+                    vec![("chr1".to_string(), 4_000_000)],
+                    mixed_size_overlap_fragments()?,
+                    Vec::new(),
+                )?;
+                let out_dir = TempDir::new()?;
+                let grouped_bed = out_dir
+                    .path()
+                    .join(format!("mixed_grouped_assignment_{case_name}.bed"));
+                write_bed4(&grouped_bed, &mixed_size_overlap_grouped_windows())?;
+
+                let mut cfg = LengthsConfig::new(
+                    IOCArgs {
+                        bam: bam.bam.clone(),
+                        output_dir: out_dir.path().to_path_buf(),
+                        n_threads: 1,
+                    },
+                    base_chromosomes(&["chr1"]),
+                );
+                cfg.set_indel_mode(IndelMode::Ignore);
+                cfg.set_windows(DistributionWindowsArgs {
+                    by_size: None,
+                    by_bed: None,
+                    by_grouped_bed: Some(grouped_bed),
+                });
+                cfg.set_window_assignment(AssignToWindowArgs { assign_by });
+                cfg.set_min_mapq(0);
+                cfg.set_require_proper_pair(false);
+                cfg.set_tile_size(1_000_000);
+                cfg.set_per_bp_length_bins(1_000, 1_000);
+
+                // Act
+                let result = run(&cfg)?;
+                let arr: Array2<f64> = read_length_counts_tsv(&result.length_counts_path)?;
+                let group_index = read_length_counts_text(&result.length_counts_path)?;
+
+                // Assert
+                assert_eq!(
+                    parse_group_index_tsv(&group_index),
+                    vec![
+                        (0, "covering".to_string()),
+                        (1, "narrow".to_string()),
+                        (2, "broad".to_string()),
+                        (3, "touching".to_string()),
+                        (4, "empty".to_string()),
+                    ]
+                );
+                assert_length_count_column_close(&arr, &expected_counts);
+                assert!(
+                    (arr.sum() - expected_sum).abs() < 1e-12,
+                    "{case_name}: observed total {}, expected {expected_sum}",
+                    arr.sum()
+                );
+            }
+
+            Ok(())
+        }
+
+        #[test]
+        fn grouped_bed_midpoint_uses_mixed_size_windows_with_expected_center_hits() -> Result<()> {
+            // Arrange: grouped midpoint output should sum the same center-hit rows as the windowed
+            // midpoint case without assigning tail-only overlap rows.
+            let bam = bam_from_fragments(
+                "lengths_grouped_mixed_midpoint_assignment",
+                vec![("chr1".to_string(), 4_000_000)],
+                mixed_size_overlap_fragments()?,
+                Vec::new(),
+            )?;
+            let out_dir = TempDir::new()?;
+            let grouped_bed = out_dir.path().join("mixed_grouped_midpoint_windows.bed");
+            write_bed4(&grouped_bed, &mixed_size_midpoint_grouped_windows())?;
+
+            let mut cfg = LengthsConfig::new(
+                IOCArgs {
+                    bam: bam.bam.clone(),
+                    output_dir: out_dir.path().to_path_buf(),
+                    n_threads: 1,
+                },
+                base_chromosomes(&["chr1"]),
+            );
+            cfg.set_indel_mode(IndelMode::Ignore);
+            cfg.set_windows(DistributionWindowsArgs {
+                by_size: None,
+                by_bed: None,
+                by_grouped_bed: Some(grouped_bed),
+            });
+            cfg.set_window_assignment(AssignToWindowArgs {
+                assign_by: WindowAssigner::Midpoint,
+            });
+            cfg.set_min_mapq(0);
+            cfg.set_require_proper_pair(false);
+            cfg.set_tile_size(1_000_000);
+            cfg.set_per_bp_length_bins(1_000, 1_000);
+
+            // Act
+            let result = run(&cfg)?;
+            let arr: Array2<f64> = read_length_counts_tsv(&result.length_counts_path)?;
+            let group_index = read_length_counts_text(&result.length_counts_path)?;
+
+            // Assert
+            assert_eq!(
+                parse_group_index_tsv(&group_index),
+                vec![
+                    (0, "covering".to_string()),
+                    (1, "narrow".to_string()),
+                    (2, "broad".to_string()),
+                    (3, "touching".to_string()),
+                ]
+            );
+            // Group order is covering, narrow, broad, touching:
+            // covering = 8 + 6 + 3 = 17
+            // narrow = A + C + D + H midpoint rows = 4
+            // broad = C midpoint row = 1
+            // touching misses the fragment midpoint = 0
+            assert_length_count_column_close(&arr, &[17.0, 4.0, 1.0, 0.0]);
+            assert!((arr.sum() - 22.0).abs() < 1e-12);
+            Ok(())
+        }
+    }
+
     #[test]
     fn bed_windowing_counts_a_right_halo_only_window_reached_by_an_owned_fragment() -> Result<()> {
         // Arrange:

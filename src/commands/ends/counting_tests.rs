@@ -9,7 +9,7 @@ fn spec_for_k(k: u8) -> KmerSpec {
 #[test]
 fn end_motif_counts_skips_zeroish_weights_and_rejects_negative_weights() -> anyhow::Result<()> {
     // Arrange: this key is valid, so only the weight controls whether sparse storage is updated.
-    let key = EncodedEndMotifKey {
+    let key = EncodedMotifKey {
         inside_code: 1,
         outside_code: 2,
         reverse_on_decode: false,
@@ -44,7 +44,7 @@ fn decode_full_motif_keeps_left_end_in_storage_order() {
     // Arrange: left-end storage order is outside || inside.
     let inside_spec = spec_for_k(2);
     let outside_spec = spec_for_k(2);
-    let key = EncodedEndMotifKey {
+    let key = EncodedMotifKey {
         inside_code: inside_spec.encode_kmer_bytes(b"GT"),
         outside_code: outside_spec.encode_kmer_bytes(b"AC"),
         reverse_on_decode: false,
@@ -63,7 +63,7 @@ fn decode_full_motif_reverse_complements_right_end() {
     // "AAAC" reverse-complements to "GTTT".
     let inside_spec = spec_for_k(2);
     let outside_spec = spec_for_k(2);
-    let key = EncodedEndMotifKey {
+    let key = EncodedMotifKey {
         inside_code: inside_spec.encode_kmer_bytes(b"AA"),
         outside_code: outside_spec.encode_kmer_bytes(b"AC"),
         reverse_on_decode: true,
@@ -86,7 +86,7 @@ fn decode_end_motif_counts_collapses_same_orientation_complements_when_requested
     let inside_spec = spec_for_k(2);
     let mut counts = EndMotifCounts::new();
     counts.incr_weighted(
-        EncodedEndMotifKey {
+        EncodedMotifKey {
             inside_code: inside_spec.encode_kmer_bytes(b"GT"),
             outside_code: 0,
             reverse_on_decode: false,
@@ -94,7 +94,7 @@ fn decode_end_motif_counts_collapses_same_orientation_complements_when_requested
         1.5,
     );
     counts.incr_weighted(
-        EncodedEndMotifKey {
+        EncodedMotifKey {
             inside_code: inside_spec.encode_kmer_bytes(b"CA"),
             outside_code: 0,
             reverse_on_decode: false,
@@ -123,7 +123,7 @@ fn decode_end_motif_counts_collapses_same_orientation_complements_after_right_en
     let inside_spec = spec_for_k(2);
     let mut counts = EndMotifCounts::new();
     counts.incr_weighted(
-        EncodedEndMotifKey {
+        EncodedMotifKey {
             inside_code: inside_spec.encode_kmer_bytes(b"AC"),
             outside_code: 0,
             reverse_on_decode: true,
@@ -131,7 +131,7 @@ fn decode_end_motif_counts_collapses_same_orientation_complements_after_right_en
         1.25,
     );
     counts.incr_weighted(
-        EncodedEndMotifKey {
+        EncodedMotifKey {
             inside_code: inside_spec.encode_kmer_bytes(b"TG"),
             outside_code: 0,
             reverse_on_decode: true,
@@ -160,7 +160,7 @@ fn decode_end_motif_counts_preserves_outside_inside_order_when_collapsing_combin
     let outside_spec = spec_for_k(1);
     let mut counts = EndMotifCounts::new();
     counts.incr_weighted(
-        EncodedEndMotifKey {
+        EncodedMotifKey {
             inside_code: inside_spec.encode_kmer_bytes(b"TA"),
             outside_code: outside_spec.encode_kmer_bytes(b"G"),
             reverse_on_decode: false,
@@ -168,7 +168,7 @@ fn decode_end_motif_counts_preserves_outside_inside_order_when_collapsing_combin
         1.25,
     );
     counts.incr_weighted(
-        EncodedEndMotifKey {
+        EncodedMotifKey {
             inside_code: inside_spec.encode_kmer_bytes(b"AT"),
             outside_code: outside_spec.encode_kmer_bytes(b"G"),
             reverse_on_decode: true,
@@ -201,7 +201,7 @@ fn decode_end_motif_counts_preserves_outside_inside_order_for_multi_base_2_plus_
     let outside_spec = spec_for_k(2);
     let mut counts = EndMotifCounts::new();
     counts.incr_weighted(
-        EncodedEndMotifKey {
+        EncodedMotifKey {
             inside_code: inside_spec.encode_kmer_bytes(b"AC"),
             outside_code: outside_spec.encode_kmer_bytes(b"GT"),
             reverse_on_decode: false,
@@ -209,7 +209,7 @@ fn decode_end_motif_counts_preserves_outside_inside_order_for_multi_base_2_plus_
         1.25,
     );
     counts.incr_weighted(
-        EncodedEndMotifKey {
+        EncodedMotifKey {
             inside_code: inside_spec.encode_kmer_bytes(b"CA"),
             outside_code: outside_spec.encode_kmer_bytes(b"TG"),
             reverse_on_decode: true,
@@ -217,7 +217,7 @@ fn decode_end_motif_counts_preserves_outside_inside_order_for_multi_base_2_plus_
         2.25,
     );
     counts.incr_weighted(
-        EncodedEndMotifKey {
+        EncodedMotifKey {
             inside_code: inside_spec.encode_kmer_bytes(b"CA"),
             outside_code: outside_spec.encode_kmer_bytes(b"TG"),
             reverse_on_decode: false,
@@ -225,7 +225,7 @@ fn decode_end_motif_counts_preserves_outside_inside_order_for_multi_base_2_plus_
         1.0,
     );
     counts.incr_weighted(
-        EncodedEndMotifKey {
+        EncodedMotifKey {
             inside_code: inside_spec.encode_kmer_bytes(b"AC"),
             outside_code: outside_spec.encode_kmer_bytes(b"GT"),
             reverse_on_decode: true,
@@ -248,7 +248,7 @@ fn decode_end_motif_counts_formats_outside_only_labels() {
     let outside_spec = spec_for_k(2);
     let mut counts = EndMotifCounts::new();
     counts.incr_weighted(
-        EncodedEndMotifKey {
+        EncodedMotifKey {
             inside_code: 0,
             outside_code: outside_spec.encode_kmer_bytes(b"AC"),
             reverse_on_decode: false,
@@ -270,7 +270,7 @@ fn decode_end_motif_counts_drops_motifs_with_n() {
     let inside_spec = spec_for_k(2);
     let mut counts = EndMotifCounts::new();
     counts.incr_weighted(
-        EncodedEndMotifKey {
+        EncodedMotifKey {
             inside_code: inside_spec.encode_kmer_bytes(b"AN"),
             outside_code: 0,
             reverse_on_decode: false,

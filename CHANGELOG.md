@@ -9,10 +9,24 @@ This is the changelog for the main CLI tool. You can find the changelog for the 
 
 ## Unreleased
 
- - The Rust `fcoverage` run result now includes grouped `group_index.tsv` sidecars in `output_files()` when they are written.
- - Adds missing blacklist setters on the Rust `LengthsConfig` API.
- - Adds minimal validation of BED files to catch obviously non-BED formats.
+**New command**:
 
+- Adds `cfdna ref-kmers` command for counting k-mers in the reference assembly for downstream normalization of k-mer counts.
+   - Adds loaders for `ref-kmers` output in R, Python and Rust.
+   - Adds reference k-mers correction to `ends` output loaders.
+
+**BREAKING CHANGES**:
+
+- Grouped motifs-file outputs now order motif groups alphabetically by group name.
+
+**Other changes**:
+
+ - Speeds up the window overlap detection algorithm used in `lengths` and `ends` when the `--by-bed`/`--by-grouped-bed` contain both broad and narrow windows that are nested.
+ - Adds minimal validation of BED files to catch obviously non-BED formats.
+ - Optimizes reading and parsing of BED-like files for improved runtime and RAM usage.
+ - Library: The Rust `fcoverage` run result now includes grouped `group_index.tsv` filepaths in `output_files()` when they are written.
+ - Library: Adds missing blacklist setters on the Rust `LengthsConfig` API.
+ 
 <br />
 
 ## cfDNAlab 0.5.0
@@ -20,7 +34,7 @@ This is the changelog for the main CLI tool. You can find the changelog for the 
 **BREAKING CHANGES**:
 
  - `cfdna fcoverage --normalize-by-length` is now actually called `--normalize-by-length` instead of `--normalize-by-length-mode`, matching the guides and documentation.
- - The Rust crate feature `cmd_ref_gc_bias` has been removed. Enable `cmd_gc_bias` to compile both the `gc-bias` and `ref-gc-bias` command APIs.
+ - The Rust crate feature `cmd_ref_gc_bias` has been removed. Enable `cmd_gc_bias` (on by default) to compile both the `gc-bias` and `ref-gc-bias` command APIs.
 
 **Other changes**:
 

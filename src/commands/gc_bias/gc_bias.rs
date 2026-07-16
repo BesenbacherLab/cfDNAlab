@@ -358,13 +358,25 @@ pub fn run_gc_bias(opt: &GCConfig, options: RunOptions) -> Result<GCBiasRunResul
     );
 
     // Load blacklist intervals if provided
-    let blacklist_map = load_blacklist_map(opt.blacklist.as_ref(), 1, 0, &chromosomes)?;
+    let blacklist_map = load_blacklist_map(
+        opt.blacklist.as_ref(),
+        1,
+        0,
+        &chromosomes,
+        opt.ioc.n_threads > 1,
+    )?;
 
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
             status_info!(options, target: COMMAND_TARGET, "Loading window coordinates");
-            let windows = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            let windows = load_windows_from_bed(
+                bed,
+                Some(chromosomes.as_slice()),
+                None,
+                None,
+                opt.ioc.n_threads > 1,
+            )?;
             ensure_plain_bed_windows_not_empty(&windows)?;
             Some(windows)
         }
@@ -1050,17 +1062,11 @@ fn process_tile(
         );
     }
 
-    // Fraction of a fragment that must overlap with a window to assign to that window
-    // Keeps overlap assignment consistent between streaming and non-streaming paths
-    let min_overlap_fraction: f64 = match opt.window_assignment.assign_by {
-        WindowAssigner::Any | WindowAssigner::CountOverlap => {
-            1. / (reference_metadata.max_fragment_length as f64 + 1.0)
-        } // +1 to avoid rounding error issues
-        WindowAssigner::All | WindowAssigner::Midpoint => {
-            1.0 - (1. / (reference_metadata.max_fragment_length as f64 + 1.0))
-        } // 1.0 but just below to avoid rounding errors
-        WindowAssigner::Proportion(p) => p,
-    };
+    // Use the same assign-by threshold for streaming fixed-size windows and BED/global lookup
+    let min_overlap_fraction = min_overlap_fraction_for_window_assignment(
+        opt.window_assignment.assign_by,
+        reference_metadata.max_fragment_length as u64,
+    );
 
     reader
         .fetch((tid, tile.fetch_start() as i64, tile.fetch_end() as i64))

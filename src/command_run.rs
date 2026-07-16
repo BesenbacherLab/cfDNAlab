@@ -83,6 +83,7 @@ impl Default for RunOptions {
     feature = "cmd_gc_bias",
     feature = "cmd_lengths",
     feature = "cmd_midpoints",
+    feature = "cmd_ref_kmers",
     feature = "cmd_wps",
     feature = "cmd_wps_peaks",
 ))]
@@ -104,6 +105,7 @@ macro_rules! status_info {
     feature = "cmd_gc_bias",
     feature = "cmd_lengths",
     feature = "cmd_midpoints",
+    feature = "cmd_ref_kmers",
     feature = "cmd_wps",
     feature = "cmd_wps_peaks",
 ))]

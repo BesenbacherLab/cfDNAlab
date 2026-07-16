@@ -314,7 +314,7 @@ pub struct FragmentKmersConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub shared_args: FragmentKmersSharedArgs,
 
-    /// List of K-mer sizes [integer].
+    /// List of K-mer sizes `[integer]`
     ///
     /// When counting for many kmer-sizes (>8), consider splitting
     /// into multiple runs to reduce memory consumption at a time.

@@ -187,6 +187,34 @@ pub(crate) fn fetch_span_for_tile(
     }
 }
 
+/// Determine the fetch span for an already-selected BED candidate set.
+///
+/// This is the BED-only equivalent of `fetch_span_for_tile(..., CandidateWindowExtent)`, but it
+/// accepts any window record that exposes a checked `Interval<u64>`.
+#[cfg(any(feature = "cmd_ends", feature = "cmd_lengths"))]
+pub(crate) fn fetch_span_for_bed_candidates<T>(
+    tile: &Tile,
+    candidate_span: Option<&TileWindowSpan>,
+    windows_chr: &[T],
+    chrom_len: u64,
+    halo_bp: u64,
+) -> Result<Option<Interval<u64>>>
+where
+    T: AsRef<Interval<u64>>,
+{
+    let Some(window_span) =
+        window_derived_fetch_extent_for_candidates(windows_chr, candidate_span)?
+    else {
+        return Ok(None);
+    };
+    Ok(clamp_fetch_to_window_span(
+        tile,
+        chrom_len,
+        window_span,
+        halo_bp,
+    )?)
+}
+
 /// Derive the aligned min/max window extent from BED windows that truly overlap the tile core.
 ///
 /// The helper iterates over the core-overlapping windows, using the cached candidate span when
@@ -253,10 +281,13 @@ pub(crate) fn window_derived_fetch_extent_for_core_overlap(
 /// This helper must derive the min/max directly from the candidate span and must not reapply a
 /// core-overlap filter.
 #[cfg(any(feature = "cmd_ends", feature = "cmd_lengths"))]
-pub(crate) fn window_derived_fetch_extent_for_candidates(
-    windows_chr: &[IndexedInterval<u64>],
+pub(crate) fn window_derived_fetch_extent_for_candidates<T>(
+    windows_chr: &[T],
     candidate_span: Option<&TileWindowSpan>,
-) -> Result<Option<Interval<u64>>> {
+) -> Result<Option<Interval<u64>>>
+where
+    T: AsRef<Interval<u64>>,
+{
     let Some(candidate_span) = candidate_span else {
         return Ok(None);
     };
@@ -270,11 +301,13 @@ pub(crate) fn window_derived_fetch_extent_for_candidates(
         return Ok(None);
     }
 
-    let mut min_start = windows_chr[start_idx].start();
-    let mut max_end = windows_chr[start_idx].end();
+    let first_window = windows_chr[start_idx].as_ref();
+    let mut min_start = first_window.start();
+    let mut max_end = first_window.end();
     for window in &windows_chr[start_idx + 1..end_idx] {
-        min_start = min_start.min(window.start());
-        max_end = max_end.max(window.end());
+        let window_interval = window.as_ref();
+        min_start = min_start.min(window_interval.start());
+        max_end = max_end.max(window_interval.end());
     }
 
     Ok(Some(Interval::new(min_start, max_end)?))

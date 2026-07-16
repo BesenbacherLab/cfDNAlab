@@ -211,13 +211,20 @@ fn execute_fragment_kmers(
         opt.shared_args.blacklist_min_size,
         0,
         &chromosomes,
+        opt.shared_args.ioc.n_threads > 1,
     )?;
 
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
             status_info!(options, target: COMMAND_TARGET, "Loading window coordinates");
-            let windows = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            let windows = load_windows_from_bed(
+                bed,
+                Some(chromosomes.as_slice()),
+                None,
+                None,
+                opt.shared_args.ioc.n_threads > 1,
+            )?;
             ensure_plain_bed_windows_not_empty(&windows)?;
             Some(windows)
         }

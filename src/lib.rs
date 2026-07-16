@@ -228,6 +228,12 @@ pub mod run_like_cli {
         pub use crate::commands::ref_gc_bias::ref_gc_bias::{RefGCBiasRunResult, run_ref_gc_bias};
     }
 
+    #[cfg(feature = "cmd_ref_kmers")]
+    pub mod ref_kmers {
+        pub use crate::commands::ref_kmers::config::RefKmersConfig;
+        pub use crate::commands::ref_kmers::ref_kmers::{RefKmersRunResult, run_ref_kmers};
+    }
+
     #[cfg(feature = "cmd_transitions")]
     pub mod transitions {
         pub use crate::commands::transitions::config::TransitionsConfig;

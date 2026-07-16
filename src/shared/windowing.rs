@@ -4,12 +4,15 @@ use crate::shared::bed::Windows;
 use anyhow::{Result, ensure};
 use fxhash::FxHashMap;
 
+#[cfg(feature = "cmd_ref_kmers")]
+pub(crate) use window_context::DistributionWindowContext;
 #[cfg(any(feature = "cmd_ends", feature = "cmd_fragment_kmers"))]
 pub(crate) use window_context::WindowContext;
 
 #[cfg(any(
     feature = "cmd_ends",
     feature = "cmd_fragment_kmers",
+    feature = "cmd_ref_kmers",
     feature = "cmd_gc_bias",
     feature = "cmd_lengths",
     feature = "cmd_wps_peaks"
@@ -19,6 +22,7 @@ pub(crate) use window_offsets::compute_window_offsets;
 #[cfg(any(
     feature = "cmd_ends",
     feature = "cmd_fragment_kmers",
+    feature = "cmd_ref_kmers",
     feature = "cmd_lengths"
 ))]
 pub(crate) use window_bin_info::{WindowBinInfo, build_bin_info};
@@ -60,19 +64,28 @@ pub(crate) fn ensure_grouped_bed_windows_not_empty(
     Ok(())
 }
 
-#[cfg(any(feature = "cmd_ends", feature = "cmd_fragment_kmers"))]
+#[cfg(any(
+    feature = "cmd_ends",
+    feature = "cmd_fragment_kmers",
+    feature = "cmd_ref_kmers"
+))]
 mod window_context {
+    #[cfg(feature = "cmd_ref_kmers")]
+    use crate::commands::cli_common::DistributionWindowSpec;
+    #[cfg(any(feature = "cmd_ends", feature = "cmd_fragment_kmers"))]
     use crate::{commands::cli_common::WindowSpec, shared::interval::IndexedInterval};
 
     /// Lightweight view into the window configuration for a given tile.
     ///
     /// Stores the context needed to convert chromosome-local indices into global window ids for a tile.
+    #[cfg(any(feature = "cmd_ends", feature = "cmd_fragment_kmers"))]
     pub(crate) struct WindowContext<'a> {
         pub(crate) spec: &'a WindowSpec,
         pub(crate) windows: Option<&'a [IndexedInterval<u64>]>,
         pub(crate) chr_idx_offset: u64,
     }
 
+    #[cfg(any(feature = "cmd_ends", feature = "cmd_fragment_kmers"))]
     impl<'a> WindowContext<'a> {
         #[inline]
         /// Return the per-chromosome windows slice when operating in BED mode.
@@ -107,11 +120,42 @@ mod window_context {
             }
         }
     }
+
+    /// Lightweight view into distribution-window configuration for a given tile.
+    ///
+    /// This mirrors [`WindowContext`] for commands that allow grouped BED windows.
+    #[cfg(feature = "cmd_ref_kmers")]
+    pub(crate) struct DistributionWindowContext<'a> {
+        pub(crate) spec: &'a DistributionWindowSpec,
+        pub(crate) chr_idx_offset: u64,
+    }
+
+    #[cfg(feature = "cmd_ref_kmers")]
+    impl<'a> DistributionWindowContext<'a> {
+        /// Map a chromosome-local overlap index to the global output row.
+        ///
+        /// BED-like ref-kmers overlaps carry their output row id directly, because grouped BED rows
+        /// are not derivable from a fixed chromosome offset.
+        #[inline]
+        pub(crate) fn original_idx(&self, chrom_window_idx: usize) -> u64 {
+            match self.spec {
+                DistributionWindowSpec::Global => 0,
+                DistributionWindowSpec::Size(_) => self
+                    .chr_idx_offset
+                    .checked_add(chrom_window_idx as u64)
+                    .expect("window index overflow for size-based windows"),
+                DistributionWindowSpec::Bed(_) | DistributionWindowSpec::GroupedBed(_) => {
+                    panic!("BED-like ref-kmers overlaps carry output row ids directly")
+                }
+            }
+        }
+    }
 }
 
 #[cfg(any(
     feature = "cmd_ends",
     feature = "cmd_fragment_kmers",
+    feature = "cmd_ref_kmers",
     feature = "cmd_gc_bias",
     feature = "cmd_lengths",
     feature = "cmd_wps_peaks"
@@ -187,6 +231,7 @@ mod window_offsets {
 #[cfg(any(
     feature = "cmd_ends",
     feature = "cmd_fragment_kmers",
+    feature = "cmd_ref_kmers",
     feature = "cmd_lengths"
 ))]
 mod window_bin_info {

@@ -13,7 +13,7 @@ use crate::{
             GC_WEIGHT_AUX_TAG,
         },
         interval::Interval,
-        io::{FinalOutputFiles, dot_join, open_text_reader},
+        io::{FinalOutputFiles, dot_join, open_text_reader, open_text_reader_in_background},
         reference::load_chrom_sizes_with_order,
         temp_chrom_names::TempChromNameMap,
         tiled_run::TempDirGuard,
@@ -187,6 +187,8 @@ fn execute_frag_to_bam(
     }
     ensure_output_dir(&opt.output_dir)?;
     let column_layout = resolve_frag_column_layout(opt)?;
+    let read_in_background =
+        std::thread::available_parallelism().is_ok_and(|thread_count| thread_count.get() > 1);
 
     let (chrom_sizes_order, chrom_sizes) = load_chrom_sizes_with_order(&opt.chrom_sizes)
         .context("Loading chromosome sizes for BAM header")?;
@@ -214,6 +216,7 @@ fn execute_frag_to_bam(
         opt.blacklist_min_size,
         0,
         &chromosomes,
+        read_in_background,
     )
     .context("Loading blacklist intervals")?;
 
@@ -222,8 +225,12 @@ fn execute_frag_to_bam(
     let temp_dir = temp_dir_guard.path().to_path_buf();
     let mut final_outputs = FinalOutputFiles::new(temp_dir_guard.path())?;
 
-    let reader = open_text_reader(&opt.frag)
-        .with_context(|| format!("Opening fragment file {}", opt.frag.display()))?;
+    let reader = if read_in_background {
+        open_text_reader_in_background(&opt.frag)
+    } else {
+        open_text_reader(&opt.frag)
+    }
+    .with_context(|| format!("Opening fragment file {}", opt.frag.display()))?;
 
     let mut counters = FragToBamCounters::default();
     let mut current_chr: Option<String> = None;

@@ -18,6 +18,7 @@ the command that writes the matching output:
   `load_fcoverage_output_with_group_index`.
 - `cmd_ends` exposes `load_ends_output`.
 - `cmd_midpoints` exposes `load_midpoints_output`.
+- `cmd_ref_kmers` exposes `load_ref_kmers_output`.
 
 `DenseMatrix`, `LengthBin`, and `WindowRow` are exported whenever
 `output_loaders` is compiled. `DenseArray3` is exported with `cmd_midpoints`.
@@ -47,8 +48,8 @@ Ranges use half-open intervals `[start, end)`.
 
 Selectors preserve requested order and reject duplicate explicit selectors. A
 missing selector means "select all values on this axis". Explicit row selectors
-are rejected for global lengths and end-motif outputs because those outputs do
-not have a meaningful selectable row axis.
+are rejected for global lengths, global end-motif outputs, and global reference
+k-mer outputs because those outputs do not have a meaningful selectable row axis.
 
 ## Shared Containers
 
@@ -184,6 +185,59 @@ Sparse data exposes:
 Selections preserve dense or sparse storage mode. Sparse selections copy only
 stored entries whose source row and motif are both selected. Missing selected
 cells remain implicit zero counts.
+
+## Reference K-mer Loader
+
+`load_ref_kmers_output(path)` reads `cfdna ref-kmers` Zarr stores with the
+supported reference k-mer schema version.
+
+Supported row modes:
+
+- Global.
+- Windows from fixed-size or BED windowing.
+- Groups from grouped BED inputs.
+
+Supported motif axes:
+
+- Concrete reference k-mers from `motif_ascii`.
+- Motif-group labels from JSON attributes on `motif_index`.
+
+Supported storage modes:
+
+- Dense frequency matrix in `/frequencies`.
+- Sparse COO values in the `/sparse` group.
+
+Stored values are frequencies. Each row has a `row_scaling_factor`, and counts
+are reconstructed as `frequency * row_scaling_factor[row]`.
+
+Dense and sparse frequencies must be finite values in `[0, 1]`.
+`row_scaling_factor` values must be finite and non-negative. Dense frequency
+shapes must match row and motif axes. Sparse coordinates must be sorted, unique,
+zero-based, and within the declared sparse shape. Missing in-bounds sparse
+coordinates are implicit zero frequencies.
+
+Concrete reference k-mer labels must match `kmer_size`, contain only A/C/G/T
+bases, and match the canonical representation when `canonical = true`.
+Motif-group labels are public selectors and must be unique. JSON labels must not
+contain control characters.
+
+`all_motifs` means zero-frequency targets are retained on the motif axis. Without
+a motifs file, those targets are all A/C/G/T k-mers for the configured `k`. With
+a motifs file, they are the motifs or motif groups listed in that file.
+
+Sparse data exposes:
+
+- `entries()` for ordered COO iteration.
+- `frequency(row_index, motif_index)` for occasional point lookup by binary
+  search.
+- `to_lookup_index()` for repeated point lookup with a RAM-heavier hash index.
+- `to_dense_matrix()` for explicit frequency densification.
+
+Counts can be reconstructed with `count()`, `sparse_count_entries()`, and
+`to_dense_count_matrix()`.
+
+Selections preserve dense or sparse storage mode, copy row and motif metadata,
+and preserve requested selector order.
 
 ## Midpoints Loader
 

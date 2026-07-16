@@ -158,6 +158,7 @@ pub fn run_wps_peaks(opt: &WPSPeaksConfig, options: RunOptions) -> Result<WPSPea
         1,
         blacklist_halo,
         &chromosomes,
+        opt.shared_args.ioc.n_threads > 1,
     )?;
 
     let fixed_window_bp = if let WindowSpec::Size(bp) = window_opt {
@@ -170,7 +171,13 @@ pub fn run_wps_peaks(opt: &WPSPeaksConfig, options: RunOptions) -> Result<WPSPea
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
             status_info!(options, target: COMMAND_TARGET, "Loading window coordinates");
-            let wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            let wds = load_windows_from_bed(
+                bed,
+                Some(chromosomes.as_slice()),
+                None,
+                None,
+                opt.shared_args.ioc.n_threads > 1,
+            )?;
             ensure_plain_bed_windows_not_empty(&wds)?;
             if matches!(
                 opt.per_window,

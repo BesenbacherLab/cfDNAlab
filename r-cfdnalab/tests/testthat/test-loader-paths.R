@@ -29,3 +29,19 @@ test_that("end-motif loader reports path problems before opening Zarr", {
   expect_error(read_end_motifs(wrong_suffix_path), "must end in '.zarr'", fixed = TRUE)
   expect_error(read_end_motifs(missing_metadata_path), "missing root zarr.json", fixed = TRUE)
 })
+
+test_that("reference k-mer loader reports path problems before opening Zarr", {
+  missing_path <- file.path(tempdir(), "missing.ref_kmers.zarr")
+  file_path <- tempfile(fileext = ".zarr")
+  writeLines("not a directory", file_path)
+  wrong_suffix_path <- tempfile(fileext = ".not_zarr")
+  dir.create(wrong_suffix_path)
+  missing_metadata_path <- tempfile(fileext = ".zarr")
+  dir.create(missing_metadata_path)
+
+  expect_error(read_ref_kmers(1L), "single path string", fixed = TRUE)
+  expect_error(read_ref_kmers(missing_path), "does not exist", fixed = TRUE)
+  expect_error(read_ref_kmers(file_path), "not a directory", fixed = TRUE)
+  expect_error(read_ref_kmers(wrong_suffix_path), "must end in '.zarr'", fixed = TRUE)
+  expect_error(read_ref_kmers(missing_metadata_path), "missing root zarr.json", fixed = TRUE)
+})

@@ -89,6 +89,7 @@ read_end_motifs <- function(path) {
   } else {
     motif <- cf_read_labels(path, "motif_index", "motif_group", length(motif_axis))
   }
+  cf_validate_unique_axis_labels(motif, "end-motif")
 
   cf_validate_axis(motif_axis, "motif_index")
   cf_validate_axis(row, "row")
@@ -314,6 +315,12 @@ cf_read_end_motif_row_metadata <- function(path, store, row, row_mode) {
   if (identical(row_mode, "global")) {
     cf_validate_dimension_names(path, "row", "row")
     labels <- cf_read_labels(path, "row", "row_label", length(row))
+    if (!identical(labels, "global")) {
+      stop(
+        "global end-motif output must contain exactly one row labeled 'global'",
+        call. = FALSE
+      )
+    }
     return(data.frame(row_label = labels, stringsAsFactors = FALSE))
   }
 
@@ -639,6 +646,322 @@ cf_dense_end_motif_matrix_for_indices <- function(
 }
 
 #' @export
+#' @rdname dense_corrected_counts_matrix
+#' @details
+#' Reference correction divides each observed end-motif count by a
+#' reference-based correction factor for the matched row. This factor is
+#' computed from the motif frequencies in the reference k-mer output and
+#' normalized so a uniform reference composition leaves counts unchanged.
+#' Motifs that are common in the reference row are scaled down. Motifs that are
+#' rare in the reference row are scaled up. Only motifs with a positive
+#' reference frequency contribute to the row's correction support.
+#'
+#' Two-sided correction modes:
+#'
+#' When motif labels contain both outside and inside bases, such as `"AC_GT"`,
+#' `two_sided_correction` chooses both the motif labels in the result and the
+#' correction factor used for each returned count.
+#'
+#' - `"joint"` keeps full labels such as `"AC_GT"` and corrects each count
+#'   using the exact reference k-mer `"ACGT"`.
+#'
+#' - `"split"` keeps full labels such as `"AC_GT"`, but calculates the
+#'   correction factor from the two sides separately. For `"AC_GT"`, separate
+#'   correction factors are calculated for outside label `"AC"` and inside
+#'   label `"GT"`. Those two correction factors are multiplied and applied to
+#'   the observed `"AC_GT"` count. Use this when you want full two-sided motif
+#'   labels in the result, but the exact full reference k-mers are too sparse or
+#'   you want the reference correction to treat outside and inside sequence
+#'   composition separately.
+#'
+#' - `"outside"` returns outside labels such as `"AC_"`. For each outside
+#'   label, all full motif counts with that outside label are summed first. For
+#'   example, `"AC_AA"` and `"AC_GT"` both contribute to the `"AC_"` count. That
+#'   summed count is corrected using the outside label `"AC"`.
+#'
+#' - `"inside"` returns inside labels such as `"_GT"`. For each inside label,
+#'   all full motif counts with that inside label are summed first. For example,
+#'   `"AA_GT"` and `"AC_GT"` both contribute to the `"_GT"` count. That summed
+#'   count is corrected using the inside label `"GT"`.
+#'
+#' For `"split"`, `"outside"`, and `"inside"`, side-specific reference frequencies
+#' are calculated from the loaded full-length reference k-mers. For example, the
+#' outside frequency for `"AC"` is the sum of frequencies for loaded k-mers with
+#' prefix `"AC"`, such as `"ACTG"` and `"ACAA"`. The inside frequency for `"TG"` is
+#' the corresponding sum over loaded k-mers with suffix `"TG"`. Separate shorter
+#' reference k-mer runs are not required.
+#'
+#' A motifs file used for the reference output restricts these sums to the k-mers
+#' in that file. Without a motifs file, all k-mers in the reference output can
+#' contribute, including k-mers absent from the sample end-motif output.
+#'
+#' The returned matrix has one column per motif on the selected correction-mode
+#' axis. `"outside"` and `"inside"` can therefore have fewer columns than the raw
+#' count matrix. For these side modes, column names contain the corrected motif
+#' labels in matrix order.
+#'
+#' @param ref_kmers Reference k-mer object used for correction.
+#' @param motifs Optional motif label vector. Use either `motifs` or
+#'   `motif_idxs`, not both.
+#' @param motif_idxs Optional one-based motif index vector.
+#' @param allow_densify If `TRUE`, allow sparse stores to be converted to a dense
+#'   in-memory matrix. Sparse stores error by default.
+#' @param use_global_bias Whether a global reference k-mer output may be
+#'   applied to every end-motif row.
+#' @param unsupported_motifs What to do when an observed sample motif has no
+#'   positive correction factor under the selected mode. Use `"error"`, `"drop"`, or
+#'   `"keep_na"`.
+#' @param two_sided_correction Required when motif labels contain both outside
+#'   and inside bases, such as `"AC_GT"`. Use `"joint"`, `"split"`,
+#'   `"outside"`, or `"inside"`. Leave as `NULL` for one-sided motifs or motif
+#'   groups.
+dense_corrected_counts_matrix.cfdnalab_global_end_motif_counts <- function(
+  x,
+  ref_kmers,
+  allow_densify = FALSE,
+  motifs = NULL,
+  motif_idxs = NULL,
+  use_global_bias = FALSE,
+  unsupported_motifs = "error",
+  two_sided_correction = NULL,
+  ...
+) {
+  cf_reject_unused_arguments(...)
+  cf_reference_corrected_counts_matrix(
+    x,
+    ref_kmers,
+    motifs = motifs,
+    motif_idxs = motif_idxs,
+    allow_densify = allow_densify,
+    use_global_bias = use_global_bias,
+    unsupported_motifs = unsupported_motifs,
+    two_sided_correction = two_sided_correction
+  )
+}
+
+#' @export
+#' @rdname dense_corrected_counts_matrix
+#' @param window_idxs Optional one-based window index vector for windowed output.
+#' @param max_blacklisted_fraction Maximum row `blacklisted_fraction` in 0..1
+#'   to retain before returning counts.
+dense_corrected_counts_matrix.cfdnalab_windowed_end_motif_counts <- function(
+  x,
+  ref_kmers,
+  allow_densify = FALSE,
+  window_idxs = NULL,
+  motifs = NULL,
+  motif_idxs = NULL,
+  max_blacklisted_fraction = 1.0,
+  use_global_bias = FALSE,
+  unsupported_motifs = "error",
+  two_sided_correction = NULL,
+  ...
+) {
+  cf_reject_unused_arguments(...)
+  cf_reference_corrected_counts_matrix(
+    x,
+    ref_kmers,
+    window_idxs = window_idxs,
+    motifs = motifs,
+    motif_idxs = motif_idxs,
+    allow_densify = allow_densify,
+    max_blacklisted_fraction = max_blacklisted_fraction,
+    use_global_bias = use_global_bias,
+    unsupported_motifs = unsupported_motifs,
+    two_sided_correction = two_sided_correction
+  )
+}
+
+#' @export
+#' @rdname dense_corrected_counts_matrix
+#' @param groups Optional group name vector for grouped output. Use either
+#'   `groups` or `group_idxs`, not both.
+#' @param group_idxs Optional one-based group index vector for grouped output.
+dense_corrected_counts_matrix.cfdnalab_grouped_end_motif_counts <- function(
+  x,
+  ref_kmers,
+  allow_densify = FALSE,
+  groups = NULL,
+  group_idxs = NULL,
+  motifs = NULL,
+  motif_idxs = NULL,
+  max_blacklisted_fraction = 1.0,
+  use_global_bias = FALSE,
+  unsupported_motifs = "error",
+  two_sided_correction = NULL,
+  ...
+) {
+  cf_reject_unused_arguments(...)
+  cf_reference_corrected_counts_matrix(
+    x,
+    ref_kmers,
+    groups = groups,
+    group_idxs = group_idxs,
+    motifs = motifs,
+    motif_idxs = motif_idxs,
+    allow_densify = allow_densify,
+    max_blacklisted_fraction = max_blacklisted_fraction,
+    use_global_bias = use_global_bias,
+    unsupported_motifs = unsupported_motifs,
+    two_sided_correction = two_sided_correction
+  )
+}
+
+#' @export
+#' @rdname sparse_corrected_counts_matrix
+#' @details
+#' Reference correction divides each observed end-motif count by a
+#' reference-based correction factor for the matched row. This factor is
+#' computed from the motif frequencies in the reference k-mer output and
+#' normalized so a uniform reference composition leaves counts unchanged.
+#' Motifs that are common in the reference row are scaled down. Motifs that are
+#' rare in the reference row are scaled up. Only motifs with a positive
+#' reference frequency contribute to the row's correction support.
+#'
+#' Two-sided correction modes:
+#'
+#' When motif labels contain both outside and inside bases, such as `"AC_GT"`,
+#' `two_sided_correction` chooses both the motif labels in the result and the
+#' correction factor used for each returned count.
+#'
+#' - `"joint"` keeps full labels such as `"AC_GT"` and corrects each count
+#'   using the exact reference k-mer `"ACGT"`.
+#'
+#' - `"split"` keeps full labels such as `"AC_GT"`, but calculates the
+#'   correction factor from the two sides separately. For `"AC_GT"`, separate
+#'   correction factors are calculated for outside label `"AC"` and inside
+#'   label `"GT"`. Those two correction factors are multiplied and applied to
+#'   the observed `"AC_GT"` count. Use this when you want full two-sided motif
+#'   labels in the result, but the exact full reference k-mers are too sparse or
+#'   you want the reference correction to treat outside and inside sequence
+#'   composition separately.
+#'
+#' - `"outside"` returns outside labels such as `"AC_"`. For each outside
+#'   label, all full motif counts with that outside label are summed first. For
+#'   example, `"AC_AA"` and `"AC_GT"` both contribute to the `"AC_"` count. That
+#'   summed count is corrected using the outside label `"AC"`.
+#'
+#' - `"inside"` returns inside labels such as `"_GT"`. For each inside label,
+#'   all full motif counts with that inside label are summed first. For example,
+#'   `"AA_GT"` and `"AC_GT"` both contribute to the `"_GT"` count. That summed
+#'   count is corrected using the inside label `"GT"`.
+#'
+#' For `"split"`, `"outside"`, and `"inside"`, side-specific reference frequencies
+#' are calculated from the loaded full-length reference k-mers. For example, the
+#' outside frequency for `"AC"` is the sum of frequencies for loaded k-mers with
+#' prefix `"AC"`, such as `"ACTG"` and `"ACAA"`. The inside frequency for `"TG"` is
+#' the corresponding sum over loaded k-mers with suffix `"TG"`. Separate shorter
+#' reference k-mer runs are not required.
+#'
+#' A motifs file used for the reference output restricts these sums to the k-mers
+#' in that file. Without a motifs file, all k-mers in the reference output can
+#' contribute, including k-mers absent from the sample end-motif output.
+#'
+#' The returned matrix has one column per motif on the selected correction-mode
+#' axis. `"outside"` and `"inside"` can therefore have fewer columns than the raw
+#' count matrix. For these side modes, column names contain the corrected motif
+#' labels in matrix order.
+#'
+#' @param ref_kmers Reference k-mer object used for correction.
+#' @param motifs Optional motif label vector. Use either `motifs` or
+#'   `motif_idxs`, not both.
+#' @param motif_idxs Optional one-based motif index vector.
+#' @param use_global_bias Whether a global reference k-mer output may be
+#'   applied to every end-motif row.
+#' @param unsupported_motifs What to do when an observed sample motif has no
+#'   positive correction factor under the selected mode. Use `"error"`, `"drop"`, or
+#'   `"keep_na"`.
+#' @param two_sided_correction Required when motif labels contain both outside
+#'   and inside bases, such as `"AC_GT"`. Use `"joint"`, `"split"`,
+#'   `"outside"`, or `"inside"`. Leave as `NULL` for one-sided motifs or motif
+#'   groups.
+sparse_corrected_counts_matrix.cfdnalab_global_end_motif_counts <- function(
+  x,
+  ref_kmers,
+  motifs = NULL,
+  motif_idxs = NULL,
+  use_global_bias = FALSE,
+  unsupported_motifs = "error",
+  two_sided_correction = NULL,
+  ...
+) {
+  cf_reject_unused_arguments(...)
+  cf_sparse_reference_corrected_counts_matrix(
+    x,
+    ref_kmers,
+    motifs = motifs,
+    motif_idxs = motif_idxs,
+    use_global_bias = use_global_bias,
+    unsupported_motifs = unsupported_motifs,
+    two_sided_correction = two_sided_correction
+  )
+}
+
+#' @export
+#' @rdname sparse_corrected_counts_matrix
+#' @param window_idxs Optional one-based window index vector for windowed output.
+#' @param max_blacklisted_fraction Maximum row `blacklisted_fraction` in 0..1
+#'   to retain before returning counts.
+sparse_corrected_counts_matrix.cfdnalab_windowed_end_motif_counts <- function(
+  x,
+  ref_kmers,
+  window_idxs = NULL,
+  motifs = NULL,
+  motif_idxs = NULL,
+  max_blacklisted_fraction = 1.0,
+  use_global_bias = FALSE,
+  unsupported_motifs = "error",
+  two_sided_correction = NULL,
+  ...
+) {
+  cf_reject_unused_arguments(...)
+  cf_sparse_reference_corrected_counts_matrix(
+    x,
+    ref_kmers,
+    window_idxs = window_idxs,
+    motifs = motifs,
+    motif_idxs = motif_idxs,
+    max_blacklisted_fraction = max_blacklisted_fraction,
+    use_global_bias = use_global_bias,
+    unsupported_motifs = unsupported_motifs,
+    two_sided_correction = two_sided_correction
+  )
+}
+
+#' @export
+#' @rdname sparse_corrected_counts_matrix
+#' @param groups Optional group name vector for grouped output. Use either
+#'   `groups` or `group_idxs`, not both.
+#' @param group_idxs Optional one-based group index vector for grouped output.
+sparse_corrected_counts_matrix.cfdnalab_grouped_end_motif_counts <- function(
+  x,
+  ref_kmers,
+  groups = NULL,
+  group_idxs = NULL,
+  motifs = NULL,
+  motif_idxs = NULL,
+  max_blacklisted_fraction = 1.0,
+  use_global_bias = FALSE,
+  unsupported_motifs = "error",
+  two_sided_correction = NULL,
+  ...
+) {
+  cf_reject_unused_arguments(...)
+  cf_sparse_reference_corrected_counts_matrix(
+    x,
+    ref_kmers,
+    groups = groups,
+    group_idxs = group_idxs,
+    motifs = motifs,
+    motif_idxs = motif_idxs,
+    max_blacklisted_fraction = max_blacklisted_fraction,
+    use_global_bias = use_global_bias,
+    unsupported_motifs = unsupported_motifs,
+    two_sided_correction = two_sided_correction
+  )
+}
+
+#' @export
 #' @rdname dense_counts_vector
 #' @param allow_densify If `TRUE`, allow sparse stores to be converted to dense
 #'   in memory before returning the vector.
@@ -654,19 +977,110 @@ dense_counts_vector.cfdnalab_global_end_motif_counts <- function(
 
 #' @export
 #' @rdname end_motif_data_frame
+#' @details
+#' End-motif methods can receive `ref_kmers` to add reference-corrected counts
+#' without manually joining the sample and reference data frames. Corrected
+#' data frames add `corrected_count` and `corrected_frequency`.
+#'
+#' Reference correction divides each observed end-motif count by a
+#' reference-based correction factor for the matched row. This factor is
+#' computed from the motif frequencies in the reference k-mer output and
+#' normalized so a uniform reference composition leaves counts unchanged.
+#' Motifs that are common in the reference row are scaled down. Motifs that are
+#' rare in the reference row are scaled up. Only motifs with a positive
+#' reference frequency contribute to the row's correction support.
+#'
+#' Two-sided correction modes:
+#'
+#' When motif labels contain both outside and inside bases, such as `"AC_GT"`,
+#' `two_sided_correction` chooses both the motif labels in the result and the
+#' correction factor used for each returned count.
+#'
+#' - `"joint"` keeps full labels such as `"AC_GT"` and corrects each count
+#'   using the exact reference k-mer `"ACGT"`.
+#'
+#' - `"split"` keeps full labels such as `"AC_GT"`, but calculates the
+#'   correction factor from the two sides separately. For `"AC_GT"`, separate
+#'   correction factors are calculated for outside label `"AC"` and inside
+#'   label `"GT"`. Those two correction factors are multiplied and applied to
+#'   the observed `"AC_GT"` count. Use this when you want full two-sided motif
+#'   labels in the result, but the exact full reference k-mers are too sparse or
+#'   you want the reference correction to treat outside and inside sequence
+#'   composition separately.
+#'
+#' - `"outside"` returns outside labels such as `"AC_"`. For each outside
+#'   label, all full motif counts with that outside label are summed first. For
+#'   example, `"AC_AA"` and `"AC_GT"` both contribute to the `"AC_"` count. That
+#'   summed count is corrected using the outside label `"AC"`.
+#'
+#' - `"inside"` returns inside labels such as `"_GT"`. For each inside label,
+#'   all full motif counts with that inside label are summed first. For example,
+#'   `"AA_GT"` and `"AC_GT"` both contribute to the `"_GT"` count. That summed
+#'   count is corrected using the inside label `"GT"`.
+#'
+#' For `"split"`, `"outside"`, and `"inside"`, side-specific reference frequencies
+#' are calculated from the loaded full-length reference k-mers. For example, the
+#' outside frequency for `"AC"` is the sum of frequencies for loaded k-mers with
+#' prefix `"AC"`, such as `"ACTG"` and `"ACAA"`. The inside frequency for `"TG"` is
+#' the corresponding sum over loaded k-mers with suffix `"TG"`. Separate shorter
+#' reference k-mer runs are not required.
+#'
+#' A motifs file used for the reference output restricts these sums to the k-mers
+#' in that file. Without a motifs file, all k-mers in the reference output can
+#' contribute, including k-mers absent from the sample end-motif output.
+#'
+#' `corrected_frequency` is `corrected_count` divided by the sum of corrected
+#' counts over the full correction-mode motif axis for the same output row.
+#' Motif selection filters these frequencies afterward and does not renormalize
+#' them, so a selected subset can sum to less than 1. If the corrected total is
+#' zero, finite frequencies are zero. With `unsupported_motifs = "keep_na"`, one
+#' undefined positive corrected count makes all frequencies in that output row
+#' `NA`. Reference correction fails if division by a positive reference factor
+#' would produce a non-finite corrected count.
+#'
+#' @param ref_kmers Optional reference k-mer object used to add corrected
+#'   counts.
 #' @param densify If `TRUE`, sparse outputs add explicit zero-count rows for
 #'   selected observed motifs. Dense outputs ignore this option.
 #' @param motifs Optional motif label vector. Use either `motifs` or
 #'   `motif_idxs`, not both.
 #' @param motif_idxs Optional one-based motif index vector.
+#' @param use_global_bias Whether a global reference k-mer output may be
+#'   applied to every end-motif row.
+#' @param unsupported_motifs What to do when an observed sample motif has no
+#'   positive correction factor under the selected mode. Use `"error"`, `"drop"`, or
+#'   `"keep_na"`.
+#' @param two_sided_correction Required when motif labels contain both outside
+#'   and inside bases, such as `"AC_GT"`, and `ref_kmers` is supplied. Use
+#'   `"joint"`, `"split"`, `"outside"`, or `"inside"`. Leave as `NULL` for
+#'   one-sided motifs or motif groups.
 end_motif_data_frame.cfdnalab_global_end_motif_counts <- function(
   x,
+  ref_kmers = NULL,
   densify = FALSE,
   motifs = NULL,
   motif_idxs = NULL,
+  use_global_bias = FALSE,
+  unsupported_motifs = "error",
+  two_sided_correction = NULL,
   ...
 ) {
   cf_reject_unused_arguments(...)
+  if (!is.null(ref_kmers)) {
+    return(cf_reference_corrected_end_motif_data_frame(
+      x,
+      ref_kmers,
+      densify = densify,
+      motifs = motifs,
+      motif_idxs = motif_idxs,
+      use_global_bias = use_global_bias,
+      unsupported_motifs = unsupported_motifs,
+      two_sided_correction = two_sided_correction
+    ))
+  }
+  if (!is.null(two_sided_correction)) {
+    stop("two_sided_correction requires ref_kmers", call. = FALSE)
+  }
   cf_end_motif_data_frame(
     x,
     row_indices = seq_len(length(x$row_idx0)),
@@ -684,14 +1098,35 @@ end_motif_data_frame.cfdnalab_global_end_motif_counts <- function(
 #'   rows.
 end_motif_data_frame.cfdnalab_windowed_end_motif_counts <- function(
   x,
+  ref_kmers = NULL,
   window_idxs = NULL,
   densify = FALSE,
   motifs = NULL,
   motif_idxs = NULL,
   max_blacklisted_fraction = 1.0,
+  use_global_bias = FALSE,
+  unsupported_motifs = "error",
+  two_sided_correction = NULL,
   ...
 ) {
   cf_reject_unused_arguments(...)
+  if (!is.null(ref_kmers)) {
+    return(cf_reference_corrected_end_motif_data_frame(
+      x,
+      ref_kmers,
+      window_idxs = window_idxs,
+      densify = densify,
+      motifs = motifs,
+      motif_idxs = motif_idxs,
+      max_blacklisted_fraction = max_blacklisted_fraction,
+      use_global_bias = use_global_bias,
+      unsupported_motifs = unsupported_motifs,
+      two_sided_correction = two_sided_correction
+    ))
+  }
+  if (!is.null(two_sided_correction)) {
+    stop("two_sided_correction requires ref_kmers", call. = FALSE)
+  }
   cf_end_motif_data_frame(
     x,
     row_indices = cf_resolve_end_motif_window_indices(x, window_idxs),
@@ -708,15 +1143,37 @@ end_motif_data_frame.cfdnalab_windowed_end_motif_counts <- function(
 #' @param group_idxs Optional one-based group index vector for grouped output.
 end_motif_data_frame.cfdnalab_grouped_end_motif_counts <- function(
   x,
+  ref_kmers = NULL,
   groups = NULL,
   group_idxs = NULL,
   densify = FALSE,
   motifs = NULL,
   motif_idxs = NULL,
   max_blacklisted_fraction = 1.0,
+  use_global_bias = FALSE,
+  unsupported_motifs = "error",
+  two_sided_correction = NULL,
   ...
 ) {
   cf_reject_unused_arguments(...)
+  if (!is.null(ref_kmers)) {
+    return(cf_reference_corrected_end_motif_data_frame(
+      x,
+      ref_kmers,
+      groups = groups,
+      group_idxs = group_idxs,
+      densify = densify,
+      motifs = motifs,
+      motif_idxs = motif_idxs,
+      max_blacklisted_fraction = max_blacklisted_fraction,
+      use_global_bias = use_global_bias,
+      unsupported_motifs = unsupported_motifs,
+      two_sided_correction = two_sided_correction
+    ))
+  }
+  if (!is.null(two_sided_correction)) {
+    stop("two_sided_correction requires ref_kmers", call. = FALSE)
+  }
   row_indices <- cf_resolve_end_motif_group_indices(x, groups, group_idxs)
   cf_end_motif_data_frame(
     x,

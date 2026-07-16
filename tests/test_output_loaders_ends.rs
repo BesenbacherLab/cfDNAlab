@@ -382,6 +382,54 @@ fn load_ends_output_rejects_invalid_public_labels() -> anyhow::Result<()> {
         json!({}),
     )?;
 
+    let control_motif_path = temp.path().join("control_motif.end_motifs.zarr");
+    let control_motif_store = create_store(
+        &control_motif_path,
+        json!({
+            "cfdnalab_schema": "end_motif_counts",
+            "cfdnalab_schema_version": 2,
+            "storage_mode": "dense",
+            "row_mode": "global",
+            "motif_axis_kind": "motif",
+            "count_units": "weighted_end_motif_count",
+            "primary_array": "counts",
+            "primary_group": null,
+        }),
+    )?;
+    write_i32_array(
+        &control_motif_store,
+        "motif_index",
+        &[1],
+        &["motif"],
+        &[0],
+        json!({}),
+    )?;
+    write_i32_array(
+        &control_motif_store,
+        "motif_byte",
+        &[2],
+        &["motif_byte"],
+        &[0, 1],
+        json!({}),
+    )?;
+    write_u8_array(
+        &control_motif_store,
+        "motif_ascii",
+        &[1, 2],
+        &["motif", "motif_byte"],
+        b"_\n",
+        json!({}),
+    )?;
+    write_i32_array(&control_motif_store, "row", &[1], &["row"], &[0], json!({}))?;
+    write_f64_array(
+        &control_motif_store,
+        "counts",
+        &[1, 1],
+        &["row", "motif"],
+        &[1.0],
+        json!({}),
+    )?;
+
     let control_label_path = temp.path().join("control_label.end_motifs.zarr");
     let control_label_store = create_store(
         &control_label_path,
@@ -430,6 +478,8 @@ fn load_ends_output_rejects_invalid_public_labels() -> anyhow::Result<()> {
     // Act
     let non_ascii_error =
         load_ends_output(&non_ascii_path).expect_err("non-ASCII motif bytes should fail");
+    let control_motif_error =
+        load_ends_output(&control_motif_path).expect_err("control-character motif should fail");
     let control_label_error =
         load_ends_output(&control_label_path).expect_err("control-character label should fail");
 
@@ -438,6 +488,11 @@ fn load_ends_output_rejects_invalid_public_labels() -> anyhow::Result<()> {
         non_ascii_error
             .to_string()
             .contains("motif_ascii row 0 contains non-ASCII motif bytes")
+    );
+    assert!(
+        control_motif_error
+            .to_string()
+            .contains("Zarr label motif contains a control character")
     );
     assert!(
         control_label_error

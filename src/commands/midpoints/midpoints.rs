@@ -150,6 +150,7 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
         opt.blacklist_min_size,
         0,
         &chromosomes,
+        opt.ioc.n_threads > 1,
     )?;
 
     // Load grouped fixed-size windows from BED
@@ -161,6 +162,7 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
             true,
             None,
             None,
+            opt.ioc.n_threads > 1,
         )?;
     if let Some(strand_detection) = strand_detection {
         match strand_detection.column {

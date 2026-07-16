@@ -50,6 +50,39 @@ test_that("dense global end motifs read from locally generated schema fixture", 
   expect_false(any(grepl("idx0|index0", names(end_motif_data_frame(ends)))))
 })
 
+test_that("end-motif loader rejects invalid global and motif labels", {
+  wrong_global_label <- make_dense_global_end_motif_zarr_fixture()
+  patch_zarr_metadata(
+    wrong_global_label,
+    "row",
+    attributes = list(label_field = "row_label", labels = list("not_global"))
+  )
+  duplicate_motif <- make_dense_global_end_motif_zarr_fixture(
+    motifs = c("_A", "_A", "_G", "_T"),
+    counts = matrix(c(1, 0, 2.5, 0), nrow = 1L)
+  )
+  control_motif <- make_dense_global_end_motif_zarr_fixture(
+    motifs = c("_\n", "_C", "_G", "_T"),
+    counts = matrix(c(1, 0, 2.5, 0), nrow = 1L)
+  )
+
+  expect_error(
+    read_end_motifs(wrong_global_label),
+    "exactly one row labeled 'global'",
+    fixed = TRUE
+  )
+  expect_error(
+    read_end_motifs(duplicate_motif),
+    "duplicate end-motif label",
+    fixed = TRUE
+  )
+  expect_error(
+    read_end_motifs(control_motif),
+    "motif_ascii must not contain ASCII control bytes",
+    fixed = TRUE
+  )
+})
+
 test_that("sparse global end motifs can be densified explicitly", {
   ends <- read_end_motifs(make_sparse_global_end_motif_zarr_fixture())
 

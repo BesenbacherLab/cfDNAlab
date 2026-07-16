@@ -41,7 +41,7 @@ use crate::{
         OutputLoaderError, OutputLoaderResult,
         common::{ensure_unique_indices, resolve_row_indices},
     },
-    shared::io::open_text_reader,
+    shared::io::{open_text_reader, open_text_reader_in_background},
 };
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::{FxHashMap, FxHashSet};
@@ -93,7 +93,11 @@ use std::{
 pub fn load_fcoverage_output(path: impl AsRef<Path>) -> OutputLoaderResult<FCoverageOutput> {
     let path = path.as_ref();
     ensure_non_positional_path(path)?;
-    FCoverageParser::new(path, None).load().map_err(Into::into)
+    let read_in_background =
+        std::thread::available_parallelism().is_ok_and(|thread_count| thread_count.get() > 1);
+    FCoverageParser::new(path, None, read_in_background)
+        .load()
+        .map_err(Into::into)
 }
 
 /// Load a non-positional grouped `cfdna fcoverage` aggregate table with group names.
@@ -146,7 +150,9 @@ pub fn load_fcoverage_output_with_group_index(
 ) -> OutputLoaderResult<FCoverageOutput> {
     let path = path.as_ref();
     ensure_non_positional_path(path)?;
-    FCoverageParser::new(path, Some(group_index_path.as_ref()))
+    let read_in_background =
+        std::thread::available_parallelism().is_ok_and(|thread_count| thread_count.get() > 1);
+    FCoverageParser::new(path, Some(group_index_path.as_ref()), read_in_background)
         .load()
         .map_err(Into::into)
 }
@@ -1313,21 +1319,27 @@ pub enum FCoverageCoefficientOfVariation {
 struct FCoverageParser {
     path: PathBuf,
     group_index_path: Option<PathBuf>,
+    read_in_background: bool,
 }
 
 impl FCoverageParser {
     /// Store the input path until `load()` opens it.
-    fn new(path: &Path, group_index_path: Option<&Path>) -> Self {
+    fn new(path: &Path, group_index_path: Option<&Path>, read_in_background: bool) -> Self {
         Self {
             path: path.to_path_buf(),
             group_index_path: group_index_path.map(Path::to_path_buf),
+            read_in_background,
         }
     }
 
     /// Read the TSV header, parse all data rows, and build an `FCoverageOutput`.
     fn load(&self) -> Result<FCoverageOutput> {
-        let mut reader = open_text_reader(&self.path)
-            .with_context(|| format!("open fcoverage output {}", self.path.display()))?;
+        let mut reader = if self.read_in_background {
+            open_text_reader_in_background(&self.path)
+        } else {
+            open_text_reader(&self.path)
+        }
+        .with_context(|| format!("open fcoverage output {}", self.path.display()))?;
         let mut header_line = String::new();
         ensure!(
             reader
@@ -1343,7 +1355,7 @@ impl FCoverageParser {
         let group_names_by_idx = self
             .group_index_path
             .as_deref()
-            .map(read_group_index)
+            .map(|path| read_group_index(path, self.read_in_background))
             .transpose()?;
         ensure!(
             group_names_by_idx.is_none() || schema.row_mode() == FCoverageRowMode::Groups,
@@ -2274,9 +2286,13 @@ fn contains_filename_part(file_name: &str, part: &str) -> bool {
 }
 
 /// Read a grouped fcoverage group-index file with `group_idx` and `group_name` columns.
-fn read_group_index(path: &Path) -> Result<FxHashMap<u64, String>> {
-    let mut reader = open_text_reader(path)
-        .with_context(|| format!("open fcoverage group-index file {}", path.display()))?;
+fn read_group_index(path: &Path, read_in_background: bool) -> Result<FxHashMap<u64, String>> {
+    let mut reader = if read_in_background {
+        open_text_reader_in_background(path)
+    } else {
+        open_text_reader(path)
+    }
+    .with_context(|| format!("open fcoverage group-index file {}", path.display()))?;
     let mut header_line = String::new();
     ensure!(
         reader

@@ -1,10 +1,13 @@
+#[cfg(any(
+    feature = "cmd_fcoverage",
+    feature = "cmd_wps",
+    feature = "cmd_wps_peaks"
+))]
+use crate::shared::interval::IndexedInterval;
 #[cfg(uses_temp_dirs)]
 use crate::shared::io::dot_join;
 #[cfg(uses_tile_window_helpers)]
-use crate::shared::{
-    bam::Contigs,
-    interval::{IndexedInterval, Interval},
-};
+use crate::shared::{bam::Contigs, interval::Interval};
 #[cfg(checks_tile_bam_tid)]
 use anyhow::Context;
 #[cfg(uses_tile_window_helpers)]
@@ -152,7 +155,16 @@ pub(crate) struct TileWindowSpan {
     pub(crate) last_idx_exclusive: usize,
 }
 
-#[cfg(uses_tile_window_helpers)]
+#[cfg(any(
+    feature = "cmd_ends",
+    feature = "cmd_fcoverage",
+    feature = "cmd_fragment_kmers",
+    feature = "cmd_gc_bias",
+    feature = "cmd_lengths",
+    feature = "cmd_midpoints",
+    feature = "cmd_wps",
+    feature = "cmd_wps_peaks"
+))]
 impl TileWindowSpan {
     /// Reports whether the cached window span is empty.
     ///
@@ -176,21 +188,22 @@ impl TileWindowSpan {
 ///
 /// # Parameters
 /// - `tiles`: All tiles sorted by chromosome and core position.
-/// - `windows_for_chr`: Closure that retrieves the start-sorted windows `(start, end, idx)` for the
-///   requested chromosome.
+/// - `windows_for_chr`: Closure that retrieves the start-sorted windows for the requested
+///   chromosome.
 ///
 /// # Returns
 /// A vector the same length as `tiles` containing the optional `[first, last)` window index span
 /// for each tile.
 #[cfg(uses_tile_window_helpers)]
-pub(crate) fn precompute_tile_window_spans<'a, F>(
+pub(crate) fn precompute_tile_window_spans<'a, F, T>(
     tiles: &[Tile],
     mut windows_for_chr: F,
     left_halo: u64,
     right_halo: u64,
 ) -> Vec<Option<TileWindowSpan>>
 where
-    F: FnMut(&str) -> &'a [IndexedInterval<u64>],
+    F: FnMut(&str) -> &'a [T],
+    T: AsRef<Interval<u64>> + 'a,
 {
     let mut spans: Vec<Option<TileWindowSpan>> = vec![None; tiles.len()];
     let mut tile_idx = 0usize;
@@ -239,7 +252,7 @@ where
             let first_candidate = &windows[w_left];
 
             // Check if the earliest remaining window begins at/after the right bound, so later ones do too
-            if first_candidate.start() >= right_bound {
+            if first_candidate.as_ref().start() >= right_bound {
                 spans[idx] = None;
                 continue;
             }
@@ -262,17 +275,23 @@ where
 ///
 /// The underlying slice is filtered on-the-fly to skip windows whose span does not intersect the
 /// tile, so callers do not need to duplicate the overlap predicates.
-#[cfg(uses_tile_window_helpers)]
-pub(crate) struct TileWindowsIter<'a> {
-    windows: &'a [IndexedInterval<u64>],
+#[cfg(uses_tile_window_iter)]
+pub(crate) struct TileWindowsIter<'a, T>
+where
+    T: AsRef<Interval<u64>>,
+{
+    windows: &'a [T],
     next_idx: usize,
     end_idx: usize,
     core_start: u64,
     core_end: u64,
 }
 
-#[cfg(uses_tile_window_helpers)]
-impl<'a> TileWindowsIter<'a> {
+#[cfg(uses_tile_window_iter)]
+impl<'a, T> TileWindowsIter<'a, T>
+where
+    T: AsRef<Interval<u64>>,
+{
     /// Produces the next source-slice index whose window intersects the tile core.
     ///
     /// Cached index bounds may include neighbouring candidates, so this method checks overlap on
@@ -289,7 +308,8 @@ impl<'a> TileWindowsIter<'a> {
             self.next_idx += 1;
             // Only return windows that truly intersect the tile core, even if the cached span
             // contains neighbouring candidates with the same chromosome ordering
-            if window.end() > self.core_start && window.start() < self.core_end {
+            let window_interval = window.as_ref();
+            if window_interval.end() > self.core_start && window_interval.start() < self.core_end {
                 return Some(window_idx);
             }
         }
@@ -297,9 +317,12 @@ impl<'a> TileWindowsIter<'a> {
     }
 }
 
-#[cfg(uses_tile_window_helpers)]
-impl<'a> Iterator for TileWindowsIter<'a> {
-    type Item = &'a IndexedInterval<u64>;
+#[cfg(uses_tile_window_iter)]
+impl<'a, T> Iterator for TileWindowsIter<'a, T>
+where
+    T: AsRef<Interval<u64>>,
+{
+    type Item = &'a T;
 
     /// Produces the next window that intersects the stored tile core.
     ///
@@ -318,18 +341,17 @@ impl<'a> Iterator for TileWindowsIter<'a> {
 /// given window list, making it useful when a tile span was not precomputed.
 ///
 /// # Parameters
-/// - `windows`: Start-sorted window triples `(start, end, idx)` for the chromosome.
+/// - `windows`: Start-sorted windows for the chromosome.
 /// - `core_start`: Inclusive core start position in absolute coordinates.
 /// - `core_end`: Exclusive core end position in absolute coordinates.
 ///
 /// # Returns
 /// A pair `(left, right)` giving the half-open window index range whose members may overlap.
-#[cfg(uses_tile_window_helpers)]
-fn span_bounds_without_cache(
-    windows: &[IndexedInterval<u64>],
-    core_start: u64,
-    core_end: u64,
-) -> (usize, usize) {
+#[cfg(uses_tile_window_iter)]
+fn span_bounds_without_cache<T>(windows: &[T], core_start: u64, core_end: u64) -> (usize, usize)
+where
+    T: AsRef<Interval<u64>>,
+{
     advance_window_span_bounds(windows, 0, 0, core_start, core_end)
 }
 
@@ -349,7 +371,7 @@ fn span_bounds_without_cache(
 /// Parameters
 /// ----------
 /// - `windows`:
-///   Start-sorted window triples `(start, end, idx)` for one chromosome
+///   Start-sorted windows for one chromosome
 /// - `left`:
 ///   Previous lower-bound scan position for the first surviving candidate window
 /// - `right`:
@@ -364,21 +386,24 @@ fn span_bounds_without_cache(
 /// - `(usize, usize)`:
 ///   Updated half-open candidate-window index span `(left, right)`
 #[cfg(uses_tile_window_helpers)]
-fn advance_window_span_bounds(
-    windows: &[IndexedInterval<u64>],
+fn advance_window_span_bounds<T>(
+    windows: &[T],
     mut left: usize,
     mut right: usize,
     left_bound: u64,
     right_bound: u64,
-) -> (usize, usize) {
-    while left < windows.len() && windows[left].end() <= left_bound {
+) -> (usize, usize)
+where
+    T: AsRef<Interval<u64>>,
+{
+    while left < windows.len() && windows[left].as_ref().end() <= left_bound {
         left += 1;
     }
 
     if right < left {
         right = left;
     }
-    while right < windows.len() && windows[right].start() < right_bound {
+    while right < windows.len() && windows[right].as_ref().start() < right_bound {
         right += 1;
     }
 
@@ -391,19 +416,22 @@ fn advance_window_span_bounds(
 /// resulting indices to the source slice before constructing the iterator.
 ///
 /// # Parameters
-/// - `windows`: Start-sorted window triples `(start, end, idx)` for the chromosome.
+/// - `windows`: Start-sorted windows for the chromosome.
 /// - `tile`: Tile whose core boundaries determine the overlap test.
 /// - `span`: Optional cached span previously produced by `precompute_tile_window_spans`.
 ///
 /// # Returns
 /// A `TileWindowsIter` positioned to stream overlapping windows. Commands that need source window
 /// indices can use the crate-local index method on the returned iterator.
-#[cfg(uses_tile_window_helpers)]
-pub(crate) fn overlapping_windows_for_tile<'a>(
-    windows: &'a [IndexedInterval<u64>],
+#[cfg(uses_tile_window_iter)]
+pub(crate) fn overlapping_windows_for_tile<'a, T>(
+    windows: &'a [T],
     tile: &Tile,
     span: Option<&TileWindowSpan>,
-) -> TileWindowsIter<'a> {
+) -> TileWindowsIter<'a, T>
+where
+    T: AsRef<Interval<u64>>,
+{
     let core_start = tile.core_start() as u64;
     let core_end = tile.core_end() as u64;
 

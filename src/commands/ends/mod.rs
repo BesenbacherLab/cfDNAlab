@@ -1,10 +1,13 @@
 pub(crate) mod config;
 pub(crate) mod config_structs;
 pub(crate) mod counting;
+#[cfg(feature = "cmd_ends")]
 pub(crate) mod ends;
 pub(crate) mod motifs;
-pub(crate) mod motifs_file;
 pub(crate) mod output;
+#[cfg(feature = "cmd_ends")]
 pub(crate) mod tiling;
+#[cfg(feature = "cmd_ends")]
 pub(crate) mod write;
+#[cfg(feature = "cmd_ends")]
 pub(crate) mod zarr;

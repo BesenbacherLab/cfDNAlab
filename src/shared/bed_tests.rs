@@ -62,6 +62,7 @@ mod tests_newest_bed_loaders {
             true,
             None,
             Some((GROUPED_BED_STRAND_SAMPLE_ROWS + 1) as u64),
+            false,
         )
         .expect_err("invalid strand after the sampling window should fail during parsing");
 
@@ -101,9 +102,7 @@ mod tests_newest_bed_loaders {
             layout_segments_for_chr(&layout, "chr1"),
             vec![(10, 20, 0), (15, 25, 1), (40, 45, 2)]
         );
-        assert_eq!(layout.segment_idx_to_group_idx.get(&0), Some(&0));
-        assert_eq!(layout.segment_idx_to_group_idx.get(&1), Some(&0));
-        assert_eq!(layout.segment_idx_to_group_idx.get(&2), Some(&1));
+        assert_eq!(layout.group_idx_by_segment_idx, vec![0, 0, 1]);
         assert_eq!(layout.group_span_positions.get(&0), Some(&20));
         assert_eq!(layout.group_span_positions.get(&1), Some(&5));
         assert_eq!(
@@ -155,8 +154,7 @@ mod tests_newest_bed_loaders {
             layout_segments_for_chr(&layout, "chr1"),
             vec![(10, 30, 0), (40, 45, 1)]
         );
-        assert_eq!(layout.segment_idx_to_group_idx.get(&0), Some(&0));
-        assert_eq!(layout.segment_idx_to_group_idx.get(&1), Some(&1));
+        assert_eq!(layout.group_idx_by_segment_idx, vec![0, 1]);
         assert_eq!(layout.group_span_positions.get(&0), Some(&20));
         assert_eq!(layout.group_span_positions.get(&1), Some(&5));
         Ok(())
@@ -187,8 +185,7 @@ mod tests_newest_bed_loaders {
             layout_segments_for_chr(&layout, "chr1"),
             vec![(10, 20, 0), (15, 30, 1)]
         );
-        assert_eq!(layout.segment_idx_to_group_idx.get(&0), Some(&0));
-        assert_eq!(layout.segment_idx_to_group_idx.get(&1), Some(&1));
+        assert_eq!(layout.group_idx_by_segment_idx, vec![0, 1]);
         assert_eq!(layout.group_span_positions.get(&0), Some(&10));
         assert_eq!(layout.group_span_positions.get(&1), Some(&15));
         Ok(())
@@ -218,8 +215,7 @@ mod tests_newest_bed_loaders {
             layout_segments_for_chr(&layout, "chr1"),
             vec![(0, 5, 0), (10, 15, 1)]
         );
-        assert_eq!(layout.segment_idx_to_group_idx.get(&0), Some(&0));
-        assert_eq!(layout.segment_idx_to_group_idx.get(&1), Some(&0));
+        assert_eq!(layout.group_idx_by_segment_idx, vec![0, 0]);
         assert_eq!(layout.group_span_positions.get(&0), Some(&10));
         Ok(())
     }
@@ -247,8 +243,7 @@ mod tests_newest_bed_loaders {
         assert_eq!(layout_segments_for_chr(&layout, "chr3"), vec![(5, 10, 0)]);
         assert_eq!(layout_segments_for_chr(&layout, "chr1"), vec![(20, 30, 1)]);
         assert!(layout_segments_for_chr(&layout, "chr2").is_empty());
-        assert_eq!(layout.segment_idx_to_group_idx.get(&0), Some(&0));
-        assert_eq!(layout.segment_idx_to_group_idx.get(&1), Some(&1));
+        assert_eq!(layout.group_idx_by_segment_idx, vec![0, 1]);
         Ok(())
     }
 
@@ -285,9 +280,7 @@ mod tests_newest_bed_loaders {
             layout_segments_for_chr(&layout, "chr1"),
             vec![(10, 15, 0), (10, 20, 1), (12, 18, 2)]
         );
-        assert_eq!(layout.segment_idx_to_group_idx.get(&0), Some(&1));
-        assert_eq!(layout.segment_idx_to_group_idx.get(&1), Some(&0));
-        assert_eq!(layout.segment_idx_to_group_idx.get(&2), Some(&2));
+        assert_eq!(layout.group_idx_by_segment_idx, vec![1, 0, 2]);
         Ok(())
     }
 
@@ -310,7 +303,7 @@ mod tests_newest_bed_loaders {
 
         // Assert
         assert!(layout.segments_by_chr.is_empty());
-        assert!(layout.segment_idx_to_group_idx.is_empty());
+        assert!(layout.group_idx_by_segment_idx.is_empty());
         assert!(layout.group_span_positions.is_empty());
         assert_eq!(layout.group_idx_to_name, group_idx_to_name);
         Ok(())
@@ -370,8 +363,7 @@ mod tests_newest_bed_loaders {
         // Assert
         assert_eq!(layout_segments_for_chr(&layout, "chr1"), vec![(0, 10, 0)]);
         assert_eq!(layout_segments_for_chr(&layout, "chr2"), vec![(20, 25, 1)]);
-        assert_eq!(layout.segment_idx_to_group_idx.get(&0), Some(&0));
-        assert_eq!(layout.segment_idx_to_group_idx.get(&1), Some(&0));
+        assert_eq!(layout.group_idx_by_segment_idx, vec![0, 0]);
         assert_eq!(layout.group_span_positions.get(&0), Some(&15));
         Ok(())
     }
@@ -425,7 +417,8 @@ mod tests_bed_loader {
         let whitelist = vec!["chr1".to_string()];
 
         // Act
-        let map = load_windows_from_bed(bed.path(), Some(whitelist.as_slice()), None, None)?;
+        let map =
+            load_windows_from_bed(bed.path(), Some(whitelist.as_slice()), None, None, false)?;
 
         // Assert
         let chr1 = map.get("chr1").expect("chr1 missing");
@@ -436,6 +429,7 @@ mod tests_bed_loader {
             Some(["chr3".to_string()].as_slice()),
             None,
             None,
+            false,
         )?;
         assert!(
             empty
@@ -455,7 +449,13 @@ mod tests_bed_loader {
         let whitelist = vec!["chr1".to_string()];
 
         // Act
-        let error = load_windows_from_bed(bed.path(), Some(whitelist.as_slice()), None, None)
+        let error = load_windows_from_bed(
+            bed.path(),
+            Some(whitelist.as_slice()),
+            None,
+            None,
+            false,
+        )
             .expect_err("malformed BED text should fail");
 
         // Assert
@@ -474,7 +474,13 @@ mod tests_bed_loader {
         let whitelist = vec!["chr1".to_string()];
 
         // Act
-        let error = load_windows_from_bed(bed.path(), Some(whitelist.as_slice()), None, None)
+        let error = load_windows_from_bed(
+            bed.path(),
+            Some(whitelist.as_slice()),
+            None,
+            None,
+            false,
+        )
             .expect_err("binary-looking BED input should fail");
 
         // Assert
@@ -492,7 +498,7 @@ mod tests_bed_loader {
         let keep_large = |_: &str, start: u64, end: u64| (end - start) >= 10;
 
         // Act
-        let map = load_windows_from_bed(bed.path(), None, Some(&keep_large), None)?;
+        let map = load_windows_from_bed(bed.path(), None, Some(&keep_large), None, false)?;
 
         // Assert
         let chr1 = map.get("chr1").expect("chr1 missing");
@@ -512,7 +518,9 @@ mod tests_bed_loader {
             encoder.finish()?;
         }
 
-        let map = load_windows_from_bed(gz.path(), None, None, None)?;
+        let read_in_background = std::thread::available_parallelism()
+            .is_ok_and(|available_threads| available_threads.get() > 1);
+        let map = load_windows_from_bed(gz.path(), None, None, None, read_in_background)?;
         let chr1 = map.get("chr1").expect("chr1 missing");
         assert_eq!(chr1.as_slice(), indexed_windows(&[(0, 5, 0), (10, 15, 1)]));
         Ok(())
@@ -525,14 +533,26 @@ mod tests_bed_loader {
         let whitelist = vec!["chr2".to_string()];
 
         // Act
-        let map = load_windows_from_bed(bed.path(), Some(whitelist.as_slice()), None, Some(3))?;
+        let map = load_windows_from_bed(
+            bed.path(),
+            Some(whitelist.as_slice()),
+            None,
+            Some(3),
+            false,
+        )?;
 
         // Assert: only the allowed chromosome is returned, but **original indices include skipped windows**
         let chr2 = map.get("chr2").expect("chr2 entry missing");
         assert_eq!(chr2.as_slice(), indexed_windows(&[(4, 8, 1), (8, 12, 2)]));
 
         // And mismatched expectations yield an error
-        let err = load_windows_from_bed(bed.path(), Some(whitelist.as_slice()), None, Some(2))
+        let err = load_windows_from_bed(
+            bed.path(),
+            Some(whitelist.as_slice()),
+            None,
+            Some(2),
+            false,
+        )
             .expect_err("expected incorrect exp_num_windows to error");
         assert!(
             err.to_string()
@@ -548,7 +568,7 @@ mod tests_bed_loader {
         let bed = write_bed(&["chr1\t0\t5", "chr1\t5\t4", "chr2\t10\t20"])?;
 
         // Act + Assert
-        let err = load_windows_from_bed(bed.path(), None, None, Some(3))
+        let err = load_windows_from_bed(bed.path(), None, None, Some(3), false)
             .expect_err("invalid window should fail loading");
         assert!(
             err.to_string()
@@ -572,9 +592,18 @@ mod tests_bed_loader {
             "chr1\t10\t12\talpha",
             "chr2\t5\t8\talpha",
         ])?;
+        let read_in_background = std::thread::available_parallelism()
+            .is_ok_and(|available_threads| available_threads.get() > 1);
 
         let (map, group_idx_to_name, strand_detection) =
-            load_grouped_windows_from_bed(bed.path(), None, false, None, Some(4))?;
+            load_grouped_windows_from_bed(
+                bed.path(),
+                None,
+                false,
+                None,
+                Some(4),
+                read_in_background,
+            )?;
         assert!(
             strand_detection.is_none(),
             "strand detection should not run when read_strands is false"
@@ -615,7 +644,7 @@ mod tests_bed_loader {
         ])?;
 
         let (map, _group_idx_to_name, strand_detection) =
-            load_grouped_windows_from_bed(bed.path(), None, true, None, Some(3))?;
+            load_grouped_windows_from_bed(bed.path(), None, true, None, Some(3), false)?;
         let strand_detection = strand_detection.expect("strand detection should run");
         assert_eq!(
             strand_detection.column,
@@ -645,7 +674,7 @@ mod tests_bed_loader {
         let bed = write_bed(&["chr1\t10\t15\talpha\t+", "chr1\t20\t25\tbeta\t-"])?;
 
         let (map, _group_idx_to_name, strand_detection) =
-            load_grouped_windows_from_bed(bed.path(), None, true, None, Some(2))?;
+            load_grouped_windows_from_bed(bed.path(), None, true, None, Some(2), false)?;
         let strand_detection = strand_detection.expect("strand detection should run");
         assert_eq!(
             strand_detection.column,
@@ -676,7 +705,7 @@ mod tests_bed_loader {
         //   misplaced strand column, so the loader must not silently treat the file as unstranded.
         let bed = write_bed(&["chr1\t10\t15\talpha\t+\t0", "chr1\t20\t25\tbeta\t-\t0"])?;
 
-        let error = load_grouped_windows_from_bed(bed.path(), None, true, None, Some(2))
+        let error = load_grouped_windows_from_bed(bed.path(), None, true, None, Some(2), false)
             .expect_err("ambiguous strand columns should fail");
 
         assert!(
@@ -702,7 +731,7 @@ mod tests_bed_loader {
 
         // Act
         let (map, _group_idx_to_name, strand_detection) =
-            load_grouped_windows_from_bed(bed.path(), None, true, None, Some(2))?;
+            load_grouped_windows_from_bed(bed.path(), None, true, None, Some(2), false)?;
 
         // Assert
         let strand_detection = strand_detection.expect("strand detection should run");
@@ -773,6 +802,7 @@ mod tests_bed_loader {
             false,
             None,
             Some(3),
+            false,
         )?;
 
         assert_eq!(map.len(), 1);
@@ -794,7 +824,7 @@ mod tests_bed_loader {
     fn should_error_when_grouped_bed_is_missing_group_name() -> Result<()> {
         let bed = write_bed(&["chr1\t0\t10"])?;
 
-        let error = load_grouped_windows_from_bed(bed.path(), None, false, None, None)
+        let error = load_grouped_windows_from_bed(bed.path(), None, false, None, None, false)
             .expect_err("missing group name should fail");
 
         assert!(error.to_string().contains("missing group name"));

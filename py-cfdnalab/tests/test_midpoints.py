@@ -39,11 +39,7 @@ def test_read_midpoints_reads_metadata_and_arrays(tmp_path: Path) -> None:
 
     assert profiles.path == store_path
     assert repr(profiles) == (
-        "MidpointProfiles("
-        f"path={str(store_path)!r}, "
-        "schema_version=1, "
-        "shape=(3, 2, 4)"
-        ")"
+        f"MidpointProfiles(path={str(store_path)!r}, schema_version=1, shape=(3, 2, 4))"
     )
     pd.testing.assert_frame_equal(
         profiles.group_metadata(),

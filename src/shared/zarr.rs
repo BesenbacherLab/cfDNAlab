@@ -18,10 +18,7 @@ use anyhow::{Context, Result, ensure};
 use serde_json::{Map, Value};
 use std::{fs, path::Path, sync::Arc};
 use zarrs::{
-    array::{
-        ArrayBuilder, DataType, Element, FillValueMetadata, builder::ArrayBuilderFillValue,
-        codec::ZstdCodec,
-    },
+    array::{ArrayBuilder, DataType, Element, builder::ArrayBuilderFillValue, codec::ZstdCodec},
     filesystem::FilesystemStore,
     group::GroupBuilder,
 };
@@ -38,11 +35,15 @@ pub(crate) const DEFAULT_ZARR_ZSTD_LEVEL: i32 = 3;
 /// coordinate axes are zero-based, so using zero would turn valid index 0 values into missing
 /// values in those readers. `-1` is outside the valid domain for these arrays and should only be
 /// seen as chunk padding or metadata for empty arrays, not as real cfDNAlab data.
-#[cfg(any(feature = "cmd_ends", feature = "cmd_midpoints"))]
+#[cfg(any(
+    feature = "cmd_ends",
+    feature = "cmd_midpoints",
+    feature = "cmd_ref_kmers"
+))]
 pub(crate) const ZARR_INT32_FILL_VALUE: i32 = -1;
 
 /// Fill value for public `int64` genomic coordinate arrays.
-#[cfg(feature = "cmd_ends")]
+#[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
 pub(crate) const ZARR_INT64_FILL_VALUE: i64 = -1;
 
 /// Fill value for non-negative `float32` count arrays.
@@ -50,7 +51,7 @@ pub(crate) const ZARR_INT64_FILL_VALUE: i64 = -1;
 pub(crate) const ZARR_FLOAT32_FILL_VALUE: f32 = -1.0;
 
 /// Fill value for non-negative `float64` count and fraction arrays.
-#[cfg(feature = "cmd_ends")]
+#[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
 pub(crate) const ZARR_FLOAT64_FILL_VALUE: f64 = -1.0;
 
 /// Fill value for fixed-width ASCII label arrays.
@@ -58,7 +59,7 @@ pub(crate) const ZARR_FLOAT64_FILL_VALUE: f64 = -1.0;
 /// Valid ASCII labels only use byte values `0..=127`, so `255` cannot be confused with a real
 /// label byte. Do not reuse this for arbitrary numeric `uint8` arrays, where `255` may be a valid
 /// data value.
-#[cfg(feature = "cmd_ends")]
+#[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
 pub(crate) const ZARR_ASCII_FILL_VALUE: u8 = u8::MAX;
 
 /// Open or create a filesystem-backed Zarr store directory.
@@ -258,14 +259,16 @@ pub(crate) fn create_zarr_array_with_fill_value(
 }
 
 /// Return a Zarr metadata fill value for boolean arrays.
+#[cfg(feature = "cmd_gc_bias")]
 pub(crate) fn bool_fill_value(value: bool) -> ArrayBuilderFillValue {
-    FillValueMetadata::from(value).into()
+    zarrs::array::FillValueMetadata::from(value).into()
 }
 
 #[cfg(any(
     feature = "cmd_ends",
     feature = "cmd_gc_bias",
-    feature = "cmd_midpoints"
+    feature = "cmd_midpoints",
+    feature = "cmd_ref_kmers"
 ))]
 pub(crate) use root_attribute_reader::read_zarr_root_attributes;
 
@@ -275,7 +278,8 @@ pub(crate) use package_readers::{ensure_zarr_schema, read_zarr_array1, read_zarr
 #[cfg(any(
     feature = "cmd_ends",
     feature = "cmd_gc_bias",
-    feature = "cmd_midpoints"
+    feature = "cmd_midpoints",
+    feature = "cmd_ref_kmers"
 ))]
 mod root_attribute_reader {
     use anyhow::{Context, Result};
@@ -401,7 +405,7 @@ where
 }
 
 /// Convert a metadata value to the public `i64` Zarr dtype.
-#[cfg(feature = "cmd_ends")]
+#[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
 pub(crate) fn checked_i64<T>(value: T, field_name: &str) -> Result<i64>
 where
     T: TryInto<i64> + Copy + std::fmt::Display,

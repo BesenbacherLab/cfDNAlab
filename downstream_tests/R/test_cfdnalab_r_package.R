@@ -49,6 +49,11 @@ test_that("R helper package reads dense global end motifs", {
     end_motif_data_frame(dense_global)$count,
     c(1, 0, 1, 0)
   )
+  expect_error(
+    end_motif_data_frame(dense_global, two_sided_correction = "joint"),
+    "two_sided_correction requires ref_kmers",
+    fixed = TRUE
+  )
 })
 
 test_that("R helper package reads sparse windowed end motifs", {
@@ -105,6 +110,222 @@ test_that("R helper package reads sparse windowed selected motif-file end motifs
   expect_error(
     end_motif_data_frame(selected, motifs = "TT_TT", densify = TRUE),
     "Unknown end-motif label"
+  )
+})
+
+test_that("R helper package corrects two-sided end motifs without same motifs file", {
+  ends <- read_end_motifs(sparse_windowed_two_sided_end_zarr_path())
+  ref_kmers <- read_ref_kmers(sparse_windowed_end_motif_ref_kmer_zarr_path())
+
+  expect_identical(motifs(ends)$motif, c("AC_GT", "GT_AC"))
+  expect_identical(kmer_size(ref_kmers), 4L)
+  expect_identical(
+    motifs(ref_kmers)$motif,
+    c("ACGT", "CGTA", "CGTT", "GTAC", "GTTT", "TACG", "TTTT")
+  )
+  expected_counts <- matrix(c(1, 0, 0, 1, 1, 0), nrow = 3L, byrow = TRUE)
+  expected_count_vector <- c(1, 0, 0, 1, 1, 0)
+  # The stored columns are [AC_GT, GT_AC], and the three sample rows contain
+  # [[1, 0], [0, 1], [1, 0]]. Seven positive reference k-mers make the joint
+  # uniform frequency 1/7. Relative to uniform, ACGT frequency 1/4 gives
+  # correction factor (1/4)/(1/7) = 7/4, while GTAC frequency 3/20 gives
+  # (3/20)/(1/7) = 21/20. Dividing each observed count by its factor gives
+  # [[4/7, 0], [0, 20/21], [4/7, 0]].
+  expected_joint <- matrix(c(4 / 7, 0, 0, 20 / 21, 4 / 7, 0), nrow = 3L, byrow = TRUE)
+  # Five positive labels on each side make each side's uniform frequency
+  # 1/5. Outside labels AC and GT both have frequency 1/4, so both factors
+  # are (1/4)/(1/5) = 5/4. Inside labels GT and AC have frequencies 1/4 and
+  # 3/20, giving factors 5/4 and 3/4. Split therefore divides AC_GT by
+  # (5/4)*(5/4)=25/16 and GT_AC by (5/4)*(3/4)=15/16. Because each observed
+  # count is 1, the corrected values are 16/25 and 16/15. Outside correction
+  # divides by 5/4 for either label. Inside correction divides AC_GT by 5/4
+  # and GT_AC by 3/4. In the stored row and column order, the split, outside,
+  # and inside matrices are therefore [[16/25, 0], [0, 16/15], [16/25, 0]],
+  # [[4/5, 0], [0, 4/5], [4/5, 0]], and
+  # [[4/5, 0], [0, 4/3], [4/5, 0]], respectively.
+  expected_split <- matrix(c(16 / 25, 0, 0, 16 / 15, 16 / 25, 0), nrow = 3L, byrow = TRUE)
+  expected_outside <- matrix(c(4 / 5, 0, 0, 4 / 5, 4 / 5, 0), nrow = 3L, byrow = TRUE)
+  expected_inside <- matrix(c(4 / 5, 0, 0, 4 / 3, 4 / 5, 0), nrow = 3L, byrow = TRUE)
+
+  expect_error(
+    end_motif_data_frame(ends, ref_kmers = ref_kmers, densify = TRUE),
+    "two-sided",
+    fixed = TRUE
+  )
+
+  joint <- end_motif_data_frame(
+    ends,
+    ref_kmers = ref_kmers,
+    densify = TRUE,
+    two_sided_correction = "joint"
+  )
+  expect_equal(joint$window_idx, c(1L, 1L, 2L, 2L, 3L, 3L))
+  expect_equal(joint$motif, rep(c("AC_GT", "GT_AC"), 3L))
+  expect_equal(joint$count, expected_count_vector)
+  expect_equal(joint$corrected_count, as.vector(t(expected_joint)))
+  expect_equal(joint$corrected_frequency, expected_count_vector)
+
+  expect_equal(
+    dense_corrected_counts_matrix(
+      ends,
+      ref_kmers,
+      allow_densify = TRUE,
+      two_sided_correction = "split"
+    ),
+    expected_split
+  )
+  expect_equal(
+    as.matrix(sparse_corrected_counts_matrix(
+      ends,
+      ref_kmers,
+      two_sided_correction = "split"
+    )),
+    expected_split
+  )
+
+  outside <- end_motif_data_frame(
+    ends,
+    ref_kmers = ref_kmers,
+    densify = TRUE,
+    two_sided_correction = "outside"
+  )
+  expect_equal(outside$motif, rep(c("AC_", "GT_"), 3L))
+  expect_equal(outside$count, expected_count_vector)
+  expect_equal(outside$corrected_count, as.vector(t(expected_outside)))
+  expect_equal(
+    unname(dense_corrected_counts_matrix(
+      ends,
+      ref_kmers,
+      allow_densify = TRUE,
+      two_sided_correction = "outside"
+    )),
+    expected_outside
+  )
+
+  inside <- end_motif_data_frame(
+    ends,
+    ref_kmers = ref_kmers,
+    densify = TRUE,
+    two_sided_correction = "inside"
+  )
+  expect_equal(inside$motif, rep(c("_GT", "_AC"), 3L))
+  expect_equal(inside$count, expected_count_vector)
+  expect_equal(inside$corrected_count, as.vector(t(expected_inside)))
+  expect_equal(
+    unname(as.matrix(sparse_corrected_counts_matrix(
+      ends,
+      ref_kmers,
+      two_sided_correction = "inside"
+    ))),
+    expected_inside
+  )
+})
+
+test_that("R helper package corrects two-sided end motifs with same motifs file", {
+  ends <- read_end_motifs(sparse_windowed_selected_motifs_end_zarr_path())
+  ref_kmers <- read_ref_kmers(sparse_windowed_selected_end_motifs_ref_kmer_zarr_path())
+
+  expect_identical(motifs(ends)$motif, c("GT_AC", "AC_GT"))
+  expect_identical(motifs(ref_kmers)$motif, c("GTAC", "ACGT", "GTTT", "TTTT"))
+  expected_counts <- matrix(c(0, 1, 1, 0, 0, 1), nrow = 3L, byrow = TRUE)
+  expected_count_vector <- c(0, 1, 1, 0, 0, 1)
+  # The stored columns are [GT_AC, AC_GT], and the three sample rows contain
+  # [[0, 1], [1, 0], [0, 1]]. Four positive reference k-mers make the joint
+  # uniform frequency 1/4. Relative to uniform, GTAC frequency 3/11 gives
+  # correction factor (3/11)/(1/4) = 12/11, while ACGT frequency 5/11 gives
+  # (5/11)/(1/4) = 20/11. Dividing each observed count by its factor gives
+  # [[0, 11/20], [11/12, 0], [0, 11/20]].
+  expected_joint <- matrix(c(0, 11 / 20, 11 / 12, 0, 0, 11 / 20), nrow = 3L, byrow = TRUE)
+  # Three positive labels on each side make each side's uniform frequency
+  # 1/3. Outside labels AC and GT both have frequency 5/11, so both factors
+  # are (5/11)/(1/3) = 15/11. Inside labels GT and AC have frequencies 5/11
+  # and 3/11, giving factors 15/11 and 9/11. Split therefore divides AC_GT
+  # by (15/11)*(15/11)=225/121 and GT_AC by
+  # (15/11)*(9/11)=135/121. Because each observed count is 1, the corrected
+  # values are 121/225 and 121/135. Outside correction divides by 15/11 for
+  # either label. Inside correction divides AC_GT by 15/11 and GT_AC by 9/11.
+  # In stored order, the split, outside, and inside matrices are therefore
+  # [[0, 121/225], [121/135, 0], [0, 121/225]],
+  # [[0, 11/15], [11/15, 0], [0, 11/15]], and
+  # [[0, 11/15], [11/9, 0], [0, 11/15]], respectively.
+  expected_split <- matrix(c(0, 121 / 225, 121 / 135, 0, 0, 121 / 225), nrow = 3L, byrow = TRUE)
+  expected_outside <- matrix(c(0, 11 / 15, 11 / 15, 0, 0, 11 / 15), nrow = 3L, byrow = TRUE)
+  expected_inside <- matrix(c(0, 11 / 15, 11 / 9, 0, 0, 11 / 15), nrow = 3L, byrow = TRUE)
+
+  joint <- end_motif_data_frame(
+    ends,
+    ref_kmers = ref_kmers,
+    densify = TRUE,
+    two_sided_correction = "joint"
+  )
+  expect_equal(joint$motif, rep(c("GT_AC", "AC_GT"), 3L))
+  expect_equal(joint$count, expected_count_vector)
+  expect_equal(joint$corrected_count, as.vector(t(expected_joint)))
+  expect_equal(joint$corrected_frequency, expected_count_vector)
+
+  expect_equal(
+    dense_corrected_counts_matrix(
+      ends,
+      ref_kmers,
+      allow_densify = TRUE,
+      two_sided_correction = "split"
+    ),
+    expected_split
+  )
+  expect_equal(
+    as.matrix(sparse_corrected_counts_matrix(
+      ends,
+      ref_kmers,
+      two_sided_correction = "split"
+    )),
+    expected_split
+  )
+
+  outside <- end_motif_data_frame(
+    ends,
+    ref_kmers = ref_kmers,
+    densify = TRUE,
+    two_sided_correction = "outside"
+  )
+  expect_equal(outside$motif, rep(c("GT_", "AC_"), 3L))
+  expect_equal(outside$count, expected_count_vector)
+  expect_equal(outside$corrected_count, as.vector(t(expected_outside)))
+  expect_equal(
+    unname(dense_corrected_counts_matrix(
+      ends,
+      ref_kmers,
+      allow_densify = TRUE,
+      two_sided_correction = "outside"
+    )),
+    expected_outside
+  )
+
+  selected_outside <- end_motif_data_frame(
+    ends,
+    ref_kmers = ref_kmers,
+    motifs = "AC_",
+    densify = TRUE,
+    two_sided_correction = "outside"
+  )
+  expect_equal(selected_outside$motif, c("AC_", "AC_", "AC_"))
+  expect_equal(selected_outside$corrected_count, c(11 / 15, 0, 11 / 15))
+
+  inside <- end_motif_data_frame(
+    ends,
+    ref_kmers = ref_kmers,
+    densify = TRUE,
+    two_sided_correction = "inside"
+  )
+  expect_equal(inside$motif, rep(c("_AC", "_GT"), 3L))
+  expect_equal(inside$count, expected_count_vector)
+  expect_equal(inside$corrected_count, as.vector(t(expected_inside)))
+  expect_equal(
+    unname(as.matrix(sparse_corrected_counts_matrix(
+      ends,
+      ref_kmers,
+      two_sided_correction = "inside"
+    ))),
+    expected_inside
   )
 })
 
@@ -205,15 +426,15 @@ test_that("R helper package reads sparse grouped wide motif-group end motifs", {
     motifs(motif_grouped),
     data.frame(
       motif_idx = c(1L, 2L),
-      motif = c("right-hit-wide", "left-hit-wide"),
+      motif = c("left-hit-wide", "right-hit-wide"),
       stringsAsFactors = FALSE
     ),
     ignore_attr = TRUE
   )
-  expect_equal(motif_idx(motif_grouped, "left-hit-wide"), 2L)
+  expect_equal(motif_idx(motif_grouped, "left-hit-wide"), 1L)
   expect_equal(
     as.matrix(sparse_counts_matrix(motif_grouped)),
-    matrix(c(1, 2, 1, 0, 0, 0), nrow = 3, byrow = TRUE)
+    matrix(c(2, 1, 0, 1, 0, 0), nrow = 3, byrow = TRUE)
   )
   expect_equal(
     as.matrix(sparse_counts_matrix(
@@ -225,12 +446,200 @@ test_that("R helper package reads sparse grouped wide motif-group end motifs", {
   )
 
   beta_dense <- end_motif_data_frame(motif_grouped, groups = "beta", densify = TRUE)
-  expect_equal(beta_dense$motif, c("right-hit-wide", "left-hit-wide"))
-  expect_equal(beta_dense$count, c(1, 2))
+  expect_equal(beta_dense$motif, c("left-hit-wide", "right-hit-wide"))
+  expect_equal(beta_dense$count, c(2, 1))
   expect_error(
     end_motif_data_frame(motif_grouped, motifs = "GT_AC"),
     "Unknown end-motif label",
     fixed = TRUE
+  )
+})
+
+test_that("R helper package reads dense global reference k-mers", {
+  ref_kmers <- read_ref_kmers(dense_global_ref_kmer_zarr_path())
+
+  expect_s3_class(ref_kmers, "cfdnalab_global_ref_kmer_frequencies")
+  expect_identical(schema_version(ref_kmers), 1L)
+  expect_identical(storage_mode(ref_kmers), "dense")
+  expect_identical(row_mode(ref_kmers), "global")
+  expect_identical(motif_axis_kind(ref_kmers), "motif")
+  expect_identical(kmer_size(ref_kmers), 3L)
+  expect_true(canonical(ref_kmers))
+  expect_true(all_motifs(ref_kmers))
+  expect_identical(assign_by(ref_kmers), "count-overlap")
+  expect_identical(length(motifs(ref_kmers)$motif), 32L)
+  expect_identical(head(motifs(ref_kmers)$motif, 4L), c("AAA", "AAC", "AAG", "AAT"))
+  expect_identical(tail(motifs(ref_kmers)$motif, 4L), c("TCA", "TCC", "TCG", "TCT"))
+  expect_equal(
+    dense_frequencies_matrix(ref_kmers, motifs = c("AAA", "ACG", "TAC", "CAT")),
+    matrix(c(4 / 36, 7 / 36, 6 / 36, 0), nrow = 1L),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    dense_counts_matrix(ref_kmers, motifs = c("AAA", "ACG", "TAC", "CAT")),
+    matrix(c(4, 7, 6, 0), nrow = 1L),
+    tolerance = 1e-8
+  )
+  expect_equal(row_scaling_factors(ref_kmers)$row_scaling_factor, 36, tolerance = 1e-8)
+  expect_equal(
+    ref_kmer_data_frame(ref_kmers, motifs = c("TAC", "AAA")),
+    data.frame(
+      row_label = c("global", "global"),
+      motif_idx = c(26L, 1L),
+      motif = c("TAC", "AAA"),
+      frequency = c(6 / 36, 4 / 36),
+      count = c(6, 4),
+      stringsAsFactors = FALSE
+    ),
+    tolerance = 1e-8,
+    ignore_attr = TRUE
+  )
+})
+
+test_that("R helper package reads sparse windowed reference k-mers", {
+  ref_kmers <- read_ref_kmers(sparse_windowed_ref_kmer_zarr_path())
+
+  expect_s3_class(ref_kmers, "cfdnalab_windowed_ref_kmer_frequencies")
+  expect_identical(storage_mode(ref_kmers), "sparse_coo")
+  expect_identical(row_mode(ref_kmers), "bed")
+  expect_identical(motifs(ref_kmers)$motif, c("CGT", "AAA", "TAC", "CCC", "GGG", "ACG", "GTA"))
+  expect_false(has_motif(ref_kmers, "TTT"))
+  expect_error(dense_frequencies_matrix(ref_kmers), "Use sparse_frequencies_matrix")
+  expect_equal(
+    dense_counts_matrix(ref_kmers, allow_densify = TRUE),
+    matrix(
+      c(
+        0, 1, 0, 1, 1, 0, 0,
+        1, 0, 4 / 3, 0, 1 / 3, 1, 2 / 3,
+        2 / 3, 0, 0, 1, 1 / 3, 0, 1 / 3,
+        5 / 3, 0, 1, 0, 0, 1, 2
+      ),
+      nrow = 4L,
+      byrow = TRUE
+    ),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    row_scaling_factors(ref_kmers)$row_scaling_factor,
+    c(3, 13 / 3, 7 / 3, 17 / 3),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    window_metadata(ref_kmers),
+    data.frame(
+      window_idx = 1:4,
+      chrom = c("chr1", "chr1", "chr2", "chr2"),
+      start = c(0L, 8L, 2L, 12L),
+      end = c(9L, 16L, 13L, 20L),
+      blacklisted_fraction = c(0, 1 / 8, 2 / 11, 0),
+      stringsAsFactors = FALSE
+    ),
+    ignore_attr = TRUE
+  )
+  expect_equal(
+    ref_kmer_data_frame(
+      ref_kmers,
+      window_idxs = c(4L, 1L),
+      motifs = c("GTA", "AAA"),
+      densify = TRUE
+    ),
+    data.frame(
+      window_idx = c(4L, 4L, 1L, 1L),
+      chrom = c("chr2", "chr2", "chr1", "chr1"),
+      start = c(12L, 12L, 0L, 0L),
+      end = c(20L, 20L, 9L, 9L),
+      blacklisted_fraction = c(0, 0, 0, 0),
+      motif_idx = c(7L, 2L, 7L, 2L),
+      motif = c("GTA", "AAA", "GTA", "AAA"),
+      frequency = c(6 / 17, 0, 0, 1 / 3),
+      count = c(2, 0, 0, 1),
+      stringsAsFactors = FALSE
+    ),
+    tolerance = 1e-8,
+    ignore_attr = TRUE
+  )
+})
+
+test_that("R helper package reads sparse grouped reference k-mers", {
+  ref_kmers <- read_ref_kmers(sparse_grouped_ref_kmer_zarr_path())
+
+  expect_s3_class(ref_kmers, "cfdnalab_grouped_ref_kmer_frequencies")
+  expect_identical(storage_mode(ref_kmers), "sparse_coo")
+  expect_identical(row_mode(ref_kmers), "grouped_bed")
+  expect_identical(group_idx(ref_kmers, "alpha"), 2L)
+  expect_identical(motifs(ref_kmers)$motif, c("CGT", "AAA", "TAC", "CCC", "GGG", "ACG", "GTA"))
+  expect_equal(
+    group_metadata(ref_kmers),
+    data.frame(
+      group_idx = c(1L, 2L),
+      group_name = c("beta", "alpha"),
+      eligible_windows = c(2L, 2L),
+      blacklisted_fraction = c(0.1, 1 / 16),
+      stringsAsFactors = FALSE
+    ),
+    ignore_attr = TRUE
+  )
+  expect_equal(
+    as.matrix(sparse_counts_matrix(
+      ref_kmers,
+      groups = c("alpha", "beta"),
+      motifs = c("GTA", "AAA")
+    )),
+    matrix(c(8 / 3, 0, 1 / 3, 1), nrow = 2L, byrow = TRUE),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    ref_kmer_data_frame(ref_kmers),
+    data.frame(
+      group_idx = c(rep(1L, 5L), rep(2L, 5L)),
+      group_name = c(rep("beta", 5L), rep("alpha", 5L)),
+      eligible_windows = rep(2L, 10L),
+      blacklisted_fraction = c(rep(0.1, 5L), rep(1 / 16, 5L)),
+      motif_idx = c(1L, 2L, 4L, 5L, 7L, 1L, 3L, 5L, 6L, 7L),
+      motif = c("CGT", "AAA", "CCC", "GGG", "GTA", "CGT", "TAC", "GGG", "ACG", "GTA"),
+      frequency = c(1 / 8, 3 / 16, 3 / 8, 1 / 4, 1 / 16, 4 / 15, 7 / 30, 1 / 30, 1 / 5, 4 / 15),
+      count = c(2 / 3, 1, 2, 4 / 3, 1 / 3, 8 / 3, 7 / 3, 1 / 3, 2, 8 / 3),
+      stringsAsFactors = FALSE
+    ),
+    tolerance = 1e-8,
+    ignore_attr = TRUE
+  )
+})
+
+test_that("R helper package reads dense grouped motif-group reference k-mers", {
+  ref_kmers <- read_ref_kmers(dense_grouped_motif_group_ref_kmer_zarr_path())
+
+  expect_s3_class(ref_kmers, "cfdnalab_grouped_ref_kmer_frequencies")
+  expect_identical(storage_mode(ref_kmers), "dense")
+  expect_identical(row_mode(ref_kmers), "grouped_bed")
+  expect_identical(motif_axis_kind(ref_kmers), "motif_group")
+  expect_true(all_motifs(ref_kmers))
+  expect_identical(motifs(ref_kmers)$motif, c("absent", "edge", "gc_rich", "homopolymer", "transition"))
+  expect_equal(
+    dense_counts_matrix(ref_kmers),
+    matrix(c(0, 1 / 3, 10 / 3, 1, 2 / 3, 0, 5, 1 / 3, 0, 14 / 3), nrow = 2L, byrow = TRUE),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    dense_counts_matrix(ref_kmers, groups = c("alpha", "beta"), motifs = c("edge", "absent")),
+    matrix(c(5, 0, 1 / 3, 0), nrow = 2L, byrow = TRUE),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    ref_kmer_data_frame(ref_kmers, groups = c("alpha", "beta"), motifs = c("edge", "absent")),
+    data.frame(
+      group_idx = c(2L, 2L, 1L, 1L),
+      group_name = c("alpha", "alpha", "beta", "beta"),
+      eligible_windows = c(2L, 2L, 2L, 2L),
+      blacklisted_fraction = c(1 / 16, 1 / 16, 0.1, 0.1),
+      motif_idx = c(2L, 1L, 2L, 1L),
+      motif = c("edge", "absent", "edge", "absent"),
+      frequency = c(1 / 2, 0, 1 / 16, 0),
+      count = c(5, 0, 1 / 3, 0),
+      stringsAsFactors = FALSE
+    ),
+    tolerance = 1e-8,
+    ignore_attr = TRUE
   )
 })
 

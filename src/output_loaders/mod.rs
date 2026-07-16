@@ -12,6 +12,7 @@
 //! cmd_fcoverage -> load_fcoverage_output(path)
 //! cmd_ends      -> load_ends_output(path)
 //! cmd_midpoints -> load_midpoints_output(path)
+//! cmd_ref_kmers -> load_ref_kmers_output(path)
 //! ```
 //!
 //! Public loader methods return `OutputLoaderResult<T>`. Error messages include
@@ -32,6 +33,12 @@ mod lengths;
 
 #[cfg(feature = "cmd_midpoints")]
 mod midpoints;
+
+#[cfg(feature = "cmd_ref_kmers")]
+mod ref_kmers;
+
+#[cfg(all(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
+mod reference_correction;
 
 pub use common::{DenseMatrix, LengthBin, WindowRow};
 pub use error::{OutputLoaderError, OutputLoaderResult};
@@ -67,4 +74,17 @@ pub use lengths::{
 pub use midpoints::{
     MidpointCountSelection, MidpointGroupRow, MidpointPositionBin, MidpointsOutput,
     MidpointsOutputMetadata, MidpointsSelector, load_midpoints_output,
+};
+
+#[cfg(feature = "cmd_ref_kmers")]
+pub use ref_kmers::{
+    RefKmerFrequencyData, RefKmerFrequencySelection, RefKmerGroupRow, RefKmerMotifAxisKind,
+    RefKmerOutputMetadata, RefKmerRowMetadata, RefKmerRowMode, RefKmerSparseCountEntry,
+    RefKmerSparseFrequencies, RefKmerSparseFrequencyEntry, RefKmerSparseFrequencyLookup,
+    RefKmerStorageMode, RefKmerWindowMode, RefKmersOutput, RefKmersSelector, load_ref_kmers_output,
+};
+
+#[cfg(all(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
+pub use reference_correction::{
+    CorrectedEndMotifCountsSelector, TwoSidedCorrectionMode, UnsupportedReferencePolicy,
 };

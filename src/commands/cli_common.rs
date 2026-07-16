@@ -311,7 +311,7 @@ pub struct WindowsArgs {
         feature = "cli",
         clap(
             long,
-            value_parser,
+            value_parser = clap::value_parser!(u64).range(1..),
             group = "windows",
             help_heading = "Windows (select max. one arg.)"
         )
@@ -375,7 +375,7 @@ pub struct DistributionWindowsArgs {
         feature = "cli",
         clap(
             long,
-            value_parser,
+            value_parser = clap::value_parser!(u64).range(1..),
             group = "windows",
             help_heading = "Windows (select max. one arg.)"
         )
@@ -463,7 +463,7 @@ pub struct GCWindowsArgs {
         feature = "cli",
         clap(
             long,
-            value_parser,
+            value_parser = clap::value_parser!(u64).range(1..),
             group = "gc_windows",
             help_heading = "Windows (select max. one arg.)"
         )
@@ -557,6 +557,42 @@ impl FromStr for WindowAssigner {
     }
 }
 
+/// Return the overlap-fraction threshold for shared window lookup.
+///
+/// `find_overlapping_windows` measures overlap as `overlap_bases / query_interval.len()`.
+/// `max_assignment_span` must be at least as large as every unprojected assignment interval the
+/// caller can query. `Any` and `CountOverlap` use `1 / (max_assignment_span + 1)`, which is below
+/// the smallest nonzero overlap fraction for any interval up to that span. `All` uses
+/// `max_assignment_span / (max_assignment_span + 1)`, which is above every partial-overlap
+/// fraction for intervals up to that span.
+///
+/// `Midpoint` callers first project the assignment interval to the single midpoint base. The same
+/// threshold as `All` then accepts windows that cover that projected base.
+#[cfg(any(
+    feature = "cmd_gc_bias",
+    feature = "cmd_lengths",
+    feature = "cmd_ref_kmers"
+))]
+pub(crate) fn min_overlap_fraction_for_window_assignment(
+    assign_by: WindowAssigner,
+    max_assignment_span: u64,
+) -> f64 {
+    assert!(
+        max_assignment_span > 0,
+        "window assignment span must be positive"
+    );
+
+    match assign_by {
+        WindowAssigner::Any | WindowAssigner::CountOverlap => {
+            1.0 / (max_assignment_span as f64 + 1.0)
+        }
+        WindowAssigner::All | WindowAssigner::Midpoint => {
+            1.0 - (1.0 / (max_assignment_span as f64 + 1.0))
+        }
+        WindowAssigner::Proportion(threshold) => threshold,
+    }
+}
+
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AssignToWindowArgs {
@@ -609,7 +645,7 @@ pub struct ChromosomeArgs {
     ///
     /// When no chromosomes are specified, it defaults to `chr1..chr22`.
     ///
-    /// Specify `"all"` *as the only string* to use all chromosomes from the
+    /// Specify `"all"` (as the only string) to use all chromosomes from the
     /// command's configured contig source.
     #[cfg_attr(
         feature = "cli", clap(
@@ -1158,6 +1194,7 @@ pub fn ensure_output_dir(path: &Path) -> Result<()> {
 /// - `beds`: Optional list of BED paths.
 /// - `min_size`: Minimum interval size (bp) to retain.
 /// - `chromosomes`: Chromosomes the command intends to process.
+/// - `read_in_background`: Whether file reading should overlap with BED parsing.
 ///
 /// Returns:
 /// - A map keyed by chromosome name containing sorted blacklist intervals.
@@ -1169,6 +1206,7 @@ pub fn load_blacklist_map(
     min_size: u64,
     halo_bp: u64,
     chromosomes: &Vec<String>,
+    read_in_background: bool,
 ) -> Result<fxhash::FxHashMap<String, Vec<crate::shared::interval::Interval<u64>>>> {
     if let Some(paths) = beds {
         crate::shared::blacklist::load_blacklists(
@@ -1176,6 +1214,7 @@ pub fn load_blacklist_map(
             min_size,
             halo_bp,
             Some(chromosomes.as_slice()),
+            read_in_background,
         )
     } else {
         Ok(fxhash::FxHashMap::default())
