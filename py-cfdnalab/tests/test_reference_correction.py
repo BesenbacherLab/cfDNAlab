@@ -668,6 +668,20 @@ def test_two_sided_reference_correction_modes_use_mode_axis(tmp_path: Path) -> N
         joint["corrected_frequency"],
         [2.0 / 11.0, 4.0 / 11.0, 3.0 / 11.0, 2.0 / 11.0],
     )
+    expected_full_motif_metadata = pd.DataFrame(
+        {
+            "matrix_column": [0, 1, 2, 3],
+            "motif_index": [0, 1, 2, 3],
+            "motif": ["A_C", "A_G", "T_C", "T_G"],
+        }
+    )
+    pd.testing.assert_frame_equal(
+        ends.corrected_motifs_metadata(
+            ref_kmers,
+            two_sided_correction="joint",
+        ),
+        expected_full_motif_metadata,
+    )
 
     split = ends.data_frame(ref_kmers=ref_kmers, two_sided_correction="split")
     assert split["motif"].tolist() == ["A_C", "A_G", "T_C", "T_G"]
@@ -692,6 +706,20 @@ def test_two_sided_reference_correction_modes_use_mode_axis(tmp_path: Path) -> N
     np.testing.assert_allclose(
         split["corrected_frequency"].to_numpy(),
         np.array([1.0 / 4.0, 3.0 / 10.0, 1.0 / 4.0, 1.0 / 5.0]),
+    )
+    pd.testing.assert_frame_equal(
+        ends.corrected_motifs_metadata(
+            ref_kmers,
+            two_sided_correction="split",
+            motifs=["T_G", "A_C"],
+        ),
+        pd.DataFrame(
+            {
+                "matrix_column": [0, 1],
+                "motif_index": [3, 0],
+                "motif": ["T_G", "A_C"],
+            }
+        ),
     )
 
     outside = ends.data_frame(ref_kmers=ref_kmers, two_sided_correction="outside")

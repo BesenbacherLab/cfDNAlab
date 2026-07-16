@@ -32,6 +32,24 @@ def _shared_reference_rows() -> pd.DataFrame:
     )
 
 
+def _two_row_end_rows() -> pd.DataFrame:
+    beta_rows = _shared_end_rows().assign(row_label="beta")
+    alpha_rows = _shared_end_rows().assign(
+        row_label="alpha",
+        count=[2.0, 4.0, 0.0, 0.0],
+    )
+    return pd.concat([beta_rows, alpha_rows], ignore_index=True)
+
+
+def _two_row_reference_rows() -> pd.DataFrame:
+    alpha_rows = _shared_reference_rows().assign(
+        row_label="alpha",
+        reference_frequency=[0.5, 0.5, 0.0, 0.0],
+    )
+    beta_rows = _shared_reference_rows().assign(row_label="beta")
+    return pd.concat([alpha_rows, beta_rows], ignore_index=True)
+
+
 def _mode(
     mode: str,
     side_labels: list[str] | None = None,
@@ -48,7 +66,6 @@ def _with_frequencies(corrected: pd.DataFrame) -> pd.DataFrame:
     return reference_correction._add_corrected_frequency(
         corrected,
         ["row_label"],
-        "error",
     )
 
 
@@ -82,6 +99,35 @@ def test_joint_core_uses_full_motif_frequencies() -> None:
     )
 
 
+def test_joint_core_uses_support_from_each_reference_row() -> None:
+    # Arrange: Sample rows are beta then alpha, while reference rows are alpha
+    # then beta. Alpha supports two motifs and beta supports all four
+    ends = SimpleNamespace(end_motifs=SimpleNamespace(motif_axis_kind="motif"))
+
+    # Act
+    corrected = reference_correction._correct_exact_label_data_frame(
+        ends,
+        _two_row_end_rows(),
+        _two_row_reference_rows(),
+        ["row_label"],
+        "error",
+    )
+
+    # Assert: Beta's frequencies give denominators [1/2, 1/2, 1, 2]. Alpha's
+    # two supported frequencies are both 1/2, giving [1, 1, 0, 0]. Output keeps
+    # sample row and motif order, and unsupported zero counts remain zero
+    assert corrected["row_label"].tolist() == ["beta"] * 4 + ["alpha"] * 4
+    assert corrected["motif"].tolist() == ["A_C", "A_G", "T_C", "T_G"] * 2
+    np.testing.assert_allclose(
+        corrected["reference_denominator"],
+        [0.5, 0.5, 1.0, 2.0, 1.0, 1.0, 0.0, 0.0],
+    )
+    np.testing.assert_allclose(
+        corrected["corrected_count"],
+        [4.0, 8.0, 6.0, 4.0, 2.0, 4.0, 0.0, 0.0],
+    )
+
+
 def test_split_core_multiplies_outside_and_inside_denominators() -> None:
     corrected = reference_correction._correct_split_data_frame(
         _shared_end_rows(),
@@ -111,6 +157,55 @@ def test_split_core_multiplies_outside_and_inside_denominators() -> None:
         corrected["corrected_frequency"],
         [1.0 / 4.0, 3.0 / 10.0, 1.0 / 4.0, 1.0 / 5.0],
     )
+
+
+def test_split_core_uses_side_support_from_each_reference_row() -> None:
+    # Arrange: Alpha has only outside A support, while beta supports A and T.
+    # Both rows support inside C and G. Reference and sample row order differ
+
+    # Act
+    corrected = reference_correction._correct_split_data_frame(
+        _two_row_end_rows(),
+        _two_row_reference_rows(),
+        ["row_label"],
+        _mode("split"),
+        "error",
+    )
+
+    # Assert: Beta keeps the shared split denominators [3/8, 5/8, 9/8, 15/8].
+    # Alpha has outside denominators A=1 and T=0, and inside denominators C=1
+    # and G=1, giving full denominators [1, 1, 0, 0]
+    assert corrected["row_label"].tolist() == ["beta"] * 4 + ["alpha"] * 4
+    assert corrected["motif"].tolist() == ["A_C", "A_G", "T_C", "T_G"] * 2
+    np.testing.assert_allclose(
+        corrected["reference_denominator"],
+        [3.0 / 8.0, 5.0 / 8.0, 9.0 / 8.0, 15.0 / 8.0, 1.0, 1.0, 0.0, 0.0],
+    )
+    np.testing.assert_allclose(
+        corrected["corrected_count"],
+        [16.0 / 3.0, 32.0 / 5.0, 16.0 / 3.0, 64.0 / 15.0, 2.0, 4.0, 0.0, 0.0],
+    )
+
+
+def test_split_core_handles_an_empty_sparse_reference_row() -> None:
+    # Arrange: A sparse reference row with no stored motifs provides no outside
+    # or inside support. Zero sample counts remain defined as zero
+    end_rows = _shared_end_rows().assign(count=0.0)
+    reference_rows = _shared_reference_rows().iloc[0:0]
+
+    # Act
+    corrected = reference_correction._correct_split_data_frame(
+        end_rows,
+        reference_rows,
+        ["row_label"],
+        _mode("split"),
+        "error",
+    )
+
+    # Assert
+    assert corrected["motif"].tolist() == ["A_C", "A_G", "T_C", "T_G"]
+    np.testing.assert_allclose(corrected["reference_denominator"], np.zeros(4))
+    np.testing.assert_allclose(corrected["corrected_count"], np.zeros(4))
 
 
 def test_outside_core_aggregates_counts_before_correction() -> None:
@@ -192,7 +287,6 @@ def test_corrected_frequency_avoids_overflow_for_large_finite_counts() -> None:
     corrected = reference_correction._add_corrected_frequency(
         corrected,
         ["row_label"],
-        "error",
     )
 
     # Assert

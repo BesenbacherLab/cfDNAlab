@@ -31,11 +31,17 @@ class _ReferenceCorrectionMode:
 
 @dataclass
 class _ReferenceCorrectionContext:
-    """Validated row and motif axes shared by all corrected output forms."""
+    """
+    Validated row and motif axes shared by all corrected output forms.
+
+    `end_row_key_columns` identifies rows in the returned end-count data.
+    `reference_row_key_columns` identifies the reference composition joined to
+    those rows and is empty when a global composition is broadcast.
+    """
 
     correction_mode: _ReferenceCorrectionMode
-    row_columns: list[str]
-    reference_row_columns: list[str]
+    end_row_key_columns: list[str]
+    reference_row_key_columns: list[str]
     selected_mode_labels: list[str]
 
 
@@ -55,18 +61,26 @@ def _prepare_reference_correction(
     keys, and selected output labels. Data frame, dense-array, and sparse-matrix
     paths reuse it so validation and axis selection cannot diverge.
     """
+    # Validate options and the relationship between the two stored outputs first
     use_global_bias = validate_scalar_bool(use_global_bias, "use_global_bias")
     two_sided_correction = _validate_two_sided_correction(two_sided_correction)
     _validate_reference_correction_inputs(ends, ref_kmers, use_global_bias)
+    # Resolve the output motif axis and the metadata keys used on each side
     correction_mode = _resolve_correction_mode(ends, ref_kmers, two_sided_correction)
-    row_columns = _reference_correction_row_columns(ends.row_mode())
-    reference_row_columns = _reference_correction_reference_row_columns(
+    end_row_key_columns = _reference_correction_row_columns(ends.row_mode())
+    reference_row_key_columns = _reference_correction_reference_row_columns(
         ends,
         ref_kmers,
         use_global_bias,
     )
-    _validate_matching_rows(ends, ref_kmers, row_columns, reference_row_columns)
-    selected_mode_labels, _ = _selected_mode_axis(
+    _validate_matching_rows(
+        ends,
+        ref_kmers,
+        end_row_key_columns,
+        reference_row_key_columns,
+    )
+    # Interpret the motif selector on the axis produced by the correction mode
+    selected_mode_labels = _selected_mode_axis(
         ends,
         correction_mode,
         motifs=motifs,
@@ -74,8 +88,8 @@ def _prepare_reference_correction(
     )
     return _ReferenceCorrectionContext(
         correction_mode=correction_mode,
-        row_columns=row_columns,
-        reference_row_columns=reference_row_columns,
+        end_row_key_columns=end_row_key_columns,
+        reference_row_key_columns=reference_row_key_columns,
         selected_mode_labels=selected_mode_labels,
     )
 
@@ -280,12 +294,16 @@ def _reference_corrected_data_frame_from_context(
     """
     Build a corrected data frame from previously validated correction state.
 
-    All source motifs are loaded before correction so reference support and
-    corrected-frequency totals use the complete correction-mode axis. Motif
-    selection is applied only after counts and frequencies are calculated, then
-    rows and motifs are restored to the requested output order.
+    End counts are loaded without motif filtering because corrected frequencies
+    need every represented motif in the output axis. Side-only modes also need
+    every full motif that contributes to a selected side. Reference support is
+    calculated separately from the full reference motif axis. Motif selection
+    is applied only after counts and frequencies are calculated.
     """
 
+    # Load selected sample rows without motif filtering. Exact and
+    # split corrected counts could be calculated from selected motifs alone, but
+    # their corrected frequencies still need the corrected total over all motifs
     end_rows = ends._data_frame(
         densify=densify,
         window_idxs=window_idxs,
@@ -297,17 +315,21 @@ def _reference_corrected_data_frame_from_context(
     )
     if end_rows.empty:
         return _add_empty_reference_correction_columns(end_rows)
+
+    # Preserve the public sample-row and column order across joins and aggregation
     output_columns = end_rows.columns.tolist()
     end_rows = end_rows.copy()
     end_rows["_cfdnalab_row_order"] = _row_order_indices(
         end_rows,
-        context.row_columns,
+        context.end_row_key_columns,
     )
 
+    # Select only reference rows matching the chosen sample rows, while keeping
+    # every reference motif needed to define support and side marginals
     ref_row_indices = _reference_row_indices_for_end_rows(
         ref_kmers,
         end_rows,
-        context.reference_row_columns,
+        context.reference_row_key_columns,
     )
     ref_rows = _reference_rows_for_indices(
         ref_kmers,
@@ -316,22 +338,24 @@ def _reference_corrected_data_frame_from_context(
 
     ref_rows = _prepared_reference_rows(
         ref_rows,
-        end_rows,
-        context.reference_row_columns,
+        context.reference_row_key_columns,
     )
+
+    # Convert the reference frequencies into correction denominators according
+    # to whether full motifs or separate motif sides define the correction
     if context.correction_mode.mode == "exact":
         corrected = _correct_exact_label_data_frame(
             ends,
             end_rows,
             ref_rows,
-            context.reference_row_columns,
+            context.reference_row_key_columns,
             unsupported_motifs,
         )
     elif context.correction_mode.mode == "split":
         corrected = _correct_split_data_frame(
             end_rows,
             ref_rows,
-            context.reference_row_columns,
+            context.reference_row_key_columns,
             context.correction_mode,
             unsupported_motifs,
         )
@@ -339,20 +363,23 @@ def _reference_corrected_data_frame_from_context(
         corrected = _correct_side_data_frame(
             end_rows,
             ref_rows,
-            context.reference_row_columns,
+            context.reference_row_key_columns,
             context.correction_mode,
             output_columns,
             unsupported_motifs,
         )
 
+    # Normalize over the complete correction-mode motif axis before applying the
+    # requested motif selector, so selection cannot change reported frequencies
     corrected = _add_corrected_frequency(
         corrected,
-        context.row_columns,
-        unsupported_motifs,
+        context.end_row_key_columns,
     )
     corrected = corrected.loc[
         corrected["motif"].isin(context.selected_mode_labels)
     ].copy()
+
+    # Restore the selector's motif order within the original sample-row order
     if context.selected_mode_labels:
         motif_order = {
             motif: index for index, motif in enumerate(context.selected_mode_labels)
@@ -505,7 +532,7 @@ def _sparse_reference_corrected_counts_matrix(
     matrix_rows = np.asarray(
         [
             row_positions[row_key]
-            for row_key in _row_key_tuples(corrected, context.row_columns)
+            for row_key in _row_key_tuples(corrected, context.end_row_key_columns)
         ],
         dtype=np.int64,
     )[stored]
@@ -585,6 +612,8 @@ def _resolve_correction_mode(
     Other two-sided modes retain the inferred side widths, and side-only modes
     also store the derived output labels used for aggregation.
     """
+    # Motif groups already define the complete correction axis. They have no
+    # outside/inside split to reinterpret, so only exact-label correction applies
     if ends.end_motifs.motif_axis_kind == "motif_group":
         if two_sided_correction is not None:
             raise ValueError(
@@ -593,9 +622,13 @@ def _resolve_correction_mode(
         return _ReferenceCorrectionMode(mode="exact")
 
     motif_labels = ends.motifs_metadata()["motif"].astype(str).tolist()
+    # An empty stored axis has nothing from which to infer side widths. Treat it
+    # as exact so empty selections can still return their expected shape
     if not motif_labels:
         return _ReferenceCorrectionMode(mode="exact")
 
+    # Resolve the split from the sample labels, then verify that the reference
+    # labels can use exactly that boundary before choosing a correction formula
     outside_width, inside_width = _infer_end_motif_side_widths(
         motif_labels,
         ref_kmers.kmer_size(),
@@ -611,12 +644,16 @@ def _resolve_correction_mode(
                 "One-sided end-motif outputs do not accept two_sided_correction"
             )
         return _ReferenceCorrectionMode(mode="exact")
+    # A true two-sided axis is ambiguous without an explicit choice because the
+    # choice controls both the correction formula and, for side modes, output shape
     if two_sided_correction is None:
         raise ValueError(
             "two-sided end-motif labels with both outside and inside bases require two_sided_correction"
         )
     if two_sided_correction == "joint":
         return _ReferenceCorrectionMode(mode="exact")
+    # Split mode keeps the stored full-motif axis. Outside and inside modes
+    # instead need a stable, deduplicated derived axis for selection and ordering
     side_labels = (
         tuple(_side_axis_labels(motif_labels, two_sided_correction))
         if two_sided_correction in {"outside", "inside"}
@@ -702,39 +739,40 @@ def _selected_mode_axis(
     *,
     motifs: str | Sequence[str] | None,
     motif_idxs: int | Sequence[int] | None,
-) -> tuple[list[str], np.ndarray]:
+) -> list[str]:
     """
-    Resolve labels and indices on the axis produced by the correction mode.
+    Resolve labels on the axis produced by the correction mode.
 
     Exact and split modes select the stored motif axis. Side-only modes select
     the derived side-label axis by label and reject stored motif indices because
     those indices do not describe the derived columns.
     """
     mode = correction_mode.mode
+    # Exact and split results retain a one-to-one relationship with stored motif
+    # indices, so the standard end-motif selector defines their result axis
     if mode in {"exact", "split"}:
         motif_indices = ends._resolve_motif_selector(motifs, motif_idxs)
-        motif_labels = (
+        return (
             ends.motifs_metadata().iloc[motif_indices]["motif"].astype(str).tolist()
         )
-        return motif_labels, motif_indices
 
+    # Side-only labels were derived by collapsing multiple stored motifs. A
+    # stored motif index therefore cannot identify a derived result column
     if motif_idxs is not None:
         raise ValueError(
             "motif index selectors are not supported for outside or inside reference correction"
         )
     full_side_labels = list(correction_mode.side_labels)
     if motifs is None:
-        return full_side_labels, np.arange(len(full_side_labels), dtype=np.int64)
+        return full_side_labels
+    # Validate label selectors against the derived axis while preserving the
+    # caller's requested order for later data frame and matrix construction
     requested_labels = normalize_strings(motifs, name="motifs")
-    side_indices_by_label = {
-        label: index for index, label in enumerate(full_side_labels)
-    }
-    selected_indices: list[int] = []
+    side_label_set = set(full_side_labels)
     for requested_label in requested_labels:
-        if requested_label not in side_indices_by_label:
+        if requested_label not in side_label_set:
             raise ValueError(f"Side-mode motif axis has no label {requested_label!r}")
-        selected_indices.append(side_indices_by_label[requested_label])
-    return requested_labels, np.asarray(selected_indices, dtype=np.int64)
+    return requested_labels
 
 
 def _side_axis_labels(motif_labels: Sequence[str], side_mode: str) -> list[str]:
@@ -757,27 +795,48 @@ def _side_axis_labels(motif_labels: Sequence[str], side_mode: str) -> list[str]:
 
 def _prepared_reference_rows(
     ref_rows: pd.DataFrame,
-    end_rows: pd.DataFrame,
     reference_row_columns: list[str],
 ) -> pd.DataFrame:
     """
     Prepare reference rows for joining to selected end-motif rows.
 
     The motif and frequency columns receive unambiguous reference names, only
-    correction columns are retained, and unrelated keyed reference rows are
-    removed without densifying sparse reference data.
+    correction columns are retained. The caller has already selected the exact
+    reference rows needed for the chosen end-motif rows.
     """
     ref_rows = ref_rows.copy()
     ref_rows = ref_rows.rename(
         columns={"motif": "reference_motif", "frequency": "reference_frequency"}
     )
     ref_columns = reference_row_columns + ["reference_motif", "reference_frequency"]
-    ref_rows = ref_rows[ref_columns]
-    return _filter_reference_rows_to_end_rows(
-        ref_rows,
-        end_rows,
-        reference_row_columns,
-    )
+    return ref_rows[ref_columns]
+
+
+def _positive_support_counts(
+    frequencies: pd.Series,
+    data_frame: pd.DataFrame,
+    row_columns: list[str],
+) -> pd.Series:
+    """
+    Count positive frequencies within each reference row.
+
+    Global reference composition receives the same scalar count on every row.
+    Keyed output is grouped by its row-identifying metadata. Empty input returns
+    an aligned empty integer series.
+    """
+    positive_frequency = frequencies.gt(0.0).astype(np.int64)
+    if not row_columns:
+        return pd.Series(
+            int(positive_frequency.sum()),
+            index=data_frame.index,
+            dtype=np.int64,
+        )
+    row_groups = [data_frame[column] for column in row_columns]
+    return positive_frequency.groupby(
+        row_groups,
+        sort=False,
+        dropna=False,
+    ).transform("sum")
 
 
 def _correct_exact_label_data_frame(
@@ -796,6 +855,8 @@ def _correct_exact_label_data_frame(
     positive-frequency motifs, making a uniform reference denominator equal to
     one. The selected unsupported-motif policy is applied after this join.
     """
+    # Translate the sample label to the corresponding reference label before
+    # joining. Concrete motif labels differ only by the end separator
     end_rows = end_rows.copy()
     if ends.end_motifs.motif_axis_kind == "motif_group":
         end_rows["reference_motif"] = end_rows["motif"]
@@ -806,10 +867,16 @@ def _correct_exact_label_data_frame(
     merge_columns = reference_row_columns + ["reference_motif"]
     if ref_rows.duplicated(merge_columns).any():
         raise ValueError("Reference k-mer rows are not unique for row and motif labels")
-    reference_support_counts = _reference_support_counts(
+
+    # Attach support before joining so frequency and support arrive together
+    ref_rows = ref_rows.copy()
+    ref_rows["number_of_supported_motifs"] = _positive_support_counts(
+        ref_rows["reference_frequency"],
         ref_rows,
         reference_row_columns,
     )
+
+    # Attach each motif's frequency and its row's support count in one join
     corrected = end_rows.merge(
         ref_rows,
         on=merge_columns,
@@ -817,17 +884,16 @@ def _correct_exact_label_data_frame(
         sort=False,
     )
     corrected["reference_frequency"] = corrected["reference_frequency"].fillna(0.0)
-    corrected = _add_number_of_supported_motifs(
-        corrected,
-        reference_support_counts,
-        reference_row_columns,
+    corrected["number_of_supported_motifs"] = (
+        corrected["number_of_supported_motifs"].fillna(0).astype(np.int64)
     )
+    # Normalize against uniform composition. With N supported motifs, a uniform
+    # reference frequency of 1/N gives a denominator of one
     corrected["reference_denominator"] = (
         corrected["reference_frequency"] * corrected["number_of_supported_motifs"]
     )
     return _apply_reference_denominator_policy(
         corrected,
-        "reference_denominator",
         unsupported_motifs,
     )
 
@@ -846,19 +912,38 @@ def _correct_split_data_frame(
     normalized against its own positive support, and the two denominators are
     multiplied. Counts and the original full-motif axis are otherwise retained.
     """
+    # Expose each full sample motif's two join labels
     outside_width = correction_mode.outside_width
     inside_width = correction_mode.inside_width
     end_rows = _add_end_sides(end_rows, outside_width, inside_width)
-    side_reference = _side_reference_denominators(
+    # Collapse the full reference universe independently by prefix and suffix
+    outside_reference = _side_reference_denominator(
         ref_rows,
         reference_row_columns,
+        "outside",
         outside_width,
         inside_width,
     )
-    corrected = _merge_side_denominators(
-        end_rows,
-        side_reference,
+    inside_reference = _side_reference_denominator(
+        ref_rows,
         reference_row_columns,
+        "inside",
+        outside_width,
+        inside_width,
+    )
+
+    # Attach both normalized side denominators, then combine their effects
+    corrected = _merge_side_denominator(
+        end_rows,
+        outside_reference,
+        reference_row_columns,
+        "outside",
+    )
+    corrected = _merge_side_denominator(
+        corrected,
+        inside_reference,
+        reference_row_columns,
+        "inside",
     )
     corrected["reference_denominator"] = (
         corrected["outside_reference_denominator"]
@@ -866,7 +951,6 @@ def _correct_split_data_frame(
     )
     return _apply_reference_denominator_policy(
         corrected,
-        "reference_denominator",
         unsupported_motifs,
     )
 
@@ -886,6 +970,7 @@ def _correct_side_data_frame(
     row. The function assigns indices from the derived side axis, restores row
     metadata, and divides each aggregate by the matching marginal denominator.
     """
+    # Replace each full sample motif with its selected side label
     outside_width = correction_mode.outside_width
     inside_width = correction_mode.inside_width
     side_mode = correction_mode.mode
@@ -901,6 +986,8 @@ def _correct_side_data_frame(
     end_rows["motif_index"] = (
         end_rows["motif"].map(side_index_by_label).astype(np.int64)
     )
+    # Save row metadata once because the following aggregation keeps only keys,
+    # the derived motif label, and the summed count
     row_metadata_columns = [
         column
         for column in output_columns
@@ -909,6 +996,7 @@ def _correct_side_data_frame(
     row_metadata = end_rows[
         ["_cfdnalab_row_order"] + row_metadata_columns
     ].drop_duplicates("_cfdnalab_row_order")
+    # Sum all full sample motifs that contribute to the same side label
     aggregated = (
         end_rows.groupby(
             ["_cfdnalab_row_order", "motif_index", "motif", side_column],
@@ -924,13 +1012,16 @@ def _correct_side_data_frame(
         sort=False,
         validate="many_to_one",
     )
-    side_reference = _side_reference_denominators(
+    # Derive side frequencies from the full reference universe and attach the
+    # denominator for the side retained in the result
+    side_reference = _side_reference_denominator(
         ref_rows,
         reference_row_columns,
+        side_column,
         outside_width,
         inside_width,
     )
-    corrected = _merge_single_side_denominator(
+    corrected = _merge_side_denominator(
         aggregated,
         side_reference,
         reference_row_columns,
@@ -940,7 +1031,6 @@ def _correct_side_data_frame(
     corrected["reference_denominator"] = corrected[denominator_column]
     return _apply_reference_denominator_policy(
         corrected,
-        "reference_denominator",
         unsupported_motifs,
     )
 
@@ -968,75 +1058,49 @@ def _add_end_sides(
     return end_rows
 
 
-def _side_reference_denominators(
-    ref_rows: pd.DataFrame,
-    reference_row_columns: list[str],
-    outside_width: int,
-    inside_width: int,
-) -> dict[str, pd.DataFrame]:
-    """
-    Build correction-denominator tables for both motif sides.
-
-    Full reference labels are sliced at the resolved boundary, then their
-    frequencies are independently aggregated and normalized for each side.
-    """
-    ref_rows = ref_rows.copy()
-    ref_rows["outside"] = ref_rows["reference_motif"].str.slice(0, outside_width)
-    ref_rows["inside"] = ref_rows["reference_motif"].str.slice(
-        outside_width,
-        outside_width + inside_width,
-    )
-    outside = _side_denominator_table(
-        ref_rows,
-        reference_row_columns,
-        "outside",
-    )
-    inside = _side_denominator_table(
-        ref_rows,
-        reference_row_columns,
-        "inside",
-    )
-    return {"outside": outside, "inside": inside}
-
-
-def _side_denominator_table(
+def _side_reference_denominator(
     ref_rows: pd.DataFrame,
     reference_row_columns: list[str],
     side_column: str,
+    outside_width: int,
+    inside_width: int,
 ) -> pd.DataFrame:
     """
-    Convert reference frequencies into denominators for a motif side.
+    Build the correction-denominator table for one motif side.
 
-    Frequencies are summed by correction row and side label. Each sum is then
-    multiplied by the number of positive-frequency side labels in that row, so
-    a uniform side composition has denominator one.
+    Full reference labels are reduced to the requested prefix or suffix. Their
+    frequencies are then aggregated within each reference row. Each marginal
+    frequency is multiplied by the number of positive-frequency side labels in
+    that row, so uniform side composition gives denominator one.
     """
+    # Turn each full reference motif into the selected sample-side label
+    ref_rows = ref_rows.copy()
+    if side_column == "outside":
+        ref_rows[side_column] = ref_rows["reference_motif"].str.slice(
+            0,
+            outside_width,
+        )
+    else:
+        ref_rows[side_column] = ref_rows["reference_motif"].str.slice(
+            outside_width,
+            outside_width + inside_width,
+        )
+
+    # Sum full reference-motif frequencies into a marginal frequency per side
     group_columns = reference_row_columns + [side_column]
     side_frequencies = (
         ref_rows.groupby(group_columns, sort=False)["reference_frequency"]
         .sum()
         .reset_index(name="side_reference_frequency")
     )
-    if reference_row_columns:
-        support_counts = (
-            side_frequencies.loc[side_frequencies["side_reference_frequency"].gt(0.0)]
-            .groupby(reference_row_columns, sort=False)
-            .size()
-            .reset_index(name="side_support_count")
-        )
-        side_frequencies = side_frequencies.merge(
-            support_counts,
-            on=reference_row_columns,
-            how="left",
-            sort=False,
-        )
-    else:
-        side_frequencies["side_support_count"] = int(
-            side_frequencies["side_reference_frequency"].gt(0.0).sum()
-        )
-    side_frequencies["side_support_count"] = (
-        side_frequencies["side_support_count"].fillna(0).astype(np.int64)
+
+    side_frequencies["side_support_count"] = _positive_support_counts(
+        side_frequencies["side_reference_frequency"],
+        side_frequencies,
+        reference_row_columns,
     )
+
+    # Scale relative to a uniform distribution over the supported side labels
     denominator_column = f"{side_column}_reference_denominator"
     side_frequencies[denominator_column] = (
         side_frequencies["side_reference_frequency"]
@@ -1045,49 +1109,14 @@ def _side_denominator_table(
     return side_frequencies[reference_row_columns + [side_column, denominator_column]]
 
 
-def _merge_side_denominators(
+def _merge_side_denominator(
     end_rows: pd.DataFrame,
-    side_reference: dict[str, pd.DataFrame],
-    reference_row_columns: list[str],
-) -> pd.DataFrame:
-    """
-    Join outside and inside correction denominators to full-motif rows.
-
-    Each join uses the reference row keys plus its corresponding side label.
-    Missing combinations remain missing for the unsupported-motif policy to
-    handle later.
-    """
-    outside_columns = reference_row_columns + [
-        "outside",
-        "outside_reference_denominator",
-    ]
-    inside_columns = reference_row_columns + [
-        "inside",
-        "inside_reference_denominator",
-    ]
-    corrected = end_rows.merge(
-        side_reference["outside"][outside_columns],
-        on=reference_row_columns + ["outside"],
-        how="left",
-        sort=False,
-    )
-    corrected = corrected.merge(
-        side_reference["inside"][inside_columns],
-        on=reference_row_columns + ["inside"],
-        how="left",
-        sort=False,
-    )
-    return corrected
-
-
-def _merge_single_side_denominator(
-    end_rows: pd.DataFrame,
-    side_reference: dict[str, pd.DataFrame],
+    side_reference: pd.DataFrame,
     reference_row_columns: list[str],
     side_column: str,
 ) -> pd.DataFrame:
     """
-    Join a selected side's denominator to side-aggregated sample rows.
+    Join one side's correction denominator to sample rows.
 
     Reference row keys and the outside or inside label identify the denominator.
     Missing matches are deliberately preserved for policy handling.
@@ -1095,7 +1124,7 @@ def _merge_single_side_denominator(
     denominator_column = f"{side_column}_reference_denominator"
     side_columns = reference_row_columns + [side_column, denominator_column]
     return end_rows.merge(
-        side_reference[side_column][side_columns],
+        side_reference[side_columns],
         on=reference_row_columns + [side_column],
         how="left",
         sort=False,
@@ -1104,7 +1133,6 @@ def _merge_single_side_denominator(
 
 def _apply_reference_denominator_policy(
     corrected: pd.DataFrame,
-    denominator_column: str,
     unsupported_motifs: str,
 ) -> pd.DataFrame:
     """
@@ -1116,9 +1144,18 @@ def _apply_reference_denominator_policy(
     corrected count.
     """
     corrected = corrected.copy()
+    denominator_column = "reference_denominator"
+
+    # A missing denominator is the result of a left join with no matching
+    # reference support. It is semantically unsupported, just like an explicit zero
     corrected[denominator_column] = corrected[denominator_column].fillna(0.0)
+
+    # Keep two masks because unsupported zero counts are harmless under error and
+    # keep_na, while drop intentionally removes the complete unsupported axis
     unsupported_reference = corrected[denominator_column].le(0.0)
     positive_unsupported_reference = unsupported_reference & corrected["count"].gt(0.0)
+
+    # Fail before modifying the table so the error reports every affected motif
     if positive_unsupported_reference.any() and unsupported_motifs == "error":
         unsupported_labels = sorted(
             corrected.loc[positive_unsupported_reference, "motif"].unique()
@@ -1129,18 +1166,23 @@ def _apply_reference_denominator_policy(
             "those rows, or unsupported_motifs='keep_na' to keep them with "
             "NaN corrected counts."
         )
+
+    # Drop is based on reference support, not observed count. This removes both
+    # positive and zero-count rows and therefore permits a variable-shaped result
     if unsupported_motifs == "drop":
         corrected = corrected.loc[~unsupported_reference].copy()
-        positive_unsupported_reference = positive_unsupported_reference.reindex(
-            corrected.index,
-            fill_value=False,
-        )
+
+    # Starting at zero gives unsupported zero-count rows their defined result and
+    # lets the division below operate exclusively on positive denominators
     corrected["corrected_count"] = 0.0
     supported_reference = corrected[denominator_column].gt(0.0)
     with np.errstate(over="ignore", invalid="ignore"):
         corrected_values = corrected.loc[supported_reference, "count"].to_numpy(
             dtype=float
         ) / corrected.loc[supported_reference, denominator_column].to_numpy(dtype=float)
+
+    # A denominator can be positive but too small to produce a finite floating-
+    # point result. Reject that row instead of allowing infinities into normalization
     if not np.isfinite(corrected_values).all():
         non_finite_labels = sorted(
             corrected.loc[
@@ -1156,18 +1198,18 @@ def _apply_reference_denominator_policy(
             "be too small for the observed counts."
         )
     corrected.loc[supported_reference, "corrected_count"] = corrected_values
+
+    # Only positive unsupported counts are unknown. A zero observation corrected
+    # by an unknown factor is still exactly zero. Frequency handling later expands
+    # any resulting NaN to the complete output row because its total is unknown
     if unsupported_motifs == "keep_na":
-        corrected.loc[
-            positive_unsupported_reference.reindex(corrected.index, fill_value=False),
-            "corrected_count",
-        ] = np.nan
+        corrected.loc[positive_unsupported_reference, "corrected_count"] = np.nan
     return corrected
 
 
 def _add_corrected_frequency(
     corrected: pd.DataFrame,
-    row_columns: list[str],
-    unsupported_motifs: str,
+    end_row_key_columns: list[str],
 ) -> pd.DataFrame:
     """
     Calculate corrected motif frequencies within each output row.
@@ -1180,48 +1222,49 @@ def _add_corrected_frequency(
     corrected["corrected_frequency"] = 0.0
     if corrected.empty:
         return corrected
-    row_groups = corrected.groupby(row_columns, sort=False, dropna=False)
-    row_maximum = row_groups["corrected_count"].transform("max")
 
-    # Scale by the row maximum before summing so finite corrected counts cannot
-    # overflow while being normalized
-    scaled_counts = pd.Series(0.0, index=corrected.index, dtype=float)
-    finite_positive_rows = row_maximum.gt(0.0) & corrected["corrected_count"].notna()
-    scaled_counts.loc[finite_positive_rows] = (
-        corrected.loc[finite_positive_rows, "corrected_count"]
-        / row_maximum.loc[finite_positive_rows]
-    )
-    corrected["_cfdnalab_scaled_count"] = scaled_counts
-    scaled_totals = corrected.groupby(
-        row_columns,
+    # Group by the metadata columns that identify an output row, then reuse the
+    # resulting index for the maximum, total, and missing-value checks
+    row_group_indices = corrected.groupby(
+        end_row_key_columns,
         sort=False,
         dropna=False,
-    )["_cfdnalab_scaled_count"].transform("sum")
-    normalizable = row_maximum.gt(0.0) & scaled_totals.gt(0.0)
-    corrected.loc[normalizable, "corrected_frequency"] = (
-        scaled_counts.loc[normalizable] / scaled_totals.loc[normalizable]
+    ).ngroup()
+    corrected_counts = corrected["corrected_count"]
+
+    # Scaling before summing avoids overflow. Replacing undefined divisions with
+    # zero also gives zero-total rows their required zero frequencies
+    row_maximum = corrected_counts.groupby(row_group_indices).transform("max")
+    scaled_counts = (
+        corrected_counts.div(row_maximum).where(row_maximum.gt(0.0), 0.0).fillna(0.0)
+    )
+    scaled_totals = scaled_counts.groupby(row_group_indices).transform("sum")
+    corrected["corrected_frequency"] = scaled_counts.div(scaled_totals).where(
+        row_maximum.gt(0.0),
+        0.0,
     )
 
-    if unsupported_motifs == "keep_na":
-        corrected["_cfdnalab_count_is_na"] = corrected["corrected_count"].isna()
-        row_has_na = corrected.groupby(
-            row_columns,
-            sort=False,
-            dropna=False,
-        )["_cfdnalab_count_is_na"].transform("any")
-        corrected.loc[row_has_na, "corrected_frequency"] = np.nan
-        corrected = corrected.drop(columns=["_cfdnalab_count_is_na"])
-    return corrected.drop(columns=["_cfdnalab_scaled_count"])
+    # One unknown corrected count makes the row total unknown, so no motif in
+    # that row has a defensible corrected frequency
+    row_has_unknown_count = (
+        corrected_counts.isna().groupby(row_group_indices).transform("any")
+    )
+    corrected.loc[row_has_unknown_count, "corrected_frequency"] = np.nan
+
+    return corrected
 
 
-def _row_order_indices(data_frame: pd.DataFrame, row_columns: list[str]) -> np.ndarray:
+def _row_order_indices(
+    data_frame: pd.DataFrame,
+    end_row_key_columns: list[str],
+) -> np.ndarray:
     """
     Assign a stable integer position to each distinct correction row.
 
     Equal row-key tuples receive the same position, and first occurrence defines
     the order used to restore rows after merges and aggregation.
     """
-    row_keys = _row_key_tuples(data_frame, row_columns)
+    row_keys = _row_key_tuples(data_frame, end_row_key_columns)
     row_order_by_key = {
         row_key: row_order for row_order, row_key in enumerate(dict.fromkeys(row_keys))
     }
@@ -1262,13 +1305,15 @@ def _selected_row_positions(
     Metadata is taken in selected-index order, so the mapping agrees with the
     dense and sparse matrix row order.
     """
-    row_columns = _reference_correction_row_columns(ends.row_mode())
+    end_row_key_columns = _reference_correction_row_columns(ends.row_mode())
     row_metadata = (
         ends._row_metadata_data_frame().iloc[row_indices].reset_index(drop=True)
     )
     return {
         row_key: position
-        for position, row_key in enumerate(_row_key_tuples(row_metadata, row_columns))
+        for position, row_key in enumerate(
+            _row_key_tuples(row_metadata, end_row_key_columns)
+        )
     }
 
 
@@ -1333,8 +1378,8 @@ def _validate_reference_correction_inputs(
 def _validate_matching_rows(
     ends: EndMotifCounts,
     ref_kmers: RefKmerFrequencies,
-    row_columns: list[str],
-    reference_row_columns: list[str],
+    end_row_key_columns: list[str],
+    reference_row_key_columns: list[str],
 ) -> None:
     """
     Ensure end and reference outputs describe the same correction rows.
@@ -1342,19 +1387,19 @@ def _validate_matching_rows(
     Both sets of row keys must be unique and identical after sorting. No keyed
     comparison is needed when a global reference row is being broadcast.
     """
-    if not reference_row_columns:
+    if not reference_row_key_columns:
         return
 
     end_row_keys = (
-        ends._row_metadata_data_frame()[row_columns]
+        ends._row_metadata_data_frame()[end_row_key_columns]
         .drop_duplicates()
-        .sort_values(row_columns)
+        .sort_values(end_row_key_columns)
         .reset_index(drop=True)
     )
     ref_row_keys = (
-        ref_kmers._row_metadata_data_frame()[reference_row_columns]
+        ref_kmers._row_metadata_data_frame()[reference_row_key_columns]
         .drop_duplicates()
-        .sort_values(reference_row_columns)
+        .sort_values(reference_row_key_columns)
         .reset_index(drop=True)
     )
     if len(end_row_keys) != len(ends._row_metadata_data_frame()):
@@ -1462,57 +1507,9 @@ def _reference_rows_for_indices(
     )
 
 
-def _reference_support_counts(
-    ref_rows: pd.DataFrame,
-    reference_row_columns: list[str],
-) -> pd.DataFrame | int:
-    """
-    Count reference motifs that contribute to uniform-support normalization.
-
-    Only strictly positive frequencies count as supported. Global broadcasting
-    returns a scalar, while keyed correction returns a per-row table for joining.
-    """
-    positive_ref_rows = ref_rows.loc[ref_rows["reference_frequency"].gt(0.0)]
-    if not reference_row_columns:
-        return len(positive_ref_rows)
-    if positive_ref_rows.empty:
-        return pd.DataFrame(
-            columns=reference_row_columns + ["number_of_supported_motifs"]
-        )
-    return (
-        positive_ref_rows.groupby(reference_row_columns, sort=False)
-        .size()
-        .reset_index(name="number_of_supported_motifs")
-    )
-
-
-def _filter_reference_rows_to_end_rows(
-    ref_rows: pd.DataFrame,
-    end_rows: pd.DataFrame,
-    reference_row_columns: list[str],
-) -> pd.DataFrame:
-    """
-    Restrict keyed reference rows to the selected end-motif row keys.
-
-    This avoids carrying unrelated windows or groups through correction. Global
-    broadcasting has no row keys and therefore leaves the reference rows intact.
-    """
-    if not reference_row_columns:
-        return ref_rows
-    selected_row_keys = set(_row_key_tuples(end_rows, reference_row_columns))
-    if not selected_row_keys:
-        return ref_rows.iloc[[]].reset_index(drop=True)
-    ref_row_keys = _row_key_tuples(ref_rows, reference_row_columns)
-    keep = np.asarray(
-        [row_key in selected_row_keys for row_key in ref_row_keys],
-        dtype=bool,
-    )
-    return ref_rows.loc[keep].reset_index(drop=True)
-
-
 def _row_key_tuples(
     data_frame: pd.DataFrame,
-    row_columns: list[str],
+    key_columns: list[str],
 ) -> list[tuple[object, ...]]:
     """
     Convert correction-row columns into ordered, hashable keys.
@@ -1520,35 +1517,7 @@ def _row_key_tuples(
     The tuples are used consistently for membership checks, row matching, and
     matrix-position maps.
     """
-    return list(data_frame[row_columns].itertuples(index=False, name=None))
-
-
-def _add_number_of_supported_motifs(
-    corrected: pd.DataFrame,
-    reference_support_counts: pd.DataFrame | int,
-    reference_row_columns: list[str],
-) -> pd.DataFrame:
-    """
-    Attach the number of supported reference motifs to each sample row.
-
-    Global support is broadcast as a scalar. Keyed support is joined by the
-    reference row columns, with absent support represented as zero.
-    """
-    if not reference_row_columns:
-        corrected = corrected.copy()
-        corrected["number_of_supported_motifs"] = int(reference_support_counts)
-        return corrected
-
-    corrected = corrected.merge(
-        reference_support_counts,
-        on=reference_row_columns,
-        how="left",
-        sort=False,
-    )
-    corrected["number_of_supported_motifs"] = (
-        corrected["number_of_supported_motifs"].fillna(0).astype(np.int64)
-    )
-    return corrected
+    return list(data_frame[key_columns].itertuples(index=False, name=None))
 
 
 def _add_empty_reference_correction_columns(data_frame: pd.DataFrame) -> pd.DataFrame:

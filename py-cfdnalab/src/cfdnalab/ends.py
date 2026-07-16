@@ -660,11 +660,26 @@ class EndMotifCounts:
             ref_kmers,
             two_sided_correction,
         )
-        motif_labels, motif_indices = _selected_mode_axis(
+        motif_labels = _selected_mode_axis(
             self,
             correction_mode,
             motifs=motifs,
             motif_idxs=motif_idxs,
+        )
+
+        # Map selected labels back to their position on the complete mode axis
+        # because matrix-column order can differ from mode-axis order
+        full_mode_labels = (
+            self.motifs_metadata()["motif"].astype(str).tolist()
+            if correction_mode.mode in {"exact", "split"}
+            else list(correction_mode.side_labels)
+        )
+        mode_index_by_label = {
+            label: index for index, label in enumerate(full_mode_labels)
+        }
+        motif_indices = np.asarray(
+            [mode_index_by_label[label] for label in motif_labels],
+            dtype=np.int64,
         )
         return pd.DataFrame(
             {

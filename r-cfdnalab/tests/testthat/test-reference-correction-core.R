@@ -19,6 +19,24 @@ shared_reference_correction_ref_rows <- function() {
   )
 }
 
+two_row_reference_correction_end_rows <- function() {
+  beta_rows <- shared_reference_correction_end_rows()
+  beta_rows$row_label <- "beta"
+  alpha_rows <- shared_reference_correction_end_rows()
+  alpha_rows$row_label <- "alpha"
+  alpha_rows$count <- c(2, 4, 0, 0)
+  rbind(beta_rows, alpha_rows)
+}
+
+two_row_reference_correction_ref_rows <- function() {
+  alpha_rows <- shared_reference_correction_ref_rows()
+  alpha_rows$row_label <- "alpha"
+  alpha_rows$reference_frequency <- c(1 / 2, 1 / 2, 0, 0)
+  beta_rows <- shared_reference_correction_ref_rows()
+  beta_rows$row_label <- "beta"
+  rbind(alpha_rows, beta_rows)
+}
+
 shared_reference_correction_mode <- function(mode, side_labels = character()) {
   list(
     mode = mode,
@@ -29,7 +47,7 @@ shared_reference_correction_mode <- function(mode, side_labels = character()) {
 }
 
 add_shared_corrected_frequencies <- function(corrected) {
-  cf_add_corrected_frequency(corrected, "row_label", "error")
+  cf_add_corrected_frequency(corrected, "row_label")
 }
 
 test_that("joint core uses full motif frequencies", {
@@ -53,6 +71,29 @@ test_that("joint core uses full motif frequencies", {
   expect_equal(corrected$corrected_frequency, c(2 / 11, 4 / 11, 3 / 11, 2 / 11))
 })
 
+test_that("joint core uses support from each reference row", {
+  # Sample rows are beta then alpha, while reference rows are alpha then beta
+  # Alpha supports two motifs and beta supports all four
+  corrected <- cf_exact_reference_corrected_rows(
+    list(motif_axis_kind = "motif"),
+    two_row_reference_correction_end_rows(),
+    two_row_reference_correction_ref_rows(),
+    "row_label",
+    "error"
+  )
+
+  # Beta's frequencies give denominators [1/2, 1/2, 1, 2]. Alpha's two
+  # supported frequencies are both 1/2, giving [1, 1, 0, 0]. Output keeps
+  # sample row and motif order, and unsupported zero counts remain zero
+  expect_identical(corrected$row_label, rep(c("beta", "alpha"), each = 4L))
+  expect_identical(corrected$motif, rep(c("A_C", "A_G", "T_C", "T_G"), 2L))
+  expect_equal(
+    corrected$reference_denominator,
+    c(1 / 2, 1 / 2, 1, 2, 1, 1, 0, 0)
+  )
+  expect_equal(corrected$corrected_count, c(4, 8, 6, 4, 2, 4, 0, 0))
+})
+
 test_that("split core multiplies outside and inside denominators", {
   corrected <- cf_split_reference_corrected_rows(
     shared_reference_correction_end_rows(),
@@ -74,6 +115,52 @@ test_that("split core multiplies outside and inside denominators", {
   expect_equal(corrected$reference_denominator, c(3 / 8, 5 / 8, 9 / 8, 15 / 8))
   expect_equal(corrected$corrected_count, c(16 / 3, 32 / 5, 16 / 3, 64 / 15))
   expect_equal(corrected$corrected_frequency, c(1 / 4, 3 / 10, 1 / 4, 1 / 5))
+})
+
+test_that("split core uses side support from each reference row", {
+  # Alpha has only outside A support, while beta supports A and T. Both rows
+  # support inside C and G. Reference and sample row order differ
+  corrected <- cf_split_reference_corrected_rows(
+    two_row_reference_correction_end_rows(),
+    two_row_reference_correction_ref_rows(),
+    "row_label",
+    shared_reference_correction_mode("split"),
+    "error"
+  )
+
+  # Beta keeps the shared split denominators [3/8, 5/8, 9/8, 15/8]. Alpha has
+  # outside denominators A=1 and T=0, and inside denominators C=1 and G=1,
+  # giving full denominators [1, 1, 0, 0]
+  expect_identical(corrected$row_label, rep(c("beta", "alpha"), each = 4L))
+  expect_identical(corrected$motif, rep(c("A_C", "A_G", "T_C", "T_G"), 2L))
+  expect_equal(
+    corrected$reference_denominator,
+    c(3 / 8, 5 / 8, 9 / 8, 15 / 8, 1, 1, 0, 0)
+  )
+  expect_equal(
+    corrected$corrected_count,
+    c(16 / 3, 32 / 5, 16 / 3, 64 / 15, 2, 4, 0, 0)
+  )
+})
+
+test_that("split core handles an empty sparse reference row", {
+  # A sparse reference row with no stored motifs provides no outside or inside
+  # support. Zero sample counts remain defined as zero
+  end_rows <- shared_reference_correction_end_rows()
+  end_rows$count <- 0
+  reference_rows <- shared_reference_correction_ref_rows()[integer(0), , drop = FALSE]
+
+  corrected <- cf_split_reference_corrected_rows(
+    end_rows,
+    reference_rows,
+    "row_label",
+    shared_reference_correction_mode("split"),
+    "error"
+  )
+
+  expect_identical(corrected$motif, c("A_C", "A_G", "T_C", "T_G"))
+  expect_equal(corrected$reference_denominator, rep(0, 4L))
+  expect_equal(corrected$corrected_count, rep(0, 4L))
 })
 
 test_that("outside core aggregates counts before correction", {
@@ -142,7 +229,7 @@ test_that("corrected frequencies remain finite when direct totals would overflow
   # Scaling both counts by their row maximum gives [1, 1], whose total is 2.
   # The normalized frequencies are therefore exactly [1/2, 1/2] without
   # summing the original values to infinity.
-  corrected <- cf_add_corrected_frequency(corrected, "row_label", "error")
+  corrected <- cf_add_corrected_frequency(corrected, "row_label")
 
   expect_equal(corrected$corrected_frequency, c(1 / 2, 1 / 2))
   expect_true(all(is.finite(corrected$corrected_frequency)))
