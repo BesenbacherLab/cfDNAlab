@@ -893,13 +893,13 @@ cf_exact_reference_corrected_rows <- function(
   corrected <- corrected[order(corrected$.cfdnalab_order), , drop = FALSE]
   corrected$.cfdnalab_order <- NULL
   corrected$reference_frequency[is.na(corrected$reference_frequency)] <- 0
-  corrected <- cf_add_reference_correction_motif_count(
+  corrected <- cf_add_number_of_supported_reference_motifs(
     corrected,
     reference_support_counts,
     reference_row_columns
   )
   corrected$reference_denominator <- (
-    corrected$reference_frequency * corrected$correction_motif_count
+    corrected$reference_frequency * corrected$number_of_supported_motifs
   )
   cf_apply_reference_denominator_policy(
     corrected,
@@ -1501,7 +1501,7 @@ cf_reference_correction_support_counts <- function(ref_rows, reference_row_colum
   if (nrow(positive_ref_rows) == 0L) {
     return(data.frame(
       positive_ref_rows[reference_row_columns],
-      correction_motif_count = integer(),
+      number_of_supported_motifs = integer(),
       stringsAsFactors = FALSE
     ))
   }
@@ -1510,7 +1510,7 @@ cf_reference_correction_support_counts <- function(ref_rows, reference_row_colum
     by = positive_ref_rows[reference_row_columns],
     FUN = sum
   )
-  names(counts)[ncol(counts)] <- "correction_motif_count"
+  names(counts)[ncol(counts)] <- "number_of_supported_motifs"
   counts
 }
 
@@ -1537,22 +1537,22 @@ cf_reference_correction_filter_ref_rows <- function(
   ref_rows[ref_row_keys %in% selected_row_keys, , drop = FALSE]
 }
 
-#' Add per-row correction motif counts to corrected end-motif rows.
+#' Add the number of supported motifs to corrected end-motif rows.
 #'
 #' @param corrected End-motif rows after joining reference frequencies.
 #' @param reference_support_counts Counts from
 #'   `cf_reference_correction_support_counts()`.
 #' @param reference_row_columns Reference row-key columns.
 #'
-#' @return `corrected` with a `correction_motif_count` column.
+#' @return `corrected` with a `number_of_supported_motifs` column.
 #' @noRd
-cf_add_reference_correction_motif_count <- function(
+cf_add_number_of_supported_reference_motifs <- function(
   corrected,
   reference_support_counts,
   reference_row_columns
 ) {
   if (length(reference_row_columns) == 0L) {
-    corrected$correction_motif_count <- as.integer(reference_support_counts)
+    corrected$number_of_supported_motifs <- as.integer(reference_support_counts)
     return(corrected)
   }
 
@@ -1567,8 +1567,11 @@ cf_add_reference_correction_motif_count <- function(
   corrected <- corrected[order(corrected$.cfdnalab_order), , drop = FALSE]
   corrected$.cfdnalab_order <- NULL
   row.names(corrected) <- NULL
-  corrected$correction_motif_count[is.na(corrected$correction_motif_count)] <- 0L
-  corrected$correction_motif_count <- as.integer(corrected$correction_motif_count)
+  missing_support <- is.na(corrected$number_of_supported_motifs)
+  corrected$number_of_supported_motifs[missing_support] <- 0L
+  corrected$number_of_supported_motifs <- as.integer(
+    corrected$number_of_supported_motifs
+  )
   corrected
 }
 

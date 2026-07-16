@@ -722,13 +722,13 @@ def _correct_exact_label_data_frame(
         sort=False,
     )
     corrected["reference_frequency"] = corrected["reference_frequency"].fillna(0.0)
-    corrected = _add_correction_motif_count(
+    corrected = _add_number_of_supported_motifs(
         corrected,
         reference_support_counts,
         reference_row_columns,
     )
     corrected["reference_denominator"] = (
-        corrected["reference_frequency"] * corrected["correction_motif_count"]
+        corrected["reference_frequency"] * corrected["number_of_supported_motifs"]
     )
     return _apply_reference_denominator_policy(
         corrected,
@@ -1256,11 +1256,13 @@ def _reference_support_counts(
     if not reference_row_columns:
         return len(positive_ref_rows)
     if positive_ref_rows.empty:
-        return pd.DataFrame(columns=reference_row_columns + ["correction_motif_count"])
+        return pd.DataFrame(
+            columns=reference_row_columns + ["number_of_supported_motifs"]
+        )
     return (
         positive_ref_rows.groupby(reference_row_columns, sort=False)
         .size()
-        .reset_index(name="correction_motif_count")
+        .reset_index(name="number_of_supported_motifs")
     )
 
 
@@ -1289,14 +1291,14 @@ def _row_key_tuples(
     return list(data_frame[row_columns].itertuples(index=False, name=None))
 
 
-def _add_correction_motif_count(
+def _add_number_of_supported_motifs(
     corrected: pd.DataFrame,
     reference_support_counts: pd.DataFrame | int,
     reference_row_columns: list[str],
 ) -> pd.DataFrame:
     if not reference_row_columns:
         corrected = corrected.copy()
-        corrected["correction_motif_count"] = int(reference_support_counts)
+        corrected["number_of_supported_motifs"] = int(reference_support_counts)
         return corrected
 
     corrected = corrected.merge(
@@ -1305,8 +1307,8 @@ def _add_correction_motif_count(
         how="left",
         sort=False,
     )
-    corrected["correction_motif_count"] = (
-        corrected["correction_motif_count"].fillna(0).astype(np.int64)
+    corrected["number_of_supported_motifs"] = (
+        corrected["number_of_supported_motifs"].fillna(0).astype(np.int64)
     )
     return corrected
 

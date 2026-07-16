@@ -1229,7 +1229,7 @@ fn corrected_counts_data(
         selection.motif_labels(),
         |selected_row_index, selected_motif_index| {
             let reference_row_index = reference_row_indices[selected_row_index];
-            let correction_motif_count = reference_support_counts
+            let number_of_supported_motifs = reference_support_counts
                 .get(&reference_row_index)
                 .copied()
                 .unwrap_or(0);
@@ -1238,7 +1238,7 @@ fn corrected_counts_data(
                     reference_frequencies.frequency(reference_row_index, reference_motif_index)
                 })
                 .unwrap_or(0.0);
-            Ok(reference_frequency * correction_motif_count as f64)
+            Ok(reference_frequency * number_of_supported_motifs as f64)
         },
         unsupported_reference_policy,
     )
