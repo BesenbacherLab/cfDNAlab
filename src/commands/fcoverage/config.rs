@@ -134,12 +134,12 @@ pub struct FCoverageConfig {
     /// **Modes**:
     ///
     /// - `unit-mass`: Specifying `--normalize-by-length` or `--normalize-by-length=unit-mass`
-    /// uses the described "all fragments contribute a mass of 1" mode. **TIP**: In this mode,
-    /// we suggest setting `--decimals 3`.
+    ///   uses the described "all fragments contribute a mass of 1" mode. **TIP**: In this mode,
+    ///   we suggest setting `--decimals 3`.
     ///
     /// - `restore-mean`: Specifying `--normalize-by-length=restore-mean` restores the global mean
-    /// by multiplying the final output by the observed mean normalization length (the countable bases)
-    /// after counting in unit-mass space.
+    ///   by multiplying the final output by the observed mean normalization length (the countable bases)
+    ///   after counting in unit-mass space.
     ///
     /// This setting is reflected in the output filenames:
     /// `length_normalized` for `unit-mass`,

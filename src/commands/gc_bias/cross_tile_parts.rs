@@ -72,18 +72,18 @@ pub(crate) fn write_crossing_parts(
 /// Parameters
 /// ----------
 /// - `files`:
-///     NPZ archives written by `write_crossing_parts`, one per tile that had spillover.
+///   NPZ archives written by `write_crossing_parts`, one per tile that had spillover.
 /// - `template`:
-///     Shape/source for constructing zeroed counts and validating incoming buffers.
+///   Shape/source for constructing zeroed counts and validating incoming buffers.
 /// - `opt`:
-///     GC bias configuration used when scaling a finalized window.
+///   GC bias configuration used when scaling a finalized window.
 /// - `avg_window_span`:
-///     Average genomic span of a window, used to normalize counts.
+///   Average genomic span of a window, used to normalize counts.
 ///
 /// Returns
 /// -------
 /// - `(GCCounts, usize)`:
-///     Sum of scaled windows and the number of windows contributing to that sum.
+///   Sum of scaled windows and the number of windows contributing to that sum.
 pub(crate) fn stream_crossing_files(
     mut files: Vec<PathBuf>,
     template: &GCCounts,
@@ -157,8 +157,7 @@ pub(crate) fn stream_crossing_files(
 
         if !window_parts.is_empty() {
             // Anything absent from this file is finished and can be flushed
-            let mut finished_idxs: Vec<usize> = Vec::new();
-            finished_idxs.reserve(window_parts.len());
+            let mut finished_idxs: Vec<usize> = Vec::with_capacity(window_parts.len());
             for idx in window_parts.keys() {
                 if !seen_in_file.contains(idx) {
                     finished_idxs.push(*idx);

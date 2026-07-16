@@ -507,7 +507,7 @@ mod tests_lengths_tiling_helpers {
         contigs.insert("chr1".to_string(), (0, 100u32));
         let contigs = Contigs { contigs };
         let (tiles, aligned) =
-            build_tiles(&vec!["chr1".to_string()], &contigs, 30, 0, Some(10)).unwrap();
+            build_tiles(&["chr1".to_string()], &contigs, 30, 0, Some(10)).unwrap();
         assert!(aligned);
         // Cores should start on multiples of 10
         for t in &tiles {
@@ -529,7 +529,7 @@ mod tests_lengths_tiling_helpers {
         // and build_tiles requires at least 10 bins (k >= 10) before rounding down.
         // So alignment should be disabled and tiles keep the original 15bp size.
         let (_tiles, aligned) =
-            build_tiles(&vec!["chr1".to_string()], &contigs, 15, 0, Some(10)).unwrap();
+            build_tiles(&["chr1".to_string()], &contigs, 15, 0, Some(10)).unwrap();
         assert!(!aligned);
     }
 

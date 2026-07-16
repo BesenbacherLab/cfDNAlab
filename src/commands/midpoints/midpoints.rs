@@ -109,14 +109,14 @@ impl CommandRunResult for MidpointsRunResult {
 /// Parameters
 /// ----------
 /// - `opt`:
-///     Fully resolved configuration for the `midpoints` command.
+///   Fully resolved configuration for the `midpoints` command.
 /// - `options`:
-///     Reporting controls for statistics, progress bars, and status logs.
+///   Reporting controls for statistics, progress bars, and status logs.
 ///
 /// Returns
 /// -------
 /// - `Ok(MidpointsRunResult)`:
-///     Counters and output paths for the completed run.
+///   Counters and output paths for the completed run.
 ///
 /// Errors
 /// ------
@@ -132,7 +132,8 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
     validate_output_prefix(prefix)?;
     if options.log_equivalent_cli {
         let command = crate::ToCliCommand::to_cli_string(opt)?;
-        info!(target: COMMAND_TARGET, "Equivalent CLI: {command}");
+        let message = crate::command_run::equivalent_cli_log_message(&command);
+        info!(target: COMMAND_TARGET, "{message}");
     }
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
@@ -149,6 +150,7 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
         opt.blacklist_min_size,
         0,
         &chromosomes,
+        opt.ioc.n_threads > 1,
     )?;
 
     // Load grouped fixed-size windows from BED
@@ -160,6 +162,7 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
             true,
             None,
             None,
+            opt.ioc.n_threads > 1,
         )?;
     if let Some(strand_detection) = strand_detection {
         match strand_detection.column {
@@ -215,7 +218,8 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
     // Resolve counted and final profile dimensions
     let profile_layout = ProfileLayout::resolve(output_window_size, opt.bin_size, opt.smoothing)?;
 
-    let interval_blacklist_margin = ((u64::from(max_fragment_length) + 1) / 2)
+    let interval_blacklist_margin = u64::from(max_fragment_length)
+        .div_ceil(2)
         .checked_add(u64::from(profile_layout.smoothing_flank))
         .context("interval blacklist margin overflow")?;
     let use_blacklist_prefilter = opt.blacklist.is_some() && !opt.keep_blacklisted_intervals;
@@ -609,35 +613,35 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
 /// Parameters
 /// ----------
 /// - `opt`:
-///     Command configuration. The worker reads filters, IO paths, and correction options from it.
+///   Command configuration. The worker reads filters, IO paths, and correction options from it.
 /// - `tile`:
-///     Genomic tile whose core owns midpoint counts and whose fetch band includes pairing halo.
+///   Genomic tile whose core owns midpoint counts and whose fetch band includes pairing halo.
 /// - `tile_counts_out`:
-///     Destination path for the sparse tile partial file if the tile produces any counts.
+///   Destination path for the sparse tile partial file if the tile produces any counts.
 /// - `window_size`:
-///     Number of midpoint positions per grouped BED window.
+///   Number of midpoint positions per grouped BED window.
 /// - `num_groups`:
-///     Number of group ids represented in the grouped BED input.
+///   Number of group ids represented in the grouped BED input.
 /// - `length_axis`:
-///     Shared length-bin lookup used by the sparse accumulator.
+///   Shared length-bin lookup used by the sparse accumulator.
 /// - `windows`:
-///     Chromosome-local grouped windows, sorted by coordinate.
+///   Chromosome-local grouped windows, sorted by coordinate.
 /// - `tile_window_span`:
-///     Optional precomputed slice range for windows that can overlap this tile.
+///   Optional precomputed slice range for windows that can overlap this tile.
 /// - `blacklist_intervals`:
-///     Chromosome-local blacklist intervals used before midpoint counting.
+///   Chromosome-local blacklist intervals used before midpoint counting.
 /// - `scaling_chr`:
-///     Chromosome-local genomic scaling bins. Empty means no scaling is applied.
+///   Chromosome-local genomic scaling bins. Empty means no scaling is applied.
 /// - `gc_corrector_opt`:
-///     Optional file-based GC corrector for fragment-level weights.
+///   Optional file-based GC corrector for fragment-level weights.
 /// - `gc_tag`:
-///     Optional BAM tag name for tag-based GC weights.
+///   Optional BAM tag name for tag-based GC weights.
 ///
 /// Returns
 /// -------
 /// - `out`:
-///     Tile-local run counters and an optional sparse temp-file path. The path is `None` when the
-///     tile had no overlapping windows or no counted midpoint cells.
+///   Tile-local run counters and an optional sparse temp-file path. The path is `None` when the
+///   tile had no overlapping windows or no counted midpoint cells.
 fn process_tile(
     opt: &MidpointsConfig,
     tile: &Tile,
@@ -999,25 +1003,25 @@ fn process_tile(
 /// Parameters
 /// ----------
 /// - `grouped_windows`:
-///     Start-sorted midpoint windows for the current chromosome. Their `idx` field stores the
-///     midpoint group index. Optional strand values must be aligned with these windows.
+///   Start-sorted midpoint windows for the current chromosome. Their `idx` field stores the
+///   midpoint group index. Optional strand values must be aligned with these windows.
 /// - `tile_span`:
-///     Optional cached index range for windows that can overlap the tile.
+///   Optional cached index range for windows that can overlap the tile.
 /// - `tile`:
-///     Tile whose core determines which sites are kept and whose fetch band bounds the result.
+///   Tile whose core determines which sites are kept and whose fetch band bounds the result.
 /// - `chrom_len`:
-///     Chromosome length used to clamp the final fetch interval.
+///   Chromosome length used to clamp the final fetch interval.
 /// - `halo_bp`:
-///     Extra bases to keep on both sides of the extreme overlapping sites before clamping back to
-///     the tile fetch band. Callers pass the maximum fragment length here so fragment-overlapping
-///     reads can still be reconstructed near tile and chromosome edges.
+///   Extra bases to keep on both sides of the extreme overlapping sites before clamping back to
+///   the tile fetch band. Callers pass the maximum fragment length here so fragment-overlapping
+///   reads can still be reconstructed near tile and chromosome edges.
 ///
 /// Returns
 /// -------
 /// - `out`:
-///     `Some((sites, fetch_span))` when at least one midpoint site overlaps the tile and a
-///     non-empty fetch interval remains after clamping. `None` when the tile has no overlapping
-///     sites or the clamped fetch interval is empty.
+///   `Some((sites, fetch_span))` when at least one midpoint site overlaps the tile and a
+///   non-empty fetch interval remains after clamping. `None` when the tile has no overlapping
+///   sites or the clamped fetch interval is empty.
 pub(crate) fn get_overlapping_sites_and_adapt_fetch_to_extremes(
     grouped_windows: &GroupedWindows,
     tile_span: Option<&TileWindowSpan>,

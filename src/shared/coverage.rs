@@ -102,12 +102,12 @@ impl Coverage {
     /// Parameters
     /// ----------
     /// - length:
-    ///     Total sequence length in bases (e.g., chrom_len).
+    ///   Total sequence length in bases (e.g., chrom_len).
     ///
     /// Returns
     /// -------
     /// - self:
-    ///     New empty prefix.
+    ///   New empty prefix.
     pub(crate) fn new(length: u32) -> Self {
         Self {
             length,
@@ -126,7 +126,7 @@ impl Coverage {
     /// Parameters
     /// ----------
     /// - frag:
-    ///     Fragment on the reference `[start, end)`, 0-based, end-exclusive.
+    ///   Fragment on the reference `[start, end)`, 0-based, end-exclusive.
     #[inline]
     pub(crate) fn add_fragment(&mut self, frag: Fragment) -> Result<()> {
         self.add_fragment_weighted(frag, 1.0)
@@ -137,9 +137,9 @@ impl Coverage {
     /// Parameters
     /// ----------
     /// - frag:
-    ///     Fragment on the reference `[start, end)`.
+    ///   Fragment on the reference `[start, end)`.
     /// - weight:
-    ///     Weight to add, must be finite and >= 0.
+    ///   Weight to add, must be finite and >= 0.
     #[inline]
     pub(crate) fn add_fragment_weighted(&mut self, frag: Fragment, weight: f64) -> Result<()> {
         if !self.prefix_available() {
@@ -253,7 +253,7 @@ impl Coverage {
     /// Returns
     /// -------
     /// - coverage:
-    ///     Borrowed slice of per-base coverage with length = `length`.
+    ///   Borrowed slice of per-base coverage with length = `length`.
     pub(crate) fn finalize_coverage(&mut self, drop_delta: bool) -> &[f32] {
         // Build coverage from the +w/-w prefix without destroying delta
         let mut cov = vec![0.0_f32; self.length as usize];
@@ -399,14 +399,14 @@ impl Coverage {
     /// Parameters
     /// ----------
     /// - `interval`:
-    ///     Checked half-open interval `[start, end)` to query.
+    ///   Checked half-open interval `[start, end)` to query.
     /// - `exclude_blacklisted`:
-    ///     Exclude blacklisted positions from the sum when a blacklist mask is available.
+    ///   Exclude blacklisted positions from the sum when a blacklist mask is available.
     ///
     /// Returns
     /// -------
     /// - `sum`:
-    ///     Coverage sum over the interval, masked if requested.
+    ///   Coverage sum over the interval, masked if requested.
     ///
     /// Notes
     /// -----
@@ -439,14 +439,14 @@ impl Coverage {
     /// Parameters
     /// ----------
     /// - `interval`:
-    ///     Checked half-open interval `[start, end)` to query.
+    ///   Checked half-open interval `[start, end)` to query.
     /// - `exclude_blacklisted`:
-    ///     Exclude blacklisted positions from the average when a blacklist mask is available.
+    ///   Exclude blacklisted positions from the average when a blacklist mask is available.
     ///
     /// Returns
     /// -------
     /// - `avg`:
-    ///     Coverage average over the interval, masked if requested.
+    ///   Coverage average over the interval, masked if requested.
     ///
     /// Notes
     /// -----
@@ -487,16 +487,16 @@ impl Coverage {
     /// Parameters
     /// ----------
     /// - `intervals`:
-    ///     Checked half-open intervals `[start, end)` to query.
+    ///   Checked half-open intervals `[start, end)` to query.
     /// - `exclude_blacklisted`:
-    ///     Exclude blacklisted positions from the sums when a blacklist mask is available.
+    ///   Exclude blacklisted positions from the sums when a blacklist mask is available.
     /// - `parallelize`:
-    ///     Process intervals with rayon parallel iterators.
+    ///   Process intervals with rayon parallel iterators.
     ///
     /// Returns
     /// -------
     /// - `sums`:
-    ///     One coverage sum per interval, in the same order as the input slice.
+    ///   One coverage sum per interval, in the same order as the input slice.
     #[inline]
     pub(crate) fn bulk_sum_coverage(
         &mut self,
@@ -523,16 +523,16 @@ impl Coverage {
     /// Parameters
     /// ----------
     /// - `intervals`:
-    ///     Checked half-open intervals `[start, end)` to query.
+    ///   Checked half-open intervals `[start, end)` to query.
     /// - `exclude_blacklisted`:
-    ///     Exclude blacklisted positions from the averages when a blacklist mask is available.
+    ///   Exclude blacklisted positions from the averages when a blacklist mask is available.
     /// - `parallelize`:
-    ///     Process intervals with rayon parallel iterators.
+    ///   Process intervals with rayon parallel iterators.
     ///
     /// Returns
     /// -------
     /// - `avgs`:
-    ///     One average coverage value per interval, in the same order as the input slice.
+    ///   One average coverage value per interval, in the same order as the input slice.
     ///
     /// Notes
     /// -----
@@ -570,12 +570,12 @@ impl Coverage {
     /// Parameters
     /// ----------
     /// - positions:
-    ///     Positions to fetch, 0-based.
+    ///   Positions to fetch, 0-based.
     ///
     /// Returns
     /// -------
     /// - values:
-    ///     Coverage values at each requested position.
+    ///   Coverage values at each requested position.
     pub(crate) fn coverage_at_positions(&self, positions: &[u32]) -> Result<Vec<f32>> {
         let cov = match self.coverage.as_ref() {
             Some(c) => c,
@@ -604,12 +604,12 @@ impl Coverage {
     /// Parameters
     /// ----------
     /// - positions:
-    ///     Positions to fetch, 0-based.
+    ///   Positions to fetch, 0-based.
     ///
     /// Returns
     /// -------
     /// - values:
-    ///     Coverage values; blacklisted sites are `f32::NAN`.
+    ///   Coverage values; blacklisted sites are `f32::NAN`.
     pub(crate) fn coverage_at_positions_nan(&self, positions: &[u32]) -> Result<Vec<f32>> {
         let cov = match self.coverage.as_ref() {
             Some(c) => c,
@@ -652,12 +652,12 @@ impl Coverage {
     /// Parameters
     /// ----------
     /// - positions:
-    ///     Positions to fetch, 0-based.
+    ///   Positions to fetch, 0-based.
     ///
     /// Returns
     /// -------
     /// - mask:
-    ///     Mask values at each requested position; if no blacklist, all zeros.
+    ///   Mask values at each requested position; if no blacklist, all zeros.
     pub(crate) fn mask_at_positions(&self, positions: &[u32]) -> Result<Vec<u8>> {
         let len = self.length as usize;
         let mut out = Vec::with_capacity(positions.len());
@@ -690,16 +690,16 @@ impl Coverage {
     /// Parameters
     /// ----------
     /// - start:
-    ///     Start of interval, inclusive
+    ///   Start of interval, inclusive
     /// - end:
-    ///     End of interval, exclusive
+    ///   End of interval, exclusive
     /// - nan_blacklisted:
-    ///     Set positions overlapped by the blacklist to `f32::NAN`
+    ///   Set positions overlapped by the blacklist to `f32::NAN`
     ///
     /// Returns
     /// -------
     /// - values:
-    ///     Coverage values for each position in `[start, end)`, with optional `f32::NAN`s for blacklisted
+    ///   Coverage values for each position in `[start, end)`, with optional `f32::NAN`s for blacklisted
     pub(crate) fn coverage_in_window(
         &self,
         start: u32,
@@ -737,7 +737,7 @@ impl Coverage {
     /// Returns
     /// -------
     /// - coverage:
-    ///     Per-base coverage of length `length`, if available.
+    ///   Per-base coverage of length `length`, if available.
     pub(crate) fn coverage(&self) -> Option<&[f32]> {
         self.coverage.as_deref()
     }
@@ -747,7 +747,7 @@ impl Coverage {
     /// Returns
     /// -------
     /// - coverage:
-    ///     Mutable per-base coverage of length `length`, if available.
+    ///   Mutable per-base coverage of length `length`, if available.
     pub(crate) fn coverage_mut(&mut self) -> Option<&mut [f32]> {
         self.coverage.as_deref_mut()
     }
@@ -757,7 +757,7 @@ impl Coverage {
     /// Returns
     /// -------
     /// - mask:
-    ///     Per-base mask where 1 = blacklisted.
+    ///   Per-base mask where 1 = blacklisted.
     pub(crate) fn blacklist_mask(&self) -> Option<&[u8]> {
         self.bl_mask.as_deref()
     }

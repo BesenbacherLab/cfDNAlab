@@ -4,14 +4,19 @@ use crate::shared::interval::Interval;
 use crate::shared::interval::{ScoredInterval, Span};
 #[cfg(feature = "cmd_fcoverage")]
 use crate::shared::interval::{TouchingMergePolicy, push_merged_interval};
-use crate::shared::io::open_text_reader;
+use crate::shared::io::{open_text_reader, open_text_reader_in_background};
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::{FxHashMap, FxHashSet};
+#[cfg(feature = "cmd_fcoverage")]
+use rayon::prelude::*;
 #[cfg(feature = "cmd_fcoverage")]
 use std::fs::File;
 #[cfg(feature = "cmd_fcoverage")]
 use std::io::{BufWriter, Write};
 use std::{io::BufRead, path::Path};
+
+// Small bounded prefix used to reject obvious non-BED input before whitelist skipping
+const BED_FORMAT_SNIFF_ROWS: usize = 16;
 
 /// Load windows from a BED file into a per-chromosome map.
 ///
@@ -29,6 +34,8 @@ use std::{io::BufRead, path::Path};
 ///  - exp_num_windows: Optional number of expected windows
 ///    in the BED file before filtering. Returns an error
 ///    if the incorrect number of windows are observed.
+///  - read_in_background: Run file reading and decompression on a background thread while the
+///    calling thread parses rows.
 ///
 /// Returns
 /// -------
@@ -38,8 +45,13 @@ pub(crate) fn load_windows_from_bed(
     chromosomes: Option<&[String]>,
     filter_fn: Option<&dyn Fn(&str, u64, u64) -> bool>,
     exp_num_windows: Option<u64>,
+    read_in_background: bool,
 ) -> Result<FxHashMap<String, Windows>> {
-    let mut reader = open_text_reader(bed.as_ref())?;
+    let mut reader = if read_in_background {
+        open_text_reader_in_background(bed.as_ref())?
+    } else {
+        open_text_reader(bed.as_ref())?
+    };
 
     // Optional whitelist of chromosomes
     let mut windows_by_chromosome: FxHashMap<String, Vec<(u64, u64, u64)>> = FxHashMap::default();
@@ -56,6 +68,7 @@ pub(crate) fn load_windows_from_bed(
     let mut buf = String::new();
     let mut lineno: usize = 0;
     let mut orig_win_idx: u64 = 0; // Counter for all *valid* windows whether filtered out or not
+    let mut sniffed_rows = 0usize;
 
     loop {
         buf.clear();
@@ -79,6 +92,11 @@ pub(crate) fn load_windows_from_bed(
         let trimmed_line_start = line.trim_start();
         if trimmed_line_start.starts_with("track") || trimmed_line_start.starts_with("browser") {
             continue;
+        }
+
+        if sniffed_rows < BED_FORMAT_SNIFF_ROWS {
+            sniff_bed3_line(line, lineno)?;
+            sniffed_rows += 1;
         }
 
         // Strict parse of first 3 BED columns without allocating a Vec
@@ -214,6 +232,53 @@ fn start_end_are_valid_coordinates(start_str: &str, end_str: &str) -> Option<()>
     Some(())
 }
 
+fn sniff_bed3_line(line: &str, lineno: usize) -> Result<()> {
+    ensure!(
+        !line.as_bytes().contains(&0),
+        "BED parse error at line {}: input appears to be binary, not BED text",
+        lineno
+    );
+
+    let mut fields = line.split_ascii_whitespace();
+    let chr = fields
+        .next()
+        .with_context(|| format!("BED parse error at line {}: missing chromosome", lineno))?;
+    let start_str = fields.next().with_context(|| {
+        format!(
+            "BED parse error at line {}: missing start for chromosome: '{}'",
+            lineno, chr
+        )
+    })?;
+    let end_str = fields.next().with_context(|| {
+        format!(
+            "BED parse error at line {}: missing end for chromosome: '{}'",
+            lineno, chr
+        )
+    })?;
+
+    let start: u64 = start_str.parse().with_context(|| {
+        format!(
+            "BED parse error at line {}: invalid start '{}'",
+            lineno, start_str
+        )
+    })?;
+    let end: u64 = end_str.parse().with_context(|| {
+        format!(
+            "BED parse error at line {}: invalid end '{}'",
+            lineno, end_str
+        )
+    })?;
+
+    ensure!(
+        end > start,
+        "BED parse error at line {}: end ({}) must be greater than start ({})",
+        lineno,
+        end,
+        start
+    );
+    Ok(())
+}
+
 /// Owned collection of half-open windows with a cached genomic span.
 ///
 /// Invariants
@@ -346,7 +411,7 @@ impl Windows {
     /// Parameters
     /// ----------
     /// - start_idx:
-    ///     First index to assign to the merged interval series.
+    ///   First index to assign to the merged interval series.
     ///
     /// Returns
     /// -------
@@ -427,6 +492,12 @@ impl Windows {
     }
 }
 
+impl AsRef<[IndexedInterval<u64>]> for Windows {
+    fn as_ref(&self) -> &[IndexedInterval<u64>] {
+        self.as_slice()
+    }
+}
+
 fn is_sorted_by_start_indexed(ws: &[IndexedInterval<u64>]) -> bool {
     ws.windows(2)
         .all(|window_pair| window_pair[0].start() <= window_pair[1].start())
@@ -460,6 +531,8 @@ const GROUPED_BED_STRAND_SAMPLE_ROWS: usize = 200;
 ///  - exp_num_windows: Optional number of expected windows
 ///    in the BED file before filtering. Returns an error
 ///    if the incorrect number of windows are observed.
+///  - read_in_background: Run file reading and decompression on a background thread while the
+///    calling thread parses rows.
 ///
 /// Returns
 /// -------
@@ -475,6 +548,7 @@ pub(crate) fn load_grouped_windows_from_bed(
     read_strands: bool,
     filter_fn: Option<&dyn Fn(&str, u64, u64) -> bool>,
     exp_num_windows: Option<u64>,
+    read_in_background: bool,
 ) -> Result<(
     FxHashMap<String, GroupedWindows>,
     FxHashMap<u64, String>,
@@ -489,7 +563,11 @@ pub(crate) fn load_grouped_windows_from_bed(
     let detected_strand_column = strand_detection
         .as_ref()
         .and_then(|detection| detection.column);
-    let mut reader = open_text_reader(bed_path)?; // Works with &Path, PathBuf, &str
+    let mut reader = if read_in_background {
+        open_text_reader_in_background(bed_path)?
+    } else {
+        open_text_reader(bed_path)?
+    };
 
     // Initialize maps
     let mut grouped_windows_by_chromosome: FxHashMap<String, Vec<IndexedInterval<u64>>> =
@@ -520,6 +598,7 @@ pub(crate) fn load_grouped_windows_from_bed(
     let mut buf = String::new();
     let mut lineno: usize = 0;
     let mut orig_win_idx: u64 = 0; // Counter for all *valid* windows whether filtered out or not
+    let mut sniffed_rows = 0usize;
 
     loop {
         buf.clear();
@@ -534,6 +613,11 @@ pub(crate) fn load_grouped_windows_from_bed(
         // Fast skips
         if should_skip_bed_line(line) {
             continue;
+        }
+
+        if sniffed_rows < BED_FORMAT_SNIFF_ROWS {
+            sniff_bed3_line(line, lineno)?;
+            sniffed_rows += 1;
         }
 
         // Strict parse of first 3 BED columns without allocating a Vec
@@ -1074,6 +1158,13 @@ impl GroupedWindows {
 }
 
 #[cfg(loads_grouped_bed)]
+impl AsRef<[IndexedInterval<u64>]> for GroupedWindows {
+    fn as_ref(&self) -> &[IndexedInterval<u64>] {
+        self.windows_as_slice()
+    }
+}
+
+#[cfg(loads_grouped_bed)]
 impl Default for GroupedWindows {
     fn default() -> Self {
         Self {
@@ -1087,14 +1178,25 @@ impl Default for GroupedWindows {
 /// Segment layout used when grouped BED rows need unique internal identities for reduction.
 ///
 /// Each stored segment carries a stable `segment_idx` in the `IndexedInterval`, while the
-/// `segment_idx_to_group_idx` map preserves the grouped row identity.
+/// same position in `group_idx_by_segment_idx` preserves the grouped row identity.
 #[derive(Debug, Clone)]
 #[cfg(feature = "cmd_fcoverage")]
 pub(crate) struct GroupedCoverageLayout {
     pub(crate) segments_by_chr: FxHashMap<String, Windows>,
-    pub(crate) segment_idx_to_group_idx: FxHashMap<u64, u64>,
+    pub(crate) group_idx_by_segment_idx: Vec<u64>,
     pub(crate) group_span_positions: FxHashMap<u64, u64>,
     pub(crate) group_idx_to_name: FxHashMap<u64, String>,
+}
+
+/// Chromosome-local grouped segments prepared before global segment indices are assigned.
+#[derive(Debug)]
+#[cfg(feature = "cmd_fcoverage")]
+struct PreparedGroupedCoverageChromosome {
+    chromosome: String,
+    windows: Windows,
+    group_indices: Vec<u64>,
+    group_span_positions: FxHashMap<u64, u64>,
+    segment_idx_offset: u64,
 }
 
 /// Build a grouped coverage layout for grouped `fcoverage` outputs.
@@ -1105,18 +1207,18 @@ pub(crate) struct GroupedCoverageLayout {
 /// Parameters
 /// ----------
 /// - `grouped_windows_by_chr`:
-///     Grouped BED coordinates keyed by chromosome.
+///   Grouped BED coordinates keyed by chromosome.
 /// - `group_idx_to_name`:
-///     Stable `group_idx -> group_name` mapping from the grouped BED loader.
+///   Stable `group_idx -> group_name` mapping from the grouped BED loader.
 /// - `chromosomes`:
-///     Chromosome order used to assign deterministic segment indices.
+///   Chromosome order used to assign deterministic segment indices.
 /// - `unique_bases`:
-///     Merge same-group overlaps and touches before indexing.
+///   Merge same-group overlaps and touches before indexing.
 ///
 /// Returns
 /// -------
 /// - `layout`:
-///     Per-chromosome segments plus stable maps back to the grouped row identity.
+///   Per-chromosome segments plus stable maps back to the grouped row identity.
 #[cfg(feature = "cmd_fcoverage")]
 pub(crate) fn build_grouped_coverage_layout(
     grouped_windows_by_chr: &FxHashMap<String, GroupedWindows>,
@@ -1126,80 +1228,137 @@ pub(crate) fn build_grouped_coverage_layout(
 ) -> Result<GroupedCoverageLayout> {
     // Output shape:
     // - `segments_by_chr` is what downstream coverage code iterates over
-    // - `segment_idx_to_group_idx` lets reducers recover the original grouped BED row identity
+    // - `group_idx_by_segment_idx` lets reducers recover the original grouped BED row identity
     // - `group_span_positions` tracks the total number of positions represented by each group
+
+    // Chromosomes are independent until global segment indices are assigned
+    let mut prepared_chromosomes: Vec<Option<PreparedGroupedCoverageChromosome>> = chromosomes
+        .par_iter()
+        .map(|chromosome| {
+            let Some(grouped_windows) = grouped_windows_by_chr.get(chromosome) else {
+                return None;
+            };
+
+            Some(prepare_grouped_coverage_chromosome(
+                chromosome,
+                grouped_windows,
+                unique_bases,
+            ))
+        })
+        .collect();
+
+    // Follow the requested chromosome order when assigning each chromosome's global index range
+    let mut next_segment_idx = 0_u64;
+    for prepared in prepared_chromosomes.iter_mut().flatten() {
+        prepared.segment_idx_offset = next_segment_idx;
+        let chromosome_segment_count = u64::try_from(prepared.windows.len())
+            .context("grouped coverage has more segments than can be indexed by u64")?;
+        next_segment_idx = next_segment_idx
+            .checked_add(chromosome_segment_count)
+            .context("grouped coverage segment index overflow")?;
+    }
+
+    // Apply each chromosome's global segment index offset in parallel
+    prepared_chromosomes
+        .par_iter_mut()
+        .try_for_each(|prepared| -> Result<()> {
+            let Some(prepared) = prepared else {
+                return Ok(());
+            };
+            ensure!(
+                prepared.windows.len() == prepared.group_indices.len(),
+                "grouped coverage prepared {} segments but {} group indices for chromosome '{}'",
+                prepared.windows.len(),
+                prepared.group_indices.len(),
+                prepared.chromosome
+            );
+
+            for (local_segment_idx, segment) in prepared.windows.windows.iter_mut().enumerate() {
+                let local_segment_idx = u64::try_from(local_segment_idx).context(
+                    "grouped coverage chromosome has more segments than can be indexed by u64",
+                )?;
+                segment.idx = prepared
+                    .segment_idx_offset
+                    .checked_add(local_segment_idx)
+                    .context("grouped coverage segment index overflow")?;
+            }
+            Ok(())
+        })?;
+
+    // Combine chromosome-local group spans in parallel
+    let group_span_positions = prepared_chromosomes
+        .par_iter_mut()
+        .filter_map(|prepared| prepared.as_mut())
+        .map(|prepared| std::mem::take(&mut prepared.group_span_positions))
+        .reduce(
+            FxHashMap::default,
+            |mut combined_spans, chromosome_spans| {
+                for (group_idx, span_positions) in chromosome_spans {
+                    *combined_spans.entry(group_idx).or_insert(0) += span_positions;
+                }
+                combined_spans
+            },
+        );
+
+    let total_segments = usize::try_from(next_segment_idx)
+        .context("grouped coverage has more segments than fit in memory")?;
     let mut segments_by_chr: FxHashMap<String, Windows> =
         FxHashMap::with_capacity_and_hasher(grouped_windows_by_chr.len(), Default::default());
-    let mut segment_idx_to_group_idx: FxHashMap<u64, u64> = FxHashMap::default();
-    let mut group_span_positions: FxHashMap<u64, u64> = FxHashMap::default();
-    let mut next_segment_idx: u64 = 0;
+    let mut group_idx_by_segment_idx: Vec<u64> = Vec::with_capacity(total_segments);
 
-    // Follow the requested chromosome order so segment indices are deterministic.
-    // Missing chromosomes are skipped without consuming indices.
-    for chromosome in chromosomes {
-        let Some(grouped_windows) = grouped_windows_by_chr.get(chromosome) else {
-            continue;
-        };
-
-        // Build the chromosome-local segments that coverage will be summed over:
-        // - raw mode keeps every original grouped BED interval as its own segment
-        // - unique-base mode first merges overlaps and touching intervals within each group
-        let mut chromosome_segments: Vec<(Interval<u64>, u64)> = if unique_bases {
-            merged_group_segments(grouped_windows.windows_as_slice())?
-        } else {
-            grouped_windows
-                .windows_as_slice()
-                .iter()
-                .map(|window| Ok((Interval::new(window.start(), window.end())?, window.idx())))
-                .collect::<Result<Vec<_>>>()?
-        };
-
-        // Sort before assigning fresh `segment_idx` values so the internal identifiers stay
-        // stable and predictable for tests, reducers, and metadata mappings.
-        chromosome_segments.sort_unstable_by_key(|(interval, group_idx)| {
-            (interval.start(), interval.end(), *group_idx)
-        });
-
-        let mut indexed_segments: Vec<IndexedInterval<u64>> =
-            Vec::with_capacity(chromosome_segments.len());
-        for (interval, group_idx) in chromosome_segments {
-            // Each segment gets a new internal identity that is unique across all chromosomes.
-            // That identity is what the BED reducer writes into partial rows.
-            let segment_idx = next_segment_idx;
-            next_segment_idx += 1;
-
-            // The grouped output still needs group-level totals and names, so keep both:
-            // - total represented span per group
-            // - reverse mapping from internal segment id back to grouped BED row id
-            *group_span_positions.entry(group_idx).or_insert(0) += interval.len();
-            segment_idx_to_group_idx.insert(segment_idx, group_idx);
-
-            // Store the segment with its fresh internal index. Downstream code only sees these
-            // segment rows and later collapses them back to grouped rows via the reverse map.
-            indexed_segments.push(IndexedInterval::new(
-                interval.start(),
-                interval.end(),
-                segment_idx,
-            )?);
-        }
-
-        // `Windows::new` re-checks start sorting and caches the chromosome span for fast overlap
-        // queries in the tiled coverage path.
-        segments_by_chr.insert(chromosome.clone(), Windows::new(indexed_segments));
+    // Assemble chromosome results in the same order used to assign their global index ranges
+    for mut prepared in prepared_chromosomes.into_iter().flatten() {
+        group_idx_by_segment_idx.append(&mut prepared.group_indices);
+        segments_by_chr.insert(prepared.chromosome, prepared.windows);
     }
 
     Ok(GroupedCoverageLayout {
         segments_by_chr,
-        segment_idx_to_group_idx,
+        group_idx_by_segment_idx,
         group_span_positions,
         group_idx_to_name: group_idx_to_name.clone(),
     })
 }
 
+/// Build and sort the coverage segments for one chromosome.
 #[cfg(feature = "cmd_fcoverage")]
-fn merged_group_segments(
-    grouped_windows: &[IndexedInterval<u64>],
-) -> Result<Vec<(Interval<u64>, u64)>> {
+fn prepare_grouped_coverage_chromosome(
+    chromosome: &str,
+    grouped_windows: &GroupedWindows,
+    unique_bases: bool,
+) -> PreparedGroupedCoverageChromosome {
+    // Build the chromosome-local segments that coverage will be summed over:
+    // - raw mode keeps every original grouped BED interval as its own segment
+    // - unique-base mode first merges overlaps and touching intervals within each group
+    let mut indexed_segments: Vec<IndexedInterval<u64>> = if unique_bases {
+        merged_group_segments(grouped_windows.windows_as_slice())
+    } else {
+        grouped_windows.windows_as_slice().to_vec()
+    };
+
+    // Sort before assigning fresh local indices so the final global identifiers stay stable
+    indexed_segments
+        .sort_unstable_by_key(|segment| (segment.start(), segment.end(), segment.idx()));
+
+    let mut group_indices = Vec::with_capacity(indexed_segments.len());
+    let mut group_span_positions: FxHashMap<u64, u64> = FxHashMap::default();
+    for segment in &indexed_segments {
+        let group_idx = segment.idx();
+        group_indices.push(group_idx);
+        *group_span_positions.entry(group_idx).or_insert(0) += segment.len();
+    }
+
+    PreparedGroupedCoverageChromosome {
+        chromosome: chromosome.to_string(),
+        windows: Windows::from_sorted(indexed_segments),
+        group_indices,
+        group_span_positions,
+        segment_idx_offset: 0,
+    }
+}
+
+#[cfg(feature = "cmd_fcoverage")]
+fn merged_group_segments(grouped_windows: &[IndexedInterval<u64>]) -> Vec<IndexedInterval<u64>> {
     // First regroup the chromosome-local windows by their original grouped BED row id.
     // We only merge within a group. Different groups must stay separate even if they overlap.
     //
@@ -1211,10 +1370,10 @@ fn merged_group_segments(
         intervals_by_group
             .entry(window.idx())
             .or_default()
-            .push(Interval::new(window.start(), window.end())?);
+            .push(window.interval);
     }
 
-    let mut merged_segments: Vec<(Interval<u64>, u64)> = Vec::new();
+    let mut merged_segments: Vec<IndexedInterval<u64>> = Vec::new();
     for (group_idx, mut intervals) in intervals_by_group {
         // `push_merged_interval` assumes start-sorted input, so sort once per group before
         // collapsing intervals.
@@ -1245,11 +1404,11 @@ fn merged_group_segments(
         merged_segments.extend(
             merged_for_group
                 .into_iter()
-                .map(|interval| (interval, group_idx)),
+                .map(|interval| IndexedInterval::from_interval(interval, group_idx)),
         );
     }
 
-    Ok(merged_segments)
+    merged_segments
 }
 
 /// Write a TSV mapping from `group_idx` -> `group_name`.
@@ -1335,6 +1494,7 @@ pub(crate) fn load_scored_windows_from_bed(
     let mut buf = String::new();
     let mut lineno: usize = 0;
     let mut orig_win_idx: u64 = 0; // Counter for all *valid* windows whether filtered out or not
+    let mut sniffed_rows = 0usize;
 
     loop {
         buf.clear();
@@ -1358,6 +1518,11 @@ pub(crate) fn load_scored_windows_from_bed(
         let trimmed_line_start = line.trim_start();
         if trimmed_line_start.starts_with("track") || trimmed_line_start.starts_with("browser") {
             continue;
+        }
+
+        if sniffed_rows < BED_FORMAT_SNIFF_ROWS {
+            sniff_bed3_line(line, lineno)?;
+            sniffed_rows += 1;
         }
 
         // Strict parse of first 3 BED columns without allocating a Vec

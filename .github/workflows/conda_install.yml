@@ -52,6 +52,7 @@ jobs:
             cmd_gc_bias
             cmd_lengths
             cmd_midpoints
+            cmd_ref_kmers
           )
 
           for feature in "${released_command_features[@]}"; do

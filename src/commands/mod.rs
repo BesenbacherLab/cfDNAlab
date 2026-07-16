@@ -26,6 +26,8 @@ pub(crate) mod midpoints;
 pub(crate) mod prepare_windows;
 #[cfg(feature = "cmd_gc_bias")]
 pub(crate) mod ref_gc_bias;
+#[cfg(feature = "cmd_ref_kmers")]
+pub(crate) mod ref_kmers;
 mod run_statistics;
 #[cfg(feature = "cmd_transitions")]
 pub(crate) mod transitions;

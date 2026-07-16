@@ -9,9 +9,9 @@ schema_version <- function(x, ...) {
   UseMethod("schema_version")
 }
 
-#' Return the end-motif storage mode.
+#' Return the output storage mode.
 #'
-#' @param x A cfDNAlab end-motif object.
+#' @param x A cfDNAlab object with dense or sparse matrix output.
 #' @param ... Reserved for future methods.
 #'
 #' @return A scalar character value, currently `"dense"` or `"sparse_coo"`.
@@ -20,9 +20,9 @@ storage_mode <- function(x, ...) {
   UseMethod("storage_mode")
 }
 
-#' Return the end-motif row mode.
+#' Return the output row mode.
 #'
-#' @param x A cfDNAlab end-motif object.
+#' @param x A cfDNAlab object with matrix rows.
 #' @param ... Reserved for future methods.
 #'
 #' @return A scalar character value describing the row axis.
@@ -101,13 +101,16 @@ length_bin_idx <- function(x, ...) {
   UseMethod("length_bin_idx")
 }
 
-#' Return end-motif column metadata.
+#' Return motif-axis metadata.
 #'
-#' For ordinary end-motif stores, the `motif` column contains concrete motif
+#' For ordinary end-motif stores, the `motif` column contains motif
 #' labels. For grouped motifs-file output, the same column contains user-defined
-#' group names from the motif axis.
+#' group names from the motif axis. Reference k-mer stores use the same column
+#' for k-mer labels or k-mer group names. For observed-only reference k-mer
+#' output, this is the combined set of motifs or motifs-file targets observed
+#' anywhere in the output.
 #'
-#' @param x A cfDNAlab end-motif object.
+#' @param x A cfDNAlab object with a motif axis.
 #' @param ... Reserved for future methods.
 #'
 #' @return A data frame with one row per motif-axis label.
@@ -118,7 +121,7 @@ motifs <- function(x, ...) {
 
 #' Look up a motif index.
 #'
-#' @param x A cfDNAlab end-motif object.
+#' @param x A cfDNAlab object with motif labels.
 #' @param ... Method-specific lookup arguments.
 #'
 #' @return A scalar one-based integer motif index.
@@ -127,15 +130,98 @@ motif_idx <- function(x, ...) {
   UseMethod("motif_idx")
 }
 
-#' Test whether an end-motif label exists.
+#' Test whether a motif label exists.
 #'
-#' @param x A cfDNAlab end-motif object.
+#' @param x A cfDNAlab object with motif labels.
 #' @param ... Method-specific lookup arguments.
 #'
 #' @return A scalar logical.
 #' @export
 has_motif <- function(x, ...) {
   UseMethod("has_motif")
+}
+
+#' Return the reference k-mer motif-axis kind.
+#'
+#' @param x A cfDNAlab reference k-mer object.
+#' @param ... Reserved for future methods.
+#'
+#' @return A scalar character value, either `"motif"` or `"motif_group"`.
+#' @export
+motif_axis_kind <- function(x, ...) {
+  UseMethod("motif_axis_kind")
+}
+
+#' Return the reference k-mer size.
+#'
+#' @param x A cfDNAlab reference k-mer object.
+#' @param ... Reserved for future methods.
+#'
+#' @return A scalar integer k-mer size.
+#' @export
+kmer_size <- function(x, ...) {
+  UseMethod("kmer_size")
+}
+
+#' Return whether reference k-mers were canonicalized.
+#'
+#' @param x A cfDNAlab reference k-mer object.
+#' @param ... Reserved for future methods.
+#'
+#' @return A scalar logical.
+#' @export
+canonical <- function(x, ...) {
+  UseMethod("canonical")
+}
+
+#' Return whether all requested reference k-mer motifs were kept.
+#'
+#' For full k-mer output, this means every A/C/G/T k-mer for the requested k.
+#' For motifs-file output, this means every target from the motifs file.
+#'
+#' @param x A cfDNAlab reference k-mer object.
+#' @param ... Reserved for future methods.
+#'
+#' @return A scalar logical.
+#' @export
+all_motifs <- function(x, ...) {
+  UseMethod("all_motifs")
+}
+
+#' Return the reference k-mer window assignment rule.
+#'
+#' @param x A cfDNAlab reference k-mer object.
+#' @param ... Reserved for future methods.
+#'
+#' @return A scalar character value.
+#' @export
+assign_by <- function(x, ...) {
+  UseMethod("assign_by")
+}
+
+#' Return the reference contig footprint.
+#'
+#' @param x A cfDNAlab reference k-mer object.
+#' @param ... Reserved for future methods.
+#'
+#' @return JSON-decoded reference contig footprint metadata.
+#' @export
+reference_contig_footprint <- function(x, ...) {
+  UseMethod("reference_contig_footprint")
+}
+
+#' Return reference k-mer row scaling factors.
+#'
+#' Reference k-mer outputs store frequencies. Multiplying a row's frequency by
+#' its `row_scaling_factor` gives the reconstructed count for that row.
+#'
+#' @param x A cfDNAlab reference k-mer object.
+#' @param ... Reserved for future methods.
+#'
+#' @return A data frame with row metadata and `row_scaling_factor`.
+#' @export
+row_scaling_factors <- function(x, ...) {
+  UseMethod("row_scaling_factors")
 }
 
 #' Return one midpoint profile as an array vector.
@@ -206,12 +292,14 @@ length_data_frame <- function(x, ...) {
   UseMethod("length_data_frame")
 }
 
-#' Return end-motif counts as a dense matrix.
+#' Return counts as a dense matrix.
 #'
-#' Sparse stores are not densified unless the method explicitly receives
-#' `allow_densify = TRUE`.
+#' Sparse output stores only non-zero values. These methods do not create a
+#' zero-filled dense matrix from sparse output unless they explicitly receive
+#' `allow_densify = TRUE`. For objects with a motif axis, densifying fills
+#' zeroes only across the labels returned by `motifs(x)`.
 #'
-#' @param x A cfDNAlab end-motif object.
+#' @param x A cfDNAlab object with count values or reconstructable counts.
 #' @param ... Method-specific arguments.
 #'
 #' @return A dense numeric matrix.
@@ -220,12 +308,43 @@ dense_counts_matrix <- function(x, ...) {
   UseMethod("dense_counts_matrix")
 }
 
-#' Return global end-motif counts as a named vector.
+#' Return reference-corrected counts as a dense matrix.
 #'
-#' Sparse stores are not densified unless the method explicitly receives
-#' `allow_densify = TRUE`.
+#' These methods divide counts by reference-based correction factors. For a
+#' one-sided motif, and for `"joint"` two-sided correction, the factor comes
+#' from the matching full reference motif. `"split"` keeps each full two-sided
+#' label but calculates outside and inside factors independently and multiplies
+#' them. `"outside"` first sums counts over inside bases, divides each sum by
+#' its outside factor, and returns labels such as `"AC_"`. `"inside"` first
+#' sums over outside bases, divides by the inside factor, and returns labels
+#' such as `"_GT"`.
 #'
-#' @param x A cfDNAlab global end-motif object.
+#' Sparse end-motif output is not densified unless the method explicitly
+#' receives `allow_densify = TRUE`. Dense matrices have a fixed row and motif
+#' shape, so `unsupported_motifs = "drop"` is not supported here. Use
+#' `end_motif_data_frame(..., ref_kmers = ref_kmers,
+#' unsupported_motifs = "drop")` when unsupported motifs should be omitted.
+#' 
+#' When motif labels contain both outside and inside bases, such as `"AC_GT"`,
+#' `two_sided_correction` is required to choose among these four interpretations.
+#'
+#' @param x A cfDNAlab end-motif object.
+#' @param ... Method-specific arguments.
+#'
+#' @return A dense numeric matrix.
+#' @export
+dense_corrected_counts_matrix <- function(x, ...) {
+  UseMethod("dense_corrected_counts_matrix")
+}
+
+#' Return global counts as a named vector.
+#'
+#' Sparse output stores only non-zero values. These methods do not create a
+#' zero-filled dense vector from sparse output unless they explicitly receive
+#' `allow_densify = TRUE`. For objects with a motif axis, densifying fills
+#' zeroes only across the labels returned by `motifs(x)`.
+#'
+#' @param x A cfDNAlab global object with count values or reconstructable counts.
 #' @param ... Method-specific arguments.
 #'
 #' @return A named numeric vector with one value per motif.
@@ -234,11 +353,54 @@ dense_counts_vector <- function(x, ...) {
   UseMethod("dense_counts_vector")
 }
 
+#' Return reference k-mer frequencies as a dense matrix.
+#'
+#' Sparse output stores only non-zero frequencies. This method does not create
+#' a zero-filled dense matrix from sparse output unless it explicitly receives
+#' `allow_densify = TRUE`. Densifying fills zeroes only across the motif axis
+#' returned by `motifs(x)`.
+#'
+#' @param x A cfDNAlab reference k-mer object.
+#' @param ... Method-specific arguments.
+#'
+#' @return A dense numeric matrix.
+#' @export
+dense_frequencies_matrix <- function(x, ...) {
+  UseMethod("dense_frequencies_matrix")
+}
+
+#' Return global reference k-mer frequencies as a named vector.
+#'
+#' Sparse output stores only non-zero frequencies. This method does not create
+#' a zero-filled dense vector from sparse output unless it explicitly receives
+#' `allow_densify = TRUE`. Densifying fills zeroes only across the motif axis
+#' returned by `motifs(x)`.
+#'
+#' @param x A cfDNAlab global reference k-mer object.
+#' @param ... Method-specific arguments.
+#'
+#' @return A named numeric vector with one value per motif.
+#' @export
+dense_frequencies_vector <- function(x, ...) {
+  UseMethod("dense_frequencies_vector")
+}
+
 #' Return end-motif counts as a data frame.
 #'
 #' Sparse outputs return stored non-zero rows unless the method explicitly
 #' receives `densify = TRUE`. Densifying adds explicit zero-count rows for
 #' selected observed motifs. Dense outputs always include zero counts.
+#'
+#' End-motif methods can receive `ref_kmers` to add reference-corrected counts
+#' without manually joining the sample and reference data frames. Corrected
+#' data frames add `corrected_count` and `corrected_frequency`. When labels have
+#' both outside and inside bases, `two_sided_correction` is required. `"joint"`
+#' corrects each full motif with its matching full reference motif. `"split"`
+#' preserves full labels but multiplies independently calculated outside and
+#' inside correction factors. `"outside"` aggregates sample counts by outside
+#' label before correction and returns labels such as `"AC_"`. `"inside"` does
+#' the corresponding aggregation by inside label and returns labels such as
+#' `"_GT"`.
 #'
 #' @param x A cfDNAlab end-motif object.
 #' @param ... Method-specific selection arguments.
@@ -249,16 +411,80 @@ end_motif_data_frame <- function(x, ...) {
   UseMethod("end_motif_data_frame")
 }
 
-#' Return end-motif counts as a sparse matrix.
+#' Return reference k-mer frequencies and reconstructed counts as a data frame.
 #'
-#' Sparse stores are converted directly from their stored COO arrays. Dense
-#' stores are read into memory before conversion.
+#' Sparse output stores only non-zero frequencies. By default, sparse output
+#' returns those stored rows only. With `densify = TRUE`, the data frame also
+#' includes zero-frequency rows for the selected rows and the selected motifs
+#' returned by `motifs(x)`. For observed-only output, those selected labels are
+#' the combined set observed anywhere in the output. Densifying does not add
+#' every possible k-mer unless `all_motifs(x)` is `TRUE`. Dense output always
+#' includes zeroes.
 #'
-#' @param x A cfDNAlab end-motif object.
+#' @param x A cfDNAlab reference k-mer object.
+#' @param ... Method-specific selection arguments.
+#'
+#' @return A data frame containing row metadata, motif metadata, `frequency`,
+#'   and reconstructed `count`.
+#' @export
+ref_kmer_data_frame <- function(x, ...) {
+  UseMethod("ref_kmer_data_frame")
+}
+
+#' Return counts as a sparse matrix.
+#'
+#' Sparse output is returned without building a zero-filled dense matrix. Dense
+#' output is read into memory before conversion to a sparse matrix.
+#'
+#' @param x A cfDNAlab object with count values or reconstructable counts.
 #' @param ... Reserved for future methods.
 #'
 #' @return A `Matrix` sparse matrix.
 #' @export
 sparse_counts_matrix <- function(x, ...) {
   UseMethod("sparse_counts_matrix")
+}
+
+#' Return reference-corrected counts as a sparse matrix.
+#'
+#' These methods divide counts by reference-based correction factors. For a
+#' one-sided motif, and for `"joint"` two-sided correction, the factor comes
+#' from the matching full reference motif. `"split"` keeps each full two-sided
+#' label but calculates outside and inside factors independently and multiplies
+#' them. `"outside"` first sums counts over inside bases, divides each sum by
+#' its outside factor, and returns labels such as `"AC_"`. `"inside"` first
+#' sums over outside bases, divides by the inside factor, and returns labels
+#' such as `"_GT"`.
+#'
+#' Sparse output is returned without building a zero-filled dense matrix. Dense
+#' output is read into memory before conversion to a sparse matrix. Sparse
+#' matrices have a fixed row and motif shape, so `unsupported_motifs = "drop"`
+#' is not supported here. Use
+#' `end_motif_data_frame(..., ref_kmers = ref_kmers,
+#' unsupported_motifs = "drop")` when unsupported motifs should be omitted.
+#' 
+#' When motif labels contain both outside and inside bases, such as `"AC_GT"`,
+#' `two_sided_correction` is required to choose among these four interpretations.
+#'
+#' @param x A cfDNAlab end-motif object.
+#' @param ... Method-specific arguments.
+#'
+#' @return A `Matrix` sparse matrix.
+#' @export
+sparse_corrected_counts_matrix <- function(x, ...) {
+  UseMethod("sparse_corrected_counts_matrix")
+}
+
+#' Return reference k-mer frequencies as a sparse matrix.
+#'
+#' Sparse output is returned without building a zero-filled dense matrix. Dense
+#' output is read into memory before conversion to a sparse matrix.
+#'
+#' @param x A cfDNAlab reference k-mer object.
+#' @param ... Method-specific arguments.
+#'
+#' @return A `Matrix` sparse matrix.
+#' @export
+sparse_frequencies_matrix <- function(x, ...) {
+  UseMethod("sparse_frequencies_matrix")
 }

@@ -346,7 +346,7 @@ fn counts_chunk_shape(shape: [usize; 3]) -> Result<[usize; 3]> {
         return Ok(shape);
     }
 
-    let position_chunk = shape[2].min(TARGET_COUNT_CHUNK_CELLS).max(1);
+    let position_chunk = shape[2].clamp(1, TARGET_COUNT_CHUNK_CELLS);
     let length_chunk = shape[1]
         .min((TARGET_COUNT_CHUNK_CELLS / position_chunk).max(1))
         .max(1);

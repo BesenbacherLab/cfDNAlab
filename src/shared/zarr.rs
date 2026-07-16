@@ -18,10 +18,7 @@ use anyhow::{Context, Result, ensure};
 use serde_json::{Map, Value};
 use std::{fs, path::Path, sync::Arc};
 use zarrs::{
-    array::{
-        ArrayBuilder, DataType, Element, FillValueMetadata, builder::ArrayBuilderFillValue,
-        codec::ZstdCodec,
-    },
+    array::{ArrayBuilder, DataType, Element, builder::ArrayBuilderFillValue, codec::ZstdCodec},
     filesystem::FilesystemStore,
     group::GroupBuilder,
 };
@@ -38,19 +35,23 @@ pub(crate) const DEFAULT_ZARR_ZSTD_LEVEL: i32 = 3;
 /// coordinate axes are zero-based, so using zero would turn valid index 0 values into missing
 /// values in those readers. `-1` is outside the valid domain for these arrays and should only be
 /// seen as chunk padding or metadata for empty arrays, not as real cfDNAlab data.
-#[cfg(any(feature = "cmd_ends", feature = "cmd_midpoints"))]
+#[cfg(any(
+    feature = "cmd_ends",
+    feature = "cmd_midpoints",
+    feature = "cmd_ref_kmers"
+))]
 pub(crate) const ZARR_INT32_FILL_VALUE: i32 = -1;
 
 /// Fill value for public `int64` genomic coordinate arrays.
-#[cfg(any(feature = "cmd_ends"))]
+#[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
 pub(crate) const ZARR_INT64_FILL_VALUE: i64 = -1;
 
 /// Fill value for non-negative `float32` count arrays.
-#[cfg(any(feature = "cmd_midpoints"))]
+#[cfg(feature = "cmd_midpoints")]
 pub(crate) const ZARR_FLOAT32_FILL_VALUE: f32 = -1.0;
 
 /// Fill value for non-negative `float64` count and fraction arrays.
-#[cfg(any(feature = "cmd_ends"))]
+#[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
 pub(crate) const ZARR_FLOAT64_FILL_VALUE: f64 = -1.0;
 
 /// Fill value for fixed-width ASCII label arrays.
@@ -58,7 +59,7 @@ pub(crate) const ZARR_FLOAT64_FILL_VALUE: f64 = -1.0;
 /// Valid ASCII labels only use byte values `0..=127`, so `255` cannot be confused with a real
 /// label byte. Do not reuse this for arbitrary numeric `uint8` arrays, where `255` may be a valid
 /// data value.
-#[cfg(any(feature = "cmd_ends"))]
+#[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
 pub(crate) const ZARR_ASCII_FILL_VALUE: u8 = u8::MAX;
 
 /// Open or create a filesystem-backed Zarr store directory.
@@ -242,7 +243,7 @@ pub(crate) fn create_zarr_array_with_fill_value(
         fill_value,
     )
     .bytes_to_bytes_codecs(vec![Arc::new(ZstdCodec::new(
-        DEFAULT_ZARR_ZSTD_LEVEL.into(),
+        DEFAULT_ZARR_ZSTD_LEVEL,
         false,
     ))])
     .dimension_names(Some(dimension_names.iter().copied()))
@@ -258,24 +259,27 @@ pub(crate) fn create_zarr_array_with_fill_value(
 }
 
 /// Return a Zarr metadata fill value for boolean arrays.
+#[cfg(feature = "cmd_gc_bias")]
 pub(crate) fn bool_fill_value(value: bool) -> ArrayBuilderFillValue {
-    FillValueMetadata::from(value).into()
+    zarrs::array::FillValueMetadata::from(value).into()
 }
 
 #[cfg(any(
     feature = "cmd_ends",
     feature = "cmd_gc_bias",
-    feature = "cmd_midpoints"
+    feature = "cmd_midpoints",
+    feature = "cmd_ref_kmers"
 ))]
 pub(crate) use root_attribute_reader::read_zarr_root_attributes;
 
-#[cfg(any(feature = "cmd_gc_bias"))]
+#[cfg(feature = "cmd_gc_bias")]
 pub(crate) use package_readers::{ensure_zarr_schema, read_zarr_array1, read_zarr_array2};
 
 #[cfg(any(
     feature = "cmd_ends",
     feature = "cmd_gc_bias",
-    feature = "cmd_midpoints"
+    feature = "cmd_midpoints",
+    feature = "cmd_ref_kmers"
 ))]
 mod root_attribute_reader {
     use anyhow::{Context, Result};
@@ -286,14 +290,14 @@ mod root_attribute_reader {
     pub(crate) fn read_zarr_root_attributes(path: &Path) -> Result<Value> {
         let metadata: Value =
             serde_json::from_str(&std::fs::read_to_string(path.join("zarr.json"))?)?;
-        Ok(metadata
+        metadata
             .get("attributes")
             .cloned()
-            .context("Zarr root metadata is missing attributes")?)
+            .context("Zarr root metadata is missing attributes")
     }
 }
 
-#[cfg(any(feature = "cmd_gc_bias"))]
+#[cfg(feature = "cmd_gc_bias")]
 mod package_readers {
     use anyhow::{Context, Result, ensure};
     use ndarray::Array2;
@@ -401,7 +405,7 @@ where
 }
 
 /// Convert a metadata value to the public `i64` Zarr dtype.
-#[cfg(any(feature = "cmd_ends"))]
+#[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
 pub(crate) fn checked_i64<T>(value: T, field_name: &str) -> Result<i64>
 where
     T: TryInto<i64> + Copy + std::fmt::Display,

@@ -41,7 +41,7 @@ use crate::{
         OutputLoaderError, OutputLoaderResult,
         common::{ensure_unique_indices, resolve_row_indices},
     },
-    shared::io::open_text_reader,
+    shared::io::{open_text_reader, open_text_reader_in_background},
 };
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::{FxHashMap, FxHashSet};
@@ -61,13 +61,13 @@ use std::{
 /// Parameters
 /// ----------
 /// - `path`:
-///     Path to a non-positional aggregate `cfdna fcoverage` TSV output. Plain
-///     text, gzip, and zstd compressed files are supported.
+///   Path to a non-positional aggregate `cfdna fcoverage` TSV output. Plain
+///   text, gzip, and zstd compressed files are supported.
 ///
 /// Returns
 /// -------
 /// - `FCoverageOutput`:
-///     Loaded row metadata, signal label, and scalar values or summary stats.
+///   Loaded row metadata, signal label, and scalar values or summary stats.
 ///
 /// ```no_run
 /// use cfdnalab::output_loaders::load_fcoverage_output;
@@ -93,7 +93,11 @@ use std::{
 pub fn load_fcoverage_output(path: impl AsRef<Path>) -> OutputLoaderResult<FCoverageOutput> {
     let path = path.as_ref();
     ensure_non_positional_path(path)?;
-    FCoverageParser::new(path, None).load().map_err(Into::into)
+    let read_in_background =
+        std::thread::available_parallelism().is_ok_and(|thread_count| thread_count.get() > 1);
+    FCoverageParser::new(path, None, read_in_background)
+        .load()
+        .map_err(Into::into)
 }
 
 /// Load a non-positional grouped `cfdna fcoverage` aggregate table with group names.
@@ -105,17 +109,17 @@ pub fn load_fcoverage_output(path: impl AsRef<Path>) -> OutputLoaderResult<FCove
 /// Parameters
 /// ----------
 /// - `path`:
-///     Path to a grouped non-positional aggregate `cfdna fcoverage` TSV output.
-///     Plain text, gzip, and zstd compressed files are supported.
+///   Path to a grouped non-positional aggregate `cfdna fcoverage` TSV output.
+///   Plain text, gzip, and zstd compressed files are supported.
 /// - `group_index_path`:
-///     Path to the matching group-index file with `group_idx` and `group_name`
-///     columns.
+///   Path to the matching group-index file with `group_idx` and `group_name`
+///   columns.
 ///
 /// Returns
 /// -------
 /// - `FCoverageOutput`:
-///     Loaded row metadata with group names, signal label, and scalar values or
-///     summary stats.
+///   Loaded row metadata with group names, signal label, and scalar values or
+///   summary stats.
 ///
 /// ```no_run
 /// use cfdnalab::output_loaders::load_fcoverage_output_with_group_index;
@@ -146,7 +150,9 @@ pub fn load_fcoverage_output_with_group_index(
 ) -> OutputLoaderResult<FCoverageOutput> {
     let path = path.as_ref();
     ensure_non_positional_path(path)?;
-    FCoverageParser::new(path, Some(group_index_path.as_ref()))
+    let read_in_background =
+        std::thread::available_parallelism().is_ok_and(|thread_count| thread_count.get() > 1);
+    FCoverageParser::new(path, Some(group_index_path.as_ref()), read_in_background)
         .load()
         .map_err(Into::into)
 }
@@ -229,7 +235,7 @@ impl FCoverageOutput {
     /// Parameters
     /// ----------
     /// - `row_index`:
-    ///     Zero-based row index in the window metadata.
+    ///   Zero-based row index in the window metadata.
     pub fn window(&self, row_index: usize) -> OutputLoaderResult<Option<&FCoverageWindowRow>> {
         Ok(self.window_metadata()?.get(row_index))
     }
@@ -241,7 +247,7 @@ impl FCoverageOutput {
     /// Parameters
     /// ----------
     /// - `row_index`:
-    ///     Zero-based row index in the group metadata.
+    ///   Zero-based row index in the group metadata.
     pub fn group(&self, row_index: usize) -> OutputLoaderResult<Option<&FCoverageGroupRow>> {
         Ok(self.group_metadata()?.get(row_index))
     }
@@ -254,7 +260,7 @@ impl FCoverageOutput {
     /// Parameters
     /// ----------
     /// - `group_name`:
-    ///     Exact group name from the group-index file.
+    ///   Exact group name from the group-index file.
     pub fn group_index(&self, group_name: &str) -> OutputLoaderResult<usize> {
         let groups = self.group_metadata()?;
         if !groups.iter().any(|group| group.name.is_some()) {
@@ -326,7 +332,7 @@ impl FCoverageOutput {
     /// Parameters
     /// ----------
     /// - `row_index`:
-    ///     Zero-based output row index.
+    ///   Zero-based output row index.
     pub fn value(&self, row_index: usize) -> OutputLoaderResult<Option<f64>> {
         Ok(self.values()?.get(row_index).copied())
     }
@@ -346,7 +352,7 @@ impl FCoverageOutput {
     /// Parameters
     /// ----------
     /// - `row_index`:
-    ///     Zero-based output row index.
+    ///   Zero-based output row index.
     pub fn summary_stat(
         &self,
         row_index: usize,
@@ -591,8 +597,8 @@ impl<'a> FCoverageSelector<'a> {
     /// Parameters
     /// ----------
     /// - `row_indices`:
-    ///     Source row indices in output-file order. The returned selection keeps
-    ///     this order and rejects duplicates.
+    ///   Source row indices in output-file order. The returned selection keeps
+    ///   this order and rejects duplicates.
     pub fn rows(self, row_indices: &[usize]) -> Self {
         self.set_rows(FCoverageRowSelector::Rows(row_indices.to_vec()), "rows")
     }
@@ -604,8 +610,8 @@ impl<'a> FCoverageSelector<'a> {
     /// Parameters
     /// ----------
     /// - `window_indices`:
-    ///     Window row indices in output-file order. The returned selection keeps
-    ///     this order and rejects duplicates.
+    ///   Window row indices in output-file order. The returned selection keeps
+    ///   this order and rejects duplicates.
     pub fn windows(self, window_indices: &[usize]) -> Self {
         self.set_rows(
             FCoverageRowSelector::Windows(window_indices.to_vec()),
@@ -620,8 +626,8 @@ impl<'a> FCoverageSelector<'a> {
     /// Parameters
     /// ----------
     /// - `group_indices`:
-    ///     Group row indices in output-file order. The returned selection keeps
-    ///     this order and rejects duplicates.
+    ///   Group row indices in output-file order. The returned selection keeps
+    ///   this order and rejects duplicates.
     pub fn groups(self, group_indices: &[usize]) -> Self {
         self.set_rows(
             FCoverageRowSelector::Groups(group_indices.to_vec()),
@@ -637,8 +643,8 @@ impl<'a> FCoverageSelector<'a> {
     /// Parameters
     /// ----------
     /// - `group_names`:
-    ///     Group names in requested output order. The returned selection keeps
-    ///     this order and rejects duplicates.
+    ///   Group names in requested output order. The returned selection keeps
+    ///   this order and rejects duplicates.
     pub fn groups_by_name<S: AsRef<str>>(self, group_names: &[S]) -> Self {
         self.set_rows(
             FCoverageRowSelector::GroupNames(
@@ -1058,7 +1064,7 @@ impl FCoverageSelection {
     /// Parameters
     /// ----------
     /// - `selected_row_index`:
-    ///     Zero-based row index within the selected rows.
+    ///   Zero-based row index within the selected rows.
     pub fn value(&self, selected_row_index: usize) -> OutputLoaderResult<Option<f64>> {
         Ok(self.values()?.get(selected_row_index).copied())
     }
@@ -1078,7 +1084,7 @@ impl FCoverageSelection {
     /// Parameters
     /// ----------
     /// - `selected_row_index`:
-    ///     Zero-based row index within the selected rows.
+    ///   Zero-based row index within the selected rows.
     pub fn summary_stat(
         &self,
         selected_row_index: usize,
@@ -1153,7 +1159,7 @@ impl FCoverageValueSelection {
     /// Parameters
     /// ----------
     /// - `selected_row_index`:
-    ///     Zero-based row index within the selected scalar values.
+    ///   Zero-based row index within the selected scalar values.
     pub fn value(&self, selected_row_index: usize) -> Option<f64> {
         self.values.get(selected_row_index).copied()
     }
@@ -1219,7 +1225,7 @@ impl FCoverageSummaryStatsSelection {
     /// Parameters
     /// ----------
     /// - `selected_row_index`:
-    ///     Zero-based row index within the selected summary-stat rows.
+    ///   Zero-based row index within the selected summary-stat rows.
     pub fn stat(&self, selected_row_index: usize) -> Option<&FCoverageSummaryStats> {
         self.stats.get(selected_row_index)
     }
@@ -1313,21 +1319,27 @@ pub enum FCoverageCoefficientOfVariation {
 struct FCoverageParser {
     path: PathBuf,
     group_index_path: Option<PathBuf>,
+    read_in_background: bool,
 }
 
 impl FCoverageParser {
     /// Store the input path until `load()` opens it.
-    fn new(path: &Path, group_index_path: Option<&Path>) -> Self {
+    fn new(path: &Path, group_index_path: Option<&Path>, read_in_background: bool) -> Self {
         Self {
             path: path.to_path_buf(),
             group_index_path: group_index_path.map(Path::to_path_buf),
+            read_in_background,
         }
     }
 
     /// Read the TSV header, parse all data rows, and build an `FCoverageOutput`.
     fn load(&self) -> Result<FCoverageOutput> {
-        let mut reader = open_text_reader(&self.path)
-            .with_context(|| format!("open fcoverage output {}", self.path.display()))?;
+        let mut reader = if self.read_in_background {
+            open_text_reader_in_background(&self.path)
+        } else {
+            open_text_reader(&self.path)
+        }
+        .with_context(|| format!("open fcoverage output {}", self.path.display()))?;
         let mut header_line = String::new();
         ensure!(
             reader
@@ -1343,7 +1355,7 @@ impl FCoverageParser {
         let group_names_by_idx = self
             .group_index_path
             .as_deref()
-            .map(read_group_index)
+            .map(|path| read_group_index(path, self.read_in_background))
             .transpose()?;
         ensure!(
             group_names_by_idx.is_none() || schema.row_mode() == FCoverageRowMode::Groups,
@@ -1611,13 +1623,13 @@ impl FCoverageSchema {
     /// Parameters
     /// ----------
     /// - `rows`:
-    ///     Parsed data rows in file order.
+    ///   Parsed data rows in file order.
     ///
     /// Returns
     /// -------
     /// - `FCoverageOutput`:
-    ///     Final loaded output with row metadata, signal label, and either
-    ///     scalar values or summary statistics.
+    ///   Final loaded output with row metadata, signal label, and either
+    ///   scalar values or summary statistics.
     fn finish(
         self,
         rows: Vec<ParsedRow>,
@@ -2274,9 +2286,13 @@ fn contains_filename_part(file_name: &str, part: &str) -> bool {
 }
 
 /// Read a grouped fcoverage group-index file with `group_idx` and `group_name` columns.
-fn read_group_index(path: &Path) -> Result<FxHashMap<u64, String>> {
-    let mut reader = open_text_reader(path)
-        .with_context(|| format!("open fcoverage group-index file {}", path.display()))?;
+fn read_group_index(path: &Path, read_in_background: bool) -> Result<FxHashMap<u64, String>> {
+    let mut reader = if read_in_background {
+        open_text_reader_in_background(path)
+    } else {
+        open_text_reader(path)
+    }
+    .with_context(|| format!("open fcoverage group-index file {}", path.display()))?;
     let mut header_line = String::new();
     ensure!(
         reader

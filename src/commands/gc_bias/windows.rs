@@ -275,16 +275,16 @@ pub(crate) fn advance_fixed_size_streaming_buffers(
 /// Parameters
 /// ----------
 /// - `buf`:
-///     Window state updated in place with ACGT counts.
+///   Window state updated in place with ACGT counts.
 ///
 /// - `gc_prefixes`:
-///     Prefix sums where each entry stores total ACGT up to that index.
+///   Prefix sums where each entry stores total ACGT up to that index.
 ///
 /// - `observed_interval`:
-///     Genomic interval whose support should be measured for this window.
+///   Genomic interval whose support should be measured for this window.
 ///
 /// - `sequence_interval`:
-///     Genomic interval associated with the prefix sums.
+///   Genomic interval associated with the prefix sums.
 ///
 /// Returns
 /// -------
@@ -352,23 +352,23 @@ pub(crate) struct PreparedTileWindows {
 /// Parameters
 /// ----------
 /// - `window_opt`:
-///     Window configuration indicating whether to use BED, fixed-size, or global windows.
+///   Window configuration indicating whether to use BED, fixed-size, or global windows.
 /// - `windows_opt`:
-///     Optional slice of per-chromosome windows `(start, end, idx)` when using BED windows.
+///   Optional slice of per-chromosome windows `(start, end, idx)` when using BED windows.
 /// - `tile`:
-///     Tile whose core and fetch bounds determine which windows are relevant.
+///   Tile whose core and fetch bounds determine which windows are relevant.
 /// - `tile_window_span`:
-///     Optional cached span that bounds candidate windows for the tile.
+///   Optional cached span that bounds candidate windows for the tile.
 /// - `chrom_len`:
-///     Total chromosome length used to cap fixed-size window ends.
+///   Total chromosome length used to cap fixed-size window ends.
 /// - `template`:
-///     GC count template used to initialize each window buffer.
+///   GC count template used to initialize each window buffer.
 ///
 /// Returns
 /// -------
 /// - `PreparedTileWindows`:
-///     Contains the ready-to-use window buffers, any streaming pair, and a skip flag for empty BED
-///     chromosomes.
+///   Contains the ready-to-use window buffers, any streaming pair, and a skip flag for empty BED
+///   chromosomes.
 pub(crate) fn prepare_tile_windows(
     window_opt: &WindowSpec,
     windows_opt: Option<&[IndexedInterval<u64>]>,

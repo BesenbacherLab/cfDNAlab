@@ -161,7 +161,9 @@ LOADER_PAGES = (
             "end_motif_data_frame",
             "dense_counts_matrix",
             "dense_counts_vector",
+            "dense_corrected_counts_matrix",
             "sparse_counts_matrix",
+            "sparse_corrected_counts_matrix",
             "schema_version",
         ),
         python_example=textwrap.dedent(
@@ -195,6 +197,76 @@ LOADER_PAGES = (
         notes=(
             "Sparse stores stay sparse unless a dense helper explicitly receives a densify option.",
             "Windowed and grouped outputs can filter rows by `max_blacklisted_fraction`.",
+        ),
+    ),
+    LoaderPage(
+        slug="reference-kmer-frequencies",
+        title="Reference K-mer Frequencies",
+        sidebar_label="Reference K-mers",
+        cli_command="cfdna ref-kmers",
+        output_file="<prefix>.ref_kmers.zarr",
+        summary=(
+            "Load reference k-mer frequency Zarr stores and extract frequency "
+            "tables, dense arrays, sparse matrices, and reconstructed counts."
+        ),
+        python_symbols=(
+            "read_ref_kmers",
+            "RefKmerFrequencies",
+            "GlobalRefKmerFrequencies",
+            "WindowedRefKmerFrequencies",
+            "GroupedRefKmerFrequencies",
+        ),
+        r_topics=(
+            "read_ref_kmers",
+            "storage_mode",
+            "row_mode",
+            "motif_axis_kind",
+            "kmer_size",
+            "canonical",
+            "all_motifs",
+            "assign_by",
+            "motifs",
+            "motif_idx",
+            "window_metadata",
+            "group_metadata",
+            "group_idx",
+            "reference_contig_footprint",
+            "row_scaling_factors",
+            "ref_kmer_data_frame",
+            "dense_frequencies_matrix",
+            "dense_frequencies_vector",
+            "sparse_frequencies_matrix",
+            "schema_version",
+        ),
+        python_example=textwrap.dedent(
+            """\
+            import cfdnalab as cfl
+
+            ref_kmers = cfl.read_ref_kmers("sample.ref_kmers.zarr")
+
+            motifs = ref_kmers.motifs_metadata()
+            scaling = ref_kmers.row_scaling_factors()
+
+            frequencies = ref_kmers.sparse_frequencies_matrix(motifs="ACGT")
+            counts = ref_kmers.data_frame(motifs="ACGT")
+            """
+        ),
+        r_example=textwrap.dedent(
+            """\
+            library(cfdnalab)
+
+            ref_kmers <- read_ref_kmers("sample.ref_kmers.zarr")
+
+            motif_table <- motifs(ref_kmers)
+            scaling <- row_scaling_factors(ref_kmers)
+
+            frequencies <- sparse_frequencies_matrix(ref_kmers, motifs = "ACGT")
+            counts <- ref_kmer_data_frame(ref_kmers, motifs = "ACGT")
+            """
+        ),
+        notes=(
+            "Reference k-mer stores contain frequencies. Count helpers reconstruct counts with `row_scaling_factor`.",
+            "Sparse stores stay sparse unless a dense helper explicitly receives an allow-densify option.",
         ),
     ),
     LoaderPage(
@@ -455,7 +527,7 @@ def write_python_api_page(output_dir: Path, python_docs: dict[str, PythonSymbolD
     content = f"""---
 title: Python API
 sidebar_label: Python API
-sidebar_position: 5
+sidebar_position: {len(LOADER_PAGES) + 2}
 ---
 
 {GENERATED_MARKER}
@@ -485,7 +557,7 @@ def write_r_api_page(output_dir: Path, r_docs: dict[str, RTopicDoc]) -> None:
     content = f"""---
 title: R API
 sidebar_label: R API
-sidebar_position: 6
+sidebar_position: {len(LOADER_PAGES) + 3}
 ---
 
 {GENERATED_MARKER}

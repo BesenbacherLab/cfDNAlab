@@ -202,7 +202,8 @@ pub fn run_wps(opt: &WPSConfig, options: RunOptions) -> Result<WPSRunResult> {
 
     if options.log_equivalent_cli {
         let command = crate::ToCliCommand::to_cli_string(opt)?;
-        info!(target: COMMAND_TARGET, "Equivalent CLI: {command}");
+        let message = crate::command_run::equivalent_cli_log_message(&command);
+        info!(target: COMMAND_TARGET, "{message}");
     }
     let (chromosomes, contigs) = resolve_chromosomes_and_contigs(
         &opt.shared_args.chromosomes,
@@ -224,13 +225,20 @@ pub fn run_wps(opt: &WPSConfig, options: RunOptions) -> Result<WPSRunResult> {
         1,
         blacklist_halo,
         &chromosomes,
+        opt.shared_args.ioc.n_threads > 1,
     )?;
 
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
             status_info!(options, target: COMMAND_TARGET, "Loading window coordinates");
-            let wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            let wds = load_windows_from_bed(
+                bed,
+                Some(chromosomes.as_slice()),
+                None,
+                None,
+                opt.shared_args.ioc.n_threads > 1,
+            )?;
             ensure_plain_bed_windows_not_empty(&wds)?;
             if matches!(
                 per_window_wps_action,

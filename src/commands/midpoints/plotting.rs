@@ -18,17 +18,17 @@ use crate::shared::plotters::{
 /// Parameters
 /// ----------
 /// - `prefix`:
-///     File prefix for plot outputs.
+///   File prefix for plot outputs.
 /// - `output_dir`:
-///     Directory where plots are written.
+///   Directory where plots are written.
 /// - `plot_groups`:
-///     Group indices to plot.
+///   Group indices to plot.
 /// - `length_bins`:
-///     Length bin edges matching the counts.
+///   Length bin edges matching the counts.
 /// - `group_idx_to_name`:
-///     Mapping from group index to user-readable name.
+///   Mapping from group index to user-readable name.
 /// - `counts`:
-///     Midpoint counts shaped `(group, length_bin, position)`.
+///   Midpoint counts shaped `(group, length_bin, position)`.
 pub(crate) fn plot_midpoint_profiles(
     prefix: &str,
     output_dir: &Path,

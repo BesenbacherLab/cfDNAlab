@@ -75,13 +75,13 @@ pub type MidpointPositionBin = IndexedInterval<u32, usize>;
 /// Parameters
 /// ----------
 /// - `path`:
-///     Path to a `cfdna midpoints` Zarr output directory.
+///   Path to a `cfdna midpoints` Zarr output directory.
 ///
 /// Returns
 /// -------
 /// - `MidpointsOutput`:
-///     Loaded axis metadata and count shape. Count blocks are read from disk by
-///     `read_all_counts()` or selection methods.
+///   Loaded axis metadata and count shape. Count blocks are read from disk by
+///   `read_all_counts()` or selection methods.
 ///
 /// ```no_run
 /// use cfdnalab::{
@@ -183,7 +183,7 @@ impl MidpointsOutput {
     /// Parameters
     /// ----------
     /// - `group_index`:
-    ///     Zero-based group axis index.
+    ///   Zero-based group axis index.
     pub fn group(&self, group_index: usize) -> Option<&MidpointGroupRow> {
         self.groups.get(group_index)
     }
@@ -196,7 +196,7 @@ impl MidpointsOutput {
     /// Parameters
     /// ----------
     /// - `group_name`:
-    ///     Group label to resolve to a zero-based group index.
+    ///   Group label to resolve to a zero-based group index.
     pub fn group_index(&self, group_name: &str) -> OutputLoaderResult<usize> {
         Ok(self
             .group_name_indices
@@ -210,7 +210,7 @@ impl MidpointsOutput {
     /// Parameters
     /// ----------
     /// - `group_name`:
-    ///     Group label to look up.
+    ///   Group label to look up.
     pub fn has_group(&self, group_name: &str) -> bool {
         self.group_name_indices.contains_key(group_name)
     }
@@ -220,7 +220,7 @@ impl MidpointsOutput {
     /// Parameters
     /// ----------
     /// - `fragment_length_bp`:
-    ///     Fragment length in bp to locate on the length-bin axis.
+    ///   Fragment length in bp to locate on the length-bin axis.
     pub fn length_bin_for_length(&self, fragment_length_bp: u32) -> Option<usize> {
         self.length_bins
             .iter()
@@ -237,7 +237,7 @@ impl MidpointsOutput {
     /// Parameters
     /// ----------
     /// - `range`:
-    ///     Half-open fragment length interval `[start, end)` in bp.
+    ///   Half-open fragment length interval `[start, end)` in bp.
     pub fn length_bins_overlapping_range(
         &self,
         range: Interval<u32>,
@@ -263,7 +263,7 @@ impl MidpointsOutput {
     /// Parameters
     /// ----------
     /// - `position_bp`:
-    ///     Interval-relative position in bp to locate on the position axis.
+    ///   Interval-relative position in bp to locate on the position axis.
     pub fn position_bin_for_position(&self, position_bp: u32) -> Option<usize> {
         self.position_bins
             .iter()
@@ -276,7 +276,7 @@ impl MidpointsOutput {
     /// Parameters
     /// ----------
     /// - `range`:
-    ///     Half-open interval-relative position range `[start, end)` in bp.
+    ///   Half-open interval-relative position range `[start, end)` in bp.
     pub fn position_bins_overlapping_range(
         &self,
         range: Interval<u32>,
@@ -548,8 +548,8 @@ impl<'a> MidpointsSelector<'a> {
     /// Parameters
     /// ----------
     /// - `group_indices`:
-    ///     Group axis indices in count-array order. The returned selection
-    ///     keeps this order and rejects duplicates.
+    ///   Group axis indices in count-array order. The returned selection
+    ///   keeps this order and rejects duplicates.
     pub fn groups(self, group_indices: &[usize]) -> Self {
         self.set_groups(
             MidpointGroupSelector::Indices(group_indices.to_vec()),
@@ -562,8 +562,8 @@ impl<'a> MidpointsSelector<'a> {
     /// Parameters
     /// ----------
     /// - `group_names`:
-    ///     Group labels from the midpoint output metadata. The returned
-    ///     selection follows this order and rejects duplicates.
+    ///   Group labels from the midpoint output metadata. The returned
+    ///   selection follows this order and rejects duplicates.
     pub fn groups_by_name<S: AsRef<str>>(self, group_names: &[S]) -> Self {
         self.set_groups(
             MidpointGroupSelector::Names(
@@ -581,8 +581,8 @@ impl<'a> MidpointsSelector<'a> {
     /// Parameters
     /// ----------
     /// - `length_bin_indices`:
-    ///     Length-bin axis indices in count-array order. The returned selection
-    ///     keeps this order and rejects duplicates.
+    ///   Length-bin axis indices in count-array order. The returned selection
+    ///   keeps this order and rejects duplicates.
     pub fn length_bins(self, length_bin_indices: &[usize]) -> Self {
         self.set_lengths(
             MidpointLengthSelector::Indices(length_bin_indices.to_vec()),
@@ -595,8 +595,8 @@ impl<'a> MidpointsSelector<'a> {
     /// Parameters
     /// ----------
     /// - `range`:
-    ///     Half-open fragment length interval `[start, end)` in bp. Every
-    ///     length bin that intersects the interval is selected.
+    ///   Half-open fragment length interval `[start, end)` in bp. Every
+    ///   length bin that intersects the interval is selected.
     pub fn length_range(self, range: Interval<u32>) -> Self {
         self.set_lengths(MidpointLengthSelector::Range(range), "length_range")
     }
@@ -609,8 +609,8 @@ impl<'a> MidpointsSelector<'a> {
     /// Parameters
     /// ----------
     /// - `position_indices`:
-    ///     Position-bin axis indices in count-array order. The returned
-    ///     selection keeps this order and rejects duplicates.
+    ///   Position-bin axis indices in count-array order. The returned
+    ///   selection keeps this order and rejects duplicates.
     pub fn positions(self, position_indices: &[usize]) -> Self {
         self.set_positions(
             MidpointPositionSelector::Indices(position_indices.to_vec()),
@@ -623,8 +623,8 @@ impl<'a> MidpointsSelector<'a> {
     /// Parameters
     /// ----------
     /// - `range`:
-    ///     Half-open interval-relative position range `[start, end)` in bp.
-    ///     Every position bin that intersects the interval is selected.
+    ///   Half-open interval-relative position range `[start, end)` in bp.
+    ///   Every position bin that intersects the interval is selected.
     pub fn position_range(self, range: Interval<u32>) -> Self {
         self.set_positions(MidpointPositionSelector::Range(range), "position_range")
     }
@@ -916,11 +916,11 @@ impl MidpointCountSelection {
     /// Parameters
     /// ----------
     /// - `group_index`:
-    ///     Zero-based group index within the selected array.
+    ///   Zero-based group index within the selected array.
     /// - `length_bin_index`:
-    ///     Zero-based fragment length-bin index within the selected array.
+    ///   Zero-based fragment length-bin index within the selected array.
     /// - `position_index`:
-    ///     Zero-based position-bin index within the selected array.
+    ///   Zero-based position-bin index within the selected array.
     pub fn count(
         &self,
         group_index: usize,
@@ -937,9 +937,9 @@ impl MidpointCountSelection {
     /// Parameters
     /// ----------
     /// - `group_index`:
-    ///     Zero-based group index within the selected array.
+    ///   Zero-based group index within the selected array.
     /// - `length_bin_index`:
-    ///     Zero-based fragment length-bin index within the selected array.
+    ///   Zero-based fragment length-bin index within the selected array.
     pub fn profile(&self, group_index: usize, length_bin_index: usize) -> Option<&[f32]> {
         self.counts
             .values_along_third_axis(group_index, length_bin_index)
@@ -1448,12 +1448,12 @@ fn read_zarr_array_attributes(root_path: &Path, array_path: &str) -> Result<Valu
             .with_context(|| format!("read Zarr metadata {}", metadata_path.display()))?,
     )
     .with_context(|| format!("parse Zarr metadata {}", metadata_path.display()))?;
-    Ok(metadata.get("attributes").cloned().with_context(|| {
+    metadata.get("attributes").cloned().with_context(|| {
         format!(
             "Zarr metadata {} is missing attributes",
             metadata_path.display()
         )
-    })?)
+    })
 }
 
 /// Return the metadata path for one Zarr array inside a store.

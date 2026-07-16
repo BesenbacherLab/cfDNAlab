@@ -12,6 +12,7 @@ The loaders live under `cfdnalab::output_loaders` and are compiled with the matc
 | `cmd_ends`      | `load_ends_output()`      | `<prefix>.end_motifs.zarr`                               |
 | `cmd_lengths`   | `load_lengths_output()`   | `<prefix>.length_counts.tsv`, optionally `.gz` or `.zst` |
 | `cmd_fcoverage` | `load_fcoverage_output()` | non-positional aggregate `fcoverage` TSV outputs         |
+| `cmd_ref_kmers` | `load_ref_kmers_output()` | `<prefix>.ref_kmers.zarr`                          |
 
 <br>
 
@@ -167,6 +168,55 @@ Windowed outputs provide `window_metadata()`, and you can select window rows wit
 
 Sparse stores keep missing in-bounds cells as implicit zero counts. Use `sparse_counts()?.to_lookup_index()` for repeated random access or `to_dense_matrix()` only when the selected matrix is small enough to hold in memory.
 
+Reference correction is available when the `cmd_ends` and `cmd_ref_kmers` features are both enabled. Load a reference k-mer store for the same k-mer size, windowing or grouping, motif settings, and reference genome, then pass it to `select_corrected_counts()`.
+
+```rust
+use cfdnalab::output_loaders::{
+    load_ends_output,
+    load_ref_kmers_output,
+    UnsupportedReferencePolicy,
+};
+
+fn main() -> anyhow::Result<()> {
+    let ends = load_ends_output("sample.end_motifs.zarr")?;
+    let ref_kmers = load_ref_kmers_output("hg38.ref_kmers.zarr")?;
+
+    let corrected = ends
+        .select_corrected_counts(&ref_kmers)
+        .motifs_by_label(&["_AA", "_GG"])
+        .unsupported_reference_policy(UnsupportedReferencePolicy::KeepNaN)
+        .read()?;
+
+    let corrected_counts = corrected.to_dense_matrix()?;
+    for row in corrected_counts.rows() {
+        println!("{row:?}");
+    }
+
+    Ok(())
+}
+```
+
+Reference correction divides each observed end-motif count by a reference-based correction factor for the matched row. This factor is computed from the motif frequencies in the reference k-mer output and normalized so a uniform reference composition leaves counts unchanged. Motifs that are common in the reference row are scaled down. Motifs that are rare in the reference row are scaled up. Only motifs with a positive reference frequency contribute to the row's correction support.
+
+When motif labels contain both outside and inside bases, such as `AC_TG`, call `.two_sided_correction(...)` and choose how the two sides should be handled:
+
+- `TwoSidedCorrectionMode::Joint` keeps full labels such as `AC_TG` and corrects each count with the matching reference k-mer, `ACTG`.
+- `TwoSidedCorrectionMode::Split` keeps full labels such as `AC_TG`, but calculates the correction factor from the two sides separately. For `AC_TG`, separate correction factors are calculated for outside label `AC` and inside label `TG`. Those two correction factors are multiplied and applied to the observed `AC_TG` count. Use this when full two-sided motif labels should remain in the result, but the exact full reference k-mers are too sparse or the correction should treat outside and inside sequence composition separately.
+- `TwoSidedCorrectionMode::Outside` returns outside labels such as `AC_`. For each outside label, all full motif counts with that outside label are summed first. For example, `AC_AA` and `AC_TG` both contribute to the `AC_` count. That summed count is corrected using the outside label `AC`.
+- `TwoSidedCorrectionMode::Inside` returns inside labels such as `_TG`. For each inside label, all full motif counts with that inside label are summed first. For example, `AA_TG` and `AC_TG` both contribute to the `_TG` count. That summed count is corrected using the inside label `TG`.
+
+For `Outside` and `Inside`, repeated side labels are deduplicated in their first loaded-motif occurrence order. The returned `EndMotifCountSelection::motif_labels()` and `motif_indices()` describe this corrected side axis, so use them to interpret matrix columns.
+
+One-sided outputs do not accept an explicit mode.
+
+Motif labels are matched to reference k-mers by removing `_`, for example `AT_CG` -> `ATCG`. Motif-group outputs are matched by group label. Both commands write forward-oriented motif labels, including right-end motifs from `cfdna ends`.
+
+For `Split`, `Outside`, and `Inside`, side-specific reference frequencies are calculated from the loaded full-length reference k-mers. For example, the outside frequency for `AC` is the sum of frequencies for loaded k-mers with prefix `AC`, such as `ACTG` and `ACAA`. The inside frequency for `TG` is the corresponding sum over loaded k-mers with suffix `TG`. Separate shorter reference k-mer runs are not required.
+
+A motifs file used for the reference output restricts these sums to the k-mers in that file. Without a motifs file, all k-mers in the reference output can contribute, including k-mers absent from the sample end-motif output.
+
+By default, end-motif and reference k-mer rows must match exactly. A global reference k-mer store can be applied to every windowed or grouped end-motif row only when `.use_global_bias(true)` is set. That option requires a global reference store and is unnecessary when both outputs are global. Sample-observed motifs can be absent from the reference genome or have zero reference frequency in a row. Positive end-motif counts for those motifs are errors by default. Use `UnsupportedReferencePolicy::KeepNaN` to keep the selected shape and mark those cells as `NaN`.
+
 <br>
 
 ## Length Counts
@@ -318,6 +368,73 @@ fn main() -> anyhow::Result<()> {
 ```
 
 Grouped fcoverage TSV files store numeric `group_idx` values. Use `load_fcoverage_output_with_group_index()` with the matching `group_index.tsv` when you want group names and `groups_by_name()` selection.
+
+<br>
+
+## Reference K-mer Frequencies
+
+Reference k-mer stores can be dense or sparse. They store row-wise frequencies plus a row scaling factor that reconstructs counts.
+
+For `ref-kmers` outputs written with `--motifs-file`, frequencies are normalized over the selected motifs or motif groups from that file. Unlisted k-mers are not part of the denominator, and the row scaling factor reconstructs selected k-mer or group counts.
+
+With `--all-motifs`, the motif axis also keeps targets whose stored frequency is zero. Without a motifs file, those targets are all A/C/G/T k-mers for the configured `k`. With a motifs file, they are the motifs or motif groups listed in that file.
+
+```rust
+use cfdnalab::output_loaders::{
+    load_ref_kmers_output,
+    RefKmerStorageMode,
+};
+
+fn main() -> anyhow::Result<()> {
+    // Load output file and check the available metadata
+    let ref_kmers = load_ref_kmers_output("hg38.ref_kmers.zarr")?;
+    ref_kmers.ensure_reference_2bit_matches("hg38.2bit")?;
+    println!("{}", ref_kmers.output_metadata());
+
+    // Reconstruct a count from one frequency and its row scaling factor
+    let motif_index = ref_kmers.motif_index("ACGT")?;
+    let count = ref_kmers
+        .count(0, motif_index)
+        .expect("row and motif indices should be in bounds");
+    println!("{count}");
+
+    // Select grouped rows and motifs, then work with reconstructed counts
+    let selected = ref_kmers
+        .select()
+        .groups_by_name(&["promoters", "enhancers"])
+        .motifs_by_label(&["ACGT", "TGCA"])
+        .read()?;
+    let selected_counts = selected.to_dense_count_matrix()?;
+    for (group, row_counts) in selected.group_metadata()?.iter().zip(selected_counts.rows()) {
+        let count_total = row_counts.iter().copied().sum::<f64>();
+        println!("{}\t{count_total}", group.name);
+    }
+
+    // Read the stored frequency data in its native mode
+    match ref_kmers.storage_mode() {
+        RefKmerStorageMode::Dense => {
+            let frequencies = ref_kmers.dense_frequencies()?;
+            println!("{:?}", frequencies.shape());
+        }
+        RefKmerStorageMode::SparseCoo => {
+            let sparse_frequencies = ref_kmers.sparse_frequencies()?;
+            for entry in sparse_frequencies.entries() {
+                println!(
+                    "{}\t{}\t{}",
+                    entry.row_index, entry.motif_index, entry.frequency
+                );
+            }
+            for entry in ref_kmers.sparse_count_entries()? {
+                println!("{}\t{}\t{}", entry.row_index, entry.motif_index, entry.count);
+            }
+        }
+    }
+
+    Ok(())
+}
+```
+
+Use `select().windows(...)`, `select().groups(...)`, or `select().groups_by_name(...)` for row subsets. Use `select().motifs(...)` or `select().motifs_by_label(...)` for motif subsets. Use `frequency()` or `frequency_for_motif()` when downstream code wants frequencies. Use `count()`, `count_for_motif()`, `sparse_count_entries()`, or `to_dense_count_matrix()` when it wants reconstructed counts.
 
 <br>
 

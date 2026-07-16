@@ -15,6 +15,7 @@ use std::path::Path;
 /// - `min_size`: Minimum interval length (bp) to keep.
 /// - `halo_bp`: Halo to expand on both sides before merging.
 /// - `chromosomes`: Optional whitelist of chromosome names to retain.
+/// - `read_in_background`: Whether file reading and decompression should overlap with BED parsing.
 ///
 /// TODO: plumb through a streaming reader so we do not materialise every
 /// interval before merging when very large inputs are used.
@@ -23,6 +24,7 @@ pub fn load_blacklists<P: AsRef<Path>>(
     min_size: u64,
     halo_bp: u64,
     chromosomes: Option<&[String]>,
+    read_in_background: bool,
 ) -> AnyResult<FxHashMap<String, Vec<Interval<u64>>>> {
     if beds.is_empty() {
         return Ok(FxHashMap::default());
@@ -31,7 +33,7 @@ pub fn load_blacklists<P: AsRef<Path>>(
     let mut merged: FxHashMap<String, Vec<Interval<u64>>> = FxHashMap::default();
 
     for bed in beds {
-        let single = load_windows_from_bed(bed, chromosomes, None, None)?;
+        let single = load_windows_from_bed(bed, chromosomes, None, None, read_in_background)?;
         accumulate_blacklist_windows(&mut merged, single, min_size, halo_bp);
     }
 

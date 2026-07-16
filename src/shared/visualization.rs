@@ -51,7 +51,7 @@ impl Track {
     /// -------
     /// - `bool`:
     ///   `true` when no indices are selected on the track
-    #[cfg(any(feature = "cmd_visualize_positions"))]
+    #[cfg(feature = "cmd_visualize_positions")]
     pub(crate) fn is_empty(&self) -> bool {
         self.selected_indices.is_empty()
     }

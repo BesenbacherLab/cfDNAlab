@@ -128,14 +128,14 @@ enum FCoverageTileTempOutput {
 /// Parameters
 /// ----------
 /// - `opt`:
-///     Fully resolved configuration for the `fcoverage` command.
+///   Fully resolved configuration for the `fcoverage` command.
 /// - `options`:
-///     Reporting controls for statistics, progress bars, and status logs.
+///   Reporting controls for statistics, progress bars, and status logs.
 ///
 /// Returns
 /// -------
 /// - `Ok(FCoverageRunResult)`:
-///     Counters, normalization metadata, and output paths for the completed run.
+///   Counters, normalization metadata, and output paths for the completed run.
 ///
 /// Errors
 /// ------
@@ -203,7 +203,8 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
 
     if options.log_equivalent_cli {
         let command = crate::ToCliCommand::to_cli_string(opt)?;
-        info!(target: COMMAND_TARGET, "Equivalent CLI: {command}");
+        let message = crate::command_run::equivalent_cli_log_message(&command);
+        info!(target: COMMAND_TARGET, "{message}");
     }
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
@@ -214,7 +215,13 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
     if opt.blacklist.is_some() {
         status_info!(options, target: COMMAND_TARGET, "Loading blacklists");
     }
-    let blacklist_map = load_blacklist_map(opt.blacklist.as_ref(), 1, 0, &chromosomes)?;
+    let blacklist_map = load_blacklist_map(
+        opt.blacklist.as_ref(),
+        1,
+        0,
+        &chromosomes,
+        opt.ioc.n_threads > 1,
+    )?;
 
     let grouped_windowed = matches!(window_opt, DistributionWindowSpec::GroupedBed(_));
     let unique_base_grouped = opt.per_window.is_unique_base_grouped_action();
@@ -264,6 +271,10 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
         }
         _ => {}
     }
+
+    // Configure global thread‐pool size
+    init_global_pool(opt.ioc.n_threads)?;
+
     // Load the selected windows
     let mut windows_map: Option<FxHashMap<String, crate::shared::bed::Windows>> = None;
     let mut grouped_layout: Option<GroupedCoverageLayout> = None;
@@ -271,7 +282,13 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
     match &window_opt {
         DistributionWindowSpec::Bed(bed) => {
             status_info!(options, target: COMMAND_TARGET, "Loading window coordinates");
-            let wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            let wds = load_windows_from_bed(
+                bed,
+                Some(chromosomes.as_slice()),
+                None,
+                None,
+                opt.ioc.n_threads > 1,
+            )?;
             ensure_plain_bed_windows_not_empty(&wds)?;
             if matches!(
                 opt.per_window,
@@ -308,21 +325,18 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
                     false,
                     None,
                     None,
+                    opt.ioc.n_threads > 1,
                 )?;
             ensure_grouped_bed_windows_not_empty(&grouped_windows_by_chr)?;
+
+            // Keep grouped segments inside the layout needed by the final grouped reduction
+            // Tile counting borrows these segments below instead of copying them into `windows_map`
             grouped_layout = Some(build_grouped_coverage_layout(
                 &grouped_windows_by_chr,
                 &group_idx_to_name,
                 &chromosomes,
                 unique_base_grouped,
             )?);
-            windows_map = Some(
-                grouped_layout
-                    .as_ref()
-                    .expect("grouped coverage layout must exist")
-                    .segments_by_chr
-                    .clone(),
-            );
         }
         DistributionWindowSpec::Size(_) | DistributionWindowSpec::Global => {}
     }
@@ -384,7 +398,13 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
         build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp, by_size_bp)?;
     let temp_chrom_name_map = TempChromNameMap::from_contigs(&chromosomes)?;
 
-    let windows_lookup = windows_map.as_ref();
+    // Select the windows used by both span precomputation and tile counting
+    // Plain BED owns them in `windows_map`, while grouped BED keeps them in `grouped_layout`
+    let windows_lookup = windows_map.as_ref().or_else(|| {
+        grouped_layout
+            .as_ref()
+            .map(|layout| &layout.segments_by_chr)
+    });
     let tile_window_spans = Arc::new(precompute_tile_window_spans(
         &tiles,
         |chr| {
@@ -465,9 +485,6 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
     let progress = ProgressFactory::with_enabled(options.show_progress);
     let pb = Arc::new(progress.default_bar(total_tiles as u64));
 
-    // Configure global thread‐pool size
-    init_global_pool(opt.ioc.n_threads)?;
-
     let mut global_counter = FCoverageCounters::default();
 
     status_info!(options, target: COMMAND_TARGET, "Counting per tile");
@@ -482,9 +499,8 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
         .enumerate()
         .map(|(tile_idx, tile)| -> Result<FCoverageTileResult> {
             let tile_span = tile_window_spans_for_threads[tile_idx];
-            let windows_chr: Option<&[IndexedInterval<u64>]> = windows_map
-                .as_ref()
-                .and_then(|m| m.get(&tile.chr).map(|v| v.as_slice()));
+            let windows_chr: Option<&[IndexedInterval<u64>]> =
+                windows_lookup.and_then(|m| m.get(&tile.chr).map(|v| v.as_slice()));
             let blacklist_chr: &[Interval<u64>] = blacklist_map
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
@@ -497,7 +513,7 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
             let tile_result = if matches!(
                 window_opt,
                 DistributionWindowSpec::Bed(_) | DistributionWindowSpec::GroupedBed(_)
-            ) && windows_chr.map_or(true, |windows| windows.is_empty())
+            ) && windows_chr.is_none_or(|windows| windows.is_empty())
             {
                 // Skip this no-window tile and just return an empty counter
                 FCoverageTileResult {
@@ -711,6 +727,7 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
 
     // Write every final output to the temp directory before moving any of them into place
     // This keeps failed writes from leaving a mix of old and new final files
+    let mut extra_output_files = Vec::new();
     let final_out_path = if !windowed {
         // Whole-genome positional coverage
         let positional_outputs = positional_tile_outputs(&tile_temp_outputs);
@@ -833,7 +850,8 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
                             .context("grouped outputs require group index metadata")?
                             .group_idx_to_name,
                     )?;
-                    final_outputs.record(temp_group_index_path, group_index_path)?;
+                    final_outputs.record(temp_group_index_path, group_index_path.clone())?;
+                    extra_output_files.push(group_index_path);
                 }
 
                 final_outputs.record(temp_final_path, final_path.clone())?;
@@ -851,11 +869,14 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
         final_out_path.display()
     );
 
+    let mut output_files = vec![final_out_path.clone()];
+    output_files.extend(extra_output_files);
+
     Ok(FCoverageRunResult {
         counters: global_counter,
         mean_normalization_length,
         final_out_path: final_out_path.clone(),
-        output_files: vec![final_out_path],
+        output_files,
     })
 }
 
@@ -977,7 +998,7 @@ fn process_tile(
                 .shift_left(fetch_start as u64)?;
 
             let gc_weight =
-                match gc_corrector.correct_fragment(fetch_relative_fragment, &gc_prefixes)? {
+                match gc_corrector.correct_fragment(fetch_relative_fragment, gc_prefixes)? {
                     Some(weight) => weight,
                     None => {
                         counter.gc_failed_fragments += 1;
@@ -1744,14 +1765,14 @@ pub(crate) fn add_fragment_clipped_to_core(
 /// Parameters
 /// ----------
 /// - `fragment`:
-///     Fragment span and optional counted reference segments for this molecule.
+///   Fragment span and optional counted reference segments for this molecule.
 /// - `opt`:
-///     Command configuration that controls whether length normalization is enabled.
+///   Command configuration that controls whether length normalization is enabled.
 ///
 /// Returns
 /// -------
 /// - `normalization_length`:
-///     `Some(denominator)` when length normalization is active, otherwise `None`.
+///   `Some(denominator)` when length normalization is active, otherwise `None`.
 ///
 /// Errors
 /// ------

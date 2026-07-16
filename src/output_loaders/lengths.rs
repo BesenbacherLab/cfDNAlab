@@ -66,7 +66,7 @@ use crate::{
     },
     shared::{
         constants::{MAX_SUPPORTED_FRAGMENT_LENGTH, MIN_ACGT_BASES_FOR_GC_FRACTION},
-        io::open_text_reader,
+        io::{open_text_reader, open_text_reader_in_background},
     },
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -92,13 +92,13 @@ use std::{
 /// Parameters
 /// ----------
 /// - `path`:
-///     Path to a `cfdna lengths` TSV output. Plain text, gzip, and zstd
-///     compressed files are supported.
+///   Path to a `cfdna lengths` TSV output. Plain text, gzip, and zstd
+///   compressed files are supported.
 ///
 /// Returns
 /// -------
 /// - `LengthsOutput`:
-///     Loaded row metadata, fragment length bins, and the full count matrix.
+///   Loaded row metadata, fragment length bins, and the full count matrix.
 ///
 /// ```no_run
 /// use cfdnalab::{
@@ -137,7 +137,11 @@ use std::{
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn load_lengths_output(path: impl AsRef<Path>) -> OutputLoaderResult<LengthsOutput> {
-    LengthsParser::new(path.as_ref()).load().map_err(Into::into)
+    let read_in_background =
+        std::thread::available_parallelism().is_ok_and(|thread_count| thread_count.get() > 1);
+    LengthsParser::new(path.as_ref(), read_in_background)
+        .load()
+        .map_err(Into::into)
 }
 
 /// Row aggregation mode detected from the length-count table schema.
@@ -218,7 +222,7 @@ impl LengthsOutput {
     /// Parameters
     /// ----------
     /// - `row_index`:
-    ///     Zero-based row index in the window metadata.
+    ///   Zero-based row index in the window metadata.
     pub fn window(&self, row_index: usize) -> OutputLoaderResult<Option<&WindowRow>> {
         Ok(self.window_metadata()?.get(row_index))
     }
@@ -230,7 +234,7 @@ impl LengthsOutput {
     /// Parameters
     /// ----------
     /// - `row_index`:
-    ///     Zero-based row index in the group metadata.
+    ///   Zero-based row index in the group metadata.
     pub fn group(&self, row_index: usize) -> OutputLoaderResult<Option<&LengthGroupRow>> {
         Ok(self.group_metadata()?.get(row_index))
     }
@@ -244,7 +248,7 @@ impl LengthsOutput {
     /// Parameters
     /// ----------
     /// - `group_name`:
-    ///     Group label to resolve to a zero-based row index.
+    ///   Group label to resolve to a zero-based row index.
     pub fn group_index(&self, group_name: &str) -> OutputLoaderResult<usize> {
         let groups = self.group_metadata()?;
         Ok(groups
@@ -262,7 +266,7 @@ impl LengthsOutput {
     /// Parameters
     /// ----------
     /// - `group_name`:
-    ///     Group label to look up.
+    ///   Group label to look up.
     pub fn has_group(&self, group_name: &str) -> bool {
         self.group_metadata()
             .is_ok_and(|groups| groups.iter().any(|group| group.name == group_name))
@@ -298,9 +302,9 @@ impl LengthsOutput {
     /// Parameters
     /// ----------
     /// - `row_index`:
-    ///     Zero-based row index in the count matrix.
+    ///   Zero-based row index in the count matrix.
     /// - `length_bin_index`:
-    ///     Zero-based fragment length-bin column index.
+    ///   Zero-based fragment length-bin column index.
     pub fn count(&self, row_index: usize, length_bin_index: usize) -> Option<f64> {
         self.counts().get(row_index, length_bin_index).copied()
     }
@@ -310,7 +314,7 @@ impl LengthsOutput {
     /// Parameters
     /// ----------
     /// - `fragment_length_bp`:
-    ///     Fragment length in bp to locate on the length-bin axis.
+    ///   Fragment length in bp to locate on the length-bin axis.
     pub fn length_bin_for_length(&self, fragment_length_bp: u32) -> Option<usize> {
         self.length_bins()
             .iter()
@@ -327,7 +331,7 @@ impl LengthsOutput {
     /// Parameters
     /// ----------
     /// - `range`:
-    ///     Half-open fragment length interval `[start, end)` in bp.
+    ///   Half-open fragment length interval `[start, end)` in bp.
     pub fn length_bins_overlapping_range(
         &self,
         range: Interval<u32>,
@@ -633,8 +637,8 @@ impl<'a> LengthsSelector<'a> {
     /// Parameters
     /// ----------
     /// - `row_indices`:
-    ///     Source row indices in output-file order. The returned selection keeps
-    ///     this order and rejects duplicates.
+    ///   Source row indices in output-file order. The returned selection keeps
+    ///   this order and rejects duplicates.
     pub fn rows(self, row_indices: &[usize]) -> Self {
         self.set_rows(LengthRowSelector::Rows(row_indices.to_vec()), "rows")
     }
@@ -646,8 +650,8 @@ impl<'a> LengthsSelector<'a> {
     /// Parameters
     /// ----------
     /// - `window_indices`:
-    ///     Window row indices in output-file order. The returned selection keeps
-    ///     this order and rejects duplicates.
+    ///   Window row indices in output-file order. The returned selection keeps
+    ///   this order and rejects duplicates.
     pub fn windows(self, window_indices: &[usize]) -> Self {
         self.set_rows(
             LengthRowSelector::Windows(window_indices.to_vec()),
@@ -662,8 +666,8 @@ impl<'a> LengthsSelector<'a> {
     /// Parameters
     /// ----------
     /// - `group_indices`:
-    ///     Group row indices in output-file order. The returned selection keeps
-    ///     this order and rejects duplicates.
+    ///   Group row indices in output-file order. The returned selection keeps
+    ///   this order and rejects duplicates.
     pub fn groups(self, group_indices: &[usize]) -> Self {
         self.set_rows(LengthRowSelector::Groups(group_indices.to_vec()), "groups")
     }
@@ -676,8 +680,8 @@ impl<'a> LengthsSelector<'a> {
     /// Parameters
     /// ----------
     /// - `group_names`:
-    ///     Group labels from the grouped output metadata. The returned selection
-    ///     follows this order and rejects duplicates.
+    ///   Group labels from the grouped output metadata. The returned selection
+    ///   follows this order and rejects duplicates.
     pub fn groups_by_name<S: AsRef<str>>(self, group_names: &[S]) -> Self {
         self.set_rows(
             LengthRowSelector::GroupNames(
@@ -695,8 +699,8 @@ impl<'a> LengthsSelector<'a> {
     /// Parameters
     /// ----------
     /// - `length_bin_indices`:
-    ///     Length-bin column indices in output order. The returned selection
-    ///     keeps this order and rejects duplicates.
+    ///   Length-bin column indices in output order. The returned selection
+    ///   keeps this order and rejects duplicates.
     pub fn length_bins(self, length_bin_indices: &[usize]) -> Self {
         self.set_lengths(
             LengthAxisSelector::Indices(length_bin_indices.to_vec()),
@@ -709,8 +713,8 @@ impl<'a> LengthsSelector<'a> {
     /// Parameters
     /// ----------
     /// - `range`:
-    ///     Half-open fragment length interval `[start, end)` in bp. Every output
-    ///     length bin that intersects the interval is selected.
+    ///   Half-open fragment length interval `[start, end)` in bp. Every output
+    ///   length bin that intersects the interval is selected.
     pub fn length_range(self, range: Interval<u32>) -> Self {
         self.set_lengths(LengthAxisSelector::Range(range), "length_range")
     }
@@ -1019,9 +1023,9 @@ impl LengthCountSelection {
     /// Parameters
     /// ----------
     /// - `row_index`:
-    ///     Zero-based row index within the selected matrix.
+    ///   Zero-based row index within the selected matrix.
     /// - `length_bin_index`:
-    ///     Zero-based length-bin index within the selected matrix.
+    ///   Zero-based length-bin index within the selected matrix.
     pub fn count(&self, row_index: usize, length_bin_index: usize) -> Option<f64> {
         self.counts.get(row_index, length_bin_index).copied()
     }
@@ -1034,20 +1038,26 @@ impl LengthCountSelection {
 /// `LengthsSchema::finish()` to build the public `LengthsOutput`.
 struct LengthsParser {
     path: PathBuf,
+    read_in_background: bool,
 }
 
 impl LengthsParser {
     /// Store the input path until `load()` opens it.
-    fn new(path: &Path) -> Self {
+    fn new(path: &Path, read_in_background: bool) -> Self {
         Self {
             path: path.to_path_buf(),
+            read_in_background,
         }
     }
 
     /// Read the TSV header, parse all data rows, and build a `LengthsOutput`.
     fn load(&self) -> Result<LengthsOutput> {
-        let mut reader = open_text_reader(&self.path)
-            .with_context(|| format!("open lengths output {}", self.path.display()))?;
+        let mut reader = if self.read_in_background {
+            open_text_reader_in_background(&self.path)
+        } else {
+            open_text_reader(&self.path)
+        }
+        .with_context(|| format!("open lengths output {}", self.path.display()))?;
         let mut header_line = String::new();
         ensure!(
             reader
@@ -1259,14 +1269,14 @@ impl LengthsSchema {
     /// Parameters
     /// ----------
     /// - `path`:
-    ///     Input path used only for user-facing error messages.
+    ///   Input path used only for user-facing error messages.
     /// - `rows`:
-    ///     Parsed data rows in file order.
+    ///   Parsed data rows in file order.
     ///
     /// Returns
     /// -------
     /// - `LengthsOutput`:
-    ///     Final loaded output with row metadata, length bins, and dense counts.
+    ///   Final loaded output with row metadata, length bins, and dense counts.
     fn finish(self, path: &Path, rows: Vec<ParsedLengthRow>) -> Result<LengthsOutput> {
         let row_count = rows.len();
         ensure!(

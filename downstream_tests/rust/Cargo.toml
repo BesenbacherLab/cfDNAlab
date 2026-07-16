@@ -9,6 +9,7 @@ default = []
 cmd_midpoints = ["cfdnalab/cmd_midpoints"]
 cmd_ends = ["cfdnalab/cmd_ends"]
 cmd_lengths = ["cfdnalab/cmd_lengths"]
+cmd_ref_kmers = ["cfdnalab/cmd_ref_kmers"]
 testing = ["cfdnalab/testing"]
 
 [dependencies]

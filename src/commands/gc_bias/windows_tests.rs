@@ -167,7 +167,7 @@ mod tests_blacklist_windowing_2 {
         // - Prefixes cover reference slice [900,910), all A/C/G/T.
         // - The observed interval [895,905) overlaps only [900,905) of that loaded slice.
         // - The support denominator is therefore the clipped length 5, not the original 10.
-        let prefixes = build_gc_prefixes(&vec![b'C'; 10]);
+        let prefixes = build_gc_prefixes(&[b'C'; 10]);
         let sequence_interval = Interval::new(900_u64, 910_u64)?;
         let observed_interval = Interval::new(895_u64, 905_u64)?;
         let mut window = WindowState::new(0, observed_interval, true, &make_template())?;
@@ -190,7 +190,7 @@ mod tests_blacklist_windowing_2 {
         // - Observed interval [880,890) has no overlap with that loaded slice.
         // - This is a caller error for support bookkeeping and should produce a clear error instead
         //   of silently recording zero support.
-        let prefixes = build_gc_prefixes(&vec![b'C'; 10]);
+        let prefixes = build_gc_prefixes(&[b'C'; 10]);
         let sequence_interval = Interval::new(900_u64, 910_u64)?;
         let observed_interval = Interval::new(880_u64, 890_u64)?;
         let mut window = WindowState::new(0, observed_interval, true, &make_template())?;

@@ -115,14 +115,14 @@ impl CommandRunResult for RefGCBiasRunResult {
 /// Parameters
 /// ----------
 /// - `opt`:
-///     Fully resolved configuration for the `ref-gc-bias` command.
+///   Fully resolved configuration for the `ref-gc-bias` command.
 /// - `options`:
-///     Reporting controls for progress bars and status logs.
+///   Reporting controls for progress bars and status logs.
 ///
 /// Returns
 /// -------
 /// - `Ok(RefGCBiasRunResult)`:
-///     Output path information for the completed run.
+///   Output path information for the completed run.
 ///
 /// Errors
 /// ------
@@ -153,7 +153,8 @@ pub fn run_ref_gc_bias(opt: &RefGCBiasConfig, options: RunOptions) -> Result<Ref
 
     if options.log_equivalent_cli {
         let command = crate::ToCliCommand::to_cli_string(opt)?;
-        info!(target: COMMAND_TARGET, "Equivalent CLI: {command}");
+        let message = crate::command_run::equivalent_cli_log_message(&command);
+        info!(target: COMMAND_TARGET, "{message}");
     }
     let chromosomes = opt
         .chromosomes
@@ -166,13 +167,25 @@ pub fn run_ref_gc_bias(opt: &RefGCBiasConfig, options: RunOptions) -> Result<Ref
     if opt.blacklist.is_some() {
         status_info!(options, target: COMMAND_TARGET, "Loading blacklists");
     }
-    let blacklist_map = load_blacklist_map(opt.blacklist.as_ref(), 1, 0, &chromosomes)?;
+    let blacklist_map = load_blacklist_map(
+        opt.blacklist.as_ref(),
+        1,
+        0,
+        &chromosomes,
+        opt.n_threads > 1,
+    )?;
 
     // Load windows from BED file and merge overlapping/touching intervals (unique positions)
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
             status_info!(options, target: COMMAND_TARGET, "Loading window coordinates");
-            let mut wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            let mut wds = load_windows_from_bed(
+                bed,
+                Some(chromosomes.as_slice()),
+                None,
+                None,
+                opt.n_threads > 1,
+            )?;
             ensure_plain_bed_windows_not_empty(&wds)?;
             status_info!(
                 options,

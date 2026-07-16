@@ -183,7 +183,7 @@ where
                     }
                     if matches!(agg, CollapseAggregation::Mean) {
                         let mut dest = out.column_mut(bin_idx);
-                        if let Some(_) = weights {
+                        if weights.is_some() {
                             if denom > 0.0 {
                                 dest /= denom;
                             } else if !indices.is_empty() {

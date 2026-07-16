@@ -1,9 +1,12 @@
-use crate::commands::{
-    counters::EndsCounters,
-    ends::counting::{
-        EncodedEndMotifKey, EndCountsByWindow, EndMotifCounts, SelectedEndCountsByWindow,
-        TileEndMotifCountEntry, TileWindowEndCounts,
+use crate::{
+    commands::{
+        counters::EndsCounters,
+        ends::counting::{
+            EndCountsByWindow, EndMotifCounts, SelectedEndCountsByWindow, TileEndMotifCountEntry,
+            TileWindowEndCounts,
+        },
     },
+    shared::kmers::motifs_file::EncodedMotifKey,
 };
 use anyhow::{Context, Result};
 use bincode::{
@@ -275,7 +278,7 @@ pub(crate) fn merge_tile_count_records(
                 merged
                     .entry(window_counts.original_idx)
                     .or_default()
-                    .incr_weighted(EncodedEndMotifKey::from(&entry), entry.value);
+                    .incr_weighted(EncodedMotifKey::from(&entry), entry.value);
             }
         }
     }

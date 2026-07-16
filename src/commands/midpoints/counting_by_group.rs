@@ -220,11 +220,11 @@ impl ProfileGroupsCounts {
     /// Parameters
     /// ----------
     /// - `window_size`:
-    ///     Number of positions per group profile.
+    ///   Number of positions per group profile.
     /// - `num_groups`:
-    ///     Number of groups from the grouped BED input.
+    ///   Number of groups from the grouped BED input.
     /// - `length_axis`:
-    ///     Shared length-bin lookup used to map raw fragment lengths to bins.
+    ///   Shared length-bin lookup used to map raw fragment lengths to bins.
     pub(crate) fn new(window_size: usize, num_groups: usize, length_axis: Arc<LengthAxis>) -> Self {
         let flattened_size = flattened_profile_size(window_size, num_groups, &length_axis);
 

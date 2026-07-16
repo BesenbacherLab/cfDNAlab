@@ -14,6 +14,13 @@ pub struct Interval<T> {
     end: T,
 }
 
+impl<T> AsRef<Interval<T>> for Interval<T> {
+    #[inline]
+    fn as_ref(&self) -> &Interval<T> {
+        self
+    }
+}
+
 /// Controls whether interval-list merging collapses touching intervals.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TouchingMergePolicy {
@@ -654,6 +661,13 @@ pub struct IndexedInterval<T, I = u64> {
     pub interval: Interval<T>,
     /// External index or identifier carried alongside the interval.
     pub idx: I,
+}
+
+impl<T, I> AsRef<Interval<T>> for IndexedInterval<T, I> {
+    #[inline]
+    fn as_ref(&self) -> &Interval<T> {
+        &self.interval
+    }
 }
 
 impl<T, I> IndexedInterval<T, I>

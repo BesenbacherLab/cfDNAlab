@@ -2,11 +2,11 @@ use crate::{
     commands::ends::{
         config::EndsConfig,
         config_structs::{BaseQualityFilter, ClipStrategy, KmerSource, WindowMotifAssigner},
-        counting::EndMotifColumnKind,
     },
     shared::{
         indel_mode::IndelMotifFilterPolicy,
         io::{create_text_writer, dot_join},
+        kmers::motifs_file::SelectedMotifColumnKind,
     },
 };
 use anyhow::{Context, Result, ensure};
@@ -40,7 +40,7 @@ pub(crate) fn write_end_settings_json(
     output_dir: &Path,
     prefix: &str,
     opt: &EndsConfig,
-    motifs_file_column_kind: Option<EndMotifColumnKind>,
+    motifs_file_column_kind: Option<SelectedMotifColumnKind>,
 ) -> Result<PathBuf> {
     ensure!(
         opt.motifs_file.is_some() == motifs_file_column_kind.is_some(),
@@ -111,10 +111,10 @@ fn json_path_or_null(path: Option<&Path>) -> String {
         .unwrap_or_else(|| "null".to_string())
 }
 
-fn json_motifs_file_mode_or_null(column_kind: Option<EndMotifColumnKind>) -> &'static str {
+fn json_motifs_file_mode_or_null(column_kind: Option<SelectedMotifColumnKind>) -> &'static str {
     match column_kind {
-        Some(EndMotifColumnKind::Motif) => "\"ungrouped\"",
-        Some(EndMotifColumnKind::MotifGroup) => "\"grouped\"",
+        Some(SelectedMotifColumnKind::Motif) => "\"ungrouped\"",
+        Some(SelectedMotifColumnKind::MotifGroup) => "\"grouped\"",
         None => "null",
     }
 }

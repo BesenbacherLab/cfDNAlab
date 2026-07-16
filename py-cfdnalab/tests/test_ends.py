@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -565,6 +566,20 @@ def test_end_motif_loader_rejects_schema_and_shape_problems(tmp_path: Path) -> N
         tmp_path / "missing_motif_ascii.end_motifs.zarr",
         omit={"motif_ascii"},
     )
+    wrong_global_label = _write_dense_global_store(
+        tmp_path / "wrong_global_label.end_motifs.zarr"
+    )
+    zarr.open_group(str(wrong_global_label), mode="a")["row"].attrs["labels"] = [
+        "not_global"
+    ]
+    duplicate_motif = _write_dense_window_store(
+        tmp_path / "duplicate_motif.end_motifs.zarr",
+        motif_names=np.array(["_AA", "_AA", "_GG"], dtype=object),
+    )
+    control_motif = _write_dense_window_store(
+        tmp_path / "control_motif.end_motifs.zarr",
+        motif_names=np.array(["_\nA", "_CC", "_GG"], dtype=object),
+    )
 
     with pytest.raises(ValueError, match="Expected cfdnalab_schema"):
         cfdnalab.read_end_motifs(wrong_schema)
@@ -584,6 +599,12 @@ def test_end_motif_loader_rejects_schema_and_shape_problems(tmp_path: Path) -> N
         cfdnalab.read_end_motifs(empty_sparse_counts)
     with pytest.raises(ValueError, match="missing arrays: \\['motif_ascii'\\]"):
         cfdnalab.read_end_motifs(missing_motif_ascii)
+    with pytest.raises(ValueError, match="exactly one row labeled 'global'"):
+        cfdnalab.read_end_motifs(wrong_global_label)
+    with pytest.raises(ValueError, match="duplicate end-motif label"):
+        cfdnalab.read_end_motifs(duplicate_motif)
+    with pytest.raises(ValueError, match="contains a control character"):
+        cfdnalab.read_end_motifs(control_motif)
 
 
 def _write_dense_window_store(
@@ -592,15 +613,18 @@ def _write_dense_window_store(
     schema: str = "end_motif_counts",
     schema_version: int = 1,
     omit: set[str] | None = None,
+    motif_names: np.ndarray | None = None,
     counts_dimension_names: tuple[str, str] = ("row", "motif"),
 ) -> Path:
+    if motif_names is None:
+        motif_names = MOTIF_NAMES
     root = zarr.open_group(str(path), mode="w", zarr_format=3)
     root.attrs["cfdnalab_schema"] = schema
     root.attrs["cfdnalab_schema_version"] = schema_version
     root.attrs["storage_mode"] = "dense"
     root.attrs["row_mode"] = "bed"
 
-    _create_motif_axis(root, MOTIF_NAMES)
+    _create_motif_axis(root, motif_names)
     _create_array(root, "row", np.array([0, 1], dtype=np.int32), chunks=(2,))
     _create_labeled_axis(
         root,
@@ -634,6 +658,223 @@ def _write_dense_window_store(
     for array_name in omit or set():
         del root[array_name]
 
+    return path
+
+
+def _write_reference_correction_ref_kmer_store(
+    path: Path,
+    *,
+    motifs: np.ndarray | None = None,
+    frequencies: np.ndarray | None = None,
+    blacklisted_fraction: np.ndarray | None = None,
+    group_names: np.ndarray | None = None,
+    storage_mode: str = "dense",
+    row_mode: str = "bed",
+) -> Path:
+    if motifs is None:
+        motifs = np.array(["AA", "CC", "GG"], dtype=object)
+    motifs = np.asarray(motifs, dtype=object)
+    if frequencies is None:
+        if len(motifs) == 3:
+            frequencies = np.array(
+                [
+                    [1.0 / 3.0, 1.0 / 6.0, 1.0 / 2.0],
+                    [1.0 / 2.0, 1.0 / 4.0, 1.0 / 4.0],
+                ],
+                dtype=np.float64,
+            )
+        else:
+            frequencies = np.full((2, len(motifs)), 1.0 / len(motifs))
+    frequencies = np.asarray(frequencies, dtype=np.float64)
+    number_of_rows = frequencies.shape[0]
+    if blacklisted_fraction is None:
+        blacklisted_fraction = np.zeros(number_of_rows, dtype=np.float64)
+        if number_of_rows == 2:
+            blacklisted_fraction = np.array([0.25, 0.0], dtype=np.float64)
+    blacklisted_fraction = np.asarray(blacklisted_fraction, dtype=np.float64)
+    if len(blacklisted_fraction) != number_of_rows:
+        raise ValueError("blacklisted_fraction length must match frequencies rows")
+
+    root = zarr.open_group(str(path), mode="w", zarr_format=3)
+    root.attrs["cfdnalab_schema"] = "ref_kmer_frequencies"
+    root.attrs["cfdnalab_schema_version"] = 1
+    root.attrs["storage_mode"] = storage_mode
+    root.attrs["row_mode"] = row_mode
+    root.attrs["motif_axis_kind"] = "motif"
+    root.attrs["value_units"] = "reference_kmer_frequency"
+    root.attrs["count_units"] = "reference_kmer_count"
+    root.attrs["row_scaling_factor_array"] = "row_scaling_factor"
+    root.attrs["count_reconstruction"] = (
+        "reference_kmer_count = frequency * row_scaling_factor[row]"
+    )
+    root.attrs["kmer_size"] = len(str(motifs[0]))
+    root.attrs["canonical"] = False
+    root.attrs["all_motifs"] = True
+    root.attrs["assign_by"] = "count-overlap"
+    if storage_mode == "dense":
+        root.attrs["primary_array"] = "frequencies"
+        root.attrs["primary_group"] = None
+    else:
+        root.attrs["primary_array"] = None
+        root.attrs["primary_group"] = "sparse"
+        root.attrs["sparse_format"] = "coo"
+        root.attrs["sparse_indices_base"] = 0
+
+    _create_motif_axis(root, motifs)
+    if row_mode == "global":
+        _create_labeled_axis(
+            root,
+            "row",
+            np.array([0], dtype=np.int32),
+            "row_label",
+            np.array(["global"], dtype=object),
+            dimension_names=("row",),
+        )
+    elif row_mode == "grouped_bed":
+        if group_names is None:
+            group_names = np.asarray(
+                [f"group_{row_index}" for row_index in range(number_of_rows)],
+                dtype=object,
+            )
+        group_names = np.asarray(group_names, dtype=object)
+        if len(group_names) != number_of_rows:
+            raise ValueError("group_names length must match frequencies rows")
+        row_index = np.arange(number_of_rows, dtype=np.int32)
+        _create_array(
+            root,
+            "row",
+            row_index,
+            chunks=(number_of_rows,),
+            dimension_names=("row",),
+        )
+        _create_labeled_axis(
+            root,
+            "group",
+            row_index,
+            "group_name",
+            group_names,
+            dimension_names=("row",),
+        )
+        _create_array(
+            root,
+            "eligible_windows",
+            np.repeat(1, number_of_rows).astype(np.int32),
+            chunks=(number_of_rows,),
+            dimension_names=("row",),
+        )
+        _create_array(
+            root,
+            "blacklisted_fraction",
+            blacklisted_fraction,
+            chunks=(number_of_rows,),
+            dimension_names=("row",),
+        )
+    else:
+        _create_array(
+            root,
+            "row",
+            np.array([0, 1], dtype=np.int32),
+            chunks=(2,),
+            dimension_names=("row",),
+        )
+        _create_labeled_axis(
+            root,
+            "chromosome",
+            np.array([0, 1], dtype=np.int32),
+            "chromosome_name",
+            np.array(["chr2", "chr10"], dtype=object),
+            dimension_names=("chromosome",),
+        )
+        _create_array(
+            root,
+            "row_chromosome",
+            np.array([0, 1], dtype=np.int32),
+            chunks=(2,),
+            dimension_names=("row",),
+        )
+        _create_array(
+            root,
+            "row_start_bp",
+            np.array([10, 40], dtype=np.int64),
+            chunks=(2,),
+            dimension_names=("row",),
+        )
+        _create_array(
+            root,
+            "row_end_bp",
+            np.array([20, 60], dtype=np.int64),
+            chunks=(2,),
+            dimension_names=("row",),
+        )
+        _create_array(
+            root,
+            "blacklisted_fraction",
+            blacklisted_fraction,
+            chunks=(number_of_rows,),
+            dimension_names=("row",),
+        )
+    _create_array(
+        root,
+        "row_scaling_factor",
+        np.repeat(6.0, number_of_rows).astype(np.float64),
+        chunks=(number_of_rows,),
+        dimension_names=("row",),
+    )
+    encoded_footprint = json.dumps([{"name": "chr2", "length": 100}])
+    _create_array(
+        root,
+        "reference_contig_footprint_json",
+        np.frombuffer(encoded_footprint.encode("utf-8"), dtype=np.uint8),
+        chunks=(len(encoded_footprint),),
+        dimension_names=("json_byte",),
+    )
+    if storage_mode == "dense":
+        _create_array(
+            root,
+            "frequencies",
+            frequencies,
+            chunks=frequencies.shape,
+            dimension_names=("row", "motif"),
+        )
+    else:
+        sparse_rows, sparse_motifs = np.nonzero(frequencies > 0.0)
+        sparse_group = root.create_group("sparse")
+        _create_array(
+            sparse_group,
+            "row",
+            sparse_rows.astype(np.int32),
+            chunks=(max(len(sparse_rows), 1),),
+            dimension_names=("nnz",),
+        )
+        _create_array(
+            sparse_group,
+            "motif",
+            sparse_motifs.astype(np.int32),
+            chunks=(max(len(sparse_motifs), 1),),
+            dimension_names=("nnz",),
+        )
+        _create_array(
+            sparse_group,
+            "frequency",
+            frequencies[sparse_rows, sparse_motifs].astype(np.float64),
+            chunks=(max(len(sparse_rows), 1),),
+            dimension_names=("nnz",),
+        )
+        _create_array(
+            sparse_group,
+            "shape",
+            np.array([number_of_rows, len(motifs)], dtype=np.int32),
+            chunks=(2,),
+            dimension_names=("sparse_dimension",),
+        )
+        _create_labeled_axis(
+            sparse_group,
+            "sparse_dimension",
+            np.array([0, 1], dtype=np.int32),
+            "sparse_dimension_name",
+            np.array(["row", "motif"], dtype=object),
+            dimension_names=("sparse_dimension",),
+        )
     return path
 
 
@@ -1077,21 +1318,31 @@ def _create_labeled_axis(
 
 
 def _create_motif_axis(root: zarr.Group, labels: np.ndarray) -> None:
-    _create_array(root, "motif_index", MOTIF_INDEX, chunks=(len(labels),))
+    _create_array(
+        root,
+        "motif_index",
+        np.arange(len(labels), dtype=np.int32),
+        chunks=(len(labels),),
+        dimension_names=("motif",),
+    )
     motif_width = len(labels[0]) if len(labels) else 0
     _create_array(
         root,
         "motif_byte",
         np.arange(motif_width, dtype=np.int32),
         chunks=(max(motif_width, 1),),
+        dimension_names=("motif_byte",),
     )
-    motif_ascii = np.frombuffer("".join(labels.tolist()).encode("ascii"), dtype=np.uint8)
+    motif_ascii = np.frombuffer(
+        "".join(labels.tolist()).encode("ascii"), dtype=np.uint8
+    )
     motif_ascii = motif_ascii.reshape((len(labels), motif_width))
     _create_array(
         root,
         "motif_ascii",
         motif_ascii,
         chunks=(max(len(labels), 1), max(motif_width, 1)),
+        dimension_names=("motif", "motif_byte"),
     )
 
 

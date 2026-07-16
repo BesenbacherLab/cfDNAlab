@@ -61,17 +61,17 @@ struct MidpointSettings<'a> {
 /// Parameters
 /// ----------
 /// - `settings_path`:
-///     Destination path in the command's final-output temp directory.
+///   Destination path in the command's final-output temp directory.
 /// - `opt`:
-///     Runtime configuration used for filters and correction flags.
+///   Runtime configuration used for filters and correction flags.
 /// - `length_axis`:
-///     Resolved fragment length bins used for axis 1 of the output array.
+///   Resolved fragment length bins used for axis 1 of the output array.
 /// - `profile_layout`:
-///     Resolved counted and written position dimensions.
+///   Resolved counted and written position dimensions.
 /// - `interval_blacklist_margin`:
-///     Margin used when interval-level blacklist prefiltering is enabled.
+///   Margin used when interval-level blacklist prefiltering is enabled.
 /// - `use_blacklist_prefilter`:
-///     Whether interval-level blacklist prefiltering was active for this run.
+///   Whether interval-level blacklist prefiltering was active for this run.
 pub(crate) fn write_midpoint_settings_json(
     settings_path: &Path,
     opt: &MidpointsConfig,

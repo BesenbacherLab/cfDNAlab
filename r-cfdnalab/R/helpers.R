@@ -6,7 +6,8 @@
 #' @noRd
 CFDNALAB_SCHEMA_VERSION_RANGES <- list(
   midpoint_profiles = c(min = 1L, max = 1L),
-  end_motif_counts = c(min = 1L, max = 2L)
+  end_motif_counts = c(min = 1L, max = 2L),
+  ref_kmer_frequencies = c(min = 1L, max = 1L)
 )
 
 #' Validate a cfDNAlab Zarr store path.
@@ -943,13 +944,22 @@ cf_read_labels <- function(path, array_name, expected_field, expected_length) {
   if (is.null(attrs$labels)) {
     stop(array_name, " metadata is missing labels", call. = FALSE)
   }
-  labels <- if (length(attrs$labels) == 0L) {
+  raw_labels <- attrs$labels
+  labels <- if (length(raw_labels) == 0L) {
     character()
   } else {
-    unlist(attrs$labels, use.names = FALSE)
+    valid_labels <- vapply(
+      raw_labels,
+      function(label) is.character(label) && length(label) == 1L && !is.na(label),
+      logical(1L)
+    )
+    if (!is.list(raw_labels) || !all(valid_labels)) {
+      stop(array_name, " labels must be character strings", call. = FALSE)
+    }
+    vapply(raw_labels, identity, character(1L), USE.NAMES = FALSE)
   }
-  if (!is.character(labels)) {
-    stop(array_name, " labels must be character strings", call. = FALSE)
+  if (any(grepl("[[:cntrl:]]", labels))) {
+    stop(array_name, " labels must not contain control characters", call. = FALSE)
   }
   if (length(labels) != expected_length) {
     stop(
@@ -986,6 +996,15 @@ cf_decode_motif_ascii <- function(bytes, n_motifs, motif_width) {
   ) {
     stop("motif_ascii must contain ASCII byte values in 0..127", call. = FALSE)
   }
+  if (n_motifs > 0L && motif_width == 0L) {
+    stop(
+      "motif_ascii cannot decode non-empty motif axis with zero motif_byte width",
+      call. = FALSE
+    )
+  }
+  if (any(bytes < 32L | bytes == 127L)) {
+    stop("motif_ascii must not contain ASCII control bytes", call. = FALSE)
+  }
   if (nrow(bytes) != n_motifs) {
     stop(
       "motif_ascii row count (",
@@ -1006,10 +1025,11 @@ cf_decode_motif_ascii <- function(bytes, n_motifs, motif_width) {
       call. = FALSE
     )
   }
+  if (n_motifs == 0L) {
+    return(character())
+  }
   unname(apply(bytes, 1L, function(row) {
-    row <- as.integer(row)
-    row <- row[row != 0L]
-    rawToChar(as.raw(row))
+    rawToChar(as.raw(as.integer(row)))
   }))
 }
 

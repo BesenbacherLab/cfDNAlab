@@ -13,28 +13,28 @@ use anyhow::{Result, ensure};
 /// Parameters
 /// ----------
 /// - `histogram`:
-///     Dense 1D histogram to mutate.
+///   Dense 1D histogram to mutate.
 /// - `support_mask`:
-///     Boolean mask flagging bins backed by real data (`true`) or unsupported gaps (`false`).
+///   Boolean mask flagging bins backed by real data (`true`) or unsupported gaps (`false`).
 /// - `polynomial_degree`:
-///     Degree of the fitting polynomial (1 = linear, 2 = quadratic, etc.).
+///   Degree of the fitting polynomial (1 = linear, 2 = quadratic, etc.).
 /// - `min_neighbours`:
-///     Minimum number of supported neighbouring bins required to fit an unsupported run.
-///     A neighbouring bin is a bin outside the unsupported run with
-///     `support_mask == true`. The closest neighbouring bins on the left and
-///     right are used first. If one side has too few real neighbours, the fit
-///     first adds artificial bins at distances mirrored from real neighbours on
-///     the opposite side. If more bins are still needed, it adds artificial bins
-///     farther outward using the nearest available boundary value.
+///   Minimum number of supported neighbouring bins required to fit an unsupported run.
+///   A neighbouring bin is a bin outside the unsupported run with
+///   `support_mask == true`. The closest neighbouring bins on the left and
+///   right are used first. If one side has too few real neighbours, the fit
+///   first adds artificial bins at distances mirrored from real neighbours on
+///   the opposite side. If more bins are still needed, it adds artificial bins
+///   farther outward using the nearest available boundary value.
 /// - `max_neighbours_per_side`:
-///     Cap on how many anchors to take from each side of the unsupported run.
+///   Cap on how many anchors to take from each side of the unsupported run.
 ///
 /// Returns
 /// -------
 /// - `Ok(())`:
-///     All unsupported runs were either interpolated or skipped due to insufficient anchors.
+///   All unsupported runs were either interpolated or skipped due to insufficient anchors.
 /// - `Err`:
-///     Validation failed (mask length mismatch or invalid tuning parameters).
+///   Validation failed (mask length mismatch or invalid tuning parameters).
 pub(crate) fn fill_unsupported_bins_with_polynomial(
     histogram: &mut [f64],
     support_mask: &mut [bool],

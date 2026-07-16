@@ -586,15 +586,15 @@ fn push_next_row_for_stream(
 /// Parameters
 /// ----------
 /// - `chr`:
-///     Chromosome label used in diagnostics.
+///   Chromosome label used in diagnostics.
 /// - `tile_outputs`:
-///     Returned partial and optional cross-index paths for this chromosome.
+///   Returned partial and optional cross-index paths for this chromosome.
 /// - `windows_chr`:
-///     BED windows with the same `orig_idx` identities written in the partial rows.
+///   BED windows with the same `orig_idx` identities written in the partial rows.
 /// - `summary`:
-///     Selects the on-disk partial schema only. It does not change row identity.
+///   Selects the on-disk partial schema only. It does not change row identity.
 /// - `on_row`:
-///     Callback receiving exact additive raw rows.
+///   Callback receiving exact additive raw rows.
 pub(crate) fn reduce_bed_rows(
     chr: &str,
     tile_outputs: &[TileAggregateTempFiles],
@@ -697,15 +697,15 @@ pub(crate) fn reduce_bed_rows(
 /// Parameters
 /// ----------
 /// - `chr`:
-///     Chromosome label used in diagnostics.
+///   Chromosome label used in diagnostics.
 /// - `tile_outputs`:
-///     Returned partial and optional cross-index paths for this chromosome.
+///   Returned partial and optional cross-index paths for this chromosome.
 /// - `chrom_len`:
-///     True chromosome length used to clip the final bin.
+///   True chromosome length used to clip the final bin.
 /// - `summary`:
-///     Selects the on-disk partial schema only. It does not change row identity.
+///   Selects the on-disk partial schema only. It does not change row identity.
 /// - `on_row`:
-///     Callback receiving exact additive raw rows.
+///   Callback receiving exact additive raw rows.
 pub(crate) fn reduce_size_rows(
     chr: &str,
     tile_outputs: &[TileAggregateTempFiles],

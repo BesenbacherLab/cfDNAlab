@@ -10,16 +10,16 @@ use zstd::stream::read::Decoder;
 /// Parameters
 /// ----------
 /// - input_paths:
-///     Paths to input .frag.tsv.zst files, in the desired order.
+///   Paths to input .frag.tsv.zst files, in the desired order.
 /// - output_path:
-///     Path to the resulting .frag.tsv.gz file to write.
+///   Path to the resulting .frag.tsv.gz file to write.
 /// - has_header:
-///     If true, write the first file entirely and drop the first line (header) from subsequent files.
+///   If true, write the first file entirely and drop the first line (header) from subsequent files.
 ///
 /// Returns
 /// -------
 /// - result:
-///     Ok on success, or an error explaining what failed.
+///   Ok on success, or an error explaining what failed.
 pub(crate) fn concat_frag_zst_to_gzip(
     input_paths: &[PathBuf],
     output_path: &Path,

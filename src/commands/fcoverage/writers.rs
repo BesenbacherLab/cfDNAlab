@@ -53,9 +53,10 @@ fn fold_reduced_segment_into_group(
     grouped_accums: &mut FxHashMap<u64, GroupedAggregateAccum>,
     row: ReducedAggregateRow,
 ) -> Result<()> {
-    let group_idx = *grouped_layout
-        .segment_idx_to_group_idx
-        .get(&row.idx)
+    let group_idx = usize::try_from(row.idx)
+        .ok()
+        .and_then(|segment_idx| grouped_layout.group_idx_by_segment_idx.get(segment_idx))
+        .copied()
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "grouped reducer is missing a group mapping for segment_idx {}",
@@ -543,25 +544,25 @@ fn aggregate_tile_outputs_for_chromosome<'a>(
 /// Parameters
 /// ----------
 /// - `final_path`:
-///     Final compressed output path to create.
+///   Final compressed output path to create.
 /// - `tile_outputs_by_chr`:
-///     Returned aggregate tile paths grouped by chromosome.
+///   Returned aggregate tile paths grouped by chromosome.
 /// - `windows_by_chr`:
-///     BED windows keyed by chromosome. These identities must match the partial rows.
+///   BED windows keyed by chromosome. These identities must match the partial rows.
 /// - `chromosomes`:
-///     Chromosome order to reduce and write.
+///   Chromosome order to reduce and write.
 /// - `masked`:
-///     Whether blacklist masking was active. Needed for scalar finalization.
+///   Whether blacklist masking was active. Needed for scalar finalization.
 /// - `action`:
-///     Requested aggregate mode for these BED windows.
+///   Requested aggregate mode for these BED windows.
 /// - `decimals`:
-///     Decimal precision used in the final output.
+///   Decimal precision used in the final output.
 /// - `n_threads`:
-///     Compression worker count for the output writer.
+///   Compression worker count for the output writer.
 /// - `signal_label`:
-///     Public signal name used inside aggregate value column names.
+///   Public signal name used inside aggregate value column names.
 /// - `restore_mean_multiplier`:
-///     Optional late multiplier applied to raw coverage sums before finalization.
+///   Optional late multiplier applied to raw coverage sums before finalization.
 pub(crate) fn write_bed_aggregate_output(
     final_path: &Path,
     tile_outputs_by_chr: &FxHashMap<String, Vec<TileAggregateTempFiles>>,

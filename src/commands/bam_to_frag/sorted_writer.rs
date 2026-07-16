@@ -52,22 +52,22 @@ impl PartialOrd for Entry {
 /// Parameters
 /// ----------
 /// - max_window_bp:
-///     Maximum coordinate displacement the input stream can exhibit. Set this to the maximum
-///     fragment length so that no future fragment starts more than `max_window_bp` bases behind
-///     the current maximum start.
+///   Maximum coordinate displacement the input stream can exhibit. Set this to the maximum
+///   fragment length so that no future fragment starts more than `max_window_bp` bases behind
+///   the current maximum start.
 ///
 /// Behavior
 /// --------
 /// - Push:
-///     Updates `max_seen_start`, inserts into the min-heap, then repeatedly flushes the heap
-///     top while `top.start <= max_seen_start - max_window_bp`.
+///   Updates `max_seen_start`, inserts into the min-heap, then repeatedly flushes the heap
+///   top while `top.start <= max_seen_start - max_window_bp`.
 /// - Flush all:
-///     Drains the residual heap, sorts that small tail, and writes it out to complete ordering.
+///   Drains the residual heap, sorts that small tail, and writes it out to complete ordering.
 /// - Ordering:
-///     Writes entries strictly ordered by `(start, end, line)` within a chromosome stream.
+///   Writes entries strictly ordered by `(start, end, line)` within a chromosome stream.
 /// - Memory bound:
-///     Heap size is bounded by the number of fragments whose starts fall within the last
-///     `max_window_bp` bases, not by total input size.
+///   Heap size is bounded by the number of fragments whose starts fall within the last
+///   `max_window_bp` bases, not by total input size.
 ///
 /// Complexity
 /// ----------

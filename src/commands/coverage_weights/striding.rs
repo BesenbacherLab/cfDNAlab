@@ -97,8 +97,8 @@ fn triangular_weights(half_window: usize) -> Vec<usize> {
 /// - `half_window = (bin_size / stride) - 1`
 ///
 ///     The kernel radius, *measured in stride-bins*. The full kernel length is
-///     `2*half_window + 1`. Example: if bin_size=5Mb and stride=0.5Mb,
-///     then bin_size/stride = 10, half_window = 9, kernel length = 19.
+///   `2*half_window + 1`. Example: if bin_size=5Mb and stride=0.5Mb,
+///   then bin_size/stride = 10, half_window = 9, kernel length = 19.
 ///
 /// - `weights = [1, 2, ..., half_window+1, ..., 2, 1]`.
 ///
@@ -123,14 +123,14 @@ fn triangular_weights(half_window: usize) -> Vec<usize> {
 /// Parameters
 /// ----------
 /// - bins:
-///     Stride bins with `stride_value` set to the command-specific value:
-///     average coverage for `coverage-weights` and fragment count for
-///     `fragment-count-weights`.
-///     `support_ratio` controls how much each stride contributes to smoothing.
+///   Stride bins with `stride_value` set to the command-specific value:
+///   average coverage for `coverage-weights` and fragment count for
+///   `fragment-count-weights`.
+///   `support_ratio` controls how much each stride contributes to smoothing.
 /// - bin_size:
-///     Large window size; used only to derive the kernel radius.
+///   Large window size; used only to derive the kernel radius.
 /// - stride:
-///     Stride size; used only to derive the kernel radius.
+///   Stride size; used only to derive the kernel radius.
 pub(crate) fn fill_triangular_overlap(bins: &mut Vec<StrideBin>, bin_size: u32, stride: u32) {
     // Kernel radius in *stride-bins*
     // If radius is 0, no neighbors -> identity
@@ -212,17 +212,17 @@ pub(crate) fn fill_triangular_overlap(bins: &mut Vec<StrideBin>, bin_size: u32, 
 /// Parameters
 /// ----------
 /// - bins_by_chr:
-///     Map from chromosome to its stride bins
+///   Map from chromosome to its stride bins
 /// - length_weighted:
-///     If true, weight each bin by eligible positions; if false, weight all bins equally
+///   If true, weight each bin by eligible positions; if false, weight all bins equally
 /// - invert:
-///     Invert the final scaling factor (1/x).
-///     **NOTE**: Zero-values remain zero.
+///   Invert the final scaling factor (1/x).
+///   **NOTE**: Zero-values remain zero.
 ///
 /// Returns
 /// -------
 /// - mean_before:
-///     The global mean used for normalization (before scaling)
+///   The global mean used for normalization (before scaling)
 pub(crate) fn normalize_weighted_average_overlap_by_global_mean(
     bins_by_chr: &mut FxHashMap<String, Vec<StrideBin>>,
     length_weighted: bool,

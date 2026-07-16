@@ -23,7 +23,7 @@ fn support_threshold_per_mb_steps_at_hundred_million_positions() -> Result<()> {
         // with integer division.
         let threshold_per_mb = 1 + n_positions / 100_000_000;
         let mask = create_support_mask_threshold_per_mb(
-            &[counts.clone()],
+            std::slice::from_ref(&counts),
             num_acgt_positions,
             threshold_per_mb as f64,
         )

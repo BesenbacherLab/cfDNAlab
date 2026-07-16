@@ -1,11 +1,13 @@
+#[cfg(feature = "cmd_fragment_kmers")]
+use crate::shared::base::rev_complement;
 use crate::shared::base::{BASES, encode_base};
 #[cfg(feature = "cmd_fragment_kmers")]
-use crate::shared::{base::rev_complement, positioning::PositionGroup};
-#[cfg(any(feature = "cmd_ends"))]
+use crate::shared::positioning::PositionGroup;
+#[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
 use anyhow::ensure;
 use anyhow::{Context, Result, bail};
 use fxhash::{FxHashMap, FxHashSet};
-#[cfg(feature = "cmd_fragment_kmers")]
+#[cfg(any(feature = "cmd_fragment_kmers", feature = "cmd_ref_kmers"))]
 use serde::{Deserialize, Serialize};
 
 /// Largest k-mer length whose full radix-5 code space fits in `u64` with sentinel values.
@@ -14,7 +16,7 @@ pub(crate) const MAX_RADIX5_KMER_SIZE: usize = 27;
 /// * `k`    – length
 /// * `code` – packed reference code in the narrowest type, promoted to u64
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg(feature = "cmd_fragment_kmers")]
+#[cfg(any(feature = "cmd_fragment_kmers", feature = "cmd_ref_kmers"))]
 pub(crate) struct Kmer {
     pub(crate) k: u8,
     pub(crate) code: u64,
@@ -22,7 +24,7 @@ pub(crate) struct Kmer {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg(feature = "cmd_fragment_kmers")]
+#[cfg(any(feature = "cmd_fragment_kmers", feature = "cmd_ref_kmers"))]
 pub(crate) enum KmerOrientation {
     Forward,
     Reverse,
@@ -114,7 +116,7 @@ impl KmerSpec {
     /// - `sentinel_none` when `seq.len() != self.k`
     /// - `sentinel_n` when any base encodes as `N`
     /// - otherwise the radix-5 code for the provided bases
-    #[cfg(any(feature = "cmd_ends"))]
+    #[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
     pub(crate) fn encode_kmer_bytes(&self, seq: &[u8]) -> u64 {
         if seq.len() != self.k {
             return self.sentinel_none;
@@ -138,13 +140,13 @@ impl KmerSpec {
     }
 
     /// Public accessor for the “no full k‑mer” sentinel.
-    #[cfg(any(feature = "cmd_ends"))]
+    #[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
     pub(crate) fn sentinel_none(&self) -> u64 {
         self.sentinel_none
     }
 
     /// Public accessor for the “contains N” sentinel.
-    #[cfg(any(feature = "cmd_ends"))]
+    #[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
     pub(crate) fn sentinel_n(&self) -> u64 {
         self.sentinel_n
     }
@@ -155,7 +157,7 @@ impl KmerSpec {
 /// This is useful when callers know the only k-mers they care about before counting starts. Codes
 /// are compact indices into first-seen unique normalized k-mers. Unselected, malformed,
 /// N-containing, and out-of-bounds k-mers map to `sentinel_missing`.
-#[cfg(any(feature = "cmd_ends"))]
+#[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
 #[derive(Clone, Debug)]
 pub(crate) struct SubspaceKmerSpec {
     /// Window length
@@ -172,11 +174,11 @@ pub(crate) struct SubspaceKmerSpec {
 ///
 /// The key is the normalized uppercase ACGT k-mer byte string. The value is the compact
 /// selected-subspace code assigned from the first-seen unique normalized k-mer order.
-#[cfg(any(feature = "cmd_ends"))]
+#[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
 #[derive(Clone, Debug)]
 struct SelectedCodesByKmerBytes(FxHashMap<Box<[u8]>, u64>);
 
-#[cfg(any(feature = "cmd_ends"))]
+#[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
 impl SubspaceKmerSpec {
     /// Return the selected-code sentinel.
     #[inline]
@@ -244,6 +246,23 @@ pub(crate) fn build_kmer_specs(kmer_sizes: &[u8]) -> Result<FxHashMap<u8, KmerSp
     Ok(specs)
 }
 
+/// Build an optional radix-5 k-mer spec.
+///
+/// `k = 0` means this side of a motif is absent, so callers get `None`. Non-zero sizes are
+/// converted to `u8` and passed through the ordinary shared k-mer spec builder.
+#[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
+pub(crate) fn build_optional_kmer_spec(k: usize, label: &str) -> Result<Option<KmerSpec>> {
+    if k == 0 {
+        return Ok(None);
+    }
+
+    let k_u8: u8 = k
+        .try_into()
+        .with_context(|| format!("{label} k-mer size {k} does not fit in u8"))?;
+    let mut specs = build_kmer_specs(&[k_u8])?;
+    Ok(specs.remove(&k_u8))
+}
+
 /// Build a selected-subspace k-mer spec.
 ///
 /// Selected codes are assigned in first-seen order after normalizing to uppercase ACGT and dropping
@@ -262,7 +281,7 @@ pub(crate) fn build_kmer_specs(kmer_sizes: &[u8]) -> Result<FxHashMap<u8, KmerSp
 /// -------
 /// - `Result<SubspaceKmerSpec>`:
 ///   A selected-subspace encoder with compact codes and an adaptive precompute dtype
-#[cfg(any(feature = "cmd_ends"))]
+#[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
 pub(crate) fn build_subspace_kmer_spec<T>(
     k: usize,
     selected_kmers: &[T],
@@ -332,7 +351,7 @@ pub(crate) fn build_left_aligned_codes_per_k(
 }
 
 /// Build one packed left-aligned code vector for a single k-mer spec.
-#[cfg(any(feature = "cmd_ends"))]
+#[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
 pub(crate) fn build_left_aligned_codes_for_spec(seq: &[u8], spec: &KmerSpec) -> KmerCodes {
     pack_codes(spec.build_left_aligned_codes(seq), spec.width)
 }
@@ -369,7 +388,7 @@ pub(crate) fn choose_width(k: usize) -> Result<(Width, u64, u64)> {
 }
 
 /// Choose storage for compact subspace codes plus one missing sentinel.
-#[cfg(any(feature = "cmd_ends"))]
+#[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
 fn choose_subspace_width(n_selected: usize) -> Result<(Width, u64)> {
     ensure!(
         n_selected > 0,
@@ -388,7 +407,7 @@ fn choose_subspace_width(n_selected: usize) -> Result<(Width, u64)> {
 }
 
 /// Normalize one exact selected k-mer to uppercase ACGT bytes.
-#[cfg(any(feature = "cmd_ends"))]
+#[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
 fn normalize_acgt_kmer(seq: &[u8], k: usize) -> Option<Box<[u8]>> {
     if seq.len() != k {
         return None;
@@ -407,7 +426,7 @@ fn normalize_acgt_kmer(seq: &[u8], k: usize) -> Option<Box<[u8]>> {
 
 /// Build selected codes for byte-backed subspaces.
 /// TODO: Make a rolling-encoder version of this to reduce hashing work
-#[cfg(any(feature = "cmd_ends"))]
+#[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
 fn build_left_aligned_subspace_codes(spec: &SubspaceKmerSpec, seq: &[u8]) -> Vec<u64> {
     let chrom_len = seq.len();
     if spec.k > chrom_len {
@@ -438,7 +457,7 @@ fn build_left_aligned_subspace_codes(spec: &SubspaceKmerSpec, seq: &[u8]) -> Vec
 /// The common reference path is uppercase ACGT. It first probes the map directly with the input
 /// slice. If that misses and the slice is already uppercase, the k-mer cannot become selected by
 /// normalization, so the helper returns `sentinel_missing` without using the scratch buffer.
-#[cfg(any(feature = "cmd_ends"))]
+#[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
 fn encode_selected_kmer_bytes_with_scratch(
     seq: &[u8],
     k: usize,

@@ -93,7 +93,6 @@ where
             k_inside,
             load_base_qualities,
         )
-        .map_err(anyhow::Error::from)
     })
     .with_fragment_filter(fragment_filter);
 

@@ -61,18 +61,18 @@ fn sorted_tile_outputs_for_chromosome<'a>(
 /// Parameters
 /// ----------
 /// - `out_dir`:
-///     Directory where the merged file is written.
+///   Directory where the merged file is written.
 /// - `chromosomes`:
-///     Requested chromosome order for the final output.
+///   Requested chromosome order for the final output.
 /// - `tile_outputs`:
-///     Returned positional tile paths from tile processing.
+///   Returned positional tile paths from tile processing.
 /// - `final_name`:
-///     Filename for the merged output.
+///   Filename for the merged output.
 ///
 /// Returns
 /// -------
 /// - `PathBuf`:
-///     Path to the merged final output.
+///   Path to the merged final output.
 fn merge_positional_tile_outputs(
     out_dir: &std::path::Path,
     chromosomes: &[String],
@@ -249,20 +249,20 @@ pub(crate) fn merge_positional_tile_outputs_with_optional_scaling(
 /// Parameters
 /// ----------
 /// - `out_dir`:
-///     Directory where the merged file is written.
+///   Directory where the merged file is written.
 /// - `chromosomes`:
-///     Requested chromosome order for the final output.
+///   Requested chromosome order for the final output.
 /// - `tile_outputs`:
-///     Returned final tile paths from aligned fixed-size tile processing.
+///   Returned final tile paths from aligned fixed-size tile processing.
 /// - `final_name`:
-///     Filename for the merged artifact.
+///   Filename for the merged artifact.
 /// - `header_line`:
-///     Plain-text header to encode as its own compressed frame.
+///   Plain-text header to encode as its own compressed frame.
 ///
 /// Returns
 /// -------
 /// - `PathBuf`:
-///     Path to the merged final output.
+///   Path to the merged final output.
 pub(crate) fn concat_aligned_size_tile_final_outputs(
     out_dir: &std::path::Path,
     chromosomes: &[String],

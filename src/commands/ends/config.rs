@@ -50,7 +50,7 @@ Counts (`<outside>_<inside>`): `AT_CG: 1`, `GA_TG: 1`
             "The column axis contains counts for the motifs unless `--motifs-file` has a group column, in which ",
             "case it contains counts for those motif groups.\n\n",
             "Concrete motif labels are saved as `<outside>_<inside>`. When `--motifs-file` has a group column, ",
-            "the raw group names are saved instead.\n\n",
+            "one entry per distinct group name is saved, ordered alphabetically by group name.\n\n",
             "## GC correction\n\n",
             "Weight the contribution of each fragment based on their GC contents per fragment length.\n\n",
             "## Genomic smoothing (--scaling-factors)\n\n",
@@ -177,16 +177,16 @@ pub struct EndsConfig {
     ///
     /// - `"auto"`:
     ///   Select the option based on the source.
-    ///   
+    ///
     ///   For **read**-sequence bases, allow indels in the alignment.
     ///
     ///   For **reference** bases, skip motifs with indels in the alignment.
     ///
     /// - `"skip-affected-end"`:
-    /// Always skip motifs overlapping indels.
+    ///   Always skip motifs overlapping indels.
     ///
     /// - `"skip-affected-fragment"`:
-    /// Skip **fragments** when either end overlap indels.
+    ///   Skip **fragments** when either end overlap indels.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -257,6 +257,9 @@ pub struct EndsConfig {
     /// Specifying the allowed subset of motifs beforehand enables
     /// counting of much larger k-mers (motif-lengths) without
     /// exploding memory.
+    ///
+    /// Grouped outputs contain one entry per distinct group name, ordered alphabetically
+    /// by group name.
     #[cfg_attr(feature = "cli", clap(long, value_parser, help_heading = "Motifs"))]
     pub motifs_file: Option<PathBuf>,
 

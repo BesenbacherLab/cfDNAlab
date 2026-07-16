@@ -191,12 +191,12 @@ pub fn read_midpoint_zarr_u32_1d<P: AsRef<Path>>(
 /// Parameters
 /// ----------
 /// - `package_path`:
-///     Path to the root directory of the reference GC Zarr package.
+///   Path to the root directory of the reference GC Zarr package.
 ///
 /// Returns
 /// -------
 /// - `ReferenceGCPackageOutput`:
-///     The package arrays and metadata needed for command-level artifact tests.
+///   The package arrays and metadata needed for command-level artifact tests.
 pub fn read_reference_gc_package<P: AsRef<Path>>(
     package_path: P,
 ) -> Result<ReferenceGCPackageOutput> {

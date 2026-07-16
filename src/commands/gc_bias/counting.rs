@@ -650,7 +650,7 @@ pub fn count_reference_gc_and_length_by_window(
         gc_prefixes.acgt.len()
     );
     ensure!(
-        gc_prefixes.gc.len() >= chrom_len as usize + 1,
+        gc_prefixes.gc.len() > chrom_len as usize,
         "prefix arrays should be chrom_len+1"
     );
 

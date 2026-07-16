@@ -10,17 +10,17 @@ use ndarray::Array2;
 /// Parameters
 /// ----------
 /// - `counts`:
-///     Input matrix where rows map to fragment lengths and columns map to GC bins.
+///   Input matrix where rows map to fragment lengths and columns map to GC bins.
 /// - `sigma`:
-///     Standard deviation for the Gaussian kernel (> 0). Larger values spread
-///     mass over wider neighborhoods.
+///   Standard deviation for the Gaussian kernel (> 0). Larger values spread
+///   mass over wider neighborhoods.
 /// - `radius`:
-///     Kernel radius in bins (> 0). The kernel spans `2 * radius + 1` bins.
+///   Kernel radius in bins (> 0). The kernel spans `2 * radius + 1` bins.
 ///
 /// Returns
 /// -------
 /// - `Array2<f64>`:
-///     Smoothed matrix with the same shape as `counts`.
+///   Smoothed matrix with the same shape as `counts`.
 pub(crate) fn smoothe_counts_gaussian(
     counts: &Array2<f64>,
     sigma: f64,
@@ -69,16 +69,16 @@ pub(crate) fn smoothe_counts_gaussian(
 /// Parameters
 /// ----------
 /// - `radius`:
-///     Half-width of the kernel in bins. The full kernel length becomes `2 *
+///   Half-width of the kernel in bins. The full kernel length becomes `2 *
 ///     radius + 1`.
 /// - `sigma`:
-///     Standard deviation of the Gaussian. Controls how quickly the weights
-///     decay from the center.
+///   Standard deviation of the Gaussian. Controls how quickly the weights
+///   decay from the center.
 ///
 /// Returns
 /// -------
 /// - `Vec<f64>`:
-///     Symmetric kernel whose entries sum to one.
+///   Symmetric kernel whose entries sum to one.
 fn gaussian_kernel(radius: usize, sigma: f64) -> Vec<f64> {
     let mut kernel = Vec::with_capacity(2 * radius + 1);
     let denom = 2.0 * sigma * sigma;

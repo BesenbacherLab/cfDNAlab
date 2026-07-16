@@ -561,6 +561,18 @@ impl LengthsConfig {
         self.require_proper_pair = require;
     }
 
+    pub fn set_blacklist(&mut self, blacklist: Option<Vec<PathBuf>>) {
+        self.blacklist = blacklist;
+    }
+
+    pub fn set_blacklist_min_size(&mut self, blacklist_min_size: u64) {
+        self.blacklist_min_size = blacklist_min_size;
+    }
+
+    pub fn set_blacklist_strategy(&mut self, blacklist_strategy: BlacklistStrategy) {
+        self.blacklist_strategy = blacklist_strategy;
+    }
+
     pub fn set_gc(&mut self, gc: ApplyGCArgFileOnly) {
         self.gc = gc;
     }

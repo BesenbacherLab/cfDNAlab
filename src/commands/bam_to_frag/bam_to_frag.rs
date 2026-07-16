@@ -93,14 +93,14 @@ impl CommandRunResult for BamToFragRunResult {
 /// Parameters
 /// ----------
 /// - `opt`:
-///     Fully resolved configuration for the `bam-to-frag` command.
+///   Fully resolved configuration for the `bam-to-frag` command.
 /// - `options`:
-///     Reporting controls for statistics, progress bars, and status logs.
+///   Reporting controls for statistics, progress bars, and status logs.
 ///
 /// Returns
 /// -------
 /// - `Ok(BamToFragRunResult)`:
-///     Counters and output paths for the completed run.
+///   Counters and output paths for the completed run.
 ///
 /// Errors
 /// ------
@@ -146,7 +146,8 @@ fn execute_bam_to_frag(opt: &BamToFragConfig, options: RunOptions) -> Result<Bam
     let window_opt = opt.resolve_windows();
     if options.log_equivalent_cli {
         let command = crate::ToCliCommand::to_cli_string(opt)?;
-        info!(target: COMMAND_TARGET, "Equivalent CLI: {command}");
+        let message = crate::command_run::equivalent_cli_log_message(&command);
+        info!(target: COMMAND_TARGET, "{message}");
     }
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
@@ -164,13 +165,20 @@ fn execute_bam_to_frag(opt: &BamToFragConfig, options: RunOptions) -> Result<Bam
         opt.blacklist_min_size,
         0,
         &chromosomes,
+        opt.ioc.n_threads > 1,
     )?;
 
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
             status_info!(options, target: COMMAND_TARGET, "Loading window coordinates");
-            let windows = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            let windows = load_windows_from_bed(
+                bed,
+                Some(chromosomes.as_slice()),
+                None,
+                None,
+                opt.ioc.n_threads > 1,
+            )?;
             ensure_plain_bed_windows_not_empty(&windows)?;
             Some(windows)
         }
@@ -381,8 +389,7 @@ fn process_chrom(
         .collect();
 
     // Get coordinates to fetch reads from and to
-    let (fetch_from, fetch_to) = if windows.is_some() {
-        let wn = windows.unwrap();
+    let (fetch_from, fetch_to) = if let Some(wn) = windows {
         let fetch_start = wn[0].start() as i64;
         let fetch_end = wn.iter().map(|window| window.end()).max().unwrap() as i64;
         (

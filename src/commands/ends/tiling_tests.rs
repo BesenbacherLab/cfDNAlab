@@ -1,5 +1,8 @@
 use super::*;
-use crate::commands::ends::counting::{EncodedEndMotifKey, EndCountsByWindow};
+use crate::{
+    commands::ends::counting::EndCountsByWindow,
+    shared::kmers::motifs_file::EncodedMotifKey,
+};
 use fxhash::FxHashMap;
 use tempfile::TempDir;
 
@@ -38,7 +41,7 @@ fn build_tile_count_records_sorts_windows_and_entries_deterministically() {
         EndMotifCounts {
             counts: FxHashMap::from_iter([
                 (
-                    EncodedEndMotifKey {
+                    EncodedMotifKey {
                         inside_code: 5,
                         outside_code: 1,
                         reverse_on_decode: true,
@@ -46,7 +49,7 @@ fn build_tile_count_records_sorts_windows_and_entries_deterministically() {
                     2.0,
                 ),
                 (
-                    EncodedEndMotifKey {
+                    EncodedMotifKey {
                         inside_code: 2,
                         outside_code: 9,
                         reverse_on_decode: false,
@@ -60,7 +63,7 @@ fn build_tile_count_records_sorts_windows_and_entries_deterministically() {
         3,
         EndMotifCounts {
             counts: FxHashMap::from_iter([(
-                EncodedEndMotifKey {
+                EncodedMotifKey {
                     inside_code: 4,
                     outside_code: 4,
                     reverse_on_decode: false,
@@ -116,7 +119,7 @@ fn merge_tile_count_records_merges_counts_by_window_and_key() {
 
     // Assert
     let counts = reduced.get(&7).expect("window 7 should be present");
-    let key = EncodedEndMotifKey {
+    let key = EncodedMotifKey {
         inside_code: 1,
         outside_code: 2,
         reverse_on_decode: false,
@@ -181,7 +184,7 @@ fn merge_tile_count_records_merges_multiple_windows_without_cross_talk() {
     assert_eq!(reduced.len(), 2);
     let window_7 = reduced.get(&7).expect("window 7 should be present");
     assert_eq!(
-        window_7.counts.get(&EncodedEndMotifKey {
+        window_7.counts.get(&EncodedMotifKey {
             inside_code: 1,
             outside_code: 2,
             reverse_on_decode: false,
@@ -191,7 +194,7 @@ fn merge_tile_count_records_merges_multiple_windows_without_cross_talk() {
 
     let window_9 = reduced.get(&9).expect("window 9 should be present");
     assert_eq!(
-        window_9.counts.get(&EncodedEndMotifKey {
+        window_9.counts.get(&EncodedMotifKey {
             inside_code: 3,
             outside_code: 4,
             reverse_on_decode: true,
@@ -199,7 +202,7 @@ fn merge_tile_count_records_merges_multiple_windows_without_cross_talk() {
         Some(&2.0)
     );
     assert_eq!(
-        window_9.counts.get(&EncodedEndMotifKey {
+        window_9.counts.get(&EncodedMotifKey {
             inside_code: 8,
             outside_code: 1,
             reverse_on_decode: false,

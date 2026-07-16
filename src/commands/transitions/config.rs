@@ -48,7 +48,7 @@ pub struct TransitionsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub shared_args: FragmentKmersSharedArgs,
 
-    /// List of transition orders [integer].
+    /// List of transition orders `[integer]`
     ///
     /// E.g. if you want to predict based on only the previous base, it's first order (e.g. [A>C]). This practically leads to 2-mer frequencies.
     /// If you want to predict based on the previous TWO bases, it's second order (e.g. [AT>C]).

@@ -80,53 +80,53 @@ const HIST_BAR_COLOR: RGBColor = RGBColor(161, 174, 177);
 /// Parameters
 /// ----------
 /// - `out_path`:
-///     Destination path for the image file.
+///   Destination path for the image file.
 /// - `title`:
-///     Plot title shown above the chart.
+///   Plot title shown above the chart.
 /// - `x_label`:
-///     Label for the x axis.
+///   Label for the x axis.
 /// - `y_label`:
-///     Label for the y axis.
+///   Label for the y axis.
 /// - `values`:
-///     Matrix to render where rows align with `y_edges` and columns with `x_edges`.
+///   Matrix to render where rows align with `y_edges` and columns with `x_edges`.
 /// - `x_edges`:
-///     Optional x-axis boundaries for each column.
-///     Used to map matrix column indices onto real-world units (e.g., GC bins -> GC percent edges).
-///     Length must be `values.ncols() + 1` when provided.
+///   Optional x-axis boundaries for each column.
+///   Used to map matrix column indices onto real-world units (e.g., GC bins -> GC percent edges).
+///   Length must be `values.ncols() + 1` when provided.
 /// - `y_edges`:
-///     Optional y-axis boundaries for each row.
-///     Used to map matrix row indices onto real-world units (e.g., fragment length bins -> fragment length edges).
-///     Length must be `values.nrows() + 1` when provided.
+///   Optional y-axis boundaries for each row.
+///   Used to map matrix row indices onto real-world units (e.g., fragment length bins -> fragment length edges).
+///   Length must be `values.nrows() + 1` when provided.
 /// - `val_min`:
-///     Optional lower bound for color scaling. Defaults to the minimum finite value.
+///   Optional lower bound for color scaling. Defaults to the minimum finite value.
 /// - `val_max`:
-///     Optional upper bound for color scaling. Defaults to the maximum finite value.
+///   Optional upper bound for color scaling. Defaults to the maximum finite value.
 /// - `val_center`:
-///     Optional center value for a diverging scale. Values below use a cool gradient toward
-///     the center and values above use a warm gradient.
+///   Optional center value for a diverging scale. Values below use a cool gradient toward
+///   the center and values above use a warm gradient.
 /// - `min_color`:
-///     Optional color for the minimum value. Defaults depend on the palette: pink when
-///     using a diverging center, black otherwise.
+///   Optional color for the minimum value. Defaults depend on the palette: pink when
+///   using a diverging center, black otherwise.
 /// - `max_color`:
-///     Optional color for the maximum value. Defaults to green.
+///   Optional color for the maximum value. Defaults to green.
 /// - `symmetric_diverging`:
-///     When true, uses the maximum absolute distance from the center to scale both
-///     sides of a diverging palette so gradients are symmetric.
+///   When true, uses the maximum absolute distance from the center to scale both
+///   sides of a diverging palette so gradients are symmetric.
 /// - `upsample_factor`:
-///     Bilinear upsampling factor applied to the matrix before plotting to reduce visible blockiness. Use 1 to disable.
+///   Bilinear upsampling factor applied to the matrix before plotting to reduce visible blockiness. Use 1 to disable.
 /// - `upsample_method`:
-///     Algorithm used when upsampling: nearest (crisp blocks) or bilinear (smooth).
+///   Algorithm used when upsampling: nearest (crisp blocks) or bilinear (smooth).
 /// - `width`:
-///     Canvas width in pixels.
+///   Canvas width in pixels.
 /// - `height`:
-///     Canvas height in pixels.
+///   Canvas height in pixels.
 /// - `format`:
-///     Output format, choose PNG for quick looks or SVG for vector editing.
+///   Output format, choose PNG for quick looks or SVG for vector editing.
 ///
 /// Returns
 /// -------
 /// - `Result<()>`:
-///     Ok when the plot is written.
+///   Ok when the plot is written.
 pub(crate) fn write_heatmap<P: AsRef<Path>>(
     out_path: P,
     title: &str,
@@ -210,9 +210,9 @@ pub(crate) fn write_heatmap<P: AsRef<Path>>(
 /// Parameters
 /// ----------
 /// - `x_hist`:
-///     Optional histogram to render above the heatmap using the x-axis scale.
+///   Optional histogram to render above the heatmap using the x-axis scale.
 /// - `y_hist`:
-///     Optional histogram to render to the right of the heatmap using the y-axis scale.
+///   Optional histogram to render to the right of the heatmap using the y-axis scale.
 pub(crate) fn write_heatmap_with_histograms<P: AsRef<Path>>(
     out_path: P,
     title: &str,
@@ -295,39 +295,39 @@ pub(crate) fn write_heatmap_with_histograms<P: AsRef<Path>>(
 /// Parameters
 /// ----------
 /// - `drawing_area`:
-///     Target drawing area from the backend.
+///   Target drawing area from the backend.
 /// - `title`:
-///     Plot title.
+///   Plot title.
 /// - `x_label`:
-///     Label for the x axis.
+///   Label for the x axis.
 /// - `y_label`:
-///     Label for the y axis.
+///   Label for the y axis.
 /// - `x_edges`:
-///     X boundaries for each column.
+///   X boundaries for each column.
 /// - `y_edges`:
-///     Y boundaries for each row.
+///   Y boundaries for each row.
 /// - `values`:
-///     Matrix of values to render.
+///   Matrix of values to render.
 /// - `min_val`:
-///     Lower bound for color scaling.
+///   Lower bound for color scaling.
 /// - `max_val`:
-///     Upper bound for color scaling.
+///   Upper bound for color scaling.
 /// - `mean_val`:
-///     Optional mean value shown in the legend.
+///   Optional mean value shown in the legend.
 /// - `center_val`:
-///     Optional diverging center.
+///   Optional diverging center.
 /// - `min_color`:
-///     Optional color for the minimum value. Defaults depend on the palette: pink when
-///     using a diverging center, pink otherwise.
+///   Optional color for the minimum value. Defaults depend on the palette: pink when
+///   using a diverging center, pink otherwise.
 /// - `max_color`:
-///     Optional color for the maximum value. Defaults to green.
+///   Optional color for the maximum value. Defaults to green.
 /// - `symmetric_diverging`:
-///     When true, uses the maximum absolute distance from the center to scale both sides so the diverging gradients share a common curve.
+///   When true, uses the maximum absolute distance from the center to scale both sides so the diverging gradients share a common curve.
 ///
 /// Returns
 /// -------
 /// - `Result<()>`:
-///     Ok when drawing finishes.
+///   Ok when drawing finishes.
 fn draw_heatmap<DB: DrawingBackend>(
     drawing_area: &DrawingArea<DB, Shift>,
     title: Option<&str>,
@@ -761,12 +761,12 @@ where
 /// Parameters
 /// ----------
 /// - `values`:
-///     Matrix to scan.
+///   Matrix to scan.
 ///
 /// Returns
 /// -------
 /// - `(f64, f64)`:
-///     Finite minimum and maximum.
+///   Finite minimum and maximum.
 fn find_finite_min_max(values: &Array2<f64>) -> (f64, f64) {
     let mut min_val = f64::INFINITY;
     let mut max_val = f64::NEG_INFINITY;
@@ -790,12 +790,12 @@ fn find_finite_min_max(values: &Array2<f64>) -> (f64, f64) {
 /// Parameters
 /// ----------
 /// - `values`:
-///     Matrix to average.
+///   Matrix to average.
 ///
 /// Returns
 /// -------
 /// - `Option<f64>`:
-///     Mean of finite entries, or None when empty.
+///   Mean of finite entries, or None when empty.
 fn find_finite_mean(values: &Array2<f64>) -> Option<f64> {
     let mut sum = 0.0;
     let mut count = 0usize;
@@ -819,16 +819,16 @@ fn find_finite_mean(values: &Array2<f64>) -> Option<f64> {
 /// Parameters
 /// ----------
 /// - `name`:
-///     Axis label used in error messages.
+///   Axis label used in error messages.
 /// - `edges`:
-///     Optional user-provided edge vector.
+///   Optional user-provided edge vector.
 /// - `len`:
-///     Number of bins along the axis.
+///   Number of bins along the axis.
 ///
 /// Returns
 /// -------
 /// - `Vec<f64>`:
-///     Validated edge vector.
+///   Validated edge vector.
 fn resolve_edges(name: &str, edges: Option<&[f64]>, len: usize) -> Result<Vec<f64>> {
     if let Some(edges) = edges {
         ensure!(
@@ -877,14 +877,14 @@ fn upsample_nearest(values: &Array2<f64>, factor: usize) -> Array2<f64> {
 /// Parameters
 /// ----------
 /// - `values`:
-///     Input matrix.
+///   Input matrix.
 /// - `factor`:
-///     Integer upsampling factor. Values below 1 are treated as 1.
+///   Integer upsampling factor. Values below 1 are treated as 1.
 ///
 /// Returns
 /// -------
 /// - `Array2<f64>`:
-///     Upsampled matrix.
+///   Upsampled matrix.
 fn upsample_bilinear(values: &Array2<f64>, factor: usize) -> Array2<f64> {
     let factor = factor.max(1);
     if factor == 1 {
@@ -940,14 +940,14 @@ fn upsample_bilinear(values: &Array2<f64>, factor: usize) -> Array2<f64> {
 /// Parameters
 /// ----------
 /// - `edges`:
-///     Original axis edge vector.
+///   Original axis edge vector.
 /// - `factor`:
-///     Upsampling factor. Values below 1 are treated as 1.
+///   Upsampling factor. Values below 1 are treated as 1.
 ///
 /// Returns
 /// -------
 /// - `Vec<f64>`:
-///     Refined edge vector.
+///   Refined edge vector.
 fn subdivide_edges(edges: &[f64], factor: usize) -> Result<Vec<f64>> {
     ensure!(edges.len() >= 2, "edges must contain at least two points");
     let factor = factor.max(1);
@@ -975,20 +975,20 @@ fn subdivide_edges(edges: &[f64], factor: usize) -> Result<Vec<f64>> {
 /// Parameters
 /// ----------
 /// - `value`:
-///     Value to map.
+///   Value to map.
 /// - `min_val`:
-///     Lower bound for scaling.
+///   Lower bound for scaling.
 /// - `max_val`:
-///     Upper bound for scaling.
+///   Upper bound for scaling.
 /// - `center_val`:
-///     Optional diverging center.
+///   Optional diverging center.
 /// - `symmetric_diverging`:
-///     When true, scales both sides using the maximum absolute distance from the center.
+///   When true, scales both sides using the maximum absolute distance from the center.
 ///
 /// Returns
 /// -------
 /// - `RGBColor`:
-///     Color for the value.
+///   Color for the value.
 fn color_for_value(
     value: f64,
     min_val: f64,
@@ -1042,16 +1042,16 @@ fn color_for_value(
 /// Parameters
 /// ----------
 /// - `start`:
-///     Start color.
+///   Start color.
 /// - `end`:
-///     End color.
+///   End color.
 /// - `t`:
-///     Position in [0, 1].
+///   Position in [0, 1].
 ///
 /// Returns
 /// -------
 /// - `RGBColor`:
-///     Interpolated color.
+///   Interpolated color.
 fn interpolate_rgb(start: RGBColor, end: RGBColor, t: f64) -> RGBColor {
     let t = t.clamp(0.0, 1.0);
     let r = start.0 as f64 + (end.0 as f64 - start.0 as f64) * t;
@@ -1068,26 +1068,26 @@ fn interpolate_rgb(start: RGBColor, end: RGBColor, t: f64) -> RGBColor {
 /// Parameters
 /// ----------
 /// - `legend_area`:
-///     Drawing area reserved for the legend.
+///   Drawing area reserved for the legend.
 /// - `min_val`:
-///     Minimum value label.
+///   Minimum value label.
 /// - `max_val`:
-///     Maximum value label.
+///   Maximum value label.
 /// - `mean_val`:
-///     Optional mean label.
+///   Optional mean label.
 /// - `center_val`:
-///     Optional diverging center label.
+///   Optional diverging center label.
 /// - `min_color`:
-///     Optional color for the minimum value. Defaults follow the heatmap palette.
+///   Optional color for the minimum value. Defaults follow the heatmap palette.
 /// - `max_color`:
-///     Optional color for the maximum value. Defaults follow the heatmap palette.
+///   Optional color for the maximum value. Defaults follow the heatmap palette.
 /// - `symmetric_diverging`:
-///     When true, legend swatches use the symmetric diverging scaling.
+///   When true, legend swatches use the symmetric diverging scaling.
 ///
 /// Returns
 /// -------
 /// - `Result<()>`:
-///     Ok when rendering succeeds.
+///   Ok when rendering succeeds.
 fn draw_color_legend<DB: DrawingBackend>(
     legend_area: &DrawingArea<DB, Shift>,
     min_val: f64,

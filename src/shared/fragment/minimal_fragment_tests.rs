@@ -90,10 +90,10 @@ mod test_minimal_fragment {
             0,
             100,
             cigar(&[('M', 50)]),
-            &vec![b'A'; 50],
+            &[b'A'; 50],
             120,
             cigar(&[('M', 50)]),
-            &vec![b'A'; 50],
+            &[b'A'; 50],
         );
         let frag = collect_fragment_from_records_for_test(&f, &r).expect("fragment");
         assert_eq!(frag.tid, 0);
@@ -112,10 +112,10 @@ mod test_minimal_fragment {
             0,
             100,
             cigar(&[('M', 100)]),
-            &vec![b'A'; 100],
+            &[b'A'; 100],
             150,
             cigar(&[('M', 30)]),
-            &vec![b'A'; 30],
+            &[b'A'; 30],
         );
         let frag = collect_fragment_from_records_for_test(&f, &r).expect("fragment");
         assert_eq!(frag.start(), 100);
@@ -126,13 +126,13 @@ mod test_minimal_fragment {
     #[test]
     fn test_collect_fragment_invalid_orientation() {
         // Both on same strand -> None
-        let f = mk_rec(0, 100, false, cigar(&[('M', 30)]), &vec![b'A'; 30], b"1");
-        let r = mk_rec(0, 140, false, cigar(&[('M', 30)]), &vec![b'A'; 30], b"1");
+        let f = mk_rec(0, 100, false, cigar(&[('M', 30)]), &[b'A'; 30], b"1");
+        let r = mk_rec(0, 140, false, cigar(&[('M', 30)]), &[b'A'; 30], b"1");
         assert!(collect_fragment_from_records_for_test(&f, &r).is_none());
 
         // End <= start -> None
-        let f = mk_rec(0, 200, false, cigar(&[('M', 10)]), &vec![b'A'; 10], b"2");
-        let r2 = mk_rec(0, 150, true, cigar(&[('M', 10)]), &vec![b'A'; 10], b"2");
+        let f = mk_rec(0, 200, false, cigar(&[('M', 10)]), &[b'A'; 10], b"2");
+        let r2 = mk_rec(0, 150, true, cigar(&[('M', 10)]), &[b'A'; 10], b"2");
         assert!(collect_fragment_from_records_for_test(&f, &r2).is_none());
     }
 }

@@ -2,7 +2,11 @@ use crate::interval::{IndexedInterval, Interval};
 use fxhash::FxHashSet;
 
 /// Reject public Zarr labels that cannot round-trip as one stable text value.
-#[cfg(any(feature = "cmd_ends", feature = "cmd_midpoints"))]
+#[cfg(any(
+    feature = "cmd_ends",
+    feature = "cmd_midpoints",
+    feature = "cmd_ref_kmers"
+))]
 pub(crate) fn validate_zarr_public_label(value: &str, field_name: &str) -> anyhow::Result<()> {
     anyhow::ensure!(
         !value.chars().any(char::is_control),
@@ -24,7 +28,11 @@ pub struct DenseMatrix<T> {
 
 impl<T> DenseMatrix<T> {
     /// Build a dense matrix from row-major values and explicit shape metadata.
-    #[cfg(any(feature = "cmd_ends", feature = "cmd_lengths"))]
+    #[cfg(any(
+        feature = "cmd_ends",
+        feature = "cmd_lengths",
+        feature = "cmd_ref_kmers"
+    ))]
     pub(crate) fn from_row_major(
         values: Vec<T>,
         rows: usize,
@@ -67,7 +75,7 @@ impl<T> DenseMatrix<T> {
     /// Parameters
     /// ----------
     /// - `row_index`:
-    ///     Zero-based row index in the matrix.
+    ///   Zero-based row index in the matrix.
     pub fn row(&self, row_index: usize) -> Option<&[T]> {
         if row_index >= self.rows {
             return None;
@@ -106,9 +114,9 @@ impl<T> DenseMatrix<T> {
     /// Parameters
     /// ----------
     /// - `row_index`:
-    ///     Zero-based row index in the matrix.
+    ///   Zero-based row index in the matrix.
     /// - `column_index`:
-    ///     Zero-based column index in the matrix.
+    ///   Zero-based column index in the matrix.
     pub fn get(&self, row_index: usize, column_index: usize) -> Option<&T> {
         if row_index >= self.rows || column_index >= self.columns {
             return None;
@@ -123,7 +131,11 @@ impl<T> DenseMatrix<T> {
     /// `start_column..end_column` uses zero-based column indices. Returns
     /// `None` if the row is out of bounds, if the column range is invalid, or
     /// if the range extends past the matrix column count.
-    #[cfg(any(feature = "cmd_lengths", feature = "cmd_ends"))]
+    #[cfg(any(
+        feature = "cmd_lengths",
+        feature = "cmd_ends",
+        feature = "cmd_ref_kmers"
+    ))]
     pub(crate) fn row_values_for_column_range(
         &self,
         row_index: usize,
@@ -247,11 +259,11 @@ impl<T> DenseArray3<T> {
     /// Parameters
     /// ----------
     /// - `first_index`:
-    ///     Zero-based index on the first axis.
+    ///   Zero-based index on the first axis.
     /// - `second_index`:
-    ///     Zero-based index on the second axis.
+    ///   Zero-based index on the second axis.
     /// - `third_index`:
-    ///     Zero-based index on the third axis.
+    ///   Zero-based index on the third axis.
     pub fn get(&self, first_index: usize, second_index: usize, third_index: usize) -> Option<&T> {
         if second_index >= self.second || third_index >= self.third {
             return None;
@@ -268,9 +280,9 @@ impl<T> DenseArray3<T> {
     /// Parameters
     /// ----------
     /// - `first_index`:
-    ///     Zero-based index on the first axis.
+    ///   Zero-based index on the first axis.
     /// - `second_index`:
-    ///     Zero-based index on the second axis.
+    ///   Zero-based index on the second axis.
     pub fn values_along_third_axis(&self, first_index: usize, second_index: usize) -> Option<&[T]> {
         if second_index >= self.second {
             return None;
@@ -332,7 +344,8 @@ pub(crate) fn ensure_unique_indices(indices: &[usize], label: &str) -> anyhow::R
 #[cfg(any(
     feature = "cmd_lengths",
     feature = "cmd_ends",
-    feature = "cmd_midpoints"
+    feature = "cmd_midpoints",
+    feature = "cmd_ref_kmers"
 ))]
 /// Reject duplicate labels before resolving label-based selectors.
 pub(crate) fn ensure_unique_labels<S: AsRef<str>>(
@@ -353,7 +366,8 @@ pub(crate) fn ensure_unique_labels<S: AsRef<str>>(
 #[cfg(any(
     feature = "cmd_lengths",
     feature = "cmd_ends",
-    feature = "cmd_midpoints"
+    feature = "cmd_midpoints",
+    feature = "cmd_ref_kmers"
 ))]
 /// Return the half-open span covered by strictly contiguous indices.
 pub(crate) fn contiguous_index_span(indices: &[usize]) -> Option<(usize, usize)> {
@@ -364,6 +378,29 @@ pub(crate) fn contiguous_index_span(indices: &[usize]) -> Option<(usize, usize)>
         }
     }
     Some((first_index, first_index + indices.len()))
+}
+
+#[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
+/// Build a reverse lookup from source-axis index to selected-axis position.
+///
+/// The returned vector has one slot for every row or motif in the source sparse matrix.
+/// A selected source index maps to `Some(selected_position)`. A source index that was not
+/// requested stays `None`, so sparse selection can skip stored entries outside the selected rows
+/// or motifs without scanning the selector lists for every sparse entry.
+pub(crate) fn build_selection_index_map(
+    selected_indices: &[usize],
+    source_axis_len: usize,
+    index_label: &str,
+) -> anyhow::Result<Vec<Option<usize>>> {
+    let mut index_map = vec![None; source_axis_len];
+    for (selected_position, &source_index) in selected_indices.iter().enumerate() {
+        anyhow::ensure!(
+            source_index < source_axis_len,
+            "{index_label} index {source_index} is outside 0..{source_axis_len}"
+        );
+        index_map[source_index] = Some(selected_position);
+    }
+    Ok(index_map)
 }
 
 #[cfg(test)]

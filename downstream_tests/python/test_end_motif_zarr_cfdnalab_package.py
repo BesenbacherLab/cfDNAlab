@@ -49,6 +49,8 @@ def test_cfdnalab_package_reads_dense_global_end_motifs(
             }
         ),
     )
+    with pytest.raises(ValueError, match="two_sided_correction requires ref_kmers"):
+        end_motifs.data_frame(two_sided_correction="joint")
 
 
 def test_cfdnalab_package_reads_sparse_windowed_end_motifs(
@@ -157,6 +159,279 @@ def test_cfdnalab_package_reads_sparse_windowed_selected_motif_file_end_motifs(
     )
     with pytest.raises(KeyError, match="Unknown end-motif label"):
         end_motifs.data_frame(motifs="TT_TT", densify=True)
+
+
+def test_cfdnalab_package_corrects_two_sided_end_motifs_without_same_motifs_file(
+    sparse_windowed_two_sided_end_zarr_path: Path,
+    sparse_windowed_end_motif_ref_kmer_zarr_path: Path,
+) -> None:
+    end_motifs = cfdnalab.read_end_motifs(sparse_windowed_two_sided_end_zarr_path)
+    ref_kmers = cfdnalab.read_ref_kmers(sparse_windowed_end_motif_ref_kmer_zarr_path)
+
+    assert end_motifs.motifs_metadata()["motif"].tolist() == ["AC_GT", "GT_AC"]
+    assert ref_kmers.kmer_size() == 4
+    assert ref_kmers.motifs_metadata()["motif"].tolist() == [
+        "ACGT",
+        "CGTA",
+        "CGTT",
+        "GTAC",
+        "GTTT",
+        "TACG",
+        "TTTT",
+    ]
+    expected_counts = np.array(
+        [[1.0, 0.0], [0.0, 1.0], [1.0, 0.0]],
+        dtype=np.float64,
+    )
+    # The stored columns are [AC_GT, GT_AC], and the three sample rows contain
+    # [[1, 0], [0, 1], [1, 0]]. Seven positive reference k-mers make the joint
+    # uniform frequency 1/7. Relative to uniform, ACGT frequency 1/4 gives
+    # correction factor (1/4)/(1/7) = 7/4, while GTAC frequency 3/20 gives
+    # (3/20)/(1/7) = 21/20. Dividing each observed count by its factor gives
+    # [[4/7, 0], [0, 20/21], [4/7, 0]].
+    expected_joint = np.array(
+        [[4.0 / 7.0, 0.0], [0.0, 20.0 / 21.0], [4.0 / 7.0, 0.0]],
+        dtype=np.float64,
+    )
+    # Five positive labels on each side make each side's uniform frequency
+    # 1/5. Outside labels AC and GT both have frequency 1/4, so both factors
+    # are (1/4)/(1/5) = 5/4. Inside labels GT and AC have frequencies 1/4 and
+    # 3/20, giving factors 5/4 and 3/4. Split therefore divides AC_GT by
+    # (5/4)*(5/4)=25/16 and GT_AC by (5/4)*(3/4)=15/16. Because each observed
+    # count is 1, the corrected values are 16/25 and 16/15. Outside correction
+    # divides by 5/4 for either label. Inside correction divides AC_GT by 5/4
+    # and GT_AC by 3/4. In the stored row and column order, the split, outside,
+    # and inside matrices are therefore [[16/25, 0], [0, 16/15], [16/25, 0]],
+    # [[4/5, 0], [0, 4/5], [4/5, 0]], and
+    # [[4/5, 0], [0, 4/3], [4/5, 0]], respectively.
+    expected_split = np.array(
+        [[16.0 / 25.0, 0.0], [0.0, 16.0 / 15.0], [16.0 / 25.0, 0.0]],
+        dtype=np.float64,
+    )
+    expected_outside = np.array(
+        [[4.0 / 5.0, 0.0], [0.0, 4.0 / 5.0], [4.0 / 5.0, 0.0]],
+        dtype=np.float64,
+    )
+    expected_inside = np.array(
+        [[4.0 / 5.0, 0.0], [0.0, 4.0 / 3.0], [4.0 / 5.0, 0.0]],
+        dtype=np.float64,
+    )
+
+    with pytest.raises(ValueError, match="two-sided"):
+        end_motifs.data_frame(ref_kmers=ref_kmers, densify=True)
+
+    joint = end_motifs.data_frame(
+        ref_kmers=ref_kmers,
+        densify=True,
+        two_sided_correction="joint",
+    )
+    assert joint["window_idx"].tolist() == [0, 0, 1, 1, 2, 2]
+    assert joint["motif"].tolist() == ["AC_GT", "GT_AC"] * 3
+    np.testing.assert_allclose(joint["count"].to_numpy(), expected_counts.ravel())
+    np.testing.assert_allclose(
+        joint["corrected_count"].to_numpy(),
+        expected_joint.ravel(),
+    )
+    np.testing.assert_allclose(
+        joint["corrected_frequency"].to_numpy(),
+        expected_counts.ravel(),
+    )
+
+    np.testing.assert_allclose(
+        end_motifs.corrected_counts_array(
+            ref_kmers,
+            allow_densify=True,
+            two_sided_correction="split",
+        ),
+        expected_split,
+    )
+    np.testing.assert_allclose(
+        end_motifs.sparse_corrected_counts_matrix(
+            ref_kmers,
+            two_sided_correction="split",
+        ).toarray(),
+        expected_split,
+    )
+
+    outside = end_motifs.data_frame(
+        ref_kmers=ref_kmers,
+        densify=True,
+        two_sided_correction="outside",
+    )
+    assert outside["motif"].tolist() == ["AC_", "GT_"] * 3
+    np.testing.assert_allclose(outside["count"].to_numpy(), expected_counts.ravel())
+    np.testing.assert_allclose(
+        outside["corrected_count"].to_numpy(),
+        expected_outside.ravel(),
+    )
+    np.testing.assert_allclose(
+        end_motifs.corrected_counts_array(
+            ref_kmers,
+            allow_densify=True,
+            two_sided_correction="outside",
+        ),
+        expected_outside,
+    )
+
+    inside = end_motifs.data_frame(
+        ref_kmers=ref_kmers,
+        densify=True,
+        two_sided_correction="inside",
+    )
+    assert inside["motif"].tolist() == ["_GT", "_AC"] * 3
+    np.testing.assert_allclose(inside["count"].to_numpy(), expected_counts.ravel())
+    np.testing.assert_allclose(
+        inside["corrected_count"].to_numpy(),
+        expected_inside.ravel(),
+    )
+    np.testing.assert_allclose(
+        end_motifs.sparse_corrected_counts_matrix(
+            ref_kmers,
+            two_sided_correction="inside",
+        ).toarray(),
+        expected_inside,
+    )
+
+
+def test_cfdnalab_package_corrects_two_sided_end_motifs_with_same_motifs_file(
+    sparse_windowed_selected_motifs_end_zarr_path: Path,
+    sparse_windowed_selected_end_motifs_ref_kmer_zarr_path: Path,
+) -> None:
+    end_motifs = cfdnalab.read_end_motifs(
+        sparse_windowed_selected_motifs_end_zarr_path
+    )
+    ref_kmers = cfdnalab.read_ref_kmers(
+        sparse_windowed_selected_end_motifs_ref_kmer_zarr_path
+    )
+
+    assert end_motifs.motifs_metadata()["motif"].tolist() == ["GT_AC", "AC_GT"]
+    assert ref_kmers.motifs_metadata()["motif"].tolist() == [
+        "GTAC",
+        "ACGT",
+        "GTTT",
+        "TTTT",
+    ]
+    expected_counts = np.array(
+        [[0.0, 1.0], [1.0, 0.0], [0.0, 1.0]],
+        dtype=np.float64,
+    )
+    # The stored columns are [GT_AC, AC_GT], and the three sample rows contain
+    # [[0, 1], [1, 0], [0, 1]]. Four positive reference k-mers make the joint
+    # uniform frequency 1/4. Relative to uniform, GTAC frequency 3/11 gives
+    # correction factor (3/11)/(1/4) = 12/11, while ACGT frequency 5/11 gives
+    # (5/11)/(1/4) = 20/11. Dividing each observed count by its factor gives
+    # [[0, 11/20], [11/12, 0], [0, 11/20]].
+    expected_joint = np.array(
+        [[0.0, 11.0 / 20.0], [11.0 / 12.0, 0.0], [0.0, 11.0 / 20.0]],
+        dtype=np.float64,
+    )
+    # Three positive labels on each side make each side's uniform frequency
+    # 1/3. Outside labels AC and GT both have frequency 5/11, so both factors
+    # are (5/11)/(1/3) = 15/11. Inside labels GT and AC have frequencies 5/11
+    # and 3/11, giving factors 15/11 and 9/11. Split therefore divides AC_GT
+    # by (15/11)*(15/11)=225/121 and GT_AC by
+    # (15/11)*(9/11)=135/121. Because each observed count is 1, the corrected
+    # values are 121/225 and 121/135. Outside correction divides by 15/11 for
+    # either label. Inside correction divides AC_GT by 15/11 and GT_AC by 9/11.
+    # In stored order, the split, outside, and inside matrices are therefore
+    # [[0, 121/225], [121/135, 0], [0, 121/225]],
+    # [[0, 11/15], [11/15, 0], [0, 11/15]], and
+    # [[0, 11/15], [11/9, 0], [0, 11/15]], respectively.
+    expected_split = np.array(
+        [[0.0, 121.0 / 225.0], [121.0 / 135.0, 0.0], [0.0, 121.0 / 225.0]],
+        dtype=np.float64,
+    )
+    expected_outside = np.array(
+        [[0.0, 11.0 / 15.0], [11.0 / 15.0, 0.0], [0.0, 11.0 / 15.0]],
+        dtype=np.float64,
+    )
+    expected_inside = np.array(
+        [[0.0, 11.0 / 15.0], [11.0 / 9.0, 0.0], [0.0, 11.0 / 15.0]],
+        dtype=np.float64,
+    )
+
+    joint = end_motifs.data_frame(
+        ref_kmers=ref_kmers,
+        densify=True,
+        two_sided_correction="joint",
+    )
+    assert joint["motif"].tolist() == ["GT_AC", "AC_GT"] * 3
+    np.testing.assert_allclose(joint["count"].to_numpy(), expected_counts.ravel())
+    np.testing.assert_allclose(
+        joint["corrected_count"].to_numpy(),
+        expected_joint.ravel(),
+    )
+    np.testing.assert_allclose(
+        joint["corrected_frequency"].to_numpy(),
+        expected_counts.ravel(),
+    )
+
+    np.testing.assert_allclose(
+        end_motifs.corrected_counts_array(
+            ref_kmers,
+            allow_densify=True,
+            two_sided_correction="split",
+        ),
+        expected_split,
+    )
+    np.testing.assert_allclose(
+        end_motifs.sparse_corrected_counts_matrix(
+            ref_kmers,
+            two_sided_correction="split",
+        ).toarray(),
+        expected_split,
+    )
+
+    outside = end_motifs.data_frame(
+        ref_kmers=ref_kmers,
+        densify=True,
+        two_sided_correction="outside",
+    )
+    assert outside["motif"].tolist() == ["GT_", "AC_"] * 3
+    np.testing.assert_allclose(outside["count"].to_numpy(), expected_counts.ravel())
+    np.testing.assert_allclose(
+        outside["corrected_count"].to_numpy(),
+        expected_outside.ravel(),
+    )
+    np.testing.assert_allclose(
+        end_motifs.corrected_counts_array(
+            ref_kmers,
+            allow_densify=True,
+            two_sided_correction="outside",
+        ),
+        expected_outside,
+    )
+
+    selected_outside = end_motifs.data_frame(
+        ref_kmers=ref_kmers,
+        motifs="AC_",
+        densify=True,
+        two_sided_correction="outside",
+    )
+    assert selected_outside["motif"].tolist() == ["AC_", "AC_", "AC_"]
+    np.testing.assert_allclose(
+        selected_outside["corrected_count"].to_numpy(),
+        np.array([11.0 / 15.0, 0.0, 11.0 / 15.0], dtype=np.float64),
+    )
+
+    inside = end_motifs.data_frame(
+        ref_kmers=ref_kmers,
+        densify=True,
+        two_sided_correction="inside",
+    )
+    assert inside["motif"].tolist() == ["_AC", "_GT"] * 3
+    np.testing.assert_allclose(inside["count"].to_numpy(), expected_counts.ravel())
+    np.testing.assert_allclose(
+        inside["corrected_count"].to_numpy(),
+        expected_inside.ravel(),
+    )
+    np.testing.assert_allclose(
+        end_motifs.sparse_corrected_counts_matrix(
+            ref_kmers,
+            two_sided_correction="inside",
+        ).toarray(),
+        expected_inside,
+    )
 
 
 def test_cfdnalab_package_reads_sparse_grouped_end_motifs(
@@ -312,14 +587,14 @@ def test_cfdnalab_package_reads_sparse_grouped_wide_motif_group_end_motifs(
         pd.DataFrame(
             {
                 "motif_index": np.array([0, 1], dtype=np.int32),
-                "motif": np.array(["right-hit-wide", "left-hit-wide"], dtype=object),
+                "motif": np.array(["left-hit-wide", "right-hit-wide"], dtype=object),
             }
         ),
     )
-    assert end_motifs.motif_idx("left-hit-wide") == 1
+    assert end_motifs.motif_idx("left-hit-wide") == 0
     np.testing.assert_allclose(
         end_motifs.dense_counts_array(allow_densify=True),
-        np.array([[1.0, 2.0], [1.0, 0.0], [0.0, 0.0]], dtype=np.float64),
+        np.array([[2.0, 1.0], [0.0, 1.0], [0.0, 0.0]], dtype=np.float64),
     )
     np.testing.assert_allclose(
         end_motifs.sparse_counts_matrix(
@@ -329,7 +604,7 @@ def test_cfdnalab_package_reads_sparse_grouped_wide_motif_group_end_motifs(
         np.array([[0.0, 1.0], [2.0, 1.0]], dtype=np.float64),
     )
     beta_frame = end_motifs.data_frame(groups="beta", densify=True)
-    assert beta_frame["motif"].tolist() == ["right-hit-wide", "left-hit-wide"]
-    assert beta_frame["count"].tolist() == [1.0, 2.0]
+    assert beta_frame["motif"].tolist() == ["left-hit-wide", "right-hit-wide"]
+    assert beta_frame["count"].tolist() == [2.0, 1.0]
     with pytest.raises(KeyError, match="Unknown end-motif label"):
         end_motifs.data_frame(motifs="GT_AC")

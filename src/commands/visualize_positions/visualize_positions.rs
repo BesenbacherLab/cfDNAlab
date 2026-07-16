@@ -86,7 +86,8 @@ pub fn run_visualize_positions(
 
     if options.log_equivalent_cli {
         let command = crate::ToCliCommand::to_cli_string(cfg)?;
-        tracing::info!(target: "visualize-positions", "Equivalent CLI: {command}");
+        let message = crate::command_run::equivalent_cli_log_message(&command);
+        tracing::info!(target: "visualize-positions", "{message}");
     }
 
     fs::create_dir_all(&cfg.work_dir)

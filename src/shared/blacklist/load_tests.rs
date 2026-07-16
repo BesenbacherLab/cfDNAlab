@@ -2,10 +2,14 @@
 mod tests_load_blacklists {
     use crate::shared::{blacklist::load::load_blacklists, interval::Interval};
     use anyhow::Result;
-    use tempfile::NamedTempFile;
+    use tempfile::{Builder, NamedTempFile};
 
     fn write_bed(lines: &[&str]) -> Result<NamedTempFile> {
-        let mut file = NamedTempFile::new()?;
+        write_bed_with_suffix(lines, ".bed")
+    }
+
+    fn write_bed_with_suffix(lines: &[&str], suffix: &str) -> Result<NamedTempFile> {
+        let mut file = Builder::new().suffix(suffix).tempfile()?;
         use std::io::Write;
         for line in lines {
             writeln!(file, "{}", line)?;
@@ -18,16 +22,75 @@ mod tests_load_blacklists {
         // Arrange
         let bed = write_bed(&["chr1\t0\t3", "chr1\t10\t20", "chr2\t5\t30"])?;
         let whitelist = vec!["chr1".to_string()];
+        let read_in_background = std::thread::available_parallelism()
+            .is_ok_and(|thread_count| thread_count.get() > 1);
 
         // Act
-        let map = load_blacklists(&[bed.path()], 5, 0, Some(whitelist.as_slice()))?;
+        let map = load_blacklists(
+            &[bed.path()],
+            5,
+            0,
+            Some(whitelist.as_slice()),
+            read_in_background,
+        )?;
 
         // Assert
         assert_eq!(
             map.get("chr1").unwrap().as_slice(),
             Interval::from_tuples(&[(10, 20)])?.as_slice()
         );
-        assert!(map.get("chr2").is_none());
+        assert!(!map.contains_key("chr2"));
+        Ok(())
+    }
+
+    #[test]
+    fn should_accept_bed_content_with_bg_extension() -> Result<()> {
+        // Arrange
+        let bed = write_bed_with_suffix(&["chr1\t0\t10"], ".bg")?;
+        let whitelist = vec!["chr1".to_string()];
+
+        // Act
+        let map = load_blacklists(&[bed.path()], 1, 0, Some(whitelist.as_slice()), false)?;
+
+        // Assert
+        assert_eq!(
+            map.get("chr1").unwrap().as_slice(),
+            Interval::from_tuples(&[(0, 10)])?.as_slice()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn should_allow_valid_bed_rows_outside_chromosome_whitelist() -> Result<()> {
+        // Arrange
+        // A syntactically valid blacklist can still have no rows for the selected chromosomes. That
+        // should remain a no-op, not an input-format error.
+        let bed = write_bed_with_suffix(&["chr2\t0\t10"], ".bg")?;
+        let whitelist = vec!["chr1".to_string()];
+
+        // Act
+        let map = load_blacklists(&[bed.path()], 1, 0, Some(whitelist.as_slice()), false)?;
+
+        // Assert
+        assert!(map.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn should_error_when_blacklist_text_is_not_bed_even_with_chromosome_whitelist() -> Result<()> {
+        // Arrange
+        // This reproduces the silent-empty case where the first token is not in the chromosome
+        // whitelist. The file still has to be valid BED; the whitelist must not hide bad rows.
+        let bed = write_bed_with_suffix(&["not bed content"], ".bg")?;
+        let whitelist = vec!["chr1".to_string()];
+
+        // Act
+        let error = load_blacklists(&[bed.path()], 1, 0, Some(whitelist.as_slice()), false)
+            .expect_err("malformed blacklist input should fail");
+
+        // Assert
+        let message = error.to_string();
+        assert!(message.contains("invalid start"), "unexpected error: {message}");
         Ok(())
     }
 
@@ -37,7 +100,7 @@ mod tests_load_blacklists {
         let bed = write_bed(&["chrX\t100\t110", "chrX\t112\t120"])?;
 
         // Act
-        let map = load_blacklists(&[bed.path()], 1, 2, None)?;
+        let map = load_blacklists(&[bed.path()], 1, 2, None, false)?;
 
         // Assert
         assert_eq!(
