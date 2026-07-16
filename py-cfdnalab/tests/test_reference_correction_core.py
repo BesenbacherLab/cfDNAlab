@@ -10,6 +10,7 @@ import cfdnalab.reference_correction as reference_correction
 # Keep this fixture and its rational expectations identical to the Rust and R
 # core correction tests. It is the language-parity specification for the math.
 
+
 def _shared_end_rows() -> pd.DataFrame:
     return pd.DataFrame(
         {

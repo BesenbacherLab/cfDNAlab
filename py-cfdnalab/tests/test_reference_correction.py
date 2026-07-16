@@ -777,9 +777,7 @@ def test_two_sided_reference_correction_modes_use_mode_axis(tmp_path: Path) -> N
             two_sided_correction="inside",
             motifs="_G",
         ),
-        pd.DataFrame(
-            {"matrix_column": [0], "motif_index": [1], "motif": ["_G"]}
-        ),
+        pd.DataFrame({"matrix_column": [0], "motif_index": [1], "motif": ["_G"]}),
     )
     with pytest.raises(ValueError, match="motif index selectors"):
         ends.data_frame(

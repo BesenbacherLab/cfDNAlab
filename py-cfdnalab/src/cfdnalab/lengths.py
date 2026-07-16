@@ -310,11 +310,13 @@ class LengthCounts:
         metadata = self.lengths.row_metadata.iloc[row_indices].reset_index(drop=True)
         metadata = metadata.loc[metadata.index.repeat(num_bins)].reset_index(drop=True)
         # Preserve column order and dtypes after blacklist filtering removes all rows
-        selected_bins = self.length_bins().iloc[length_bin_indices].reset_index(
-            drop=True
+        selected_bins = (
+            self.length_bins().iloc[length_bin_indices].reset_index(drop=True)
         )
-        bins = selected_bins.iloc[[]].copy() if num_rows == 0 else pd.concat(
-            [selected_bins] * num_rows, ignore_index=True
+        bins = (
+            selected_bins.iloc[[]].copy()
+            if num_rows == 0
+            else pd.concat([selected_bins] * num_rows, ignore_index=True)
         )
         data_frame = pd.concat([metadata, bins], axis=1)
         data_frame[value] = values.ravel()

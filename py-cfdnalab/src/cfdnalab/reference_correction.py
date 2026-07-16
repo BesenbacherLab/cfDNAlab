@@ -332,8 +332,7 @@ def _reference_corrected_data_frame_from_context(
     ].copy()
     if context.selected_mode_labels:
         motif_order = {
-            motif: index
-            for index, motif in enumerate(context.selected_mode_labels)
+            motif: index for index, motif in enumerate(context.selected_mode_labels)
         }
         corrected["_cfdnalab_motif_order"] = corrected["motif"].map(motif_order)
         corrected = corrected.sort_values(
@@ -400,8 +399,10 @@ def _reference_corrected_counts_array(
         max_blacklisted_fraction=max_blacklisted_fraction,
         unsupported_motifs=unsupported_motifs,
     )
-    return corrected["corrected_count"].to_numpy(dtype=float).reshape(
-        (len(row_indices), len(context.selected_mode_labels))
+    return (
+        corrected["corrected_count"]
+        .to_numpy(dtype=float)
+        .reshape((len(row_indices), len(context.selected_mode_labels)))
     )
 
 
@@ -442,9 +443,7 @@ def _sparse_reference_corrected_counts_matrix(
         max_blacklisted_fraction=max_blacklisted_fraction,
     )
     if len(row_indices) == 0 or len(context.selected_mode_labels) == 0:
-        return sparse.coo_matrix(
-            (len(row_indices), len(context.selected_mode_labels))
-        )
+        return sparse.coo_matrix((len(row_indices), len(context.selected_mode_labels)))
 
     corrected = _reference_corrected_data_frame_from_context(
         ends,
@@ -458,9 +457,7 @@ def _sparse_reference_corrected_counts_matrix(
         unsupported_motifs=unsupported_motifs,
     )
     if corrected.empty:
-        return sparse.coo_matrix(
-            (len(row_indices), len(context.selected_mode_labels))
-        )
+        return sparse.coo_matrix((len(row_indices), len(context.selected_mode_labels)))
 
     row_positions = _selected_row_positions(ends, row_indices)
     motif_positions = {
@@ -470,9 +467,7 @@ def _sparse_reference_corrected_counts_matrix(
     corrected_values = corrected["corrected_count"].to_numpy(dtype=float)
     stored = (corrected_values != 0.0) | np.isnan(corrected_values)
     if not np.any(stored):
-        return sparse.coo_matrix(
-            (len(row_indices), len(context.selected_mode_labels))
-        )
+        return sparse.coo_matrix((len(row_indices), len(context.selected_mode_labels)))
 
     matrix_rows = np.asarray(
         [
@@ -481,9 +476,9 @@ def _sparse_reference_corrected_counts_matrix(
         ],
         dtype=np.int64,
     )[stored]
-    matrix_columns = corrected["motif"].map(motif_positions).to_numpy(
-        dtype=np.int64
-    )[stored]
+    matrix_columns = (
+        corrected["motif"].map(motif_positions).to_numpy(dtype=np.int64)[stored]
+    )
     return sparse.coo_matrix(
         (
             corrected_values[stored],
@@ -657,11 +652,10 @@ def _selected_mode_axis(
     selected_indices: list[int] = []
     for requested_label in requested_labels:
         if requested_label not in side_indices_by_label:
-            raise ValueError(
-                f"Side-mode motif axis has no label {requested_label!r}"
-            )
+            raise ValueError(f"Side-mode motif axis has no label {requested_label!r}")
         selected_indices.append(side_indices_by_label[requested_label])
     return requested_labels, np.asarray(selected_indices, dtype=np.int64)
+
 
 def _side_axis_labels(motif_labels: Sequence[str], side_mode: str) -> list[str]:
     side_labels: list[str] = []
@@ -782,7 +776,9 @@ def _correct_side_data_frame(
     end_rows = _add_end_sides(end_rows, outside_width, inside_width)
     side_column = "outside" if side_mode == "outside" else "inside"
     end_rows["motif"] = (
-        end_rows["outside"] + "_" if side_mode == "outside" else "_" + end_rows["inside"]
+        end_rows["outside"] + "_"
+        if side_mode == "outside"
+        else "_" + end_rows["inside"]
     )
     side_axis = list(correction_mode["side_labels"])
     side_index_by_label = {label: index for index, label in enumerate(side_axis)}
@@ -842,10 +838,9 @@ def _add_end_sides(
     outside_inside = end_rows["motif"].map(_split_end_motif_label)
     end_rows["outside"] = [outside for outside, _ in outside_inside]
     end_rows["inside"] = [inside for _, inside in outside_inside]
-    invalid_width = (
-        end_rows["outside"].str.len().ne(outside_width)
-        | end_rows["inside"].str.len().ne(inside_width)
-    )
+    invalid_width = end_rows["outside"].str.len().ne(outside_width) | end_rows[
+        "inside"
+    ].str.len().ne(inside_width)
     if invalid_width.any():
         raise ValueError("End-motif label does not match inferred side widths")
     return end_rows
@@ -889,9 +884,7 @@ def _side_denominator_table(
     )
     if reference_row_columns:
         support_counts = (
-            side_frequencies.loc[
-                side_frequencies["side_reference_frequency"].gt(0.0)
-            ]
+            side_frequencies.loc[side_frequencies["side_reference_frequency"].gt(0.0)]
             .groupby(reference_row_columns, sort=False)
             .size()
             .reset_index(name="side_support_count")
@@ -989,12 +982,9 @@ def _apply_reference_denominator_policy(
     corrected["corrected_count"] = 0.0
     supported_reference = corrected[denominator_column].gt(0.0)
     with np.errstate(over="ignore", invalid="ignore"):
-        corrected_values = (
-            corrected.loc[supported_reference, "count"].to_numpy(dtype=float)
-            / corrected.loc[supported_reference, denominator_column].to_numpy(
-                dtype=float
-            )
-        )
+        corrected_values = corrected.loc[supported_reference, "count"].to_numpy(
+            dtype=float
+        ) / corrected.loc[supported_reference, denominator_column].to_numpy(dtype=float)
     if not np.isfinite(corrected_values).all():
         non_finite_labels = sorted(
             corrected.loc[
@@ -1066,7 +1056,9 @@ def _row_order_indices(data_frame: pd.DataFrame, row_columns: list[str]) -> np.n
     row_order_by_key = {
         row_key: row_order for row_order, row_key in enumerate(dict.fromkeys(row_keys))
     }
-    return np.asarray([row_order_by_key[row_key] for row_key in row_keys], dtype=np.int64)
+    return np.asarray(
+        [row_order_by_key[row_key] for row_key in row_keys], dtype=np.int64
+    )
 
 
 def _selected_rows(
@@ -1146,8 +1138,7 @@ def _validate_reference_correction_inputs(
     )
     if not (reference_motif_lengths == ref_kmers.kmer_size()).all():
         raise ValueError(
-            "End-motif width must match reference k-mer size "
-            f"({ref_kmers.kmer_size()})"
+            f"End-motif width must match reference k-mer size ({ref_kmers.kmer_size()})"
         )
 
 
@@ -1224,9 +1215,7 @@ def _reference_row_indices_for_end_rows(
             _row_key_tuples(reference_metadata, reference_row_columns)
         )
     }
-    selected_row_keys = dict.fromkeys(
-        _row_key_tuples(end_rows, reference_row_columns)
-    )
+    selected_row_keys = dict.fromkeys(_row_key_tuples(end_rows, reference_row_columns))
     try:
         return np.asarray(
             [reference_indices_by_key[row_key] for row_key in selected_row_keys],
@@ -1260,9 +1249,7 @@ def _reference_support_counts(
     if not reference_row_columns:
         return len(positive_ref_rows)
     if positive_ref_rows.empty:
-        return pd.DataFrame(
-            columns=reference_row_columns + ["correction_motif_count"]
-        )
+        return pd.DataFrame(columns=reference_row_columns + ["correction_motif_count"])
     return (
         positive_ref_rows.groupby(reference_row_columns, sort=False)
         .size()

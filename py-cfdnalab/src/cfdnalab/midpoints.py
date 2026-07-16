@@ -387,9 +387,7 @@ class MidpointProfiles:
                             "eligible_intervals": int(
                                 self.profiles.eligible_intervals[group_idx]
                             ),
-                            "length_bin": int(
-                                self.profiles.length_bin[length_bin_idx]
-                            ),
+                            "length_bin": int(self.profiles.length_bin[length_bin_idx]),
                             "length_start_bp": int(
                                 self.profiles.length_start_bp[length_bin_idx]
                             ),

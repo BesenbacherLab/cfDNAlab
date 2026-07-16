@@ -1333,7 +1333,9 @@ def _create_motif_axis(root: zarr.Group, labels: np.ndarray) -> None:
         chunks=(max(motif_width, 1),),
         dimension_names=("motif_byte",),
     )
-    motif_ascii = np.frombuffer("".join(labels.tolist()).encode("ascii"), dtype=np.uint8)
+    motif_ascii = np.frombuffer(
+        "".join(labels.tolist()).encode("ascii"), dtype=np.uint8
+    )
     motif_ascii = motif_ascii.reshape((len(labels), motif_width))
     _create_array(
         root,

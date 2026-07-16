@@ -248,9 +248,7 @@ class RefKmerFrequencies:
             _validate_array_dimensions(
                 store["row_chromosome"], ("row",), "row_chromosome"
             )
-            _validate_array_dimensions(
-                store["row_start_bp"], ("row",), "row_start_bp"
-            )
+            _validate_array_dimensions(store["row_start_bp"], ("row",), "row_start_bp")
             _validate_array_dimensions(store["row_end_bp"], ("row",), "row_end_bp")
             _validate_array_dimensions(
                 store["blacklisted_fraction"], ("row",), "blacklisted_fraction"
@@ -705,9 +703,10 @@ class RefKmerFrequencies:
             motif_indices,
             allow_densify=densify,
         )
-        selected_counts = selected_frequencies * self.ref_kmers.row_scaling_factor[
-            row_indices
-        ][:, np.newaxis]
+        selected_counts = (
+            selected_frequencies
+            * self.ref_kmers.row_scaling_factor[row_indices][:, np.newaxis]
+        )
         repeated_rows = row_metadata.loc[
             row_metadata.index.repeat(motif_count)
         ].reset_index(drop=True)
@@ -813,9 +812,7 @@ class RefKmerFrequencies:
             )
             data_frame["window_idx"] = self.ref_kmers.row
             data_frame["chrom"] = chromosome_names[row_chromosome.astype(int)]
-            data_frame["start"] = _required(
-                self.ref_kmers.row_start_bp, "row_start_bp"
-            )
+            data_frame["start"] = _required(self.ref_kmers.row_start_bp, "row_start_bp")
             data_frame["end"] = _required(self.ref_kmers.row_end_bp, "row_end_bp")
             data_frame["blacklisted_fraction"] = _required(
                 self.ref_kmers.blacklisted_fraction, "blacklisted_fraction"
@@ -1276,11 +1273,7 @@ class GroupedRefKmerFrequencies(RefKmerFrequencies):
 
 def read_ref_kmers(
     path: pathlib.Path | str,
-) -> (
-    GlobalRefKmerFrequencies
-    | WindowedRefKmerFrequencies
-    | GroupedRefKmerFrequencies
-):
+) -> GlobalRefKmerFrequencies | WindowedRefKmerFrequencies | GroupedRefKmerFrequencies:
     """
     Open a cfDNAlab reference k-mer frequency output directory.
     """
@@ -1428,7 +1421,12 @@ def _validate_required_arrays(
     """
     Require all arrays needed by the active storage mode and row mode.
     """
-    required = {"motif_index", "row", "row_scaling_factor", "reference_contig_footprint_json"}
+    required = {
+        "motif_index",
+        "row",
+        "row_scaling_factor",
+        "reference_contig_footprint_json",
+    }
     if motif_axis_kind == "motif":
         required.update({"motif_byte", "motif_ascii"})
     if storage_mode == "dense":
@@ -1473,9 +1471,7 @@ def _has_array(store: Any, name: str) -> bool:
     return True
 
 
-def _validate_dense_frequencies(
-    frequencies: Any, n_rows: int, n_motifs: int
-) -> None:
+def _validate_dense_frequencies(frequencies: Any, n_rows: int, n_motifs: int) -> None:
     """
     Validate dense reference k-mer frequency array dimensions and shape.
     """
@@ -1501,9 +1497,7 @@ def _validate_sparse_arrays(
     """
     _validate_array_dimensions(store["sparse/row"], ("nnz",), "sparse/row")
     _validate_array_dimensions(store["sparse/motif"], ("nnz",), "sparse/motif")
-    _validate_array_dimensions(
-        store["sparse/frequency"], ("nnz",), "sparse/frequency"
-    )
+    _validate_array_dimensions(store["sparse/frequency"], ("nnz",), "sparse/frequency")
     _validate_array_dimensions(
         store["sparse/shape"], ("sparse_dimension",), "sparse/shape"
     )
@@ -1587,8 +1581,7 @@ def _read_reference_contig_footprint(store: Any) -> Any:
     raw = _read_array(store, "reference_contig_footprint_json")
     if raw.dtype != np.uint8:
         raise ValueError(
-            "reference_contig_footprint_json must have dtype uint8, "
-            f"found {raw.dtype}"
+            f"reference_contig_footprint_json must have dtype uint8, found {raw.dtype}"
         )
     try:
         return json.loads(bytes(raw).decode("utf-8"))
@@ -1653,9 +1646,7 @@ def _read_labels(
         if not isinstance(label, str):
             raise ValueError(f"{array_name} labels must be character strings")
         if _contains_control_character(label):
-            raise ValueError(
-                f"{array_name} labels must not contain control characters"
-            )
+            raise ValueError(f"{array_name} labels must not contain control characters")
         validated_labels.append(label)
 
     label_array = np.asarray(validated_labels, dtype=str)
@@ -1760,13 +1751,9 @@ def _validate_row_scaling_factors(values: np.ndarray) -> None:
     if values.size == 0:
         return
     if not np.issubdtype(values.dtype, np.number):
-        raise ValueError(
-            "row_scaling_factor must contain finite non-negative values"
-        )
+        raise ValueError("row_scaling_factor must contain finite non-negative values")
     if np.any(~np.isfinite(values)) or np.any(values < 0.0):
-        raise ValueError(
-            "row_scaling_factor must contain finite non-negative values"
-        )
+        raise ValueError("row_scaling_factor must contain finite non-negative values")
 
 
 def _validate_concrete_motif_labels(

@@ -21,7 +21,9 @@ def _write_length_tsv_zst(path: Path, lines: list[str]) -> Path:
     return path
 
 
-def test_global_length_counts_expose_bins_counts_and_data_frames(tmp_path: Path) -> None:
+def test_global_length_counts_expose_bins_counts_and_data_frames(
+    tmp_path: Path,
+) -> None:
     path = _write_length_tsv(
         tmp_path / "sample.length_counts.tsv",
         [
@@ -34,11 +36,7 @@ def test_global_length_counts_expose_bins_counts_and_data_frames(tmp_path: Path)
 
     assert isinstance(lengths, cfdnalab.GlobalLengthCounts)
     assert repr(lengths) == (
-        "GlobalLengthCounts("
-        f"path={str(path)!r}, "
-        "mode='global', "
-        "shape=(1, 2)"
-        ")"
+        f"GlobalLengthCounts(path={str(path)!r}, mode='global', shape=(1, 2))"
     )
     pd.testing.assert_frame_equal(
         lengths.length_bins(),
@@ -65,9 +63,7 @@ def test_global_length_counts_expose_bins_counts_and_data_frames(tmp_path: Path)
     with pytest.raises(KeyError, match="No length-count bin contains length 40"):
         lengths.length_bin_idx(40)
     np.testing.assert_allclose(lengths.counts_array(), np.array([[12.0, 3.0]]))
-    np.testing.assert_allclose(
-        lengths.counts_array(with_lengths=39), np.array([[3.0]])
-    )
+    np.testing.assert_allclose(lengths.counts_array(with_lengths=39), np.array([[3.0]]))
     np.testing.assert_allclose(
         lengths.counts_array(with_length_range=(31, 35)), np.array([[3.0]])
     )
@@ -296,11 +292,7 @@ def test_windowed_length_counts_filter_blacklisted_rows(tmp_path: Path) -> None:
 
     assert isinstance(lengths, cfdnalab.WindowedLengthCounts)
     assert repr(lengths) == (
-        "WindowedLengthCounts("
-        f"path={str(path)!r}, "
-        "mode='windowed', "
-        "shape=(2, 2)"
-        ")"
+        f"WindowedLengthCounts(path={str(path)!r}, mode='windowed', shape=(2, 2))"
     )
     pd.testing.assert_frame_equal(
         lengths.window_metadata(),
@@ -379,11 +371,7 @@ def test_grouped_length_counts_support_group_selectors_and_zero_rows(
 
     assert isinstance(lengths, cfdnalab.GroupedLengthCounts)
     assert repr(lengths) == (
-        "GroupedLengthCounts("
-        f"path={str(path)!r}, "
-        "mode='grouped', "
-        "shape=(3, 2)"
-        ")"
+        f"GroupedLengthCounts(path={str(path)!r}, mode='grouped', shape=(3, 2))"
     )
     assert lengths.group_idx("beta") == 1
     pd.testing.assert_frame_equal(
@@ -612,7 +600,9 @@ def test_length_tsv_validation_rejects_ambiguous_shapes(tmp_path: Path) -> None:
             "2",
         ],
     )
-    with pytest.raises(ValueError, match="Global length-count output must contain exactly one row"):
+    with pytest.raises(
+        ValueError, match="Global length-count output must contain exactly one row"
+    ):
         cfdnalab.read_lengths(multiple_global_rows)
 
     duplicate_bins = _write_length_tsv(
@@ -722,5 +712,7 @@ def test_length_bin_lookup_rejects_gaps_and_overlaps(tmp_path: Path) -> None:
             ],
         )
     )
-    with pytest.raises(ValueError, match="Multiple length-count bins contain length 45"):
+    with pytest.raises(
+        ValueError, match="Multiple length-count bins contain length 45"
+    ):
         overlapping.length_bin_idx(45)

@@ -305,8 +305,7 @@ def normalize_zero_based_indices(
     else:
         try:
             values = [
-                validate_zero_based_index(index, size, index_name)
-                for index in indices
+                validate_zero_based_index(index, size, index_name) for index in indices
             ]
         except TypeError as error:
             raise TypeError(

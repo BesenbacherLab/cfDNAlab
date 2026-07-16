@@ -2252,7 +2252,9 @@ def _raw_zarr_attributes(path: pathlib.Path) -> dict[str, Any]:
     return attributes if isinstance(attributes, dict) else {}
 
 
-def _raw_zarr_array_shape(path: pathlib.Path, array_name: str) -> tuple[int, ...] | None:
+def _raw_zarr_array_shape(
+    path: pathlib.Path, array_name: str
+) -> tuple[int, ...] | None:
     """
     Read one array shape directly from its metadata file.
     """
@@ -2509,8 +2511,7 @@ def _contains_control_character(label: str) -> bool:
     Return whether a label contains a Unicode control character.
     """
     return any(
-        ord(character) < 32 or 0x7F <= ord(character) <= 0x9F
-        for character in label
+        ord(character) < 32 or 0x7F <= ord(character) <= 0x9F for character in label
     )
 
 
