@@ -4,7 +4,10 @@
 
 <br />
 
-## Unreleased
+## py-cfDNAlab 0.4.0
+
+- Adds zarr loader for the outputs of `cfdna ref-kmers`.
+- Adds reference correction in the loader for outputs of `cfdna ends` using the `ref-kmers` frequencies.
 
 <br />
 
