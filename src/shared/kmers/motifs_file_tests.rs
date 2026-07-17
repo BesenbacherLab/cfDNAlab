@@ -309,7 +309,7 @@ fn parses_crlf_terminated_motifs_file_rows() -> anyhow::Result<()> {
 
 #[test]
 fn shares_one_selected_subspace_when_inside_and_outside_large_k_match() -> anyhow::Result<()> {
-    // Arrange: both motif halves use k=30, so they can share one selected half-code universe. The
+    // Arrange: both motif halves use k=30, so they can share one selected half-code subset. The
     // full inside/outside motif pair is still filtered by the encoded lookup after each half has
     // been encoded.
     let contents = format!("{}_{}\n", "C".repeat(30), "A".repeat(30));

@@ -1,4 +1,4 @@
-//! Output-universe helpers for the `ends` command.
+//! Motif-output helpers for the `ends` command.
 //!
 //! This module owns the dense-vs-sparse motif ordering logic and the guards
 //! around dense output size. Keeping that here avoids mixing output shape
@@ -51,7 +51,7 @@ pub(crate) fn collect_end_motif_order(bins: &[FxHashMap<String, f64>]) -> Vec<St
     motifs.into_iter().collect()
 }
 
-/// Build the full dense motif universe for `--all-motifs`.
+/// Build the complete dense motif set for `--all-motifs`.
 ///
 /// The returned labels follow the public `<outside>_<inside>` convention after
 /// optional complement collapsing. This is only used for dense outputs where
@@ -70,7 +70,7 @@ pub(crate) fn collect_end_motif_order(bins: &[FxHashMap<String, f64>]) -> Vec<St
 /// Returns
 /// -------
 /// - `Result<Vec<String>>`:
-///   Sorted dense motif universe for the current settings
+///   Sorted complete dense motif set for the current settings
 pub(crate) fn build_all_end_motif_order(
     inside_spec: Option<&KmerSpec>,
     outside_spec: Option<&KmerSpec>,
@@ -193,10 +193,10 @@ fn max_dense_end_motif_output_bytes() -> Result<u64> {
     }
 }
 
-/// Guard full-universe enumeration for `--all-motifs`.
+/// Guard complete motif-set enumeration for `--all-motifs`.
 ///
 /// The dense path is defined by the final matrix size, not just by `k`, but
-/// the full motif universe still needs its own early check so we do not try to
+/// the complete motif set still needs its own early check so we do not try to
 /// enumerate an obviously impossible motif list before the matrix is written.
 ///
 /// Parameters
@@ -222,10 +222,10 @@ pub(crate) fn ensure_all_motifs_enumeration_size(
         .context("combined motif length overflows usize")?;
     let motif_count_upper = 4_u64
         .checked_pow(total_k as u32)
-        .context("all-motifs universe overflows u64")?;
+        .context("complete motif set overflows u64")?;
     let n_motifs: usize = motif_count_upper
         .try_into()
-        .context("all-motifs universe does not fit in usize")?;
+        .context("complete motif set does not fit in usize")?;
 
     ensure_dense_end_motif_output_size(n_windows, n_motifs).with_context(|| {
         format!("refusing to enumerate all motifs for k_inside={k_inside}, k_outside={k_outside}")

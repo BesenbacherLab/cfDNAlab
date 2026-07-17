@@ -1452,7 +1452,7 @@ fn ref_kmers_midpoint_assignment_uses_the_center_base() -> Result<()> {
 #[test]
 fn ref_kmers_large_k_motifs_file_counts_selected_subspace() -> Result<()> {
     // Arrange:
-    // k = 30 is outside the full reference k-mer universe used without a motifs file. The motifs
+    // k = 30 is outside the complete reference k-mer set used without a motifs file. The motifs
     // file selects exactly two possible targets. The reference contains one A^30 k-mer and no C^30
     // k-mers, so all-motifs selected output should keep both columns with counts 1 and 0.
     let present_motif = "A".repeat(30);

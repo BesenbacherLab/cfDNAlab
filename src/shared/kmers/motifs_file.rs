@@ -92,7 +92,7 @@ impl SelectedMotifLookup {
 /// Codec used for one selected motif half during tile-local counting.
 ///
 /// Full radix-5 specs are used up to the radix-5 limit. Larger selected motifs switch to a
-/// byte-backed selected subspace because the full motif universe cannot be represented.
+/// byte-backed selected subspace because the complete motif set cannot be represented.
 #[derive(Clone, Debug)]
 pub(crate) enum SelectedMotifHalfSpec {
     /// Full radix-5 k-mer space
@@ -658,7 +658,7 @@ fn build_selected_end_motif_half_specs(
     if k_inside > MAX_RADIX5_KMER_SIZE && k_inside == k_outside && k_inside > 0 {
         // One byte-backed selected subspace is enough when both large-k halves have the same
         // length. The full inside/outside pair is still checked by the encoded lookup, so sharing
-        // this half-code universe only broadens the cheap prefilter and avoids duplicate per-tile
+        // this half-code subset only broadens the cheap prefilter and avoids duplicate per-tile
         // code arrays
         let mut selected_halves = Vec::with_capacity(rows.len() * 4);
         for row in rows {

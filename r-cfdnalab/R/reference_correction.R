@@ -304,7 +304,7 @@ cf_reference_corrected_end_motif_data_frame_from_context <- function(
     max_blacklisted_fraction = 1.0
   )
 
-  # Keep the complete reference motif universe for the chosen reference rows
+  # Keep the complete reference motif set for the chosen reference rows
   # because support counts and side marginals must not depend on sample selection
   ref_rows <- cf_prepare_reference_correction_ref_rows(
     ref_rows,

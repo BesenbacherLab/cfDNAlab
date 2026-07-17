@@ -206,8 +206,8 @@ impl SubspaceKmerSpec {
     /// Build left-aligned selected codes for every reference position.
     ///
     /// The result has the same length as `seq`. Positions without a complete selected k-mer contain
-    /// `sentinel_missing`. The packed dtype is chosen from the subspace size, not from the full
-    /// k-mer universe.
+    /// `sentinel_missing`. The packed dtype is chosen from the subspace size, not from the complete
+    /// k-mer set.
     pub(crate) fn build_left_aligned_codes(&self, seq: &[u8]) -> KmerCodes {
         let raw = build_left_aligned_subspace_codes(self, seq);
         pack_codes(raw, self.width)
@@ -267,7 +267,7 @@ pub(crate) fn build_optional_kmer_spec(k: usize, label: &str) -> Result<Option<K
 ///
 /// Selected codes are assigned in first-seen order after normalizing to uppercase ACGT and dropping
 /// duplicate k-mers. Subspace encoding is byte-backed for every k, because the selected set can be
-/// smaller than the full radix-5 universe and can also include k values that full radix-5 cannot
+/// smaller than the complete radix-5 k-mer set and can also include k values that full radix-5 cannot
 /// represent in `u64`.
 ///
 /// Parameters

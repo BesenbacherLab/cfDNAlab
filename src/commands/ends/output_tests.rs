@@ -164,24 +164,24 @@ fn ensure_dense_end_motif_output_size_rejects_invalid_env_override() {
 }
 
 #[test]
-fn ensure_all_motifs_enumeration_size_accepts_small_universe() {
+fn ensure_all_motifs_enumeration_size_accepts_small_set() {
     // Arrange / Act / Assert: 4^(1+1) = 16 motifs, which is trivially small.
     ensure_all_motifs_enumeration_size(1, 1, 10)
-        .expect("small all-motifs universe should be allowed");
+        .expect("small complete motif set should be allowed");
 }
 
 #[test]
-fn ensure_all_motifs_enumeration_size_rejects_large_universe_before_enumeration() {
+fn ensure_all_motifs_enumeration_size_rejects_large_set_before_enumeration() {
     // Arrange: 4^20 motifs is already far beyond the dense output guard for one window.
     let err = ensure_all_motifs_enumeration_size(10, 10, 1)
-        .expect_err("large all-motifs universe should be rejected");
+        .expect_err("large complete motif set should be rejected");
 
     // Assert
     assert!(err.to_string().contains("refusing to enumerate all motifs"));
 }
 
 #[test]
-fn build_all_end_motif_order_returns_full_single_base_universe_without_collapse() {
+fn build_all_end_motif_order_returns_complete_single_base_set_without_collapse() {
     // Arrange
     let inside_spec = spec_for_k(1);
 
@@ -195,7 +195,7 @@ fn build_all_end_motif_order_returns_full_single_base_universe_without_collapse(
 #[test]
 fn build_all_end_motif_order_collapses_single_base_complements() {
     // Arrange: for k=1, complement and reverse-complement are identical, so this test only
-    // checks the single-base universe reduction itself. The transform distinction is covered by
+    // checks the single-base set reduction itself. The transform distinction is covered by
     // the combined-motif tests below.
     let inside_spec = spec_for_k(1);
 
@@ -208,7 +208,7 @@ fn build_all_end_motif_order_collapses_single_base_complements() {
 }
 
 #[test]
-fn build_all_end_motif_order_enumerates_the_full_combined_outside_inside_universe() {
+fn build_all_end_motif_order_enumerates_the_complete_combined_outside_inside_set() {
     // Arrange
     let inside_spec = spec_for_k(1);
     let outside_spec = spec_for_k(1);
@@ -232,7 +232,7 @@ fn build_all_end_motif_order_collapses_combined_even_length_motifs_by_same_orien
     // - A < T and C < G, so motifs starting with A or C stay as-is
     // - motifs starting with G or T collapse to complements starting with C or A
     //
-    // Therefore the full canonical universe is exactly the eight labels whose outside base is
+    // Therefore the complete canonical set is exactly the eight labels whose outside base is
     // A or C.
     let inside_spec = spec_for_k(1);
     let outside_spec = spec_for_k(1);
@@ -254,7 +254,7 @@ fn build_all_end_motif_order_collapses_combined_odd_length_motifs_without_swappi
     // - the full motif is compared as one `outside || inside` string
     // - the first base always decides the lexicographic winner against its complement
     // - canonical full motifs must therefore start with A or C, never G or T
-    // - after splitting at k_outside=1, the exact dense universe is:
+    // - after splitting at k_outside=1, the exact dense set is:
     //   A_<any 2-mer> and C_<any 2-mer>
     let inside_spec = spec_for_k(2);
     let outside_spec = spec_for_k(1);
@@ -263,7 +263,7 @@ fn build_all_end_motif_order_collapses_combined_odd_length_motifs_without_swappi
     let motifs = build_all_end_motif_order(Some(&inside_spec), Some(&outside_spec), true)
         .expect("collapsed odd-length combined motif order");
 
-    // Assert: exact dense universe in sorted order.
+    // Assert: exact dense set in sorted order.
     let bases = ["A", "C", "G", "T"];
     let mut expected = Vec::new();
     for outside in ["A", "C"] {
@@ -284,7 +284,7 @@ fn build_all_end_motif_order_collapses_combined_odd_length_motifs_without_swappi
 #[test]
 fn build_all_end_motif_order_collapses_readable_combined_2_plus_2_examples() {
     // Arrange: k_outside=2 and k_inside=2 keeps both halves multi-base, but we only assert a few
-    // hand-derived pairs instead of an opaque generated universe.
+    // hand-derived pairs instead of an opaque generated set.
     //
     // First-principles examples:
     // - "GTAC" complements to "CATG", so the canonical label must be "CA_TG", not "GT_AC"
@@ -300,9 +300,9 @@ fn build_all_end_motif_order_collapses_readable_combined_2_plus_2_examples() {
 
     // Act
     let motifs = build_all_end_motif_order(Some(&inside_spec), Some(&outside_spec), true)
-        .expect("collapsed 2+2 dense universe");
+        .expect("collapsed 2+2 dense set");
 
-    // Assert: exact dense universe plus a few hand-derived labels that make the contract obvious.
+    // Assert: exact dense set plus a few hand-derived labels that make the contract obvious.
     assert_eq!(motifs, expected_collapsed_combined_2_plus_2_order());
 
     assert!(motifs.contains(&"CA_TG".to_string()));
@@ -312,7 +312,7 @@ fn build_all_end_motif_order_collapses_readable_combined_2_plus_2_examples() {
     assert!(!motifs.contains(&"TG_CA".to_string()));
 
     // `AC_GT` is produced both directly and as the complement of `TG_CA`, so it must appear only
-    // once in the dense universe.
+    // once in the dense set.
     assert_eq!(
         motifs.iter().filter(|motif| motif.as_str() == "AC_GT").count(),
         1

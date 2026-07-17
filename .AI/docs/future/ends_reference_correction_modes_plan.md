@@ -92,7 +92,7 @@ the inside reference denominator.
 - Keep `use_global_bias` semantics unchanged. A global reference can correct
   non-global end rows only with explicit opt-in.
 - Compute reference support from the matched reference row and correction
-  universe, not from motifs observed in the sample or selected by the loader.
+  motif set, not from motifs observed in the sample or selected by the loader.
 - Reject positive corrected units with no positive reference denominator under
   the unsupported-reference policy.
 - Motif-group end-motif outputs accept only `two_sided_correction = None`.
@@ -263,7 +263,7 @@ separate shorter-k reference runs near row edges or masked bases. That is
 acceptable because correction stays tied to the same eligible joint motif space
 as the end-motif output and avoids extra reference passes.
 
-The correction universe comes from the reference package, not from sample
+The correction motif set comes from the reference package, not from sample
 sparsity and not from loader motif selectors. If the reference output was built
 from a motifs file, side frequencies are conditioned on that selected
 full-motif set. Unlisted full motifs are not part of the denominator.
@@ -282,9 +282,9 @@ making side-mode matrix columns inspectable after `read()`. Label selectors
 return the requested side labels in requested selector order.
 
 For large k-mer sizes, use a motifs file consistently for `ends` and
-`ref-kmers` to define a tractable correction universe. Do not add a
+`ref-kmers` to define a tractable correction motif subset. Do not add a
 selector-dependent denominator mode. The motifs-file route is the documented
-way to define a large or custom correction universe.
+way to define a large or custom correction motif set.
 
 ## Validation
 
@@ -377,7 +377,7 @@ before `read()`.
 
 For `joint`, `split`, and one-sided correction, implementations may
 apply motif selection before correction as an optimization, as long as reference
-support and denominators are still computed from the full correction universe.
+support and denominators are still computed from the complete correction motif set.
 This keeps the same values as full correction followed by filtering.
 
 Pre-aggregation full-motif filtering for `outside` and `inside` is not part of

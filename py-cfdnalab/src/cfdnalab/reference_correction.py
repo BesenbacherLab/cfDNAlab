@@ -163,7 +163,7 @@ def _reference_corrected_data_frame(
 
     One-sided outputs do not accept an explicit mode.
 
-    Reference universe
+    Reference motif set
     ------------------
     For `"split"`, `"outside"`, and `"inside"`, side-specific reference
     frequencies are calculated from the loaded full-length reference k-mers.
@@ -916,7 +916,7 @@ def _correct_split_data_frame(
     outside_width = correction_mode.outside_width
     inside_width = correction_mode.inside_width
     end_rows = _add_end_sides(end_rows, outside_width, inside_width)
-    # Collapse the full reference universe independently by prefix and suffix
+    # Collapse the complete reference motif set independently by prefix and suffix
     outside_reference = _side_reference_denominator(
         ref_rows,
         reference_row_columns,
@@ -1012,7 +1012,7 @@ def _correct_side_data_frame(
         sort=False,
         validate="many_to_one",
     )
-    # Derive side frequencies from the full reference universe and attach the
+    # Derive side frequencies from the complete reference motif set and attach the
     # denominator for the side retained in the result
     side_reference = _side_reference_denominator(
         ref_rows,
@@ -1494,7 +1494,7 @@ def _reference_rows_for_indices(
     Load the complete reference motif axis for selected reference rows.
 
     All motifs are required because correction support and side marginals use
-    the reference universe, not only sample-selected motifs. Sparse stores read
+    the complete reference motif set, not only sample-selected motifs. Sparse stores read
     stored rows, while dense stores return their complete selected coordinates.
     """
     motif_indices = np.arange(len(ref_kmers.motifs_metadata()), dtype=np.int64)

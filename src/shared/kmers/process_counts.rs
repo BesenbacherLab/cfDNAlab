@@ -113,7 +113,7 @@ fn extract_bins(
         .collect()
 }
 
-/// Collect motifs for a category, optionally ensuring the full universe and filtering 'N'
+/// Collect motifs for a category, optionally ensuring the complete set and filtering 'N'
 #[cfg(feature = "cmd_fragment_kmers")]
 fn collect_motifs(
     windows: &[FxHashMap<String, f64>],
@@ -121,7 +121,7 @@ fn collect_motifs(
     canonical: bool,
     ensure_all: bool,
 ) -> Vec<String> {
-    // Universe of motifs to keep
+    // Set of motifs to keep
     let set: FxHashSet<String> = if ensure_all {
         base_motifs.into_iter().collect()
     } else {
@@ -180,8 +180,8 @@ pub(crate) fn all_motifs(k: usize, specs: &FxHashMap<u8, KmerSpec>) -> Vec<Strin
 /// - `T = 3`
 /// - `N = 4`
 ///
-/// `all_motifs()` only needs the A/C/G/T universe. A radix-4 counter is exactly that no-N
-/// universe, because each digit has only the four allowed A/C/G/T states.
+/// `all_motifs()` only needs the complete A/C/G/T set. A radix-4 counter represents exactly that
+/// no-N set, because each digit has only the four allowed A/C/G/T states.
 ///
 /// The function has to keep integer values and positional representations separate. A decimal value
 /// is the ordinary base-10 integer value, like the value stored in a `u64`. A digit is one
@@ -231,7 +231,7 @@ pub(crate) fn all_motifs(k: usize, specs: &FxHashMap<u8, KmerSpec>) -> Vec<Strin
 /// Parameters
 /// ----------
 /// - `radix4_code`:
-///   The 0-based index in the A/C/G/T-only motif universe. It must be less than `4^k`.
+///   The 0-based index in the complete A/C/G/T-only motif set. It must be less than `4^k`.
 /// - `k`:
 ///   Motif length in bases. `k = 0` maps to code `0`, representing the empty motif.
 ///

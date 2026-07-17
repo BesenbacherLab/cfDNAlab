@@ -321,7 +321,7 @@ class EndMotifCounts:
         Return whether a motif label exists in this output.
 
         Sparse output only stores observed motifs, so an unobserved motif will
-        return `False` even if it is part of the theoretical motif universe.
+        return `False` even if it is part of the complete motif set.
 
         Parameters
         ----------

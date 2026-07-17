@@ -96,7 +96,7 @@ Initial config should be close to:
 
 `kmer_size` is singular on purpose. Supporting multiple k values while also supporting motif-file grouping makes the motif contract and output shape much less clear.
 
-`all_motifs` controls whether the complete motif axis is requested. Dense output should be used when the output axis is known to contain the full motif universe for the configured k-mer contract. Otherwise sparse output is preferred. This is a mathematical/output-contract decision, not just a question of whether the command generated all motifs itself.
+`all_motifs` controls whether the complete motif axis is requested. Dense output should be used when the output axis is known to contain the complete motif set for the configured k-mer contract. Otherwise sparse output is preferred. This is a mathematical/output-contract decision, not just a question of whether the command generated all motifs itself.
 
 `motifs_file` is part of the target command. It should support selected motifs and motif groups. The docs should describe the accepted k-mer motif format directly, not inherit `ends` wording about inside and outside motif halves.
 

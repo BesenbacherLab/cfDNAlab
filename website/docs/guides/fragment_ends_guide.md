@@ -193,7 +193,7 @@ Reference correction divides each observed end-motif count by a reference-based 
 
 First precompute matching reference k-mer frequencies with `cfdna ref-kmers`, then load the sample end motifs and reference k-mers in Python or R and pass the reference k-mers to the usual end-motif output loaders.
 
-You only need to run `cfdna ref-kmers` once per reference setup. That means once per reference genome, blacklist, k-mer size, etc. You do not need to run it once per sample.
+You only need to run `cfdna ref-kmers` once per reference setup. That means once per reference genome, blacklist, k-mer size, etc.
 
 ### Two-sided correction
 
@@ -225,7 +225,7 @@ cfdna ref-kmers \
   --all-motifs
 ```
 
-If the `cfdna ends` call used `--by-size`, `--by-bed`, or `--by-grouped-bed`, pass the same windowing or grouping option to `cfdna ref-kmers`. Use the same motifs file for both commands when you want correction to use exactly that selected motif universe. Omit the motifs file from `ref-kmers` when the wider reference motif universe should contribute to correction. `ref-kmers` accepts end-motif labels such as `AT_CG` and treats them as the reference k-mer `ATCG`.
+If the `cfdna ends` call used `--by-size`, `--by-bed`, or `--by-grouped-bed`, pass the same windowing or grouping option to `cfdna ref-kmers`. Use the same motifs file for both commands when you want correction to use exactly that motif subset. Omit the motifs file from `ref-kmers` when the complete reference motif set should contribute to correction. `ref-kmers` accepts end-motif labels such as `AT_CG` and treats them as the reference k-mer `ATCG`.
 
 Both outputs use **forward-oriented** motif labels only. `cfdna ends` reverse-complements right-end motifs before writing them, and `cfdna ref-kmers` counts reference k-mers left-to-right. Ungrouped motif labels are matched by removing the underscore, for example `AT_CG -> ATCG`, `_AA -> AA`, and `AA_ -> AA`. Grouped motifs-file output are matched directly on the group names.
 

@@ -607,7 +607,7 @@ pub fn run_ends(opt: &EndsConfig, options: RunOptions) -> Result<EndsRunResult> 
             }
 
             // `all_motifs` switches the final output from "observed motifs only" to a dense fixed motif
-            // universe. The dense size checks happen before we allocate or enumerate that full universe.
+            // set. The dense size checks happen before we allocate or enumerate that complete set.
             if opt.all_motifs {
                 ensure_all_motifs_enumeration_size(opt.k_inside, opt.k_outside, label_bins.len())?;
             }

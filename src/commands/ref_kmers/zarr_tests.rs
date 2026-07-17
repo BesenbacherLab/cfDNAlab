@@ -188,7 +188,7 @@ fn postprocess_ref_kmer_counts_rejects_out_of_bounds_row() {
 }
 
 #[test]
-fn build_all_ref_kmer_order_collapses_odd_canonical_universe() -> Result<()> {
+fn build_all_ref_kmer_order_collapses_odd_complete_canonical_set() -> Result<()> {
     // Arrange: for k = 1, A and T collapse to A, while C and G collapse to C.
     let spec = kmer_spec(1);
 
@@ -201,7 +201,7 @@ fn build_all_ref_kmer_order_collapses_odd_canonical_universe() -> Result<()> {
 }
 
 #[test]
-fn complete_ref_kmer_axis_len_counts_noncanonical_universe() {
+fn complete_ref_kmer_axis_len_counts_noncanonical_set() {
     // Arrange: without canonicalization, every A/C/G/T string gets its own label.
 
     // Act
@@ -216,9 +216,9 @@ fn complete_ref_kmer_axis_len_counts_noncanonical_universe() {
 }
 
 #[test]
-fn complete_ref_kmer_axis_len_counts_odd_canonical_universe() {
+fn complete_ref_kmer_axis_len_counts_odd_canonical_set() {
     // Arrange: odd-length k-mers have no self reverse-complements, so canonicalization halves the
-    // complete A/C/G/T universe.
+    // complete A/C/G/T set.
 
     // Act
     let k1_axis_len = complete_ref_kmer_axis_len(1, true);
@@ -230,7 +230,7 @@ fn complete_ref_kmer_axis_len_counts_odd_canonical_universe() {
 }
 
 #[test]
-fn complete_ref_kmer_axis_len_counts_even_canonical_universe() {
+fn complete_ref_kmer_axis_len_counts_even_canonical_set() {
     // Arrange: even-length k-mers include self reverse-complements. For k = 2, the four fixed
     // points are AT, CG, GC, and TA. The remaining 12 k-mers form 6 reverse-complement pairs, so
     // k = 2 has 10 labels. For k = 4, there are 4^2 = 16 fixed points and 240 remaining k-mers,
@@ -246,7 +246,7 @@ fn complete_ref_kmer_axis_len_counts_even_canonical_universe() {
 }
 
 #[test]
-fn complete_ref_kmer_axis_len_returns_none_for_invalid_or_oversized_universes() {
+fn complete_ref_kmer_axis_len_returns_none_for_invalid_or_oversized_sets() {
     // Arrange: k = 0 is not a motif length, and 4^32 is one larger than u64::MAX.
 
     // Act
