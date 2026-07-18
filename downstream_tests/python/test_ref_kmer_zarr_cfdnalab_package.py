@@ -20,6 +20,7 @@ def test_cfdnalab_package_reads_dense_global_ref_kmers(
     assert ref_kmers.motif_axis_kind() == "motif"
     assert ref_kmers.kmer_size() == 3
     assert ref_kmers.canonical()
+    assert ref_kmers.orientation() == "both"
     assert ref_kmers.all_motifs()
     assert ref_kmers.assign_by() == "count-overlap"
     assert [entry["name"] for entry in ref_kmers.reference_contig_footprint()] == [

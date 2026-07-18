@@ -24,6 +24,7 @@ use cfdnalab::{
         RefKmerStorageMode, TwoSidedCorrectionMode, load_ends_output, load_lengths_output,
         load_midpoints_output, load_ref_kmers_output,
     },
+    run_like_cli::ref_kmers::RefKmerOrientation,
 };
 use std::{
     env,
@@ -214,6 +215,7 @@ fn rust_ref_kmer_loader_reads_downstream_fixtures() -> Result<()> {
     assert_eq!(dense.motif_axis_kind(), RefKmerMotifAxisKind::Motif);
     assert_eq!(dense.kmer_size(), 3);
     assert!(dense.canonical());
+    assert_eq!(dense.orientation(), RefKmerOrientation::Both);
     assert!(dense.all_motifs());
     assert_eq!(dense.assign_by(), "count-overlap");
     assert_eq!(
