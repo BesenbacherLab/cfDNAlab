@@ -204,8 +204,10 @@ def _reference_corrected_data_frame(
     `use_global_bias=True` to apply the global reference composition to every
     end-motif row.
 
-    `cfdna ends` and `cfdna ref-kmers` both write forward-oriented motif labels.
-    Right-end motifs have already been reverse-complemented by `cfdna ends`.
+    `cfdna ends` writes motifs from each fragment end inward. Right-end motifs
+    are therefore reverse-complemented relative to the stored reference.
+    Reference correction requires `cfdna ref-kmers --orientation both`, which
+    averages the reference-forward sequence and its reverse complement.
 
     Window, group, and motif selectors follow the same rules as
     `ends.data_frame()`. Motif selectors choose the returned end-motif rows.
@@ -752,9 +754,7 @@ def _selected_mode_axis(
     # indices, so the standard end-motif selector defines their result axis
     if mode in {"exact", "split"}:
         motif_indices = ends._resolve_motif_selector(motifs, motif_idxs)
-        return (
-            ends.motifs_metadata().iloc[motif_indices]["motif"].astype(str).tolist()
-        )
+        return ends.motifs_metadata().iloc[motif_indices]["motif"].astype(str).tolist()
 
     # Side-only labels were derived by collapsing multiple stored motifs. A
     # stored motif index therefore cannot identify a derived result column
@@ -1353,6 +1353,11 @@ def _validate_reference_correction_inputs(
     if ref_kmers.canonical():
         raise ValueError(
             "Reference correction requires non-canonical reference k-mer output"
+        )
+    if ref_kmers.orientation() != "both":
+        raise ValueError(
+            "Reference correction requires reference k-mer output generated "
+            "with `--orientation both`"
         )
     if ends.end_motifs.motif_axis_kind == "motif_group":
         if ref_kmers.motif_axis_kind() != "motif_group":

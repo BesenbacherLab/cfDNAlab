@@ -78,8 +78,10 @@
 #' `use_global_bias = TRUE` to apply the global reference composition to every
 #' end-motif row.
 #'
-#' `cfdna ends` and `cfdna ref-kmers` both write forward-oriented motif labels.
-#' Right-end motifs have already been reverse-complemented by `cfdna ends`.
+#' `cfdna ends` writes motifs from each fragment end inward. Right-end motifs
+#' are therefore reverse-complemented relative to the stored reference.
+#' Reference correction requires `cfdna ref-kmers --orientation both`, which
+#' averages the reference-forward sequence and its reverse complement.
 #'
 #' Window, group, and motif selectors follow the same rules as
 #' `end_motif_data_frame()`. Motif selectors choose the returned end-motif
@@ -1440,6 +1442,13 @@ cf_reference_correction_ref_row_indices_from_end_rows <- function(
 #' @return Invisibly returns `TRUE`.
 #' @noRd
 cf_validate_reference_correction_motif_axes <- function(ends, ref_kmers) {
+  if (!identical(ref_kmers$orientation, "both")) {
+    stop(
+      "Reference correction requires reference k-mer output generated with ",
+      "`--orientation both`",
+      call. = FALSE
+    )
+  }
   if (isTRUE(ref_kmers$canonical)) {
     stop("Reference correction requires non-canonical reference k-mer output", call. = FALSE)
   }

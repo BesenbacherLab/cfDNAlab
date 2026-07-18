@@ -155,15 +155,4 @@ zero, finite frequencies are zero. With \code{unsupported_motifs = "keep_na"}, o
 undefined positive corrected count makes all frequencies in that output row
 \code{NA}. Reference correction fails if division by a positive reference factor
 would produce a non-finite corrected count.
-
-End-motif methods can receive \code{ref_kmers} to add reference-corrected counts
-without manually joining the sample and reference data frames. Corrected
-data frames add \code{corrected_count} and \code{corrected_frequency}. When labels have
-both outside and inside bases, \code{two_sided_correction} is required. \code{"joint"}
-corrects each full motif with its matching full reference motif. \code{"split"}
-preserves full labels but multiplies independently calculated outside and
-inside correction factors. \code{"outside"} aggregates sample counts by outside
-label before correction and returns labels such as \code{"AC_"}. \code{"inside"} does
-the corresponding aggregation by inside label and returns labels such as
-\code{"_GT"}.
 }

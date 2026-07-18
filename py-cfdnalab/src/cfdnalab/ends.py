@@ -965,6 +965,13 @@ class GlobalEndMotifCounts(EndMotifCounts):
         positive reference frequency contribute to the row's correction
         support.
 
+        End-motif labels run inward from either fragment end, so reference
+        correction requires reference k-mer output generated with
+        `--orientation both`.
+        This assumes that left and right fragment ends contribute equally
+        within each output row, as expected for genomic windows of practical
+        size.
+
         Two-sided correction modes
         --------------------------
         When motif labels contain both outside and inside bases, such as
@@ -1156,6 +1163,13 @@ class GlobalEndMotifCounts(EndMotifCounts):
         positive reference frequency contribute to the row's correction
         support.
 
+        End-motif labels run inward from either fragment end, so reference
+        correction requires reference k-mer output generated with
+        `--orientation both`.
+        This assumes that left and right fragment ends contribute equally
+        within each output row, as expected for genomic windows of practical
+        size.
+
         Two-sided correction modes
         --------------------------
         When motif labels contain both outside and inside bases, such as
@@ -1250,6 +1264,13 @@ class GlobalEndMotifCounts(EndMotifCounts):
         positive reference frequency contribute to the row's correction
         support.
 
+        End-motif labels run inward from either fragment end, so reference
+        correction requires reference k-mer output generated with
+        `--orientation both`.
+        This assumes that left and right fragment ends contribute equally
+        within each output row, as expected for genomic windows of practical
+        size.
+
         Two-sided correction modes
         --------------------------
         When motif labels contain both outside and inside bases, such as
@@ -1342,6 +1363,13 @@ class WindowedEndMotifCounts(EndMotifCounts):
         that are rare in the reference row are scaled up. Only motifs with a
         positive reference frequency contribute to the row's correction
         support.
+
+        End-motif labels run inward from either fragment end, so reference
+        correction requires reference k-mer output generated with
+        `--orientation both`.
+        This assumes that left and right fragment ends contribute equally
+        within each output row, as expected for genomic windows of practical
+        size.
 
         Two-sided correction modes
         --------------------------
@@ -1566,6 +1594,13 @@ class WindowedEndMotifCounts(EndMotifCounts):
         positive reference frequency contribute to the row's correction
         support.
 
+        End-motif labels run inward from either fragment end, so reference
+        correction requires reference k-mer output generated with
+        `--orientation both`.
+        This assumes that left and right fragment ends contribute equally
+        within each output row, as expected for genomic windows of practical
+        size.
+
         Two-sided correction modes
         --------------------------
         When motif labels contain both outside and inside bases, such as
@@ -1664,6 +1699,13 @@ class WindowedEndMotifCounts(EndMotifCounts):
         positive reference frequency contribute to the row's correction
         support.
 
+        End-motif labels run inward from either fragment end, so reference
+        correction requires reference k-mer output generated with
+        `--orientation both`.
+        This assumes that left and right fragment ends contribute equally
+        within each output row, as expected for genomic windows of practical
+        size.
+
         Two-sided correction modes
         --------------------------
         When motif labels contain both outside and inside bases, such as
@@ -1759,6 +1801,13 @@ class GroupedEndMotifCounts(EndMotifCounts):
         that are rare in the reference row are scaled up. Only motifs with a
         positive reference frequency contribute to the row's correction
         support.
+
+        End-motif labels run inward from either fragment end, so reference
+        correction requires reference k-mer output generated with
+        `--orientation both`.
+        This assumes that left and right fragment ends contribute equally
+        within each output row, as expected for genomic windows of practical
+        size.
 
         Two-sided correction modes
         --------------------------
@@ -2016,6 +2065,13 @@ class GroupedEndMotifCounts(EndMotifCounts):
         positive reference frequency contribute to the row's correction
         support.
 
+        End-motif labels run inward from either fragment end, so reference
+        correction requires reference k-mer output generated with
+        `--orientation both`.
+        This assumes that left and right fragment ends contribute equally
+        within each output row, as expected for genomic windows of practical
+        size.
+
         Two-sided correction modes
         --------------------------
         When motif labels contain both outside and inside bases, such as
@@ -2114,6 +2170,13 @@ class GroupedEndMotifCounts(EndMotifCounts):
         that are rare in the reference row are scaled up. Only motifs with a
         positive reference frequency contribute to the row's correction
         support.
+
+        End-motif labels run inward from either fragment end, so reference
+        correction requires reference k-mer output generated with
+        `--orientation both`.
+        This assumes that left and right fragment ends contribute equally
+        within each output row, as expected for genomic windows of practical
+        size.
 
         Two-sided correction modes
         --------------------------

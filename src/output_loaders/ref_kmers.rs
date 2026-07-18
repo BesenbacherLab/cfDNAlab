@@ -12,6 +12,7 @@
 //! point lookups and dense reconstruction without changing the on-disk frequency contract.
 
 use crate::{
+    commands::ref_kmers::config::RefKmerOrientation,
     interval::Interval,
     output_loaders::{
         OutputLoaderError, OutputLoaderResult,
@@ -38,7 +39,7 @@ use zarrs::{
     filesystem::FilesystemStore,
 };
 
-const REF_KMER_SCHEMA_VERSION: u64 = 1;
+const REF_KMER_SCHEMA_VERSION: u64 = 2;
 
 /// Load a `cfdna ref-kmers` Zarr store.
 ///
@@ -72,6 +73,7 @@ pub struct RefKmersOutput {
     data: RefKmerFrequencyData,
     kmer_size: u8,
     canonical: bool,
+    orientation: RefKmerOrientation,
     all_motifs: bool,
     assign_by: String,
     reference_contig_footprint: Vec<ContigFootprintEntry>,
@@ -101,6 +103,11 @@ impl RefKmersOutput {
     /// Return whether the output collapsed reverse-complement-equivalent k-mers.
     pub fn canonical(&self) -> bool {
         self.canonical
+    }
+
+    /// Return which sequence orientations contributed to each stored motif frequency.
+    pub fn orientation(&self) -> RefKmerOrientation {
+        self.orientation
     }
 
     /// Return whether zero-frequency motif targets were kept in the stored motif axis.
@@ -245,6 +252,7 @@ impl RefKmersOutput {
             motif_count: self.motif_count(),
             kmer_size: self.kmer_size,
             canonical: self.canonical,
+            orientation: self.orientation,
             all_motifs: self.all_motifs,
             assign_by: self.assign_by.clone(),
             reference_contig_footprint: self.reference_contig_footprint.clone(),
@@ -503,6 +511,7 @@ impl RefKmersOutput {
             data,
             kmer_size: self.kmer_size,
             canonical: self.canonical,
+            orientation: self.orientation,
             source_all_motifs: self.all_motifs,
             assign_by: self.assign_by.clone(),
         })
@@ -783,6 +792,7 @@ pub struct RefKmerFrequencySelection {
     data: RefKmerFrequencyData,
     kmer_size: u8,
     canonical: bool,
+    orientation: RefKmerOrientation,
     source_all_motifs: bool,
     assign_by: String,
 }
@@ -811,6 +821,11 @@ impl RefKmerFrequencySelection {
     /// Return whether the source output collapsed reverse-complement-equivalent k-mers.
     pub fn canonical(&self) -> bool {
         self.canonical
+    }
+
+    /// Return which sequence orientations contributed to the source frequencies.
+    pub fn orientation(&self) -> RefKmerOrientation {
+        self.orientation
     }
 
     /// Return whether the source output kept zero-frequency motif targets before this selection.
@@ -983,6 +998,8 @@ pub struct RefKmerOutputMetadata {
     pub kmer_size: u8,
     /// Whether reverse-complement-equivalent k-mers were collapsed.
     pub canonical: bool,
+    /// Which sequence orientations contributed to each motif frequency.
+    pub orientation: RefKmerOrientation,
     /// Whether zero-frequency motifs were included.
     pub all_motifs: bool,
     /// Window-assignment mode recorded in the Zarr metadata.
@@ -996,7 +1013,7 @@ impl fmt::Display for RefKmerOutputMetadata {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "storage_mode={}, row_mode={}, motif_axis={}, row_count={}, motif_count={}, kmer_size={}, canonical={}, all_motifs={}, assign_by={}",
+            "storage_mode={}, row_mode={}, motif_axis={}, row_count={}, motif_count={}, kmer_size={}, canonical={}, orientation={}, all_motifs={}, assign_by={}",
             describe_ref_kmer_storage_mode(self.storage_mode),
             describe_ref_kmer_row_mode(self.row_mode),
             describe_ref_kmer_motif_axis_kind(self.motif_axis_kind),
@@ -1004,6 +1021,7 @@ impl fmt::Display for RefKmerOutputMetadata {
             self.motif_count,
             self.kmer_size,
             self.canonical,
+            self.orientation.metadata_name(),
             self.all_motifs,
             self.assign_by
         )
@@ -1706,6 +1724,7 @@ impl RefKmersParser {
             data,
             kmer_size: root_metadata.kmer_size,
             canonical: root_metadata.canonical,
+            orientation: root_metadata.orientation,
             all_motifs: root_metadata.all_motifs,
             assign_by: root_metadata.assign_by,
             reference_contig_footprint,
@@ -1720,6 +1739,7 @@ struct RefKmerRootMetadata {
     motif_axis_kind: RefKmerMotifAxisKind,
     kmer_size: u8,
     canonical: bool,
+    orientation: RefKmerOrientation,
     all_motifs: bool,
     assign_by: String,
 }
@@ -1801,6 +1821,11 @@ impl RefKmerRootMetadata {
         };
         let kmer_size = u8_from_u64(u64_attr(attributes, "kmer_size")?, "kmer_size")?;
         ensure!(kmer_size > 0, "reference k-mer kmer_size must be positive");
+        let orientation = match string_attr(attributes, "orientation")? {
+            "both" => RefKmerOrientation::Both,
+            "reference_forward" => RefKmerOrientation::ReferenceForward,
+            other => bail!("unsupported reference k-mer orientation '{other}'"),
+        };
 
         Ok(Self {
             storage_mode,
@@ -1808,6 +1833,7 @@ impl RefKmerRootMetadata {
             motif_axis_kind,
             kmer_size,
             canonical: bool_attr(attributes, "canonical")?,
+            orientation,
             all_motifs: bool_attr(attributes, "all_motifs")?,
             assign_by: string_attr(attributes, "assign_by")?.to_string(),
         })

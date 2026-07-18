@@ -1,9 +1,12 @@
 use super::*;
 use crate::{
-    commands::cli_common::DistributionWindowSpec,
+    commands::{cli_common::DistributionWindowSpec, ref_kmers::config::RefKmerOrientation},
     shared::{
         interval::IndexedInterval,
-        kmers::kmer_codec::{build_kmer_specs, build_left_aligned_codes_for_spec, KmerSpec},
+        kmers::{
+            kmer_codec::{build_kmer_specs, build_left_aligned_codes_for_spec, KmerSpec},
+            motifs_file::parse_selected_ref_kmers_file,
+        },
         overlaps::{
             ChromosomeBedWindows, DEFAULT_BROAD_WINDOW_MIN_BP, TileBedWindowView,
             TileBedWindowSpans,
@@ -12,7 +15,7 @@ use crate::{
         windowing::DistributionWindowContext,
     },
 };
-use std::{ops::Range, path::PathBuf};
+use std::{io::Write, ops::Range, path::PathBuf};
 
 struct CountFixture {
     kmer_size: u8,
@@ -141,6 +144,7 @@ fn run_count(
             0,
             chrom_len,
             assign_by,
+            RefKmerOrientation::Both,
             None,
         )?;
     }
@@ -149,6 +153,162 @@ fn run_count(
         "unselected count path should not fill selected counts"
     );
     Ok(counts_by_window)
+}
+
+fn selected_lookup(contents: &str, kmer_size: usize) -> Result<SelectedMotifLookup> {
+    let mut motifs_file = tempfile::NamedTempFile::new()?;
+    write!(motifs_file, "{contents}")?;
+    parse_selected_ref_kmers_file(motifs_file.path(), kmer_size)
+}
+
+fn run_selected_global_count(
+    sequence: &[u8],
+    kmer_size: u8,
+    lookup: &SelectedMotifLookup,
+    orientation: RefKmerOrientation,
+) -> Result<SelectedKmerCountsByWindow> {
+    let spec = lookup
+        .inside_spec
+        .as_ref()
+        .expect("selected reference lookup has an inside spec");
+    let codes = spec.build_left_aligned_codes(sequence);
+    let enc = Enc {
+        k: kmer_size,
+        codes: &codes,
+        none: spec.missing_reference_code(),
+        n: spec.masked_reference_code(),
+    };
+    let window_spec = DistributionWindowSpec::Global;
+    let window_context = DistributionWindowContext {
+        spec: &window_spec,
+        chr_idx_offset: 0,
+    };
+    let mut counts_by_window = KmerCountsByWindow::default();
+    let mut selected_counts_by_window = SelectedKmerCountsByWindow::default();
+
+    count_kmers_by_window(
+        &mut counts_by_window,
+        &mut selected_counts_by_window,
+        &enc,
+        &window_context,
+        FixedWidthWindowSource::Global,
+        0..sequence.len() as u64,
+        0,
+        sequence.len() as u64,
+        WindowAssigner::Any,
+        orientation,
+        Some(lookup),
+    )?;
+    assert!(counts_by_window.is_empty());
+    Ok(selected_counts_by_window)
+}
+
+#[test]
+fn both_orientations_count_selected_reverse_complement_into_one_target() -> Result<()> {
+    // Arrange: only AACC is selected. The reference contains AACC once and its reverse complement
+    // GGTT once, separated by Ns so no other full k-mers are valid. Each observation contributes
+    // half to the AACC target, for a total selected count of 1.
+    let lookup = selected_lookup("AACC\n", 4)?;
+
+    // Act
+    let counts = run_selected_global_count(
+        b"AACCNNNNGGTT",
+        4,
+        &lookup,
+        RefKmerOrientation::Both,
+    )?;
+
+    // Assert
+    assert_close(counts[&0].counts[&0], 1.0);
+    Ok(())
+}
+
+#[test]
+fn both_orientations_count_when_only_reverse_complement_label_is_selected() -> Result<()> {
+    // Arrange: only GGTT is selected and the reference contains only AACC. The reverse lookup
+    // contributes half of the observation to the selected GGTT target.
+    let lookup = selected_lookup("GGTT\n", 4)?;
+
+    // Act
+    let counts =
+        run_selected_global_count(b"AACC", 4, &lookup, RefKmerOrientation::Both)?;
+
+    // Assert
+    assert_close(counts[&0].counts[&0], 0.5);
+    Ok(())
+}
+
+#[test]
+fn both_orientations_add_two_halves_when_reverse_complements_share_a_group() -> Result<()> {
+    // Arrange: AACC and GGTT share one group. Each of the two reference observations contributes
+    // 0.5 through the forward lookup and 0.5 through the reverse lookup, so the group total is 2.
+    let lookup = selected_lookup("AACC\tpair\nGGTT\tpair\n", 4)?;
+
+    // Act
+    let counts = run_selected_global_count(
+        b"AACCNNNNGGTT",
+        4,
+        &lookup,
+        RefKmerOrientation::Both,
+    )?;
+
+    // Assert
+    assert_close(counts[&0].counts[&0], 2.0);
+    Ok(())
+}
+
+#[test]
+fn both_orientations_split_halves_when_reverse_complements_use_different_groups() -> Result<()> {
+    // Arrange: group_a contains AACC and group_b contains GGTT. Across one occurrence of each
+    // sequence, each group receives 0.5 + 0.5 = 1.
+    let lookup = selected_lookup("AACC\tgroup_a\nGGTT\tgroup_b\n", 4)?;
+
+    // Act
+    let counts = run_selected_global_count(
+        b"AACCNNNNGGTT",
+        4,
+        &lookup,
+        RefKmerOrientation::Both,
+    )?;
+
+    // Assert
+    assert_close(counts[&0].counts[&0], 1.0);
+    assert_close(counts[&0].counts[&1], 1.0);
+    Ok(())
+}
+
+#[test]
+fn both_orientations_keep_self_reverse_complement_selected_weight_once() -> Result<()> {
+    // Arrange: AATT is self reverse-complementary. Its forward and reverse lookup states point to
+    // the same target, so the two half contributions reconstruct its original weight 1.
+    let lookup = selected_lookup("AATT\n", 4)?;
+
+    // Act
+    let counts =
+        run_selected_global_count(b"AATT", 4, &lookup, RefKmerOrientation::Both)?;
+
+    // Assert
+    assert_close(counts[&0].counts[&0], 1.0);
+    Ok(())
+}
+
+#[test]
+fn reference_forward_selected_count_ignores_reverse_lookup_state() -> Result<()> {
+    // Arrange: only AACC is selected, while the reference contains only GGTT. Reference-forward
+    // mode must preserve the old behavior and produce no selected count.
+    let lookup = selected_lookup("AACC\n", 4)?;
+
+    // Act
+    let counts = run_selected_global_count(
+        b"GGTT",
+        4,
+        &lookup,
+        RefKmerOrientation::ReferenceForward,
+    )?;
+
+    // Assert
+    assert!(counts.is_empty());
+    Ok(())
 }
 
 fn fixture_kmer(fixture: &CountFixture, motif: &[u8]) -> Kmer {

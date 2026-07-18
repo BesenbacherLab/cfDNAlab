@@ -1,15 +1,8 @@
 //! Runner for calculating reference k-mer backgrounds.
 //!
 //! Counts reference k-mers in a tiled pass, with per-window scaling factors
-//! enabling downstream count reconstruction.
-//!
-//! K-mers are only counted in the left->right direction.
-//! For reverse-orientation k-mers, you can reverse-complement
-//! the k-mers downstream.
-
-// TODO: Perhaps make it an option to add the revcomp counts to the output?
-// It's literally just a loop with:
-//   counts[revcomp(motif)] += counts[motif]  # (though with a tmp dict in-between)
+//! enabling downstream count reconstruction. By default, each observation is
+//! split equally between its reference-forward label and reverse complement.
 
 use crate::{
     bam::Contigs,
@@ -452,6 +445,7 @@ pub fn run_ref_kmers(opt: &RefKmersConfig, options: RunOptions) -> Result<RefKme
         total_windows_usize,
         opt.canonical,
         opt.all_motifs,
+        opt.orientation,
     )?;
     let empty_rows = frequency_bins
         .frequency_bins
@@ -493,6 +487,7 @@ pub fn run_ref_kmers(opt: &RefKmersConfig, options: RunOptions) -> Result<RefKme
             write_dense_output,
             kmer_size: opt.kmer_size,
             canonical: opt.canonical,
+            orientation: opt.orientation,
             // This is the user option stored in metadata, not the dense-storage decision above
             all_motifs: opt.all_motifs,
             assign_by: opt.assign_by,
@@ -592,6 +587,7 @@ fn process_tile(
             seq_start,
             chrom_len,
             opt.assign_by,
+            opt.orientation,
             selected_motifs,
         )?;
     }

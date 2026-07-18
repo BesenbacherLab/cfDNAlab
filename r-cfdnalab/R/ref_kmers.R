@@ -17,6 +17,11 @@ REF_KMER_VALID_ROW_MODES <- c("global", "size", "bed", "grouped_bed")
 #' @noRd
 REF_KMER_VALID_AXIS_KINDS <- c("motif", "motif_group")
 
+#' Supported reference k-mer orientation modes.
+#'
+#' @noRd
+REF_KMER_VALID_ORIENTATIONS <- c("both", "reference_forward")
+
 #' Read cfDNAlab reference k-mer frequencies.
 #'
 #' Loads a `<prefix>.ref_kmers.zarr` output directory created with the
@@ -172,6 +177,7 @@ read_ref_kmers <- function(path) {
     motif_axis_kind = motif_axis_kind,
     kmer_size = ref_kmer_metadata$kmer_size,
     canonical = ref_kmer_metadata$canonical,
+    orientation = ref_kmer_metadata$orientation,
     all_motifs = ref_kmer_metadata$all_motifs,
     assign_by = ref_kmer_metadata$assign_by,
     motif_idx0 = as.integer(motif_axis),
@@ -245,6 +251,11 @@ cf_validate_ref_kmer_root_attributes <- function(attrs, storage_mode) {
   if (length(attrs$canonical) != 1L || !is.logical(attrs$canonical) || is.na(attrs$canonical)) {
     stop("canonical must be TRUE or FALSE", call. = FALSE)
   }
+  orientation <- cf_validate_allowed_string(
+    attrs$orientation,
+    REF_KMER_VALID_ORIENTATIONS,
+    "reference k-mer orientation"
+  )
   if (length(attrs$all_motifs) != 1L || !is.logical(attrs$all_motifs) || is.na(attrs$all_motifs)) {
     stop("all_motifs must be TRUE or FALSE", call. = FALSE)
   }
@@ -256,6 +267,7 @@ cf_validate_ref_kmer_root_attributes <- function(attrs, storage_mode) {
   list(
     kmer_size = as.integer(kmer_size),
     canonical = isTRUE(attrs$canonical),
+    orientation = orientation,
     all_motifs = isTRUE(attrs$all_motifs),
     assign_by = assign_by
   )
@@ -593,6 +605,13 @@ kmer_size.cfdnalab_ref_kmer_frequencies <- function(x, ...) {
 canonical.cfdnalab_ref_kmer_frequencies <- function(x, ...) {
   cf_reject_unused_arguments(...)
   x$canonical
+}
+
+#' @export
+#' @rdname orientation
+orientation.cfdnalab_ref_kmer_frequencies <- function(x, ...) {
+  cf_reject_unused_arguments(...)
+  x$orientation
 }
 
 #' @export

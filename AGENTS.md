@@ -26,6 +26,7 @@ This file is the authoritative entry point for repo-specific agent instructions.
 - Do not rewrite comments or docs for generic style preference; preserve existing wording unless the change is a clear correctness, clarity, or consistency improvement tied to the current task.
 - Do not write unnecessary wrapper functions.
 - Don't make unnecessary newlines in READMEs. Especially not in existing sections.
+- Question the biological consistency of choices. When something is not biologically valid, bring it up in the chat.
 
 Spellings:
 

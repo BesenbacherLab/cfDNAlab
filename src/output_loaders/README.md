@@ -209,7 +209,7 @@ For `Outside` and `Inside`, repeated side labels are deduplicated in their first
 
 One-sided outputs do not accept an explicit mode.
 
-Motif labels are matched to reference k-mers by removing `_`, for example `AT_CG` -> `ATCG`. Motif-group outputs are matched by group label. Both commands write forward-oriented motif labels, including right-end motifs from `cfdna ends`.
+Motif labels are matched to reference k-mers by removing `_`, for example `AT_CG` -> `ATCG`. Motif-group outputs are matched by group label. End-motif labels are end-relative: each label reads from its fragment end inward, so right-end labels are reverse-complemented relative to reference coordinates. Reference correction requires `ref-kmers --orientation both`. Those frequencies give half of each reference k-mer observation to its reference-forward label and half to its reverse complement.
 
 For `Split`, `Outside`, and `Inside`, side-specific reference frequencies are calculated from the loaded full-length reference k-mers. For example, the outside frequency for `AC` is the sum of frequencies for loaded k-mers with prefix `AC`, such as `ACTG` and `ACAA`. The inside frequency for `TG` is the corresponding sum over loaded k-mers with suffix `TG`. Separate shorter reference k-mer runs are not required.
 
@@ -375,9 +375,11 @@ Grouped fcoverage TSV files store numeric `group_idx` values. Use `load_fcoverag
 
 Reference k-mer stores can be dense or sparse. They store row-wise frequencies plus a row scaling factor that reconstructs counts.
 
-For `ref-kmers` outputs written with `--motifs-file`, frequencies are normalized over the selected motifs or motif groups from that file. Unlisted k-mers are not part of the denominator, and the row scaling factor reconstructs selected k-mer or group counts.
+For `ref-kmers` outputs written with `--motifs-file`, frequencies are calculated over the motifs or groups listed in that file. Unlisted k-mers are not included. Multiplying a frequency by the row scaling factor reconstructs the count for that motif or group.
 
-With `--all-motifs`, the motif axis also keeps targets whose stored frequency is zero. Without a motifs file, those targets are all A/C/G/T k-mers for the configured `k`. With a motifs file, they are the motifs or motif groups listed in that file.
+Group membership comes only from the motifs file. Reverse complements are not automatically added to the same group. For example, suppose the left-to-right reference counts are `AACC=3` and `GGTT=5`. With `orientation=both`, a file containing only `AACC<TAB>group_a` produces `group_a=4`. Assigning both motifs to `group_a` produces `group_a=8`. Assigning `AACC` to `group_a` and `GGTT` to `group_b` produces `group_a=4` and `group_b=4`. A motif that is its own reverse complement keeps its full count.
+
+With `--all-motifs`, motifs or groups are kept even when their frequency is zero. Without a motifs file, this keeps all A/C/G/T k-mers for the configured `k`. With a motifs file, it keeps every motif or group listed in the file.
 
 ```rust
 use cfdnalab::output_loaders::{

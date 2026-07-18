@@ -1,6 +1,9 @@
 use crate::{
-    commands::cli_common::{
-        DistributionWindowSpec, WindowAssigner, min_overlap_fraction_for_window_assignment,
+    commands::{
+        cli_common::{
+            DistributionWindowSpec, WindowAssigner, min_overlap_fraction_for_window_assignment,
+        },
+        ref_kmers::config::RefKmerOrientation,
     },
     shared::{
         base::ZEROISH_F64_TOLERANCE,
@@ -92,6 +95,7 @@ pub(crate) fn count_kmers_by_window(
     sequence_start: u64,
     chrom_len: u64,
     assign_by: WindowAssigner,
+    orientation: RefKmerOrientation,
     selected_motifs: Option<&SelectedMotifLookup>,
 ) -> Result<()> {
     let k = enc.k as u64;
@@ -116,16 +120,25 @@ pub(crate) fn count_kmers_by_window(
             continue;
         }
 
-        let selected_target_idx = if let Some(selected_motifs) = selected_motifs {
-            let key = EncodedMotifKey {
+        let selected_target_indices = if let Some(selected_motifs) = selected_motifs {
+            let forward_key = EncodedMotifKey {
                 inside_code: code,
                 outside_code: 0,
                 reverse_on_decode: false,
             };
-            match selected_motifs.target_for(key) {
-                Some(target_idx) => Some(target_idx),
-                None => continue,
+            let forward_target_idx = selected_motifs.target_for(forward_key);
+            let reverse_target_idx = if matches!(orientation, RefKmerOrientation::Both) {
+                selected_motifs.target_for(EncodedMotifKey {
+                    reverse_on_decode: true,
+                    ..forward_key
+                })
+            } else {
+                None
+            };
+            if forward_target_idx.is_none() && reverse_target_idx.is_none() {
+                continue;
             }
+            Some((forward_target_idx, reverse_target_idx))
         } else {
             None
         };
@@ -147,12 +160,32 @@ pub(crate) fn count_kmers_by_window(
                 }
             };
             let weight = count_weight(assign_by, overlapped_window.overlap_fraction);
-            if let Some(target_idx) = selected_target_idx {
-                selected_counts_by_window
-                    .entry(row_idx)
-                    .or_default()
-                    .incr_weighted(target_idx, weight);
+            if let Some((forward_target_idx, reverse_target_idx)) = selected_target_indices {
+                let selected_counts = selected_counts_by_window.entry(row_idx).or_default();
+                match orientation {
+                    RefKmerOrientation::Both => {
+                        // Selected output is reduced directly to target or group indices, so the
+                        // original motif identity is not available during final postprocessing.
+                        // Apply the orientation split exactly once here, before that information is
+                        // discarded. Unrestricted output keeps the full weight below and performs
+                        // its split later in `postprocess_ref_kmer_counts`.
+                        let half_weight = weight / 2.0;
+                        if let Some(target_idx) = forward_target_idx {
+                            selected_counts.incr_weighted(target_idx, half_weight);
+                        }
+                        if let Some(target_idx) = reverse_target_idx {
+                            selected_counts.incr_weighted(target_idx, half_weight);
+                        }
+                    }
+                    RefKmerOrientation::ReferenceForward => {
+                        if let Some(target_idx) = forward_target_idx {
+                            selected_counts.incr_weighted(target_idx, weight);
+                        }
+                    }
+                }
             } else {
+                // Preserve the full reference-forward weight for unrestricted output. Its motif
+                // and reverse-complement labels are resolved together during final postprocessing.
                 counts_by_window
                     .entry(row_idx)
                     .or_default()

@@ -4,6 +4,15 @@
 
 <br />
 
+## py-cfDNAlab 0.5.0
+
+**BREAKING CHANGES**:
+
+- Reference correction now requires reference k-mer output generated with `cfdna ref-kmers --orientation both`.
+- Reference k-mer outputs created with `cfDNAlab 0.6.0` are no longer supported. Regenerate them with `cfDNAlab 0.7.0` or newer.
+
+<br />
+
 ## py-cfDNAlab 0.4.0
 
 - Adds zarr loader for the outputs of `cfdna ref-kmers`.

@@ -10,7 +10,7 @@ use cfdnalab::{
     reference::twobit_contig_footprint,
     run_like_cli::{
         common::{ChromosomeArgs, DistributionWindowsArgs, WindowAssigner},
-        ref_kmers::{RefKmersConfig, run_ref_kmers},
+        ref_kmers::{RefKmerOrientation, RefKmersConfig, run_ref_kmers},
     },
     testing::{Bed4Row, twobit_from_sequences, write_bed4},
 };
@@ -30,6 +30,9 @@ fn ref_kmers_config(reference_path: &Path, output_dir: &Path, kmer_size: u8) -> 
         },
     );
     config.set_n_threads(1);
+    // Most pre-orientation command tests derive the original reference-forward expectations.
+    // Dedicated orientation tests below exercise the new default behavior.
+    config.set_orientation(RefKmerOrientation::ReferenceForward);
     config
 }
 
@@ -55,6 +58,52 @@ fn assert_slice_close(observed: &[f64], expected: &[f64]) {
     for (observed_value, expected_value) in observed.iter().zip(expected.iter()) {
         assert_close(*observed_value, *expected_value);
     }
+}
+
+#[test]
+fn ref_kmers_both_orientation_averages_reverse_complement_counts() -> Result<()> {
+    // Each N-separated block contributes exactly one 4-mer. The reference-forward counts are
+    // AACC=3, GGTT=5, GGAA=2, and CCCC=1.
+    let sequence = [
+        vec!["AACC"; 3],
+        vec!["GGTT"; 5],
+        vec!["GGAA"; 2],
+        vec!["CCCC"; 1],
+    ]
+    .concat()
+    .join("N");
+    let reference = twobit_from_sequences(
+        "ref_kmers_both_orientation",
+        vec![("chr1".to_string(), sequence)],
+    )?;
+    let output_dir = TempDir::new()?;
+    let mut config = ref_kmers_config(&reference.path, output_dir.path(), 4);
+    config.set_output_prefix("unit_both_orientation");
+    config.set_orientation(RefKmerOrientation::Both);
+
+    run(&config)?;
+
+    let loaded = load_ref_kmers_output(
+        output_dir
+            .path()
+            .join("unit_both_orientation.ref_kmers.zarr"),
+    )?;
+    assert_eq!(loaded.orientation(), RefKmerOrientation::Both);
+    assert_eq!(loaded.row_scaling_factors(), &[11.0]);
+    for (motif, expected_count) in [
+        ("AACC", 4.0),
+        ("GGTT", 4.0),
+        ("GGAA", 1.0),
+        ("TTCC", 1.0),
+        ("CCCC", 0.5),
+        ("GGGG", 0.5),
+    ] {
+        assert_close(
+            loaded.count_for_motif(0, motif)?.unwrap_or(0.0),
+            expected_count,
+        );
+    }
+    Ok(())
 }
 
 mod mixed_size_overlap_assignment_tests {
@@ -465,9 +514,11 @@ fn ref_kmers_by_size_writes_fractional_frequencies_and_scaling_factors() -> Resu
     // The five 4-mers are:
     //   ACGT [0,4), CGTA [1,5), GTAC [2,6), TACG [3,7), ACGT [4,8).
     //
-    // Under count-overlap:
+    // Under count-overlap before orientation averaging:
     //   row 0 counts are ACGT=1, CGTA=3/4, GTAC=1/2, TACG=1/4, total=2.5.
     //   row 1 counts are ACGT=1, CGTA=1/4, GTAC=1/2, TACG=3/4, total=2.5.
+    // ACGT and GTAC are self reverse-complementary. CGTA and TACG are a pair, so both end with
+    // count 1/2 in each row after orientation averaging.
     let reference = twobit_from_sequences(
         "ref_kmers_by_size",
         vec![("chr1".to_string(), "ACGTACGT".to_string())],
@@ -481,6 +532,7 @@ fn ref_kmers_by_size_writes_fractional_frequencies_and_scaling_factors() -> Resu
         by_grouped_bed: None,
     });
     config.set_assign_by(WindowAssigner::CountOverlap);
+    config.set_orientation(RefKmerOrientation::Both);
 
     // Act
     run(&config)?;
@@ -513,23 +565,23 @@ fn ref_kmers_by_size_writes_fractional_frequencies_and_scaling_factors() -> Resu
     assert_eq!(sparse_rows, vec![0, 0, 0, 0, 1, 1, 1, 1]);
     assert_eq!(sparse_motifs, vec![0, 1, 2, 3, 0, 1, 2, 3]);
     assert_close(sparse_frequencies[0], 1.0 / 2.5);
-    assert_close(sparse_frequencies[1], 0.75 / 2.5);
+    assert_close(sparse_frequencies[1], 0.50 / 2.5);
     assert_close(sparse_frequencies[2], 0.50 / 2.5);
-    assert_close(sparse_frequencies[3], 0.25 / 2.5);
+    assert_close(sparse_frequencies[3], 0.50 / 2.5);
     assert_close(sparse_frequencies[4], 1.0 / 2.5);
-    assert_close(sparse_frequencies[5], 0.25 / 2.5);
+    assert_close(sparse_frequencies[5], 0.50 / 2.5);
     assert_close(sparse_frequencies[6], 0.50 / 2.5);
-    assert_close(sparse_frequencies[7], 0.75 / 2.5);
+    assert_close(sparse_frequencies[7], 0.50 / 2.5);
 
     // Count reconstruction uses frequency * row_scaling_factor[row].
     let scaling = read_f64_array(&package_path, "/row_scaling_factor");
     assert_close(
         sparse_frequencies[1] * scaling[sparse_rows[1] as usize],
-        0.75,
+        0.50,
     );
     assert_close(
         sparse_frequencies[7] * scaling[sparse_rows[7] as usize],
-        0.75,
+        0.50,
     );
 
     let loaded = load_ref_kmers_output(&package_path)?;
@@ -572,8 +624,8 @@ fn ref_kmers_by_size_writes_fractional_frequencies_and_scaling_factors() -> Resu
         ]
     );
     let cgta_index = loaded.motif_index("CGTA")?;
-    assert_close(loaded.frequency(0, cgta_index).unwrap(), 0.75 / 2.5);
-    assert_close(loaded.count(0, cgta_index).unwrap(), 0.75);
+    assert_close(loaded.frequency(0, cgta_index).unwrap(), 0.50 / 2.5);
+    assert_close(loaded.count(0, cgta_index).unwrap(), 0.50);
     let windows = loaded.window_metadata()?;
     assert_eq!(windows[0].chrom, "chr1");
     assert_eq!(windows[0].interval.as_tuple(), (0, 4));
@@ -600,6 +652,7 @@ fn ref_kmers_motifs_file_groups_selected_targets_end_to_end() -> Result<()> {
     config.set_output_prefix("unit_grouped_ref_kmers");
     config.set_motifs_file(Some(motifs_file.path().to_path_buf()));
     config.set_assign_by(WindowAssigner::Any);
+    config.set_orientation(RefKmerOrientation::Both);
 
     // Act
     run(&config)?;
@@ -992,6 +1045,7 @@ fn ref_kmers_grouped_bed_count_overlap_uses_manual_overlap_mass() -> Result<()> 
         by_grouped_bed: Some(grouped_bed),
     });
     config.set_assign_by(WindowAssigner::CountOverlap);
+    config.set_orientation(RefKmerOrientation::Both);
 
     // Act
     run(&config)?;
@@ -1006,10 +1060,12 @@ fn ref_kmers_grouped_bed_count_overlap_uses_manual_overlap_mass() -> Result<()> 
     let beta_idx = loaded.group_index("beta")?;
     assert_close(loaded.row_scaling_factor(alpha_idx).unwrap(), 7.50);
     assert_close(loaded.row_scaling_factor(beta_idx).unwrap(), 3.00);
-    assert_close(loaded.count_for_motif(alpha_idx, "AAAA")?.unwrap(), 7.50);
-    assert_close(loaded.count_for_motif(beta_idx, "AAAA")?.unwrap(), 3.00);
-    assert_close(loaded.frequency_for_motif(alpha_idx, "AAAA")?.unwrap(), 1.0);
-    assert_close(loaded.frequency_for_motif(beta_idx, "AAAA")?.unwrap(), 1.0);
+    assert_close(loaded.count_for_motif(alpha_idx, "AAAA")?.unwrap(), 3.75);
+    assert_close(loaded.count_for_motif(alpha_idx, "TTTT")?.unwrap(), 3.75);
+    assert_close(loaded.count_for_motif(beta_idx, "AAAA")?.unwrap(), 1.50);
+    assert_close(loaded.count_for_motif(beta_idx, "TTTT")?.unwrap(), 1.50);
+    assert_close(loaded.frequency_for_motif(alpha_idx, "AAAA")?.unwrap(), 0.5);
+    assert_close(loaded.frequency_for_motif(beta_idx, "AAAA")?.unwrap(), 0.5);
 
     let groups = loaded.group_metadata()?;
     let alpha = groups
@@ -1039,6 +1095,7 @@ fn ref_kmers_loader_reconstructs_dense_all_motifs_counts() -> Result<()> {
     let mut config = ref_kmers_config(&reference.path, output_dir.path(), 1);
     config.set_output_prefix("unit_dense_ref_kmers");
     config.set_all_motifs(true);
+    config.set_orientation(RefKmerOrientation::Both);
 
     // Act
     run(&config)?;
@@ -1454,7 +1511,8 @@ fn ref_kmers_large_k_motifs_file_counts_selected_subspace() -> Result<()> {
     // Arrange:
     // k = 30 is outside the complete reference k-mer set used without a motifs file. The motifs
     // file selects exactly two possible targets. The reference contains one A^30 k-mer and no C^30
-    // k-mers, so all-motifs selected output should keep both columns with counts 1 and 0.
+    // k-mers. Its reverse complement T^30 is not selected, so the A^30 target receives only the
+    // reference-forward half. All-motifs selected output keeps both columns with counts 0.5 and 0.
     let present_motif = "A".repeat(30);
     let absent_motif = "C".repeat(30);
     let reference = twobit_from_sequences(
@@ -1467,6 +1525,7 @@ fn ref_kmers_large_k_motifs_file_counts_selected_subspace() -> Result<()> {
     config.set_output_prefix("unit_large_k_ref_kmers");
     config.set_motifs_file(Some(motifs_file.path().to_path_buf()));
     config.set_all_motifs(true);
+    config.set_orientation(RefKmerOrientation::Both);
 
     // Act
     run(&config)?;
@@ -1481,10 +1540,10 @@ fn ref_kmers_large_k_motifs_file_counts_selected_subspace() -> Result<()> {
         loaded.motif_labels(),
         &[present_motif.clone(), absent_motif.clone()]
     );
-    assert_eq!(loaded.row_scaling_factors(), &[1.0]);
+    assert_eq!(loaded.row_scaling_factors(), &[0.5]);
     assert_close(
         loaded.count_for_motif(0, present_motif.as_str())?.unwrap(),
-        1.0,
+        0.5,
     );
     assert_close(
         loaded.count_for_motif(0, absent_motif.as_str())?.unwrap(),
@@ -1602,9 +1661,10 @@ fn ref_kmers_selected_motifs_keep_empty_rows_without_unselected_denominator() ->
 #[test]
 fn ref_kmers_fixed_size_rows_are_offset_across_chromosomes() -> Result<()> {
     // Arrange:
-    // k = 1 and fixed windows of width 2.
-    //   chr1=AAAA gives row 0 A=2 and row 1 A=2.
-    //   chr2=CCCC gives row 2 C=2 and row 3 C=2.
+    // k = 1 and fixed windows of width 2. With the default `both` orientation, each A contributes
+    // half to A and half to T, while each C contributes half to C and half to G:
+    //   chr1=AAAA gives rows 0 and 1 A=1, T=1, total=2.
+    //   chr2=CCCC gives rows 2 and 3 C=1, G=1, total=2.
     // Rows should follow the selected chromosome order without reusing row indices per chromosome.
     let reference = twobit_from_sequences(
         "ref_kmers_multi_contig_size_rows",
@@ -1643,10 +1703,14 @@ fn ref_kmers_fixed_size_rows_are_offset_across_chromosomes() -> Result<()> {
             .join("unit_multi_contig_ref_kmers.ref_kmers.zarr"),
     )?;
     assert_eq!(loaded.row_scaling_factors(), &[2.0, 2.0, 2.0, 2.0]);
-    assert_close(loaded.count_for_motif(0, "A")?.unwrap(), 2.0);
-    assert_close(loaded.count_for_motif(1, "A")?.unwrap(), 2.0);
-    assert_close(loaded.count_for_motif(2, "C")?.unwrap(), 2.0);
-    assert_close(loaded.count_for_motif(3, "C")?.unwrap(), 2.0);
+    assert_close(loaded.count_for_motif(0, "A")?.unwrap(), 1.0);
+    assert_close(loaded.count_for_motif(0, "T")?.unwrap(), 1.0);
+    assert_close(loaded.count_for_motif(1, "A")?.unwrap(), 1.0);
+    assert_close(loaded.count_for_motif(1, "T")?.unwrap(), 1.0);
+    assert_close(loaded.count_for_motif(2, "C")?.unwrap(), 1.0);
+    assert_close(loaded.count_for_motif(2, "G")?.unwrap(), 1.0);
+    assert_close(loaded.count_for_motif(3, "C")?.unwrap(), 1.0);
+    assert_close(loaded.count_for_motif(3, "G")?.unwrap(), 1.0);
     assert_close(loaded.count_for_motif(0, "C")?.unwrap(), 0.0);
     assert_close(loaded.count_for_motif(2, "A")?.unwrap(), 0.0);
     assert_eq!(

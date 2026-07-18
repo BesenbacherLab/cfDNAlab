@@ -174,6 +174,21 @@ canonical <- function(x, ...) {
   UseMethod("canonical")
 }
 
+#' Return the reference k-mer orientation mode.
+#'
+#' `"both"` averages the reference-forward sequence and its reverse complement.
+#' `"reference_forward"` uses only the sequence read left-to-right from the
+#' stored reference.
+#'
+#' @param x A cfDNAlab reference k-mer object.
+#' @param ... Reserved for future methods.
+#'
+#' @return A scalar character value.
+#' @export
+orientation <- function(x, ...) {
+  UseMethod("orientation")
+}
+
 #' Return whether all requested reference k-mer motifs were kept.
 #'
 #' For full k-mer output, this means every A/C/G/T k-mer for the requested k.
@@ -319,6 +334,11 @@ dense_counts_matrix <- function(x, ...) {
 #' sums over outside bases, divides by the inside factor, and returns labels
 #' such as `"_GT"`.
 #'
+#' End-motif labels run inward from either fragment end, so reference correction
+#' requires reference k-mer output generated with `--orientation both`.
+#' This assumes that left and right fragment ends contribute equally within each
+#' output row, as expected for genomic windows of practical size.
+#'
 #' Sparse end-motif output is not densified unless the method explicitly
 #' receives `allow_densify = TRUE`. Dense matrices have a fixed row and motif
 #' shape, so `unsupported_motifs = "drop"` is not supported here. Use
@@ -391,17 +411,6 @@ dense_frequencies_vector <- function(x, ...) {
 #' receives `densify = TRUE`. Densifying adds explicit zero-count rows for
 #' selected observed motifs. Dense outputs always include zero counts.
 #'
-#' End-motif methods can receive `ref_kmers` to add reference-corrected counts
-#' without manually joining the sample and reference data frames. Corrected
-#' data frames add `corrected_count` and `corrected_frequency`. When labels have
-#' both outside and inside bases, `two_sided_correction` is required. `"joint"`
-#' corrects each full motif with its matching full reference motif. `"split"`
-#' preserves full labels but multiplies independently calculated outside and
-#' inside correction factors. `"outside"` aggregates sample counts by outside
-#' label before correction and returns labels such as `"AC_"`. `"inside"` does
-#' the corresponding aggregation by inside label and returns labels such as
-#' `"_GT"`.
-#'
 #' @param x A cfDNAlab end-motif object.
 #' @param ... Method-specific selection arguments.
 #'
@@ -455,6 +464,11 @@ sparse_counts_matrix <- function(x, ...) {
 #' its outside factor, and returns labels such as `"AC_"`. `"inside"` first
 #' sums over outside bases, divides by the inside factor, and returns labels
 #' such as `"_GT"`.
+#'
+#' End-motif labels run inward from either fragment end, so reference correction
+#' requires reference k-mer output generated with `--orientation both`.
+#' This assumes that left and right fragment ends contribute equally within each
+#' output row, as expected for genomic windows of practical size.
 #'
 #' Sparse output is returned without building a zero-filled dense matrix. Dense
 #' output is read into memory before conversion to a sparse matrix. Sparse

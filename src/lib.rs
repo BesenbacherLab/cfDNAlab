@@ -230,7 +230,7 @@ pub mod run_like_cli {
 
     #[cfg(feature = "cmd_ref_kmers")]
     pub mod ref_kmers {
-        pub use crate::commands::ref_kmers::config::RefKmersConfig;
+        pub use crate::commands::ref_kmers::config::{RefKmerOrientation, RefKmersConfig};
         pub use crate::commands::ref_kmers::ref_kmers::{RefKmersRunResult, run_ref_kmers};
     }
 

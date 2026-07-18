@@ -165,6 +165,7 @@ ref_kmer_root_attributes <- function(
   motif_axis_kind = "motif",
   kmer_size = 2L,
   canonical = FALSE,
+  orientation = "both",
   all_motifs = FALSE,
   assign_by = "count-overlap",
   value_units = "reference_kmer_frequency",
@@ -172,7 +173,7 @@ ref_kmer_root_attributes <- function(
   row_scaling_factor_array = "row_scaling_factor",
   count_reconstruction = "reference_kmer_count = frequency * row_scaling_factor[row]",
   schema = "ref_kmer_frequencies",
-  schema_version = 1L
+  schema_version = 2L
 ) {
   attributes <- list(
     cfdnalab_schema = schema,
@@ -186,6 +187,7 @@ ref_kmer_root_attributes <- function(
     count_reconstruction = count_reconstruction,
     kmer_size = kmer_size,
     canonical = canonical,
+    orientation = orientation,
     all_motifs = all_motifs,
     assign_by = assign_by
   )

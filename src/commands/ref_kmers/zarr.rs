@@ -13,10 +13,13 @@
 use crate::{
     commands::{
         cli_common::WindowAssigner,
-        ref_kmers::counting::{KmerCounts, KmerCountsByWindow},
+        ref_kmers::{
+            config::RefKmerOrientation,
+            counting::{KmerCounts, KmerCountsByWindow},
+        },
     },
     shared::{
-        base::make_canonical,
+        base::{make_canonical, rev_complement},
         bed::GroupedWindows,
         blacklist::compute_blacklist_overlap,
         interval::Interval,
@@ -51,7 +54,7 @@ use zarrs::{
     filesystem::FilesystemStore,
 };
 
-const CFDNALAB_REF_KMER_SCHEMA_VERSION: u32 = 1;
+const CFDNALAB_REF_KMER_SCHEMA_VERSION: u32 = 2;
 const TARGET_DENSE_FREQUENCY_CHUNK_CELLS: usize = 2_000_000;
 /// Target maximum number of COO entries written per sparse Zarr chunk.
 ///
@@ -134,6 +137,7 @@ pub(crate) struct RefKmerZarrPackage<'a> {
     pub(crate) write_dense_output: bool,
     pub(crate) kmer_size: u8,
     pub(crate) canonical: bool,
+    pub(crate) orientation: RefKmerOrientation,
     /// Whether the user requested `--all-motifs`, stored as output metadata
     pub(crate) all_motifs: bool,
     pub(crate) assign_by: WindowAssigner,
@@ -144,7 +148,11 @@ pub(crate) struct RefKmerZarrPackage<'a> {
 ///
 /// Tile counting stores compact `Kmer` keys and sparse row counts. This function is the boundary
 /// where those internal keys become output motif labels, then output column indices, then
-/// row-normalized frequencies. It preserves the final output row IDs assigned before tiling.
+/// row-normalized frequencies. Unrestricted tile counting records each genomic k-mer observation
+/// once, at its full weight, under the reference-forward encoded key. This function performs the
+/// first and only orientation expansion for those unrestricted counts. Motifs-file counting
+/// applies orientation weights while resolving selected targets and does not call this function.
+/// Final output row IDs assigned before tiling are preserved.
 ///
 /// The motif axis has two modes. With `all_motifs`, the axis contains every A/C/G/T k-mer for the
 /// requested k and missing motifs are represented as zeroes in dense output. Without
@@ -168,6 +176,9 @@ pub(crate) struct RefKmerZarrPackage<'a> {
 ///   Whether to collapse each motif with its reverse complement before output
 /// - `all_motifs`:
 ///   Whether to retain all A/C/G/T k-mers instead of only observed motifs
+/// - `orientation`:
+///   Whether each decoded count stays reference-forward or is divided between its label and its
+///   reverse complement
 ///
 /// Returns
 /// -------
@@ -179,6 +190,7 @@ pub(crate) fn postprocess_ref_kmer_counts(
     kmer_spec: &KmerSpec,
     canonical: bool,
     all_motifs: bool,
+    orientation: RefKmerOrientation,
 ) -> Result<(RefKmerFrequencyBins, Vec<String>)> {
     // Keep string-keyed bins while decoding, filtering, and canonicalizing labels
     let mut label_bins = vec![FxHashMap::default(); total_windows];
@@ -195,9 +207,9 @@ pub(crate) fn postprocess_ref_kmer_counts(
             label_bins.len()
         );
 
-        for (kmer, value) in counts.counts {
+        for (kmer, reference_forward_weight) in counts.counts {
             // Drop zeroish weights, reject NaN or invalid weights, and keep row totals meaningful
-            if !KmerCounts::should_store_weight(value)? {
+            if !KmerCounts::should_store_weight(reference_forward_weight)? {
                 continue;
             }
             ensure!(
@@ -211,13 +223,36 @@ pub(crate) fn postprocess_ref_kmer_counts(
             if motif.contains('N') {
                 continue;
             }
-            let motif = if canonical {
-                make_canonical(motif, true, true)
-            } else {
-                motif
-            };
-            // Canonicalization can make multiple encoded keys land in the same output label
-            *label_bins[row_idx].entry(motif).or_insert(0.0) += value;
+            match orientation {
+                RefKmerOrientation::Both => {
+                    let reverse_motif = rev_complement(&motif);
+                    // Split, rather than duplicate, each full-weight genomic observation. This
+                    // gives equal reference weight to the label used for a left-end observation
+                    // and the reverse-complemented label used for a right-end observation.
+                    let half_weight = reference_forward_weight / 2.0;
+                    for oriented_motif in [motif, reverse_motif] {
+                        let output_motif = if canonical {
+                            make_canonical(oriented_motif, true, true)
+                        } else {
+                            oriented_motif
+                        };
+                        // Reverse-complement partners can resolve to the same output label through
+                        // canonicalization or because the motif is self-reverse-complementary. In
+                        // both cases the two half weights reconstruct the original full weight.
+                        *label_bins[row_idx].entry(output_motif).or_insert(0.0) += half_weight;
+                    }
+                }
+                RefKmerOrientation::ReferenceForward => {
+                    let output_motif = if canonical {
+                        make_canonical(motif, true, true)
+                    } else {
+                        motif
+                    };
+                    // Canonicalization can make multiple encoded keys land in the same output label.
+                    *label_bins[row_idx].entry(output_motif).or_insert(0.0) +=
+                        reference_forward_weight;
+                }
+            }
         }
     }
 
@@ -826,6 +861,7 @@ fn write_root_metadata(
         "count_reconstruction": "reference_kmer_count = frequency * row_scaling_factor[row]",
         "kmer_size": package.kmer_size,
         "canonical": package.canonical,
+        "orientation": package.orientation.metadata_name(),
         "all_motifs": package.all_motifs,
         "assign_by": assign_by_name(package.assign_by),
         "primary_array": null,

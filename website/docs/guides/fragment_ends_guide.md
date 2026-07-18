@@ -227,7 +227,17 @@ cfdna ref-kmers \
 
 If the `cfdna ends` call used `--by-size`, `--by-bed`, or `--by-grouped-bed`, pass the same windowing or grouping option to `cfdna ref-kmers`. Use the same motifs file for both commands when you want correction to use exactly that motif subset. Omit the motifs file from `ref-kmers` when the complete reference motif set should contribute to correction. `ref-kmers` accepts end-motif labels such as `AT_CG` and treats them as the reference k-mer `ATCG`.
 
-Both outputs use **forward-oriented** motif labels only. `cfdna ends` reverse-complements right-end motifs before writing them, and `cfdna ref-kmers` counts reference k-mers left-to-right. Ungrouped motif labels are matched by removing the underscore, for example `AT_CG -> ATCG`, `_AA -> AA`, and `AA_ -> AA`. Grouped motifs-file output are matched directly on the group names.
+End-motif labels are **end-relative**: each label reads from the fragment end inward. Left-end labels therefore follow reference coordinates, while right-end labels are reverse-complemented relative to reference coordinates. By default, `cfdna ref-kmers --orientation both` gives half of each reference k-mer observation to its reference-forward label and half to its reverse complement, producing reference frequencies suitable for either fragment end. Ungrouped motif labels are matched by removing the underscore, for example `AT_CG -> ATCG`, `_AA -> AA`, and `AA_ -> AA`. Grouped motifs-file outputs are matched directly by group name.
+
+For grouped motifs files, the group written beside each motif receives that motif's count. Suppose the left-to-right reference counts are `AACC=3` and `GGTT=5`, where the two motifs are reverse complements:
+
+| Motifs-file assignments | Reference group counts with `--orientation both` |
+| --- | --- |
+| `AACC -> group_a` and `GGTT` is not listed | `group_a = 3/2 + 5/2 = 4` |
+| `AACC -> group_a` and `GGTT -> group_a` | `group_a = 3 + 5 = 8` |
+| `AACC -> group_a` and `GGTT -> group_b` | `group_a = 4` and `group_b = 4` |
+
+If only one motif from the pair is in the file, its group receives the averaged count of `4`. The other `4` is not included in the output. If both motifs use the same group, that group receives the full count of `8`. If they use different groups, each group receives `4`. A motif that is its own reverse complement contributes its full count to its group. Frequencies are calculated over the motifs or groups in the file, and `row_scaling_factor` is their combined count. For example, if `group_a` is the only group in the first row of the table, its frequency is `1` and its count is `4`.
 
 ### Apply correction in Python
 

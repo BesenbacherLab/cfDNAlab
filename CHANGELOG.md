@@ -7,6 +7,15 @@ This is the changelog for the main CLI tool. You can find the changelog for the 
 
 <br />
 
+## cfDNAlab 0.7.0
+
+**BREAKING CHANGES**:
+
+ - `cfdna ref-kmers` gets the `--orientation` argument which now defaults to `both`, meaning we count a k-mer with 0.5 for each orientation (forward-oriented and reverse complemented). This changes the counts significantly, as the reverse-complemented motifs now have the same count. The motivation for this change is to make the default `cfdna ref-kmers` output suitable for reference correction of `cfdna ends` motif counts, where the right-end motifs are reverse-complemented. This solves #10.
+ - Reference correction for end motifs now require `cfdna ref-kmers --orientation both`. Files created with `cfdnalab 0.6.0` will fail to be used.
+
+<br />
+
 ## cfDNAlab 0.6.0
 
 **New command**:
