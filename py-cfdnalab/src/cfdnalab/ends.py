@@ -968,9 +968,10 @@ class GlobalEndMotifCounts(EndMotifCounts):
         End-motif labels run inward from either fragment end, so reference
         correction requires reference k-mer output generated with
         `--orientation both`.
-        This assumes that left and right fragment ends contribute equally
-        within each output row, as expected for genomic windows of practical
-        size.
+        This is an approximate correction for broad or local
+        reference-composition bias. It assumes that left and right fragment
+        ends contribute equally within each row. Correction in short windows
+        can be unreliable, so use windows of at least a few kilobases.
 
         Two-sided correction modes
         --------------------------
@@ -1166,9 +1167,10 @@ class GlobalEndMotifCounts(EndMotifCounts):
         End-motif labels run inward from either fragment end, so reference
         correction requires reference k-mer output generated with
         `--orientation both`.
-        This assumes that left and right fragment ends contribute equally
-        within each output row, as expected for genomic windows of practical
-        size.
+        This is an approximate correction for broad or local
+        reference-composition bias. It assumes that left and right fragment
+        ends contribute equally within each row. Correction in short windows
+        can be unreliable, so use windows of at least a few kilobases.
 
         Two-sided correction modes
         --------------------------
@@ -1267,9 +1269,10 @@ class GlobalEndMotifCounts(EndMotifCounts):
         End-motif labels run inward from either fragment end, so reference
         correction requires reference k-mer output generated with
         `--orientation both`.
-        This assumes that left and right fragment ends contribute equally
-        within each output row, as expected for genomic windows of practical
-        size.
+        This is an approximate correction for broad or local
+        reference-composition bias. It assumes that left and right fragment
+        ends contribute equally within each row. Correction in short windows
+        can be unreliable, so use windows of at least a few kilobases.
 
         Two-sided correction modes
         --------------------------
@@ -1367,9 +1370,10 @@ class WindowedEndMotifCounts(EndMotifCounts):
         End-motif labels run inward from either fragment end, so reference
         correction requires reference k-mer output generated with
         `--orientation both`.
-        This assumes that left and right fragment ends contribute equally
-        within each output row, as expected for genomic windows of practical
-        size.
+        This is an approximate correction for broad or local
+        reference-composition bias. It assumes that left and right fragment
+        ends contribute equally within each row. Correction in short windows
+        can be unreliable, so use windows of at least a few kilobases.
 
         Two-sided correction modes
         --------------------------
@@ -1597,9 +1601,10 @@ class WindowedEndMotifCounts(EndMotifCounts):
         End-motif labels run inward from either fragment end, so reference
         correction requires reference k-mer output generated with
         `--orientation both`.
-        This assumes that left and right fragment ends contribute equally
-        within each output row, as expected for genomic windows of practical
-        size.
+        This is an approximate correction for broad or local
+        reference-composition bias. It assumes that left and right fragment
+        ends contribute equally within each row. Correction in short windows
+        can be unreliable, so use windows of at least a few kilobases.
 
         Two-sided correction modes
         --------------------------
@@ -1702,9 +1707,10 @@ class WindowedEndMotifCounts(EndMotifCounts):
         End-motif labels run inward from either fragment end, so reference
         correction requires reference k-mer output generated with
         `--orientation both`.
-        This assumes that left and right fragment ends contribute equally
-        within each output row, as expected for genomic windows of practical
-        size.
+        This is an approximate correction for broad or local
+        reference-composition bias. It assumes that left and right fragment
+        ends contribute equally within each row. Correction in short windows
+        can be unreliable, so use windows of at least a few kilobases.
 
         Two-sided correction modes
         --------------------------
@@ -1805,9 +1811,10 @@ class GroupedEndMotifCounts(EndMotifCounts):
         End-motif labels run inward from either fragment end, so reference
         correction requires reference k-mer output generated with
         `--orientation both`.
-        This assumes that left and right fragment ends contribute equally
-        within each output row, as expected for genomic windows of practical
-        size.
+        This is an approximate correction for broad or local
+        reference-composition bias. It assumes that left and right fragment
+        ends contribute equally within each row. Correction in short windows
+        can be unreliable, so use windows of at least a few kilobases.
 
         Two-sided correction modes
         --------------------------
@@ -2068,9 +2075,10 @@ class GroupedEndMotifCounts(EndMotifCounts):
         End-motif labels run inward from either fragment end, so reference
         correction requires reference k-mer output generated with
         `--orientation both`.
-        This assumes that left and right fragment ends contribute equally
-        within each output row, as expected for genomic windows of practical
-        size.
+        This is an approximate correction for broad or local
+        reference-composition bias. It assumes that left and right fragment
+        ends contribute equally within each row. Correction in short windows
+        can be unreliable, so use windows of at least a few kilobases.
 
         Two-sided correction modes
         --------------------------
@@ -2174,9 +2182,10 @@ class GroupedEndMotifCounts(EndMotifCounts):
         End-motif labels run inward from either fragment end, so reference
         correction requires reference k-mer output generated with
         `--orientation both`.
-        This assumes that left and right fragment ends contribute equally
-        within each output row, as expected for genomic windows of practical
-        size.
+        This is an approximate correction for broad or local
+        reference-composition bias. It assumes that left and right fragment
+        ends contribute equally within each row. Correction in short windows
+        can be unreliable, so use windows of at least a few kilobases.
 
         Two-sided correction modes
         --------------------------

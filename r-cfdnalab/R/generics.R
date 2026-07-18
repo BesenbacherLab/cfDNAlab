@@ -336,8 +336,10 @@ dense_counts_matrix <- function(x, ...) {
 #'
 #' End-motif labels run inward from either fragment end, so reference correction
 #' requires reference k-mer output generated with `--orientation both`.
-#' This assumes that left and right fragment ends contribute equally within each
-#' output row, as expected for genomic windows of practical size.
+#' This is an approximate correction for broad or local reference-composition
+#' bias. It assumes that left and right fragment ends contribute equally within
+#' each row. Correction in short windows can be unreliable, so use windows of
+#' at least a few kilobases.
 #'
 #' Sparse end-motif output is not densified unless the method explicitly
 #' receives `allow_densify = TRUE`. Dense matrices have a fixed row and motif
@@ -467,8 +469,10 @@ sparse_counts_matrix <- function(x, ...) {
 #'
 #' End-motif labels run inward from either fragment end, so reference correction
 #' requires reference k-mer output generated with `--orientation both`.
-#' This assumes that left and right fragment ends contribute equally within each
-#' output row, as expected for genomic windows of practical size.
+#' This is an approximate correction for broad or local reference-composition
+#' bias. It assumes that left and right fragment ends contribute equally within
+#' each row. Correction in short windows can be unreliable, so use windows of
+#' at least a few kilobases.
 #'
 #' Sparse output is returned without building a zero-filled dense matrix. Dense
 #' output is read into memory before conversion to a sparse matrix. Sparse

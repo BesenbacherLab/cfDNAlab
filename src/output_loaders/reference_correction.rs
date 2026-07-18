@@ -84,8 +84,10 @@ pub enum UnsupportedReferencePolicy {
 /// matched directly by group label and do not accept a two-sided mode. End-motif
 /// labels are oriented from each fragment end inward. Reference correction therefore
 /// requires `ref-kmers --orientation both`, whose frequencies average each reference
-/// k-mer with its reverse complement. This assumes that left and right fragment ends contribute
-/// equally within each output row, as expected for genomic windows of practical size.
+/// k-mer with its reverse complement. This is an approximate correction for broad or local
+/// reference-composition bias. It assumes that left and right fragment ends contribute equally
+/// within each row. Correction in short windows can be unreliable, so use windows of at least a
+/// few kilobases.
 ///
 /// For labels that contain both outside and inside bases, choose the mode that
 /// matches the question:
