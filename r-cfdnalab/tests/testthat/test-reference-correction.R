@@ -158,6 +158,29 @@ test_that("reference correction rejects canonical reference", {
   )
 })
 
+test_that("reference correction rejects reference-forward orientation", {
+  end_path <- make_dense_windowed_end_motif_zarr_fixture()
+  ref_path <- make_dense_windowed_ref_kmer_zarr_fixture(
+    motifs = c("A", "C"),
+    frequencies = matrix(c(0.5, 0.5, 0.5, 0.5), nrow = 2L, byrow = TRUE),
+    row_scaling_factor = c(2, 2),
+    root_attributes = ref_kmer_root_attributes(
+      storage_mode = "dense",
+      row_mode = "bed",
+      kmer_size = 1L,
+      orientation = "reference_forward"
+    )
+  )
+  ends <- read_end_motifs(end_path)
+  ref_kmers <- read_ref_kmers(ref_path)
+
+  expect_error(
+    end_motif_data_frame(ends, ref_kmers = ref_kmers),
+    "--orientation both",
+    fixed = TRUE
+  )
+})
+
 test_that("one-sided reference correction rejects explicit mode", {
   end_path <- make_dense_windowed_end_motif_zarr_fixture()
   ref_path <- make_dense_windowed_ref_kmer_zarr_fixture(

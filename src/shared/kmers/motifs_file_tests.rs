@@ -46,6 +46,15 @@ fn ref_lookup_key(code: u64) -> EncodedMotifKey {
     }
 }
 
+#[cfg(feature = "cmd_ref_kmers")]
+fn ref_reverse_lookup_key(code: u64) -> EncodedMotifKey {
+    EncodedMotifKey {
+        inside_code: code,
+        outside_code: 0,
+        reverse_on_decode: true,
+    }
+}
+
 #[test]
 fn parses_ungrouped_combined_motifs_into_ordered_targets_and_encoded_lookup() -> anyhow::Result<()> {
     // Arrange: two 2+2 motifs define two output motif targets in file order.
@@ -309,7 +318,7 @@ fn parses_crlf_terminated_motifs_file_rows() -> anyhow::Result<()> {
 
 #[test]
 fn shares_one_selected_subspace_when_inside_and_outside_large_k_match() -> anyhow::Result<()> {
-    // Arrange: both motif halves use k=30, so they can share one selected half-code universe. The
+    // Arrange: both motif halves use k=30, so they can share one selected half-code subset. The
     // full inside/outside motif pair is still filtered by the encoded lookup after each half has
     // been encoded.
     let contents = format!("{}_{}\n", "C".repeat(30), "A".repeat(30));
@@ -340,10 +349,10 @@ fn shares_one_selected_subspace_when_inside_and_outside_large_k_match() -> anyho
 
 #[cfg(feature = "cmd_ref_kmers")]
 #[test]
-fn parses_ref_kmers_with_plain_or_separated_labels() -> anyhow::Result<()> {
-    // Arrange: ref-kmers has one left-to-right k-mer axis. A single `_` can be used to reuse
-    // end-motif-style files, but it is removed before the public labels and lookup keys are built.
-    let contents = "AC_GT\nTTAA\n";
+fn parses_ref_kmers_with_forward_and_reverse_observation_lookup_states() -> anyhow::Result<()> {
+    // Arrange: a single `_` can be used to reuse end-motif-style files. AACC is deliberately not
+    // self reverse-complementary, so its reverse observation state is encoded as GGTT.
+    let contents = "AA_CC\nTTAA\n";
 
     // Act
     let lookup =
@@ -351,12 +360,12 @@ fn parses_ref_kmers_with_plain_or_separated_labels() -> anyhow::Result<()> {
 
     // Assert
     assert_eq!(lookup.column_kind, SelectedMotifColumnKind::Motif);
-    assert_eq!(target_labels(&lookup), vec!["ACGT", "TTAA"]);
+    assert_eq!(target_labels(&lookup), vec!["AACC", "TTAA"]);
     assert!(lookup.outside_spec.is_none());
 
     let spec = ref_spec_for(4);
     assert_eq!(
-        lookup.target_for(ref_lookup_key(spec.encode_kmer_bytes(b"ACGT"))),
+        lookup.target_for(ref_lookup_key(spec.encode_kmer_bytes(b"AACC"))),
         Some(0)
     );
     assert_eq!(
@@ -364,12 +373,14 @@ fn parses_ref_kmers_with_plain_or_separated_labels() -> anyhow::Result<()> {
         Some(1)
     );
 
-    let reverse_decode_key = EncodedMotifKey {
-        inside_code: spec.encode_kmer_bytes(b"ACGT"),
-        outside_code: 0,
-        reverse_on_decode: true,
-    };
-    assert_eq!(lookup.target_for(reverse_decode_key), None);
+    assert_eq!(
+        lookup.target_for(ref_reverse_lookup_key(spec.encode_kmer_bytes(b"GGTT"))),
+        Some(0)
+    );
+    assert_eq!(
+        lookup.target_for(ref_reverse_lookup_key(spec.encode_kmer_bytes(b"AACC"))),
+        None
+    );
 
     Ok(())
 }
@@ -462,8 +473,10 @@ fn parses_crlf_terminated_ref_kmers_motifs_file_rows() -> anyhow::Result<()> {
 #[test]
 fn uses_selected_subspace_for_large_ref_kmers() -> anyhow::Result<()> {
     // Arrange: k = 30 cannot use the full radix-5 code space, so motifs-file counting must use a
-    // byte-backed selected subspace.
+    // byte-backed selected subspace. Only A^30 is listed, but T^30 must also be encoded because it
+    // is the reverse complement observed in reference coordinates.
     let motif = "A".repeat(30);
+    let reverse_motif = "T".repeat(30);
     let contents = format!("{motif}\n");
 
     // Act
@@ -477,8 +490,17 @@ fn uses_selected_subspace_for_large_ref_kmers() -> anyhow::Result<()> {
         panic!("expected selected subspace for k = 30");
     };
     assert_eq!(spec.k, 30);
-    let code = spec.encode_kmer_bytes(motif.as_bytes());
-    assert_eq!(lookup.target_for(ref_lookup_key(code)), Some(0));
+    let forward_code = spec.encode_kmer_bytes(motif.as_bytes());
+    let reverse_code = spec.encode_kmer_bytes(reverse_motif.as_bytes());
+    assert_eq!(lookup.target_for(ref_lookup_key(forward_code)), Some(0));
+    assert_eq!(
+        lookup.target_for(ref_reverse_lookup_key(reverse_code)),
+        Some(0)
+    );
+    assert_eq!(
+        spec.build_left_aligned_codes(reverse_motif.as_bytes()).get(0),
+        reverse_code
+    );
     Ok(())
 }
 

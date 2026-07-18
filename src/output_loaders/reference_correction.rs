@@ -14,6 +14,7 @@
 //! factors separately and multiplies them. Side modes first sum sample counts
 //! over the unused side, then correct and return labels such as `AC_` or `_TG`.
 
+use crate::commands::ref_kmers::config::RefKmerOrientation;
 use crate::output_loaders::{
     DenseMatrix, EndMotifAxisKind, EndMotifCountSelection, EndMotifCountsData, EndMotifRowMetadata,
     EndMotifRowMode, EndMotifSparseCounts, EndMotifSparseEntry, EndsOutput, EndsSelector,
@@ -80,8 +81,13 @@ pub enum UnsupportedReferencePolicy {
 ///
 /// Motif labels are matched to reference k-mers by removing `_`. For example,
 /// `AT_CG` is matched to `ATCG` in `joint` mode. Motif-group outputs are
-/// matched directly by group label and do not accept a two-sided mode. Both
-/// `cfdna ends` and `cfdna ref-kmers` write forward-oriented motif labels.
+/// matched directly by group label and do not accept a two-sided mode. End-motif
+/// labels are oriented from each fragment end inward. Reference correction therefore
+/// requires `ref-kmers --orientation both`, whose frequencies average each reference
+/// k-mer with its reverse complement. This is an approximate correction for broad or local
+/// reference-composition bias. It assumes that left and right fragment ends contribute equally
+/// within each row. Correction in short windows can be unreliable, so use windows of at least a
+/// few kilobases.
 ///
 /// For labels that contain both outside and inside bases, choose the mode that
 /// matches the question:
@@ -720,14 +726,18 @@ fn resolve_correction_mode(
 
 /// Ensure sample and reference motif axes can be used for correction.
 ///
-/// Reference output must be non-canonical, grouped axes must match, and concrete
-/// end-motif labels must have the reference k-mer width. Two-sided mode options
-/// are rejected for grouped axes before any counts are read.
+/// Reference output must include both sequence orientations and be non-canonical. Grouped axes
+/// must match, and concrete end-motif labels must have the reference k-mer width. Two-sided mode
+/// options are rejected for grouped axes before any counts are read.
 fn validate_reference_correction_motif_axes(
     ends: &EndsOutput,
     ref_kmers: &RefKmersOutput,
     two_sided_correction_mode: Option<TwoSidedCorrectionMode>,
 ) -> Result<()> {
+    ensure!(
+        ref_kmers.orientation() == RefKmerOrientation::Both,
+        "reference correction requires reference k-mer output generated with `--orientation both`"
+    );
     ensure!(
         !ref_kmers.canonical(),
         "reference correction requires non-canonical reference k-mer output"

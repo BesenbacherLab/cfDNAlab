@@ -1,5 +1,6 @@
 use crate::{
     commands::ref_kmers::{
+        config::RefKmerOrientation,
         counting::{KmerCounts, KmerCountsByWindow, SelectedKmerCountsByWindow},
         tiling::{
             TileResult, deserialize_selected_tile_counts, deserialize_tile_counts,
@@ -27,9 +28,11 @@ pub(crate) struct CollectedRefKmerFrequencies {
 ///
 /// This is the join point between tile-level counting and Zarr writing. Full-space output keeps
 /// encoded k-mer keys until `postprocess_ref_kmer_counts` decodes and optionally canonicalizes
-/// them. Motifs-file output has already reduced counts to parser-assigned target indices, so it
-/// uses the shared selected-motif postprocessor and then applies the same row normalization as the
-/// full-space path.
+/// them. These unrestricted counts retain their full reference-forward weight until that
+/// postprocessor applies the orientation split. Motifs-file output applies the split during
+/// counting because it immediately reduces observations to parser-assigned target indices. It
+/// therefore uses the shared selected-motif postprocessor without applying orientation weights
+/// again, then uses the same row normalization as the full-space path.
 ///
 /// Parameters
 /// ----------
@@ -45,6 +48,9 @@ pub(crate) struct CollectedRefKmerFrequencies {
 ///   Whether full-space motif labels should be reverse-complement collapsed
 /// - `all_motifs`:
 ///   Whether to retain the full motif axis or all motifs-file targets
+/// - `orientation`:
+///   Whether each reference observation contributes only to its reference-forward label or is
+///   divided between that label and its reverse complement
 ///
 /// Returns
 /// -------
@@ -57,6 +63,7 @@ pub(crate) fn collect_ref_kmer_frequencies(
     total_windows: usize,
     canonical: bool,
     all_motifs: bool,
+    orientation: RefKmerOrientation,
 ) -> Result<CollectedRefKmerFrequencies> {
     match selected_motifs {
         None => {
@@ -74,6 +81,7 @@ pub(crate) fn collect_ref_kmer_frequencies(
                 kmer_decode_spec,
                 canonical,
                 all_motifs,
+                orientation,
             )?;
             Ok(CollectedRefKmerFrequencies {
                 frequency_bins,

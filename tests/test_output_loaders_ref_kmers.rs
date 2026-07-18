@@ -8,6 +8,7 @@ use cfdnalab::output_loaders::{
     RefKmerMotifAxisKind, RefKmerRowMetadata, RefKmerRowMode, RefKmerSparseCountEntry,
     RefKmerSparseFrequencyEntry, RefKmerStorageMode, load_ref_kmers_output,
 };
+use cfdnalab::run_like_cli::ref_kmers::RefKmerOrientation;
 use serde_json::{Map, Value, json};
 use std::{fs, path::Path, sync::Arc};
 use tempfile::TempDir;
@@ -49,6 +50,7 @@ fn load_ref_kmers_output_reads_dense_global_store() -> anyhow::Result<()> {
     assert_eq!(loaded.motif_axis_kind(), RefKmerMotifAxisKind::Motif);
     assert_eq!(loaded.kmer_size(), 1);
     assert!(!loaded.canonical());
+    assert_eq!(loaded.orientation(), RefKmerOrientation::Both);
     assert!(!loaded.all_motifs());
     assert_eq!(loaded.assign_by(), "count-overlap");
     assert_eq!(loaded.motif_labels(), &["A".to_string(), "C".to_string()]);
@@ -66,7 +68,7 @@ fn load_ref_kmers_output_reads_dense_global_store() -> anyhow::Result<()> {
     assert!(loaded.sparse_frequencies().is_err());
     assert_eq!(
         loaded.output_metadata().to_string(),
-        "storage_mode=dense, row_mode=global, motif_axis=motifs, row_count=1, motif_count=2, kmer_size=1, canonical=false, all_motifs=false, assign_by=count-overlap"
+        "storage_mode=dense, row_mode=global, motif_axis=motifs, row_count=1, motif_count=2, kmer_size=1, canonical=false, orientation=both, all_motifs=false, assign_by=count-overlap"
     );
     Ok(())
 }
@@ -158,7 +160,7 @@ fn load_ref_kmers_output_rejects_wrong_schema_version() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     let path = temp.path().join("sample.ref_kmers.zarr");
     let mut attributes = dense_root_attributes(1, false);
-    attributes["cfdnalab_schema_version"] = json!(2);
+    attributes["cfdnalab_schema_version"] = json!(1);
     create_store(&path, attributes)?;
 
     // Act
@@ -166,6 +168,25 @@ fn load_ref_kmers_output_rejects_wrong_schema_version() -> anyhow::Result<()> {
 
     // Assert
     assert!(error.to_string().contains("schema version mismatch"));
+    Ok(())
+}
+
+/// Verify unknown orientation metadata is rejected.
+#[test]
+fn load_ref_kmers_output_rejects_unknown_orientation() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    let path = temp.path().join("sample.ref_kmers.zarr");
+    let mut attributes = dense_root_attributes(1, false);
+    attributes["orientation"] = json!("unknown");
+    create_store(&path, attributes)?;
+
+    let error = load_ref_kmers_output(&path).expect_err("unknown orientation should fail");
+
+    assert!(
+        error
+            .to_string()
+            .contains("unsupported reference k-mer orientation")
+    );
     Ok(())
 }
 
@@ -381,7 +402,7 @@ fn sparse_root_attributes(kmer_size: u8, canonical: bool) -> Value {
 fn common_root_attributes(kmer_size: u8, canonical: bool) -> Value {
     json!({
         "cfdnalab_schema": "ref_kmer_frequencies",
-        "cfdnalab_schema_version": 1,
+        "cfdnalab_schema_version": 2,
         "row_mode": "global",
         "motif_axis_kind": "motif",
         "value_units": "reference_kmer_frequency",
@@ -390,6 +411,7 @@ fn common_root_attributes(kmer_size: u8, canonical: bool) -> Value {
         "count_reconstruction": "reference_kmer_count = frequency * row_scaling_factor[row]",
         "kmer_size": kmer_size,
         "canonical": canonical,
+        "orientation": "both",
         "all_motifs": false,
         "assign_by": "count-overlap",
     })

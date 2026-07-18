@@ -30,7 +30,7 @@ def test_dense_windowed_ref_kmers_load_metadata_and_arrays(tmp_path: Path) -> No
     assert repr(ref_kmers) == (
         "WindowedRefKmerFrequencies("
         f"path={str(store_path)!r}, "
-        "schema_version=1, "
+        "schema_version=2, "
         "storage_mode='dense', "
         "row_mode='bed', "
         "motif_axis_kind='motif', "
@@ -43,6 +43,7 @@ def test_dense_windowed_ref_kmers_load_metadata_and_arrays(tmp_path: Path) -> No
     assert ref_kmers.motif_axis_kind() == "motif"
     assert ref_kmers.kmer_size() == 2
     assert not ref_kmers.canonical()
+    assert ref_kmers.orientation() == "both"
     assert not ref_kmers.all_motifs()
     assert ref_kmers.assign_by() == "count-overlap"
     assert ref_kmers.reference_contig_footprint() == REFERENCE_FOOTPRINT
@@ -300,7 +301,7 @@ def test_ref_kmer_loader_rejects_schema_and_shape_problems(tmp_path: Path) -> No
     )
     wrong_version = _write_dense_window_store(
         tmp_path / "wrong_version.ref_kmers.zarr",
-        schema_version=99,
+        schema_version=1,
     )
     missing_array = _write_dense_window_store(
         tmp_path / "missing_array.ref_kmers.zarr",
@@ -388,6 +389,10 @@ def test_ref_kmer_loader_rejects_metadata_that_changes_count_meaning(
         tmp_path / "wrong_scaling.ref_kmers.zarr",
         row_scaling_factor_array="other",
     )
+    wrong_orientation = _write_dense_window_store(
+        tmp_path / "wrong_orientation.ref_kmers.zarr",
+        orientation="unknown",
+    )
 
     with pytest.raises(ValueError, match="value_units"):
         cfdnalab.read_ref_kmers(wrong_units)
@@ -395,6 +400,8 @@ def test_ref_kmer_loader_rejects_metadata_that_changes_count_meaning(
         cfdnalab.read_ref_kmers(wrong_count_reconstruction)
     with pytest.raises(ValueError, match="row_scaling_factor_array"):
         cfdnalab.read_ref_kmers(wrong_scaling_array)
+    with pytest.raises(ValueError, match="orientation"):
+        cfdnalab.read_ref_kmers(wrong_orientation)
 
 
 def test_ref_kmer_loader_rejects_invalid_values_and_motifs(tmp_path: Path) -> None:
@@ -526,7 +533,7 @@ def _write_dense_window_store(
     path: Path,
     *,
     schema: str = "ref_kmer_frequencies",
-    schema_version: int = 1,
+    schema_version: int = 2,
     value_units: str = "reference_kmer_frequency",
     count_reconstruction: str = (
         "reference_kmer_count = frequency * row_scaling_factor[row]"
@@ -534,6 +541,7 @@ def _write_dense_window_store(
     row_scaling_factor_array: str = "row_scaling_factor",
     motif_names: np.ndarray = MOTIF_NAMES,
     canonical: bool = False,
+    orientation: str = "both",
     frequencies: np.ndarray | None = None,
     row_scaling_factor: np.ndarray | None = None,
     row_chromosome: np.ndarray | None = None,
@@ -561,6 +569,7 @@ def _write_dense_window_store(
         row_scaling_factor_array=row_scaling_factor_array,
         kmer_size=len(motif_names[0]),
         canonical=canonical,
+        orientation=orientation,
     )
 
     _create_motif_axis(root, motif_names)
@@ -800,7 +809,7 @@ def _set_ref_kmer_root_attrs(
     root: zarr.Group,
     *,
     schema: str = "ref_kmer_frequencies",
-    schema_version: int = 1,
+    schema_version: int = 2,
     storage_mode: str,
     row_mode: str,
     motif_axis_kind: str,
@@ -812,6 +821,7 @@ def _set_ref_kmer_root_attrs(
     ),
     kmer_size: int,
     canonical: bool = False,
+    orientation: str = "both",
     all_motifs: bool = False,
     assign_by: str = "count-overlap",
 ) -> None:
@@ -826,6 +836,7 @@ def _set_ref_kmer_root_attrs(
     root.attrs["count_reconstruction"] = count_reconstruction
     root.attrs["kmer_size"] = kmer_size
     root.attrs["canonical"] = canonical
+    root.attrs["orientation"] = orientation
     root.attrs["all_motifs"] = all_motifs
     root.attrs["assign_by"] = assign_by
     if storage_mode == "dense":

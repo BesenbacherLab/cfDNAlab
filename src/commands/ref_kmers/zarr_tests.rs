@@ -39,6 +39,7 @@ fn validate_sparse_global_package(
         write_dense_output: false,
         kmer_size,
         canonical,
+        orientation: RefKmerOrientation::Both,
         all_motifs: false,
         assign_by: WindowAssigner::Any,
         reference_contig_footprint: &reference_contig_footprint,
@@ -147,8 +148,14 @@ fn postprocess_ref_kmer_counts_decodes_and_canonicalizes_reverse_complements() -
     );
 
     // Act
-    let (frequencies, motif_order) =
-        postprocess_ref_kmer_counts(counts_by_window, 1, &spec, true, false)?;
+    let (frequencies, motif_order) = postprocess_ref_kmer_counts(
+        counts_by_window,
+        1,
+        &spec,
+        true,
+        false,
+        RefKmerOrientation::Both,
+    )?;
 
     // Assert
     assert_eq!(motif_order, vec!["AC"]);
@@ -177,8 +184,15 @@ fn postprocess_ref_kmer_counts_rejects_out_of_bounds_row() {
     );
 
     // Act
-    let error = postprocess_ref_kmer_counts(counts_by_window, 1, &spec, false, false)
-        .expect_err("out-of-bounds row should fail");
+    let error = postprocess_ref_kmer_counts(
+        counts_by_window,
+        1,
+        &spec,
+        false,
+        false,
+        RefKmerOrientation::Both,
+    )
+    .expect_err("out-of-bounds row should fail");
 
     // Assert
     assert!(
@@ -188,7 +202,165 @@ fn postprocess_ref_kmer_counts_rejects_out_of_bounds_row() {
 }
 
 #[test]
-fn build_all_ref_kmer_order_collapses_odd_canonical_universe() -> Result<()> {
+fn postprocess_ref_kmer_counts_averages_both_orientations_without_changing_row_total() -> Result<()>
+{
+    // Arrange: the reverse-complement pairs are AACC/GGTT, GGAA/TTCC, and CCCC/GGGG.
+    // Only the first pair is observed in both directions. The hand-derived transformed counts are:
+    // AACC=(3+5)/2=4, GGTT=(5+3)/2=4, GGAA=(2+0)/2=1, TTCC=(0+2)/2=1,
+    // CCCC=(1+0)/2=0.5, and GGGG=(0+1)/2=0.5. Their total remains 11.
+    let spec = kmer_spec(4);
+    let mut counts_by_window = KmerCountsByWindow::default();
+    counts_by_window.insert(
+        0,
+        KmerCounts {
+            counts: FxHashMap::from_iter([
+                (
+                    Kmer {
+                        k: 4,
+                        code: spec.encode_kmer_bytes(b"AACC"),
+                        orientation: KmerOrientation::Forward,
+                    },
+                    3.0,
+                ),
+                (
+                    Kmer {
+                        k: 4,
+                        code: spec.encode_kmer_bytes(b"GGTT"),
+                        orientation: KmerOrientation::Forward,
+                    },
+                    5.0,
+                ),
+                (
+                    Kmer {
+                        k: 4,
+                        code: spec.encode_kmer_bytes(b"GGAA"),
+                        orientation: KmerOrientation::Forward,
+                    },
+                    2.0,
+                ),
+                (
+                    Kmer {
+                        k: 4,
+                        code: spec.encode_kmer_bytes(b"CCCC"),
+                        orientation: KmerOrientation::Forward,
+                    },
+                    1.0,
+                ),
+            ]),
+        },
+    );
+
+    // Act
+    let (frequencies, motif_order) = postprocess_ref_kmer_counts(
+        counts_by_window,
+        1,
+        &spec,
+        false,
+        false,
+        RefKmerOrientation::Both,
+    )?;
+
+    // Assert
+    assert_eq!(
+        motif_order,
+        vec!["AACC", "CCCC", "GGAA", "GGGG", "GGTT", "TTCC"]
+    );
+    assert_close(frequencies.row_scaling_factors[0], 11.0);
+    let expected_counts = [4.0, 0.5, 1.0, 0.5, 4.0, 1.0];
+    for (motif_index, expected_count) in expected_counts.into_iter().enumerate() {
+        assert_close(
+            frequencies.frequency_bins[0][&(motif_index as u32)]
+                * frequencies.row_scaling_factors[0],
+            expected_count,
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn postprocess_ref_kmer_counts_keeps_self_reverse_complement_weight_once() -> Result<()> {
+    // Arrange: AATT is its own reverse complement, so its two half contributions sum to the
+    // original weight 7 rather than doubling it.
+    let spec = kmer_spec(4);
+    let counts_by_window = KmerCountsByWindow::from_iter([(
+        0,
+        KmerCounts {
+            counts: FxHashMap::from_iter([(
+                Kmer {
+                    k: 4,
+                    code: spec.encode_kmer_bytes(b"AATT"),
+                    orientation: KmerOrientation::Forward,
+                },
+                7.0,
+            )]),
+        },
+    )]);
+
+    // Act
+    let (frequencies, motif_order) = postprocess_ref_kmer_counts(
+        counts_by_window,
+        1,
+        &spec,
+        false,
+        false,
+        RefKmerOrientation::Both,
+    )?;
+
+    // Assert
+    assert_eq!(motif_order, vec!["AATT"]);
+    assert_close(frequencies.row_scaling_factors[0], 7.0);
+    assert_close(frequencies.frequency_bins[0][&0], 1.0);
+    Ok(())
+}
+
+#[test]
+fn postprocess_ref_kmer_counts_reference_forward_preserves_directional_counts() -> Result<()> {
+    // Arrange: reference-forward mode must retain the existing directional AACC/GGTT counts.
+    let spec = kmer_spec(4);
+    let counts_by_window = KmerCountsByWindow::from_iter([(
+        0,
+        KmerCounts {
+            counts: FxHashMap::from_iter([
+                (
+                    Kmer {
+                        k: 4,
+                        code: spec.encode_kmer_bytes(b"AACC"),
+                        orientation: KmerOrientation::Forward,
+                    },
+                    3.0,
+                ),
+                (
+                    Kmer {
+                        k: 4,
+                        code: spec.encode_kmer_bytes(b"GGTT"),
+                        orientation: KmerOrientation::Forward,
+                    },
+                    5.0,
+                ),
+            ]),
+        },
+    )]);
+
+    // Act
+    let (frequencies, motif_order) = postprocess_ref_kmer_counts(
+        counts_by_window,
+        1,
+        &spec,
+        false,
+        false,
+        RefKmerOrientation::ReferenceForward,
+    )?;
+
+    // Assert
+    assert_eq!(motif_order, vec!["AACC", "GGTT"]);
+    assert_close(frequencies.row_scaling_factors[0], 8.0);
+    assert_close(frequencies.frequency_bins[0][&0], 3.0 / 8.0);
+    assert_close(frequencies.frequency_bins[0][&1], 5.0 / 8.0);
+    Ok(())
+}
+
+#[test]
+fn build_all_ref_kmer_order_collapses_odd_complete_canonical_set() -> Result<()> {
     // Arrange: for k = 1, A and T collapse to A, while C and G collapse to C.
     let spec = kmer_spec(1);
 
@@ -201,7 +373,7 @@ fn build_all_ref_kmer_order_collapses_odd_canonical_universe() -> Result<()> {
 }
 
 #[test]
-fn complete_ref_kmer_axis_len_counts_noncanonical_universe() {
+fn complete_ref_kmer_axis_len_counts_noncanonical_set() {
     // Arrange: without canonicalization, every A/C/G/T string gets its own label.
 
     // Act
@@ -216,9 +388,9 @@ fn complete_ref_kmer_axis_len_counts_noncanonical_universe() {
 }
 
 #[test]
-fn complete_ref_kmer_axis_len_counts_odd_canonical_universe() {
+fn complete_ref_kmer_axis_len_counts_odd_canonical_set() {
     // Arrange: odd-length k-mers have no self reverse-complements, so canonicalization halves the
-    // complete A/C/G/T universe.
+    // complete A/C/G/T set.
 
     // Act
     let k1_axis_len = complete_ref_kmer_axis_len(1, true);
@@ -230,7 +402,7 @@ fn complete_ref_kmer_axis_len_counts_odd_canonical_universe() {
 }
 
 #[test]
-fn complete_ref_kmer_axis_len_counts_even_canonical_universe() {
+fn complete_ref_kmer_axis_len_counts_even_canonical_set() {
     // Arrange: even-length k-mers include self reverse-complements. For k = 2, the four fixed
     // points are AT, CG, GC, and TA. The remaining 12 k-mers form 6 reverse-complement pairs, so
     // k = 2 has 10 labels. For k = 4, there are 4^2 = 16 fixed points and 240 remaining k-mers,
@@ -246,7 +418,7 @@ fn complete_ref_kmer_axis_len_counts_even_canonical_universe() {
 }
 
 #[test]
-fn complete_ref_kmer_axis_len_returns_none_for_invalid_or_oversized_universes() {
+fn complete_ref_kmer_axis_len_returns_none_for_invalid_or_oversized_sets() {
     // Arrange: k = 0 is not a motif length, and 4^32 is one larger than u64::MAX.
 
     // Act
@@ -444,6 +616,7 @@ fn dense_ref_kmer_zarr_writes_frequencies_scaling_and_window_metadata() -> Resul
             write_dense_output: true,
             kmer_size: 2,
             canonical: false,
+            orientation: RefKmerOrientation::Both,
             all_motifs: true,
             assign_by: WindowAssigner::CountOverlap,
             reference_contig_footprint: &reference_contig_footprint,
@@ -458,8 +631,9 @@ fn dense_ref_kmer_zarr_writes_frequencies_scaling_and_window_metadata() -> Resul
     );
     assert_eq!(
         root_metadata["attributes"]["cfdnalab_schema_version"],
-        serde_json::json!(1)
+        serde_json::json!(2)
     );
+    assert_eq!(root_metadata["attributes"]["orientation"], "both");
     assert_eq!(root_metadata["attributes"]["storage_mode"], "dense");
     assert_eq!(root_metadata["attributes"]["row_mode"], "bed");
     assert_eq!(root_metadata["attributes"]["primary_array"], "frequencies");
@@ -522,6 +696,7 @@ fn sparse_ref_kmer_zarr_writes_sorted_frequency_coo_arrays() -> Result<()> {
             write_dense_output: false,
             kmer_size: 2,
             canonical: false,
+            orientation: RefKmerOrientation::Both,
             all_motifs: false,
             assign_by: WindowAssigner::Any,
             reference_contig_footprint: &reference_contig_footprint,
@@ -596,6 +771,7 @@ fn sparse_ref_kmer_zarr_writes_row_major_coo_and_omits_zero_frequencies() -> Res
             write_dense_output: false,
             kmer_size: 1,
             canonical: false,
+            orientation: RefKmerOrientation::Both,
             all_motifs: false,
             assign_by: WindowAssigner::Any,
             reference_contig_footprint: &reference_contig_footprint,
@@ -641,6 +817,7 @@ fn sparse_ref_kmer_zarr_writes_empty_coo_arrays_when_all_rows_are_empty() -> Res
             write_dense_output: false,
             kmer_size: 1,
             canonical: false,
+            orientation: RefKmerOrientation::Both,
             all_motifs: false,
             assign_by: WindowAssigner::Any,
             reference_contig_footprint: &reference_contig_footprint,
@@ -714,6 +891,7 @@ fn window_ref_kmer_zarr_rejects_out_of_order_output_indices() {
             write_dense_output: true,
             kmer_size: 1,
             canonical: false,
+            orientation: RefKmerOrientation::Both,
             all_motifs: false,
             assign_by: WindowAssigner::Any,
             reference_contig_footprint: &reference_contig_footprint,
@@ -753,6 +931,7 @@ fn motif_group_ref_kmer_zarr_writes_json_labels_without_motif_ascii() -> Result<
             write_dense_output: false,
             kmer_size: 4,
             canonical: false,
+            orientation: RefKmerOrientation::Both,
             all_motifs: false,
             assign_by: WindowAssigner::All,
             reference_contig_footprint: &reference_contig_footprint,
@@ -813,6 +992,7 @@ fn grouped_ref_kmer_zarr_writes_group_metadata_and_dense_frequencies() -> Result
             write_dense_output: true,
             kmer_size: 1,
             canonical: false,
+            orientation: RefKmerOrientation::Both,
             all_motifs: true,
             assign_by: WindowAssigner::Proportion(0.5),
             reference_contig_footprint: &reference_contig_footprint,

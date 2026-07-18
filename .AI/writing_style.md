@@ -18,7 +18,7 @@ Docstrings should read like a short tutorial, then details, then structured sect
 
 Bullet points in CLI-facing documentation (config files) should have a newline between them, otherwise CLI collapses the sentences.
 
-Reduce the number of semi-colons in docstrings and comments. Use comma or dot instead.
+Do not use semicolons in docstrings, documentation, or comments. Use separate sentences instead.
 
 In-line comments start with title-cased first word and does not have a terminal dot *in the end*. E.g. `// A comment`
 

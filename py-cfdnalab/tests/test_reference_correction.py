@@ -90,6 +90,22 @@ def test_reference_corrected_end_motifs_rejects_canonical_reference(
         ends.data_frame(ref_kmers=ref_kmers)
 
 
+def test_reference_corrected_end_motifs_rejects_reference_forward_orientation(
+    tmp_path: Path,
+) -> None:
+    end_path = _write_dense_window_store(tmp_path / "sample.end_motifs.zarr")
+    ref_path = _write_reference_correction_ref_kmer_store(
+        tmp_path / "reference.ref_kmers.zarr"
+    )
+    ref_root = zarr.open_group(str(ref_path), mode="a", zarr_format=3)
+    ref_root.attrs["orientation"] = "reference_forward"
+    ends = cfdnalab.read_end_motifs(end_path)
+    ref_kmers = cfdnalab.read_ref_kmers(ref_path)
+
+    with pytest.raises(ValueError, match="--orientation both"):
+        ends.data_frame(ref_kmers=ref_kmers)
+
+
 def test_one_sided_reference_correction_rejects_explicit_mode(
     tmp_path: Path,
 ) -> None:

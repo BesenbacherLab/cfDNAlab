@@ -20,6 +20,7 @@ def test_cfdnalab_package_reads_dense_global_ref_kmers(
     assert ref_kmers.motif_axis_kind() == "motif"
     assert ref_kmers.kmer_size() == 3
     assert ref_kmers.canonical()
+    assert ref_kmers.orientation() == "both"
     assert ref_kmers.all_motifs()
     assert ref_kmers.assign_by() == "count-overlap"
     assert [entry["name"] for entry in ref_kmers.reference_contig_footprint()] == [
@@ -79,20 +80,21 @@ def test_cfdnalab_package_reads_sparse_windowed_ref_kmers(
         "TAC",
         "CCC",
         "GGG",
+        "TTT",
         "ACG",
         "GTA",
     ]
-    assert not ref_kmers.has_motif("TTT")
+    assert ref_kmers.has_motif("TTT")
     with pytest.raises(ValueError, match="would turn sparse reference k-mer output"):
         ref_kmers.dense_frequencies_array()
     np.testing.assert_allclose(
         ref_kmers.dense_counts_array(allow_densify=True),
         np.array(
             [
-                [0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0],
-                [1.0, 0.0, 4 / 3, 0.0, 1 / 3, 1.0, 2 / 3],
-                [2 / 3, 0.0, 0.0, 1.0, 1 / 3, 0.0, 1 / 3],
-                [5 / 3, 0.0, 1.0, 0.0, 0.0, 1.0, 2.0],
+                [0.0, 1 / 2, 0.0, 1.0, 1.0, 1 / 2, 0.0, 0.0],
+                [1.0, 0.0, 1.0, 1 / 6, 1 / 6, 0.0, 1.0, 1.0],
+                [1 / 3, 0.0, 1 / 6, 2 / 3, 2 / 3, 0.0, 1 / 3, 1 / 6],
+                [4 / 3, 0.0, 3 / 2, 0.0, 0.0, 0.0, 4 / 3, 3 / 2],
             ],
             dtype=np.float64,
         ),
@@ -128,10 +130,10 @@ def test_cfdnalab_package_reads_sparse_windowed_ref_kmers(
                 "start": np.array([12, 12, 0, 0], dtype=np.int64),
                 "end": np.array([20, 20, 9, 9], dtype=np.int64),
                 "blacklisted_fraction": np.array([0.0, 0.0, 0.0, 0.0]),
-                "motif_index": np.array([6, 1, 6, 1], dtype=np.int32),
+                "motif_index": np.array([7, 1, 7, 1], dtype=np.int32),
                 "motif": np.array(["GTA", "AAA", "GTA", "AAA"], dtype=object),
-                "frequency": np.array([6 / 17, 0.0, 0.0, 1 / 3], dtype=np.float64),
-                "count": np.array([2.0, 0.0, 0.0, 1.0], dtype=np.float64),
+                "frequency": np.array([9 / 34, 0.0, 0.0, 1 / 6], dtype=np.float64),
+                "count": np.array([3 / 2, 0.0, 0.0, 1 / 2], dtype=np.float64),
             }
         ),
         check_exact=False,
@@ -154,6 +156,7 @@ def test_cfdnalab_package_reads_sparse_grouped_ref_kmers(
         "TAC",
         "CCC",
         "GGG",
+        "TTT",
         "ACG",
         "GTA",
     ]
@@ -173,26 +176,33 @@ def test_cfdnalab_package_reads_sparse_grouped_ref_kmers(
             groups=["alpha", "beta"],
             motifs=["GTA", "AAA"],
         ).toarray(),
-        np.array([[8 / 3, 0.0], [1 / 3, 1.0]], dtype=np.float64),
+        np.array([[5 / 2, 0.0], [1 / 6, 1 / 2]], dtype=np.float64),
     )
     pd.testing.assert_frame_equal(
         ref_kmers.data_frame(),
         pd.DataFrame(
             {
-                "group_idx": np.array([0, 0, 0, 0, 0, 1, 1, 1, 1, 1], dtype=np.int32),
-                "group_name": np.array(["beta"] * 5 + ["alpha"] * 5, dtype=object),
-                "eligible_windows": np.array([2] * 10, dtype=np.int32),
-                "blacklisted_fraction": np.array([0.1] * 5 + [1 / 16] * 5),
-                "motif_index": np.array([0, 1, 3, 4, 6, 0, 2, 4, 5, 6], dtype=np.int32),
+                "group_idx": np.array([0] * 8 + [1] * 6, dtype=np.int32),
+                "group_name": np.array(["beta"] * 8 + ["alpha"] * 6, dtype=object),
+                "eligible_windows": np.array([2] * 14, dtype=np.int32),
+                "blacklisted_fraction": np.array([0.1] * 8 + [1 / 16] * 6),
+                "motif_index": np.array(
+                    [0, 1, 2, 3, 4, 5, 6, 7, 0, 2, 3, 4, 6, 7],
+                    dtype=np.int32,
+                ),
                 "motif": np.array(
                     [
                         "CGT",
                         "AAA",
+                        "TAC",
                         "CCC",
                         "GGG",
+                        "TTT",
+                        "ACG",
                         "GTA",
                         "CGT",
                         "TAC",
+                        "CCC",
                         "GGG",
                         "ACG",
                         "GTA",
@@ -200,11 +210,41 @@ def test_cfdnalab_package_reads_sparse_grouped_ref_kmers(
                     dtype=object,
                 ),
                 "frequency": np.array(
-                    [1 / 8, 3 / 16, 3 / 8, 1 / 4, 1 / 16, 4 / 15, 7 / 30, 1 / 30, 1 / 5, 4 / 15],
+                    [
+                        1 / 16,
+                        3 / 32,
+                        1 / 32,
+                        5 / 16,
+                        5 / 16,
+                        3 / 32,
+                        1 / 16,
+                        1 / 32,
+                        7 / 30,
+                        1 / 4,
+                        1 / 60,
+                        1 / 60,
+                        7 / 30,
+                        1 / 4,
+                    ],
                     dtype=np.float64,
                 ),
                 "count": np.array(
-                    [2 / 3, 1.0, 2.0, 4 / 3, 1 / 3, 8 / 3, 7 / 3, 1 / 3, 2.0, 8 / 3],
+                    [
+                        1 / 3,
+                        1 / 2,
+                        1 / 6,
+                        5 / 3,
+                        5 / 3,
+                        1 / 2,
+                        1 / 3,
+                        1 / 6,
+                        7 / 3,
+                        5 / 2,
+                        1 / 6,
+                        1 / 6,
+                        7 / 3,
+                        5 / 2,
+                    ],
                     dtype=np.float64,
                 ),
             }

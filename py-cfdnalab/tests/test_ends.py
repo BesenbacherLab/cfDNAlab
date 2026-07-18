@@ -697,7 +697,7 @@ def _write_reference_correction_ref_kmer_store(
 
     root = zarr.open_group(str(path), mode="w", zarr_format=3)
     root.attrs["cfdnalab_schema"] = "ref_kmer_frequencies"
-    root.attrs["cfdnalab_schema_version"] = 1
+    root.attrs["cfdnalab_schema_version"] = 2
     root.attrs["storage_mode"] = storage_mode
     root.attrs["row_mode"] = row_mode
     root.attrs["motif_axis_kind"] = "motif"
@@ -709,6 +709,7 @@ def _write_reference_correction_ref_kmer_store(
     )
     root.attrs["kmer_size"] = len(str(motifs[0]))
     root.attrs["canonical"] = False
+    root.attrs["orientation"] = "both"
     root.attrs["all_motifs"] = True
     root.attrs["assign_by"] = "count-overlap"
     if storage_mode == "dense":

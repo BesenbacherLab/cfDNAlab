@@ -483,7 +483,7 @@ fn ref_kmers_config_roundtrips_through_rendered_cli() {
     use crate::{
         commands::{
             cli_common::{DistributionWindowsArgs, WindowAssigner},
-            ref_kmers::config::RefKmersConfig,
+            ref_kmers::config::{RefKmerOrientation, RefKmersConfig},
         },
         shared::logging::{LogSpec, LoggingArgs},
     };
@@ -497,6 +497,8 @@ fn ref_kmers_config_roundtrips_through_rendered_cli() {
             chromosomes_file: Some(PathBuf::from("chromosomes.txt")),
         },
     );
+    assert_eq!(config.orientation, RefKmerOrientation::Both);
+    config.set_orientation(RefKmerOrientation::ReferenceForward);
     config.set_output_prefix("hg38");
     config.set_n_threads(2);
     config.set_windows(DistributionWindowsArgs {

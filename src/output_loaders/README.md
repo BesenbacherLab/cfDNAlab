@@ -12,7 +12,7 @@ The loaders live under `cfdnalab::output_loaders` and are compiled with the matc
 | `cmd_ends`      | `load_ends_output()`      | `<prefix>.end_motifs.zarr`                               |
 | `cmd_lengths`   | `load_lengths_output()`   | `<prefix>.length_counts.tsv`, optionally `.gz` or `.zst` |
 | `cmd_fcoverage` | `load_fcoverage_output()` | non-positional aggregate `fcoverage` TSV outputs         |
-| `cmd_ref_kmers` | `load_ref_kmers_output()` | `<prefix>.ref_kmers.zarr`                          |
+| `cmd_ref_kmers` | `load_ref_kmers_output()` | `<prefix>.ref_kmers.zarr`                                |
 
 <br>
 
@@ -198,6 +198,8 @@ fn main() -> anyhow::Result<()> {
 
 Reference correction divides each observed end-motif count by a reference-based correction factor for the matched row. This factor is computed from the motif frequencies in the reference k-mer output and normalized so a uniform reference composition leaves counts unchanged. Motifs that are common in the reference row are scaled down. Motifs that are rare in the reference row are scaled up. Only motifs with a positive reference frequency contribute to the row's correction support.
 
+This is an **approximate** correction for broad or local reference-composition bias in non-small windows. Short windows can lead to unreliable corrections, why we recommend window sizes of at least a few kilobases.
+
 When motif labels contain both outside and inside bases, such as `AC_TG`, call `.two_sided_correction(...)` and choose how the two sides should be handled:
 
 - `TwoSidedCorrectionMode::Joint` keeps full labels such as `AC_TG` and corrects each count with the matching reference k-mer, `ACTG`.
@@ -209,11 +211,11 @@ For `Outside` and `Inside`, repeated side labels are deduplicated in their first
 
 One-sided outputs do not accept an explicit mode.
 
-Motif labels are matched to reference k-mers by removing `_`, for example `AT_CG` -> `ATCG`. Motif-group outputs are matched by group label. Both commands write forward-oriented motif labels, including right-end motifs from `cfdna ends`.
+Motif labels are matched to reference k-mers by removing `_`, for example `AT_CG` -> `ATCG`. Motif-group outputs are matched by group label. End-motif labels are end-relative: each label reads from its fragment end inward, so right-end labels are reverse-complemented relative to reference coordinates. Reference correction requires `ref-kmers --orientation both`. The reported frequency for a motif is the average of its reference-forward frequency and the frequency of its reverse complement.
 
 For `Split`, `Outside`, and `Inside`, side-specific reference frequencies are calculated from the loaded full-length reference k-mers. For example, the outside frequency for `AC` is the sum of frequencies for loaded k-mers with prefix `AC`, such as `ACTG` and `ACAA`. The inside frequency for `TG` is the corresponding sum over loaded k-mers with suffix `TG`. Separate shorter reference k-mer runs are not required.
 
-A motifs file used for the reference output restricts these sums to the k-mers in that file. Without a motifs file, all k-mers in the reference output can contribute, including k-mers absent from the sample end-motif output.
+A motifs file used for the reference output restricts these sums to the k-mers in that file. If `ends` used `--motifs-file`, pass the same file to `ref-kmers`. Without a motifs file, all k-mers in the reference output can contribute, including k-mers absent from the sample end-motif output.
 
 By default, end-motif and reference k-mer rows must match exactly. A global reference k-mer store can be applied to every windowed or grouped end-motif row only when `.use_global_bias(true)` is set. That option requires a global reference store and is unnecessary when both outputs are global. Sample-observed motifs can be absent from the reference genome or have zero reference frequency in a row. Positive end-motif counts for those motifs are errors by default. Use `UnsupportedReferencePolicy::KeepNaN` to keep the selected shape and mark those cells as `NaN`.
 
@@ -375,9 +377,11 @@ Grouped fcoverage TSV files store numeric `group_idx` values. Use `load_fcoverag
 
 Reference k-mer stores can be dense or sparse. They store row-wise frequencies plus a row scaling factor that reconstructs counts.
 
-For `ref-kmers` outputs written with `--motifs-file`, frequencies are normalized over the selected motifs or motif groups from that file. Unlisted k-mers are not part of the denominator, and the row scaling factor reconstructs selected k-mer or group counts.
+For `ref-kmers` outputs written with `--motifs-file`, frequencies are calculated over the motifs or groups listed in that file. Unlisted k-mers are not included. Multiplying a frequency by the row scaling factor reconstructs the count for that motif or group.
 
-With `--all-motifs`, the motif axis also keeps targets whose stored frequency is zero. Without a motifs file, those targets are all A/C/G/T k-mers for the configured `k`. With a motifs file, they are the motifs or motif groups listed in that file.
+Group membership comes only from the motifs file. Reverse complements are not automatically added to the same group. For example, suppose the left-to-right reference counts are `AACC=3` and `GGTT=5`. With `orientation=both`, a file containing only `AACC<TAB>group_a` produces `group_a=4`. Assigning both motifs to `group_a` produces `group_a=8`. Assigning `AACC` to `group_a` and `GGTT` to `group_b` produces `group_a=4` and `group_b=4`. A motif that is its own reverse complement keeps its full count.
+
+With `--all-motifs`, motifs or groups are kept even when their frequency is zero. Without a motifs file, this keeps all A/C/G/T k-mers for the configured `k`. With a motifs file, it keeps every motif or group listed in the file.
 
 ```rust
 use cfdnalab::output_loaders::{

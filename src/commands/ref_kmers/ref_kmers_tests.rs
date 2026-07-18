@@ -201,33 +201,34 @@ fn manualish_example() -> anyhow::Result<()> {
         "TG".to_string(),
         "TT".to_string(),
     ];
-    // Count-overlap uses half-open k-mer intervals. In the final chr1 row [50,68), CC gets 0.5
-    // from start 49 and 1.0 from starts 50, 56, 57, and 58. No start 67 is counted because
-    // [67,69) crosses the chromosome end.
+    // Count-overlap uses half-open k-mer intervals. Each reference-forward count is then averaged
+    // with its reverse-complement partner because `both` is the default orientation. For example,
+    // the first row has reference-forward AA=1 and TT=0.5, so both output columns contain 0.75.
+    // Self-reverse-complementary 2-mers such as AT, CG, GC, and TA retain their original counts.
     let expected_bed_counts: [[f64; 16]; 8] = [
         [
-            1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.5, 0.0, 0.0, 1.0, 1.0, 2.0, 0.0, 0.0, 1.0, 0.5,
+            0.75, 1.5, 0.0, 0.0, 1.0, 1.0, 1.5, 0.0, 0.0, 1.0, 1.0, 1.5, 0.0, 0.0, 1.0, 0.75,
         ],
         [
-            0.0, 0.0, 2.0, 3.0, 1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 0.5, 0.0, 2.0, 1.5, 0.0, 0.0,
+            0.0, 0.0, 1.5, 3.0, 0.5, 0.75, 1.0, 1.5, 1.75, 2.0, 0.75, 0.0, 2.0, 1.75, 0.5, 0.0,
         ],
         [
-            2.0, 1.0, 0.5, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 2.0, 1.0, 1.0, 0.0, 0.0, 2.0,
+            2.0, 1.0, 0.25, 0.0, 0.0, 1.25, 0.0, 0.25, 0.0, 0.0, 1.25, 1.0, 1.0, 0.0, 0.0, 2.0,
         ],
         [
-            3.0, 1.0, 0.0, 0.0, 1.0, 4.5, 0.0, 1.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 1.0, 3.0,
+            3.0, 0.5, 0.5, 0.0, 1.0, 3.75, 0.0, 0.5, 0.0, 0.0, 3.75, 0.5, 0.0, 0.0, 1.0, 3.0,
         ],
         [
-            1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.5, 1.0, 0.0, 0.0, 1.5, 1.0,
+            1.0, 1.0, 0.0, 0.0, 1.25, 1.25, 1.0, 0.0, 0.0, 1.0, 1.25, 1.0, 0.0, 0.0, 1.25, 1.0,
         ],
         [
-            0.0, 0.0, 2.0, 3.0, 1.0, 0.5, 2.0, 1.0, 2.0, 1.0, 0.0, 0.5, 2.0, 2.0, 0.0, 0.0,
+            0.0, 0.25, 1.5, 3.0, 0.5, 0.25, 2.0, 1.5, 2.0, 1.0, 0.25, 0.25, 2.0, 2.0, 0.5, 0.0,
         ],
         [
-            2.0, 1.0, 0.0, 0.0, 0.5, 2.0, 0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 0.0, 0.0, 0.0,
+            1.0, 1.0, 0.0, 0.0, 0.25, 1.25, 0.0, 0.0, 0.0, 0.0, 1.25, 1.0, 1.0, 0.0, 0.25, 1.0,
         ],
         [
-            3.0, 1.0, 0.0, 0.0, 1.5, 1.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 3.0,
+            3.0, 0.5, 0.5, 0.0, 1.25, 1.0, 0.0, 0.5, 0.0, 1.0, 1.0, 0.5, 0.0, 0.0, 1.25, 3.0,
         ],
     ];
     let expected_bed_scaling = [11.0, 17.0, 10.0, 17.5, 11.0, 17.0, 8.0, 13.5];
@@ -326,9 +327,10 @@ fn manualish_example() -> anyhow::Result<()> {
     /* --by-size vs global */
 
     // Global counts skip only 2-mers that include an N. For chr2 this removes starts 41, 42, 55,
-    // 56, 62, and 63. Starts 54=CC, 61=TG, and 66=CA remain valid.
+    // 56, 62, and 63. Starts 54=CC, 61=TG, and 66=CA remain valid. After that filtering,
+    // reverse-complement pairs are averaged exactly as they are for each BED row.
     let expected_global_counts = [
-        14.0, 9.0, 6.0, 6.0, 9.0, 14.0, 7.0, 4.0, 4.0, 7.0, 12.0, 8.0, 8.0, 4.0, 6.0, 10.0,
+        12.0, 8.5, 5.0, 6.0, 7.5, 13.0, 7.0, 5.0, 4.0, 7.0, 13.0, 8.5, 8.0, 4.0, 7.5, 12.0,
     ];
     let sum_count_rows = |counts: &crate::output_loaders::DenseMatrix<f64>| -> Vec<f64> {
         let mut totals = vec![0.0; counts.column_count()];
@@ -391,13 +393,14 @@ fn manualish_example() -> anyhow::Result<()> {
     assert_eq!(canonical_output.storage_mode(), RefKmerStorageMode::Dense);
     assert!(canonical_output.canonical());
     // Canonical 2-mers are the lexicographically smaller member of each reverse-complement pair.
-    // The expected counts come from `expected_global_counts` in `expected_motif_labels` order:
-    // AA = AA + TT = 14 + 10 = 24
-    // AC = AC + GT = 9 + 8 = 17
-    // AG = AG + CT = 6 + 4 = 10
+    // The expected counts equal the original reference-forward pair totals. Averaging writes half
+    // of each pair total to both labels before canonicalization sums those two halves again:
+    // AA = 12 + 12 = 24
+    // AC = 8.5 + 8.5 = 17
+    // AG = 5 + 5 = 10
     // AT = AT = 6
-    // CA = CA + TG = 9 + 6 = 15
-    // CC = CC + GG = 14 + 12 = 26
+    // CA = 7.5 + 7.5 = 15
+    // CC = 13 + 13 = 26
     // CG = CG = 7
     // GA = GA + TC = 4 + 4 = 8
     // GC = GC = 7
@@ -521,7 +524,7 @@ fn manualish_example() -> anyhow::Result<()> {
     assert_eq!(blacklist_output.row_mode(), RefKmerRowMode::Global);
     assert_eq!(blacklist_output.row_scaling_factors(), &[122.0]);
     let expected_blacklisted_global_counts = [
-        13.0, 9.0, 5.0, 6.0, 7.0, 14.0, 7.0, 4.0, 4.0, 6.0, 11.0, 8.0, 8.0, 4.0, 6.0, 10.0,
+        11.5, 8.5, 4.5, 6.0, 6.5, 12.5, 7.0, 4.5, 4.0, 6.0, 12.5, 8.5, 8.0, 4.0, 6.5, 11.5,
     ];
     let blacklist_counts = blacklist_output.to_dense_count_matrix()?;
     assert_counts_close(

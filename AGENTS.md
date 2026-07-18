@@ -26,6 +26,7 @@ This file is the authoritative entry point for repo-specific agent instructions.
 - Do not rewrite comments or docs for generic style preference; preserve existing wording unless the change is a clear correctness, clarity, or consistency improvement tied to the current task.
 - Do not write unnecessary wrapper functions.
 - Don't make unnecessary newlines in READMEs. Especially not in existing sections.
+- Question the biological consistency of choices. When something is not biologically valid, bring it up in the chat.
 
 Spellings:
 
@@ -34,6 +35,7 @@ Spellings:
  - Use "a"/"an" instead of "one" unless the count is relevant. It is more natural.
 
  - Do not use words like "geometry" and "payload" instead of more specific explanations. Be specific.
+ - Don't use "motif universe", use "motif set".
 
 Always read [.AI/collaboration.md](/Users/au547627/Documents/Development/rust/cfDNAlab/.AI/collaboration.md) to avoid annoying sycophanting. I want truth not praise.
 

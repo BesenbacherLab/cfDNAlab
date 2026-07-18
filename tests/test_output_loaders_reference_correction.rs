@@ -479,6 +479,45 @@ fn corrected_counts_reject_canonical_reference() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Verify correction rejects reference-forward reference k-mer frequencies.
+#[test]
+fn corrected_counts_reject_reference_forward_orientation() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    let ends_path = temp.path().join("sample.end_motifs.zarr");
+    let ref_path = temp.path().join("reference_forward.ref_kmers.zarr");
+
+    write_windowed_end_motif_store(
+        &ends_path,
+        FixtureStorage::Dense,
+        &["_AA", "_CC"],
+        &[1.0, 2.0, 3.0, 4.0],
+    )?;
+    let mut reference_attributes = ref_root_attributes(FixtureStorage::Dense, "bed", &["AA", "CC"]);
+    reference_attributes["orientation"] = json!("reference_forward");
+    let ref_store = create_store(&ref_path, reference_attributes)?;
+    write_motif_axis(&ref_store, &["AA", "CC"])?;
+    write_window_rows(&ref_store)?;
+    write_row_scaling_factors(&ref_store, 2)?;
+    write_reference_footprint(&ref_store)?;
+    write_ref_frequencies(
+        &ref_store,
+        FixtureStorage::Dense,
+        2,
+        2,
+        &[0.5, 0.5, 0.5, 0.5],
+    )?;
+
+    let ends = load_ends_output(&ends_path)?;
+    let ref_kmers = load_ref_kmers_output(&ref_path)?;
+    let error = ends
+        .select_corrected_counts(&ref_kmers)
+        .read()
+        .expect_err("reference-forward correction should fail");
+
+    assert!(error.to_string().contains("--orientation both"));
+    Ok(())
+}
+
 /// Verify two-sided outputs require a mode and joint mode uses full reference motifs.
 #[test]
 fn two_sided_correction_requires_mode_and_joint_uses_full_reference_motifs() -> anyhow::Result<()> {
@@ -962,7 +1001,7 @@ fn ref_root_attributes(storage: FixtureStorage, row_mode: &str, motif_labels: &[
     let (storage_mode, primary_array, primary_group) = storage_metadata(storage, "frequencies");
     let mut attributes = json!({
         "cfdnalab_schema": "ref_kmer_frequencies",
-        "cfdnalab_schema_version": 1,
+        "cfdnalab_schema_version": 2,
         "storage_mode": storage_mode,
         "row_mode": row_mode,
         "motif_axis_kind": "motif",
@@ -972,6 +1011,7 @@ fn ref_root_attributes(storage: FixtureStorage, row_mode: &str, motif_labels: &[
         "count_reconstruction": "reference_kmer_count = frequency * row_scaling_factor[row]",
         "kmer_size": motif_labels.first().map_or(0, |label| label.len()),
         "canonical": false,
+        "orientation": "both",
         "all_motifs": false,
         "assign_by": "count-overlap",
         "primary_array": primary_array,

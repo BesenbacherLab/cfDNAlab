@@ -419,17 +419,26 @@ fn generate_end_motif_zarr_fixtures_with_cfdnalab() -> Result<()> {
     let unrestricted_ref_frequencies = read_sparse_frequency_matrix(&unrestricted_ref_kmers_path)?;
     assert_eq!(
         unrestricted_ref_motifs,
-        vec!["ACGT", "CGTA", "CGTT", "GTAC", "GTTT", "TACG", "TTTT"]
+        vec![
+            "AAAA", "AAAC", "AACG", "ACGT", "CGTA", "CGTT", "GTAC", "GTTT", "TACG", "TTTT"
+        ]
     );
-    assert_eq!(unrestricted_ref_frequencies.shape(), &[3, 7]);
+    assert_eq!(unrestricted_ref_frequencies.shape(), &[3, 10]);
+    // Each 5 bp window receives total count 5 from overlap-weighted 4-mers. Before orientation
+    // averaging, their counts are ACGT=5/4, CGTA=1/2, CGTT=3/4, GTAC=3/4, GTTT=1/2,
+    // TACG=1, and TTTT=1/4. Averaging each motif with its reverse complement introduces
+    // AAAA, AAAC, and AACG and shares the non-palindromic pair counts equally.
     for (motif, frequency) in [
+        ("AAAA", 1.0 / 40.0),
+        ("AAAC", 1.0 / 20.0),
+        ("AACG", 3.0 / 40.0),
         ("ACGT", 1.0 / 4.0),
-        ("CGTA", 1.0 / 10.0),
-        ("CGTT", 3.0 / 20.0),
+        ("CGTA", 3.0 / 20.0),
+        ("CGTT", 3.0 / 40.0),
         ("GTAC", 3.0 / 20.0),
-        ("GTTT", 1.0 / 10.0),
-        ("TACG", 1.0 / 5.0),
-        ("TTTT", 1.0 / 20.0),
+        ("GTTT", 1.0 / 20.0),
+        ("TACG", 3.0 / 20.0),
+        ("TTTT", 1.0 / 40.0),
     ] {
         let motif_index = unrestricted_ref_motifs
             .iter()
@@ -466,15 +475,17 @@ fn generate_end_motif_zarr_fixtures_with_cfdnalab() -> Result<()> {
     let selected_ref_frequencies = read_sparse_frequency_matrix(&selected_ref_kmers_path)?;
     assert_eq!(selected_ref_motifs, vec!["GTAC", "ACGT", "GTTT", "TTTT"]);
     assert_eq!(selected_ref_frequencies.shape(), &[3, 4]);
+    // The selected labels receive counts 3/4, 5/4, 1/4, and 1/8 after orientation averaging.
+    // Their total support is 19/8, so the stored frequencies are 6/19, 10/19, 2/19, and 1/19.
     for row_index in 0..3 {
-        assert_close(selected_ref_frequencies[(row_index, 0)], 3.0 / 11.0);
-        assert_close(selected_ref_frequencies[(row_index, 1)], 5.0 / 11.0);
-        assert_close(selected_ref_frequencies[(row_index, 2)], 2.0 / 11.0);
-        assert_close(selected_ref_frequencies[(row_index, 3)], 1.0 / 11.0);
+        assert_close(selected_ref_frequencies[(row_index, 0)], 6.0 / 19.0);
+        assert_close(selected_ref_frequencies[(row_index, 1)], 10.0 / 19.0);
+        assert_close(selected_ref_frequencies[(row_index, 2)], 2.0 / 19.0);
+        assert_close(selected_ref_frequencies[(row_index, 3)], 1.0 / 19.0);
     }
     assert_vec_close(
         read_zarr_array::<f64>(&selected_ref_kmers_path, "/row_scaling_factor")?,
-        &[2.75, 2.75, 2.75],
+        &[19.0 / 8.0, 19.0 / 8.0, 19.0 / 8.0],
     );
 
     let sparse_grouped_bed = output_dir.join("tiny_ends_grouped.bed");
@@ -738,25 +749,32 @@ fn generate_ref_kmer_zarr_fixtures_with_cfdnalab() -> Result<()> {
     let window_frequencies = read_sparse_frequency_matrix(&sparse_windowed_path)?;
     assert_eq!(
         window_motifs,
-        vec!["CGT", "AAA", "TAC", "CCC", "GGG", "ACG", "GTA"]
+        vec!["CGT", "AAA", "TAC", "CCC", "GGG", "TTT", "ACG", "GTA"]
     );
-    assert_eq!(window_frequencies.shape(), &[4, 7]);
-    assert_close(window_frequencies[(0, 1)], 1.0 / 3.0);
+    assert_eq!(window_frequencies.shape(), &[4, 8]);
+    // Orientation averaging gives each reverse-complement pair equal counts while preserving
+    // each row's total selected-motif count. The pairs are CGT/ACG, AAA/TTT, TAC/GTA,
+    // and CCC/GGG.
+    assert_close(window_frequencies[(0, 1)], 1.0 / 6.0);
     assert_close(window_frequencies[(0, 3)], 1.0 / 3.0);
     assert_close(window_frequencies[(0, 4)], 1.0 / 3.0);
+    assert_close(window_frequencies[(0, 5)], 1.0 / 6.0);
     assert_close(window_frequencies[(1, 0)], 3.0 / 13.0);
-    assert_close(window_frequencies[(1, 2)], 4.0 / 13.0);
-    assert_close(window_frequencies[(1, 4)], 1.0 / 13.0);
-    assert_close(window_frequencies[(1, 5)], 3.0 / 13.0);
-    assert_close(window_frequencies[(1, 6)], 2.0 / 13.0);
-    assert_close(window_frequencies[(2, 0)], 2.0 / 7.0);
-    assert_close(window_frequencies[(2, 3)], 3.0 / 7.0);
-    assert_close(window_frequencies[(2, 4)], 1.0 / 7.0);
+    assert_close(window_frequencies[(1, 2)], 3.0 / 13.0);
+    assert_close(window_frequencies[(1, 3)], 1.0 / 26.0);
+    assert_close(window_frequencies[(1, 4)], 1.0 / 26.0);
+    assert_close(window_frequencies[(1, 6)], 3.0 / 13.0);
+    assert_close(window_frequencies[(1, 7)], 3.0 / 13.0);
+    assert_close(window_frequencies[(2, 0)], 1.0 / 7.0);
+    assert_close(window_frequencies[(2, 2)], 1.0 / 14.0);
+    assert_close(window_frequencies[(2, 3)], 2.0 / 7.0);
+    assert_close(window_frequencies[(2, 4)], 2.0 / 7.0);
     assert_close(window_frequencies[(2, 6)], 1.0 / 7.0);
-    assert_close(window_frequencies[(3, 0)], 5.0 / 17.0);
-    assert_close(window_frequencies[(3, 2)], 3.0 / 17.0);
-    assert_close(window_frequencies[(3, 5)], 3.0 / 17.0);
-    assert_close(window_frequencies[(3, 6)], 6.0 / 17.0);
+    assert_close(window_frequencies[(2, 7)], 1.0 / 14.0);
+    assert_close(window_frequencies[(3, 0)], 4.0 / 17.0);
+    assert_close(window_frequencies[(3, 2)], 9.0 / 34.0);
+    assert_close(window_frequencies[(3, 6)], 4.0 / 17.0);
+    assert_close(window_frequencies[(3, 7)], 9.0 / 34.0);
     assert_vec_close(
         read_zarr_array::<f64>(&sparse_windowed_path, "/row_scaling_factor")?,
         &[3.0, 13.0 / 3.0, 7.0 / 3.0, 17.0 / 3.0],
@@ -791,19 +809,23 @@ fn generate_ref_kmer_zarr_fixtures_with_cfdnalab() -> Result<()> {
     let grouped_frequencies = read_sparse_frequency_matrix(&sparse_grouped_path)?;
     assert_eq!(
         grouped_motifs,
-        vec!["CGT", "AAA", "TAC", "CCC", "GGG", "ACG", "GTA"]
+        vec!["CGT", "AAA", "TAC", "CCC", "GGG", "TTT", "ACG", "GTA"]
     );
-    assert_eq!(grouped_frequencies.shape(), &[2, 7]);
-    assert_close(grouped_frequencies[(0, 0)], 1.0 / 8.0);
-    assert_close(grouped_frequencies[(0, 1)], 3.0 / 16.0);
-    assert_close(grouped_frequencies[(0, 3)], 3.0 / 8.0);
-    assert_close(grouped_frequencies[(0, 4)], 1.0 / 4.0);
+    assert_eq!(grouped_frequencies.shape(), &[2, 8]);
+    assert_close(grouped_frequencies[(0, 0)], 1.0 / 16.0);
+    assert_close(grouped_frequencies[(0, 1)], 3.0 / 32.0);
+    assert_close(grouped_frequencies[(0, 2)], 1.0 / 32.0);
+    assert_close(grouped_frequencies[(0, 3)], 5.0 / 16.0);
+    assert_close(grouped_frequencies[(0, 4)], 5.0 / 16.0);
+    assert_close(grouped_frequencies[(0, 5)], 3.0 / 32.0);
     assert_close(grouped_frequencies[(0, 6)], 1.0 / 16.0);
-    assert_close(grouped_frequencies[(1, 0)], 4.0 / 15.0);
-    assert_close(grouped_frequencies[(1, 2)], 7.0 / 30.0);
-    assert_close(grouped_frequencies[(1, 4)], 1.0 / 30.0);
-    assert_close(grouped_frequencies[(1, 5)], 1.0 / 5.0);
-    assert_close(grouped_frequencies[(1, 6)], 4.0 / 15.0);
+    assert_close(grouped_frequencies[(0, 7)], 1.0 / 32.0);
+    assert_close(grouped_frequencies[(1, 0)], 7.0 / 30.0);
+    assert_close(grouped_frequencies[(1, 2)], 1.0 / 4.0);
+    assert_close(grouped_frequencies[(1, 3)], 1.0 / 60.0);
+    assert_close(grouped_frequencies[(1, 4)], 1.0 / 60.0);
+    assert_close(grouped_frequencies[(1, 6)], 7.0 / 30.0);
+    assert_close(grouped_frequencies[(1, 7)], 1.0 / 4.0);
     assert_vec_close(
         read_zarr_array::<f64>(&sparse_grouped_path, "/row_scaling_factor")?,
         &[16.0 / 3.0, 10.0],

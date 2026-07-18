@@ -121,31 +121,31 @@ test_that("R helper package corrects two-sided end motifs without same motifs fi
   expect_identical(kmer_size(ref_kmers), 4L)
   expect_identical(
     motifs(ref_kmers)$motif,
-    c("ACGT", "CGTA", "CGTT", "GTAC", "GTTT", "TACG", "TTTT")
+    c("AAAA", "AAAC", "AACG", "ACGT", "CGTA", "CGTT", "GTAC", "GTTT", "TACG", "TTTT")
   )
   expected_counts <- matrix(c(1, 0, 0, 1, 1, 0), nrow = 3L, byrow = TRUE)
   expected_count_vector <- c(1, 0, 0, 1, 1, 0)
   # The stored columns are [AC_GT, GT_AC], and the three sample rows contain
-  # [[1, 0], [0, 1], [1, 0]]. Seven positive reference k-mers make the joint
-  # uniform frequency 1/7. Relative to uniform, ACGT frequency 1/4 gives
-  # correction factor (1/4)/(1/7) = 7/4, while GTAC frequency 3/20 gives
-  # (3/20)/(1/7) = 21/20. Dividing each observed count by its factor gives
-  # [[4/7, 0], [0, 20/21], [4/7, 0]].
-  expected_joint <- matrix(c(4 / 7, 0, 0, 20 / 21, 4 / 7, 0), nrow = 3L, byrow = TRUE)
-  # Five positive labels on each side make each side's uniform frequency
-  # 1/5. Outside labels AC and GT both have frequency 1/4, so both factors
-  # are (1/4)/(1/5) = 5/4. Inside labels GT and AC have frequencies 1/4 and
-  # 3/20, giving factors 5/4 and 3/4. Split therefore divides AC_GT by
-  # (5/4)*(5/4)=25/16 and GT_AC by (5/4)*(3/4)=15/16. Because each observed
-  # count is 1, the corrected values are 16/25 and 16/15. Outside correction
-  # divides by 5/4 for either label. Inside correction divides AC_GT by 5/4
-  # and GT_AC by 3/4. In the stored row and column order, the split, outside,
-  # and inside matrices are therefore [[16/25, 0], [0, 16/15], [16/25, 0]],
-  # [[4/5, 0], [0, 4/5], [4/5, 0]], and
-  # [[4/5, 0], [0, 4/3], [4/5, 0]], respectively.
-  expected_split <- matrix(c(16 / 25, 0, 0, 16 / 15, 16 / 25, 0), nrow = 3L, byrow = TRUE)
-  expected_outside <- matrix(c(4 / 5, 0, 0, 4 / 5, 4 / 5, 0), nrow = 3L, byrow = TRUE)
-  expected_inside <- matrix(c(4 / 5, 0, 0, 4 / 3, 4 / 5, 0), nrow = 3L, byrow = TRUE)
+  # [[1, 0], [0, 1], [1, 0]]. Ten positive reference k-mers make the joint
+  # uniform frequency 1/10. Relative to uniform, ACGT frequency 1/4 gives
+  # correction factor (1/4)/(1/10) = 5/2, while GTAC frequency 3/20 gives
+  # (3/20)/(1/10) = 3/2. Dividing each observed count by its factor gives
+  # [[2/5, 0], [0, 2/3], [2/5, 0]].
+  expected_joint <- matrix(c(2 / 5, 0, 0, 2 / 3, 2 / 5, 0), nrow = 3L, byrow = TRUE)
+  # Six positive labels on each side make the side-wise uniform frequency
+  # 1/6. Outside AC has frequency 1/4, giving factor 3/2, while outside GT
+  # has frequency 1/5, giving factor 6/5. Inside GT and AC have the same
+  # respective frequencies and factors. Split therefore divides AC_GT by
+  # (3/2)*(3/2)=9/4 and GT_AC by (6/5)*(6/5)=36/25. Because each observed
+  # count is 1, the corrected values are 4/9 and 25/36. Outside correction
+  # divides AC_GT by 3/2 and GT_AC by 6/5. Inside correction uses the same
+  # factors. In stored row and column order, the split, outside, and inside
+  # matrices are therefore [[4/9, 0], [0, 25/36], [4/9, 0]],
+  # [[2/3, 0], [0, 5/6], [2/3, 0]], and
+  # [[2/3, 0], [0, 5/6], [2/3, 0]], respectively.
+  expected_split <- matrix(c(4 / 9, 0, 0, 25 / 36, 4 / 9, 0), nrow = 3L, byrow = TRUE)
+  expected_outside <- matrix(c(2 / 3, 0, 0, 5 / 6, 2 / 3, 0), nrow = 3L, byrow = TRUE)
+  expected_inside <- matrix(c(2 / 3, 0, 0, 5 / 6, 2 / 3, 0), nrow = 3L, byrow = TRUE)
 
   expect_error(
     end_motif_data_frame(ends, ref_kmers = ref_kmers, densify = TRUE),
@@ -231,26 +231,26 @@ test_that("R helper package corrects two-sided end motifs with same motifs file"
   expected_count_vector <- c(0, 1, 1, 0, 0, 1)
   # The stored columns are [GT_AC, AC_GT], and the three sample rows contain
   # [[0, 1], [1, 0], [0, 1]]. Four positive reference k-mers make the joint
-  # uniform frequency 1/4. Relative to uniform, GTAC frequency 3/11 gives
-  # correction factor (3/11)/(1/4) = 12/11, while ACGT frequency 5/11 gives
-  # (5/11)/(1/4) = 20/11. Dividing each observed count by its factor gives
-  # [[0, 11/20], [11/12, 0], [0, 11/20]].
-  expected_joint <- matrix(c(0, 11 / 20, 11 / 12, 0, 0, 11 / 20), nrow = 3L, byrow = TRUE)
+  # uniform frequency 1/4. GTAC and ACGT frequencies 6/19 and 10/19 give
+  # factors (6/19)/(1/4) = 24/19 and (10/19)/(1/4) = 40/19. Dividing each
+  # observed count by its factor gives
+  # [[0, 19/40], [19/24, 0], [0, 19/40]].
+  expected_joint <- matrix(c(0, 19 / 40, 19 / 24, 0, 0, 19 / 40), nrow = 3L, byrow = TRUE)
   # Three positive labels on each side make each side's uniform frequency
-  # 1/3. Outside labels AC and GT both have frequency 5/11, so both factors
-  # are (5/11)/(1/3) = 15/11. Inside labels GT and AC have frequencies 5/11
-  # and 3/11, giving factors 15/11 and 9/11. Split therefore divides AC_GT
-  # by (15/11)*(15/11)=225/121 and GT_AC by
-  # (15/11)*(9/11)=135/121. Because each observed count is 1, the corrected
-  # values are 121/225 and 121/135. Outside correction divides by 15/11 for
-  # either label. Inside correction divides AC_GT by 15/11 and GT_AC by 9/11.
-  # In stored order, the split, outside, and inside matrices are therefore
-  # [[0, 121/225], [121/135, 0], [0, 121/225]],
-  # [[0, 11/15], [11/15, 0], [0, 11/15]], and
-  # [[0, 11/15], [11/9, 0], [0, 11/15]], respectively.
-  expected_split <- matrix(c(0, 121 / 225, 121 / 135, 0, 0, 121 / 225), nrow = 3L, byrow = TRUE)
-  expected_outside <- matrix(c(0, 11 / 15, 11 / 15, 0, 0, 11 / 15), nrow = 3L, byrow = TRUE)
-  expected_inside <- matrix(c(0, 11 / 15, 11 / 9, 0, 0, 11 / 15), nrow = 3L, byrow = TRUE)
+  # 1/3. Outside AC and GT have frequencies 10/19 and 8/19, giving factors
+  # 30/19 and 24/19. Inside GT and AC have frequencies 10/19 and 6/19,
+  # giving factors 30/19 and 18/19. Split therefore divides AC_GT by
+  # (30/19)*(30/19)=900/361 and GT_AC by
+  # (24/19)*(18/19)=432/361. Because each observed count is 1, the corrected
+  # values are 361/900 and 361/432. Outside correction divides AC_GT by
+  # 30/19 and GT_AC by 24/19. Inside correction divides AC_GT by 30/19 and
+  # GT_AC by 18/19. In stored order, the split, outside, and inside matrices
+  # are therefore [[0, 361/900], [361/432, 0], [0, 361/900]],
+  # [[0, 19/30], [19/24, 0], [0, 19/30]], and
+  # [[0, 19/30], [19/18, 0], [0, 19/30]], respectively.
+  expected_split <- matrix(c(0, 361 / 900, 361 / 432, 0, 0, 361 / 900), nrow = 3L, byrow = TRUE)
+  expected_outside <- matrix(c(0, 19 / 30, 19 / 24, 0, 0, 19 / 30), nrow = 3L, byrow = TRUE)
+  expected_inside <- matrix(c(0, 19 / 30, 19 / 18, 0, 0, 19 / 30), nrow = 3L, byrow = TRUE)
 
   joint <- end_motif_data_frame(
     ends,
@@ -308,7 +308,7 @@ test_that("R helper package corrects two-sided end motifs with same motifs file"
     two_sided_correction = "outside"
   )
   expect_equal(selected_outside$motif, c("AC_", "AC_", "AC_"))
-  expect_equal(selected_outside$corrected_count, c(11 / 15, 0, 11 / 15))
+  expect_equal(selected_outside$corrected_count, c(19 / 30, 0, 19 / 30))
 
   inside <- end_motif_data_frame(
     ends,
@@ -459,12 +459,13 @@ test_that("R helper package reads dense global reference k-mers", {
   ref_kmers <- read_ref_kmers(dense_global_ref_kmer_zarr_path())
 
   expect_s3_class(ref_kmers, "cfdnalab_global_ref_kmer_frequencies")
-  expect_identical(schema_version(ref_kmers), 1L)
+  expect_identical(schema_version(ref_kmers), 2L)
   expect_identical(storage_mode(ref_kmers), "dense")
   expect_identical(row_mode(ref_kmers), "global")
   expect_identical(motif_axis_kind(ref_kmers), "motif")
   expect_identical(kmer_size(ref_kmers), 3L)
   expect_true(canonical(ref_kmers))
+  expect_identical(orientation(ref_kmers), "both")
   expect_true(all_motifs(ref_kmers))
   expect_identical(assign_by(ref_kmers), "count-overlap")
   expect_identical(length(motifs(ref_kmers)$motif), 32L)
@@ -502,17 +503,17 @@ test_that("R helper package reads sparse windowed reference k-mers", {
   expect_s3_class(ref_kmers, "cfdnalab_windowed_ref_kmer_frequencies")
   expect_identical(storage_mode(ref_kmers), "sparse_coo")
   expect_identical(row_mode(ref_kmers), "bed")
-  expect_identical(motifs(ref_kmers)$motif, c("CGT", "AAA", "TAC", "CCC", "GGG", "ACG", "GTA"))
-  expect_false(has_motif(ref_kmers, "TTT"))
+  expect_identical(motifs(ref_kmers)$motif, c("CGT", "AAA", "TAC", "CCC", "GGG", "TTT", "ACG", "GTA"))
+  expect_true(has_motif(ref_kmers, "TTT"))
   expect_error(dense_frequencies_matrix(ref_kmers), "Use sparse_frequencies_matrix")
   expect_equal(
     dense_counts_matrix(ref_kmers, allow_densify = TRUE),
     matrix(
       c(
-        0, 1, 0, 1, 1, 0, 0,
-        1, 0, 4 / 3, 0, 1 / 3, 1, 2 / 3,
-        2 / 3, 0, 0, 1, 1 / 3, 0, 1 / 3,
-        5 / 3, 0, 1, 0, 0, 1, 2
+        0, 1 / 2, 0, 1, 1, 1 / 2, 0, 0,
+        1, 0, 1, 1 / 6, 1 / 6, 0, 1, 1,
+        1 / 3, 0, 1 / 6, 2 / 3, 2 / 3, 0, 1 / 3, 1 / 6,
+        4 / 3, 0, 3 / 2, 0, 0, 0, 4 / 3, 3 / 2
       ),
       nrow = 4L,
       byrow = TRUE
@@ -549,10 +550,10 @@ test_that("R helper package reads sparse windowed reference k-mers", {
       start = c(12L, 12L, 0L, 0L),
       end = c(20L, 20L, 9L, 9L),
       blacklisted_fraction = c(0, 0, 0, 0),
-      motif_idx = c(7L, 2L, 7L, 2L),
+      motif_idx = c(8L, 2L, 8L, 2L),
       motif = c("GTA", "AAA", "GTA", "AAA"),
-      frequency = c(6 / 17, 0, 0, 1 / 3),
-      count = c(2, 0, 0, 1),
+      frequency = c(9 / 34, 0, 0, 1 / 6),
+      count = c(3 / 2, 0, 0, 1 / 2),
       stringsAsFactors = FALSE
     ),
     tolerance = 1e-8,
@@ -567,7 +568,7 @@ test_that("R helper package reads sparse grouped reference k-mers", {
   expect_identical(storage_mode(ref_kmers), "sparse_coo")
   expect_identical(row_mode(ref_kmers), "grouped_bed")
   expect_identical(group_idx(ref_kmers, "alpha"), 2L)
-  expect_identical(motifs(ref_kmers)$motif, c("CGT", "AAA", "TAC", "CCC", "GGG", "ACG", "GTA"))
+  expect_identical(motifs(ref_kmers)$motif, c("CGT", "AAA", "TAC", "CCC", "GGG", "TTT", "ACG", "GTA"))
   expect_equal(
     group_metadata(ref_kmers),
     data.frame(
@@ -585,20 +586,29 @@ test_that("R helper package reads sparse grouped reference k-mers", {
       groups = c("alpha", "beta"),
       motifs = c("GTA", "AAA")
     )),
-    matrix(c(8 / 3, 0, 1 / 3, 1), nrow = 2L, byrow = TRUE),
+    matrix(c(5 / 2, 0, 1 / 6, 1 / 2), nrow = 2L, byrow = TRUE),
     tolerance = 1e-8
   )
   expect_equal(
     ref_kmer_data_frame(ref_kmers),
     data.frame(
-      group_idx = c(rep(1L, 5L), rep(2L, 5L)),
-      group_name = c(rep("beta", 5L), rep("alpha", 5L)),
-      eligible_windows = rep(2L, 10L),
-      blacklisted_fraction = c(rep(0.1, 5L), rep(1 / 16, 5L)),
-      motif_idx = c(1L, 2L, 4L, 5L, 7L, 1L, 3L, 5L, 6L, 7L),
-      motif = c("CGT", "AAA", "CCC", "GGG", "GTA", "CGT", "TAC", "GGG", "ACG", "GTA"),
-      frequency = c(1 / 8, 3 / 16, 3 / 8, 1 / 4, 1 / 16, 4 / 15, 7 / 30, 1 / 30, 1 / 5, 4 / 15),
-      count = c(2 / 3, 1, 2, 4 / 3, 1 / 3, 8 / 3, 7 / 3, 1 / 3, 2, 8 / 3),
+      group_idx = c(rep(1L, 8L), rep(2L, 6L)),
+      group_name = c(rep("beta", 8L), rep("alpha", 6L)),
+      eligible_windows = rep(2L, 14L),
+      blacklisted_fraction = c(rep(0.1, 8L), rep(1 / 16, 6L)),
+      motif_idx = c(1:8, 1L, 3L, 4L, 5L, 7L, 8L),
+      motif = c(
+        "CGT", "AAA", "TAC", "CCC", "GGG", "TTT", "ACG", "GTA",
+        "CGT", "TAC", "CCC", "GGG", "ACG", "GTA"
+      ),
+      frequency = c(
+        1 / 16, 3 / 32, 1 / 32, 5 / 16, 5 / 16, 3 / 32, 1 / 16, 1 / 32,
+        7 / 30, 1 / 4, 1 / 60, 1 / 60, 7 / 30, 1 / 4
+      ),
+      count = c(
+        1 / 3, 1 / 2, 1 / 6, 5 / 3, 5 / 3, 1 / 2, 1 / 3, 1 / 6,
+        7 / 3, 5 / 2, 1 / 6, 1 / 6, 7 / 3, 5 / 2
+      ),
       stringsAsFactors = FALSE
     ),
     tolerance = 1e-8,

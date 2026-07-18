@@ -2,12 +2,13 @@ test_that("dense windowed reference k-mers expose metadata, frequencies, and cou
   ref_kmers <- read_ref_kmers(make_dense_windowed_ref_kmer_zarr_fixture())
 
   expect_s3_class(ref_kmers, "cfdnalab_windowed_ref_kmer_frequencies")
-  expect_equal(schema_version(ref_kmers), 1L)
+  expect_equal(schema_version(ref_kmers), 2L)
   expect_equal(storage_mode(ref_kmers), "dense")
   expect_equal(row_mode(ref_kmers), "bed")
   expect_equal(motif_axis_kind(ref_kmers), "motif")
   expect_equal(kmer_size(ref_kmers), 2L)
   expect_false(canonical(ref_kmers))
+  expect_equal(orientation(ref_kmers), "both")
   expect_false(all_motifs(ref_kmers))
   expect_equal(assign_by(ref_kmers), "count-overlap")
   expect_output(print(ref_kmers), "<cfDNAlab reference k-mer frequencies>", fixed = TRUE)
@@ -231,7 +232,7 @@ test_that("reference k-mer loader rejects schema and shape problems", {
     root_attributes = ref_kmer_root_attributes(
       storage_mode = "dense",
       row_mode = "bed",
-      schema_version = 99L
+      schema_version = 1L
     )
   )
   missing_scaling <- make_dense_windowed_ref_kmer_zarr_fixture()
@@ -295,10 +296,18 @@ test_that("reference k-mer loader rejects metadata that changes count meaning", 
       count_reconstruction = "count = frequency"
     )
   )
+  wrong_orientation <- make_dense_windowed_ref_kmer_zarr_fixture(
+    root_attributes = ref_kmer_root_attributes(
+      storage_mode = "dense",
+      row_mode = "bed",
+      orientation = "unknown"
+    )
+  )
 
   expect_error(read_ref_kmers(wrong_units), "value_units")
   expect_error(read_ref_kmers(wrong_scaling_array), "row_scaling_factor_array")
   expect_error(read_ref_kmers(wrong_reconstruction), "count_reconstruction")
+  expect_error(read_ref_kmers(wrong_orientation), "reference k-mer orientation")
 })
 
 test_that("reference k-mer loader rejects invalid values and motif labels", {

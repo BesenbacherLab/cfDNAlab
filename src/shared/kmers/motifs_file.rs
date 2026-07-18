@@ -15,7 +15,7 @@
 //! sort group labels alphabetically. Counting can then do one hash lookup per observed motif and
 //! skip all unselected motifs without allocating motif strings.
 
-#[cfg(feature = "cmd_ends")]
+#[cfg(any(feature = "cmd_ends", feature = "cmd_ref_kmers"))]
 use crate::shared::base::rev_complement;
 use crate::shared::kmers::kmer_codec::{
     KmerCodes, KmerSpec, MAX_RADIX5_KMER_SIZE, SubspaceKmerSpec, build_left_aligned_codes_for_spec,
@@ -92,7 +92,7 @@ impl SelectedMotifLookup {
 /// Codec used for one selected motif half during tile-local counting.
 ///
 /// Full radix-5 specs are used up to the radix-5 limit. Larger selected motifs switch to a
-/// byte-backed selected subspace because the full motif universe cannot be represented.
+/// byte-backed selected subspace because the complete motif set cannot be represented.
 #[derive(Clone, Debug)]
 pub(crate) enum SelectedMotifHalfSpec {
     /// Full radix-5 k-mer space
@@ -199,7 +199,7 @@ enum SelectedMotifsFileKind {
         /// Expected outside motif length from `--k-outside`
         k_outside: usize,
     },
-    /// Reference k-mer labels with one left-to-right k-mer.
+    /// Reference k-mer labels with one full k-mer.
     #[cfg(feature = "cmd_ref_kmers")]
     RefKmers {
         /// Expected k-mer length from `--kmer-size`
@@ -658,7 +658,7 @@ fn build_selected_end_motif_half_specs(
     if k_inside > MAX_RADIX5_KMER_SIZE && k_inside == k_outside && k_inside > 0 {
         // One byte-backed selected subspace is enough when both large-k halves have the same
         // length. The full inside/outside pair is still checked by the encoded lookup, so sharing
-        // this half-code universe only broadens the cheap prefilter and avoids duplicate per-tile
+        // this half-code subset only broadens the cheap prefilter and avoids duplicate per-tile
         // code arrays
         let mut selected_halves = Vec::with_capacity(rows.len() * 4);
         for row in rows {
@@ -724,7 +724,11 @@ fn build_selected_ref_kmer_spec(
             .context("missing non-zero reference k-mer spec");
     }
 
-    let selected_kmers: Vec<&str> = rows.iter().map(|row| row.motif.inside.as_str()).collect();
+    let mut selected_kmers = Vec::with_capacity(rows.len() * 2);
+    for row in rows {
+        selected_kmers.push(row.motif.inside.clone());
+        selected_kmers.push(rev_complement(&row.motif.inside));
+    }
     let spec = build_subspace_kmer_spec(kmer_size, &selected_kmers)
         .with_context(|| "building selected reference k-mer subspace")?;
     Ok(SelectedMotifHalfSpec::from_subspace(spec))
@@ -738,8 +742,9 @@ fn collect_selected_half_states(selected_halves: &mut Vec<String>, half: &str) {
 
 /// Build the encoded lookup keys produced by one public motif label.
 ///
-/// End motifs get both observable end states. Reference k-mers get one left-to-right state with an
-/// empty outside half.
+/// End motifs get both observable end states. Reference k-mers get a reference-forward state and
+/// a reverse-observation state. The latter maps an observed `RC(motif)` back to this motif's target
+/// when `ref-kmers --orientation both` is used.
 fn encoded_keys_for_motif(
     motif: &ParsedSelectedMotifLabel,
     kind: SelectedMotifsFileKind,
@@ -755,16 +760,30 @@ fn encoded_keys_for_motif(
             encoded_keys_for_end_motif(motif, inside_spec, outside_spec).map(Vec::from)
         }
         #[cfg(feature = "cmd_ref_kmers")]
-        SelectedMotifsFileKind::RefKmers { .. } => Ok(vec![EncodedMotifKey {
-            inside_code: encode_optional_motif_half(
-                &motif.inside,
-                inside_spec,
-                "k-mer",
-                &motif.label,
-            )?,
-            outside_code: 0,
-            reverse_on_decode: false,
-        }]),
+        SelectedMotifsFileKind::RefKmers { .. } => {
+            let forward_key = EncodedMotifKey {
+                inside_code: encode_optional_motif_half(
+                    &motif.inside,
+                    inside_spec,
+                    "k-mer",
+                    &motif.label,
+                )?,
+                outside_code: 0,
+                reverse_on_decode: false,
+            };
+            let reverse_motif = rev_complement(&motif.inside);
+            let reverse_key = EncodedMotifKey {
+                inside_code: encode_optional_motif_half(
+                    &reverse_motif,
+                    inside_spec,
+                    "reverse-complement k-mer",
+                    &motif.label,
+                )?,
+                outside_code: 0,
+                reverse_on_decode: true,
+            };
+            Ok(vec![forward_key, reverse_key])
+        }
     }
 }
 

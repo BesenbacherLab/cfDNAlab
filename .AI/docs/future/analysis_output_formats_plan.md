@@ -483,7 +483,7 @@ opportunity to make sparse payloads deterministic and easy to diff. Duplicate
 should already have merged them.
 
 Sparse output keeps the observed motif axis written by the command. Dense
-`--all-motifs` remains the path for users who need the full motif universe.
+`--all-motifs` remains the path for users who need the complete motif set.
 
 ### Downstream Loading Targets
 

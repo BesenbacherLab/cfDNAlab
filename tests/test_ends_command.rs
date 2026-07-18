@@ -3486,11 +3486,11 @@ fn collapse_complement_merges_complement_equivalent_single_base_end_motifs() -> 
 }
 
 #[test]
-fn dense_all_motifs_output_enumerates_the_full_combined_1_plus_1_universe_without_collapse()
+fn dense_all_motifs_output_enumerates_the_complete_combined_1_plus_1_set_without_collapse()
 -> Result<()> {
     // Arrange: left endpoint only for fragment [10,20) with one outside and one inside
     // reference base. The observed motif is "C_G", but dense output must still write the full
-    // combined 1+1 universe.
+    // complete combined 1+1 set.
     let bam = simple_paired_fragment_bam("ends_dense_combined_no_collapse", 10, 10, 4)?;
     let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
@@ -3533,8 +3533,7 @@ fn dense_all_motifs_output_enumerates_the_full_combined_1_plus_1_universe_withou
 }
 
 #[test]
-fn dense_all_motifs_output_enumerates_the_full_collapsed_combined_1_plus_1_universe() -> Result<()>
-{
+fn dense_all_motifs_output_enumerates_the_complete_collapsed_combined_1_plus_1_set() -> Result<()> {
     // Arrange: two left endpoints produce "G_T" and "C_A", which are same-orientation
     // complements and must both collapse to the canonical label "C_A".
     let reference = twobit_from_sequences(
@@ -3635,10 +3634,10 @@ fn dense_all_motifs_output_enumerates_the_full_collapsed_combined_1_plus_1_unive
 }
 
 #[test]
-fn dense_all_motifs_output_enumerates_the_full_combined_2_plus_2_universe_without_collapse()
+fn dense_all_motifs_output_enumerates_the_complete_combined_2_plus_2_set_without_collapse()
 -> Result<()> {
     // Arrange: one left endpoint from a 10 bp fragment with a 2+2 reference motif. Dense output
-    // must still enumerate the full 4^4 universe, not just the observed "GT_AC" column.
+    // must still enumerate the complete 4^4 set, not just the observed "GT_AC" column.
     let reference = twobit_from_sequences(
         "ends_dense_combined_2_plus_2_reference",
         vec![(
@@ -3695,8 +3694,7 @@ fn dense_all_motifs_output_enumerates_the_full_combined_2_plus_2_universe_withou
 }
 
 #[test]
-fn dense_all_motifs_output_enumerates_the_full_collapsed_combined_2_plus_2_universe() -> Result<()>
-{
+fn dense_all_motifs_output_enumerates_the_complete_collapsed_combined_2_plus_2_set() -> Result<()> {
     // Arrange: two left endpoints produce "GT_AC" and "CA_TG", which are same-orientation
     // complements and must both land in the canonical "CA_TG" column.
     let reference = twobit_from_sequences(
@@ -5161,8 +5159,8 @@ fn grouped_motifs_file_sparse_output_can_have_zero_columns() -> Result<()> {
 }
 
 #[test]
-fn motifs_file_all_motifs_uses_selected_axis_size_not_full_kmer_universe() -> Result<()> {
-    // Arrange: k=15 has a full universe of 4^15 motifs, which is too large for the default dense
+fn motifs_file_all_motifs_uses_selected_axis_size_not_complete_kmer_set() -> Result<()> {
+    // Arrange: k=15 has a complete set of 4^15 motifs, which is too large for the default dense
     // output guard. With --motifs-file, --all-motifs should mean "all selected targets", so only
     // the three file rows define the dense motif axis.
     let bam = simple_paired_fragment_bam("ends_motifs_file_all_motifs_k15", 10, 30, 20)?;
@@ -5662,7 +5660,7 @@ fn all_motifs_dense_output_includes_zero_count_columns_for_unobserved_motifs() -
 
 #[test]
 fn all_motifs_dense_output_enumerates_outside_only_labels_when_k_inside_is_zero() -> Result<()> {
-    // Arrange: outside-only motifs should still have a fixed dense column universe.
+    // Arrange: outside-only motifs should still have a fixed complete dense column set.
     let bam = simple_paired_fragment_bam("ends_outside_only_dense", 10, 10, 4)?;
     let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
@@ -9768,7 +9766,7 @@ fn sparse_output_motif_labels_only_include_observed_motifs() -> Result<()> {
 
 #[test]
 fn all_motifs_dense_output_enumerates_inside_only_labels_when_k_outside_is_zero() -> Result<()> {
-    // Arrange: inside-only motifs should still have a fixed dense universe under all-motifs.
+    // Arrange: inside-only motifs should still have a fixed complete dense set under all-motifs.
     let bam = simple_paired_fragment_bam("ends_inside_only_dense", 10, 10, 4)?;
     let reference = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;

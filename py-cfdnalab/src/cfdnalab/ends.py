@@ -321,7 +321,7 @@ class EndMotifCounts:
         Return whether a motif label exists in this output.
 
         Sparse output only stores observed motifs, so an unobserved motif will
-        return `False` even if it is part of the theoretical motif universe.
+        return `False` even if it is part of the complete motif set.
 
         Parameters
         ----------
@@ -965,6 +965,14 @@ class GlobalEndMotifCounts(EndMotifCounts):
         positive reference frequency contribute to the row's correction
         support.
 
+        End-motif labels run inward from either fragment end, so reference
+        correction requires reference k-mer output generated with
+        `--orientation both`.
+        This is an approximate correction for broad or local
+        reference-composition bias. It assumes that left and right fragment
+        ends contribute equally within each row. Correction in short windows
+        can be unreliable, so use windows of at least a few kilobases.
+
         Two-sided correction modes
         --------------------------
         When motif labels contain both outside and inside bases, such as
@@ -1156,6 +1164,14 @@ class GlobalEndMotifCounts(EndMotifCounts):
         positive reference frequency contribute to the row's correction
         support.
 
+        End-motif labels run inward from either fragment end, so reference
+        correction requires reference k-mer output generated with
+        `--orientation both`.
+        This is an approximate correction for broad or local
+        reference-composition bias. It assumes that left and right fragment
+        ends contribute equally within each row. Correction in short windows
+        can be unreliable, so use windows of at least a few kilobases.
+
         Two-sided correction modes
         --------------------------
         When motif labels contain both outside and inside bases, such as
@@ -1250,6 +1266,14 @@ class GlobalEndMotifCounts(EndMotifCounts):
         positive reference frequency contribute to the row's correction
         support.
 
+        End-motif labels run inward from either fragment end, so reference
+        correction requires reference k-mer output generated with
+        `--orientation both`.
+        This is an approximate correction for broad or local
+        reference-composition bias. It assumes that left and right fragment
+        ends contribute equally within each row. Correction in short windows
+        can be unreliable, so use windows of at least a few kilobases.
+
         Two-sided correction modes
         --------------------------
         When motif labels contain both outside and inside bases, such as
@@ -1342,6 +1366,14 @@ class WindowedEndMotifCounts(EndMotifCounts):
         that are rare in the reference row are scaled up. Only motifs with a
         positive reference frequency contribute to the row's correction
         support.
+
+        End-motif labels run inward from either fragment end, so reference
+        correction requires reference k-mer output generated with
+        `--orientation both`.
+        This is an approximate correction for broad or local
+        reference-composition bias. It assumes that left and right fragment
+        ends contribute equally within each row. Correction in short windows
+        can be unreliable, so use windows of at least a few kilobases.
 
         Two-sided correction modes
         --------------------------
@@ -1566,6 +1598,14 @@ class WindowedEndMotifCounts(EndMotifCounts):
         positive reference frequency contribute to the row's correction
         support.
 
+        End-motif labels run inward from either fragment end, so reference
+        correction requires reference k-mer output generated with
+        `--orientation both`.
+        This is an approximate correction for broad or local
+        reference-composition bias. It assumes that left and right fragment
+        ends contribute equally within each row. Correction in short windows
+        can be unreliable, so use windows of at least a few kilobases.
+
         Two-sided correction modes
         --------------------------
         When motif labels contain both outside and inside bases, such as
@@ -1664,6 +1704,14 @@ class WindowedEndMotifCounts(EndMotifCounts):
         positive reference frequency contribute to the row's correction
         support.
 
+        End-motif labels run inward from either fragment end, so reference
+        correction requires reference k-mer output generated with
+        `--orientation both`.
+        This is an approximate correction for broad or local
+        reference-composition bias. It assumes that left and right fragment
+        ends contribute equally within each row. Correction in short windows
+        can be unreliable, so use windows of at least a few kilobases.
+
         Two-sided correction modes
         --------------------------
         When motif labels contain both outside and inside bases, such as
@@ -1759,6 +1807,14 @@ class GroupedEndMotifCounts(EndMotifCounts):
         that are rare in the reference row are scaled up. Only motifs with a
         positive reference frequency contribute to the row's correction
         support.
+
+        End-motif labels run inward from either fragment end, so reference
+        correction requires reference k-mer output generated with
+        `--orientation both`.
+        This is an approximate correction for broad or local
+        reference-composition bias. It assumes that left and right fragment
+        ends contribute equally within each row. Correction in short windows
+        can be unreliable, so use windows of at least a few kilobases.
 
         Two-sided correction modes
         --------------------------
@@ -2016,6 +2072,14 @@ class GroupedEndMotifCounts(EndMotifCounts):
         positive reference frequency contribute to the row's correction
         support.
 
+        End-motif labels run inward from either fragment end, so reference
+        correction requires reference k-mer output generated with
+        `--orientation both`.
+        This is an approximate correction for broad or local
+        reference-composition bias. It assumes that left and right fragment
+        ends contribute equally within each row. Correction in short windows
+        can be unreliable, so use windows of at least a few kilobases.
+
         Two-sided correction modes
         --------------------------
         When motif labels contain both outside and inside bases, such as
@@ -2114,6 +2178,14 @@ class GroupedEndMotifCounts(EndMotifCounts):
         that are rare in the reference row are scaled up. Only motifs with a
         positive reference frequency contribute to the row's correction
         support.
+
+        End-motif labels run inward from either fragment end, so reference
+        correction requires reference k-mer output generated with
+        `--orientation both`.
+        This is an approximate correction for broad or local
+        reference-composition bias. It assumes that left and right fragment
+        ends contribute equally within each row. Correction in short windows
+        can be unreliable, so use windows of at least a few kilobases.
 
         Two-sided correction modes
         --------------------------

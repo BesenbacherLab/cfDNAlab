@@ -20,7 +20,7 @@
 - Motif rows are validated against the configured `k_inside` and `k_outside`. Labels are normalized to `<outside>_<inside>` even when a one-sided motif is written without `_`.
 - One-column files expose concrete motif labels as the output motif axis. Two-column files count directly into user-defined motif groups, and the output motif axis stores those group names.
 - File target order is first-seen file order. For grouped files, group order is first-seen group order.
-- The file path uses selected half-motif codecs. K values that fit radix-5 use the full radix-5 codec so sparse keys can still use the ordinary end-motif representation. Larger k values use byte-backed selected subspace lookup rather than enumerating the full motif universe.
+- The file path uses selected half-motif codecs. K values that fit radix-5 use the full radix-5 codec so sparse keys can still use the ordinary end-motif representation. Larger k values use byte-backed selected subspace lookup rather than enumerating the complete motif set.
 - Selected counting skips unlisted observed motifs before inserting sparse count entries.
 - Right-end lookup keeps the reverse-complemented encoded state distinct from left-end lookup. The file can therefore assign a motif and its reverse complement to different targets.
 - `--all-motifs` with `--motifs-file` keeps every file-defined target in the final axis, including unobserved motifs or groups. Without `--all-motifs`, unobserved file targets are dropped from sparse output.

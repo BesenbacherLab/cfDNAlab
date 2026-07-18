@@ -5,16 +5,49 @@ use std::path::PathBuf;
 
 const DEFAULT_TILE_SIZE: u32 = 10_000_000;
 
+/// Choose which sequence orientations contribute to each reference k-mer label.
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RefKmerOrientation {
+    /// Average the reference-forward k-mer and its reverse complement.
+    #[default]
+    Both,
+    /// Count only the k-mer read left-to-right from the stored reference.
+    ReferenceForward,
+}
+
+impl RefKmerOrientation {
+    /// Return the stable CLI spelling for this orientation mode.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Both => "both",
+            Self::ReferenceForward => "reference-forward",
+        }
+    }
+
+    /// Return the stable Zarr metadata spelling for this orientation mode.
+    pub(crate) fn metadata_name(self) -> &'static str {
+        match self {
+            Self::Both => "both",
+            Self::ReferenceForward => "reference_forward",
+        }
+    }
+}
+
 /// Count reference k-mer frequencies for genomic windows or groups.
 ///
 /// Builds a reference-sequence background for downstream k-mer correction.
 /// It writes row-wise frequencies plus a row scaling factor
 /// for reconstructing counts downstream.
 ///
-/// K-mers are counted **left-to-right** and only contains the forward-oriented motifs
-/// from eligible positions (non-blacklisted regions).
-/// Downstream applications needing the reverse-oriented motifs would need to
-/// reverse-complement the motifs.
+/// By default, the reference background represents both sequence orientations so it can correct
+/// end-motif labels from either fragment end. Each eligible reference k-mer contributes half its
+/// weight to the sequence read left-to-right from the reference and half to its reverse complement.
+/// A motif and its reverse complement therefore receive the same reference frequency. For a
+/// complete motif set, each genomic k-mer opportunity contributes a total weight of 1 across the
+/// output labels. With a motifs file, only motif labels present in the file receive their half
+/// contributions, so the row scaling factor is the total count assigned to the listed motifs or
+/// groups.
 ///
 /// The selected window assignment controls whether overlapping k-mers contribute
 /// fractional counts (default) or full counts when overlapping with a certain proportion.
@@ -142,6 +175,20 @@ pub struct RefKmersConfig {
     )]
     pub blacklist: Option<Vec<PathBuf>>,
 
+    /// Which sequence orientations contribute to each k-mer label `[string]`
+    ///
+    /// `"both"` gives half of each observation's weight to the reference-forward sequence and
+    /// half to its reverse complement. This is required for fragment end-motif correction because
+    /// end-motif labels read from each fragment end inward, making right-end labels
+    /// reverse-complemented relative to reference coordinates.
+    ///
+    /// `"reference-forward"` counts only the sequence read left-to-right from the stored reference.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, value_enum, default_value_t = RefKmerOrientation::Both, help_heading = "Core")
+    )]
+    pub orientation: RefKmerOrientation,
+
     /// Collapse each k-mer with its reverse complement `[flag]`
     ///
     /// Odd-sized k-mers are collapsed such that the middle base is `A` or `C`.
@@ -167,9 +214,19 @@ pub struct RefKmersConfig {
     /// In grouped mode, the output motif axis contains one entry per distinct group name,
     /// ordered alphabetically by group name.
     ///
-    /// Frequencies are normalized over the selected motifs or groups in this file.
+    /// Group membership comes only from the motifs file. Reverse complements are not automatically
+    /// added to the same group. With `--orientation both`, reverse-complement labels receive the
+    /// same averaged count. For example, if the left-to-right reference counts are `AACC=3` and
+    /// `GGTT=5`:
+    /// - If the file contains only `AACC<TAB>group_a`, `group_a` gets count `4`.
+    /// - If both motifs are assigned to `group_a`, `group_a` gets count `8`.
+    /// - If `AACC` is assigned to `group_a` and `GGTT` to `group_b`, each group gets count `4`.
+    /// A motif that is its own reverse complement keeps its full count.
+    ///
+    /// Frequencies are normalized over the motifs or groups listed in this file.
     /// Unlisted k-mers are not part of the denominator. The row scaling factor stores the
-    /// selected-target count total, so reconstructed counts are selected k-mer or group counts.
+    /// total count assigned to the motifs or groups listed in the file, so reconstructed counts
+    /// represent those motifs or groups.
     ///
     /// Specifying the allowed subset of motifs beforehand enables counting of much
     /// larger k-mers without enumerating every A/C/G/T k-mer of that length.
@@ -236,6 +293,7 @@ impl RefKmersConfig {
             assign_by: WindowAssigner::default(),
             chromosomes,
             blacklist: None,
+            orientation: RefKmerOrientation::Both,
             canonical: false,
             all_motifs: false,
             motifs_file: None,
@@ -289,6 +347,11 @@ impl RefKmersConfig {
         self.blacklist = blacklist;
     }
 
+    /// Set which sequence orientations contribute to each k-mer label.
+    pub fn set_orientation(&mut self, orientation: RefKmerOrientation) {
+        self.orientation = orientation;
+    }
+
     /// Set whether to collapse each k-mer with its reverse complement.
     pub fn set_canonical(&mut self, canonical: bool) {
         self.canonical = canonical;
@@ -331,6 +394,7 @@ impl ToCliCommand for RefKmersConfig {
         );
         push_chromosomes(&mut args, &self.chromosomes);
         push_path_values(&mut args, "--blacklist", self.blacklist.as_deref());
+        push_value(&mut args, "--orientation", self.orientation.as_str());
         push_bool(&mut args, "--canonical", self.canonical);
         push_bool(&mut args, "--all-motifs", self.all_motifs);
         push_optional_path(&mut args, "--motifs-file", self.motifs_file.as_deref());

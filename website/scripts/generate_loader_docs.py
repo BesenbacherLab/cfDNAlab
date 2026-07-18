@@ -223,6 +223,7 @@ LOADER_PAGES = (
             "motif_axis_kind",
             "kmer_size",
             "canonical",
+            "orientation",
             "all_motifs",
             "assign_by",
             "motifs",
@@ -1008,8 +1009,14 @@ def parse_rd_topic(rd_path: Path) -> RTopicDoc:
         usage=rd_usage_text(extract_first_rd_command(text, "usage")),
         arguments=arguments,
         value=rd_text(extract_first_rd_command(text, "value")),
-        description=rd_text(extract_first_rd_command(text, "description")),
-        details=rd_text(extract_first_rd_command(text, "details")),
+        description=rd_text(
+            extract_first_rd_command(text, "description"),
+            preserve_paragraphs=True,
+        ),
+        details=rd_text(
+            extract_first_rd_command(text, "details"),
+            preserve_paragraphs=True,
+        ),
         examples=rd_examples_text(extract_first_rd_command(text, "examples")),
     )
 
@@ -1101,11 +1108,16 @@ def unwrap_rd_examples(text: str) -> str:
     return text
 
 
-def rd_text(text: str, *, preserve_newlines: bool = False) -> str:
+def rd_text(
+    text: str,
+    *,
+    preserve_newlines: bool = False,
+    preserve_paragraphs: bool = False,
+) -> str:
     if not text:
         return ""
     converted = text
-    converted = convert_rd_itemize(converted)
+    converted = convert_rd_itemize(converted, as_markdown_list=preserve_paragraphs)
     converted = re.sub(r"\\method\{([^{}]+)\}\{([^{}]+)\}", r"\1.\2", converted)
     for command_name, replacement in (
         ("code", r"`\1`"),
@@ -1130,10 +1142,13 @@ def rd_text(text: str, *, preserve_newlines: bool = False) -> str:
     converted = converted.replace("\\", "")
     if preserve_newlines:
         return "\n".join(line.rstrip() for line in converted.strip().splitlines())
+    if preserve_paragraphs:
+        return normalize_rd_paragraphs(converted)
     return normalize_inline_whitespace(converted)
 
 
-def convert_rd_itemize(text: str) -> str:
+def convert_rd_itemize(text: str, *, as_markdown_list: bool) -> str:
+    """Convert Rd itemization to inline text or a Markdown list for block sections."""
     converted = text
     search_start = 0
     while True:
@@ -1144,14 +1159,36 @@ def convert_rd_itemize(text: str) -> str:
         if brace_index == -1:
             return converted
         content, end_index = extract_braced_content(converted, brace_index)
-        raw_items = [item.strip() for item in re.split(r"\\item\s+", content) if item.strip()]
-        replacement = " ".join(raw_items)
+        raw_items = [
+            normalize_inline_whitespace(item)
+            for item in re.split(r"\\item\s+", content)
+            if item.strip()
+        ]
+        if as_markdown_list:
+            replacement = "\n\n" + "\n".join(f"- {item}" for item in raw_items) + "\n\n"
+        else:
+            replacement = " ".join(raw_items)
         converted = converted[:itemize_index] + replacement + converted[end_index:]
         search_start = itemize_index + len(replacement)
 
 
 def normalize_inline_whitespace(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip())
+
+
+def normalize_rd_paragraphs(text: str) -> str:
+    """Join source wrapping while retaining paragraphs and Markdown lists."""
+    blocks = re.split(r"\n\s*\n", text.strip())
+    rendered_blocks: list[str] = []
+    for block in blocks:
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        if not lines:
+            continue
+        if all(line.startswith("- ") for line in lines):
+            rendered_blocks.append("\n".join(lines))
+        else:
+            rendered_blocks.append(normalize_inline_whitespace(" ".join(lines)))
+    return "\n\n".join(rendered_blocks)
 
 
 def normalize_blank_lines(text: str) -> str:

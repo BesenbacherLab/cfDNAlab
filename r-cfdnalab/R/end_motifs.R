@@ -982,6 +982,13 @@ dense_counts_vector.cfdnalab_global_end_motif_counts <- function(
 #' without manually joining the sample and reference data frames. Corrected
 #' data frames add `corrected_count` and `corrected_frequency`.
 #'
+#' End-motif labels run inward from either fragment end, so reference correction
+#' requires reference k-mer output generated with `--orientation both`.
+#' This is an approximate correction for broad or local reference-composition
+#' bias. It assumes that left and right fragment ends contribute equally within
+#' each row. Correction in short windows can be unreliable, so use windows of
+#' at least a few kilobases.
+#'
 #' Reference correction divides each observed end-motif count by a
 #' reference-based correction factor for the matched row. This factor is
 #' computed from the motif frequencies in the reference k-mer output and

@@ -45,8 +45,8 @@ fn all_motifs_returns_the_full_acgt_space() -> Result<()> {
 
 #[test]
 fn all_motifs_preserves_legacy_radix5_order_for_k3() -> Result<()> {
-    // Arrange: this is the exact A/C/G/T order produced by filtering the radix-5 A/C/G/T/N
-    // universe. The optimized radix-4 path must preserve both the labels and their order.
+    // Arrange: this is the exact A/C/G/T order produced by filtering the complete radix-5
+    // A/C/G/T/N set. The optimized radix-4 path must preserve both the labels and their order.
     let specs = build_kmer_specs(&[3])?;
     let spec = &specs[&3];
     let expected = vec![

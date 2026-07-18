@@ -26,10 +26,11 @@ from ._helpers import (
     validate_scalar_bool,
 )
 
-REF_KMER_SUPPORTED_SCHEMA_VERSION = 1
+REF_KMER_SUPPORTED_SCHEMA_VERSION = 2
 VALID_STORAGE_MODES = {"dense", "sparse_coo"}
 VALID_ROW_MODES = {"global", "size", "bed", "grouped_bed"}
 VALID_MOTIF_AXIS_KINDS = {"motif", "motif_group"}
+VALID_ORIENTATIONS = {"both", "reference_forward"}
 EXPECTED_VALUE_UNITS = "reference_kmer_frequency"
 EXPECTED_COUNT_UNITS = "reference_kmer_count"
 EXPECTED_ROW_SCALING_ARRAY = "row_scaling_factor"
@@ -48,6 +49,7 @@ class LoadedRefKmers:
     motif_axis_kind: str
     kmer_size: int
     canonical: bool
+    orientation: str
     all_motifs: bool
     assign_by: str
     motif_index: np.ndarray
@@ -296,6 +298,7 @@ class RefKmerFrequencies:
             motif_axis_kind=motif_axis_kind,
             kmer_size=metadata["kmer_size"],
             canonical=metadata["canonical"],
+            orientation=metadata["orientation"],
             all_motifs=metadata["all_motifs"],
             assign_by=metadata["assign_by"],
             motif_index=motif_index,
@@ -355,6 +358,16 @@ class RefKmerFrequencies:
         Return whether reverse-complement k-mers were collapsed.
         """
         return self.ref_kmers.canonical
+
+    def orientation(self) -> str:
+        """
+        Return which sequence orientations contributed to each motif frequency.
+
+        `"both"` averages the reference-forward sequence and its reverse
+        complement. `"reference_forward"` uses only the sequence read
+        left-to-right from the stored reference.
+        """
+        return self.ref_kmers.orientation
 
     def all_motifs(self) -> bool:
         """
@@ -1384,6 +1397,12 @@ def _validate_root_metadata(store: Any) -> dict[str, Any]:
     if not isinstance(canonical, bool):
         raise ValueError(f"canonical must be a boolean, found {canonical!r}")
 
+    orientation = store.attrs.get("orientation")
+    if orientation not in VALID_ORIENTATIONS:
+        raise ValueError(
+            f"orientation must be 'both' or 'reference_forward', found {orientation!r}"
+        )
+
     all_motifs = store.attrs.get("all_motifs")
     if not isinstance(all_motifs, bool):
         raise ValueError(f"all_motifs must be a boolean, found {all_motifs!r}")
@@ -1398,6 +1417,7 @@ def _validate_root_metadata(store: Any) -> dict[str, Any]:
         "motif_axis_kind": motif_axis_kind,
         "kmer_size": int(kmer_size),
         "canonical": canonical,
+        "orientation": orientation,
         "all_motifs": all_motifs,
         "assign_by": assign_by,
     }
