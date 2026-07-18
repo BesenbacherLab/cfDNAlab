@@ -211,7 +211,7 @@ For `Outside` and `Inside`, repeated side labels are deduplicated in their first
 
 One-sided outputs do not accept an explicit mode.
 
-Motif labels are matched to reference k-mers by removing `_`, for example `AT_CG` -> `ATCG`. Motif-group outputs are matched by group label. End-motif labels are end-relative: each label reads from its fragment end inward, so right-end labels are reverse-complemented relative to reference coordinates. Reference correction requires `ref-kmers --orientation both`. Those frequencies give half of each reference k-mer observation to its reference-forward label and half to its reverse complement.
+Motif labels are matched to reference k-mers by removing `_`, for example `AT_CG` -> `ATCG`. Motif-group outputs are matched by group label. End-motif labels are end-relative: each label reads from its fragment end inward, so right-end labels are reverse-complemented relative to reference coordinates. Reference correction requires `ref-kmers --orientation both`. The reported frequency for a motif is the average of its reference-forward frequency and the frequency of its reverse complement.
 
 For `Split`, `Outside`, and `Inside`, side-specific reference frequencies are calculated from the loaded full-length reference k-mers. For example, the outside frequency for `AC` is the sum of frequencies for loaded k-mers with prefix `AC`, such as `ACTG` and `ACAA`. The inside frequency for `TG` is the corresponding sum over loaded k-mers with suffix `TG`. Separate shorter reference k-mer runs are not required.
 

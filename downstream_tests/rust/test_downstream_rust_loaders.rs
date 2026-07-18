@@ -586,39 +586,34 @@ fn check_reference_correction_without_same_motifs_file() -> Result<()> {
         FixtureKind::Directory,
     )?)?;
     // The stored columns are [AC_GT, GT_AC], and the three sample rows contain
-    // [[1, 0], [0, 1], [1, 0]]. Seven positive reference k-mers make the joint
-    // uniform frequency 1/7. Relative to uniform, ACGT frequency 1/4 gives
-    // correction factor (1/4)/(1/7) = 7/4, while GTAC frequency 3/20 gives
-    // (3/20)/(1/7) = 21/20. Dividing each observed count by its factor gives
-    // [[4/7, 0], [0, 20/21], [4/7, 0]].
-    let expected_joint = &[4.0 / 7.0, 0.0, 0.0, 20.0 / 21.0, 4.0 / 7.0, 0.0];
-    // Five positive labels on each side make each side's uniform frequency
-    // 1/5. Outside labels AC and GT both have frequency 1/4, so both factors
-    // are (1/4)/(1/5) = 5/4. Inside labels GT and AC have frequencies 1/4 and
-    // 3/20, giving factors 5/4 and 3/4. Split therefore divides AC_GT by
-    // (5/4)*(5/4)=25/16 and GT_AC by (5/4)*(3/4)=15/16. Because each observed
-    // count is 1, the corrected values are 16/25 and 16/15. Outside correction
-    // divides by 5/4 for either label. Inside correction divides AC_GT by 5/4
-    // and GT_AC by 3/4. In the stored row and column order, the split, outside,
-    // and inside matrices are therefore [[16/25, 0], [0, 16/15], [16/25, 0]],
-    // [[4/5, 0], [0, 4/5], [4/5, 0]], and
-    // [[4/5, 0], [0, 4/3], [4/5, 0]], respectively.
-    let expected_split = &[
-        16.0 / 25.0,
-        0.0,
-        0.0,
-        16.0 / 15.0,
-        16.0 / 25.0,
-        0.0,
-    ];
-    let expected_outside = &[4.0 / 5.0, 0.0, 0.0, 4.0 / 5.0, 4.0 / 5.0, 0.0];
-    let expected_inside = &[4.0 / 5.0, 0.0, 0.0, 4.0 / 3.0, 4.0 / 5.0, 0.0];
+    // [[1, 0], [0, 1], [1, 0]]. Ten positive reference k-mers make the joint
+    // uniform frequency 1/10. Relative to uniform, ACGT frequency 1/4 gives
+    // correction factor (1/4)/(1/10) = 5/2, while GTAC frequency 3/20 gives
+    // (3/20)/(1/10) = 3/2. Dividing each observed count by its factor gives
+    // [[2/5, 0], [0, 2/3], [2/5, 0]].
+    let expected_joint = &[2.0 / 5.0, 0.0, 0.0, 2.0 / 3.0, 2.0 / 5.0, 0.0];
+    // Six positive labels on each side make the side-wise uniform frequency
+    // 1/6. Outside AC has frequency 1/4, giving factor 3/2, while outside GT
+    // has frequency 1/5, giving factor 6/5. Inside GT and AC have the same
+    // respective frequencies and factors. Split therefore divides AC_GT by
+    // (3/2)*(3/2)=9/4 and GT_AC by (6/5)*(6/5)=36/25. Because each observed
+    // count is 1, the corrected values are 4/9 and 25/36. Outside correction
+    // divides AC_GT by 3/2 and GT_AC by 6/5. Inside correction uses the same
+    // factors. In stored row and column order, the split, outside, and inside
+    // matrices are therefore [[4/9, 0], [0, 25/36], [4/9, 0]],
+    // [[2/3, 0], [0, 5/6], [2/3, 0]], and
+    // [[2/3, 0], [0, 5/6], [2/3, 0]], respectively.
+    let expected_split = &[4.0 / 9.0, 0.0, 0.0, 25.0 / 36.0, 4.0 / 9.0, 0.0];
+    let expected_outside = &[2.0 / 3.0, 0.0, 0.0, 5.0 / 6.0, 2.0 / 3.0, 0.0];
+    let expected_inside = &[2.0 / 3.0, 0.0, 0.0, 5.0 / 6.0, 2.0 / 3.0, 0.0];
 
     assert_eq!(ends.motif_labels(), &["AC_GT", "GT_AC"]);
     assert_eq!(ref_kmers.kmer_size(), 4);
     assert_eq!(
         ref_kmers.motif_labels(),
-        &["ACGT", "CGTA", "CGTT", "GTAC", "GTTT", "TACG", "TTTT"]
+        &[
+            "AAAA", "AAAC", "AACG", "ACGT", "CGTA", "CGTT", "GTAC", "GTTT", "TACG", "TTTT"
+        ]
     );
     match ends.select_corrected_counts(&ref_kmers).read() {
         Ok(_) => bail!("two-sided correction without an explicit mode should fail"),
@@ -686,40 +681,26 @@ fn check_reference_correction_with_same_motifs_file() -> Result<()> {
     )?)?;
     // The stored columns are [GT_AC, AC_GT], and the three sample rows contain
     // [[0, 1], [1, 0], [0, 1]]. Four positive reference k-mers make the joint
-    // uniform frequency 1/4. Relative to uniform, GTAC frequency 3/11 gives
-    // correction factor (3/11)/(1/4) = 12/11, while ACGT frequency 5/11 gives
-    // (5/11)/(1/4) = 20/11. Dividing each observed count by its factor gives
-    // [[0, 11/20], [11/12, 0], [0, 11/20]].
-    let expected_joint = &[0.0, 11.0 / 20.0, 11.0 / 12.0, 0.0, 0.0, 11.0 / 20.0];
+    // uniform frequency 1/4. GTAC and ACGT frequencies 6/19 and 10/19 give
+    // factors (6/19)/(1/4) = 24/19 and (10/19)/(1/4) = 40/19. Dividing each
+    // observed count by its factor gives
+    // [[0, 19/40], [19/24, 0], [0, 19/40]].
+    let expected_joint = &[0.0, 19.0 / 40.0, 19.0 / 24.0, 0.0, 0.0, 19.0 / 40.0];
     // Three positive labels on each side make each side's uniform frequency
-    // 1/3. Outside labels AC and GT both have frequency 5/11, so both factors
-    // are (5/11)/(1/3) = 15/11. Inside labels GT and AC have frequencies 5/11
-    // and 3/11, giving factors 15/11 and 9/11. Split therefore divides AC_GT
-    // by (15/11)*(15/11)=225/121 and GT_AC by
-    // (15/11)*(9/11)=135/121. Because each observed count is 1, the corrected
-    // values are 121/225 and 121/135. Outside correction divides by 15/11 for
-    // either label. Inside correction divides AC_GT by 15/11 and GT_AC by 9/11.
-    // In stored order, the split, outside, and inside matrices are therefore
-    // [[0, 121/225], [121/135, 0], [0, 121/225]],
-    // [[0, 11/15], [11/15, 0], [0, 11/15]], and
-    // [[0, 11/15], [11/9, 0], [0, 11/15]], respectively.
-    let expected_split = &[
-        0.0,
-        121.0 / 225.0,
-        121.0 / 135.0,
-        0.0,
-        0.0,
-        121.0 / 225.0,
-    ];
-    let expected_outside = &[
-        0.0,
-        11.0 / 15.0,
-        11.0 / 15.0,
-        0.0,
-        0.0,
-        11.0 / 15.0,
-    ];
-    let expected_inside = &[0.0, 11.0 / 15.0, 11.0 / 9.0, 0.0, 0.0, 11.0 / 15.0];
+    // 1/3. Outside AC and GT have frequencies 10/19 and 8/19, giving factors
+    // 30/19 and 24/19. Inside GT and AC have frequencies 10/19 and 6/19,
+    // giving factors 30/19 and 18/19. Split therefore divides AC_GT by
+    // (30/19)*(30/19)=900/361 and GT_AC by
+    // (24/19)*(18/19)=432/361. Because each observed count is 1, the corrected
+    // values are 361/900 and 361/432. Outside correction divides AC_GT by
+    // 30/19 and GT_AC by 24/19. Inside correction divides AC_GT by 30/19 and
+    // GT_AC by 18/19. In stored order, the split, outside, and inside matrices
+    // are therefore [[0, 361/900], [361/432, 0], [0, 361/900]],
+    // [[0, 19/30], [19/24, 0], [0, 19/30]], and
+    // [[0, 19/30], [19/18, 0], [0, 19/30]], respectively.
+    let expected_split = &[0.0, 361.0 / 900.0, 361.0 / 432.0, 0.0, 0.0, 361.0 / 900.0];
+    let expected_outside = &[0.0, 19.0 / 30.0, 19.0 / 24.0, 0.0, 0.0, 19.0 / 30.0];
+    let expected_inside = &[0.0, 19.0 / 30.0, 19.0 / 18.0, 0.0, 0.0, 19.0 / 30.0];
 
     assert_eq!(ends.motif_labels(), &["GT_AC", "AC_GT"]);
     assert_eq!(ref_kmers.motif_labels(), &["GTAC", "ACGT", "GTTT", "TTTT"]);
@@ -762,7 +743,7 @@ fn check_reference_correction_with_same_motifs_file() -> Result<()> {
     assert_eq!(selected_outside.motif_labels(), &["AC_"]);
     assert_f64_slice_near(
         selected_outside.to_dense_matrix()?.values_row_major(),
-        &[11.0 / 15.0, 0.0, 11.0 / 15.0],
+        &[19.0 / 30.0, 0.0, 19.0 / 30.0],
     );
 
     let inside = ends
