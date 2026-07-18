@@ -245,39 +245,43 @@ fn rust_ref_kmer_loader_reads_downstream_fixtures() -> Result<()> {
     assert_eq!(sparse_windowed.row_mode(), RefKmerRowMode::BedWindows);
     assert_eq!(
         sparse_windowed.motif_labels(),
-        &["CGT", "AAA", "TAC", "CCC", "GGG", "ACG", "GTA"]
+        &["CGT", "AAA", "TAC", "CCC", "GGG", "TTT", "ACG", "GTA"]
     );
     assert_f64_slice_near(
         sparse_windowed.to_dense_count_matrix()?.values_row_major(),
         &[
             0.0,
-            1.0,
+            1.0 / 2.0,
             0.0,
             1.0,
             1.0,
+            1.0 / 2.0,
             0.0,
             0.0,
             1.0,
             0.0,
+            1.0,
+            1.0 / 6.0,
+            1.0 / 6.0,
+            0.0,
+            1.0,
+            1.0,
+            1.0 / 3.0,
+            0.0,
+            1.0 / 6.0,
+            2.0 / 3.0,
+            2.0 / 3.0,
+            0.0,
+            1.0 / 3.0,
+            1.0 / 6.0,
             4.0 / 3.0,
             0.0,
-            1.0 / 3.0,
-            1.0,
-            2.0 / 3.0,
-            2.0 / 3.0,
+            3.0 / 2.0,
             0.0,
             0.0,
-            1.0,
-            1.0 / 3.0,
             0.0,
-            1.0 / 3.0,
-            5.0 / 3.0,
-            0.0,
-            1.0,
-            0.0,
-            0.0,
-            1.0,
-            2.0,
+            4.0 / 3.0,
+            3.0 / 2.0,
         ],
     );
     let windows = sparse_windowed.window_metadata()?;
@@ -311,7 +315,7 @@ fn rust_ref_kmer_loader_reads_downstream_fixtures() -> Result<()> {
         selected_windows
             .to_dense_count_matrix()?
             .values_row_major(),
-        &[2.0, 0.0, 0.0, 1.0],
+        &[3.0 / 2.0, 0.0, 0.0, 1.0 / 2.0],
     );
 
     let sparse_grouped = load_ref_kmers_output(fixture_path(
@@ -324,7 +328,7 @@ fn rust_ref_kmer_loader_reads_downstream_fixtures() -> Result<()> {
     assert_eq!(sparse_grouped.group_index("alpha")?, 1);
     assert_eq!(
         sparse_grouped.motif_labels(),
-        &["CGT", "AAA", "TAC", "CCC", "GGG", "ACG", "GTA"]
+        &["CGT", "AAA", "TAC", "CCC", "GGG", "TTT", "ACG", "GTA"]
     );
     let groups = sparse_grouped.group_metadata()?;
     assert_eq!(
@@ -350,7 +354,7 @@ fn rust_ref_kmer_loader_reads_downstream_fixtures() -> Result<()> {
     assert_eq!(selected_groups.motif_labels(), &["GTA", "AAA"]);
     assert_f64_slice_near(
         selected_groups.to_dense_count_matrix()?.values_row_major(),
-        &[8.0 / 3.0, 0.0, 1.0 / 3.0, 1.0],
+        &[5.0 / 2.0, 0.0, 1.0 / 6.0, 1.0 / 2.0],
     );
 
     let dense_motif_groups = load_ref_kmers_output(fixture_path(

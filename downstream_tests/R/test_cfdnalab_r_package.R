@@ -502,17 +502,17 @@ test_that("R helper package reads sparse windowed reference k-mers", {
   expect_s3_class(ref_kmers, "cfdnalab_windowed_ref_kmer_frequencies")
   expect_identical(storage_mode(ref_kmers), "sparse_coo")
   expect_identical(row_mode(ref_kmers), "bed")
-  expect_identical(motifs(ref_kmers)$motif, c("CGT", "AAA", "TAC", "CCC", "GGG", "ACG", "GTA"))
-  expect_false(has_motif(ref_kmers, "TTT"))
+  expect_identical(motifs(ref_kmers)$motif, c("CGT", "AAA", "TAC", "CCC", "GGG", "TTT", "ACG", "GTA"))
+  expect_true(has_motif(ref_kmers, "TTT"))
   expect_error(dense_frequencies_matrix(ref_kmers), "Use sparse_frequencies_matrix")
   expect_equal(
     dense_counts_matrix(ref_kmers, allow_densify = TRUE),
     matrix(
       c(
-        0, 1, 0, 1, 1, 0, 0,
-        1, 0, 4 / 3, 0, 1 / 3, 1, 2 / 3,
-        2 / 3, 0, 0, 1, 1 / 3, 0, 1 / 3,
-        5 / 3, 0, 1, 0, 0, 1, 2
+        0, 1 / 2, 0, 1, 1, 1 / 2, 0, 0,
+        1, 0, 1, 1 / 6, 1 / 6, 0, 1, 1,
+        1 / 3, 0, 1 / 6, 2 / 3, 2 / 3, 0, 1 / 3, 1 / 6,
+        4 / 3, 0, 3 / 2, 0, 0, 0, 4 / 3, 3 / 2
       ),
       nrow = 4L,
       byrow = TRUE
@@ -549,10 +549,10 @@ test_that("R helper package reads sparse windowed reference k-mers", {
       start = c(12L, 12L, 0L, 0L),
       end = c(20L, 20L, 9L, 9L),
       blacklisted_fraction = c(0, 0, 0, 0),
-      motif_idx = c(7L, 2L, 7L, 2L),
+      motif_idx = c(8L, 2L, 8L, 2L),
       motif = c("GTA", "AAA", "GTA", "AAA"),
-      frequency = c(6 / 17, 0, 0, 1 / 3),
-      count = c(2, 0, 0, 1),
+      frequency = c(9 / 34, 0, 0, 1 / 6),
+      count = c(3 / 2, 0, 0, 1 / 2),
       stringsAsFactors = FALSE
     ),
     tolerance = 1e-8,
@@ -567,7 +567,7 @@ test_that("R helper package reads sparse grouped reference k-mers", {
   expect_identical(storage_mode(ref_kmers), "sparse_coo")
   expect_identical(row_mode(ref_kmers), "grouped_bed")
   expect_identical(group_idx(ref_kmers, "alpha"), 2L)
-  expect_identical(motifs(ref_kmers)$motif, c("CGT", "AAA", "TAC", "CCC", "GGG", "ACG", "GTA"))
+  expect_identical(motifs(ref_kmers)$motif, c("CGT", "AAA", "TAC", "CCC", "GGG", "TTT", "ACG", "GTA"))
   expect_equal(
     group_metadata(ref_kmers),
     data.frame(
@@ -585,20 +585,29 @@ test_that("R helper package reads sparse grouped reference k-mers", {
       groups = c("alpha", "beta"),
       motifs = c("GTA", "AAA")
     )),
-    matrix(c(8 / 3, 0, 1 / 3, 1), nrow = 2L, byrow = TRUE),
+    matrix(c(5 / 2, 0, 1 / 6, 1 / 2), nrow = 2L, byrow = TRUE),
     tolerance = 1e-8
   )
   expect_equal(
     ref_kmer_data_frame(ref_kmers),
     data.frame(
-      group_idx = c(rep(1L, 5L), rep(2L, 5L)),
-      group_name = c(rep("beta", 5L), rep("alpha", 5L)),
-      eligible_windows = rep(2L, 10L),
-      blacklisted_fraction = c(rep(0.1, 5L), rep(1 / 16, 5L)),
-      motif_idx = c(1L, 2L, 4L, 5L, 7L, 1L, 3L, 5L, 6L, 7L),
-      motif = c("CGT", "AAA", "CCC", "GGG", "GTA", "CGT", "TAC", "GGG", "ACG", "GTA"),
-      frequency = c(1 / 8, 3 / 16, 3 / 8, 1 / 4, 1 / 16, 4 / 15, 7 / 30, 1 / 30, 1 / 5, 4 / 15),
-      count = c(2 / 3, 1, 2, 4 / 3, 1 / 3, 8 / 3, 7 / 3, 1 / 3, 2, 8 / 3),
+      group_idx = c(rep(1L, 8L), rep(2L, 6L)),
+      group_name = c(rep("beta", 8L), rep("alpha", 6L)),
+      eligible_windows = rep(2L, 14L),
+      blacklisted_fraction = c(rep(0.1, 8L), rep(1 / 16, 6L)),
+      motif_idx = c(1:8, 1L, 3L, 4L, 5L, 7L, 8L),
+      motif = c(
+        "CGT", "AAA", "TAC", "CCC", "GGG", "TTT", "ACG", "GTA",
+        "CGT", "TAC", "CCC", "GGG", "ACG", "GTA"
+      ),
+      frequency = c(
+        1 / 16, 3 / 32, 1 / 32, 5 / 16, 5 / 16, 3 / 32, 1 / 16, 1 / 32,
+        7 / 30, 1 / 4, 1 / 60, 1 / 60, 7 / 30, 1 / 4
+      ),
+      count = c(
+        1 / 3, 1 / 2, 1 / 6, 5 / 3, 5 / 3, 1 / 2, 1 / 3, 1 / 6,
+        7 / 3, 5 / 2, 1 / 6, 1 / 6, 7 / 3, 5 / 2
+      ),
       stringsAsFactors = FALSE
     ),
     tolerance = 1e-8,
