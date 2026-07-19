@@ -170,6 +170,7 @@ def test_cfdnalab_package_corrects_two_sided_end_motifs_without_same_motifs_file
 
     assert end_motifs.motifs_metadata()["motif"].tolist() == ["AC_GT", "GT_AC"]
     assert ref_kmers.kmer_size() == 4
+    assert ref_kmers.orientation() == "both"
     assert ref_kmers.motifs_metadata()["motif"].tolist() == [
         "AAAA",
         "AAAC",
@@ -308,6 +309,7 @@ def test_cfdnalab_package_corrects_two_sided_end_motifs_with_same_motifs_file(
     )
 
     assert end_motifs.motifs_metadata()["motif"].tolist() == ["GT_AC", "AC_GT"]
+    assert ref_kmers.orientation() == "both"
     assert ref_kmers.motifs_metadata()["motif"].tolist() == [
         "GTAC",
         "ACGT",
