@@ -80,6 +80,9 @@ pub struct RefKmersConfig {
     )]
     pub output_dir: PathBuf,
 
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub temp: TempDirArgs,
+
     /// Optional prefix for the output file (e.g., a reference genome name) `[string]`
     ///
     /// Leave empty to write the filename without a leading prefix.
@@ -286,6 +289,7 @@ impl RefKmersConfig {
         Self {
             ref_genome: Ref2BitRequiredArgs { ref_2bit },
             output_dir,
+            temp: TempDirArgs::default(),
             output_prefix: String::new(),
             n_threads: crate::shared::thread_pool::default_thread_count(),
             kmer_size,
@@ -310,6 +314,10 @@ impl RefKmersConfig {
     /// Set the output directory.
     pub fn set_output_dir(&mut self, output_dir: PathBuf) {
         self.output_dir = output_dir;
+    }
+
+    pub fn set_temp_dir(&mut self, temp_dir: Option<PathBuf>) {
+        self.temp.temp_dir = temp_dir;
     }
 
     /// Set the optional filename prefix for the output package.
@@ -383,6 +391,7 @@ impl ToCliCommand for RefKmersConfig {
         let mut args = command_args("ref-kmers");
         push_ref_2bit_required(&mut args, &self.ref_genome);
         push_path(&mut args, "--output-dir", &self.output_dir);
+        push_temp_dir(&mut args, &self.temp);
         push_output_prefix(&mut args, &self.output_prefix);
         push_value(&mut args, "--n-threads", self.n_threads);
         push_value(&mut args, "--kmer-size", self.kmer_size);

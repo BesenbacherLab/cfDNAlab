@@ -2,8 +2,8 @@ use crate::{
     ToCliCommand,
     cli_command::helpers::*,
     commands::cli_common::{
-        ApplyGCArgs, ChromosomeArgs, IOCArgs, LoggingArgs, ScaleGenomeArgs, UnpairedArgs,
-        resolve_length_bin_edges,
+        ApplyGCArgs, ChromosomeArgs, IOCArgs, LoggingArgs, ScaleGenomeArgs, TempDirArgs,
+        UnpairedArgs, resolve_length_bin_edges,
     },
     commands::midpoints::smoothing::MidpointSmoothing,
     shared::{
@@ -57,6 +57,9 @@ use std::path::PathBuf;
 pub struct MidpointsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub temp: TempDirArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub unpaired: UnpairedArgs,
@@ -298,6 +301,7 @@ impl MidpointsConfig {
     pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs, intervals: PathBuf) -> Self {
         Self {
             ioc,
+            temp: TempDirArgs::default(),
             unpaired: UnpairedArgs {
                 reads_are_fragments: false,
             },
@@ -328,6 +332,10 @@ impl MidpointsConfig {
 
     pub fn set_output_prefix<S: Into<String>>(&mut self, prefix: S) {
         self.output_prefix = prefix.into();
+    }
+
+    pub fn set_temp_dir(&mut self, temp_dir: Option<PathBuf>) {
+        self.temp.temp_dir = temp_dir;
     }
 
     pub fn set_length_bins(&mut self, edges: Vec<u32>) {
@@ -392,6 +400,7 @@ impl ToCliCommand for MidpointsConfig {
     fn to_cli_args(&self) -> crate::Result<Vec<std::ffi::OsString>> {
         let mut args = command_args("midpoints");
         push_ioc(&mut args, &self.ioc);
+        push_temp_dir(&mut args, &self.temp);
         push_unpaired(&mut args, &self.unpaired);
         push_output_prefix(&mut args, &self.output_prefix);
         push_path(&mut args, "--intervals", &self.intervals);

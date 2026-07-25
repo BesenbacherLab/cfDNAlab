@@ -18,7 +18,7 @@ use crate::{
             kmer_codec::KmerCodes,
             motifs_file::{EncodedMotifKey, SelectedMotifHalfSpec, SelectedMotifLookup},
         },
-        reference::read_seq_in_range,
+        reference::ReferenceReader,
         tiled_run::Tile,
     },
 };
@@ -176,6 +176,7 @@ pub(crate) fn motif_reference_span_for_tile(
 pub(crate) fn build_tile_motif_context<'a>(
     opt: &EndsConfig,
     tile: &Tile,
+    reference_reader: Option<&mut ReferenceReader>,
     reference_span: Interval<u64>,
     chrom_len: u64,
     blacklist_intervals: &'a [Interval<u64>],
@@ -213,12 +214,9 @@ pub(crate) fn build_tile_motif_context<'a>(
         });
     }
 
-    let ref_2bit = opt
-        .ref_2bit
-        .as_ref()
-        .context(motif_extraction_ref_2bit_requirement_message())?;
-    let mut reference_bases = read_seq_in_range(
-        ref_2bit,
+    let reference_reader =
+        reference_reader.context(motif_extraction_ref_2bit_requirement_message())?;
+    let mut reference_bases = reference_reader.read_seq_in_range(
         &tile.chr,
         (reference_start as usize)..(reference_end as usize),
     )?;

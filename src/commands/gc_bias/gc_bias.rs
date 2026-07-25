@@ -42,12 +42,11 @@ use crate::{
         overlaps::find_overlapping_windows,
         progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
-        reference::read_seq_in_range,
-        reference::{ContigFootprintEntry, twobit_contig_footprint},
-        thread_pool::init_global_pool,
-        tiled_run::{
-            TempDirGuard, Tile, TileWindowSpan, build_tiles, precompute_tile_window_spans,
+        reference::{
+            ContigFootprintEntry, ReferenceReader, stage_reference_2bit, twobit_contig_footprint,
         },
+        thread_pool::init_global_pool,
+        tiled_run::{RunTempDirs, Tile, TileWindowSpan, build_tiles, precompute_tile_window_spans},
         windowing::compute_window_offsets,
         windowing::ensure_plain_bed_windows_not_empty,
     },
@@ -59,12 +58,11 @@ use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::{
-    fs::create_dir_all,
     path::{Path, PathBuf},
     sync::Arc,
     time::Instant,
 };
-use tracing::{info, warn};
+use tracing::info;
 
 const COMMAND_TARGET: &str = "gc-bias";
 
@@ -337,6 +335,18 @@ pub fn run_gc_bias(opt: &GCConfig, options: RunOptions) -> Result<GCBiasRunResul
         &reference_metadata,
         &twobit_contig_footprint(&opt.ref_genome.ref_2bit)?,
     )?;
+
+    ensure_output_dir(&opt.ioc.output_dir)?;
+    let work_root = opt.temp.temp_dir.as_deref().unwrap_or(&opt.ioc.output_dir);
+    let run_temp_dirs = RunTempDirs::new(
+        work_root,
+        &opt.ioc.output_dir,
+        &dot_join(&[COMMAND_TARGET, prefix]),
+    )
+    .context("create gc-bias temporary directories")?;
+    let temp_dir = run_temp_dirs.work_dir().to_path_buf();
+    status_info!(options, target: COMMAND_TARGET, "Copying reference 2bit to the temporary directory");
+    let staged_ref_2bit = stage_reference_2bit(&opt.ref_genome.ref_2bit, run_temp_dirs.work_dir())?;
     let avg_norm_ref_counts = mean_scale_per_length_array(
         &reference_counts,
         0.,
@@ -344,11 +354,7 @@ pub fn run_gc_bias(opt: &GCConfig, options: RunOptions) -> Result<GCBiasRunResul
     );
     drop(reference_counts);
 
-    // Create output directory
-    create_dir_all(&opt.ioc.output_dir).context("Cannot create output_dir")?;
-    let final_temp_dir_guard = TempDirGuard::new(&opt.ioc.output_dir, "gc_bias_final")
-        .context("create final output temp dir")?;
-    let mut final_outputs = FinalOutputFiles::new(final_temp_dir_guard.path())?;
+    let mut final_outputs = FinalOutputFiles::new(run_temp_dirs.final_output_dir())?;
     let mut intermediate_saver = IntermediateFileSaver::new(
         opt.save_intermediates,
         final_outputs.temp_dir().to_path_buf(),
@@ -429,60 +435,62 @@ pub fn run_gc_bias(opt: &GCConfig, options: RunOptions) -> Result<GCBiasRunResul
     )?;
     let zero_reduce_sum = zero_counts.zeroed_like()?;
 
-    // Build temporary directory for cross-tile window partials
-    let mut temp_dir_guard = TempDirGuard::new(&opt.ioc.output_dir, "gc_bias_cross")
-        .context("create per-run temp dir")?;
-    let temp_dir = temp_dir_guard.path().to_path_buf();
-
     let mut reduce_state: ReduceState = tiles
         .par_iter()
         .enumerate()
-        .map(|(tile_idx, tile)| -> Result<ReduceState> {
-            // Crossing files share one temp directory across chromosomes, so their filenames need
-            // the run-global tile index, not `Tile.index`, which is chromosome-local.
-            let crossing_file_tile_idx =
-                u32::try_from(tile_idx).context("global tile index exceeded u32 range")?;
-            let chr = tile.chr.as_str();
-            let tile_span = tile_window_spans_for_threads[tile_idx];
-            let windows_chr: Option<&[IndexedInterval<u64>]> = windows_map
-                .as_ref()
-                .and_then(|m| m.get(chr).map(|v| v.as_slice()));
-            let blacklist_chr: &[Interval<u64>] =
-                blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]);
-            let crossing_window_index_offset_chr = match &window_opt {
-                // Fixed-size window ids start at zero on each chromosome. BED windows already
-                // carry global original ids, and global mode uses the single shared window id 0.
-                WindowSpec::Size(_) => *chromosome_window_offsets
-                    .get(chr)
-                    .with_context(|| format!("missing fixed-size window offset for {chr}"))?,
-                _ => 0,
-            };
+        .map_init(
+            || ReferenceReader::open(&staged_ref_2bit),
+            |reference_reader_result, (tile_idx, tile)| -> Result<ReduceState> {
+                let reference_reader = reference_reader_result
+                    .as_mut()
+                    .map_err(|error| anyhow!("{error:#}"))?;
+                // Crossing files share one temp directory across chromosomes, so their filenames need
+                // the run-global tile index, not `Tile.index`, which is chromosome-local.
+                let crossing_file_tile_idx =
+                    u32::try_from(tile_idx).context("global tile index exceeded u32 range")?;
+                let chr = tile.chr.as_str();
+                let tile_span = tile_window_spans_for_threads[tile_idx];
+                let windows_chr: Option<&[IndexedInterval<u64>]> = windows_map
+                    .as_ref()
+                    .and_then(|m| m.get(chr).map(|v| v.as_slice()));
+                let blacklist_chr: &[Interval<u64>] =
+                    blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]);
+                let crossing_window_index_offset_chr = match &window_opt {
+                    // Fixed-size window ids start at zero on each chromosome. BED windows already
+                    // carry global original ids, and global mode uses the single shared window id 0.
+                    WindowSpec::Size(_) => *chromosome_window_offsets
+                        .get(chr)
+                        .with_context(|| format!("missing fixed-size window offset for {chr}"))?,
+                    _ => 0,
+                };
 
-            let (tile_counts, counter) = process_tile(
-                tile,
-                tile_span.as_ref(),
-                windows_aligned_to_tiles,
-                opt,
-                &reference_metadata,
-                windows_chr,
-                &window_opt,
-                avg_window_span,
-                &zero_counts,
-                &temp_dir,
-                blacklist_chr,
-                crossing_file_tile_idx,
-                crossing_window_index_offset_chr,
-            )?;
+                let (tile_counts, counter) = process_tile(
+                    tile,
+                    tile_span.as_ref(),
+                    windows_aligned_to_tiles,
+                    opt,
+                    &reference_metadata,
+                    windows_chr,
+                    &window_opt,
+                    avg_window_span,
+                    &zero_counts,
+                    &temp_dir,
+                    blacklist_chr,
+                    crossing_file_tile_idx,
+                    crossing_window_index_offset_chr,
+                    reference_reader,
+                )?;
 
-            let mut state = ReduceState::from_scaled_sum(zero_reduce_sum.clone());
-            state.merge_scaled(&tile_counts.counts)?;
-            state.add_weight(tile_counts.weight);
-            state.merge_counters(counter);
-            state.push_crossing_file(tile_counts.crossing_file);
+                let mut state = ReduceState::from_scaled_sum(zero_reduce_sum.clone());
+                state.merge_scaled(&tile_counts.counts)?;
+                state.add_weight(tile_counts.weight);
+                state.merge_counters(counter);
+                state.push_crossing_file(tile_counts.crossing_file);
 
-            pb.inc(1);
-            Ok(state)
-        })
+                pb.inc(1);
+                Ok(state)
+            },
+        )
         .try_fold(
             || ReduceState::from_scaled_sum(zero_reduce_sum.clone()),
             |mut acc, state| -> Result<ReduceState> {
@@ -518,15 +526,6 @@ pub fn run_gc_bias(opt: &GCConfig, options: RunOptions) -> Result<GCBiasRunResul
         )?;
         reduce_state.scaled_sum.merge_from(&cross_sum)?;
         reduce_state.scaled_weight += cross_weight;
-    }
-
-    if let Err(err) = temp_dir_guard.remove() {
-        warn!(
-            target: COMMAND_TARGET,
-            "warning: failed to remove temp dir {}: {}",
-            temp_dir.display(),
-            err
-        );
     }
 
     let counted_windows = if matches!(window_opt, WindowSpec::Global) {
@@ -990,6 +989,7 @@ fn process_tile(
     blacklist_intervals: &[Interval<u64>],
     crossing_file_tile_idx: u32,
     crossing_window_index_offset: u64,
+    reference_reader: &mut ReferenceReader,
 ) -> anyhow::Result<(WindowState, GCCounters)> {
     let apply_window_scaling = !matches!(window_opt, WindowSpec::Global);
 
@@ -1031,11 +1031,8 @@ fn process_tile(
 
     let gc_prefixes = {
         // Load only the tile span (core plus halo)
-        let mut seq_bytes = read_seq_in_range(
-            &opt.ref_genome.ref_2bit,
-            &tile.chr,
-            seq_start as usize..seq_end as usize,
-        )?;
+        let mut seq_bytes =
+            reference_reader.read_seq_in_range(&tile.chr, seq_start as usize..seq_end as usize)?;
         // Blacklist GC prefixes to avoid using blacklist-overlapping fragments in bias-estimation
         // NOTE: Downstream commands don't blacklist prefixes so it's possible to correct such fragments
         // using their full GC context

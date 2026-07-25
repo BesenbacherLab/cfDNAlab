@@ -248,6 +248,9 @@ Planned: `cfdna fragment-kmers` (count kmers within fragments), `cfdna wps-peaks
 - How do I run the command for unpaired data?
   - The commands accept `--reads-are-fragments`. Each read is then assumed to represent the full aligned fragment.
 
+- Why are the commands suddenly much slower when I run many jobs on my HPC cluster?
+  - Your jobs may be doing lots of temporary file I/O on shared storage. Try pointing `--temp-dir` to a node-local scratch directory. Some HPC clusters assign `$TMPDIR` to point at this. If that does not help, please open an [issue](https://github.com/BesenbacherLab/cfDNAlab/issues/new/choose).
+
 - How did you use LLMs (AI) in this project?
   - OpenAI's codex models were used for pair programming to speed up development and testing. Claude Code provided code reviews. All code for the released commands have been designed and validated by us.
 
@@ -275,6 +278,7 @@ cfdna <command>
   --bam <sample>.bam \                          # Coordinate-sorted cfDNA BAM file
   --output-dir <path> \                         # Output directory
   --output-prefix <sample_id> \                 # Output filename prefix
+  --temp-dir <path> \                           # Directory for temporary files (defaults to output directory)
   --n-threads <int> \                           # CPU threads
   --tile-size <int> \                           # Processing tile size (reduce for lower RAM)
   --reads-are-fragments \                       # Treat each read as one fragment
@@ -292,6 +296,18 @@ cfdna <command>
   --logging <string>                            # Logging mode: stdout, quiet, file
 
 ```
+
+#### Specify local scratch for temporary files [Recommended]
+
+The `--temp-dir` argument can point to a local scratch directory for temporary files. This can significantly reduce IO time when running many parallel jobs on an HPC cluster.
+
+Many cluster environments have variables such as `$TMPDIR`, `$SLURM_TMPDIR`, or `$LOCAL_SCRATCH` for specifying where such files should be temporarily stored. You may want to verify that this disk has enough storage capacity. It can be specified as:
+
+```bash
+cfdna ... --temp-dir "$TMPDIR"
+```
+
+When possible, specify a directory on a node-local disk. When specifying `--ref-2bit`, that file is also temporarily copied to this directory (in each command call) as this has been found to significantly reduce shared-filesystem contention and runtime when running many jobs at a time.
 
 ### GC correction pipeline
 

@@ -2,8 +2,13 @@ use anyhow::{Context, Result};
 use fxhash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 use std::io::BufRead;
-use std::{fs::File, io::BufReader, ops::RangeBounds, path::Path};
-use twobit::TwoBitFile;
+use std::{
+    fs::{self, File},
+    io::BufReader,
+    ops::RangeBounds,
+    path::{Path, PathBuf},
+};
+use twobit::{TwoBitFile, TwoBitPhysicalFile};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ContigFootprintEntry {
@@ -11,16 +16,70 @@ pub struct ContigFootprintEntry {
     pub size: u64,
 }
 
+/// Reusable reader for sequence queries against one 2bit file.
+pub(crate) struct ReferenceReader {
+    reader: TwoBitPhysicalFile,
+}
+
+impl ReferenceReader {
+    /// Open a 2bit file and load its sequence index.
+    pub(crate) fn open(path: &Path) -> anyhow::Result<Self> {
+        let reader = TwoBitFile::open(path)
+            .with_context(|| format!("opening 2bit reference {}", path.display()))?;
+        Ok(Self { reader })
+    }
+
+    /// Load the full sequence for one chromosome.
+    pub(crate) fn read_seq(&mut self, chr: &str) -> anyhow::Result<Vec<u8>> {
+        let seq = self
+            .reader
+            .read_sequence(chr, ..)
+            .with_context(|| format!("extracting reference seq for {chr}"))?;
+        Ok(seq.into_bytes())
+    }
+
+    /// Load a sequence range for one chromosome.
+    pub(crate) fn read_seq_in_range<R>(&mut self, chr: &str, range: R) -> anyhow::Result<Vec<u8>>
+    where
+        R: RangeBounds<usize> + Clone,
+    {
+        let seq = self
+            .reader
+            .read_sequence(chr, range.clone())
+            .with_context(|| {
+                format!(
+                    "extracting reference seq for {}:{:?}-{:?}",
+                    chr,
+                    range.start_bound().cloned(),
+                    range.end_bound().cloned()
+                )
+            })?;
+        Ok(seq.into_bytes())
+    }
+}
+
+/// Copy a reference into a command's unique working directory.
+#[allow(
+    dead_code,
+    reason = "single-command feature builds may compile reference helpers without staging a 2bit file"
+)]
+pub(crate) fn stage_reference_2bit(source: &Path, work_dir: &Path) -> anyhow::Result<PathBuf> {
+    let destination = work_dir.join("reference.2bit");
+    fs::copy(source, &destination).with_context(|| {
+        format!(
+            "copying 2bit reference {} to {}",
+            source.display(),
+            destination.display()
+        )
+    })?;
+    Ok(destination)
+}
+
 /// Load reference genome sequence for
 /// a single chromosome from a 2bit file.
 pub fn read_seq<P: AsRef<Path>>(path: P, chr: &str) -> anyhow::Result<Vec<u8>> {
-    // Open 2bit file
-    let mut tb = TwoBitFile::open(path).context("opening 2bit")?;
-    // Extract reference sequence
-    let seq = tb
-        .read_sequence(chr, ..)
-        .context(format!("extracting reference seq for {}", chr))?;
-    Ok(seq.as_bytes().to_vec())
+    let mut reader = ReferenceReader::open(path.as_ref())?;
+    reader.read_seq(chr)
 }
 
 /// Load reference genome sequence for a range of positions
@@ -29,16 +88,8 @@ pub fn read_seq_in_range<R, P: AsRef<Path>>(path: P, chr: &str, range: R) -> any
 where
     R: RangeBounds<usize> + Clone,
 {
-    // Open 2bit file
-    let mut tb = TwoBitFile::open(path).context("opening 2bit")?;
-    // Extract reference sequence
-    let seq = tb.read_sequence(chr, range.clone()).context(format!(
-        "extracting reference seq for {}:{:?}-{:?}",
-        chr,
-        range.start_bound().cloned(),
-        range.end_bound().cloned()
-    ))?;
-    Ok(seq.as_bytes().to_vec())
+    let mut reader = ReferenceReader::open(path.as_ref())?;
+    reader.read_seq_in_range(chr, range)
 }
 
 /// Return (chrom_name, length) for the requested contigs in a .2bit file
@@ -157,4 +208,9 @@ pub fn load_chrom_sizes_with_order<P: AsRef<std::path::Path>>(
     }
 
     Ok((order, sizes))
+}
+
+#[cfg(test)]
+mod tests {
+    include!("reference_tests.rs");
 }

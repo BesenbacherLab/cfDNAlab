@@ -191,6 +191,7 @@ fn ref_gc_bias_config_renders_cli_call() {
         },
         output_dir: PathBuf::from("out"),
         output_prefix: "hg38".to_string(),
+        temp: Default::default(),
         n_threads: 2,
         n_positions: 10_000,
         seed: Some(7),

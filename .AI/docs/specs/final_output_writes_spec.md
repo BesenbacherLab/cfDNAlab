@@ -6,7 +6,7 @@ Final user-facing outputs are completion signals for workflow managers and ad ho
 
 - A final output is any user-facing file whose existence can be interpreted as command completion.
 - Primary outputs, compressed tables, BED or bedGraph outputs, group-index files, settings files, headers, BAM files, package files, and other metadata needed to interpret a primary output are part of the final output set.
-- Internal tile files and reducer scratch files are not final outputs. They stay in command temp directories and are not public completion signals.
+- Internal tile files and reducer scratch files are not final outputs. They stay in the unique work directory and are not public completion signals.
 
 ## Write Contract
 
@@ -22,7 +22,7 @@ Final user-facing outputs are completion signals for workflow managers and ad ho
 
 Commands should use `shared::io::FinalOutputFiles` for final output placement:
 
-- `FinalOutputFiles::new` creates the `final_outputs` subdirectory inside the supplied command temp directory.
+- `FinalOutputFiles::new` creates the `final_outputs` subdirectory inside the supplied temporary output directory.
 - `temp_path_for` maps a final output path to the corresponding path in the final-output temp directory.
 - `record` stores one temp-to-final path pair and rejects duplicate temp or final paths.
 - `record_temp_files_with_same_names_in` records files created inside the final-output temp directory when a writer returns the paths it created.
@@ -30,13 +30,14 @@ Commands should use `shared::io::FinalOutputFiles` for final output placement:
 
 The helper enforces path bookkeeping. Callers are still responsible for writing complete files, closing writers, and recording all required metadata files before calling `move_into_place`.
 
-## Temp Directories and Cleanup
+## Temporary Directories and Cleanup
 
-- Final-output temp directories live inside a command-owned temp directory.
-- Command temp directories are unique per run and should be created under the selected output directory so temporary and final files stay on the expected filesystem.
-- `TempDirGuard` owns cleanup on success, early return, and drop.
-- Normal cleanup is best effort. Drop-time cleanup failures are warnings, not command failures after final outputs have been moved into place.
-- Commands should call `TempDirGuard::remove` only when cleanup failure should become part of the command result for that specific path.
+- Commands create a visible, unique work directory under `--temp-dir`, or under the output directory when the option is omitted.
+- Commands create a separate visible, unique temporary output directory under the output directory, even when `--temp-dir` is omitted.
+- References, tile files, reducer spills, and internal command outputs belong in the work directory.
+- `FinalOutputFiles` receives this temporary output directory. Because it is on the output filesystem, `move_into_place` can rename completed files without copying them between filesystems.
+- `TempDirGuard` owns cleanup of both directories on success, early return, and drop. It never removes the directory supplied with `--temp-dir`.
+- Cleanup failures warn with the exact remaining path and do not turn an otherwise completed command into a failure.
 
 ## Limits
 

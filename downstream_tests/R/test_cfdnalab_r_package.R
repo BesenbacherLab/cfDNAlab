@@ -118,7 +118,9 @@ test_that("R helper package corrects two-sided end motifs without same motifs fi
   ref_kmers <- read_ref_kmers(sparse_windowed_end_motif_ref_kmer_zarr_path())
 
   expect_identical(motifs(ends)$motif, c("AC_GT", "GT_AC"))
+  expect_identical(schema_version(ref_kmers), 2L)
   expect_identical(kmer_size(ref_kmers), 4L)
+  expect_identical(orientation(ref_kmers), "both")
   expect_identical(
     motifs(ref_kmers)$motif,
     c("AAAA", "AAAC", "AACG", "ACGT", "CGTA", "CGTT", "GTAC", "GTTT", "TACG", "TTTT")
@@ -226,6 +228,8 @@ test_that("R helper package corrects two-sided end motifs with same motifs file"
   ref_kmers <- read_ref_kmers(sparse_windowed_selected_end_motifs_ref_kmer_zarr_path())
 
   expect_identical(motifs(ends)$motif, c("GT_AC", "AC_GT"))
+  expect_identical(schema_version(ref_kmers), 2L)
+  expect_identical(orientation(ref_kmers), "both")
   expect_identical(motifs(ref_kmers)$motif, c("GTAC", "ACGT", "GTTT", "TTTT"))
   expected_counts <- matrix(c(0, 1, 1, 0, 0, 1), nrow = 3L, byrow = TRUE)
   expected_count_vector <- c(0, 1, 1, 0, 0, 1)
@@ -501,8 +505,10 @@ test_that("R helper package reads sparse windowed reference k-mers", {
   ref_kmers <- read_ref_kmers(sparse_windowed_ref_kmer_zarr_path())
 
   expect_s3_class(ref_kmers, "cfdnalab_windowed_ref_kmer_frequencies")
+  expect_identical(schema_version(ref_kmers), 2L)
   expect_identical(storage_mode(ref_kmers), "sparse_coo")
   expect_identical(row_mode(ref_kmers), "bed")
+  expect_identical(orientation(ref_kmers), "both")
   expect_identical(motifs(ref_kmers)$motif, c("CGT", "AAA", "TAC", "CCC", "GGG", "TTT", "ACG", "GTA"))
   expect_true(has_motif(ref_kmers, "TTT"))
   expect_error(dense_frequencies_matrix(ref_kmers), "Use sparse_frequencies_matrix")
@@ -565,8 +571,10 @@ test_that("R helper package reads sparse grouped reference k-mers", {
   ref_kmers <- read_ref_kmers(sparse_grouped_ref_kmer_zarr_path())
 
   expect_s3_class(ref_kmers, "cfdnalab_grouped_ref_kmer_frequencies")
+  expect_identical(schema_version(ref_kmers), 2L)
   expect_identical(storage_mode(ref_kmers), "sparse_coo")
   expect_identical(row_mode(ref_kmers), "grouped_bed")
+  expect_identical(orientation(ref_kmers), "both")
   expect_identical(group_idx(ref_kmers, "alpha"), 2L)
   expect_identical(motifs(ref_kmers)$motif, c("CGT", "AAA", "TAC", "CCC", "GGG", "TTT", "ACG", "GTA"))
   expect_equal(
@@ -620,9 +628,11 @@ test_that("R helper package reads dense grouped motif-group reference k-mers", {
   ref_kmers <- read_ref_kmers(dense_grouped_motif_group_ref_kmer_zarr_path())
 
   expect_s3_class(ref_kmers, "cfdnalab_grouped_ref_kmer_frequencies")
+  expect_identical(schema_version(ref_kmers), 2L)
   expect_identical(storage_mode(ref_kmers), "dense")
   expect_identical(row_mode(ref_kmers), "grouped_bed")
   expect_identical(motif_axis_kind(ref_kmers), "motif_group")
+  expect_identical(orientation(ref_kmers), "both")
   expect_true(all_motifs(ref_kmers))
   expect_identical(motifs(ref_kmers)$motif, c("absent", "edge", "gc_rich", "homopolymer", "transition"))
   expect_equal(

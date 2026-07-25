@@ -50,10 +50,10 @@ For fixed-size windows, fetch narrowing derives the first and last fixed bins to
 
 ## Temporary Directories
 
-- Temporary directories are created under the command output directory as `tmp.<prefix>.<random>` or equivalent dot-joined names.
-- `TempDirGuard` owns cleanup on success, early return, and drop.
+- Commands with temporary files create `tmp.<command-and-prefix>.work.<random>` under the directory selected with `--temp-dir` and `tmp.<command-and-prefix>.final.<random>` under the output directory.
+- Both directories are visible, atomically created, unique per run, and owned by cleanup guards.
 - Ctrl-C cleanup registration is shared across guarded temp dirs. The signal handler starts the hidden cleanup helper and exits the main process, so cleanup happens after in-process worker threads have stopped writing.
-- Commands should keep temp dirs inside the selected output tree so large intermediates stay on the expected filesystem.
+- Temporary files may be placed on node-local scratch with `--temp-dir`. Files awaiting their final rename remain under the selected output directory.
 
 ## Reducer Rules
 

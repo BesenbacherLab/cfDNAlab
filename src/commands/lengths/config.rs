@@ -4,7 +4,8 @@ use crate::{
     commands::{
         cli_common::{
             ApplyGCArgFileOnly, AssignToWindowArgs, ChromosomeArgs, DistributionWindowsArgs,
-            IOCArgs, LoggingArgs, ScaleGenomeArgs, UnpairedArgs, resolve_length_bin_edges,
+            IOCArgs, LoggingArgs, ScaleGenomeArgs, TempDirArgs, UnpairedArgs,
+            resolve_length_bin_edges,
         },
         gc_bias::correct::{GCLengthRange, MarginalizeLengthsWeightingScheme},
     },
@@ -96,6 +97,9 @@ pub const DEFAULT_OUTPUT_DECIMALS: u8 = 6;
 pub struct LengthsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub temp: TempDirArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub unpaired: UnpairedArgs,
@@ -461,6 +465,7 @@ impl LengthsConfig {
     pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs) -> Self {
         Self {
             ioc,
+            temp: TempDirArgs::default(),
             output_prefix: String::new(),
             decimals: DEFAULT_OUTPUT_DECIMALS,
             indel_mode: IndelMode::Ignore,
@@ -495,6 +500,10 @@ impl LengthsConfig {
 
     pub fn set_indel_mode(&mut self, mode: IndelMode) {
         self.indel_mode = mode;
+    }
+
+    pub fn set_temp_dir(&mut self, temp_dir: Option<PathBuf>) {
+        self.temp.temp_dir = temp_dir;
     }
 
     pub fn set_windows(&mut self, windows: DistributionWindowsArgs) {
@@ -628,6 +637,7 @@ impl ToCliCommand for LengthsConfig {
     fn to_cli_args(&self) -> crate::Result<Vec<std::ffi::OsString>> {
         let mut args = command_args("lengths");
         push_ioc(&mut args, &self.ioc);
+        push_temp_dir(&mut args, &self.temp);
         push_unpaired(&mut args, &self.unpaired);
         push_output_prefix(&mut args, &self.output_prefix);
         push_value(&mut args, "--decimals", self.decimals);

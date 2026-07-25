@@ -44,10 +44,12 @@ use crate::{
             precompute_tile_bed_window_spans,
         },
         progress::ProgressFactory,
-        reference::{read_seq_in_range, twobit_contig_footprint, twobit_contig_lengths},
+        reference::{
+            ReferenceReader, stage_reference_2bit, twobit_contig_footprint, twobit_contig_lengths,
+        },
         temp_chrom_names::TempChromNameMap,
         thread_pool::init_global_pool,
-        tiled_run::{TempDirGuard, Tile, build_tiles},
+        tiled_run::{RunTempDirs, Tile, build_tiles},
         windowing::{
             DistributionWindowContext, build_bin_info, compute_window_offsets,
             ensure_plain_bed_windows_not_empty,
@@ -157,12 +159,21 @@ pub fn run_ref_kmers(opt: &RefKmersConfig, options: RunOptions) -> Result<RefKme
         info!(target: COMMAND_TARGET, "{message}");
     }
 
+    ensure_output_dir(&opt.output_dir)?;
+    let work_root = opt.temp.temp_dir.as_deref().unwrap_or(&opt.output_dir);
+    let run_temp_dirs = RunTempDirs::new(
+        work_root,
+        &opt.output_dir,
+        &dot_join(&[COMMAND_TARGET, prefix]),
+    )
+    .context("create ref-kmers temporary directories")?;
+    let temp_dir = run_temp_dirs.work_dir();
+    status_info!(options, target: COMMAND_TARGET, "Copying reference 2bit to the temporary directory");
+    let staged_ref_2bit = stage_reference_2bit(&opt.ref_genome.ref_2bit, temp_dir)?;
+
     let chromosomes = opt
         .chromosomes
-        .resolve_chromosomes(Some(ContigSource::ref_2bit(&opt.ref_genome.ref_2bit)))?;
-
-    // Create output directory
-    ensure_output_dir(&opt.output_dir)?;
+        .resolve_chromosomes(Some(ContigSource::ref_2bit(&staged_ref_2bit)))?;
 
     // Load blacklist intervals if provided
     if opt.blacklist.is_some() {
@@ -213,7 +224,7 @@ pub fn run_ref_kmers(opt: &RefKmersConfig, options: RunOptions) -> Result<RefKme
         _ => (None, None),
     };
     // Build chromosome lengths and contigs for tiling without opening BAMs
-    let chrom_lengths = twobit_contig_lengths(opt.ref_genome.ref_2bit.clone(), &chromosomes)?;
+    let chrom_lengths = twobit_contig_lengths(staged_ref_2bit.clone(), &chromosomes)?;
     let contigs = {
         let mut map: FxHashMap<String, (i32, u32)> =
             FxHashMap::with_capacity_and_hasher(chromosomes.len(), Default::default());
@@ -315,11 +326,7 @@ pub fn run_ref_kmers(opt: &RefKmersConfig, options: RunOptions) -> Result<RefKme
         }
     }
 
-    // Create droppable temporary directory
-    let temp_dir_guard =
-        TempDirGuard::new(&opt.output_dir, prefix).context("create per-run temp dir")?;
-    let temp_dir = temp_dir_guard.path();
-    let mut final_outputs = FinalOutputFiles::new(temp_dir)?;
+    let mut final_outputs = FinalOutputFiles::new(run_temp_dirs.final_output_dir())?;
     let temp_chrom_name_map = TempChromNameMap::from_contigs(&chromosomes)?;
 
     let counts_prefix = &dot_join(&[prefix, "counts"]);
@@ -331,50 +338,59 @@ pub fn run_ref_kmers(opt: &RefKmersConfig, options: RunOptions) -> Result<RefKme
     let tile_results: Vec<TileResult> = tiles
         .par_iter()
         .enumerate()
-        .map(|(tile_idx, tile)| {
-            let chr = tile.chr.as_str();
-            let blacklist_chr: &[Interval<u64>] = blacklist_map
-                .get(&tile.chr)
-                .map(|v| v.as_slice())
-                .unwrap_or(&[]);
-            let chr_len = *chrom_lengths
-                .get(chr)
-                .ok_or_else(|| anyhow::anyhow!("missing chromosome length for {}", chr))?;
-            let tile_bed_window_view = match bed_windows_by_chr
-                .as_ref()
-                .and_then(|windows_by_chromosome| windows_by_chromosome.get(&tile.chr))
-            {
-                Some(chromosome_windows) => {
-                    let spans = tile_bed_window_spans_for_threads
-                        .as_ref()
-                        .as_ref()
-                        .context("BED reference k-mer counting requires tile BED window spans")?;
-                    Some(TileBedWindowView {
-                        chromosome_windows,
-                        spans: &spans[tile_idx],
-                    })
-                }
-                None => None,
-            };
+        .map_init(
+            || ReferenceReader::open(&staged_ref_2bit),
+            |reference_reader_result, (tile_idx, tile)| {
+                let reference_reader = reference_reader_result
+                    .as_mut()
+                    .map_err(|error| anyhow::anyhow!("{error:#}"))?;
+                let chr = tile.chr.as_str();
+                let blacklist_chr: &[Interval<u64>] = blacklist_map
+                    .get(&tile.chr)
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+                let chr_len = *chrom_lengths
+                    .get(chr)
+                    .ok_or_else(|| anyhow::anyhow!("missing chromosome length for {}", chr))?;
+                let tile_bed_window_view = match bed_windows_by_chr
+                    .as_ref()
+                    .and_then(|windows_by_chromosome| windows_by_chromosome.get(&tile.chr))
+                {
+                    Some(chromosome_windows) => {
+                        let spans = tile_bed_window_spans_for_threads
+                            .as_ref()
+                            .as_ref()
+                            .context(
+                                "BED reference k-mer counting requires tile BED window spans",
+                            )?;
+                        Some(TileBedWindowView {
+                            chromosome_windows,
+                            spans: &spans[tile_idx],
+                        })
+                    }
+                    None => None,
+                };
 
-            // Count k-mers that start in the tile core. The k-mer span may extend into the halo.
-            let tile_result = process_tile(
-                opt,
-                tile,
-                tile_bed_window_view,
-                chr_len as u64,
-                *chr_offsets_for_threads.get(&tile.chr).unwrap_or(&0),
-                &window_opt,
-                blacklist_chr,
-                temp_dir,
-                counts_prefix,
-                &temp_chrom_name_map,
-                kmer_counting_spec.as_ref(),
-                selected_motifs.as_ref(),
-            );
-            pb.inc(1);
-            tile_result
-        })
+                // Count k-mers that start in the tile core. The k-mer span may extend into the halo.
+                let tile_result = process_tile(
+                    opt,
+                    tile,
+                    tile_bed_window_view,
+                    chr_len as u64,
+                    *chr_offsets_for_threads.get(&tile.chr).unwrap_or(&0),
+                    &window_opt,
+                    blacklist_chr,
+                    temp_dir,
+                    counts_prefix,
+                    &temp_chrom_name_map,
+                    kmer_counting_spec.as_ref(),
+                    selected_motifs.as_ref(),
+                    reference_reader,
+                );
+                pb.inc(1);
+                tile_result
+            },
+        )
         .collect::<Result<Vec<_>>>()? // Short-circuits on the first Err
         .into_iter()
         .flatten()
@@ -393,7 +409,7 @@ pub fn run_ref_kmers(opt: &RefKmersConfig, options: RunOptions) -> Result<RefKme
     drop(bed_windows_by_chr);
 
     status_info!(options, target: COMMAND_TARGET, "Processing counts");
-    let reference_contig_footprint = twobit_contig_footprint(&opt.ref_genome.ref_2bit)?;
+    let reference_contig_footprint = twobit_contig_footprint(&staged_ref_2bit)?;
 
     let bin_info = if matches!(&window_opt, DistributionWindowSpec::GroupedBed(_)) {
         Vec::new()
@@ -520,6 +536,7 @@ fn process_tile(
     temp_chrom_name_map: &TempChromNameMap,
     kmers_spec: Option<&SelectedMotifHalfSpec>,
     selected_motifs: Option<&SelectedMotifLookup>,
+    reference_reader: &mut ReferenceReader,
 ) -> Result<Option<TileResult>> {
     let core_start = tile.core_start() as u64;
     let core_end = tile.core_end() as u64;
@@ -532,11 +549,8 @@ fn process_tile(
     let seq_end = tile.fetch_end().min(chrom_len as u32) as u64;
 
     // Load only the tile span (core plus padding) so starts in the core have full context
-    let mut seq_bytes = read_seq_in_range(
-        &opt.ref_genome.ref_2bit,
-        &tile.chr,
-        seq_start as usize..seq_end as usize,
-    )?;
+    let mut seq_bytes =
+        reference_reader.read_seq_in_range(&tile.chr, seq_start as usize..seq_end as usize)?;
     apply_blacklist_mask_to_seq(&mut seq_bytes, blacklist_intervals, seq_start);
 
     // Path for this tile's temporary outputs

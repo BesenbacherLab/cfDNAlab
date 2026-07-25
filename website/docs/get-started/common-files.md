@@ -35,6 +35,8 @@ The **BAM** file (`--bam`) contains the actual sample-specific sequencing data, 
 
 **Genomic smoothing**: Use genomic smoothing when you care about **local** changes in fragment counts or coverage. This makes all non-blacklisted genomic regions contribute roughly the same total weight to the features. There are two related modes: **coverage**, where longer fragments count more because they cover more positions, and **fragment counts**, where each fragment has the same total weight regardless of length. We calculate local fragment counts or coverage in large genomic windows, then divide each fragment’s contribution to features by the count or coverage of the windows it overlaps. `cfdna fragment-count-weights` and `cfdna coverage-weights` calculate these scaling factors once per sample BAM file. They use a running-window, triangular weighting scheme, which gives a smooth effect similar to Gaussian smoothing. Pass the resulting scaling factors into feature extraction commands.
 
+**Temporary files**: By default, temporary files are written under the command's output directory. When running many jobs in parallel on an HPC cluster, use `--temp-dir` to place them on node-local scratch instead. Commands that use `--ref-2bit` also copy that file into the temporary directory for each command call, which reduces shared-filesystem contention. Final outputs are still written to `--output-dir`.
+
 ## Store paths in bash variables
 
 To avoid writing the filepaths again and again, you can assign them to shell variables. Of course, some of the files need to be created first. Adjust these to your paths.
@@ -62,6 +64,11 @@ BAM="$PROJECT_DIR/inputs/$SAMPLE_ID.bam"
 GC_FILE="$PROJECT_DIR/outputs/$SAMPLE_ID/gc_bias/$SAMPLE_ID.gc_bias_correction.zarr"
 COUNT_SCALING_FACTORS="$PROJECT_DIR/outputs/$SAMPLE_ID/scaling_factors/$SAMPLE_ID.fragment_counts.scaling_factors.tsv"
 COVERAGE_SCALING_FACTORS="$PROJECT_DIR/outputs/$SAMPLE_ID/scaling_factors/$SAMPLE_ID.coverage.scaling_factors.tsv"
+
+# Job level (optional)
+# Set this to the node-local scratch directory provided by your cluster
+# $TMPDIR is an example. Your cluster may use another environment variable
+TEMP_DIR="$TMPDIR"
 ```
 
 If you only use one blacklist file, you can skip the array and keep a single variable:
@@ -72,7 +79,7 @@ BLACKLIST="$PROJECT_DIR/refs/blacklist/hg38-blacklist.bed"
 
 ## Use the variables in commands
 
-**Note**: *The below examples only show the arguments for the shell variables, they are not full examples.*
+**Note**: *The below examples only show the arguments for the shell variables, they are not full examples. Omit `--temp-dir "$TEMP_DIR"` when not using node-local scratch.*
 
 Here is a sample-specific `gc-bias` call that reuses the variables above:
 
@@ -83,6 +90,7 @@ cfdna gc-bias \
   --output-prefix "$SAMPLE_ID" \
   --ref-2bit "$REF_2BIT" \
   --ref-gc-file "$REF_GC_FILE" \
+  --temp-dir "$TEMP_DIR" \
   "${BLACKLIST_ARGS[@]}"
 ```
 
@@ -97,6 +105,7 @@ cfdna midpoints \
   --ref-2bit "$REF_2BIT" \
   --gc-file "$GC_FILE" \
   --scaling-factors "$COUNT_SCALING_FACTORS" \
+  --temp-dir "$TEMP_DIR" \
   "${BLACKLIST_ARGS[@]}"
 ```
 
@@ -107,6 +116,8 @@ While you can use any folder structure you want, the below layout conceptualizes
 Keeping shared reference files separate from sample-specific outputs makes the pipeline easier to understand:
 
 Some additional files and alternative outputs only appear in relevant modes, such as `group_index.tsv` for grouped outputs and the different `fcoverage` aggregate files.
+
+Temporary directories are not shown because cfDNAlab removes them after each command call. With `--temp-dir`, they are created outside this project layout in the selected directory.
 
 ```text
 project/

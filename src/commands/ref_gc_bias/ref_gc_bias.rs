@@ -50,11 +50,13 @@ use crate::{
         interval::{IndexedInterval, Interval},
         io::{FinalOutputFiles, dot_join},
         progress::ProgressFactory,
-        reference::{read_seq_in_range, twobit_contig_footprint, twobit_contig_lengths},
+        reference::{
+            ReferenceReader, stage_reference_2bit, twobit_contig_footprint, twobit_contig_lengths,
+        },
         sampling::{sample_starts_in_core, sampling_density},
         thread_pool::init_global_pool,
         tiled_run::{
-            TempDirGuard, Tile, TileWindowSpan, build_tiles, overlapping_windows_for_tile,
+            RunTempDirs, Tile, TileWindowSpan, build_tiles, overlapping_windows_for_tile,
             precompute_tile_window_spans,
         },
         windowing::ensure_plain_bed_windows_not_empty,
@@ -156,12 +158,21 @@ pub fn run_ref_gc_bias(opt: &RefGCBiasConfig, options: RunOptions) -> Result<Ref
         let message = crate::command_run::equivalent_cli_log_message(&command);
         info!(target: COMMAND_TARGET, "{message}");
     }
+
+    ensure_output_dir(&opt.output_dir)?;
+    let work_root = opt.temp.temp_dir.as_deref().unwrap_or(&opt.output_dir);
+    let run_temp_dirs = RunTempDirs::new(
+        work_root,
+        &opt.output_dir,
+        &dot_join(&[COMMAND_TARGET, prefix]),
+    )
+    .context("create ref-gc-bias temporary directories")?;
+    status_info!(options, target: COMMAND_TARGET, "Copying reference 2bit to the temporary directory");
+    let staged_ref_2bit = stage_reference_2bit(&opt.ref_genome.ref_2bit, run_temp_dirs.work_dir())?;
+
     let chromosomes = opt
         .chromosomes
-        .resolve_chromosomes(Some(ContigSource::ref_2bit(&opt.ref_genome.ref_2bit)))?;
-
-    // Create output directory
-    ensure_output_dir(&opt.output_dir)?;
+        .resolve_chromosomes(Some(ContigSource::ref_2bit(&staged_ref_2bit)))?;
 
     // Load blacklist intervals if provided
     if opt.blacklist.is_some() {
@@ -209,7 +220,7 @@ pub fn run_ref_gc_bias(opt: &RefGCBiasConfig, options: RunOptions) -> Result<Ref
     };
 
     // Build chromosome lengths and contigs for tiling without opening BAMs
-    let chrom_lengths = twobit_contig_lengths(opt.ref_genome.ref_2bit.clone(), &chromosomes)?;
+    let chrom_lengths = twobit_contig_lengths(staged_ref_2bit.clone(), &chromosomes)?;
     let contigs = {
         let mut map: FxHashMap<String, (i32, u32)> =
             FxHashMap::with_capacity_and_hasher(chromosomes.len(), Default::default());
@@ -304,41 +315,48 @@ pub fn run_ref_gc_bias(opt: &RefGCBiasConfig, options: RunOptions) -> Result<Ref
     let (total_counts, total_covered_acgt_positions) = tiles
         .par_iter()
         .enumerate()
-        .map(|(tile_idx, tile)| {
-            let chr = tile.chr.as_str();
-            let tile_span = tile_window_spans_for_threads[tile_idx];
-            let windows_chr: Option<&[IndexedInterval<u64>]> = windows_map
-                .as_ref()
-                .and_then(|m| m.get(&tile.chr).map(|v| v.as_slice()));
-            let blacklist_chr: &[Interval<u64>] = blacklist_map
-                .get(&tile.chr)
-                .map(|v| v.as_slice())
-                .unwrap_or(&[]);
-            let chr_len = *chrom_lengths
-                .get(chr)
-                .ok_or_else(|| anyhow::anyhow!("missing chromosome length for {}", chr))?;
-            let mut tile_rng = StdRng::seed_from_u64(tile_seeds[tile_idx]);
-            let starts = sample_starts_in_core(
-                &mut tile_rng,
-                tile.core_start() as u64,
-                tile.core_end() as u64,
-                chr_len as u64,
-                opt.fragment_lengths.max_fragment_length as u64,
-                start_position_sampling_density,
-            );
-            // Count tile-local windows using the shared counter logic on window slices
-            let res = process_tile(
-                tile,
-                tile_span.as_ref(),
-                chr_len as u64,
-                windows_chr,
-                starts.as_slice(),
-                blacklist_chr,
-                opt,
-            );
-            pb.inc(1);
-            res
-        })
+        .map_init(
+            || ReferenceReader::open(&staged_ref_2bit),
+            |reference_reader_result, (tile_idx, tile)| {
+                let reference_reader = reference_reader_result
+                    .as_mut()
+                    .map_err(|error| anyhow::anyhow!("{error:#}"))?;
+                let chr = tile.chr.as_str();
+                let tile_span = tile_window_spans_for_threads[tile_idx];
+                let windows_chr: Option<&[IndexedInterval<u64>]> = windows_map
+                    .as_ref()
+                    .and_then(|m| m.get(&tile.chr).map(|v| v.as_slice()));
+                let blacklist_chr: &[Interval<u64>] = blacklist_map
+                    .get(&tile.chr)
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+                let chr_len = *chrom_lengths
+                    .get(chr)
+                    .ok_or_else(|| anyhow::anyhow!("missing chromosome length for {}", chr))?;
+                let mut tile_rng = StdRng::seed_from_u64(tile_seeds[tile_idx]);
+                let starts = sample_starts_in_core(
+                    &mut tile_rng,
+                    tile.core_start() as u64,
+                    tile.core_end() as u64,
+                    chr_len as u64,
+                    opt.fragment_lengths.max_fragment_length as u64,
+                    start_position_sampling_density,
+                );
+                // Count tile-local windows using the shared counter logic on window slices
+                let res = process_tile(
+                    tile,
+                    tile_span.as_ref(),
+                    chr_len as u64,
+                    windows_chr,
+                    starts.as_slice(),
+                    blacklist_chr,
+                    opt,
+                    reference_reader,
+                );
+                pb.inc(1);
+                res
+            },
+        )
         .try_reduce(
             || (zero_counts.clone(), 0u64),
             |(mut acc_counts, acc_acgt), (tile_counts, tile_acgt)| {
@@ -436,9 +454,7 @@ pub fn run_ref_gc_bias(opt: &RefGCBiasConfig, options: RunOptions) -> Result<Ref
         global_grid.dim()
     );
 
-    let final_temp_dir_guard = TempDirGuard::new(&opt.output_dir, "ref_gc_bias_final")
-        .context("create final output temp dir")?;
-    let mut final_outputs = FinalOutputFiles::new(final_temp_dir_guard.path())?;
+    let mut final_outputs = FinalOutputFiles::new(run_temp_dirs.final_output_dir())?;
 
     // Write every final output to the temp directory before moving any of them into place
     // This keeps failed writes from appearing completed
@@ -461,7 +477,7 @@ pub fn run_ref_gc_bias(opt: &RefGCBiasConfig, options: RunOptions) -> Result<Ref
             smoothing_sigma: opt.smoothing_sigma,
             skip_smoothing: opt.skip_smoothing,
             chromosomes: &chromosomes,
-            reference_contig_footprint: &twobit_contig_footprint(&opt.ref_genome.ref_2bit)?,
+            reference_contig_footprint: &twobit_contig_footprint(&staged_ref_2bit)?,
         },
     )
     .context("Writing reference GC package failed")?;
@@ -498,6 +514,7 @@ fn process_tile(
     start_positions: &[usize],
     blacklist_intervals: &[Interval<u64>],
     opt: &RefGCBiasConfig,
+    reference_reader: &mut ReferenceReader,
 ) -> Result<(GCCounts, u64)> {
     let core_start = tile.core_start() as u64;
     let core_end = tile.core_end() as u64;
@@ -516,11 +533,8 @@ fn process_tile(
     let seq_end = tile.fetch_end().min(chrom_len as u32) as u64;
 
     // Load only the tile span (core plus padding) so starts in the core have full context
-    let mut seq_bytes = read_seq_in_range(
-        &opt.ref_genome.ref_2bit,
-        &tile.chr,
-        seq_start as usize..seq_end as usize,
-    )?;
+    let mut seq_bytes =
+        reference_reader.read_seq_in_range(&tile.chr, seq_start as usize..seq_end as usize)?;
     apply_blacklist_mask_to_seq(&mut seq_bytes, blacklist_intervals, seq_start);
     let gc_prefixes = build_gc_prefixes(&seq_bytes);
 

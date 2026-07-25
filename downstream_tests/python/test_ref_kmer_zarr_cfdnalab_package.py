@@ -74,6 +74,7 @@ def test_cfdnalab_package_reads_sparse_windowed_ref_kmers(
     assert ref_kmers.storage_mode() == "sparse_coo"
     assert ref_kmers.row_mode() == "bed"
     assert ref_kmers.kmer_size() == 3
+    assert ref_kmers.orientation() == "both"
     assert ref_kmers.motifs_metadata()["motif"].tolist() == [
         "CGT",
         "AAA",
@@ -149,6 +150,7 @@ def test_cfdnalab_package_reads_sparse_grouped_ref_kmers(
     assert isinstance(ref_kmers, cfdnalab.GroupedRefKmerFrequencies)
     assert ref_kmers.storage_mode() == "sparse_coo"
     assert ref_kmers.row_mode() == "grouped_bed"
+    assert ref_kmers.orientation() == "both"
     assert ref_kmers.group_idx("alpha") == 1
     assert ref_kmers.motifs_metadata()["motif"].tolist() == [
         "CGT",
@@ -263,6 +265,7 @@ def test_cfdnalab_package_reads_dense_grouped_motif_group_ref_kmers(
     assert ref_kmers.storage_mode() == "dense"
     assert ref_kmers.row_mode() == "grouped_bed"
     assert ref_kmers.motif_axis_kind() == "motif_group"
+    assert ref_kmers.orientation() == "both"
     assert ref_kmers.all_motifs()
     assert ref_kmers.motifs_metadata()["motif"].tolist() == [
         "absent",

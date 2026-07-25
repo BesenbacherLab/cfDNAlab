@@ -130,6 +130,7 @@ fn bam_to_frag_roundtrip_config() -> crate::commands::bam_to_frag::config::BamTo
         crate::commands::bam_to_frag::config::BamToFragConfig::new(ioc(), chromosomes());
     config.set_output_prefix("sample");
     config.set_by_bed(Some(PathBuf::from("windows.bed")));
+    config.set_temp_dir(Some(PathBuf::from("/cluster/local-scratch")));
     config
 }
 
@@ -246,6 +247,7 @@ fn bam_to_bam_config_roundtrips_through_rendered_cli() {
         chromosomes(),
     );
     config.set_by_bed(Some(PathBuf::from("windows.bed")));
+    config.set_temp_dir(Some(PathBuf::from("/cluster/local-scratch")));
 
     assert_config_roundtrips!(config, BamToBam, "bam-to-bam");
 }
@@ -267,6 +269,7 @@ fn frag_to_bam_config_roundtrips_through_rendered_cli() {
     );
     config.set_output_prefix("sample");
     config.set_frag_header(Some(PathBuf::from("sample.frag.header.tsv")));
+    config.set_temp_dir(Some(PathBuf::from("/cluster/local-scratch")));
 
     assert_config_roundtrips!(config, FragToBam, "frag-to-bam");
 }
@@ -278,6 +281,7 @@ fn coverage_weights_config_roundtrips_through_rendered_cli() {
         crate::commands::coverage_weights::config::CoverageWeightsConfig::new(ioc(), chromosomes());
     config.set_output_prefix("sample".to_string());
     config.set_ignore_gap(true);
+    config.set_temp_dir(Some(PathBuf::from("/cluster/local-scratch")));
 
     assert_config_roundtrips!(config, CoverageWeights, "coverage-weights");
 }
@@ -291,6 +295,7 @@ fn fragment_count_weights_config_roundtrips_through_rendered_cli() {
             chromosomes(),
         );
     config.set_output_prefix("sample".to_string());
+    config.set_temp_dir(Some(PathBuf::from("/cluster/local-scratch")));
 
     assert_config_roundtrips!(config, FragmentCountWeights, "fragment-count-weights");
 }
@@ -306,6 +311,7 @@ fn fcoverage_config_roundtrips_through_rendered_cli() {
     let mut config = FCoverageConfig::new(ioc(), chromosomes());
     config.set_output_prefix("sample");
     config.set_per_window(CoverageWindowAction::Total);
+    config.set_temp_dir(Some(PathBuf::from("/cluster/local-scratch")));
     config.set_windows(DistributionWindowsArgs {
         by_size: Some(1_000_000),
         by_bed: None,
@@ -325,6 +331,7 @@ fn gc_bias_config_roundtrips_through_rendered_cli() {
         chromosomes(),
     );
     config.set_output_prefix("sample".to_string());
+    config.set_temp_dir(Some(PathBuf::from("/cluster/local-scratch")));
 
     assert_config_roundtrips!(config, GCBias, "gc-bias");
 }
@@ -343,6 +350,7 @@ fn ref_gc_bias_config_roundtrips_through_rendered_cli() {
         chromosomes(),
     );
     config.set_output_prefix("hg38");
+    config.set_temp_dir(Some(PathBuf::from("/cluster/local-scratch")));
     config.set_n_threads(2);
     config.set_n_positions(10_000);
     config.set_seed(Some(7));
@@ -385,6 +393,7 @@ fn ref_gc_bias_config_roundtrips_through_rendered_cli_with_non_default_programma
     config.set_ref_2bit(PathBuf::from("updated_ref.2bit"));
     config.set_output_dir(PathBuf::from("updated_out"));
     config.set_output_prefix("hg38");
+    config.set_temp_dir(Some(PathBuf::from("/cluster/local-scratch")));
     config.set_n_threads(2);
     config.set_n_positions(10_000);
     config.set_seed(Some(7));
@@ -420,6 +429,7 @@ fn lengths_config_roundtrips_through_rendered_cli() {
 
     let mut config = LengthsConfig::new(ioc(), chromosomes());
     config.output_prefix = "sample".to_string();
+    config.set_temp_dir(Some(PathBuf::from("/cluster/local-scratch")));
     config.set_windows(DistributionWindowsArgs {
         by_size: Some(1_000_000),
         by_bed: None,
@@ -442,6 +452,7 @@ fn midpoints_config_roundtrips_through_rendered_cli() {
         PathBuf::from("sites.bed"),
     );
     config.set_output_prefix("sample");
+    config.set_temp_dir(Some(PathBuf::from("/cluster/local-scratch")));
     config.set_length_bins(vec![30, 80, 151]);
 
     assert_config_roundtrips!(config, Midpoints, "midpoints");
@@ -453,6 +464,7 @@ fn ends_config_roundtrips_through_rendered_cli() {
     let mut config = crate::commands::ends::config::EndsConfig::new(ioc(), chromosomes(), 2, 2);
     config.set_min_mapq(20);
     config.set_tile_size(1_000_000);
+    config.set_temp_dir(Some(PathBuf::from("/cluster/local-scratch")));
 
     assert_config_roundtrips!(config, Ends, "ends");
 }
@@ -500,6 +512,7 @@ fn ref_kmers_config_roundtrips_through_rendered_cli() {
     assert_eq!(config.orientation, RefKmerOrientation::Both);
     config.set_orientation(RefKmerOrientation::ReferenceForward);
     config.set_output_prefix("hg38");
+    config.set_temp_dir(Some(PathBuf::from("/cluster/local-scratch")));
     config.set_n_threads(2);
     config.set_windows(DistributionWindowsArgs {
         by_size: None,

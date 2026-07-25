@@ -1,6 +1,6 @@
 use crate::commands::cli_common::{
     ApplyGCArgFileOnly, ChromosomeArgs, FragmentLengthArgs, LoggingArgs, ScaleGenomeArgs,
-    UnpairedArgs, WindowSpec,
+    TempDirArgs, UnpairedArgs, WindowSpec,
 };
 use crate::shared::blacklist::BlacklistStrategy;
 use crate::{ToCliCommand, cli_command::helpers::*};
@@ -83,6 +83,9 @@ pub struct BamToBamConfig {
         )
     )]
     pub out_bam: PathBuf,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub temp: TempDirArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub unpaired: UnpairedArgs,
@@ -199,6 +202,7 @@ impl BamToBamConfig {
         Self {
             in_bam,
             out_bam,
+            temp: TempDirArgs::default(),
             by_bed: None,
             chromosomes,
             coverage_scaling_factors: None,
@@ -228,6 +232,10 @@ impl BamToBamConfig {
         } else {
             WindowSpec::Global
         }
+    }
+
+    pub fn set_temp_dir(&mut self, temp_dir: Option<PathBuf>) {
+        self.temp.temp_dir = temp_dir;
     }
 
     pub fn set_by_bed(&mut self, by_bed: Option<PathBuf>) {
@@ -291,6 +299,7 @@ impl ToCliCommand for BamToBamConfig {
         let mut args = command_args("bam-to-bam");
         push_path(&mut args, "--in-bam", &self.in_bam);
         push_path(&mut args, "--out-bam", &self.out_bam);
+        push_temp_dir(&mut args, &self.temp);
         push_unpaired(&mut args, &self.unpaired);
         push_optional_path(&mut args, "--by-bed", self.by_bed.as_deref());
         push_chromosomes(&mut args, &self.chromosomes);

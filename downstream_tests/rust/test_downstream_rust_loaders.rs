@@ -245,6 +245,7 @@ fn rust_ref_kmer_loader_reads_downstream_fixtures() -> Result<()> {
     )?)?;
     assert_eq!(sparse_windowed.storage_mode(), RefKmerStorageMode::SparseCoo);
     assert_eq!(sparse_windowed.row_mode(), RefKmerRowMode::BedWindows);
+    assert_eq!(sparse_windowed.orientation(), RefKmerOrientation::Both);
     assert_eq!(
         sparse_windowed.motif_labels(),
         &["CGT", "AAA", "TAC", "CCC", "GGG", "TTT", "ACG", "GTA"]
@@ -327,6 +328,7 @@ fn rust_ref_kmer_loader_reads_downstream_fixtures() -> Result<()> {
     )?)?;
     assert_eq!(sparse_grouped.storage_mode(), RefKmerStorageMode::SparseCoo);
     assert_eq!(sparse_grouped.row_mode(), RefKmerRowMode::Groups);
+    assert_eq!(sparse_grouped.orientation(), RefKmerOrientation::Both);
     assert_eq!(sparse_grouped.group_index("alpha")?, 1);
     assert_eq!(
         sparse_grouped.motif_labels(),
@@ -366,6 +368,7 @@ fn rust_ref_kmer_loader_reads_downstream_fixtures() -> Result<()> {
     )?)?;
     assert_eq!(dense_motif_groups.storage_mode(), RefKmerStorageMode::Dense);
     assert_eq!(dense_motif_groups.row_mode(), RefKmerRowMode::Groups);
+    assert_eq!(dense_motif_groups.orientation(), RefKmerOrientation::Both);
     assert_eq!(
         dense_motif_groups.motif_axis_kind(),
         RefKmerMotifAxisKind::MotifGroup
@@ -615,6 +618,7 @@ fn check_reference_correction_without_same_motifs_file() -> Result<()> {
 
     assert_eq!(ends.motif_labels(), &["AC_GT", "GT_AC"]);
     assert_eq!(ref_kmers.kmer_size(), 4);
+    assert_eq!(ref_kmers.orientation(), RefKmerOrientation::Both);
     assert_eq!(
         ref_kmers.motif_labels(),
         &[
@@ -709,6 +713,7 @@ fn check_reference_correction_with_same_motifs_file() -> Result<()> {
     let expected_inside = &[0.0, 19.0 / 30.0, 19.0 / 18.0, 0.0, 0.0, 19.0 / 30.0];
 
     assert_eq!(ends.motif_labels(), &["GT_AC", "AC_GT"]);
+    assert_eq!(ref_kmers.orientation(), RefKmerOrientation::Both);
     assert_eq!(ref_kmers.motif_labels(), &["GTAC", "ACGT", "GTTT", "TTTT"]);
 
     let joint = ends

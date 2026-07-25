@@ -16,7 +16,9 @@ Use:
 - Both commands call internal `fcoverage` rather than duplicating fragment iteration.
 - `coverage-weights` runs by-size stride bins with `--per-window average`.
 - `fragment-count-weights` runs by-size stride bins with `--normalize-by-length=unit-mass --per-window total`.
-- Internal `fcoverage` output is written under a guarded temporary directory inside the selected output directory.
+- Internal `fcoverage` output is written beneath the outer command's unique work directory.
+- The outer `--temp-dir` work location is propagated to internal `fcoverage`; file-based GC correction therefore stages the 2bit reference only in the internal run that reads it.
+- The scaling-factor TSV stages separately on the output filesystem before same-filesystem publication.
 - Intermediate fcoverage values are written with 12 decimals and then read back for smoothing.
 - The top-level command owns the CLI banner and statistics. Nested `fcoverage` logs should appear as phase logs only.
 

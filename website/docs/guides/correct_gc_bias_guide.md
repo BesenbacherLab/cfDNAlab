@@ -4,6 +4,8 @@ Fragmentomics features are vulnerable to biases from various sample-handling and
 
 This requires only a few steps.
 
+When running many jobs at once on an HPC cluster, use `--temp-dir` to place temporary files on node-local scratch and significantly reduce shared-filesystem contention.
+
 ## Step 1. Build reference GC bias once per assembly
 
 Calculate the expected GC bias in the reference genome assembly (for example hg38). This output can be reused for all samples aligned to that assembly.

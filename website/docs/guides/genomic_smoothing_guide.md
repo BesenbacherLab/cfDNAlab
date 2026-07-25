@@ -13,6 +13,8 @@ For some commands, like `cfdna midpoints`, you may want all genomic regions to c
 
 When applied in downstream feature extractions, each fragment contribution is multiplied by the scaling factor of its genomic scaling bin.
 
+When running many jobs at once on an HPC cluster, use `--temp-dir` to place temporary files on node-local scratch and significantly reduce shared-filesystem contention.
+
 ## Step 1. Build per-sample scaling factors
 
 ```bash

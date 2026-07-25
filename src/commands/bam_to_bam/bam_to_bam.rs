@@ -36,9 +36,9 @@ use crate::{
         overlaps::find_overlapping_windows,
         progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
-        reference::read_seq,
+        reference::{ReferenceReader, stage_reference_2bit},
         scale_genome::{ScalingBin, compute_per_window_scaling_over_fragment},
-        tiled_run::TempDirGuard,
+        tiled_run::RunTempDirs,
         windowing::ensure_plain_bed_windows_not_empty,
     },
 };
@@ -160,9 +160,23 @@ fn execute_bam_to_bam(opt: &BamToBamConfig, options: RunOptions) -> Result<BamTo
         .parent()
         .expect("`--out-bam` did not contain a parent directory.");
     ensure_output_dir(output_dir)?;
-    let temp_dir_guard =
-        TempDirGuard::new(output_dir, COMMAND_TARGET).context("create per-run temp dir")?;
-    let mut final_outputs = FinalOutputFiles::new(temp_dir_guard.path())?;
+    let work_root = opt.temp.temp_dir.as_deref().unwrap_or(output_dir);
+    let run_temp_dirs = RunTempDirs::new(work_root, output_dir, COMMAND_TARGET)?;
+    let mut final_outputs = FinalOutputFiles::new(run_temp_dirs.final_output_dir())?;
+    let staged_ref_2bit = if opt.gc.gc_file.is_some() {
+        let source = opt
+            .ref_2bit
+            .as_deref()
+            .context("--gc-file requires --ref-2bit")?;
+        status_info!(
+            options,
+            target: COMMAND_TARGET,
+            "Copying 2bit reference to the temporary directory"
+        );
+        Some(stage_reference_2bit(source, run_temp_dirs.work_dir())?)
+    } else {
+        None
+    };
 
     // Load blacklist intervals if provided
     if opt.blacklist.is_some() {
@@ -223,10 +237,14 @@ fn execute_bam_to_bam(opt: &BamToBamConfig, options: RunOptions) -> Result<BamTo
     }
     let gc_corrector = load_gc_corrector(
         opt.gc.gc_file.as_ref(),
-        opt.ref_2bit.as_ref(),
+        staged_ref_2bit.as_ref(),
         opt.fragment_lengths.min_fragment_length,
         opt.fragment_lengths.max_fragment_length,
     )?;
+    let mut reference_reader = staged_ref_2bit
+        .as_deref()
+        .map(ReferenceReader::open)
+        .transpose()?;
 
     // Create progress bar
     let progress = ProgressFactory::with_enabled(options.show_progress);
@@ -266,6 +284,7 @@ fn execute_bam_to_bam(opt: &BamToBamConfig, options: RunOptions) -> Result<BamTo
                     .map(|v| v.as_slice())
                     .unwrap_or(&[]),
                 gc_corrector.clone(),
+                reference_reader.as_mut(),
                 &mut writer,
             )?;
             pb.inc(1);
@@ -324,6 +343,7 @@ fn process_chrom(
     coverage_scaling_chr: &[ScalingBin],
     count_scaling_chr: &[ScalingBin],
     gc_corrector_opt: Option<GCCorrector>,
+    reference_reader: Option<&mut ReferenceReader>,
     writer: &mut bam::Writer,
 ) -> anyhow::Result<BamToBamCounters> {
     if matches!(opt.resolve_windows(), WindowSpec::Bed(_))
@@ -339,11 +359,9 @@ fn process_chrom(
     let mut counter = BamToBamCounters::default();
 
     let gc_prefixes_opt = if gc_corrector_opt.is_some() {
-        let ref_2bit = match opt.ref_2bit.as_ref() {
-            Some(r) => r,
-            None => bail!("When GC correction is specified, --ref-2bit must also be specified"),
-        };
-        let seq_bytes = read_seq(ref_2bit, chr)?;
+        let reference_reader = reference_reader
+            .context("GC correction requires an initialized 2bit reference reader")?;
+        let seq_bytes = reference_reader.read_seq(chr)?;
         Some(build_gc_prefixes(&seq_bytes))
     } else {
         None

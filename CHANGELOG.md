@@ -7,6 +7,16 @@ This is the changelog for the main CLI tool. You can find the changelog for the 
 
 <br />
 
+## cfDNAlab 0.8.0
+
+**Main focus**: This release handles the issue where running many jobs with `cfdna <command>` calls in parallel led to significant increased runtime due to shared-filesystem contention. It does so by introducing the `--temp-dir` argument for specifying a node-local scratch location for temporary files. The main contention issue was identified to be the many reads of the `ref-2bit` reference sequence file. By copying it into the temporary local scratch directory before processing, the issue was heavily reduced. Thanks to Anders from GenomeDK for spotting this.
+
+ - Adds `--temp-dir` to commands that create temporary files. This allows temporary copies of the `--ref-2bit` file, tile files, and other intermediate files to be placed on node-local scratch when running on HPC clusters. When omitted, temporary files remain under the output directory. cfDNAlab does not select `$TMPDIR` or another environment variable automatically.
+ - Commands that use `--ref-2bit` now copy the file into a unique temporary directory for each command call. This reduces shared-filesystem contention when many jobs run in parallel.
+ - Separates temporary processing files from temporary final-output files. Both directories remain uniquely named and are cleaned up after successful runs, errors, and Ctrl-C. Final outputs are still written to the requested output directory.
+
+<br />
+
 ## cfDNAlab 0.7.0
 
 **BREAKING CHANGES**:

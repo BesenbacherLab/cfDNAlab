@@ -10,6 +10,8 @@ For a fragment *counts*-like signal, see ["Normalize by countable bases"](#norma
 
 The following examples show different aspects of the `cfdna fcoverage` command. They can of course be combined in a multitude of ways, but for simplification we just show one aspect at a time.
 
+When running many jobs at once on an HPC cluster, use `--temp-dir` to place temporary files on node-local scratch and significantly reduce shared-filesystem contention.
+
 ### Positional fragment coverage
 
 Extract the per-position fragment coverage into BedGraph files: 

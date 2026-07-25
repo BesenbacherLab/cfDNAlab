@@ -4,7 +4,7 @@ use crate::{
     commands::{
         cli_common::{
             ApplyGCArgs, ChromosomeArgs, DistributionWindowsArgs, FragmentLengthArgs, IOCArgs,
-            LoggingArgs, ScaleGenomeArgs, UnpairedArgs,
+            LoggingArgs, ScaleGenomeArgs, TempDirArgs, UnpairedArgs,
         },
         ends::config_structs::*,
     },
@@ -100,6 +100,9 @@ const ENDS_LONG_ABOUT: &str = ends_long_about!();
 pub struct EndsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub temp: TempDirArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub unpaired: UnpairedArgs,
@@ -382,6 +385,7 @@ impl EndsConfig {
     ) -> Self {
         Self {
             ioc,
+            temp: TempDirArgs::default(),
             output_prefix: String::new(),
             ref_2bit: None,
             k_inside,
@@ -421,6 +425,10 @@ impl EndsConfig {
 
     pub fn set_indel_filter(&mut self, filter: IndelMotifFilterPolicy) {
         self.indel_filter = filter;
+    }
+
+    pub fn set_temp_dir(&mut self, temp_dir: Option<PathBuf>) {
+        self.temp.temp_dir = temp_dir;
     }
 
     pub fn set_windows(&mut self, windows: DistributionWindowsArgs) {
@@ -468,6 +476,7 @@ impl ToCliCommand for EndsConfig {
     fn to_cli_args(&self) -> crate::Result<Vec<std::ffi::OsString>> {
         let mut args = command_args("ends");
         push_ioc(&mut args, &self.ioc);
+        push_temp_dir(&mut args, &self.temp);
         push_unpaired(&mut args, &self.unpaired);
         push_output_prefix(&mut args, &self.output_prefix);
         push_optional_path(&mut args, "--ref-2bit", self.ref_2bit.as_deref());
