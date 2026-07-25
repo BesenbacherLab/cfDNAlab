@@ -21,6 +21,8 @@ use cfdnalab::{
     run_like_cli::common::{ChromosomeArgs, IOCArgs},
 };
 
+const TEMP_DIR: &str = "/cluster/local-scratch";
+
 fn ioc() -> IOCArgs {
     IOCArgs {
         bam: PathBuf::from("input.bam"),
@@ -98,9 +100,11 @@ fn bam_to_bam_renders_without_cli_feature() {
         chromosomes(),
     );
     config.set_by_bed(Some(PathBuf::from("windows.bed")));
+    config.set_temp_dir(Some(PathBuf::from(TEMP_DIR)));
 
     let (args, _command) = render_no_cli_command(&config, "bam-to-bam");
     assert_contains_pair(&args, "--min-mapq", "0");
+    assert_contains_pair(&args, "--temp-dir", TEMP_DIR);
 }
 
 #[cfg(feature = "cmd_bam_to_frag")]
@@ -111,9 +115,11 @@ fn bam_to_frag_renders_without_cli_feature() {
     let mut config = BamToFragConfig::new(ioc(), chromosomes());
     config.set_output_prefix("sample");
     config.set_by_bed(Some(PathBuf::from("windows.bed")));
+    config.set_temp_dir(Some(PathBuf::from(TEMP_DIR)));
 
     let (args, _command) = render_no_cli_command(&config, "bam-to-frag");
     assert_contains_pair(&args, "--min-mapq", "0");
+    assert_contains_pair(&args, "--temp-dir", TEMP_DIR);
 }
 
 #[cfg(feature = "cmd_frag_to_bam")]
@@ -129,9 +135,11 @@ fn frag_to_bam_renders_without_cli_feature() {
     );
     config.set_output_prefix("sample");
     config.set_frag_header(Some(PathBuf::from("sample.frag.header.tsv")));
+    config.set_temp_dir(Some(PathBuf::from(TEMP_DIR)));
 
     let (args, _command) = render_no_cli_command(&config, "frag-to-bam");
     assert_contains_pair(&args, "--min-mapq", "0");
+    assert_contains_pair(&args, "--temp-dir", TEMP_DIR);
 }
 
 #[cfg(feature = "cmd_coverage_weights")]
@@ -142,9 +150,11 @@ fn coverage_weights_renders_without_cli_feature() {
     let mut config = CoverageWeightsConfig::new(ioc(), chromosomes());
     config.set_output_prefix("sample".to_string());
     config.set_ignore_gap(true);
+    config.set_temp_dir(Some(PathBuf::from(TEMP_DIR)));
 
     let (args, _command) = render_no_cli_command(&config, "coverage-weights");
     assert_contains_pair(&args, "--stride", "500000");
+    assert_contains_pair(&args, "--temp-dir", TEMP_DIR);
 }
 
 #[cfg(feature = "cmd_fragment_count_weights")]
@@ -154,9 +164,11 @@ fn fragment_count_weights_renders_without_cli_feature() {
 
     let mut config = FragmentCountWeightsConfig::new(ioc(), chromosomes());
     config.set_output_prefix("sample".to_string());
+    config.set_temp_dir(Some(PathBuf::from(TEMP_DIR)));
 
     let (args, _command) = render_no_cli_command(&config, "fragment-count-weights");
     assert_contains_pair(&args, "--stride", "500000");
+    assert_contains_pair(&args, "--temp-dir", TEMP_DIR);
 }
 
 #[cfg(feature = "cmd_fcoverage")]
@@ -175,9 +187,11 @@ fn fcoverage_renders_without_cli_feature() {
         by_bed: None,
         by_grouped_bed: None,
     });
+    config.set_temp_dir(Some(PathBuf::from(TEMP_DIR)));
 
     let (args, _command) = render_no_cli_command(&config, "fcoverage");
     assert_contains_pair(&args, "--decimals", "2");
+    assert_contains_pair(&args, "--temp-dir", TEMP_DIR);
 }
 
 #[cfg(feature = "cmd_gc_bias")]
@@ -192,9 +206,11 @@ fn gc_bias_renders_without_cli_feature() {
         chromosomes(),
     );
     config.set_output_prefix("sample".to_string());
+    config.set_temp_dir(Some(PathBuf::from(TEMP_DIR)));
 
     let (args, _command) = render_no_cli_command(&config, "gc-bias");
     assert_contains_pair(&args, "--outlier-method", "iqr");
+    assert_contains_pair(&args, "--temp-dir", TEMP_DIR);
 }
 
 #[cfg(feature = "cmd_gc_bias")]
@@ -205,11 +221,12 @@ fn ref_gc_bias_renders_without_cli_feature() {
         ref_gc_bias::{RefGCBiasConfig, RefGCWindowsArgs},
     };
 
-    let config = RefGCBiasConfig {
+    let mut config = RefGCBiasConfig {
         ref_genome: Ref2BitRequiredArgs {
             ref_2bit: PathBuf::from("ref.2bit"),
         },
         output_dir: PathBuf::from("out"),
+        temp: Default::default(),
         output_prefix: "hg38".to_string(),
         n_threads: 2,
         n_positions: 10_000,
@@ -228,9 +245,11 @@ fn ref_gc_bias_renders_without_cli_feature() {
         tile_size: 10_000_000,
         logging: Default::default(),
     };
+    config.set_temp_dir(Some(PathBuf::from(TEMP_DIR)));
 
     let (args, _command) = render_no_cli_command(&config, "ref-gc-bias");
     assert_contains_pair(&args, "--end-offset", "10");
+    assert_contains_pair(&args, "--temp-dir", TEMP_DIR);
 }
 
 #[cfg(feature = "cmd_lengths")]
@@ -246,10 +265,12 @@ fn lengths_renders_without_cli_feature() {
         by_grouped_bed: None,
     });
     config.set_length_bins_spec("30:101:10");
+    config.set_temp_dir(Some(PathBuf::from(TEMP_DIR)));
 
     let (args, command) = render_no_cli_command(&config, "lengths");
     assert_contains_pair(&args, "--decimals", "6");
     assert_contains_pair(&args, "--length-bins", "30:101:10");
+    assert_contains_pair(&args, "--temp-dir", TEMP_DIR);
     assert!(
         command.contains("30:101:10"),
         "display command should preserve length-bin range specs, got {command:?}"
@@ -264,10 +285,12 @@ fn midpoints_renders_without_cli_feature() {
     let mut config = MidpointsConfig::new(ioc(), chromosomes(), PathBuf::from("sites.bed"));
     config.set_output_prefix("sample");
     config.set_length_bins_spec("30:151:10");
+    config.set_temp_dir(Some(PathBuf::from(TEMP_DIR)));
 
     let (args, command) = render_no_cli_command(&config, "midpoints");
     assert_contains_pair(&args, "--bin-size", "1");
     assert_contains_pair(&args, "--length-bins", "30:151:10");
+    assert_contains_pair(&args, "--temp-dir", TEMP_DIR);
     assert!(
         command.contains("30:151:10"),
         "display command should preserve length-bin range specs, got {command:?}"
@@ -282,9 +305,30 @@ fn ends_renders_without_cli_feature() {
     let mut config = EndsConfig::new(ioc(), chromosomes(), 2, 2);
     config.set_min_mapq(20);
     config.set_tile_size(1_000_000);
+    config.set_temp_dir(Some(PathBuf::from(TEMP_DIR)));
 
     let (args, _command) = render_no_cli_command(&config, "ends");
     assert_contains_pair(&args, "--source-inside", "read");
+    assert_contains_pair(&args, "--temp-dir", TEMP_DIR);
+}
+
+#[cfg(feature = "cmd_ref_kmers")]
+#[test]
+fn ref_kmers_renders_without_cli_feature() {
+    use cfdnalab::run_like_cli::ref_kmers::RefKmersConfig;
+
+    let mut config = RefKmersConfig::new(
+        PathBuf::from("ref.2bit"),
+        PathBuf::from("out"),
+        4,
+        chromosomes(),
+    );
+    config.set_output_prefix("hg38");
+    config.set_temp_dir(Some(PathBuf::from(TEMP_DIR)));
+
+    let (args, _command) = render_no_cli_command(&config, "ref-kmers");
+    assert_contains_pair(&args, "--orientation", "both");
+    assert_contains_pair(&args, "--temp-dir", TEMP_DIR);
 }
 
 #[cfg(feature = "cmd_fragment_kmers")]
