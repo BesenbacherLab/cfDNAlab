@@ -1,4 +1,4 @@
-use crate::commands::cli_common::{ChromosomeArgs, FragmentLengthArgs, LoggingArgs};
+use crate::commands::cli_common::{ChromosomeArgs, FragmentLengthArgs, LoggingArgs, TempDirArgs};
 use crate::shared::blacklist::BlacklistStrategy;
 use crate::{ToCliCommand, cli_command::helpers::*};
 use std::path::PathBuf;
@@ -58,6 +58,9 @@ pub struct FragToBamConfig {
         )
     )]
     pub output_dir: PathBuf,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub temp: TempDirArgs,
 
     /// Optional prefix for output file (e.g., a sample name) `[string]`
     ///
@@ -179,6 +182,7 @@ impl FragToBamConfig {
         Self {
             frag,
             output_dir,
+            temp: TempDirArgs::default(),
             output_prefix: String::new(),
             chromosomes,
             chrom_sizes,
@@ -204,6 +208,10 @@ impl FragToBamConfig {
 
     pub fn set_output_dir(&mut self, output_dir: PathBuf) {
         self.output_dir = output_dir;
+    }
+
+    pub fn set_temp_dir(&mut self, temp_dir: Option<PathBuf>) {
+        self.temp.temp_dir = temp_dir;
     }
 
     pub fn set_chromosomes(&mut self, chromosomes: ChromosomeArgs) {
@@ -252,6 +260,7 @@ impl ToCliCommand for FragToBamConfig {
         let mut args = command_args("frag-to-bam");
         push_path(&mut args, "--frag", &self.frag);
         push_path(&mut args, "--output-dir", &self.output_dir);
+        push_temp_dir(&mut args, &self.temp);
         push_output_prefix(&mut args, &self.output_prefix);
         push_optional_path(&mut args, "--frag-header", self.frag_header.as_deref());
         push_path(&mut args, "--chrom-sizes", &self.chrom_sizes);

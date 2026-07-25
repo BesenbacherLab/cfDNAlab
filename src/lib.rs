@@ -119,7 +119,8 @@ pub mod run_like_cli {
             ContigSource, ContigSourceKind, DistributionWindowSpec, DistributionWindowsArgs,
             FragmentLengthArgs, FragmentPositionSelectionArgs, GCWindowsArgs, IOCArgs, LogSpec,
             LoggingArgs, Ref2BitOptionalForGCArgs, Ref2BitRequiredArgs, ScaleGenomeArgs,
-            UnpairedArgs, UnparsedPositionalSelectionSpec, WindowAssigner, WindowSpec, WindowsArgs,
+            TempDirArgs, UnpairedArgs, UnparsedPositionalSelectionSpec, WindowAssigner, WindowSpec,
+            WindowsArgs,
         };
         pub use crate::shared::blacklist::BlacklistStrategy;
         pub use crate::shared::clip_mode::ClipMode;

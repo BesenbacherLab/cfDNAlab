@@ -85,6 +85,7 @@ mod tests_gc_bias {
             },
             output_dir: ref_gc_dir.path().to_path_buf(),
             output_prefix: String::new(),
+            temp: Default::default(),
             n_threads: 1,
             n_positions: 962,
             seed: Some(23),
@@ -551,6 +552,7 @@ mod tests_gc_bias {
             },
             output_dir: out_dir.path().to_path_buf(),
             output_prefix: String::new(),
+            temp: Default::default(),
             n_threads: 1,
             // These tests use small synthetic references, for example:
             // - `twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)` is 256 bp
@@ -1332,6 +1334,7 @@ mod tests_gc_bias {
             },
             output_dir: ref_gc_dir.path().to_path_buf(),
             output_prefix: String::new(),
+            temp: Default::default(),
             n_threads: 1,
             // Two chromosomes of length 100 with fragment length 10 give:
             //   (100 - 10 + 1) * 2 = 91 * 2 = 182 valid starts.
@@ -1765,6 +1768,7 @@ mod tests_gc_bias {
             },
             output_dir: ref_gc_dir.path().to_path_buf(),
             output_prefix: String::new(),
+            temp: Default::default(),
             n_threads: 1,
             n_positions: 191,
             seed: Some(23),
@@ -1909,6 +1913,7 @@ mod tests_gc_bias {
             },
             output_dir: ref_gc_dir.path().to_path_buf(),
             output_prefix: String::new(),
+            temp: Default::default(),
             n_threads: 1,
             n_positions: 41,
             seed: Some(11),
@@ -2036,6 +2041,7 @@ mod tests_gc_bias {
             },
             output_dir: ref_gc_dir.path().to_path_buf(),
             output_prefix: String::new(),
+            temp: Default::default(),
             n_threads: 1,
             n_positions: 41,
             seed: Some(11),

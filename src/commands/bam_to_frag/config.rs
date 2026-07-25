@@ -1,6 +1,6 @@
 use crate::commands::cli_common::{
     ApplyGCArgFileOnly, ChromosomeArgs, FragmentLengthArgs, IOCArgs, LoggingArgs, ScaleGenomeArgs,
-    UnpairedArgs, WindowSpec,
+    TempDirArgs, UnpairedArgs, WindowSpec,
 };
 use crate::shared::blacklist::BlacklistStrategy;
 use crate::{ToCliCommand, cli_command::helpers::*};
@@ -50,6 +50,9 @@ use std::path::PathBuf;
 pub struct BamToFragConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub temp: TempDirArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub unpaired: UnpairedArgs,
@@ -177,6 +180,7 @@ impl BamToFragConfig {
     pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs) -> Self {
         Self {
             ioc,
+            temp: TempDirArgs::default(),
             unpaired: UnpairedArgs {
                 reads_are_fragments: false,
             },
@@ -211,6 +215,10 @@ impl BamToFragConfig {
 
     pub fn set_output_prefix<S: Into<String>>(&mut self, prefix: S) {
         self.output_prefix = prefix.into();
+    }
+
+    pub fn set_temp_dir(&mut self, temp_dir: Option<PathBuf>) {
+        self.temp.temp_dir = temp_dir;
     }
 
     pub fn set_by_bed(&mut self, by_bed: Option<PathBuf>) {
@@ -274,6 +282,7 @@ impl ToCliCommand for BamToFragConfig {
     fn to_cli_args(&self) -> crate::Result<Vec<std::ffi::OsString>> {
         let mut args = command_args("bam-to-frag");
         push_ioc(&mut args, &self.ioc);
+        push_temp_dir(&mut args, &self.temp);
         push_unpaired(&mut args, &self.unpaired);
         push_output_prefix(&mut args, &self.output_prefix);
         push_optional_path(&mut args, "--by-bed", self.by_bed.as_deref());

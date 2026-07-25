@@ -151,6 +151,7 @@ pub(crate) fn push_scaling_weights_cli_args(
     config: &ScalingWeightsArgs,
 ) {
     push_ioc(args, &config.ioc);
+    push_temp_dir(args, &config.temp);
     push_unpaired(args, &config.unpaired);
     push_output_prefix(args, &config.output_prefix);
     push_value(args, "--tile-size", config.tile_size);

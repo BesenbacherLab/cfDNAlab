@@ -52,6 +52,100 @@ fn temp_dir_guard_remove_is_idempotent() -> anyhow::Result<()> {
 }
 
 #[test]
+fn run_temp_dirs_are_separate_when_roots_match() -> anyhow::Result<()> {
+    let root = tempfile::TempDir::new()?;
+    let run_dirs = RunTempDirs::new(root.path(), root.path(), "ends.sample")?;
+
+    assert_ne!(run_dirs.work_dir(), run_dirs.final_output_dir());
+    assert_eq!(run_dirs.work_dir().parent(), Some(root.path()));
+    assert_eq!(run_dirs.final_output_dir().parent(), Some(root.path()));
+    assert!(
+        run_dirs
+            .work_dir()
+            .file_name()
+            .and_then(std::ffi::OsStr::to_str)
+            .is_some_and(|name| name.starts_with("tmp.ends.sample.work."))
+    );
+    assert!(
+        run_dirs
+            .final_output_dir()
+            .file_name()
+            .and_then(std::ffi::OsStr::to_str)
+            .is_some_and(|name| name.starts_with("tmp.ends.sample.final."))
+    );
+    Ok(())
+}
+
+#[test]
+fn run_temp_dirs_use_distinct_work_and_output_roots() -> anyhow::Result<()> {
+    let work_root = tempfile::TempDir::new()?;
+    let output_root = tempfile::TempDir::new()?;
+    let run_dirs = RunTempDirs::new(work_root.path(), output_root.path(), "fcoverage")?;
+
+    assert_eq!(run_dirs.work_dir().parent(), Some(work_root.path()));
+    assert_eq!(
+        run_dirs.final_output_dir().parent(),
+        Some(output_root.path())
+    );
+    Ok(())
+}
+
+#[test]
+fn run_temp_dirs_remove_both_non_empty_directories_on_drop() -> anyhow::Result<()> {
+    let work_root = tempfile::TempDir::new()?;
+    let output_root = tempfile::TempDir::new()?;
+    let (work_dir, final_dir) = {
+        let run_dirs = RunTempDirs::new(work_root.path(), output_root.path(), "gc-bias")?;
+        let work_dir = run_dirs.work_dir().to_path_buf();
+        let final_dir = run_dirs.final_output_dir().to_path_buf();
+        std::fs::create_dir(work_dir.join("chromosome_partials"))?;
+        std::fs::write(
+            work_dir.join("chromosome_partials").join("chr1.bin"),
+            b"partial",
+        )?;
+        std::fs::create_dir(final_dir.join("final_outputs"))?;
+        std::fs::write(
+            final_dir.join("final_outputs").join("result.tsv"),
+            b"result",
+        )?;
+        (work_dir, final_dir)
+    };
+
+    assert!(!work_dir.exists());
+    assert!(!final_dir.exists());
+    Ok(())
+}
+
+#[test]
+fn temp_dir_creation_is_unique_under_concurrency() -> anyhow::Result<()> {
+    let root = tempfile::TempDir::new()?;
+    let root_path = root.path().to_path_buf();
+    let handles = (0..16)
+        .map(|_| {
+            let root_path = root_path.clone();
+            std::thread::spawn(move || TempDirGuard::new(&root_path, "concurrent"))
+        })
+        .collect::<Vec<_>>();
+
+    let guards = handles
+        .into_iter()
+        .map(|handle| {
+            handle
+                .join()
+                .expect("temporary-directory creation thread should not panic")
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let paths = guards
+        .iter()
+        .map(|guard| guard.path().to_path_buf())
+        .collect::<std::collections::HashSet<_>>();
+
+    assert_eq!(paths.len(), guards.len());
+    assert!(paths.iter().all(|path| path.exists()));
+    Ok(())
+}
+
+#[test]
 fn temp_dir_retry_cleanup_removes_nested_directory() -> anyhow::Result<()> {
     let base_dir = tempfile::TempDir::new()?;
     let temp_path = base_dir.path().join("tmp.cleanup_retry");

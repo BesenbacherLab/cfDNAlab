@@ -42,6 +42,8 @@ When you are only counting the inside bases, you can also choose to *include* th
 
 The following examples show different aspects of the `cfdna ends` command. They can of course be combined in a multitude of ways, but for simplification we just show one aspect at a time.
 
+When running many jobs at once on an HPC cluster, use `--temp-dir` to place temporary files on node-local scratch and significantly reduce shared-filesystem contention.
+
 ### Base command
 
 The following example counts 2 bases outside plus 2 bases inside the fragment:

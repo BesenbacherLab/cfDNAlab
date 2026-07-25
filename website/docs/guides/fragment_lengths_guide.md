@@ -6,6 +6,8 @@ Multiple studies have used fragment lengths (count distributions) to detect canc
 
 The following examples show different aspects of the `cfdna lengths` command. They can of course be combined in a multitude of ways, but for simplification we just show one aspect at a time.
 
+When running many jobs at once on an HPC cluster, use `--temp-dir` to place temporary files on node-local scratch and significantly reduce shared-filesystem contention.
+
 ### Global length distribution
 
 Count the global fragment length distribution:

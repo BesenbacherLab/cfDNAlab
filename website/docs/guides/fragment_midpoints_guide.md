@@ -6,6 +6,8 @@ Multiple studies have used midpoint coverage profiles around e.g. transcription 
 
 The following examples show different aspects of the `cfdna midpoints` command. They can of course be combined in a multitude of ways, but for simplification we just show one aspect at a time.
 
+When running many jobs at once on an HPC cluster, use `--temp-dir` to place temporary files on node-local scratch and significantly reduce shared-filesystem contention.
+
 ### Base command
 
 Extract midpoint profiles given a set of fixed-size intervals:

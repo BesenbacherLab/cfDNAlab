@@ -159,6 +159,31 @@ pub struct IOCArgs {
     pub n_threads: usize,
 }
 
+/// Choose where temporary files are written.
+#[cfg_attr(feature = "cli", derive(clap::Args))]
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TempDirArgs {
+    /// Directory to use for temporary files `[path]`
+    ///
+    /// Moving the temporary file I/O to a local scratch directory can
+    /// significantly reduce runtime. Commands that use `--ref-2bit` also
+    /// copy the 2bit reference here to avoid shared-filesystem contention when
+    /// running many jobs in parallel.
+    ///
+    /// Uniquely named temporary subdirectories are used, so the original contents are left alone.
+    ///
+    /// On HPC clusters, use a node-local scratch directory. Some clusters provide the path to
+    /// node-local scratch through an environment variable such as `$TMPDIR`, `$SLURM_TMPDIR`,
+    /// or `$LOCAL_SCRATCH`.
+    ///
+    /// When omitted, all temporary files are written under the output directory.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, value_parser, required = false, help_heading = "Core")
+    )]
+    pub temp_dir: Option<PathBuf>,
+}
+
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnpairedArgs {

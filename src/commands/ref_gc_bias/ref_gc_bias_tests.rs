@@ -52,6 +52,7 @@ fn base_test_config(ref_2bit: PathBuf) -> RefGCBiasConfig {
         ref_genome: Ref2BitRequiredArgs { ref_2bit },
         output_dir: PathBuf::from("out"),
         output_prefix: String::new(),
+        temp: Default::default(),
         n_threads: 1,
         n_positions: 100,
         seed: Some(1),
@@ -91,6 +92,7 @@ fn process_tile_skips_a_halo_only_bed_window_in_core_overlap_mode() -> Result<()
         last_idx_exclusive: 1,
     };
     let start_positions: Vec<usize> = (10..20).collect();
+    let mut reference_reader = ReferenceReader::open(&reference.path)?;
 
     let (counts, total_acgt_in_core) = process_tile(
         &tile,
@@ -100,6 +102,7 @@ fn process_tile_skips_a_halo_only_bed_window_in_core_overlap_mode() -> Result<()
         &start_positions,
         &[],
         &cfg,
+        &mut reference_reader,
     )?;
 
     assert_eq!(counts.sum(), 0.0);
@@ -129,6 +132,7 @@ fn process_tile_counts_boundary_crossing_bed_window_from_core_start_through_fetc
         last_idx_exclusive: 1,
     };
     let start_positions: Vec<usize> = (10..20).collect();
+    let mut reference_reader = ReferenceReader::open(&reference.path)?;
 
     let (counts, total_acgt_in_core) = process_tile(
         &tile,
@@ -138,6 +142,7 @@ fn process_tile_counts_boundary_crossing_bed_window_from_core_start_through_fetc
         &start_positions,
         &[],
         &cfg,
+        &mut reference_reader,
     )?;
 
     assert_eq!(counts.sum(), 2.0);
@@ -172,6 +177,7 @@ fn process_tile_blacklist_uses_reference_coordinates_with_nonzero_sequence_origi
     };
     let start_positions: Vec<usize> = (900..910).collect();
     let blacklist_intervals = vec![Interval::new(905_u64, 910_u64)?];
+    let mut reference_reader = ReferenceReader::open(&reference.path)?;
 
     let (counts, total_acgt_in_core) = process_tile(
         &tile,
@@ -181,6 +187,7 @@ fn process_tile_blacklist_uses_reference_coordinates_with_nonzero_sequence_origi
         &start_positions,
         &blacklist_intervals,
         &cfg,
+        &mut reference_reader,
     )?;
 
     assert_eq!(counts.sum(), 0.0);

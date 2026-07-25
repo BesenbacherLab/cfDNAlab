@@ -108,6 +108,9 @@ pub struct GCConfig {
     pub ioc: IOCArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
+    pub temp: TempDirArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
     pub unpaired: UnpairedArgs,
 
     /// Optional prefix for output files (e.g., a sample name) `[string]`
@@ -361,6 +364,7 @@ impl GCConfig {
     ) -> Self {
         Self {
             ioc,
+            temp: TempDirArgs::default(),
             unpaired: UnpairedArgs {
                 reads_are_fragments: false,
             },
@@ -391,6 +395,10 @@ impl GCConfig {
 
     pub fn set_ioc(&mut self, ioc: IOCArgs) {
         self.ioc = ioc;
+    }
+
+    pub fn set_temp_dir(&mut self, temp_dir: Option<PathBuf>) {
+        self.temp.temp_dir = temp_dir;
     }
 
     pub fn set_output_prefix(&mut self, output_prefix: String) {
@@ -553,6 +561,7 @@ impl ToCliCommand for GCConfig {
     fn to_cli_args(&self) -> crate::Result<Vec<std::ffi::OsString>> {
         let mut args = command_args("gc-bias");
         push_ioc(&mut args, &self.ioc);
+        push_temp_dir(&mut args, &self.temp);
         push_unpaired(&mut args, &self.unpaired);
         push_output_prefix(&mut args, &self.output_prefix);
         push_ref_2bit_required(&mut args, &self.ref_genome);

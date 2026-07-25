@@ -18,7 +18,7 @@ use crate::commands::cli_common::WindowsArgs;
 use crate::commands::cli_common::{
     ApplyGCArgFileOnly, ApplyGCArgs, AssignToWindowArgs, ChromosomeArgs, DistributionWindowsArgs,
     FragmentLengthArgs, GCWindowsArgs, IOCArgs, LoggingArgs, Ref2BitRequiredArgs, ScaleGenomeArgs,
-    UnpairedArgs, WindowAssigner,
+    TempDirArgs, UnpairedArgs, WindowAssigner,
 };
 #[cfg(any(
     feature = "cmd_fragment_kmers",
@@ -104,6 +104,10 @@ pub(crate) fn push_ioc(args: &mut Vec<OsString>, ioc: &IOCArgs) {
     push_path(args, "--bam", &ioc.bam);
     push_path(args, "--output-dir", &ioc.output_dir);
     push_value(args, "--n-threads", ioc.n_threads);
+}
+
+pub(crate) fn push_temp_dir(args: &mut Vec<OsString>, temp: &TempDirArgs) {
+    push_optional_path(args, "--temp-dir", temp.temp_dir.as_deref());
 }
 
 pub(crate) fn push_unpaired(args: &mut Vec<OsString>, unpaired: &UnpairedArgs) {

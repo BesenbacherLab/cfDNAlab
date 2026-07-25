@@ -40,7 +40,7 @@ use crate::{
         },
         progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
-        reference::read_seq_in_range,
+        reference::{ReferenceReader, stage_reference_2bit},
         scale_genome::{
             ScalingBin, build_reference_based_scaling_overlaps_for_assignment_overlaps,
             compute_per_window_scaling_over_fragment_for_selected_windows,
@@ -48,7 +48,7 @@ use crate::{
         },
         temp_chrom_names::TempChromNameMap,
         thread_pool::init_global_pool,
-        tiled_run::{TempDirGuard, Tile, build_tiles},
+        tiled_run::{RunTempDirs, Tile, build_tiles},
         window_fetch::{BedFetchPolicy, fetch_span_for_bed_candidates, fetch_span_for_tile},
         windowing::{
             WindowBinInfo, build_bin_info, compute_window_offsets,
@@ -253,6 +253,26 @@ pub fn run_lengths(opt: &LengthsConfig, options: RunOptions) -> Result<LengthsRu
 
     // Create output directory
     ensure_output_dir(&opt.ioc.output_dir)?;
+    let work_root = opt.temp.temp_dir.as_deref().unwrap_or(&opt.ioc.output_dir);
+    let run_temp_dirs = RunTempDirs::new(
+        work_root,
+        &opt.ioc.output_dir,
+        &dot_join(&[COMMAND_TARGET, prefix]),
+    )
+    .context("create lengths temporary directories")?;
+    let temp_dir = run_temp_dirs.work_dir();
+    let mut final_outputs = FinalOutputFiles::new(run_temp_dirs.final_output_dir())?;
+    let staged_ref_2bit = if opt.gc.gc_file.is_some() {
+        status_info!(options, target: COMMAND_TARGET, "Copying reference 2bit to the temporary directory");
+        Some(stage_reference_2bit(
+            opt.ref_2bit
+                .as_deref()
+                .context("--ref-2bit is required with file-based GC correction")?,
+            temp_dir,
+        )?)
+    } else {
+        None
+    };
 
     // Load blacklist intervals if provided
     if opt.blacklist.is_some() {
@@ -336,7 +356,7 @@ pub fn run_lengths(opt: &LengthsConfig, options: RunOptions) -> Result<LengthsRu
     }
     let gc_corrector = load_length_agnostic_gc_corrector(
         opt.gc.gc_file.as_ref(),
-        opt.ref_2bit.as_ref(),
+        staged_ref_2bit.as_ref(),
         &opt.gc_length_weighting,
         opt.gc_length_range,
         opt.gc_length_trim_rare,
@@ -391,10 +411,6 @@ pub fn run_lengths(opt: &LengthsConfig, options: RunOptions) -> Result<LengthsRu
     // Cloned with `zeroed_like` when building per-window `TileCounts`, which guarantees merge compatibility during reduction
     let template_counts = LengthCounts::new(Arc::clone(&length_axis));
 
-    let temp_dir_guard =
-        TempDirGuard::new(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
-    let temp_dir = temp_dir_guard.path();
-    let mut final_outputs = FinalOutputFiles::new(temp_dir)?;
     let partials_prefix = &dot_join(&[prefix, "part"]);
     let cross_prefix = &dot_join(&[prefix, "cross"]);
 
@@ -405,44 +421,56 @@ pub fn run_lengths(opt: &LengthsConfig, options: RunOptions) -> Result<LengthsRu
     let tile_results: Vec<TileOutputs> = tiles
         .par_iter()
         .enumerate()
-        .map(|(tile_idx, tile)| -> Result<TileOutputs> {
-            let bed_window_view = match (
-                bed_windows_by_chr.as_ref().and_then(|m| m.get(&tile.chr)),
-                tile_bed_window_spans_for_threads.as_ref(),
-            ) {
-                (Some(chromosome_windows), Some(spans)) => Some(TileBedWindowView {
-                    chromosome_windows,
-                    spans: &spans[tile_idx],
-                }),
-                _ => None,
-            };
-            let blacklist_chr: &[Interval<u64>] = blacklist_map
-                .get(&tile.chr)
-                .map(|v| v.as_slice())
-                .unwrap_or(&[]);
-            let scaling_chr: &[ScalingBin] = scaling_map
-                .get(&tile.chr)
-                .map(|v| v.as_slice())
-                .unwrap_or(&[]);
+        .map_init(
+            || staged_ref_2bit.as_deref().map(ReferenceReader::open),
+            |reference_reader_result, (tile_idx, tile)| -> Result<TileOutputs> {
+                let reference_reader = match reference_reader_result {
+                    Some(reader_result) => Some(
+                        reader_result
+                            .as_mut()
+                            .map_err(|error| anyhow::anyhow!("{error:#}"))?,
+                    ),
+                    None => None,
+                };
+                let bed_window_view = match (
+                    bed_windows_by_chr.as_ref().and_then(|m| m.get(&tile.chr)),
+                    tile_bed_window_spans_for_threads.as_ref(),
+                ) {
+                    (Some(chromosome_windows), Some(spans)) => Some(TileBedWindowView {
+                        chromosome_windows,
+                        spans: &spans[tile_idx],
+                    }),
+                    _ => None,
+                };
+                let blacklist_chr: &[Interval<u64>] = blacklist_map
+                    .get(&tile.chr)
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+                let scaling_chr: &[ScalingBin] = scaling_map
+                    .get(&tile.chr)
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
 
-            let counter = process_tile(
-                opt,
-                tile,
-                bed_window_view,
-                &window_opt,
-                blacklist_chr,
-                scaling_chr,
-                gc_corrector.clone(),
-                &length_axis,
-                &template_counts,
-                temp_dir,
-                partials_prefix,
-                cross_prefix,
-                &temp_chrom_name_map,
-            )?;
-            pb.inc(1);
-            Ok(counter)
-        })
+                let counter = process_tile(
+                    opt,
+                    tile,
+                    bed_window_view,
+                    &window_opt,
+                    blacklist_chr,
+                    scaling_chr,
+                    gc_corrector.clone(),
+                    reference_reader,
+                    &length_axis,
+                    &template_counts,
+                    temp_dir,
+                    partials_prefix,
+                    cross_prefix,
+                    &temp_chrom_name_map,
+                )?;
+                pb.inc(1);
+                Ok(counter)
+            },
+        )
         .collect::<Result<_>>()?; // Short-circuits on the first Err
 
     if options.show_progress {
@@ -758,6 +786,7 @@ fn process_tile(
     blacklist_intervals: &[Interval<u64>],
     scaling_chr: &[ScalingBin],
     gc_corrector_opt: Option<LengthAgnosticGCCorrector>,
+    reference_reader: Option<&mut ReferenceReader>,
     length_axis: &Arc<LengthAxis>,
     template: &LengthCounts,
     temp_dir: &Path,
@@ -776,12 +805,9 @@ fn process_tile(
 
     // Build GC prefixes for the full tile fetch span
     let gc_prefixes_opt = if gc_corrector_opt.is_some() {
-        let ref_2bit = match opt.ref_2bit.as_ref() {
-            Some(r) => r,
-            None => bail!("When GC correction is specified, --ref-2bit must also be specified"),
-        };
-        let seq_bytes = read_seq_in_range(
-            ref_2bit,
+        let reference_reader = reference_reader
+            .context("file-based GC correction requires a staged reference reader")?;
+        let seq_bytes = reference_reader.read_seq_in_range(
             &tile.chr,
             // NOTE: Need for full fetch span to get GC of overlapping fragments!
             (tile.fetch_start() as usize)..(tile.fetch_end() as usize),

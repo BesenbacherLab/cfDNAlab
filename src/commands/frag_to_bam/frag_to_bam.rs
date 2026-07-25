@@ -16,7 +16,7 @@ use crate::{
         io::{FinalOutputFiles, dot_join, open_text_reader, open_text_reader_in_background},
         reference::load_chrom_sizes_with_order,
         temp_chrom_names::TempChromNameMap,
-        tiled_run::TempDirGuard,
+        tiled_run::RunTempDirs,
     },
 };
 use anyhow::{Context, Result, anyhow, bail};
@@ -220,10 +220,15 @@ fn execute_frag_to_bam(
     )
     .context("Loading blacklist intervals")?;
 
-    let mut temp_dir_guard = TempDirGuard::new(&opt.output_dir, opt.output_prefix.trim())
-        .context("Creating temp directory for frag-to-bam")?;
-    let temp_dir = temp_dir_guard.path().to_path_buf();
-    let mut final_outputs = FinalOutputFiles::new(temp_dir_guard.path())?;
+    let work_root = opt.temp.temp_dir.as_deref().unwrap_or(&opt.output_dir);
+    let run_temp_dirs = RunTempDirs::new(
+        work_root,
+        &opt.output_dir,
+        &dot_join(&[COMMAND_TARGET, opt.output_prefix.trim()]),
+    )
+    .context("Creating temporary directories for frag-to-bam")?;
+    let temp_dir = run_temp_dirs.work_dir().to_path_buf();
+    let mut final_outputs = FinalOutputFiles::new(run_temp_dirs.final_output_dir())?;
 
     let reader = if read_in_background {
         open_text_reader_in_background(&opt.frag)
@@ -400,9 +405,6 @@ fn execute_frag_to_bam(
     /* Second pass (from temps) - Write to BAM */
 
     if chroms_observed.is_empty() {
-        temp_dir_guard
-            .remove()
-            .context("Cleaning up temp directory")?;
         bail!("No fragments passed filters; no BAM to write");
     }
 
@@ -455,10 +457,6 @@ fn execute_frag_to_bam(
     final_outputs.record(temp_output_path, output_path.clone())?;
     final_outputs.record(temp_bai_path, output_bai_path)?;
     final_outputs.move_into_place()?;
-
-    temp_dir_guard
-        .remove()
-        .context("Cleaning up temp directory")?;
 
     Ok((counters, output_path))
 }

@@ -487,6 +487,58 @@ fn given_valid_frag_when_run_then_writes_expected_unpaired_bam_records() -> Resu
 }
 
 #[test]
+fn explicit_temp_root_preserves_outputs_and_leaves_no_run_directories() -> Result<()> {
+    let input_dir = TempDir::new()?;
+    let default_output_dir = TempDir::new()?;
+    let scratch_output_dir = TempDir::new()?;
+    let scratch_root = TempDir::new()?;
+    let frag_path = input_dir.path().join("input.frag.tsv");
+    let chrom_sizes_path = input_dir.path().join("chrom.sizes");
+
+    write_frag_file(&frag_path, &["chr1\t10\t20\t60\t+", "chr1\t30\t50\t40\t-"])?;
+    write_chrom_sizes(&chrom_sizes_path, &[("chr1", 100)])?;
+
+    let default_config = make_config(
+        frag_path.clone(),
+        default_output_dir.path().to_path_buf(),
+        chrom_sizes_path.clone(),
+        base_chromosomes(&["chr1"]),
+    );
+    let mut scratch_config = make_config(
+        frag_path,
+        scratch_output_dir.path().to_path_buf(),
+        chrom_sizes_path,
+        base_chromosomes(&["chr1"]),
+    );
+    scratch_config.set_temp_dir(Some(scratch_root.path().to_path_buf()));
+
+    run_frag_to_bam(&default_config)?;
+    run_frag_to_bam(&scratch_config)?;
+
+    let default_bam = output_bam_path(default_output_dir.path(), "restored");
+    let scratch_bam = output_bam_path(scratch_output_dir.path(), "restored");
+    assert_eq!(fs::read(&default_bam)?, fs::read(&scratch_bam)?);
+    assert_eq!(
+        fs::read(output_bai_path(default_output_dir.path(), "restored"))?,
+        fs::read(output_bai_path(scratch_output_dir.path(), "restored"))?
+    );
+    assert!(
+        fs::read_dir(scratch_root.path())?.next().is_none(),
+        "successful completion should remove the work directory"
+    );
+    assert!(
+        fs::read_dir(scratch_output_dir.path())?.all(|entry| {
+            entry
+                .ok()
+                .and_then(|entry| entry.file_name().into_string().ok())
+                .is_some_and(|name| !name.starts_with("tmp."))
+        }),
+        "successful completion should remove final-output staging directories"
+    );
+    Ok(())
+}
+
+#[test]
 fn given_valid_frag_when_run_then_writes_bam_index_and_reports_it() -> Result<()> {
     // Arrange:
     // `frag-to-bam` validates that input fragments are coordinate-ordered, writes a coordinate-sorted

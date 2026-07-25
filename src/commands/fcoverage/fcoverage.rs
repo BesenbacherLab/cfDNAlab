@@ -24,11 +24,11 @@ use crate::shared::interval::{IndexedInterval, Interval};
 use crate::shared::io::{FinalOutputFiles, dot_join};
 use crate::shared::progress::ProgressFactory;
 use crate::shared::read::{default_include_read_paired_end, default_include_read_unpaired};
-use crate::shared::reference::read_seq_in_range;
+use crate::shared::reference::{ReferenceReader, stage_reference_2bit};
 use crate::shared::scale_genome::{ScalingBin, apply_scaling_to_coverage_in_place};
 use crate::shared::temp_chrom_names::TempChromNameMap;
 use crate::shared::tiled_run::{
-    TempDirGuard, Tile, TileMode, TileWindowSpan, build_tiles, overlapping_windows_for_tile,
+    RunTempDirs, Tile, TileMode, TileWindowSpan, build_tiles, overlapping_windows_for_tile,
     precompute_tile_window_spans,
 };
 use crate::{
@@ -211,6 +211,26 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
 
     // Create output directory
     ensure_output_dir(&opt.ioc.output_dir)?;
+    let work_root = opt.temp.temp_dir.as_deref().unwrap_or(&opt.ioc.output_dir);
+    let run_temp_dirs = RunTempDirs::new(
+        work_root,
+        &opt.ioc.output_dir,
+        &dot_join(&[COMMAND_TARGET, prefix]),
+    )
+    .context("create fcoverage temporary directories")?;
+    let temp_dir = run_temp_dirs.work_dir();
+    let mut final_outputs = FinalOutputFiles::new(run_temp_dirs.final_output_dir())?;
+    let staged_ref_2bit = if opt.gc.gc_file.is_some() {
+        status_info!(options, target: COMMAND_TARGET, "Copying reference 2bit to the temporary directory");
+        Some(stage_reference_2bit(
+            opt.ref_2bit
+                .as_deref()
+                .context("--ref-2bit is required with file-based GC correction")?,
+            temp_dir,
+        )?)
+    } else {
+        None
+    };
 
     if opt.blacklist.is_some() {
         status_info!(options, target: COMMAND_TARGET, "Loading blacklists");
@@ -362,7 +382,7 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
     }
     let gc_corrector = load_gc_corrector(
         opt.gc.gc_file.as_ref(),
-        opt.ref_2bit.as_ref(),
+        staged_ref_2bit.as_ref(),
         opt.fragment_lengths.min_fragment_length,
         opt.fragment_lengths.max_fragment_length,
     )?;
@@ -379,12 +399,6 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
         || opt.gc.gc_file.is_some()
         || opt.gc.gc_tag.is_some()
         || opt.uses_length_normalization();
-
-    // Build temporary directory
-    let temp_dir_guard =
-        TempDirGuard::new(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
-    let temp_dir = temp_dir_guard.path();
-    let mut final_outputs = FinalOutputFiles::new(temp_dir)?;
 
     // Window size when --by-size (otherwise None)
     let by_size_bp: Option<u64> = match &window_opt {
@@ -497,7 +511,17 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
     let tile_results: Vec<FCoverageTileResult> = tiles
         .par_iter()
         .enumerate()
-        .map(|(tile_idx, tile)| -> Result<FCoverageTileResult> {
+        .map_init(
+            || staged_ref_2bit.as_deref().map(ReferenceReader::open),
+            |reference_reader_result, (tile_idx, tile)| -> Result<FCoverageTileResult> {
+            let reference_reader = match reference_reader_result {
+                Some(reader_result) => Some(
+                    reader_result
+                        .as_mut()
+                        .map_err(|error| anyhow::anyhow!("{error:#}"))?,
+                ),
+                None => None,
+            };
             let tile_span = tile_window_spans_for_threads[tile_idx];
             let windows_chr: Option<&[IndexedInterval<u64>]> =
                 windows_lookup.and_then(|m| m.get(&tile.chr).map(|v| v.as_slice()));
@@ -652,13 +676,15 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
                     scaling_chr,
                     gc_corrector.clone(), // Quite small memory footprint
                     gc_tag,
+                    reference_reader,
                     mode,
                     tile_output_decimals,
                 )?
             };
             pb.inc(1);
             Ok(tile_result)
-        })
+        },
+        )
         .collect::<anyhow::Result<_>>()?; // Short-circuits on the first Err
 
     pb.finish_with_message("| Finished counting");
@@ -889,6 +915,7 @@ fn process_tile(
     scaling_chr: &[ScalingBin],
     gc_corrector_opt: Option<GCCorrector>,
     gc_tag: Option<&str>,
+    reference_reader: Option<&mut ReferenceReader>,
     mode: TileMode,
     decimals: i32,
 ) -> Result<FCoverageTileResult> {
@@ -900,12 +927,9 @@ fn process_tile(
     let mut counter = FCoverageCounters::default();
 
     let gc_prefixes_opt = if gc_corrector_opt.is_some() {
-        let ref_2bit = match opt.ref_2bit.as_ref() {
-            Some(r) => r,
-            None => bail!("When GC correction is specified, --ref-2bit must also be specified"),
-        };
-        let seq_bytes = read_seq_in_range(
-            ref_2bit,
+        let reference_reader = reference_reader
+            .context("file-based GC correction requires a staged reference reader")?;
+        let seq_bytes = reference_reader.read_seq_in_range(
             &tile.chr,
             // NOTE: Need for full fetch span to get GC of overlapping fragments!
             (tile.fetch_start() as usize)..(tile.fetch_end() as usize),

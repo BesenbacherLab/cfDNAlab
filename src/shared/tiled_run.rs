@@ -8,7 +8,7 @@ use crate::shared::interval::IndexedInterval;
 use crate::shared::io::dot_join;
 #[cfg(uses_tile_window_helpers)]
 use crate::shared::{bam::Contigs, interval::Interval};
-#[cfg(checks_tile_bam_tid)]
+#[cfg(any(checks_tile_bam_tid, uses_temp_dirs))]
 use anyhow::Context;
 #[cfg(uses_tile_window_helpers)]
 use anyhow::ensure;
@@ -659,10 +659,10 @@ fn random_suffix(n: usize) -> String {
         .collect()
 }
 
-/// Creates a unique temporary directory within the output tree.
+/// Creates a unique temporary directory within the selected temporary-file root.
 ///
-/// The function attempts a handful of random suffixes before falling back to a timestamp-based
-/// name, ensuring directories can be created even under heavy parallelism.
+/// If two commands choose the same randomly generated name, only one can create the directory.
+/// The other command tries a new name.
 ///
 /// # Parameters
 /// - `base_out`: Root directory that should contain the temporary directory.
@@ -672,27 +672,32 @@ fn random_suffix(n: usize) -> String {
 /// Path to the created temporary directory.
 #[cfg(uses_temp_dirs)]
 pub(crate) fn make_temp_dir(base_out: &Path, prefix: &str) -> anyhow::Result<PathBuf> {
-    // Try a few times just in case
-    for _ in 0..8 {
+    std::fs::create_dir_all(base_out)
+        .with_context(|| format!("creating temporary-directory root {}", base_out.display()))?;
+
+    for _ in 0..32 {
         let suffix = random_suffix(10);
-        let p = base_out.join(dot_join(&["tmp", prefix, &suffix]));
-        if !p.exists() {
-            std::fs::create_dir_all(&p)?;
-            return Ok(p);
+        let path = base_out.join(dot_join(&["tmp", prefix, &suffix]));
+        match std::fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("creating temporary directory {}", path.display()));
+            }
         }
     }
-    // Fallback: timestamped
-    let ts = chrono::Utc::now().timestamp_millis();
-    let p = base_out.join(dot_join(&["tmp", prefix, &ts.to_string()]));
-    std::fs::create_dir_all(&p)?;
-    Ok(p)
+
+    anyhow::bail!(
+        "failed to create a unique temporary directory under {} after 32 attempts",
+        base_out.display()
+    )
 }
 
 /// Guard for per-run temporary directories.
 ///
 /// Commands keep this value in scope for as long as tile files may be needed. The directory is
 /// removed when the guard is dropped, so early returns clean up the same way as successful runs.
-/// Call `remove()` when cleanup failure should be reported on the normal success path.
 #[cfg(uses_temp_dirs)]
 pub(crate) struct TempDirGuard {
     path: PathBuf,
@@ -723,13 +728,8 @@ impl TempDirGuard {
         &self.path
     }
 
-    /// Removes the guarded directory and disables drop-time cleanup after success.
-    #[cfg(any(
-        feature = "cmd_frag_to_bam",
-        feature = "cmd_gc_bias",
-        feature = "cmd_prepare_windows",
-        feature = "cmd_transitions"
-    ))]
+    /// Remove the guarded directory immediately and disable drop-time cleanup.
+    #[cfg(any(test, feature = "cmd_prepare_windows", feature = "cmd_transitions"))]
     pub(crate) fn remove(&mut self) -> anyhow::Result<()> {
         if self.removed {
             return Ok(());
@@ -741,13 +741,47 @@ impl TempDirGuard {
                 unregister_temp_dir_for_ctrl_c_cleanup(&self.path);
                 Ok(())
             }
-            Err(err) if err.kind() == ErrorKind::NotFound => {
+            Err(error) if error.kind() == ErrorKind::NotFound => {
                 self.removed = true;
                 unregister_temp_dir_for_ctrl_c_cleanup(&self.path);
                 Ok(())
             }
-            Err(err) => Err(err.into()),
+            Err(error) => Err(error.into()),
         }
+    }
+}
+
+/// Owns separate working and final-output staging directories for a command run.
+///
+/// Working files may live on a different filesystem selected with `--temp-dir`. Final outputs
+/// always stage beneath the output directory so publishing them remains a same-filesystem rename.
+#[cfg(uses_temp_dirs)]
+pub(crate) struct RunTempDirs {
+    work: TempDirGuard,
+    final_output: TempDirGuard,
+}
+
+#[cfg(uses_temp_dirs)]
+impl RunTempDirs {
+    /// Create visible, unique work and final-output staging directories.
+    pub(crate) fn new(work_root: &Path, output_dir: &Path, prefix: &str) -> anyhow::Result<Self> {
+        let work_prefix = dot_join(&[prefix, "work"]);
+        let final_prefix = dot_join(&[prefix, "final"]);
+        let work = TempDirGuard::new(work_root, &work_prefix)
+            .context("creating command work directory")?;
+        let final_output = TempDirGuard::new(output_dir, &final_prefix)
+            .context("creating final-output staging directory")?;
+        Ok(Self { work, final_output })
+    }
+
+    /// Return the directory for references, tiles, and other working files.
+    pub(crate) fn work_dir(&self) -> &Path {
+        self.work.path()
+    }
+
+    /// Return the output-filesystem directory used before final publication.
+    pub(crate) fn final_output_dir(&self) -> &Path {
+        self.final_output.path()
     }
 }
 

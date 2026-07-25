@@ -109,6 +109,7 @@ fn write_reference_package_for_single_length(
         },
         output_dir: out_dir.path().to_path_buf(),
         output_prefix: String::new(),
+        temp: Default::default(),
         n_threads: 1,
         // These tests use small synthetic references, for example:
         // - `simple_reference_twobit()` is 256 bp

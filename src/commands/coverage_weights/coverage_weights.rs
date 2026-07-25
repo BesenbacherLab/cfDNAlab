@@ -24,7 +24,7 @@ use crate::{
     shared::{
         interval::Interval,
         io::{FinalOutputFiles, dot_join, open_text_reader},
-        tiled_run::TempDirGuard,
+        tiled_run::RunTempDirs,
     },
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -270,26 +270,21 @@ pub(crate) fn run_with_fcoverage(
     let (chromosomes, _contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
 
-    // Keep all intermediate files under the user-chosen output directory so disk usage stays
-    // within the filesystem location the user already selected for results.
     ensure_output_dir(&opt.ioc.output_dir)?;
-    let final_temp_dir_guard = TempDirGuard::new(
+    let work_root = opt.temp.temp_dir.as_deref().unwrap_or(&opt.ioc.output_dir);
+    let run_temp_dirs = RunTempDirs::new(
+        work_root,
         &opt.ioc.output_dir,
-        &dot_join(&[opt.output_prefix.as_str(), "scaling_weights_final"]),
+        &dot_join(&[command.target(), opt.output_prefix.as_str()]),
     )
-    .context("creating final output temp directory")?;
-    let mut final_outputs = FinalOutputFiles::new(final_temp_dir_guard.path())?;
-
-    let fcoverage_output_dir_guard = TempDirGuard::new(
-        &opt.ioc.output_dir,
-        &dot_join(&[opt.output_prefix.as_str(), "coverage_weights_source"]),
-    )
-    .context("creating internal fcoverage output directory")?;
-    let fcoverage_output_dir = fcoverage_output_dir_guard.path().to_path_buf();
+    .context("creating scaling-weights temporary directories")?;
+    let mut final_outputs = FinalOutputFiles::new(run_temp_dirs.final_output_dir())?;
+    let fcoverage_output_dir = run_temp_dirs.work_dir().join("fcoverage_output");
 
     let fcoverage_cfg = build_fcoverage_stride_config(
         opt,
         &fcoverage_output_dir,
+        run_temp_dirs.work_dir(),
         normalize_by_length,
         command,
         source_ignore_gap.unwrap_or(false),
@@ -430,6 +425,7 @@ pub(crate) fn run_with_fcoverage(
 fn build_fcoverage_stride_config(
     opt: &ScalingWeightsArgs,
     output_dir: &Path,
+    temp_dir: &Path,
     normalize_by_length: bool,
     command: ScalingWeightsCommand,
     ignore_gap: bool,
@@ -465,6 +461,7 @@ fn build_fcoverage_stride_config(
     cfg.set_blacklist(opt.blacklist.clone());
     cfg.set_gc(opt.gc.clone());
     cfg.set_ref_2bit(opt.ref_2bit.clone());
+    cfg.set_temp_dir(Some(temp_dir.to_path_buf()));
     cfg
 }
 

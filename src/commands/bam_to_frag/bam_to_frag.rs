@@ -31,11 +31,11 @@ use crate::{
         overlaps::find_overlapping_windows,
         progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
-        reference::read_seq,
+        reference::{ReferenceReader, stage_reference_2bit},
         scale_genome::{ScalingBin, compute_per_window_scaling_over_fragment},
         temp_chrom_names::TempChromNameMap,
         thread_pool::init_global_pool,
-        tiled_run::TempDirGuard,
+        tiled_run::RunTempDirs,
         windowing::ensure_plain_bed_windows_not_empty,
         writers::open_zstd_auto_writer,
     },
@@ -155,6 +155,28 @@ fn execute_bam_to_frag(opt: &BamToFragConfig, options: RunOptions) -> Result<Bam
 
     // Create output directory
     ensure_output_dir(&opt.ioc.output_dir)?;
+    let work_root = opt.temp.temp_dir.as_deref().unwrap_or(&opt.ioc.output_dir);
+    let run_temp_dirs = RunTempDirs::new(
+        work_root,
+        &opt.ioc.output_dir,
+        &dot_join(&[COMMAND_TARGET, prefix]),
+    )?;
+    let temp_dir = run_temp_dirs.work_dir().to_path_buf();
+    let mut final_outputs = FinalOutputFiles::new(run_temp_dirs.final_output_dir())?;
+    let staged_ref_2bit = if opt.gc.gc_file.is_some() {
+        let source = opt
+            .ref_2bit
+            .as_deref()
+            .context("--gc-file requires --ref-2bit")?;
+        status_info!(
+            options,
+            target: COMMAND_TARGET,
+            "Copying 2bit reference to the temporary directory"
+        );
+        Some(stage_reference_2bit(source, run_temp_dirs.work_dir())?)
+    } else {
+        None
+    };
 
     // Load blacklist intervals if provided
     if opt.blacklist.is_some() {
@@ -215,16 +237,10 @@ fn execute_bam_to_frag(opt: &BamToFragConfig, options: RunOptions) -> Result<Bam
     }
     let gc_corrector = load_gc_corrector(
         opt.gc.gc_file.as_ref(),
-        opt.ref_2bit.as_ref(),
+        staged_ref_2bit.as_ref(),
         opt.fragment_lengths.min_fragment_length,
         opt.fragment_lengths.max_fragment_length,
     )?;
-
-    // Build temporary directory
-    let temp_dir_guard =
-        TempDirGuard::new(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
-    let temp_dir = temp_dir_guard.path().to_path_buf();
-    let mut final_outputs = FinalOutputFiles::new(temp_dir_guard.path())?;
     let output_file: PathBuf = opt.ioc.output_dir.join(dot_join(&[prefix, "frag.tsv.gz"]));
     let output_header_file: PathBuf = opt
         .ioc
@@ -244,29 +260,41 @@ fn execute_bam_to_frag(opt: &BamToFragConfig, options: RunOptions) -> Result<Bam
 
     let results: Vec<(PathBuf, BamToFragCounters)> = chromosomes
         .par_iter()
-        .map(|chr| -> Result<(_, _)> {
-            let out = process_chrom(
-                chr,
-                opt,
-                &temp_dir,
-                windows_map
-                    .as_ref()
-                    .and_then(|m| m.get(chr).map(|v| v.as_slice())),
-                blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
-                coverage_scaling_map
-                    .get(chr)
-                    .map(|v| v.as_slice())
-                    .unwrap_or(&[]),
-                count_scaling_map
-                    .get(chr)
-                    .map(|v| v.as_slice())
-                    .unwrap_or(&[]),
-                gc_corrector.clone(),
-                &temp_chrom_name_map,
-            )?;
-            pb.inc(1);
-            Ok(out)
-        })
+        .map_init(
+            || staged_ref_2bit.as_deref().map(ReferenceReader::open),
+            |reference_reader_result, chr| -> Result<(_, _)> {
+                let reference_reader = match reference_reader_result {
+                    Some(reader_result) => Some(
+                        reader_result
+                            .as_mut()
+                            .map_err(|error| anyhow::anyhow!("{error:#}"))?,
+                    ),
+                    None => None,
+                };
+                let out = process_chrom(
+                    chr,
+                    opt,
+                    &temp_dir,
+                    windows_map
+                        .as_ref()
+                        .and_then(|m| m.get(chr).map(|v| v.as_slice())),
+                    blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
+                    coverage_scaling_map
+                        .get(chr)
+                        .map(|v| v.as_slice())
+                        .unwrap_or(&[]),
+                    count_scaling_map
+                        .get(chr)
+                        .map(|v| v.as_slice())
+                        .unwrap_or(&[]),
+                    gc_corrector.clone(),
+                    reference_reader,
+                    &temp_chrom_name_map,
+                )?;
+                pb.inc(1);
+                Ok(out)
+            },
+        )
         .collect::<Result<_>>()?; // short-circuits on the first Err
 
     pb.finish_with_message("| Finished conversion");
@@ -341,6 +369,7 @@ fn process_chrom(
     coverage_scaling_chr: &[ScalingBin],
     count_scaling_chr: &[ScalingBin],
     gc_corrector_opt: Option<GCCorrector>,
+    reference_reader: Option<&mut ReferenceReader>,
     temp_chrom_name_map: &TempChromNameMap,
 ) -> anyhow::Result<(PathBuf, BamToFragCounters)> {
     let out_path = temp_chrom_name_map.path_with_suffix(temp_dir, chr, "frag.tsv.zst")?;
@@ -361,11 +390,9 @@ fn process_chrom(
 
     // TODO: Consider tiling the function to decrease memory from the prefixes
     let gc_prefixes_opt = if gc_corrector_opt.is_some() {
-        let ref_2bit = match opt.ref_2bit.as_ref() {
-            Some(r) => r,
-            None => bail!("When GC correction is specified, --ref-2bit must also be specified"),
-        };
-        let seq_bytes = read_seq(ref_2bit, chr)?;
+        let reference_reader = reference_reader
+            .context("GC correction requires an initialized 2bit reference reader")?;
+        let seq_bytes = reference_reader.read_seq(chr)?;
         Some(build_gc_prefixes(&seq_bytes))
     } else {
         None

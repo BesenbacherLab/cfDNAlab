@@ -2,7 +2,8 @@ use std::path::PathBuf;
 
 use crate::commands::cli_common::{ApplyGCArgs, ScaleGenomeArgs};
 use crate::commands::cli_common::{
-    ChromosomeArgs, DistributionWindowsArgs, FragmentLengthArgs, IOCArgs, LoggingArgs, UnpairedArgs,
+    ChromosomeArgs, DistributionWindowsArgs, FragmentLengthArgs, IOCArgs, LoggingArgs, TempDirArgs,
+    UnpairedArgs,
 };
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use crate::{ToCliCommand, cli_command::helpers::*};
@@ -112,6 +113,9 @@ pub enum LengthNormalizationMode {
 pub struct FCoverageConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub temp: TempDirArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub unpaired: UnpairedArgs,
@@ -326,6 +330,7 @@ impl FCoverageConfig {
     pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs) -> Self {
         Self {
             ioc,
+            temp: TempDirArgs::default(),
             unpaired: UnpairedArgs {
                 reads_are_fragments: false,
             },
@@ -355,6 +360,10 @@ impl FCoverageConfig {
 
     pub fn set_output_prefix<S: Into<String>>(&mut self, prefix: S) {
         self.output_prefix = prefix.into();
+    }
+
+    pub fn set_temp_dir(&mut self, temp_dir: Option<PathBuf>) {
+        self.temp.temp_dir = temp_dir;
     }
 
     pub fn set_unpaired(&mut self, unpaired: UnpairedArgs) {
@@ -442,6 +451,7 @@ impl ToCliCommand for FCoverageConfig {
     fn to_cli_args(&self) -> crate::Result<Vec<std::ffi::OsString>> {
         let mut args = command_args("fcoverage");
         push_ioc(&mut args, &self.ioc);
+        push_temp_dir(&mut args, &self.temp);
         push_unpaired(&mut args, &self.unpaired);
         push_value(
             &mut args,

@@ -14,6 +14,9 @@ pub struct ScalingWeightsArgs {
     pub ioc: IOCArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
+    pub temp: TempDirArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
     pub unpaired: UnpairedArgs,
 
     /// Optional prefix for output files (e.g., a sample name) `[string]`
@@ -121,6 +124,7 @@ impl ScalingWeightsArgs {
     pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs) -> Self {
         Self {
             ioc,
+            temp: TempDirArgs::default(),
             unpaired: UnpairedArgs {
                 reads_are_fragments: false,
             },
@@ -145,6 +149,10 @@ impl ScalingWeightsArgs {
 
     pub fn set_output_prefix(&mut self, output_prefix: String) {
         self.output_prefix = output_prefix;
+    }
+
+    pub fn set_temp_dir(&mut self, temp_dir: Option<PathBuf>) {
+        self.temp.temp_dir = temp_dir;
     }
 
     pub fn set_bin_size(&mut self, bin_size: u32) {

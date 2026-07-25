@@ -41,12 +41,12 @@ use crate::{
         overlaps::find_overlapping_windows,
         progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
-        reference::read_seq_in_range,
+        reference::{ReferenceReader, stage_reference_2bit},
         scale_genome::{ScalingBin, compute_per_window_scaling_over_fragment},
         temp_chrom_names::TempChromNameMap,
         thread_pool::init_global_pool,
         tiled_run::{
-            TempDirGuard, Tile, TileWindowSpan, build_tiles, clamp_fetch_to_window_span,
+            RunTempDirs, Tile, TileWindowSpan, build_tiles, clamp_fetch_to_window_span,
             overlapping_windows_for_tile, precompute_tile_window_spans,
         },
         window_fetch::window_derived_fetch_extent_for_core_overlap,
@@ -140,6 +140,25 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
 
     // Create output directory
     ensure_output_dir(&opt.ioc.output_dir)?;
+    let work_root = opt.temp.temp_dir.as_deref().unwrap_or(&opt.ioc.output_dir);
+    let run_temp_dirs = RunTempDirs::new(
+        work_root,
+        &opt.ioc.output_dir,
+        &dot_join(&[COMMAND_TARGET, prefix]),
+    )
+    .context("create midpoints temporary directories")?;
+    let temp_dir = run_temp_dirs.work_dir();
+    let staged_ref_2bit = if opt.gc.gc_file.is_some() {
+        status_info!(options, target: COMMAND_TARGET, "Copying reference 2bit to the temporary directory");
+        Some(stage_reference_2bit(
+            opt.ref_2bit
+                .as_deref()
+                .context("--ref-2bit is required with file-based GC correction")?,
+            temp_dir,
+        )?)
+    } else {
+        None
+    };
 
     // Load blacklist intervals if provided
     if opt.blacklist.is_some() {
@@ -314,15 +333,10 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
     }
     let gc_corrector = load_gc_corrector(
         opt.gc.gc_file.as_ref(),
-        opt.ref_2bit.as_ref(),
+        staged_ref_2bit.as_ref(),
         min_fragment_length,
         max_fragment_length,
     )?;
-
-    // Build temporary directory
-    let temp_dir_guard =
-        TempDirGuard::new(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
-    let temp_dir = temp_dir_guard.path();
 
     // Build tiles with a pairing halo wide enough for any accepted fragment
     let halo_bp: u32 = max_fragment_length; // Safe halo for pairing
@@ -378,47 +392,59 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
     let tile_results: Vec<(ProfileGroupsCounters, Option<PathBuf>)> = tiles
         .par_iter()
         .enumerate()
-        .map(|(tile_idx, tile)| -> Result<(_, _)> {
-            let tile_span = tile_window_spans_for_threads[tile_idx];
-            // Borrow chromosome-local data for this tile worker
-            let windows_chr: &GroupedWindows = grouped_windows_map
-                .get(&tile.chr)
-                .unwrap_or(&empty_grouped_windows);
-            let blacklist_chr: &[Interval<u64>] = blacklist_map
-                .get(&tile.chr)
-                .map(|v| v.as_slice())
-                .unwrap_or(&[]);
-            let scaling_chr: &[ScalingBin] = scaling_map
-                .get(&tile.chr)
-                .map(|v| v.as_slice())
-                .unwrap_or(&[]);
+        .map_init(
+            || staged_ref_2bit.as_deref().map(ReferenceReader::open),
+            |reference_reader_result, (tile_idx, tile)| -> Result<(_, _)> {
+                let reference_reader = match reference_reader_result {
+                    Some(reader_result) => Some(
+                        reader_result
+                            .as_mut()
+                            .map_err(|error| anyhow::anyhow!("{error:#}"))?,
+                    ),
+                    None => None,
+                };
+                let tile_span = tile_window_spans_for_threads[tile_idx];
+                // Borrow chromosome-local data for this tile worker
+                let windows_chr: &GroupedWindows = grouped_windows_map
+                    .get(&tile.chr)
+                    .unwrap_or(&empty_grouped_windows);
+                let blacklist_chr: &[Interval<u64>] = blacklist_map
+                    .get(&tile.chr)
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+                let scaling_chr: &[ScalingBin] = scaling_map
+                    .get(&tile.chr)
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
 
-            // Sparse tile partial file path. Empty tiles skip writing this file
-            let chr_token = temp_chrom_name_map.token_for(tile.chr.as_str())?;
-            let tile_counts_out = temp_dir.join(format!(
-                "{prefix}.{chr}.{idx}.npz",
-                prefix = tmp_prefix,
-                chr = chr_token,
-                idx = tile.index
-            ));
+                // Sparse tile partial file path. Empty tiles skip writing this file
+                let chr_token = temp_chrom_name_map.token_for(tile.chr.as_str())?;
+                let tile_counts_out = temp_dir.join(format!(
+                    "{prefix}.{chr}.{idx}.npz",
+                    prefix = tmp_prefix,
+                    chr = chr_token,
+                    idx = tile.index
+                ));
 
-            let out = process_tile(
-                opt,
-                tile,
-                tile_counts_out,
-                profile_layout.flanked_length,
-                num_groups,
-                Arc::clone(&length_axis),
-                windows_chr,
-                tile_span.as_ref(),
-                blacklist_chr,
-                scaling_chr,
-                gc_corrector.clone(),
-                gc_tag,
-            )?;
-            pb.inc(1);
-            Ok(out)
-        })
+                let out = process_tile(
+                    opt,
+                    tile,
+                    tile_counts_out,
+                    profile_layout.flanked_length,
+                    num_groups,
+                    Arc::clone(&length_axis),
+                    windows_chr,
+                    tile_span.as_ref(),
+                    blacklist_chr,
+                    scaling_chr,
+                    gc_corrector.clone(),
+                    gc_tag,
+                    reference_reader,
+                )?;
+                pb.inc(1);
+                Ok(out)
+            },
+        )
         .collect::<Result<_>>()?; // short-circuits on the first Err
 
     if options.show_progress {
@@ -460,7 +486,7 @@ pub fn run_midpoints(opt: &MidpointsConfig, options: RunOptions) -> Result<Midpo
 
     // Write every final output to the temp directory before moving any of them into place
     // This keeps failed writes from leaving a mix of old and new final files
-    let mut final_outputs = FinalOutputFiles::new(temp_dir)?;
+    let mut final_outputs = FinalOutputFiles::new(run_temp_dirs.final_output_dir())?;
 
     let temp_counts_path = final_outputs.temp_path_for(&final_counts_path)?;
     status_info!(
@@ -655,6 +681,7 @@ fn process_tile(
     scaling_chr: &[ScalingBin],
     gc_corrector_opt: Option<GCCorrector>,
     gc_tag: Option<&str>,
+    reference_reader: Option<&mut ReferenceReader>,
 ) -> anyhow::Result<(ProfileGroupsCounters, Option<PathBuf>)> {
     // Open a fresh BAM reader for this thread
     let (mut reader, _tid_check, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
@@ -664,12 +691,9 @@ fn process_tile(
     let mut counter = ProfileGroupsCounters::default();
 
     let gc_prefixes_opt = if gc_corrector_opt.is_some() {
-        let ref_2bit = match opt.ref_2bit.as_ref() {
-            Some(r) => r,
-            None => bail!("When GC correction is specified, --ref-2bit must also be specified"),
-        };
-        let seq_bytes = read_seq_in_range(
-            ref_2bit,
+        let reference_reader = reference_reader
+            .context("file-based GC correction requires a staged reference reader")?;
+        let seq_bytes = reference_reader.read_seq_in_range(
             &tile.chr,
             // NOTE: Need the full fetch span to get GC of overlapping fragments!
             (tile.fetch_start() as usize)..(tile.fetch_end() as usize),

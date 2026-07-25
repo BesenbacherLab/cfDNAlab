@@ -879,6 +879,7 @@ fn normalize_weighted_average_overlap_by_global_mean_keeps_bins_above_support_fl
 #[test]
 fn build_fcoverage_stride_config_uses_unit_mass_and_total_for_fragment_count_weights() {
     let tempdir = TempDir::new().expect("tempdir should exist");
+    let scratch = TempDir::new().expect("scratch tempdir should exist");
     let args = ScalingWeightsArgs::new(
         crate::commands::cli_common::IOCArgs {
             bam: PathBuf::from("input.bam"),
@@ -894,6 +895,7 @@ fn build_fcoverage_stride_config_uses_unit_mass_and_total_for_fragment_count_wei
     let cfg = build_fcoverage_stride_config(
         &args,
         tempdir.path(),
+        scratch.path(),
         true,
         ScalingWeightsCommand::FragmentCount,
         false,
@@ -904,4 +906,9 @@ fn build_fcoverage_stride_config_uses_unit_mass_and_total_for_fragment_count_wei
         LengthNormalizationMode::UnitMass
     );
     assert_eq!(cfg.per_window, CoverageWindowAction::Total);
+    assert_eq!(
+        cfg.temp.temp_dir.as_deref(),
+        Some(scratch.path()),
+        "internal fcoverage should inherit the outer command work root"
+    );
 }
