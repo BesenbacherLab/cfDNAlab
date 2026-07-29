@@ -68,6 +68,8 @@ COVERAGE_SCALING_FACTORS="$PROJECT_DIR/outputs/$SAMPLE_ID/scaling_factors/$SAMPL
 # Job level (optional)
 # Set this to the node-local scratch directory provided by your cluster
 # $TMPDIR is an example. Your cluster may use another environment variable
+# and it may only be available inside the allocated job or on interactive
+# compute nodes
 TEMP_DIR="$TMPDIR"
 ```
 
