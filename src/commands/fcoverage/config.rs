@@ -478,11 +478,9 @@ impl ToCliCommand for FCoverageConfig {
         push_ioc(&mut args, &self.ioc);
         push_temp_dir(&mut args, &self.temp);
         push_unpaired(&mut args, &self.unpaired);
-        push_value(
-            &mut args,
-            "--normalize-by-length",
-            length_normalization_value(self.normalize_by_length),
-        );
+        if let Some(normalization_mode) = length_normalization_value(self.normalize_by_length) {
+            push_value(&mut args, "--normalize-by-length", normalization_mode);
+        }
         if let Some(trim_to) = self.trim_to {
             push_value(&mut args, "--trim-to", trim_to);
         }
@@ -510,11 +508,11 @@ impl ToCliCommand for FCoverageConfig {
     }
 }
 
-fn length_normalization_value(mode: LengthNormalizationMode) -> &'static str {
+fn length_normalization_value(mode: LengthNormalizationMode) -> Option<&'static str> {
     match mode {
-        LengthNormalizationMode::Off => "off",
-        LengthNormalizationMode::UnitMass => "unit-mass",
-        LengthNormalizationMode::RestoreMean => "restore-mean",
+        LengthNormalizationMode::Off => None,
+        LengthNormalizationMode::UnitMass => Some("unit-mass"),
+        LengthNormalizationMode::RestoreMean => Some("restore-mean"),
     }
 }
 

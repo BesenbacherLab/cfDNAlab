@@ -7,9 +7,17 @@ This is the changelog for the main CLI tool. You can find the changelog for the 
 
 <br />
 
+## Unreleased
+
+ - The "Equivalent CLI" string for `cfdna fcoverage` no longer contains `--normalize-by-length off` when that argument was not specified. The correct way to avoid `--normalize-by-length` is to just not set it. The `off` option is the internal name for this.
+
+<br />
+
 ## cfDNAlab 0.9.0
 
-- Adds `--trim-to` to `fcoverage` for counting a centered span around each fragment's midpoint. Shorter fragments can be left unchanged or extended to the requested span.
+ - Adds `--trim-to` to `cfdna fcoverage` for counting a centered span around each fragment's midpoint. Shorter fragments can be left unchanged or extended to the requested span.
+
+<br />
 
 ## cfDNAlab 0.8.0
 

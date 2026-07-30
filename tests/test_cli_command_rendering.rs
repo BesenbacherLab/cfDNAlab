@@ -164,6 +164,47 @@ fn fcoverage_config_renders_cli_call() {
 
 #[cfg(feature = "cmd_fcoverage")]
 #[test]
+fn fcoverage_config_omits_disabled_length_normalization() {
+    use cfdnalab::run_like_cli::fcoverage::FCoverageConfig;
+
+    // Arrange
+    let config = FCoverageConfig::new(ioc(), chromosomes());
+
+    // Act
+    let args = assert_cli_accepts(config.to_cli_args().unwrap(), "fcoverage");
+
+    // Assert
+    assert!(
+        !args
+            .iter()
+            .any(|argument| argument == "--normalize-by-length"),
+        "disabled length normalization should be omitted from the rendered CLI: {args:?}"
+    );
+}
+
+#[cfg(feature = "cmd_fcoverage")]
+#[test]
+fn fcoverage_config_renders_enabled_length_normalization_modes() {
+    use cfdnalab::run_like_cli::fcoverage::{FCoverageConfig, LengthNormalizationMode};
+
+    for (mode, expected_value) in [
+        (LengthNormalizationMode::UnitMass, "unit-mass"),
+        (LengthNormalizationMode::RestoreMean, "restore-mean"),
+    ] {
+        // Arrange
+        let mut config = FCoverageConfig::new(ioc(), chromosomes());
+        config.set_normalize_by_length(mode);
+
+        // Act
+        let args = assert_cli_accepts(config.to_cli_args().unwrap(), "fcoverage");
+
+        // Assert
+        assert_contains_pair(&args, "--normalize-by-length", expected_value);
+    }
+}
+
+#[cfg(feature = "cmd_fcoverage")]
+#[test]
 fn fcoverage_config_renders_trim_rule() {
     use cfdnalab::run_like_cli::fcoverage::{FCoverageConfig, FragmentSpanTrim};
 
