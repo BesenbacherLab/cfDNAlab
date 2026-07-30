@@ -152,6 +152,193 @@ mod tests_clean_up_and_normalization {
     }
 }
 
+mod tests_fragment_span_trim {
+    use super::super::{
+        add_fragment_to_core_after_optional_trim, validate_fragment_span_trim,
+    };
+    use crate::commands::cli_common::{ChromosomeArgs, IOCArgs};
+    use crate::commands::fcoverage::config::{FCoverageConfig, LengthNormalizationMode};
+    use crate::commands::fcoverage::fragment_span_trim::FragmentSpanTrim;
+    use crate::shared::coverage::Coverage;
+    use crate::shared::fragment::segment_fragment::FragmentWithSegments;
+    use crate::shared::interval::Interval;
+    use crate::shared::tiled_run::Tile;
+    use std::path::PathBuf;
+
+    fn interval(start: u32, end: u32) -> Interval<u32> {
+        Interval::new(start, end).expect("test interval should be valid")
+    }
+
+    fn fragment(
+        start: u32,
+        end: u32,
+        segments: Option<&[(u32, u32)]>,
+    ) -> FragmentWithSegments {
+        FragmentWithSegments {
+            tid: 0,
+            interval: interval(start, end),
+            segments: segments.map(|entries| {
+                entries
+                    .iter()
+                    .map(|(segment_start, segment_end)| interval(*segment_start, *segment_end))
+                    .collect()
+            }),
+            gc_tag: Default::default(),
+        }
+    }
+
+    fn base_config() -> FCoverageConfig {
+        FCoverageConfig::new(
+            IOCArgs {
+                bam: PathBuf::from("input.bam"),
+                output_dir: PathBuf::from("out"),
+                n_threads: 1,
+            },
+            ChromosomeArgs::default(),
+        )
+    }
+
+    #[test]
+    fn trimmed_span_adds_weight_only_to_expected_genomic_positions() {
+        // Arrange
+        // The original fragment is [100, 301), with midpoint base 200. Trimming it to 165 bp
+        // must count [118, 283) without changing the supplied weight
+        let original = fragment(100, 301, None);
+        let tile = Tile::new(
+            "chr1".to_string(),
+            0,
+            0,
+            interval(0, 400),
+            interval(0, 400),
+        )
+        .expect("test tile should be valid");
+        let mut opt = base_config();
+        opt.set_trim_to(Some(FragmentSpanTrim::AtMost { target_length: 165 }));
+        let mut coverage = Coverage::new(400);
+
+        // Act
+        let was_counted = add_fragment_to_core_after_optional_trim(
+            &mut coverage,
+            &original,
+            2.0,
+            &tile,
+            400,
+            &opt,
+        )
+        .expect("coverage insertion should succeed");
+        let observed = coverage.finalize_coverage(false);
+
+        // Assert
+        let mut expected = vec![0.0; 400];
+        expected[118..283].fill(2.0);
+        assert!(was_counted);
+        assert_eq!(observed, expected);
+    }
+
+    #[test]
+    fn validation_accepts_no_trimming() {
+        // Arrange
+        let opt = base_config();
+
+        // Act
+        let result = validate_fragment_span_trim(&opt);
+
+        // Assert
+        result.expect("configuration without trimming should remain valid");
+    }
+
+    #[test]
+    fn validation_accepts_target_equal_to_configured_max_fragment_length() {
+        // Arrange
+        let mut opt = base_config();
+        opt.fragment_lengths_mut().max_fragment_length = 165;
+        opt.set_trim_to(Some(FragmentSpanTrim::AtMost { target_length: 165 }));
+
+        // Act
+        let result = validate_fragment_span_trim(&opt);
+
+        // Assert
+        result.expect("target equal to configured maximum should be valid");
+    }
+
+    #[test]
+    fn validation_rejects_target_above_configured_max_fragment_length() {
+        // Arrange
+        let mut opt = base_config();
+        opt.fragment_lengths_mut().max_fragment_length = 151;
+        opt.set_trim_to(Some(FragmentSpanTrim::AtMost { target_length: 165 }));
+
+        // Act
+        let error = validate_fragment_span_trim(&opt)
+            .expect_err("target above configured maximum should fail");
+
+        // Assert
+        assert!(
+            error.to_string().contains("must be <= --max-fragment-length"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn validation_rejects_programmatically_constructed_even_target() {
+        // Arrange
+        let mut opt = base_config();
+        opt.set_trim_to(Some(FragmentSpanTrim::AtMost { target_length: 166 }));
+
+        // Act
+        let error = validate_fragment_span_trim(&opt)
+            .expect_err("programmatically constructed even target should fail");
+
+        // Assert
+        assert!(
+            error.to_string().contains("must be odd"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn validation_rejects_programmatically_constructed_target_below_minimum() {
+        // Arrange
+        let mut opt = base_config();
+        opt.set_trim_to(Some(FragmentSpanTrim::Exactly { target_length: 0 }));
+
+        // Act
+        let error = validate_fragment_span_trim(&opt)
+            .expect_err("programmatically constructed zero-length target should fail");
+
+        // Assert
+        assert!(
+            error.to_string().contains("at least 1 bp"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn validation_rejects_every_length_normalization_mode() {
+        for normalization_mode in [
+            LengthNormalizationMode::UnitMass,
+            LengthNormalizationMode::RestoreMean,
+        ] {
+            // Arrange
+            let mut opt = base_config();
+            opt.set_trim_to(Some(FragmentSpanTrim::AtMost { target_length: 165 }));
+            opt.set_normalize_by_length(normalization_mode);
+
+            // Act
+            let error = validate_fragment_span_trim(&opt)
+                .expect_err("length normalization with trimming should fail");
+
+            // Assert
+            assert!(
+                error
+                    .to_string()
+                    .contains("cannot be combined with --normalize-by-length"),
+                "unexpected error for {normalization_mode:?}: {error:#}"
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests_coverage_prefix {
     use crate::shared::{

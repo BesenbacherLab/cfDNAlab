@@ -164,6 +164,7 @@ pub mod run_like_cli {
     pub mod fcoverage {
         pub use crate::commands::fcoverage::config::{FCoverageConfig, LengthNormalizationMode};
         pub use crate::commands::fcoverage::fcoverage::{FCoverageRunResult, run_fcoverage};
+        pub use crate::commands::fcoverage::fragment_span_trim::FragmentSpanTrim;
         pub use crate::commands::fcoverage::window_results::CoverageWindowAction;
     }
 

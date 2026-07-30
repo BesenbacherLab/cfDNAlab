@@ -321,6 +321,19 @@ fn fcoverage_config_roundtrips_through_rendered_cli() {
     assert_config_roundtrips!(config, Fcoverage, "fcoverage");
 }
 
+#[cfg(feature = "cmd_fcoverage")]
+#[test]
+fn fcoverage_trim_config_roundtrips_through_rendered_cli() {
+    use crate::commands::fcoverage::{
+        config::FCoverageConfig, fragment_span_trim::FragmentSpanTrim,
+    };
+
+    let mut config = FCoverageConfig::new(ioc(), chromosomes());
+    config.set_trim_to(Some(FragmentSpanTrim::AtMost { target_length: 165 }));
+
+    assert_config_roundtrips!(config, Fcoverage, "fcoverage");
+}
+
 #[cfg(feature = "cmd_gc_bias")]
 #[test]
 fn gc_bias_config_roundtrips_through_rendered_cli() {

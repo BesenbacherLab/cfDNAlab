@@ -1,5 +1,6 @@
 pub(crate) mod config;
 pub(crate) mod fcoverage;
+pub(crate) mod fragment_span_trim;
 pub(crate) mod reducer;
 pub(crate) mod tiling;
 pub(crate) mod window_results;

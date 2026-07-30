@@ -183,6 +183,25 @@ fn ends_help_only_shows_collapse_complements_when_experimental_feature_is_enable
     Ok(())
 }
 
+#[cfg(feature = "cmd_fcoverage")]
+#[test]
+fn fcoverage_help_shows_trim_to() -> Result<()> {
+    let output = command_output("fcoverage", &["--help"])?;
+    let stdout_text = String::from_utf8_lossy(&output.stdout);
+    let stderr_text = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "Expected cfdna fcoverage --help to succeed.\nstdout:\n{stdout_text}\nstderr:\n{stderr_text}"
+    );
+    assert!(
+        stdout_text.contains("--trim-to"),
+        "Expected fcoverage help to show --trim-to.\nstdout:\n{stdout_text}"
+    );
+
+    Ok(())
+}
+
 #[cfg(feature = "cmd_lengths")]
 #[test]
 fn lengths_cli_minimal_invocation_writes_output_files_with_expected_prefix() -> Result<()> {
