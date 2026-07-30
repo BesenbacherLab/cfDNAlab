@@ -17,12 +17,13 @@ use cfdnalab::run_like_cli::bam_to_bam::{
 };
 use cfdnalab::run_like_cli::common::{
     ApplyGCArgs, AssignToWindowArgs, ChromosomeArgs, DistributionWindowsArgs, IOCArgs,
-    ScaleGenomeArgs,
+    ScaleGenomeArgs, UnpairedArgs,
 };
 #[cfg(feature = "cmd_coverage_weights")]
 use cfdnalab::run_like_cli::coverage_weights::{
     CoverageWeightsConfig, run_coverage_weights as run_coverage_weights_command,
 };
+use cfdnalab::run_like_cli::fcoverage::FragmentSpanTrim;
 use cfdnalab::run_like_cli::fcoverage::{
     CoverageWindowAction, FCoverageConfig, FCoverageRunResult, LengthNormalizationMode,
     run_fcoverage as run_fcoverage_command,
@@ -395,6 +396,334 @@ fn single_read_fragment_bam_at(
             insert_size: 0,
         }],
     )
+}
+
+fn single_read_fragment_bam_with_chromosome_length(
+    name: &str,
+    chromosome_length: u32,
+    fragment_start: i64,
+    fragment_length: u32,
+) -> Result<TempBam> {
+    bam_from_fragments(
+        name,
+        vec![("chr1".to_string(), chromosome_length)],
+        Vec::new(),
+        vec![ReadSpec {
+            tid: 0,
+            pos: fragment_start,
+            cigar: vec![Cigar::Match(fragment_length)],
+            seq: vec![b'A'; fragment_length as usize],
+            base_quality: 40,
+            is_reverse: false,
+            mapq: 60,
+            flags: 0,
+            mate_tid: None,
+            mate_pos: None,
+            insert_size: 0,
+        }],
+    )
+}
+
+fn configure_read_as_fragment_trimming(cfg: &mut FCoverageConfig, trim_to: FragmentSpanTrim) {
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.set_trim_to(Some(trim_to));
+}
+
+#[test]
+fn trim_modes_write_the_expected_centered_positional_span() -> Result<()> {
+    let scenarios = [
+        (
+            "at_most",
+            20_i64,
+            61_u32,
+            FragmentSpanTrim::AtMost { target_length: 41 },
+        ),
+        (
+            "exactly",
+            40_i64,
+            21_u32,
+            FragmentSpanTrim::Exactly { target_length: 41 },
+        ),
+    ];
+
+    for (name, fragment_start, fragment_length, trim_to) in scenarios {
+        // Arrange
+        // Both original fragments have midpoint base 50. The odd 41 bp target therefore spans
+        // [30, 71), whether the original is trimmed from 61 bp or extended from 21 bp.
+        let bam = single_read_fragment_bam_at(name, fragment_start, fragment_length)?;
+        let out_dir = TempDir::new()?;
+        let mut cfg = base_config(&bam.bam, out_dir.path());
+        configure_read_as_fragment_trimming(&mut cfg, trim_to);
+
+        // Act
+        let result = run(&cfg)?;
+        let output = read_zst_to_string(&result.final_out_path)?;
+
+        // Assert
+        assert_eq!(output, "chr1\t30\t71\t1\n", "unexpected mode {name}");
+    }
+
+    Ok(())
+}
+
+#[test]
+fn at_most_61_counts_the_central_61_bp_of_every_fragment_above_the_minimum() -> Result<()> {
+    // Arrange
+    // Both fragments exceed the 100 bp inclusion minimum. Their odd lengths give unique midpoint
+    // bases, so trimming to 61 bp produces [40, 101) and [302, 363), respectively.
+    let bam = bam_from_fragments(
+        "trim_central_61",
+        vec![("chr1".to_string(), 500)],
+        vec![
+            PairedFragmentSpec::new(0, 20, 101, 20).build()?,
+            PairedFragmentSpec::new(0, 250, 165, 20).build()?,
+        ],
+        Vec::new(),
+    )?;
+    let out_dir = TempDir::new()?;
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_fragment_lengths(cfdnalab::run_like_cli::common::FragmentLengthArgs {
+        min_fragment_length: 100,
+        max_fragment_length: 200,
+    });
+    cfg.set_trim_to(Some(FragmentSpanTrim::AtMost { target_length: 61 }));
+
+    // Act
+    let result = run(&cfg)?;
+    let output = read_zst_to_string(&result.final_out_path)?;
+
+    // Assert
+    assert_eq!(output, "chr1\t40\t101\t1\nchr1\t302\t363\t1\n");
+
+    Ok(())
+}
+
+#[test]
+fn at_most_trim_respects_the_inter_mate_gap_setting() -> Result<()> {
+    // Arrange
+    // The paired fragment spans [20, 121) and has 20 bp reads at [20, 40) and [101, 121).
+    // Its central 81 bp span is [30, 111). Including the inter-mate gap counts that full span.
+    // Ignoring the gap retains only the intersections [30, 40) and [101, 111).
+    let bam = bam_from_fragments(
+        "trim_inter_mate_gap",
+        vec![("chr1".to_string(), 200)],
+        vec![PairedFragmentSpec::new(0, 20, 101, 20).build()?],
+        Vec::new(),
+    )?;
+    let scenarios = [
+        (false, "chr1\t30\t111\t1\n"),
+        (true, "chr1\t30\t40\t1\nchr1\t101\t111\t1\n"),
+    ];
+
+    for (ignore_gap, expected) in scenarios {
+        let out_dir = TempDir::new()?;
+        let mut cfg = base_config(&bam.bam, out_dir.path());
+        cfg.set_ignore_gap(ignore_gap);
+        cfg.set_trim_to(Some(FragmentSpanTrim::AtMost { target_length: 81 }));
+
+        // Act
+        let result = run(&cfg)?;
+        let output = read_zst_to_string(&result.final_out_path)?;
+
+        // Assert
+        assert_eq!(
+            output, expected,
+            "unexpected --ignore-gap={ignore_gap} output"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn at_most_trim_keeps_deleted_reference_bases_uncounted() -> Result<()> {
+    // Arrange
+    // The 20M10D21M read has outer span [20, 71), midpoint base 45, and deletion [40, 50)
+    // Trimming the outer span to 31 bp gives [30, 61), so the counted segments must be
+    // [30, 40) and [50, 61)
+    let bam = bam_from_fragments(
+        "trim_deletion",
+        vec![("chr1".to_string(), 200)],
+        Vec::new(),
+        vec![ReadSpec {
+            tid: 0,
+            pos: 20,
+            cigar: vec![Cigar::Match(20), Cigar::Del(10), Cigar::Match(21)],
+            seq: vec![b'A'; 41],
+            base_quality: 40,
+            is_reverse: false,
+            mapq: 60,
+            flags: 0,
+            mate_tid: None,
+            mate_pos: None,
+            insert_size: 0,
+        }],
+    )?;
+    let out_dir = TempDir::new()?;
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_keep_zero_runs(false);
+    configure_read_as_fragment_trimming(&mut cfg, FragmentSpanTrim::AtMost { target_length: 31 });
+
+    // Act
+    let result = run(&cfg)?;
+    let output = read_zst_to_string(&result.final_out_path)?;
+
+    // Assert
+    assert_eq!(output, "chr1\t30\t40\t1\nchr1\t50\t61\t1\n");
+
+    Ok(())
+}
+
+#[test]
+fn exact_trim_is_tile_invariant_when_span_crosses_boundary() -> Result<()> {
+    // Arrange
+    // The 101 bp fragment [990, 1091) has midpoint 1040. Extending to 165 bp gives [958, 1123),
+    // which crosses the 1000 bp tile boundary in the first run.
+    let bam =
+        single_read_fragment_bam_with_chromosome_length("trim_crosses_tile", 2_200, 990, 101)?;
+    let mut observed = Vec::new();
+
+    for tile_size in [1_000_u32, 2_000_u32] {
+        let out_dir = TempDir::new()?;
+        let mut cfg = base_config(&bam.bam, out_dir.path());
+        cfg.set_tile_size(tile_size);
+        configure_read_as_fragment_trimming(
+            &mut cfg,
+            FragmentSpanTrim::Exactly { target_length: 165 },
+        );
+
+        // Act
+        let result = run(&cfg)?;
+        let output = read_zst_to_string(&result.final_out_path)?;
+        observed.push(dense_bedgraph_for_chromosome(&output, "chr1", 2_200));
+    }
+
+    // Assert
+    let mut expected = vec![0.0; 2_200];
+    expected[958..1123].fill(1.0);
+    assert_eq!(observed, vec![expected.clone(), expected]);
+
+    Ok(())
+}
+
+#[test]
+fn exact_trim_uses_existing_fixed_windows() -> Result<()> {
+    // Arrange
+    // The transformed fragment is [958, 1123). It contributes 42 bases to [0, 1000) and
+    // 123 bases to [1000, 2000). No trimming-specific window definition is involved.
+    let bam =
+        single_read_fragment_bam_with_chromosome_length("trim_fixed_windows", 2_000, 990, 101)?;
+    let out_dir = TempDir::new()?;
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_per_window(CoverageWindowAction::Total);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: Some(1_000),
+        by_bed: None,
+        by_grouped_bed: None,
+    });
+    configure_read_as_fragment_trimming(&mut cfg, FragmentSpanTrim::Exactly { target_length: 165 });
+
+    // Act
+    let result = run(&cfg)?;
+    let output = read_zst_to_string(&result.final_out_path)?;
+
+    // Assert
+    let expected = concat!(
+        "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions\n",
+        "chr1\t0\t1000\t42\t0\n",
+        "chr1\t1000\t2000\t123\t0\n",
+    );
+    assert_eq!(output, expected);
+
+    Ok(())
+}
+
+#[test]
+fn trim_keeps_gc_tag_weight_on_transformed_span() -> Result<()> {
+    // Arrange
+    // The original read is [20, 81), so its midpoint is 50 and its 41 bp trimmed span is
+    // [30, 71). The GC tag supplies weight 2.5 independently of that coordinate change.
+    let base_bam = single_read_fragment_bam_at("trim_gc_tag_base", 20, 61)?;
+    let tagged_bam = bam_with_gc_tags(&base_bam.bam, "trim_gc_tag", &[Some(2.5)])?;
+    let out_dir = TempDir::new()?;
+    let mut cfg = base_config(&tagged_bam.bam, out_dir.path());
+    cfg.set_decimals(1);
+    cfg.set_gc(ApplyGCArgs {
+        gc_file: None,
+        gc_tag: Some("GC".to_string()),
+        neutralize_invalid_gc: false,
+    });
+    configure_read_as_fragment_trimming(&mut cfg, FragmentSpanTrim::AtMost { target_length: 41 });
+
+    // Act
+    let result = run(&cfg)?;
+    let output = read_zst_to_string(&result.final_out_path)?;
+
+    // Assert
+    assert_eq!(output, "chr1\t30\t71\t2.5\n");
+
+    Ok(())
+}
+
+#[test]
+fn trim_keeps_gc_file_weight_from_original_fragment_length() -> Result<()> {
+    // Arrange
+    // The GC package assigns weight 1 to lengths [10, 60) and weight 2 to lengths [60, 200)
+    // at zero GC. The original fragment is 61 bp and therefore receives weight 2. Its trimmed
+    // counting span is 41 bp, which would incorrectly receive weight 1 if trimming changed the
+    // length supplied to GC correction.
+    let bam = single_read_fragment_bam_at("trim_gc_file", 20, 61)?;
+    let reference = twobit_with_single_repeating_contig("trim_gc_file_ref", "chr1", "A", 256)?;
+    let out_dir = TempDir::new()?;
+    let gc_path = out_dir.path().join("trim_gc_file.zarr");
+    build_gc_package(&gc_path, 0, twobit_contig_footprint(&reference.path)?)?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_gc(ApplyGCArgs {
+        gc_file: Some(gc_path),
+        gc_tag: None,
+        neutralize_invalid_gc: false,
+    });
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    configure_read_as_fragment_trimming(&mut cfg, FragmentSpanTrim::AtMost { target_length: 41 });
+
+    // Act
+    let result = run(&cfg)?;
+    let output = read_zst_to_string(&result.final_out_path)?;
+
+    // Assert
+    assert_eq!(output, "chr1\t30\t71\t2\n");
+
+    Ok(())
+}
+
+#[test]
+fn trimming_rejects_every_length_normalization_mode_before_reading_input() -> Result<()> {
+    for normalization_mode in [
+        LengthNormalizationMode::UnitMass,
+        LengthNormalizationMode::RestoreMean,
+    ] {
+        // Arrange
+        let out_dir = TempDir::new()?;
+        let mut cfg = base_config(Path::new("missing.bam"), out_dir.path());
+        cfg.set_trim_to(Some(FragmentSpanTrim::AtMost { target_length: 61 }));
+        cfg.set_normalize_by_length(normalization_mode);
+
+        // Act
+        let error = run(&cfg).expect_err("trimming with length normalization should fail");
+
+        // Assert
+        assert!(
+            error
+                .to_string()
+                .contains("--trim-to cannot be combined with --normalize-by-length"),
+            "unexpected error for {normalization_mode:?}: {error:#}"
+        );
+    }
+
+    Ok(())
 }
 
 fn build_bai_for_test_bam(bam_path: &Path) -> Result<()> {

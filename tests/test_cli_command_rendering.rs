@@ -162,6 +162,18 @@ fn fcoverage_config_renders_cli_call() {
     assert_contains_pair(&args, "--decimals", "2");
 }
 
+#[cfg(feature = "cmd_fcoverage")]
+#[test]
+fn fcoverage_config_renders_trim_rule() {
+    use cfdnalab::run_like_cli::fcoverage::{FCoverageConfig, FragmentSpanTrim};
+
+    let mut config = FCoverageConfig::new(ioc(), chromosomes());
+    config.set_trim_to(Some(FragmentSpanTrim::Exactly { target_length: 165 }));
+
+    let args = assert_cli_accepts(config.to_cli_args().unwrap(), "fcoverage");
+    assert_contains_pair(&args, "--trim-to", "exactly=165");
+}
+
 #[cfg(feature = "cmd_gc_bias")]
 #[test]
 fn gc_bias_config_renders_cli_call() {

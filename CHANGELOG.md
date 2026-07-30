@@ -7,6 +7,10 @@ This is the changelog for the main CLI tool. You can find the changelog for the 
 
 <br />
 
+## cfDNAlab 0.9.0
+
+- Adds `--trim-to` to `fcoverage` for counting a centered span around each fragment's midpoint. Shorter fragments can be left unchanged or extended to the requested span.
+
 ## cfDNAlab 0.8.0
 
 **Main focus**: This release handles the issue where running many jobs with `cfdna <command>` calls in parallel led to significant increased runtime due to shared-filesystem contention. It does so by introducing the `--temp-dir` argument for specifying a node-local scratch location for temporary files. The main contention issue was identified to be the many reads of the `ref-2bit` reference sequence file. By copying it into the temporary local scratch directory before processing, the issue was heavily reduced. Thanks to Anders from GenomeDK for spotting this.

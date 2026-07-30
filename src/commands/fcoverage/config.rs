@@ -5,6 +5,7 @@ use crate::commands::cli_common::{
     ChromosomeArgs, DistributionWindowsArgs, FragmentLengthArgs, IOCArgs, LoggingArgs, TempDirArgs,
     UnpairedArgs,
 };
+use crate::commands::fcoverage::fragment_span_trim::FragmentSpanTrim;
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use crate::{ToCliCommand, cli_command::helpers::*};
 
@@ -164,6 +165,25 @@ pub struct FCoverageConfig {
         )
     )]
     pub normalize_by_length: LengthNormalizationMode,
+
+    /// Trim the fragment span around the midpoint when counting `[string]`
+    ///
+    /// Normally, a fragment contributes coverage across its full span. Use this option to give
+    /// long fragments a shorter centered span, or to give every fragment the same centered span.
+    ///
+    /// - `at-most=61`: Count the middle 61 bp of fragments longer than 61 bp. Shorter fragments
+    ///   keep their original span.
+    ///
+    /// - `exactly=61`: Count a 61 bp span around every fragment midpoint. Shorter fragments are
+    ///   extended and longer fragments are trimmed.
+    ///
+    /// The size must be odd, at least 1 bp, and no greater than `--max-fragment-length`. An odd
+    /// size places the same number of bases on either side of the midpoint.
+    ///
+    /// Trimming does not add coverage across an inter-mate gap removed by `--ignore-gap` or across
+    /// a deletion in the alignment.
+    #[cfg_attr(feature = "cli", clap(long, value_parser, help_heading = "Core"))]
+    pub trim_to: Option<FragmentSpanTrim>,
 
     /// Optional prefix for output files (e.g., a sample name) `[string]`
     ///
@@ -336,6 +356,7 @@ impl FCoverageConfig {
             },
             logging: LoggingArgs::default(),
             normalize_by_length: LengthNormalizationMode::Off,
+            trim_to: None,
             output_prefix: String::new(),
             decimals: 2,
             keep_zero_runs: false,
@@ -372,6 +393,10 @@ impl FCoverageConfig {
 
     pub fn set_normalize_by_length(&mut self, normalize_by_length: LengthNormalizationMode) {
         self.normalize_by_length = normalize_by_length;
+    }
+
+    pub fn set_trim_to(&mut self, trim_to: Option<FragmentSpanTrim>) {
+        self.trim_to = trim_to;
     }
 
     pub fn uses_length_normalization(&self) -> bool {
@@ -458,6 +483,9 @@ impl ToCliCommand for FCoverageConfig {
             "--normalize-by-length",
             length_normalization_value(self.normalize_by_length),
         );
+        if let Some(trim_to) = self.trim_to {
+            push_value(&mut args, "--trim-to", trim_to);
+        }
         push_output_prefix(&mut args, &self.output_prefix);
         push_value(&mut args, "--decimals", self.decimals);
         push_bool(&mut args, "--keep-zero-runs", self.keep_zero_runs);

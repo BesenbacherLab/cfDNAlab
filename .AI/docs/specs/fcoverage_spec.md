@@ -9,6 +9,9 @@
 - Default coverage includes the inter-mate gap as part of the fragment span. `--ignore-gap` removes `[forward.reference_end, reverse.pos)` from counted coverage and cannot be combined with `--reads-are-fragments`.
 - Fragment length filters are applied to the fragment definition used by the command. The shared minimum is 10 bp, and default CLI filtering is 30..1000 bp inclusive.
 - Always-on read filters remove secondary, supplementary, duplicate, QC-failed, unmapped, cross-tid, and non-inward paired fragments.
+- `--trim-to at-most=<odd_bp>` changes only longer spans, while `--trim-to exactly=<odd_bp>` also extends shorter spans. The target must be at least 1 bp and no greater than `--max-fragment-length`.
+- Trimming uses the reproducibly selected midpoint base. Extension is clipped at chromosome boundaries without shifting the midpoint.
+- Trimming is applied immediately before counting. Existing explicit countable segments are intersected with a shorter span. Extension adds only outer flanks and does not fill excluded internal regions.
 
 ## Weighting
 
@@ -24,6 +27,7 @@
 - `restore-mean`: count like `unit-mass`, then multiply the final output by the observed mean normalization length.
 - The normalization denominator includes blacklisted positions in the fragment span. Blacklist masking affects reported coverage support, not the fragment's length-normalization mass.
 - Output filenames indicate normalization: `length_normalized` for unit mass and `length_normalized.restored_mean` for restored mean.
+- `--trim-to` cannot be combined with either length-normalization mode.
 
 ## Windows And Actions
 

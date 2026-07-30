@@ -1,5 +1,6 @@
 use crate::command_run::{CommandRunResult, RunOptions, status_info};
 use crate::commands::fcoverage::config::FCoverageConfig;
+use crate::commands::fcoverage::fragment_span_trim::trimmed_counting_segments;
 use crate::commands::fcoverage::reducer::TileAggregateTempFiles;
 use crate::commands::fcoverage::tiling::{
     TileTempFile, TileTempFileKind, adapt_fetch_to_extreme_windows, build_summary_prefixes,
@@ -191,6 +192,7 @@ pub fn run_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
 fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCoverageRunResult> {
     opt.fragment_lengths.validate()?;
     opt.gc.validate(opt.ref_2bit.as_deref())?;
+    validate_fragment_span_trim(opt)?;
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
@@ -906,6 +908,26 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
     })
 }
 
+/// Validate interactions between span trimming and other `fcoverage` options.
+fn validate_fragment_span_trim(opt: &FCoverageConfig) -> Result<()> {
+    let Some(trim_to) = opt.trim_to else {
+        return Ok(());
+    };
+
+    trim_to.validate().map_err(anyhow::Error::msg)?;
+    let target_length = trim_to.target_length();
+    if target_length > opt.fragment_lengths.max_fragment_length {
+        bail!(
+            "--trim-to target ({target_length}) must be <= --max-fragment-length ({})",
+            opt.fragment_lengths.max_fragment_length
+        );
+    }
+    if opt.uses_length_normalization() {
+        bail!("--trim-to cannot be combined with --normalize-by-length");
+    }
+    Ok(())
+}
+
 /// Process one tile: pair reads, build coverage, and write outputs for this tile
 fn process_tile(
     opt: &FCoverageConfig,
@@ -1035,11 +1057,13 @@ fn process_tile(
                 };
 
             // Clip and add to tile core coverage (segments respected)
-            let was_counted = add_fragment_clipped_to_core(
+            let was_counted = add_fragment_to_core_after_optional_trim(
                 &mut cp,
                 &fragment,
                 base_weight * gc_weight,
-                tile.core,
+                tile,
+                chrom_len as u32,
+                opt,
             )?;
 
             if was_counted {
@@ -1082,11 +1106,13 @@ fn process_tile(
                 }
             };
 
-            let was_counted = add_fragment_clipped_to_core(
+            let was_counted = add_fragment_to_core_after_optional_trim(
                 &mut cp,
                 &fragment,
                 base_weight * gc_weight,
-                tile.core,
+                tile,
+                chrom_len as u32,
+                opt,
             )?;
 
             if was_counted {
@@ -1106,8 +1132,14 @@ fn process_tile(
             let base_weight = calculate_base_weight(normalization_length);
 
             // Clip and add to tile core coverage (segments respected)
-            let was_counted =
-                add_fragment_clipped_to_core(&mut cp, &fragment, base_weight, tile.core)?;
+            let was_counted = add_fragment_to_core_after_optional_trim(
+                &mut cp,
+                &fragment,
+                base_weight,
+                tile,
+                chrom_len as u32,
+                opt,
+            )?;
 
             if was_counted {
                 counter.base.counted_fragments += 1;
@@ -1712,6 +1744,35 @@ fn add_clipped_blacklist_to_cp(
     Ok(())
 }
 
+/// Apply the optional span change and add the resulting coordinates.
+///
+/// The caller supplies the weight calculated from the original fragment. Keeping this wrapper
+/// immediately around the coverage insertion makes that ordering explicit and prevents the
+/// transformed span from leaking into filtering or correction code.
+#[inline]
+fn add_fragment_to_core_after_optional_trim(
+    cp: &mut Coverage,
+    fragment: &FragmentWithSegments,
+    weight: f64,
+    tile: &Tile,
+    chromosome_length: u32,
+    opt: &FCoverageConfig,
+) -> Result<bool> {
+    if let Some(trim_to) = opt.trim_to {
+        let counting_segments =
+            trimmed_counting_segments(fragment, tile.chr.as_str(), chromosome_length, trim_to)?;
+        return add_segments_clipped_to_core(
+            cp,
+            fragment.tid,
+            counting_segments.as_slice(),
+            weight,
+            tile.core,
+        );
+    }
+
+    add_fragment_clipped_to_core(cp, fragment, weight, tile.core)
+}
+
 /// Adds a fragment's coverage contribution into the tile-local accumulator.
 ///
 /// Segmented fragments are processed segment by segment, while simple fragments are clipped once.
@@ -1722,8 +1783,7 @@ fn add_clipped_blacklist_to_cp(
 /// - `cp`: Tile-local coverage structure to update.
 /// - `fragment`: Fragment carrying absolute coordinates and optional segments.
 /// - `weight`: Weight applied when inserting the fragment.
-/// - `core_start`: Inclusive start of the tile core in absolute coordinates.
-/// - `core_end`: Exclusive end of the tile core in absolute coordinates.
+/// - `core_interval`: Tile core in absolute coordinates.
 ///
 /// # Returns
 /// - `Ok(true)` if the fragment contributes at least one base to the tile core.
@@ -1737,42 +1797,47 @@ pub(crate) fn add_fragment_clipped_to_core(
     core_interval: Interval<u32>,
 ) -> Result<bool> {
     // Use explicit segments if present
-    let mut counted = false;
-    let core_start = core_interval.start();
-    let to_core_local = |interval: Interval<u32>| -> Result<Interval<u32>> {
-        interval.shift_left(core_start).map_err(anyhow::Error::from)
-    };
     if let Some(segments) = &fragment.segments {
-        for segment in segments {
-            let Some(clipped_interval) = segment.clip_to(core_interval) else {
-                // Skips fragments completely outside tile
-                continue;
-            };
-            // Shift to tile-local coordinates
-            let local_interval = to_core_local(clipped_interval)?;
-            let local = Fragment {
-                tid: fragment.tid,
-                interval: local_interval,
-                gc_tag: Default::default(),
-            };
-            cp.add_fragment_weighted(local, weight)?;
-            counted = true;
-        }
+        add_segments_clipped_to_core(cp, fragment.tid, segments, weight, core_interval)
     } else {
         // No explicit segments -> treat as one span (this already encodes your include_inter_mate_gap policy)
-        // Skips fragments completely outside tile
-        if let Some(clipped_interval) = fragment.interval.clip_to(core_interval) {
-            // Shift to tile-local coordinates
-            let local_interval = to_core_local(clipped_interval)?;
-            let local = Fragment {
-                tid: fragment.tid,
-                interval: local_interval,
-                gc_tag: Default::default(),
-            };
+        add_segments_clipped_to_core(
+            cp,
+            fragment.tid,
+            std::slice::from_ref(&fragment.interval),
+            weight,
+            core_interval,
+        )
+    }
+}
 
-            cp.add_fragment_weighted(local, weight)?;
-            counted = true;
-        }
+/// Add absolute reference segments to the tile-local coverage accumulator.
+#[inline]
+fn add_segments_clipped_to_core(
+    cp: &mut Coverage,
+    tid: i32,
+    segments: &[Interval<u32>],
+    weight: f64,
+    core_interval: Interval<u32>,
+) -> Result<bool> {
+    let mut counted = false;
+    let core_start = core_interval.start();
+    for segment in segments {
+        let Some(clipped_segment) = segment.clip_to(core_interval) else {
+            // Skip segments completely outside the tile core
+            continue;
+        };
+        // Shift to tile-local coordinates
+        let local_segment = clipped_segment.shift_left(core_start)?;
+        cp.add_fragment_weighted(
+            Fragment {
+                tid,
+                interval: local_segment,
+                gc_tag: Default::default(),
+            },
+            weight,
+        )?;
+        counted = true;
     }
     Ok(counted)
 }
