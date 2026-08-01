@@ -3,8 +3,7 @@
 use std::path::PathBuf;
 
 use crate::commands::cli_common::{
-    ApplyGCArgs, ChromosomeArgs, FragmentLengthArgs, IOCArgs, LoggingArgs, ScaleGenomeArgs,
-    TempDirArgs, UnpairedArgs,
+    ChromosomeArgs, FragmentLengthArgs, IOCArgs, LoggingArgs, TempDirArgs, UnpairedArgs,
 };
 use crate::{ToCliCommand, cli_command::helpers::*};
 
@@ -53,8 +52,10 @@ pub const DEFAULT_MIN_MAPQ: u8 = 30;
 /// normalization factors are stored as a single multiplicative lookup weight for `fcoverage`.
 ///
 /// This method was developed and evaluated primarily for fragment lengths from 100 to 220 bp.
-/// Using a substantially different range is experimental. The same blacklist, GC correction, and
-/// genomic scaling choices should be used when fitting and applying the normalization.
+/// Using a substantially different range is experimental. Like LIONHEART, this command always
+/// fits the relationship from uncorrected coverage. GC correction and genomic scaling remain
+/// independent `fcoverage` operations that can be combined with the fitted model during
+/// application.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct OverlappingLengthsCorrectionConfig {
@@ -101,10 +102,6 @@ pub struct OverlappingLengthsCorrectionConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub chromosomes: ChromosomeArgs,
 
-    /// Optional positional genomic scaling applied only to the observed coverage signal.
-    #[cfg_attr(feature = "cli", clap(flatten))]
-    pub scale_genome: ScaleGenomeArgs,
-
     /// Minimum fragment length to include `[integer]`
     #[cfg_attr(
         feature = "cli",
@@ -137,19 +134,6 @@ pub struct OverlappingLengthsCorrectionConfig {
     )]
     pub blacklist: Option<Vec<PathBuf>>,
 
-    /// Optional GC correction applied only to the observed coverage signal.
-    #[cfg_attr(feature = "cli", clap(flatten))]
-    pub gc: ApplyGCArgs,
-
-    /// Optional 2bit reference genome file `[path]`
-    ///
-    /// Required with `--gc-file` and otherwise ignored.
-    #[cfg_attr(
-        feature = "cli",
-        clap(short = 'r', long, help_heading = "GC Correction")
-    )]
-    pub ref_2bit: Option<PathBuf>,
-
     /// Logging destination and verbosity settings.
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub logging: LoggingArgs,
@@ -173,14 +157,11 @@ impl OverlappingLengthsCorrectionConfig {
             length_bin_size: DEFAULT_LENGTH_BIN_SIZE,
             ignore_gap: false,
             chromosomes,
-            scale_genome: ScaleGenomeArgs::default(),
             min_fragment_length: DEFAULT_MIN_FRAGMENT_LENGTH,
             max_fragment_length: DEFAULT_MAX_FRAGMENT_LENGTH,
             min_mapq: DEFAULT_MIN_MAPQ,
             require_proper_pair: false,
             blacklist: None,
-            gc: ApplyGCArgs::default(),
-            ref_2bit: None,
             logging: LoggingArgs::default(),
         }
     }
@@ -209,14 +190,11 @@ impl ToCliCommand for OverlappingLengthsCorrectionConfig {
         push_value(&mut args, "--length-bin-size", self.length_bin_size);
         push_bool(&mut args, "--ignore-gap", self.ignore_gap);
         push_chromosomes(&mut args, &self.chromosomes);
-        push_scale_genome(&mut args, &self.scale_genome);
         push_value(&mut args, "--min-fragment-length", self.min_fragment_length);
         push_value(&mut args, "--max-fragment-length", self.max_fragment_length);
         push_value(&mut args, "--min-mapq", self.min_mapq);
         push_bool(&mut args, "--require-proper-pair", self.require_proper_pair);
         push_path_values(&mut args, "--blacklist", self.blacklist.as_deref());
-        push_apply_gc(&mut args, &self.gc);
-        push_optional_path(&mut args, "--ref-2bit", self.ref_2bit.as_deref());
         push_logging(&mut args, &self.logging);
         Ok(args)
     }

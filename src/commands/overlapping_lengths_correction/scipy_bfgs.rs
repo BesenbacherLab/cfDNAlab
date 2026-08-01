@@ -25,6 +25,9 @@
 //! selects BFGS, estimates gradients with absolute forward differences, tries its MINPACK-derived
 //! DCSRCH Wolfe-1 line search, and falls back to its pure Python Wolfe-2 line search. This module
 //! keeps that sequence and its defaults together so model code does not obscure optimizer details.
+//! cfDNAlab has a stricter error contract for invalid optimizer states. It rejects a Wolfe-2 step
+//! when the iteration limit is reached before the strong-Wolfe conditions are established, and it
+//! rejects a non-finite or non-positive BFGS update curvature instead of substituting a value.
 
 use anyhow::{Result, bail, ensure};
 
@@ -102,21 +105,9 @@ pub(super) fn minimize_bfgs(
         if accepted.step * euclidean_norm(direction) <= 0.0 {
             return Ok(point);
         }
-        let inverse_curvature = {
-            let curvature = dot(gradient_change, step_vector);
-            if curvature == 0.0 {
-                // This is SciPy's explicit divide-by-zero fallback
-                1000.0
-            } else {
-                1.0 / curvature
-            }
-        };
-        inverse_hessian = bfgs_inverse_hessian_update(
-            inverse_hessian,
-            step_vector,
-            gradient_change,
-            inverse_curvature,
-        );
+        let curvature = dot(gradient_change, step_vector);
+        inverse_hessian =
+            bfgs_inverse_hessian_update(inverse_hessian, step_vector, gradient_change, curvature)?;
     }
 
     bail!(
@@ -136,9 +127,10 @@ struct LineSearchPoint {
 /// Wolfe-2 result before its optional derivative has been resolved.
 ///
 /// A converged search contains the gradient used to verify the curvature condition. SciPy instead
-/// returns its last step without a derivative when the outer Wolfe-2 loop reaches `maxiter`; BFGS
-/// then evaluates that gradient before updating its inverse Hessian. Representing the gradient as
-/// optional preserves that distinction without exposing it outside the line-search implementation.
+/// returns its last step without a derivative when the outer Wolfe-2 loop reaches `maxiter`.
+/// SciPy's BFGS caller then evaluates that gradient before updating its inverse Hessian. Retaining
+/// the optional gradient reproduces that scalar-search result for upstream regression tests, while
+/// cfDNAlab's production wrapper rejects it.
 #[derive(Clone, Copy, Debug)]
 struct WolfeTwoPoint {
     step: f64,
@@ -744,12 +736,14 @@ fn line_search_wolfe2(
     let Some(accepted) = accepted else {
         return Ok(None);
     };
-    // SciPy's scalar Wolfe-2 search returns no derivative after exhausting `maxiter`. Its BFGS
-    // caller accepts that step and immediately evaluates the gradient at the new point.
-    let gradient = accepted
-        .gradient
-        .map(Ok)
-        .unwrap_or_else(|| evaluate_gradient(accepted.step, accepted.value))?;
+    // SciPy returns the last trial after exhausting `maxiter`, even though the strong-Wolfe
+    // conditions were not established. A fitted cfDNAlab model must not silently accept that step.
+    let Some(gradient) = accepted.gradient else {
+        bail!(
+            "Wolfe-2 line search reached its limit of {} iterations without establishing the strong-Wolfe conditions",
+            settings.maximum_iterations
+        );
+    };
     Ok(Some(LineSearchPoint {
         step: accepted.step,
         value: accepted.value,
@@ -992,12 +986,28 @@ fn quadratic_interpolant_minimum(
 }
 
 /// Apply SciPy's rank-two inverse-Hessian BFGS update.
+///
+/// A valid strong-Wolfe step gives positive update curvature `y^T s`. SciPy substitutes an inverse
+/// curvature of `1000` when the curvature is exactly zero. cfDNAlab instead rejects non-finite or
+/// non-positive curvature because those values cannot produce a trustworthy positive-definite
+/// inverse-Hessian update.
 fn bfgs_inverse_hessian_update(
     inverse_hessian: [[f64; PARAMETER_COUNT]; PARAMETER_COUNT],
     step: [f64; PARAMETER_COUNT],
     gradient_change: [f64; PARAMETER_COUNT],
-    inverse_curvature: f64,
-) -> [[f64; PARAMETER_COUNT]; PARAMETER_COUNT] {
+    curvature: f64,
+) -> Result<[[f64; PARAMETER_COUNT]; PARAMETER_COUNT]> {
+    ensure!(
+        curvature.is_finite() && curvature > 0.0,
+        "BFGS update curvature must be finite and positive, got {}",
+        curvature
+    );
+    let inverse_curvature = 1.0 / curvature;
+    ensure!(
+        inverse_curvature.is_finite(),
+        "BFGS inverse update curvature is non-finite for curvature {}",
+        curvature
+    );
     let mut left = identity_matrix();
     let mut right = identity_matrix();
     for row in 0..PARAMETER_COUNT {
@@ -1014,7 +1024,7 @@ fn bfgs_inverse_hessian_update(
             updated[row][column] += inverse_curvature * step[row] * step[column];
         }
     }
-    updated
+    Ok(updated)
 }
 
 fn identity_matrix() -> [[f64; PARAMETER_COUNT]; PARAMETER_COUNT] {

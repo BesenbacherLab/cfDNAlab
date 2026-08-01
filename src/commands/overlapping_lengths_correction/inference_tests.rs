@@ -79,8 +79,6 @@ fn package_with_lookup(
         require_proper_pair: false,
         reads_are_fragments: false,
         ignore_gap: false,
-        gc_mode: "none".to_string(),
-        scaling_enabled: false,
         blacklist_used: false,
     })
 }

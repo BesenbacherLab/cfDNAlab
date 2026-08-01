@@ -3,32 +3,33 @@
 use std::{path::PathBuf, sync::Arc, time::Instant};
 
 use anyhow::{Context, Result, bail, ensure};
-use fxhash::FxHashMap;
 use rayon::prelude::*;
+use rust_htslib::bam::{Read, Record};
 use tracing::{info, warn};
 
 use crate::{
     command_run::{CommandRunResult, RunOptions, status_info},
     commands::{
         cli_common::{
-            ensure_output_dir, load_blacklist_map, load_scaling_map,
-            resolve_chromosomes_and_contigs, validate_output_prefix,
+            ensure_output_dir, load_blacklist_map, resolve_chromosomes_and_contigs,
+            validate_output_prefix,
         },
         counters::FCoverageCounters,
-        gc_bias::correct::load_gc_corrector,
         run_statistics::{
-            DEFAULT_FRAGMENT_STATISTICS_LABELS, FragmentRunStatisticsOptions, GCStatisticsSummary,
+            DEFAULT_FRAGMENT_STATISTICS_LABELS, FragmentRunStatisticsOptions,
             TILE_DOUBLE_COUNT_NOTE, print_fragment_run_statistics,
         },
     },
     shared::{
+        bam::create_chromosome_reader,
+        fragment::segment_fragment::FragmentWithSegments,
+        fragment_iterators::fragments_with_segments_from_bam,
         interval::Interval,
         io::{FinalOutputFiles, dot_join},
         progress::ProgressFactory,
-        reference::{ReferenceReader, stage_reference_2bit},
-        scale_genome::{ScalingBin, scaling_gc_mode_for_run},
+        read::{default_include_read_paired_end, default_include_read_unpaired},
         thread_pool::init_global_pool,
-        tiled_run::{RunTempDirs, build_tiles},
+        tiled_run::{RunTempDirs, Tile, build_tiles},
     },
 };
 
@@ -40,7 +41,7 @@ use super::{
     model::fit_overlapping_length_model,
     package::OverlappingLengthsCorrectionPackage,
     reducer::{OverlappingLengthStatistics, build_length_bin_edges},
-    tiling::{OverlappingLengthTileResult, process_tile},
+    tiling::add_segment_to_core_deltas,
 };
 
 const COMMAND_TARGET: &str = "overlap-length-model";
@@ -48,7 +49,7 @@ const COMMAND_TARGET: &str = "overlap-length-model";
 /// Result of fitting an average overlapping fragment length normalization model.
 #[derive(Debug)]
 pub struct OverlappingLengthsCorrectionRunResult {
-    /// Fragment and GC-filtering counters accumulated across all tiles.
+    /// Fragment-filtering counters accumulated across all tiles.
     pub counters: FCoverageCounters,
     /// Final path of the written Zarr model package.
     pub package_path: PathBuf,
@@ -106,22 +107,7 @@ pub fn run_overlapping_lengths_correction(
                 notes: &[TILE_DOUBLE_COUNT_NOTE],
                 labels: DEFAULT_FRAGMENT_STATISTICS_LABELS,
                 blacklist_excluded_fragments: None,
-                gc: (config.gc.gc_file.is_some() || config.gc.gc_tag.is_some()).then_some(
-                    GCStatisticsSummary {
-                        failed_fragments: result.counters.gc_failed_fragments,
-                        neutralize_invalid_gc: config.gc.neutralize_invalid_gc,
-                        missing_tags: config
-                            .gc
-                            .gc_tag
-                            .is_some()
-                            .then_some(result.counters.gc_missing_tags),
-                        out_of_range_tags: config
-                            .gc
-                            .gc_tag
-                            .is_some()
-                            .then_some(result.counters.gc_out_of_range_tags),
-                    },
-                ),
+                gc: None,
             },
             [format!(
                 "Eligible covered bases used for fitting: {}",
@@ -143,7 +129,6 @@ fn execute(
     // Validate scientific combinations before creating output or temporary directories
     let fragment_lengths = config.fragment_lengths();
     fragment_lengths.validate()?;
-    config.gc.validate(config.ref_2bit.as_deref())?;
     ensure!(
         config.length_bin_size > 0,
         "--length-bin-size must be positive"
@@ -188,48 +173,16 @@ fn execute(
     .context("create overlapping fragment length model temporary directories")?;
     let mut final_outputs = FinalOutputFiles::new(run_temp_dirs.final_output_dir())?;
 
-    // Each Rayon worker opens its own reader against this local staged reference
-    let staged_reference = if config.gc.gc_file.is_some() {
-        status_info!(options, target: COMMAND_TARGET, "Copying reference 2bit to the temporary directory");
-        Some(stage_reference_2bit(
-            config
-                .ref_2bit
-                .as_deref()
-                .context("--ref-2bit is required with --gc-file")?,
-            run_temp_dirs.work_dir(),
-        )?)
-    } else {
-        None
-    };
     if config.blacklist.is_some() {
         status_info!(options, target: COMMAND_TARGET, "Loading blacklists");
     }
-    // Blacklists and scaling tracks are chromosome-indexed once and borrowed by tile workers
+    // Blacklists are chromosome-indexed once and borrowed by tile workers
     let blacklist_map = load_blacklist_map(
         config.blacklist.as_ref(),
         1,
         0,
         &chromosomes,
         config.ioc.n_threads > 1,
-    )?;
-    if config.scale_genome.scaling_factors.is_some() {
-        status_info!(options, target: COMMAND_TARGET, "Loading scaling factors");
-    }
-    let scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
-        &config.scale_genome,
-        &chromosomes,
-        &contigs,
-        scaling_gc_mode_for_run(config.gc.gc_file.is_some(), config.gc.gc_tag.is_some()),
-        Some(config.ignore_gap),
-    )?;
-    if config.gc.gc_file.is_some() {
-        status_info!(options, target: COMMAND_TARGET, "Loading GC correction matrix");
-    }
-    let gc_corrector = load_gc_corrector(
-        config.gc.gc_file.as_ref(),
-        staged_reference.as_ref(),
-        config.min_fragment_length,
-        config.max_fragment_length,
     )?;
     // Bin edges are constructed once so every tile produces merge-compatible vectors
     let length_bin_edges = build_length_bin_edges(
@@ -249,43 +202,18 @@ fn execute(
     let progress = ProgressFactory::with_enabled(options.show_progress);
     let progress_bar = Arc::new(progress.default_bar(tiles.len() as u64));
     status_info!(options, target: COMMAND_TARGET, "Collecting overlapping fragment length statistics per tile");
-    let gc_tag = config.gc.gc_tag.as_deref();
     // A maximum-fragment-length halo supplies complete fragments at every tile-core boundary
     let tile_results = tiles
         .par_iter()
-        .map_init(
-            || staged_reference.as_deref().map(ReferenceReader::open),
-            |reference_reader_result, tile| -> Result<OverlappingLengthTileResult> {
-                let reference_reader = match reference_reader_result {
-                    Some(reader_result) => Some(
-                        reader_result
-                            .as_mut()
-                            .map_err(|error| anyhow::anyhow!("{error:#}"))?,
-                    ),
-                    None => None,
-                };
-                let blacklist = blacklist_map
-                    .get(&tile.chr)
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[] as &[Interval<u64>]);
-                let scaling = scaling_map
-                    .get(&tile.chr)
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[] as &[ScalingBin]);
-                let result = process_tile(
-                    config,
-                    tile,
-                    length_bin_edges.clone(),
-                    blacklist,
-                    scaling,
-                    gc_corrector.clone(),
-                    gc_tag,
-                    reference_reader,
-                )?;
-                progress_bar.inc(1);
-                Ok(result)
-            },
-        )
+        .map(|tile| -> Result<OverlappingLengthTileResult> {
+            let blacklist = blacklist_map
+                .get(&tile.chr)
+                .map(Vec::as_slice)
+                .unwrap_or(&[] as &[Interval<u64>]);
+            let result = process_tile(config, tile, length_bin_edges.clone(), blacklist)?;
+            progress_bar.inc(1);
+            Ok(result)
+        })
         .collect::<Result<Vec<_>>>()?;
     progress_bar.finish_with_message("| Finished collecting statistics");
 
@@ -314,5 +242,170 @@ fn execute(
         package_path: final_path.clone(),
         eligible_covered_bases: statistics.eligible_covered_bases,
         output_files: vec![final_path],
+    })
+}
+
+/// Additive output from a single tile core.
+///
+/// The dense difference arrays are consumed inside `process_tile`. Only these compact statistics
+/// and command counters are returned to the parallel reducer.
+#[derive(Debug)]
+struct OverlappingLengthTileResult {
+    /// Length-bin signal sums, base counts, and raw-depth frequencies for the tile core.
+    statistics: OverlappingLengthStatistics,
+    /// Read and fragment counters observed while processing the tile.
+    counters: FCoverageCounters,
+}
+
+/// Collect sufficient statistics for one tile core.
+///
+/// Raw depth and fragment-length sums are discrete prefix sums. The observed coverage signal is
+/// the same raw depth, matching LIONHEART's independent model-fitting path.
+///
+/// The BAM fetch includes a maximum-fragment-length halo, while all returned statistics are
+/// restricted to the non-overlapping tile core. This makes tile results additive and prevents
+/// boundary bases from being counted twice.
+///
+/// Parameters
+/// ----------
+/// - `config`:
+///   Fragment filters used by model fitting.
+/// - `tile`:
+///   Core and halo coordinates for this worker.
+/// - `length_bin_edges`:
+///   Shared bin edges copied into the tile-local reducer.
+/// - `blacklist`:
+///   Sorted chromosome intervals excluded from the returned statistics.
+///
+/// Returns
+/// -------
+/// - `OverlappingLengthTileResult`:
+///   Compact sufficient statistics and counters for this tile core.
+fn process_tile(
+    config: &OverlappingLengthsCorrectionConfig,
+    tile: &Tile,
+    length_bin_edges: Vec<f64>,
+    blacklist: &[Interval<u64>],
+) -> Result<OverlappingLengthTileResult> {
+    // Open a reader per worker because rust-htslib readers are stateful and not shared across tiles
+    let (mut reader, bam_tid, _chromosome_length) =
+        create_chromosome_reader(&config.ioc.bam, &tile.chr)?;
+    tile.ensure_matches_bam_tid(bam_tid)?;
+    let (fetch_start, fetch_end) = tile.fetch.as_tuple();
+    reader
+        .fetch((tile.tid, i64::from(fetch_start), i64::from(fetch_end)))
+        .with_context(|| {
+            format!(
+                "fetch {} {}-{} for overlapping fragment length fitting",
+                tile.chr, fetch_start, fetch_end
+            )
+        })?;
+
+    // Integer arrays preserve exact raw depth and fragment length sums during model training
+    let core_length = tile.core.len() as usize;
+    let mut raw_depth_delta = vec![0_i64; core_length + 1];
+    let mut fragment_length_sum_delta = vec![0_i64; core_length + 1];
+    let lengths = config.fragment_lengths();
+    let unpaired = config.unpaired.reads_are_fragments;
+    // Apply the same read-level filtering vocabulary as fcoverage
+    let include_read: Box<dyn Fn(&Record) -> bool + Send + Sync> = if unpaired {
+        let minimum_mapq = config.min_mapq;
+        Box::new(move |record| default_include_read_unpaired(record, minimum_mapq))
+    } else {
+        let minimum_mapq = config.min_mapq;
+        let require_proper_pair = config.require_proper_pair;
+        Box::new(move |record| {
+            default_include_read_paired_end(record, require_proper_pair, minimum_mapq)
+        })
+    };
+    let mut fragments = fragments_with_segments_from_bam(
+        reader
+            .records()
+            .map(|result| result.map_err(anyhow::Error::from)),
+        move |record| include_read(record),
+        1,
+        !config.ignore_gap,
+        None,
+        move |fragment: &FragmentWithSegments| lengths.contains(fragment.len()),
+        unpaired,
+    )
+    .with_local_counters();
+    let mut counters = FCoverageCounters::default();
+
+    // Add complete directional fragments to core-clipped difference arrays
+    for fragment_result in fragments.by_ref() {
+        let fragment = fragment_result.context("reading fragment")?;
+        if fragment.start() < fetch_start || fragment.end() > fetch_end {
+            continue;
+        }
+        // Every counted segment receives the original full directional fragment length
+        let fragment_length = i64::from(fragment.len());
+        let mut counted = false;
+        if let Some(segments) = &fragment.segments {
+            for segment in segments {
+                counted |= add_segment_to_core_deltas(
+                    *segment,
+                    tile.core,
+                    fragment_length,
+                    &mut raw_depth_delta,
+                    &mut fragment_length_sum_delta,
+                );
+            }
+        } else {
+            counted = add_segment_to_core_deltas(
+                fragment.interval,
+                tile.core,
+                fragment_length,
+                &mut raw_depth_delta,
+                &mut fragment_length_sum_delta,
+            );
+        }
+        if counted {
+            counters.base.counted_fragments += 1;
+        }
+    }
+    counters.add_from_snapshot(fragments.counters_snapshot());
+
+    // Resolve both difference arrays in a single left-to-right scan of the tile core
+    let mut statistics = OverlappingLengthStatistics::new(length_bin_edges)?;
+    let mut raw_depth = 0_i64;
+    let mut fragment_length_sum = 0_i64;
+    let mut blacklist_index =
+        blacklist.partition_point(|interval| interval.end() <= u64::from(tile.core_start()));
+    for local_position in 0..core_length {
+        raw_depth += raw_depth_delta[local_position];
+        fragment_length_sum += fragment_length_sum_delta[local_position];
+        ensure!(
+            raw_depth >= 0 && fragment_length_sum >= 0,
+            "overlapping fragment length prefix sum became negative"
+        );
+        // Uncovered positions have no defined average overlapping fragment length
+        if raw_depth == 0 {
+            continue;
+        }
+        let genomic_position = u64::from(tile.core_start()) + local_position as u64;
+        while blacklist_index < blacklist.len()
+            && blacklist[blacklist_index].end() <= genomic_position
+        {
+            blacklist_index += 1;
+        }
+        // Mask before binning so blacklisted bases affect neither fit nor depth frequencies
+        if blacklist_index < blacklist.len()
+            && blacklist[blacklist_index].start() <= genomic_position
+            && genomic_position < blacklist[blacklist_index].end()
+        {
+            continue;
+        }
+        let average_length = fragment_length_sum as f64 / raw_depth as f64;
+        statistics.add_position(
+            average_length,
+            raw_depth as f64,
+            u32::try_from(raw_depth).context("raw positional fragment depth exceeds u32")?,
+        )?;
+    }
+
+    Ok(OverlappingLengthTileResult {
+        statistics,
+        counters,
     })
 }

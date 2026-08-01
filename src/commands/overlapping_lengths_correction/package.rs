@@ -22,7 +22,7 @@ use super::{
 };
 
 /// Current on-disk schema version for overlapping fragment length model packages.
-pub const OVERLAPPING_LENGTHS_CORRECTION_SCHEMA_VERSION: u32 = 1;
+pub const OVERLAPPING_LENGTHS_CORRECTION_SCHEMA_VERSION: u32 = 2;
 /// Schema identifier stored in the Zarr root attributes.
 const OVERLAPPING_LENGTHS_CORRECTION_SCHEMA: &str = "overlap_length_model";
 
@@ -92,10 +92,6 @@ pub struct OverlappingLengthsCorrectionPackage {
     pub reads_are_fragments: bool,
     /// Whether reference gaps were excluded from covered positions.
     pub ignore_gap: bool,
-    /// Observed-signal GC mode: `none`, `correction_file`, or `bam_tag`.
-    pub gc_mode: String,
-    /// Whether positional genomic scaling affected the fitted observed signal.
-    pub scaling_enabled: bool,
     /// Whether blacklisted positions were excluded during fitting.
     pub blacklist_used: bool,
 }
@@ -116,14 +112,6 @@ impl OverlappingLengthsCorrectionPackage {
             .iter()
             .map(|(&depth, &frequency)| (depth, frequency))
             .unzip();
-        let gc_mode = if config.gc.gc_file.is_some() {
-            "correction_file"
-        } else if config.gc.gc_tag.is_some() {
-            "bam_tag"
-        } else {
-            "none"
-        }
-        .to_string();
         Self {
             version: OVERLAPPING_LENGTHS_CORRECTION_SCHEMA_VERSION,
             length_bin_edges: statistics.length_bin_edges.clone(),
@@ -149,8 +137,6 @@ impl OverlappingLengthsCorrectionPackage {
             require_proper_pair: config.require_proper_pair,
             reads_are_fragments: config.unpaired.reads_are_fragments,
             ignore_gap: config.ignore_gap,
-            gc_mode,
-            scaling_enabled: config.scale_genome.scaling_factors.is_some(),
             blacklist_used: config.blacklist.is_some(),
         }
     }
@@ -182,8 +168,6 @@ impl OverlappingLengthsCorrectionPackage {
                 "require_proper_pair": self.require_proper_pair,
                 "reads_are_fragments": self.reads_are_fragments,
                 "ignore_gap": self.ignore_gap,
-                "gc_mode": self.gc_mode,
-                "scaling_enabled": self.scaling_enabled,
                 "blacklist_used": self.blacklist_used,
                 "initial_fit": fit_json(self.initial_fit),
                 "refit": fit_json(self.refit),
@@ -290,8 +274,6 @@ impl OverlappingLengthsCorrectionPackage {
             require_proper_pair: bool_attribute(&root, "require_proper_pair")?,
             reads_are_fragments: bool_attribute(&root, "reads_are_fragments")?,
             ignore_gap: bool_attribute(&root, "ignore_gap")?,
-            gc_mode: string_attribute(&root, "gc_mode")?,
-            scaling_enabled: bool_attribute(&root, "scaling_enabled")?,
             blacklist_used: bool_attribute(&root, "blacklist_used")?,
         };
         package.validate()?;
@@ -417,14 +399,6 @@ fn u32_attribute(root: &Value, key: &str) -> Result<u32> {
 fn bool_attribute(root: &Value, key: &str) -> Result<bool> {
     root.get(key)
         .and_then(Value::as_bool)
-        .with_context(|| format!("missing {key} metadata"))
-}
-
-/// Read a required string root attribute into owned storage.
-fn string_attribute(root: &Value, key: &str) -> Result<String> {
-    root.get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
         .with_context(|| format!("missing {key} metadata"))
 }
 

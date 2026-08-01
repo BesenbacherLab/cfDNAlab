@@ -304,8 +304,9 @@ pub struct FCoverageConfig {
     /// Average overlapping fragment length normalization model `[path]`
     ///
     /// Precompute with `cfdna overlap-length-model`. The model was developed primarily for 100-220
-    /// bp fragments and may not work for other ranges. Use the same blacklist, GC correction, and
-    /// genomic scaling choices for model fitting and application.
+    /// bp fragments and may not work for other ranges. The model is fitted from uncorrected
+    /// coverage and can be combined independently with fragment-level GC correction and genomic
+    /// scaling in this command.
     #[cfg(feature = "cmd_overlapping_lengths_correction")]
     #[cfg_attr(
         feature = "cli",

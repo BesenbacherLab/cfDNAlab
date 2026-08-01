@@ -13,8 +13,8 @@ ports LIONHEART's two skewed Student-t mixture fits and is considered validated 
   `read.pos` to `read.reference_end`.
 - Raw integer fragment depth drives the initial mixture's `1 / sqrt(depth)` spread. The refit and
   target use raw depth after bin-wise noise and skew division, `coverage > 0.5` filtering, and
-  ties-to-even rounding, matching LIONHEART. GC weighting and genomic scaling affect only the
-  observed coverage signal.
+  ties-to-even rounding, matching LIONHEART. Raw integer fragment depth is also the observed
+  coverage signal. Model fitting does not accept GC correction or genomic scaling.
 - A covered segment receives the fragment's full length from `forward.pos` to
   `reverse.reference_end` in the length-sum prefix, including when deletions, skipped regions, or
   the inter-mate gap are omitted from coverage.
@@ -26,6 +26,12 @@ ports LIONHEART's two skewed Student-t mixture fits and is considered validated 
 
 ## Model and application
 
+- The optimizer follows LIONHEART's SciPy 1.13 BFGS defaults, numerical forward differences, and
+  Wolfe-1 then Wolfe-2 search order. cfDNAlab uses a stricter error contract for invalid optimizer
+  states. It reports an error when Wolfe-2 exhausts its iterations without establishing the
+  strong-Wolfe conditions, or when the BFGS update curvature is non-finite or non-positive. SciPy
+  instead makes its last Wolfe-2 trial available and substitutes an inverse curvature of `1000`
+  when curvature is exactly zero.
 - The package stores all fitted curves, division factors, combined multiplicative weights, fit
   parameters, and compatibility settings. It stores no input paths or file fingerprints.
 - `fcoverage` calculates a positional lookup weight from raw overlap depth and length sum, then
@@ -33,7 +39,9 @@ ports LIONHEART's two skewed Student-t mixture fits and is considered validated 
 - The model scalar multiplies existing length-normalization and GC fragment weights.
   Genomic scaling remains positional after coverage accumulation.
 - An `ignore_gap` mismatch is an error. Fragment-filter, pairing, trimming, and length-normalization
-  differences warn and continue. GC/scaling/blacklist identity is documented rather than checked.
+  differences warn and continue. Blacklist identity is documented rather than checked. GC
+  correction and genomic scaling are independent application settings and are not model
+  compatibility properties.
 - Model-enabled fcoverage tiles use a two-maximum-fragment-length halo. Inference tracks the
   largest returned fragment start and finalizes positions before that start minus the maximum
   fragment length. It retains bounded 64 KiB prefix chunks until all queued fragments that

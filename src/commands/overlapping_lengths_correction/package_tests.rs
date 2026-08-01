@@ -2,7 +2,7 @@ use super::*;
 
 fn package() -> OverlappingLengthsCorrectionPackage {
     OverlappingLengthsCorrectionPackage {
-        version: 1,
+        version: OVERLAPPING_LENGTHS_CORRECTION_SCHEMA_VERSION,
         length_bin_edges: vec![100.0, 103.0, 106.0],
         length_bin_midpoints: vec![101.5, 104.5],
         length_bin_base_counts: vec![1, 1],
@@ -34,8 +34,6 @@ fn package() -> OverlappingLengthsCorrectionPackage {
         require_proper_pair: false,
         reads_are_fragments: false,
         ignore_gap: false,
-        gc_mode: "none".to_string(),
-        scaling_enabled: false,
         blacklist_used: false,
     }
 }
@@ -63,4 +61,34 @@ fn zarr_round_trip_preserves_package_values() -> Result<()> {
         package
     );
     Ok(())
+}
+
+#[test]
+fn zarr_metadata_has_no_gc_or_scaling_training_mode() -> Result<()> {
+    let package = package();
+    let temporary_directory = tempfile::tempdir()?;
+    let package_path = temporary_directory.path().join("model.zarr");
+
+    package.write_zarr(&package_path)?;
+    let root = read_zarr_root_attributes(&package_path)?;
+
+    assert!(root.get("gc_mode").is_none());
+    assert!(root.get("scaling_enabled").is_none());
+    Ok(())
+}
+
+#[test]
+fn package_rejects_previous_conditional_training_schema() {
+    let mut package = package();
+    package.version = OVERLAPPING_LENGTHS_CORRECTION_SCHEMA_VERSION - 1;
+
+    let error = package
+        .validate()
+        .expect_err("the former conditional-training package schema must not load");
+
+    assert!(
+        error
+            .to_string()
+            .contains("unsupported overlapping fragment length model schema version")
+    );
 }

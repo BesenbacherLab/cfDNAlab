@@ -214,6 +214,58 @@ fn bfgs_propagates_objective_error_from_line_search_probe() {
 }
 
 #[test]
+fn wolfe_two_wrapper_reports_an_unverified_step_after_iteration_exhaustion() {
+    let point = [0.0, 0.0, 0.0];
+    let direction = [1.0, 0.0, 0.0];
+    let gradient = [-2.0, 0.0, 0.0];
+    let evaluate = |candidate: [f64; PARAMETER_COUNT]| Ok((candidate[0] - 1.0).powi(2));
+    let settings = WolfeTwoSettings {
+        maximum_iterations: 0,
+        ..BFGS_WOLFE_TWO_SETTINGS
+    };
+
+    let error = line_search_wolfe2(
+        point,
+        direction,
+        gradient,
+        evaluate(point).expect("quadratic objective should be finite"),
+        None,
+        settings,
+        &evaluate,
+    )
+    .expect_err("an unverified Wolfe-2 step must not be accepted by BFGS");
+
+    assert!(
+        error
+            .to_string()
+            .contains("without establishing the strong-Wolfe conditions")
+    );
+}
+
+#[test]
+fn inverse_hessian_update_rejects_invalid_curvature() {
+    let inverse_hessian = identity_matrix();
+    let step = [1.0, 0.0, 0.0];
+    let gradient_change = [1.0, 0.0, 0.0];
+
+    for curvature in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        let error = bfgs_inverse_hessian_update(
+            inverse_hessian,
+            step,
+            gradient_change,
+            curvature,
+        )
+        .expect_err("invalid BFGS curvature must not update the inverse Hessian");
+
+        assert!(
+            error
+                .to_string()
+                .contains("update curvature must be finite and positive")
+        );
+    }
+}
+
+#[test]
 fn forward_difference_uses_scaled_representable_step_for_large_parameter() {
     let point = [1.0e20, 0.0, 0.0];
     let evaluate = |candidate: [f64; PARAMETER_COUNT]| Ok(candidate[0] / 1.0e20);
