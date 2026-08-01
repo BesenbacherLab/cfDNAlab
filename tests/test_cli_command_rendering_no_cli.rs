@@ -194,7 +194,7 @@ fn fcoverage_renders_without_cli_feature() {
     assert_contains_pair(&args, "--temp-dir", TEMP_DIR);
 }
 
-#[cfg(feature = "cmd_overlapping_lengths_correction")]
+#[cfg(feature = "cmd_overlap_length_model")]
 #[test]
 fn overlap_length_model_renders_without_cli_feature() {
     use cfdnalab::run_like_cli::overlapping_lengths_correction::OverlappingLengthsCorrectionConfig;

@@ -1,4 +1,5 @@
 use super::*;
+use anyhow::Result;
 
 #[test]
 fn segment_adds_raw_depth_and_full_fragment_length() -> Result<()> {

@@ -203,7 +203,7 @@ mod tests_fragment_span_trim {
                     .collect()
             }),
             gc_tag: Default::default(),
-            #[cfg(feature = "cmd_overlapping_lengths_correction")]
+            #[cfg(feature = "cmd_overlap_length_model")]
             overlap_length_weight: 1.0,
         }
     }

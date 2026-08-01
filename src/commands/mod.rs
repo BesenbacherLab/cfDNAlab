@@ -22,7 +22,7 @@ pub(crate) mod gc_bias;
 pub(crate) mod lengths;
 #[cfg(feature = "cmd_midpoints")]
 pub(crate) mod midpoints;
-#[cfg(feature = "cmd_overlapping_lengths_correction")]
+#[cfg(feature = "cmd_overlap_length_model")]
 pub(crate) mod overlapping_lengths_correction;
 #[cfg(feature = "cmd_prepare_windows")]
 pub(crate) mod prepare_windows;

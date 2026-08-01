@@ -211,7 +211,7 @@ pub mod run_like_cli {
         pub use crate::commands::midpoints::smoothing::MidpointSmoothing;
     }
 
-    #[cfg(feature = "cmd_overlapping_lengths_correction")]
+    #[cfg(feature = "cmd_overlap_length_model")]
     pub mod overlapping_lengths_correction {
         pub use crate::commands::overlapping_lengths_correction::config::OverlappingLengthsCorrectionConfig;
         pub use crate::commands::overlapping_lengths_correction::overlapping_lengths_correction::{

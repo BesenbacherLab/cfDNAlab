@@ -215,7 +215,7 @@ fn fcoverage_config_renders_trim_rule() {
     assert_contains_pair(&args, "--trim-to", "exactly=165");
 }
 
-#[cfg(feature = "cmd_overlapping_lengths_correction")]
+#[cfg(feature = "cmd_overlap_length_model")]
 #[test]
 fn overlap_length_model_config_renders_cli_call() {
     use cfdnalab::run_like_cli::overlapping_lengths_correction::OverlappingLengthsCorrectionConfig;

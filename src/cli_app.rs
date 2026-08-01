@@ -22,7 +22,7 @@ use crate::commands::gc_bias::config::GCConfig;
 use crate::commands::lengths::config::LengthsConfig;
 #[cfg(feature = "cmd_midpoints")]
 use crate::commands::midpoints::config::MidpointsConfig;
-#[cfg(feature = "cmd_overlapping_lengths_correction")]
+#[cfg(feature = "cmd_overlap_length_model")]
 use crate::commands::overlapping_lengths_correction::config::OverlappingLengthsCorrectionConfig;
 #[cfg(feature = "cmd_prepare_windows")]
 use crate::commands::prepare_windows::config::PrepareConfig;
@@ -79,7 +79,7 @@ pub(crate) enum Cmd {
     WPSPeaks(WPSPeaksConfig),
     #[cfg(feature = "cmd_midpoints")]
     Midpoints(MidpointsConfig),
-    #[cfg(feature = "cmd_overlapping_lengths_correction")]
+    #[cfg(feature = "cmd_overlap_length_model")]
     OverlapLengthModel(OverlappingLengthsCorrectionConfig),
     #[cfg(feature = "cmd_fragment_kmers")]
     FragmentKmers(FragmentKmersConfig),
@@ -170,7 +170,7 @@ pub(crate) fn run_cli() {
             config.logging.log.clone(),
             Some(config.ioc.output_dir.as_path()),
         ),
-        #[cfg(feature = "cmd_overlapping_lengths_correction")]
+        #[cfg(feature = "cmd_overlap_length_model")]
         Cmd::OverlapLengthModel(config) => (
             config.logging.log.clone(),
             Some(config.ioc.output_dir.as_path()),
@@ -272,7 +272,7 @@ pub(crate) fn run_cli() {
             crate::commands::midpoints::midpoints::run_midpoints(&config, run_options)
                 .map(|_| ())
         }
-        #[cfg(feature = "cmd_overlapping_lengths_correction")]
+        #[cfg(feature = "cmd_overlap_length_model")]
         Cmd::OverlapLengthModel(config) => {
             crate::commands::overlapping_lengths_correction::overlapping_lengths_correction::run_overlapping_lengths_correction(
                 &config,

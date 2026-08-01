@@ -15,9 +15,9 @@ use crate::commands::fcoverage::writers::{
 };
 use crate::commands::gc_bias::correct::{GCCorrector, load_gc_corrector};
 use crate::commands::gc_bias::counting::build_gc_prefixes;
-#[cfg(feature = "cmd_overlapping_lengths_correction")]
+#[cfg(feature = "cmd_overlap_length_model")]
 use crate::commands::overlapping_lengths_correction::inference::OverlappingLengthWeightIterator;
-#[cfg(feature = "cmd_overlapping_lengths_correction")]
+#[cfg(feature = "cmd_overlap_length_model")]
 use crate::commands::overlapping_lengths_correction::package::OverlappingLengthsCorrectionPackage;
 use crate::shared::coverage::{Coverage, clamp_finite_coverage_below_to_zero};
 use crate::shared::formatters::round_to;
@@ -216,7 +216,7 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
 
     // Load and validate the optional lookup before any tile work begins
-    #[cfg(feature = "cmd_overlapping_lengths_correction")]
+    #[cfg(feature = "cmd_overlap_length_model")]
     let overlap_length_package = opt
         .overlap_length_file
         .as_ref()
@@ -224,7 +224,7 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
         .transpose()
         .context("load average overlapping fragment length normalization model")?
         .map(Arc::new);
-    #[cfg(feature = "cmd_overlapping_lengths_correction")]
+    #[cfg(feature = "cmd_overlap_length_model")]
     if let Some(package) = &overlap_length_package {
         validate_overlap_length_compatibility(opt, package)?;
     }
@@ -696,7 +696,7 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
                     blacklist_chr,
                     scaling_chr,
                     gc_corrector.clone(), // Quite small memory footprint
-                    #[cfg(feature = "cmd_overlapping_lengths_correction")]
+                    #[cfg(feature = "cmd_overlap_length_model")]
                     overlap_length_package.clone(),
                     gc_tag,
                     reference_reader,
@@ -957,7 +957,7 @@ fn process_tile(
     blacklist_chr: &[Interval<u64>],
     scaling_chr: &[ScalingBin],
     gc_corrector_opt: Option<GCCorrector>,
-    #[cfg(feature = "cmd_overlapping_lengths_correction")] overlap_length_package: Option<
+    #[cfg(feature = "cmd_overlap_length_model")] overlap_length_package: Option<
         Arc<OverlappingLengthsCorrectionPackage>,
     >,
     gc_tag: Option<&str>,
@@ -1043,15 +1043,15 @@ fn process_tile(
         unpaired,
     )
     .with_local_counters();
-    #[cfg(feature = "cmd_overlapping_lengths_correction")]
+    #[cfg(feature = "cmd_overlap_length_model")]
     // The package minimum participates in the exact-zero cleanup floor derived below
     let minimum_overlap_length_weight = overlap_length_package
         .as_deref()
         .map(minimum_package_overlap_length_weight)
         .unwrap_or(1.0);
-    #[cfg(not(feature = "cmd_overlapping_lengths_correction"))]
+    #[cfg(not(feature = "cmd_overlap_length_model"))]
     let minimum_overlap_length_weight = 1.0;
-    #[cfg(feature = "cmd_overlapping_lengths_correction")]
+    #[cfg(feature = "cmd_overlap_length_model")]
     // The adaptor preserves normal fragment order while assigning the overlap-derived scalar
     let mut iter = OverlappingLengthWeightIterator::new(
         fragment_iter,
@@ -1063,7 +1063,7 @@ fn process_tile(
         )?,
         blacklist_chr,
     );
-    #[cfg(not(feature = "cmd_overlapping_lengths_correction"))]
+    #[cfg(not(feature = "cmd_overlap_length_model"))]
     let mut iter = fragment_iter;
 
     // Iterate fragments and add coverage
@@ -1224,9 +1224,9 @@ fn process_tile(
     }
 
     // Get counters from iterator
-    #[cfg(feature = "cmd_overlapping_lengths_correction")]
+    #[cfg(feature = "cmd_overlap_length_model")]
     counter.add_from_snapshot(iter.into_inner().counters_snapshot());
-    #[cfg(not(feature = "cmd_overlapping_lengths_correction"))]
+    #[cfg(not(feature = "cmd_overlap_length_model"))]
     counter.add_from_snapshot(iter.counters_snapshot());
 
     let temp_output = match mode {
@@ -1975,11 +1975,11 @@ fn minimum_positive_gc_weight(opt: &FCoverageConfig) -> f64 {
 /// The feature-disabled branch keeps ordinary fcoverage independent of the experimental command
 /// and its optional numerical dependency.
 fn uses_overlap_length_correction(opt: &FCoverageConfig) -> bool {
-    #[cfg(feature = "cmd_overlapping_lengths_correction")]
+    #[cfg(feature = "cmd_overlap_length_model")]
     {
         opt.overlap_length_file.is_some()
     }
-    #[cfg(not(feature = "cmd_overlapping_lengths_correction"))]
+    #[cfg(not(feature = "cmd_overlap_length_model"))]
     {
         let _ = opt;
         false
@@ -2005,18 +2005,18 @@ fn fcoverage_tile_halo(opt: &FCoverageConfig) -> Result<u32> {
 #[inline]
 /// Read the overlap scalar or return neutral weight when the feature is disabled.
 fn fragment_overlap_length_weight(fragment: &FragmentWithSegments) -> f64 {
-    #[cfg(feature = "cmd_overlapping_lengths_correction")]
+    #[cfg(feature = "cmd_overlap_length_model")]
     {
         fragment.overlap_length_weight
     }
-    #[cfg(not(feature = "cmd_overlapping_lengths_correction"))]
+    #[cfg(not(feature = "cmd_overlap_length_model"))]
     {
         let _ = fragment;
         1.0
     }
 }
 
-#[cfg(feature = "cmd_overlapping_lengths_correction")]
+#[cfg(feature = "cmd_overlap_length_model")]
 /// Return the smallest scalar that a package lookup can assign.
 ///
 /// A fragment receives a base-pair-weighted mean of lookup values, so its scalar cannot be below
@@ -2062,7 +2062,7 @@ fn internal_residual_coverage_floor(
     (minimum_positive_pre_scaling_support(opt, minimum_overlap_length_weight) / 2.0) as f32
 }
 
-#[cfg(feature = "cmd_overlapping_lengths_correction")]
+#[cfg(feature = "cmd_overlap_length_model")]
 /// Check whether fcoverage settings are scientifically compatible with a fitted package.
 ///
 /// `ignore_gap` is the only hard error because it changes which positions define overlap context.

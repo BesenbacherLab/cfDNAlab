@@ -307,7 +307,7 @@ pub struct FCoverageConfig {
     /// bp fragments and may not work for other ranges. The model is fitted from uncorrected
     /// coverage and can be combined independently with fragment-level GC correction and genomic
     /// scaling in this command.
-    #[cfg(feature = "cmd_overlapping_lengths_correction")]
+    #[cfg(feature = "cmd_overlap_length_model")]
     #[cfg_attr(
         feature = "cli",
         clap(long, value_parser, help_heading = "Normalization")
@@ -379,7 +379,7 @@ impl FCoverageConfig {
             windows: DistributionWindowsArgs::default(),
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),
-            #[cfg(feature = "cmd_overlapping_lengths_correction")]
+            #[cfg(feature = "cmd_overlap_length_model")]
             overlap_length_file: None,
             fragment_lengths: FragmentLengthArgs::default(),
             min_mapq: 30,
@@ -438,7 +438,7 @@ impl FCoverageConfig {
         self.scale_genome = scale_genome;
     }
 
-    #[cfg(feature = "cmd_overlapping_lengths_correction")]
+    #[cfg(feature = "cmd_overlap_length_model")]
     pub fn set_overlap_length_file(&mut self, overlap_length_file: Option<PathBuf>) {
         self.overlap_length_file = overlap_length_file;
     }
@@ -517,7 +517,7 @@ impl ToCliCommand for FCoverageConfig {
         push_distribution_windows(&mut args, &self.windows);
         push_chromosomes(&mut args, &self.chromosomes);
         push_scale_genome(&mut args, &self.scale_genome);
-        #[cfg(feature = "cmd_overlapping_lengths_correction")]
+        #[cfg(feature = "cmd_overlap_length_model")]
         push_optional_path(
             &mut args,
             "--overlap-length-file",
