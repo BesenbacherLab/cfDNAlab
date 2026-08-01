@@ -14,6 +14,7 @@ include = [
     "/CHANGELOG.md",
     "/LICENSE",
     "/README.md",
+    "/THIRD_PARTY_LICENSES.md",
     "/cfdnalab_logo_750x500_150dpi.png",
     "/cfdnalab_command_overview.png",
     "/src/**/*.rs",
@@ -59,6 +60,7 @@ cmd_lengths = ["cmd_gc_bias"]
 cmd_prepare_windows = []
 cmd_ref_kmers = []
 cmd_midpoints = ["cmd_gc_bias"]
+cmd_overlapping_lengths_correction = ["cmd_fcoverage", "dep:statrs"]
 cmd_transitions = ["cmd_fragment_kmers"]
 cmd_visualize_positions = ["cmd_fragment_kmers"]
 cmd_visualize_positions_tests = ["cmd_visualize_positions"]
@@ -90,6 +92,7 @@ rust-htslib = { version = "1.0.0", default-features = false, features = ["curl",
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0"
 smallvec = "1.15.1"
+statrs = { version = "0.19.0", optional = true }
 staged-sg-filter = { version = "0.2.3", optional = true }
 strum = "0.27.2"
 strum_macros = "0.27.2"

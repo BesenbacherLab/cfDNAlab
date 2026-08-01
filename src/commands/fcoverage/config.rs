@@ -301,6 +301,18 @@ pub struct FCoverageConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub scale_genome: ScaleGenomeArgs,
 
+    /// Average overlapping fragment length normalization model `[path]`
+    ///
+    /// Precompute with `cfdna overlap-length-model`. The model was developed primarily for 100-220
+    /// bp fragments and may not work for other ranges. Use the same blacklist, GC correction, and
+    /// genomic scaling choices for model fitting and application.
+    #[cfg(feature = "cmd_overlapping_lengths_correction")]
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, value_parser, help_heading = "Normalization")
+    )]
+    pub overlap_length_file: Option<PathBuf>,
+
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub fragment_lengths: FragmentLengthArgs,
 
@@ -366,6 +378,8 @@ impl FCoverageConfig {
             windows: DistributionWindowsArgs::default(),
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),
+            #[cfg(feature = "cmd_overlapping_lengths_correction")]
+            overlap_length_file: None,
             fragment_lengths: FragmentLengthArgs::default(),
             min_mapq: 30,
             require_proper_pair: false,
@@ -421,6 +435,11 @@ impl FCoverageConfig {
 
     pub fn set_scale_genome(&mut self, scale_genome: ScaleGenomeArgs) {
         self.scale_genome = scale_genome;
+    }
+
+    #[cfg(feature = "cmd_overlapping_lengths_correction")]
+    pub fn set_overlap_length_file(&mut self, overlap_length_file: Option<PathBuf>) {
+        self.overlap_length_file = overlap_length_file;
     }
 
     pub fn set_keep_zero_runs(&mut self, keep: bool) {
@@ -497,6 +516,12 @@ impl ToCliCommand for FCoverageConfig {
         push_distribution_windows(&mut args, &self.windows);
         push_chromosomes(&mut args, &self.chromosomes);
         push_scale_genome(&mut args, &self.scale_genome);
+        #[cfg(feature = "cmd_overlapping_lengths_correction")]
+        push_optional_path(
+            &mut args,
+            "--overlap-length-file",
+            self.overlap_length_file.as_deref(),
+        );
         push_fragment_lengths(&mut args, &self.fragment_lengths);
         push_value(&mut args, "--min-mapq", self.min_mapq);
         push_bool(&mut args, "--require-proper-pair", self.require_proper_pair);

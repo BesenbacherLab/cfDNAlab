@@ -19,6 +19,17 @@
 - Invalid or missing GC weights skip fragments by default. `--neutralize-invalid-gc` keeps those fragments with weight 1.0 and records failures in run statistics.
 - Scaling factors are multiplicative per-base weights loaded from TSV files with full contiguous chromosome coverage. Known GC-mode mismatches fail during load.
 - Coverage-weight TSVs can carry `ignore_gap` metadata. A mismatch with the current `fcoverage --ignore-gap` setting warns, not fails.
+- `--overlap-length-file` adds the sample's average overlapping fragment length normalization
+  scalar before coverage accumulation. This scalar multiplies the length-normalization and GC
+  weights.
+- Model application uses the original counted segments before `--trim-to`, excludes blacklisted
+  bases from the scalar average, and requires matching `ignore_gap` semantics.
+- Model application adds sparse start/end events to a FIFO queue, finalizes each genomic position
+  at most once, and stores finalized normalization-weight prefixes in rolling 64 KiB chunks. It
+  returns weighted fragments in exactly the normal fragment iterator's order.
+- Other filter, pairing, trimming, and length-normalization differences from the package warn and
+  continue. Source file identity, chromosome membership, GC/scaling files, and blacklists are not
+  validated against the package.
 
 ## Length Normalization
 

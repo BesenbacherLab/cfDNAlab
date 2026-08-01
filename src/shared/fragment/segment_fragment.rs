@@ -19,6 +19,13 @@ pub(crate) struct FragmentWithSegments {
     pub(crate) interval: Interval<u32>, // forward.start .. reverse.end
     pub(crate) segments: Option<SmallVec<[Interval<u32>; 12]>>,
     pub(crate) gc_tag: GCTagValue,
+    /// Scalar correction based on average overlapping fragment lengths across the counted span.
+    ///
+    /// The rolling fcoverage adaptor replaces the neutral value after the fragment's positional
+    /// context is final. Trimming does not change this value because it is intentionally calculated
+    /// from the original counted fragment span.
+    #[cfg(feature = "cmd_overlapping_lengths_correction")]
+    pub(crate) overlap_length_weight: f64,
 }
 
 impl FragmentWithSegments {
@@ -46,6 +53,8 @@ impl From<Fragment> for FragmentWithSegments {
             interval: f.interval,
             segments: None,
             gc_tag: GCTagValue::default(),
+            #[cfg(feature = "cmd_overlapping_lengths_correction")]
+            overlap_length_weight: 1.0,
         }
     }
 }
@@ -240,6 +249,8 @@ pub(crate) fn collect_fragment_with_segments(
             interval: fragment_interval,
             segments: None,
             gc_tag,
+            #[cfg(feature = "cmd_overlapping_lengths_correction")]
+            overlap_length_weight: 1.0,
         });
     }
 
@@ -305,6 +316,8 @@ pub(crate) fn collect_fragment_with_segments(
             interval: fragment_interval,
             segments: None,
             gc_tag,
+            #[cfg(feature = "cmd_overlapping_lengths_correction")]
+            overlap_length_weight: 1.0,
         });
     }
 
@@ -329,6 +342,8 @@ pub(crate) fn collect_fragment_with_segments(
         interval: fragment_interval,
         segments,
         gc_tag,
+        #[cfg(feature = "cmd_overlapping_lengths_correction")]
+        overlap_length_weight: 1.0,
     })
 }
 
@@ -349,6 +364,8 @@ pub(crate) fn collect_fragment_with_segments_from_single_read(
             interval: fragment_interval,
             segments: None,
             gc_tag: read.gc_tag,
+            #[cfg(feature = "cmd_overlapping_lengths_correction")]
+            overlap_length_weight: 1.0,
         });
     }
 
@@ -374,6 +391,8 @@ pub(crate) fn collect_fragment_with_segments_from_single_read(
             interval: fragment_interval,
             segments: None,
             gc_tag: read.gc_tag,
+            #[cfg(feature = "cmd_overlapping_lengths_correction")]
+            overlap_length_weight: 1.0,
         });
     }
 
@@ -396,6 +415,8 @@ pub(crate) fn collect_fragment_with_segments_from_single_read(
         interval: fragment_interval,
         segments,
         gc_tag: read.gc_tag,
+        #[cfg(feature = "cmd_overlapping_lengths_correction")]
+        overlap_length_weight: 1.0,
     })
 }
 

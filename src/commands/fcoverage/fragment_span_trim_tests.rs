@@ -19,6 +19,8 @@ fn fragment(
                 .collect()
         }),
         gc_tag: Default::default(),
+        #[cfg(feature = "cmd_overlapping_lengths_correction")]
+        overlap_length_weight: 1.0,
     }
 }
 

@@ -215,6 +215,19 @@ fn fcoverage_config_renders_trim_rule() {
     assert_contains_pair(&args, "--trim-to", "exactly=165");
 }
 
+#[cfg(feature = "cmd_overlapping_lengths_correction")]
+#[test]
+fn overlap_length_model_config_renders_cli_call() {
+    use cfdnalab::run_like_cli::overlapping_lengths_correction::OverlappingLengthsCorrectionConfig;
+
+    let mut config = OverlappingLengthsCorrectionConfig::new(ioc(), chromosomes());
+    config.output_prefix = "sample".to_string();
+
+    let args = assert_cli_accepts(config.to_cli_args().unwrap(), "overlap-length-model");
+    assert_contains_pair(&args, "--min-mapq", "30");
+    assert_contains_pair(&args, "--tile-size", "5000000");
+}
+
 #[cfg(feature = "cmd_gc_bias")]
 #[test]
 fn gc_bias_config_renders_cli_call() {
