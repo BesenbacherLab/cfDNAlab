@@ -56,12 +56,15 @@ pub(crate) struct OverlappingLengthModel {
 ///
 /// 1. Normalize observed per-bin signal to mean one and fit the raw mixture.
 /// 2. Smooth the fitted curve and derive the noise and linear-skew division factors.
-/// 3. Normalize the stored per-bin means by those two factors and fit the mixture again.
+/// 3. Normalize the stored per-bin means by those two factors, rebuild LIONHEART's corrected and
+///    rounded depth sample, and fit the mixture again.
 /// 4. Construct a symmetric target at 166 bp using the refitted scale.
 /// 5. Derive the mean-shift division factor and multiply the reciprocal factors.
 ///
-/// Both mixture fits use the same raw integer depth-frequency table. Corrected or scaled coverage
-/// never controls the `1 / sqrt(depth)` sampling spread.
+/// The initial mixture uses raw integer depth frequencies. The refit and target use depths after
+/// bin-wise noise and skew division, the same `> 0.5` selection, and ties-to-even rounding used by
+/// LIONHEART. Joint length-bin/depth sufficient statistics make that reconstruction possible
+/// without retaining positions or rereading the BAM.
 pub(crate) fn fit_overlapping_length_model(
     statistics: &OverlappingLengthStatistics,
 ) -> Result<OverlappingLengthModel> {
@@ -76,8 +79,7 @@ pub(crate) fn fit_overlapping_length_model(
         .map(|pair| (pair[0] + pair[1]) / 2.0)
         .collect::<Vec<_>>();
     let observed_bias = scale_to_mean_one(&statistics.observed_means()?)?;
-    let start_mean =
-        mean_midpoint_of_bins_above_half_normalized_signal(&bin_midpoints, &observed_bias)?;
+    let start_mean = statistics.mean_average_overlapping_length()?;
     let lower_bound = *statistics
         .length_bin_edges
         .first()
@@ -134,25 +136,27 @@ pub(crate) fn fit_overlapping_length_model(
         "skew correction",
     )?)?;
 
-    // Refit the intermediate curve with the stronger skewness penalty
-    let refit_start_mean =
-        mean_midpoint_of_bins_above_half_normalized_signal(&bin_midpoints, &first_corrected_bias)?;
+    // Reconstruct the corrected positional sample used by LIONHEART's second fit. A position's
+    // raw depth and average-length bin determine both its corrected depth and whether it survives
+    // the refit's `coverage > 0.5` selection.
+    let refit_sampling =
+        refit_sampling_statistics(statistics, &noise_division_factors, &skew_division_factors)?;
     let refit = optimize_mixture(
         &bin_midpoints,
-        &statistics.raw_depth_frequencies,
+        &refit_sampling.depth_frequencies,
         &first_corrected_bias,
         lower_bound,
         upper_bound,
         MixtureFitParameters {
             scale_multiplier: 8.0,
             skewness: -0.5,
-            mean_fragment_length: refit_start_mean,
+            mean_fragment_length: refit_sampling.mean_average_length,
         },
         REFIT_SKEWNESS_PENALTY,
     )?;
     let second_fitted_bias = smooth_with_five_point_gaussian_kernel(&mixture_distribution(
         &bin_midpoints,
-        &statistics.raw_depth_frequencies,
+        &refit_sampling.depth_frequencies,
         lower_bound,
         upper_bound,
         refit,
@@ -160,7 +164,7 @@ pub(crate) fn fit_overlapping_length_model(
     // Keep the refitted scale but force the target to mean 166 and zero skew
     let target_bias = scale_to_mean_one(&mixture_distribution(
         &bin_midpoints,
-        &statistics.raw_depth_frequencies,
+        &refit_sampling.depth_frequencies,
         lower_bound,
         upper_bound,
         MixtureFitParameters {
@@ -211,10 +215,11 @@ pub(crate) fn fit_overlapping_length_model(
 
 /// Build the depth-weighted skewed Student-t mixture for a parameter set.
 ///
-/// Each positive raw depth contributes a component whose spread is
-/// `BASE_SIGMA / sqrt(depth) * scale_multiplier`. Component weights are the genome-wide raw-depth
-/// frequencies. The clipping scale follows LIONHEART and is calculated once with the unscaled
-/// base sigma times the fitted multiplier.
+/// Each positive supplied depth contributes a component whose spread is
+/// `BASE_SIGMA / sqrt(depth) * scale_multiplier`. Component weights are the supplied genome-wide
+/// depth frequencies: raw for the initial fit and corrected/rounded for the refit and target. The
+/// clipping scale follows LIONHEART and is calculated once with the unscaled base sigma times the
+/// fitted multiplier.
 fn mixture_distribution(
     bin_midpoints: &[f64],
     raw_depth_frequencies: &BTreeMap<u32, u64>,
@@ -250,7 +255,7 @@ fn mixture_distribution(
         "Student-t clipping scale is invalid"
     );
 
-    // Accumulate only observed positive depths, weighted by their genomic frequencies
+    // Accumulate only represented positive depths, weighted by their genomic frequencies
     let mut composite = vec![0.0; bin_midpoints.len()];
     for (&depth, &count) in raw_depth_frequencies {
         if depth == 0 || count == 0 {
@@ -378,35 +383,92 @@ fn divide_elementwise(numerator: &[f64], denominator: &[f64], label: &str) -> Re
         .collect()
 }
 
-/// Choose an initial fitted location from bins above half the curve's arithmetic mean.
+/// Reconstructed positional sample used by LIONHEART's second fit and target distribution.
+struct RefitSamplingStatistics {
+    /// Frequencies of corrected, selected, and ties-to-even-rounded depths.
+    depth_frequencies: BTreeMap<u32, u64>,
+    /// Mean actual average overlapping fragment length among selected positions.
+    mean_average_length: f64,
+}
+
+/// Rebuild LIONHEART's refit depth sample from additive joint sufficient statistics.
 ///
-/// The curve has already been scaled so its arithmetic mean is one. This helper therefore averages
-/// the fragment length bin midpoints whose relative signal is greater than 0.5. The numerical
-/// threshold originates in LIONHEART, but LIONHEART applies it to per-position coverage before
-/// averaging the corresponding per-position overlap lengths. Applying it to the retained binned
-/// curve is the single-sweep approximation specified for this implementation. It is not
-/// mathematically identical to LIONHEART's positional initialization.
-fn mean_midpoint_of_bins_above_half_normalized_signal(
-    midpoints: &[f64],
-    normalized_signal: &[f64],
-) -> Result<f64> {
+/// LIONHEART first divides positional raw coverage by the noise and skew factors selected by that
+/// position's average-length bin. It retains corrected coverage above `0.5`, rounds the retained
+/// values with NumPy's ties-to-even rule, and uses their frequencies for both the refit mixture and
+/// the symmetric target. The refit location starts at the mean actual average length of those same
+/// selected positions.
+fn refit_sampling_statistics(
+    statistics: &OverlappingLengthStatistics,
+    noise_division_factors: &[f64],
+    skew_division_factors: &[f64],
+) -> Result<RefitSamplingStatistics> {
     ensure!(
-        midpoints.len() == normalized_signal.len(),
-        "fragment length midpoints and normalized signal have different lengths"
+        statistics.length_bin_depth_statistics.len() == noise_division_factors.len()
+            && noise_division_factors.len() == skew_division_factors.len(),
+        "refit correction factors and length-bin depth statistics have different lengths"
     );
-    let mut midpoint_sum = 0.0;
-    let mut selected_bin_count = 0_usize;
-    for (&midpoint, &value) in midpoints.iter().zip(normalized_signal) {
-        if value > 0.5 {
-            midpoint_sum += midpoint;
-            selected_bin_count += 1;
+
+    let mut depth_frequencies = BTreeMap::new();
+    let mut average_length_sum = 0.0;
+    let mut selected_position_count = 0_u64;
+    for (bin_index, depth_statistics) in statistics.length_bin_depth_statistics.iter().enumerate() {
+        let noise_division_factor = noise_division_factors[bin_index];
+        let skew_division_factor = skew_division_factors[bin_index];
+        ensure!(
+            noise_division_factor.is_finite()
+                && noise_division_factor > 0.0
+                && skew_division_factor.is_finite()
+                && skew_division_factor > 0.0,
+            "refit noise or skew division factor is invalid in bin {}",
+            bin_index
+        );
+        let combined_division_factor = noise_division_factor * skew_division_factor;
+        ensure!(
+            combined_division_factor.is_finite() && combined_division_factor > 0.0,
+            "combined refit noise and skew division factor is invalid in bin {}",
+            bin_index
+        );
+        for (&raw_depth, cell) in depth_statistics {
+            ensure!(
+                raw_depth > 0
+                    && cell.position_count > 0
+                    && cell.average_length_sum.is_finite()
+                    && cell.average_length_sum > 0.0,
+                "joint refit statistics are invalid for depth {} in bin {}",
+                raw_depth,
+                bin_index
+            );
+            // Noise and skew correction are multiplicative, so apply their product once while
+            // retaining the fitted factors' full f64 precision.
+            let corrected_depth = f64::from(raw_depth) / combined_division_factor;
+            if corrected_depth <= 0.5 {
+                continue;
+            }
+            let rounded_depth = corrected_depth.round_ties_even();
+            ensure!(
+                rounded_depth >= 1.0 && rounded_depth <= f64::from(u32::MAX),
+                "corrected refit depth is outside the supported positive u32 range in bin {}",
+                bin_index
+            );
+            *depth_frequencies.entry(rounded_depth as u32).or_default() += cell.position_count;
+            average_length_sum += cell.average_length_sum;
+            selected_position_count += cell.position_count;
         }
     }
     ensure!(
-        selected_bin_count > 0,
-        "no overlapping fragment length bins have normalized coverage above 0.5"
+        selected_position_count > 0,
+        "no covered positions remain after refit coverage correction and filtering"
     );
-    Ok(midpoint_sum / selected_bin_count as f64)
+    let mean_average_length = average_length_sum / selected_position_count as f64;
+    ensure!(
+        mean_average_length.is_finite() && mean_average_length > 0.0,
+        "refit average overlapping fragment length is invalid"
+    );
+    Ok(RefitSamplingStatistics {
+        depth_frequencies,
+        mean_average_length,
+    })
 }
 
 /// Calculate mean squared curve error plus the fit-specific quadratic skewness penalty.

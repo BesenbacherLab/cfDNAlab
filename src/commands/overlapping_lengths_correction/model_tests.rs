@@ -1,5 +1,7 @@
 use super::*;
-use crate::commands::overlapping_lengths_correction::reducer::build_length_bin_edges;
+use crate::commands::overlapping_lengths_correction::reducer::{
+    LengthBinDepthStatistics, build_length_bin_edges,
+};
 
 fn assert_curves_close(left: &[f64], right: &[f64], tolerance: f64) {
     assert_eq!(left.len(), right.len());
@@ -113,6 +115,41 @@ fn synthetic_statistics() -> Result<(OverlappingLengthStatistics, MixtureFitPara
         .iter()
         .map(|value| value * bases_per_bin as f64)
         .collect::<Vec<_>>();
+    let length_bin_depth_statistics = bin_midpoints
+        .iter()
+        .map(|&midpoint| {
+            BTreeMap::from([
+                (
+                    1,
+                    LengthBinDepthStatistics {
+                        position_count: 10_000,
+                        average_length_sum: midpoint * 10_000.0,
+                    },
+                ),
+                (
+                    2,
+                    LengthBinDepthStatistics {
+                        position_count: 30_000,
+                        average_length_sum: midpoint * 30_000.0,
+                    },
+                ),
+                (
+                    3,
+                    LengthBinDepthStatistics {
+                        position_count: 40_000,
+                        average_length_sum: midpoint * 40_000.0,
+                    },
+                ),
+                (
+                    4,
+                    LengthBinDepthStatistics {
+                        position_count: 20_000,
+                        average_length_sum: midpoint * 20_000.0,
+                    },
+                ),
+            ])
+        })
+        .collect();
 
     Ok((
         OverlappingLengthStatistics {
@@ -120,6 +157,7 @@ fn synthetic_statistics() -> Result<(OverlappingLengthStatistics, MixtureFitPara
             length_bin_base_counts: vec![bases_per_bin; bin_midpoints.len()],
             observed_signal_sums,
             raw_depth_frequencies,
+            length_bin_depth_statistics,
             eligible_covered_bases,
         },
         generating_parameters,
@@ -229,18 +267,35 @@ fn three_division_factors_combine_multiplicatively() {
 }
 
 #[test]
-fn initial_location_uses_only_bins_strictly_above_half_normalized_signal() -> Result<()> {
-    // The first bin equals the threshold and is excluded. The remaining midpoint mean is
-    // (104.5 + 107.5) / 2 = 106.0 bp
-    let bin_midpoints = [101.5, 104.5, 107.5];
-    let normalized_signal = [0.5, 0.75, 1.75];
+fn initial_location_is_weighted_by_covered_positions_and_uses_actual_average_lengths() -> Result<()>
+{
+    let mut statistics = OverlappingLengthStatistics::new(vec![100.0, 110.0, 120.0])?;
+    statistics.add_position(101.25, 0.1, 1)?;
+    statistics.add_position(114.0, 10.0, 2)?;
+    statistics.add_position(115.5, 10.0, 2)?;
 
-    let initial_location = mean_midpoint_of_bins_above_half_normalized_signal(
-        &bin_midpoints,
-        &normalized_signal,
-    )?;
+    // Signal magnitude and the unweighted midpoint mean are irrelevant. LIONHEART initializes
+    // from positional average lengths with positive raw coverage: (101.25 + 114 + 115.5) / 3.
+    let initial_location = statistics.mean_average_overlapping_length()?;
 
-    assert!((initial_location - 106.0).abs() < 1.0e-12);
+    assert!((initial_location - 110.25).abs() < 1.0e-12);
+    Ok(())
+}
+
+#[test]
+fn refit_sampling_filters_corrected_depth_and_uses_numpy_ties_to_even_rounding() -> Result<()> {
+    let mut statistics = OverlappingLengthStatistics::new(vec![100.0, 110.0, 120.0])?;
+    statistics.add_position(101.0, 1.0, 1)?;
+    statistics.add_position(102.0, 1.0, 1)?;
+    statistics.add_position(103.0, 3.0, 3)?;
+    statistics.add_position(117.0, 5.0, 5)?;
+
+    let sampling = refit_sampling_statistics(&statistics, &[2.0, 2.0], &[1.0, 1.0])?;
+
+    // Depth 1 becomes exactly 0.5 and is excluded. NumPy rounds both 1.5 and 2.5 to the even 2;
+    // ordinary half-away-from-zero rounding would incorrectly place the latter at depth 3.
+    assert_eq!(sampling.depth_frequencies, BTreeMap::from([(2, 2)]));
+    assert!((sampling.mean_average_length - 110.0).abs() < 1.0e-12);
     Ok(())
 }
 
@@ -297,9 +352,14 @@ fn complete_two_fit_model_recovers_synthetic_mixture_and_target_correction() -> 
         &expected_noise_division_factors,
         1.0e-12,
     );
+    let refit_sampling = refit_sampling_statistics(
+        &statistics,
+        &model.noise_division_factors,
+        &model.skew_division_factors,
+    )?;
     let second_fitted_unsmoothed = mixture_distribution(
         &model.bin_midpoints,
-        &statistics.raw_depth_frequencies,
+        &refit_sampling.depth_frequencies,
         100.0,
         220.0,
         model.refit,
@@ -309,14 +369,10 @@ fn complete_two_fit_model_recovers_synthetic_mixture_and_target_correction() -> 
         &smooth_with_five_point_gaussian_kernel(&second_fitted_unsmoothed),
         1.0e-12,
     );
-    let refit_start_mean = mean_midpoint_of_bins_above_half_normalized_signal(
-        &model.bin_midpoints,
-        &model.first_corrected_bias,
-    )?;
     let refit_start_objective = objective(
-        [8.0, -0.5, refit_start_mean],
+        [8.0, -0.5, refit_sampling.mean_average_length],
         &model.bin_midpoints,
-        &statistics.raw_depth_frequencies,
+        &refit_sampling.depth_frequencies,
         &model.first_corrected_bias,
         100.0,
         220.0,
@@ -329,7 +385,7 @@ fn complete_two_fit_model_recovers_synthetic_mixture_and_target_correction() -> 
             model.refit.mean_fragment_length,
         ],
         &model.bin_midpoints,
-        &statistics.raw_depth_frequencies,
+        &refit_sampling.depth_frequencies,
         &model.first_corrected_bias,
         100.0,
         220.0,

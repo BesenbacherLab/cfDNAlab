@@ -11,15 +11,18 @@ ports LIONHEART's two skewed Student-t mixture fits and is considered validated 
 
 - A paired fragment length is `forward.pos` to `reverse.reference_end`. An unpaired fragment is
   `read.pos` to `read.reference_end`.
-- Raw integer fragment depth drives the `1 / sqrt(depth)` spread in both mixture fits. GC weighting
-  and genomic scaling affect only the observed coverage signal.
+- Raw integer fragment depth drives the initial mixture's `1 / sqrt(depth)` spread. The refit and
+  target use raw depth after bin-wise noise and skew division, `coverage > 0.5` filtering, and
+  ties-to-even rounding, matching LIONHEART. GC weighting and genomic scaling affect only the
+  observed coverage signal.
 - A covered segment receives the fragment's full length from `forward.pos` to
   `reverse.reference_end` in the length-sum prefix, including when deletions, skipped regions, or
   the inter-mate gap are omitted from coverage.
 - Blacklisted positions do not contribute to model sufficient statistics or an inferred fragment
   weight.
-- Tiles aggregate only their cores. Per-bin signal sums/counts and the raw-depth histogram are
-  sufficient for both fits, so training performs one BAM sweep.
+- Tiles aggregate only their cores. Per-bin signal sums/counts, the raw-depth histogram, and joint
+  length-bin/depth counts with actual average-length sums are sufficient for both fits, so training
+  performs one BAM sweep.
 
 ## Model and application
 

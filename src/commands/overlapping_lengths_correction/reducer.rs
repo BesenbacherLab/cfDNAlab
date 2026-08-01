@@ -4,11 +4,25 @@ use std::collections::BTreeMap;
 
 use anyhow::{Result, ensure};
 
+/// Additive statistics for positions sharing a length bin and raw fragment depth.
+///
+/// Noise and skew correction factors are constant within a length bin. Retaining the raw depth
+/// alongside the number and summed actual average lengths is therefore sufficient to reconstruct
+/// LIONHEART's corrected-depth filtering, rounding, and refit initialization without retaining
+/// individual positions.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct LengthBinDepthStatistics {
+    /// Number of eligible covered positions in this cell.
+    pub(crate) position_count: u64,
+    /// Sum of the actual positional average overlapping fragment lengths in this cell.
+    pub(crate) average_length_sum: f64,
+}
+
 /// Additive sufficient statistics collected by a tile.
 ///
 /// Keeping only these values is what allows both model fits to run after a single tiled sweep of
-/// the BAM. The second fit divides each bin's signal sum by the first two bin-wise correction
-/// factors. It does not need positional coverage again.
+/// the BAM. Joint length-bin/depth cells reconstruct the second fit's corrected-depth frequencies
+/// and location initialization after applying the first two bin-wise correction factors.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct OverlappingLengthStatistics {
     /// Monotonically increasing bin boundaries, including configured minimum and maximum.
@@ -19,6 +33,8 @@ pub(crate) struct OverlappingLengthStatistics {
     pub(crate) observed_signal_sums: Vec<f64>,
     /// Frequency of each positive raw integer fragment depth over eligible bases.
     pub(crate) raw_depth_frequencies: BTreeMap<u32, u64>,
+    /// Per-length-bin raw-depth cells used to reconstruct the corrected refit sample.
+    pub(crate) length_bin_depth_statistics: Vec<BTreeMap<u32, LengthBinDepthStatistics>>,
     /// Total covered, non-blacklisted positions accumulated across all bins.
     pub(crate) eligible_covered_bases: u64,
 }
@@ -40,6 +56,7 @@ impl OverlappingLengthStatistics {
             length_bin_base_counts: vec![0; num_bins],
             observed_signal_sums: vec![0.0; num_bins],
             raw_depth_frequencies: BTreeMap::new(),
+            length_bin_depth_statistics: vec![BTreeMap::new(); num_bins],
             eligible_covered_bases: 0,
         })
     }
@@ -72,6 +89,11 @@ impl OverlappingLengthStatistics {
         self.length_bin_base_counts[bin_index] += 1;
         self.observed_signal_sums[bin_index] += observed_signal;
         *self.raw_depth_frequencies.entry(raw_depth).or_default() += 1;
+        let depth_statistics = self.length_bin_depth_statistics[bin_index]
+            .entry(raw_depth)
+            .or_default();
+        depth_statistics.position_count += 1;
+        depth_statistics.average_length_sum += average_overlapping_length;
         self.eligible_covered_bases += 1;
         Ok(())
     }
@@ -84,6 +106,10 @@ impl OverlappingLengthStatistics {
         ensure!(
             self.length_bin_edges == other.length_bin_edges,
             "cannot merge overlapping-length statistics with different bins"
+        );
+        ensure!(
+            self.length_bin_depth_statistics.len() == other.length_bin_depth_statistics.len(),
+            "cannot merge overlapping-length depth statistics with different bin counts"
         );
         for (target, value) in self
             .length_bin_base_counts
@@ -102,8 +128,55 @@ impl OverlappingLengthStatistics {
         for (depth, count) in other.raw_depth_frequencies {
             *self.raw_depth_frequencies.entry(depth).or_default() += count;
         }
+        for (target_bin, other_bin) in self
+            .length_bin_depth_statistics
+            .iter_mut()
+            .zip(other.length_bin_depth_statistics)
+        {
+            for (depth, other_statistics) in other_bin {
+                let target_statistics = target_bin.entry(depth).or_default();
+                target_statistics.position_count += other_statistics.position_count;
+                target_statistics.average_length_sum += other_statistics.average_length_sum;
+            }
+        }
         self.eligible_covered_bases += other.eligible_covered_bases;
         Ok(())
+    }
+
+    /// Calculate the covered-position mean of actual average overlapping fragment lengths.
+    ///
+    /// LIONHEART initializes its first fit from positional insert-size values with positive raw
+    /// coverage. Every position retained here has positive raw depth, so this is the exact 1 bp
+    /// analogue of that initialization before LIONHEART's outlier removal.
+    pub(crate) fn mean_average_overlapping_length(&self) -> Result<f64> {
+        ensure!(
+            self.eligible_covered_bases > 0,
+            "cannot calculate an average overlapping fragment length without covered bases"
+        );
+        let represented_position_count = self
+            .length_bin_depth_statistics
+            .iter()
+            .flat_map(BTreeMap::values)
+            .map(|statistics| statistics.position_count)
+            .sum::<u64>();
+        ensure!(
+            represented_position_count == self.eligible_covered_bases,
+            "joint length-bin/depth statistics represent {} positions but expected {}",
+            represented_position_count,
+            self.eligible_covered_bases
+        );
+        let average_length_sum = self
+            .length_bin_depth_statistics
+            .iter()
+            .flat_map(BTreeMap::values)
+            .map(|statistics| statistics.average_length_sum)
+            .sum::<f64>();
+        let mean = average_length_sum / self.eligible_covered_bases as f64;
+        ensure!(
+            mean.is_finite() && mean > 0.0,
+            "covered-position average overlapping fragment length is invalid"
+        );
+        Ok(mean)
     }
 
     /// Calculate the observed mean signal in every configured length bin.

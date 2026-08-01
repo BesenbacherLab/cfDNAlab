@@ -25,6 +25,19 @@ fn merging_tiles_is_additive() -> Result<()> {
     assert_eq!(left.observed_signal_sums[0], 6.0);
     assert_eq!(left.raw_depth_frequencies.get(&1), Some(&1));
     assert_eq!(left.raw_depth_frequencies.get(&2), Some(&1));
+    assert_eq!(
+        left.length_bin_depth_statistics[0]
+            .get(&1)
+            .map(|statistics| statistics.position_count),
+        Some(1)
+    );
+    assert_eq!(
+        left.length_bin_depth_statistics[0]
+            .get(&2)
+            .map(|statistics| statistics.position_count),
+        Some(1)
+    );
+    assert!((left.mean_average_overlapping_length()? - 101.0).abs() < 1.0e-12);
     Ok(())
 }
 
