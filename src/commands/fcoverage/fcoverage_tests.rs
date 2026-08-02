@@ -5,7 +5,6 @@ mod tests_clean_up_and_normalization {
     };
     use crate::commands::cli_common::{ApplyGCArgs, ChromosomeArgs, IOCArgs};
     use crate::commands::fcoverage::config::{FCoverageConfig, LengthNormalizationMode};
-    use crate::shared::coverage::clamp_finite_coverage_below_to_zero;
     use crate::shared::gc_tag::MIN_REASONABLE_GC_WEIGHT;
     use std::path::PathBuf;
 
@@ -26,26 +25,8 @@ mod tests_clean_up_and_normalization {
 
         assert_eq!(minimum_positive_base_weight(&opt), 1.0);
         assert_eq!(minimum_positive_gc_weight(&opt), 1.0);
-        assert_eq!(minimum_positive_pre_scaling_support(&opt, 1.0), 1.0);
-        assert_eq!(internal_residual_coverage_floor(&opt, 1.0), 0.5);
-    }
-
-    #[test]
-    fn overlap_correction_scales_the_floor_by_its_minimum_real_weight() {
-        let opt = base_config();
-
-        assert_eq!(minimum_positive_pre_scaling_support(&opt, 0.2), 0.2);
-        assert_eq!(internal_residual_coverage_floor(&opt, 0.2), 0.1);
-
-        // Values below 0.1 cannot be a real contribution when the smallest lookup weight is 0.2
-        // The floor therefore removes cancellation residue while retaining a single fragment's
-        // smallest valid contribution
-        let mut coverage = [0.099_f32, 0.2_f32];
-        clamp_finite_coverage_below_to_zero(
-            &mut coverage,
-            internal_residual_coverage_floor(&opt, 0.2),
-        );
-        assert_eq!(coverage, [0.0, 0.2]);
+        assert_eq!(minimum_positive_pre_scaling_support(&opt), 1.0);
+        assert_eq!(internal_residual_coverage_floor(&opt), 0.5);
     }
 
     #[test]
@@ -59,11 +40,11 @@ mod tests_clean_up_and_normalization {
         assert_eq!(minimum_positive_base_weight(&opt), expected_min_support);
         assert_eq!(minimum_positive_gc_weight(&opt), 1.0);
         assert_eq!(
-            minimum_positive_pre_scaling_support(&opt, 1.0),
+            minimum_positive_pre_scaling_support(&opt),
             expected_min_support
         );
         assert_eq!(
-            internal_residual_coverage_floor(&opt, 1.0),
+            internal_residual_coverage_floor(&opt),
             (expected_min_support / 2.0) as f32
         );
     }
@@ -83,11 +64,11 @@ mod tests_clean_up_and_normalization {
             MIN_REASONABLE_GC_WEIGHT as f64
         );
         assert_eq!(
-            minimum_positive_pre_scaling_support(&opt, 1.0),
+            minimum_positive_pre_scaling_support(&opt),
             MIN_REASONABLE_GC_WEIGHT as f64
         );
         assert_eq!(
-            internal_residual_coverage_floor(&opt, 1.0),
+            internal_residual_coverage_floor(&opt),
             MIN_REASONABLE_GC_WEIGHT / 2.0
         );
     }
@@ -107,11 +88,11 @@ mod tests_clean_up_and_normalization {
             MIN_REASONABLE_GC_WEIGHT as f64
         );
         assert_eq!(
-            minimum_positive_pre_scaling_support(&opt, 1.0),
+            minimum_positive_pre_scaling_support(&opt),
             MIN_REASONABLE_GC_WEIGHT as f64
         );
         assert_eq!(
-            internal_residual_coverage_floor(&opt, 1.0),
+            internal_residual_coverage_floor(&opt),
             MIN_REASONABLE_GC_WEIGHT / 2.0
         );
     }
@@ -131,9 +112,9 @@ mod tests_clean_up_and_normalization {
         // longest allowed fragment. GC correction can lower that further down to the minimum
         // supported positive GC weight.
         let min_support = (1.0 / 1000.0) * MIN_REASONABLE_GC_WEIGHT as f64;
-        let cleanup_floor = internal_residual_coverage_floor(&opt, 1.0);
+        let cleanup_floor = internal_residual_coverage_floor(&opt);
 
-        assert_eq!(minimum_positive_pre_scaling_support(&opt, 1.0), min_support);
+        assert_eq!(minimum_positive_pre_scaling_support(&opt), min_support);
         assert_eq!(cleanup_floor, (min_support / 2.0) as f32);
         assert!(cleanup_floor > 0.0);
         assert!((cleanup_floor as f64) < min_support);
@@ -161,12 +142,12 @@ mod tests_clean_up_and_normalization {
             minimum_positive_base_weight(&restore_mean)
         );
         assert_eq!(
-            minimum_positive_pre_scaling_support(&unit_mass, 1.0),
-            minimum_positive_pre_scaling_support(&restore_mean, 1.0)
+            minimum_positive_pre_scaling_support(&unit_mass),
+            minimum_positive_pre_scaling_support(&restore_mean)
         );
         assert_eq!(
-            internal_residual_coverage_floor(&unit_mass, 1.0),
-            internal_residual_coverage_floor(&restore_mean, 1.0)
+            internal_residual_coverage_floor(&unit_mass),
+            internal_residual_coverage_floor(&restore_mean)
         );
     }
 }
@@ -203,8 +184,6 @@ mod tests_fragment_span_trim {
                     .collect()
             }),
             gc_tag: Default::default(),
-            #[cfg(feature = "cmd_overlap_length_model")]
-            overlap_length_weight: 1.0,
         }
     }
 

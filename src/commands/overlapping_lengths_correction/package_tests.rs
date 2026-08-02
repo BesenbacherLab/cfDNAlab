@@ -42,8 +42,13 @@ fn package() -> OverlappingLengthsCorrectionPackage {
 fn lookup_clips_values_to_extreme_bins() -> Result<()> {
     let package = package();
 
-    assert_eq!(package.weight_for_average_length(80.0)?, 0.5);
-    assert_eq!(package.weight_for_average_length(220.0)?, 2.0);
+    let below_range_bin = package.bin_index_for_average_length(80.0)?;
+    let above_range_bin = package.bin_index_for_average_length(220.0)?;
+
+    assert_eq!(below_range_bin, 0);
+    assert_eq!(above_range_bin, 1);
+    assert_eq!(package.weight_for_bin_index(below_range_bin as u32)?, 0.5);
+    assert_eq!(package.weight_for_bin_index(above_range_bin as u32)?, 2.0);
 
     Ok(())
 }

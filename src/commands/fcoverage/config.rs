@@ -305,8 +305,9 @@ pub struct FCoverageConfig {
     ///
     /// Precompute with `cfdna overlap-length-model`. The model was developed primarily for 100-220
     /// bp fragments and may not work for other ranges. The model is fitted from uncorrected
-    /// coverage and can be combined independently with fragment-level GC correction and genomic
-    /// scaling in this command.
+    /// coverage. During application, its multiplier is selected separately at every reference
+    /// position from the raw fragments overlapping that position. The positional multiplier is
+    /// applied after fragment-level GC correction and before genomic scaling.
     #[cfg(feature = "cmd_overlap_length_model")]
     #[cfg_attr(
         feature = "cli",

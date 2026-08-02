@@ -16,7 +16,7 @@ use crate::commands::fcoverage::writers::{
 use crate::commands::gc_bias::correct::{GCCorrector, load_gc_corrector};
 use crate::commands::gc_bias::counting::build_gc_prefixes;
 #[cfg(feature = "cmd_overlap_length_model")]
-use crate::commands::overlapping_lengths_correction::inference::OverlappingLengthWeightIterator;
+use crate::commands::overlapping_lengths_correction::inference::PositionalOverlapLengthCollector;
 #[cfg(feature = "cmd_overlap_length_model")]
 use crate::commands::overlapping_lengths_correction::package::OverlappingLengthsCorrectionPackage;
 use crate::shared::coverage::{Coverage, clamp_finite_coverage_below_to_zero};
@@ -1032,8 +1032,8 @@ fn process_tile(
         })
     };
 
-    // Construct the normal filtered fragment stream before adding optional overlap context
-    let fragment_iter = fragments_with_segments_from_bam(
+    // Construct the normal filtered fragment stream
+    let mut iter = fragments_with_segments_from_bam(
         reader.records().map(|r| r.map_err(anyhow::Error::from)),
         move |rec| include_read_fn(rec),
         1,
@@ -1044,27 +1044,19 @@ fn process_tile(
     )
     .with_local_counters();
     #[cfg(feature = "cmd_overlap_length_model")]
-    // The package minimum participates in the exact-zero cleanup floor derived below
-    let minimum_overlap_length_weight = overlap_length_package
-        .as_deref()
-        .map(minimum_package_overlap_length_weight)
-        .unwrap_or(1.0);
-    #[cfg(not(feature = "cmd_overlap_length_model"))]
-    let minimum_overlap_length_weight = 1.0;
-    #[cfg(feature = "cmd_overlap_length_model")]
-    // The adaptor preserves normal fragment order while assigning the overlap-derived scalar
-    let mut iter = OverlappingLengthWeightIterator::new(
-        fragment_iter,
-        overlap_length_package,
-        opt.fragment_lengths.max_fragment_length,
-        Interval::new(
-            u32::try_from(fetch_span.start()).context("fetch start exceeds u32")?,
-            u32::try_from(fetch_span.end()).context("fetch end exceeds u32")?,
-        )?,
-        blacklist_chr,
-    );
-    #[cfg(not(feature = "cmd_overlap_length_model"))]
-    let mut iter = fragment_iter;
+    // Raw fragments define positional overlap context before any later GC rejection
+    let mut overlap_length_collector = overlap_length_package
+        .map(|package| {
+            PositionalOverlapLengthCollector::new(
+                package,
+                Interval::new(
+                    u32::try_from(fetch_span.start()).context("fetch start exceeds u32")?,
+                    u32::try_from(fetch_span.end()).context("fetch end exceeds u32")?,
+                )?,
+                Interval::new(tile.core_start(), tile.core_end())?,
+            )
+        })
+        .transpose()?;
 
     // Iterate fragments and add coverage
     // Separate branches for with/without GC correction
@@ -1076,6 +1068,10 @@ fn process_tile(
         let fetch_end = tile.fetch_end();
         for fragment_res in iter.by_ref() {
             let fragment = fragment_res.context("reading fragment")?;
+            #[cfg(feature = "cmd_overlap_length_model")]
+            if let Some(collector) = overlap_length_collector.as_mut() {
+                collector.observe(&fragment)?;
+            }
             let normalization_length = normalization_length_for_fragment(&fragment, opt)?;
             let base_weight = calculate_base_weight(normalization_length);
 
@@ -1107,7 +1103,7 @@ fn process_tile(
             let was_counted = add_fragment_to_core_after_optional_trim(
                 &mut cp,
                 &fragment,
-                base_weight * fragment_overlap_length_weight(&fragment) * gc_weight,
+                base_weight * gc_weight,
                 tile,
                 chrom_len as u32,
                 opt,
@@ -1126,6 +1122,10 @@ fn process_tile(
     } else if gc_tag.is_some() {
         for fragment_res in iter.by_ref() {
             let fragment = fragment_res.context("reading fragment")?;
+            #[cfg(feature = "cmd_overlap_length_model")]
+            if let Some(collector) = overlap_length_collector.as_mut() {
+                collector.observe(&fragment)?;
+            }
             let normalization_length = normalization_length_for_fragment(&fragment, opt)?;
             let base_weight = calculate_base_weight(normalization_length);
 
@@ -1156,7 +1156,7 @@ fn process_tile(
             let was_counted = add_fragment_to_core_after_optional_trim(
                 &mut cp,
                 &fragment,
-                base_weight * fragment_overlap_length_weight(&fragment) * gc_weight,
+                base_weight * gc_weight,
                 tile,
                 chrom_len as u32,
                 opt,
@@ -1175,6 +1175,10 @@ fn process_tile(
     } else {
         for fragment_res in iter.by_ref() {
             let fragment = fragment_res.context("reading fragment")?;
+            #[cfg(feature = "cmd_overlap_length_model")]
+            if let Some(collector) = overlap_length_collector.as_mut() {
+                collector.observe(&fragment)?;
+            }
             let normalization_length = normalization_length_for_fragment(&fragment, opt)?;
             let base_weight = calculate_base_weight(normalization_length);
 
@@ -1182,7 +1186,7 @@ fn process_tile(
             let was_counted = add_fragment_to_core_after_optional_trim(
                 &mut cp,
                 &fragment,
-                base_weight * fragment_overlap_length_weight(&fragment),
+                base_weight,
                 tile,
                 chrom_len as u32,
                 opt,
@@ -1207,13 +1211,19 @@ fn process_tile(
     cp.finalize_coverage(true);
 
     // Clamp almost-zero coverages to zero to avoid any f32 roundoff error
-    // NOTE: Must come before scaling!
-    // NOTE: If we add other normalizations, we must consider its effect here!
+    // This must precede positional overlap correction and genomic scaling because the floor is
+    // derived from the minimum fragment contribution before either positional operation
     if let Some(cov_mut) = cp.coverage_mut() {
-        clamp_finite_coverage_below_to_zero(
-            cov_mut,
-            internal_residual_coverage_floor(opt, minimum_overlap_length_weight),
-        );
+        clamp_finite_coverage_below_to_zero(cov_mut, internal_residual_coverage_floor(opt));
+    }
+
+    // Finish positional overlap context and apply it before genomic scaling
+    #[cfg(feature = "cmd_overlap_length_model")]
+    if let Some(collector) = overlap_length_collector {
+        let positional_bins = collector.finish()?;
+        if let Some(cov_mut) = cp.coverage_mut() {
+            positional_bins.apply_to_coverage(cov_mut)?;
+        }
     }
 
     // Apply per-bin scaling (in-place)
@@ -1224,9 +1234,6 @@ fn process_tile(
     }
 
     // Get counters from iterator
-    #[cfg(feature = "cmd_overlap_length_model")]
-    counter.add_from_snapshot(iter.into_inner().counters_snapshot());
-    #[cfg(not(feature = "cmd_overlap_length_model"))]
     counter.add_from_snapshot(iter.counters_snapshot());
 
     let temp_output = match mode {
@@ -1989,8 +1996,8 @@ fn uses_overlap_length_correction(opt: &FCoverageConfig) -> bool {
 /// Calculate the tile fetch halo required by the selected normalization modes.
 ///
 /// Ordinary fcoverage needs one maximum-fragment-length halo to reconstruct fragments contributing
-/// to the core. Average overlapping fragment length normalization needs a second span to observe
-/// fragments that overlap those contributing fragments.
+/// to the core. Average overlapping fragment length normalization uses two maximum-fragment-length
+/// spans as conservative raw context while the positional collector writes only the tile core.
 fn fcoverage_tile_halo(opt: &FCoverageConfig) -> Result<u32> {
     if uses_overlap_length_correction(opt) {
         opt.fragment_lengths
@@ -2002,46 +2009,13 @@ fn fcoverage_tile_halo(opt: &FCoverageConfig) -> Result<u32> {
     }
 }
 
-#[inline]
-/// Read the overlap scalar or return neutral weight when the feature is disabled.
-fn fragment_overlap_length_weight(fragment: &FragmentWithSegments) -> f64 {
-    #[cfg(feature = "cmd_overlap_length_model")]
-    {
-        fragment.overlap_length_weight
-    }
-    #[cfg(not(feature = "cmd_overlap_length_model"))]
-    {
-        let _ = fragment;
-        1.0
-    }
-}
-
-#[cfg(feature = "cmd_overlap_length_model")]
-/// Return the smallest scalar that a package lookup can assign.
-///
-/// A fragment receives a base-pair-weighted mean of lookup values, so its scalar cannot be below
-/// this minimum. The value is therefore a valid factor in the residual-floor derivation.
-fn minimum_package_overlap_length_weight(package: &OverlappingLengthsCorrectionPackage) -> f64 {
-    package
-        .combined_weights
-        .iter()
-        .copied()
-        .fold(f64::INFINITY, f64::min)
-}
-
 /// Smallest real positive pre-scaling support that one counted position can receive.
 ///
-/// This must be updated whenever a new pre-scaling weighting or normalization can lower the
-/// per-position support below the current bound. The tests intentionally exercise the current
-/// GC and length-normalization combinations so future changes have to revisit this derivation.
+/// Positional overlap-length correction is applied only after this cleanup, so it does not
+/// participate in the minimum fragment contribution derived here.
 #[inline]
-fn minimum_positive_pre_scaling_support(
-    opt: &FCoverageConfig,
-    minimum_overlap_length_weight: f64,
-) -> f64 {
-    minimum_positive_base_weight(opt)
-        * minimum_positive_gc_weight(opt)
-        * minimum_overlap_length_weight
+fn minimum_positive_pre_scaling_support(opt: &FCoverageConfig) -> f64 {
+    minimum_positive_base_weight(opt) * minimum_positive_gc_weight(opt)
 }
 
 /// Internal cleanup floor for fake support created by floating-point add/subtract residue.
@@ -2050,25 +2024,20 @@ fn minimum_positive_pre_scaling_support(
 /// argument combination, so it can only remove values that should be impossible in exact
 /// arithmetic for this run.
 #[inline]
-fn internal_residual_coverage_floor(
-    opt: &FCoverageConfig,
-    minimum_overlap_length_weight: f64,
-) -> f32 {
+fn internal_residual_coverage_floor(opt: &FCoverageConfig) -> f32 {
     // Delta cancellation at high depth can leave non-zero floating-point residue in positions with
-    // no real support. A fragment's average overlapping fragment length normalization weight is an
-    // average of package lookup weights, so it cannot be smaller than the package minimum. Half the
-    // resulting minimum real contribution preserves every valid positive contribution while still
-    // restoring exact zero after cancellation
-    (minimum_positive_pre_scaling_support(opt, minimum_overlap_length_weight) / 2.0) as f32
+    // no real support. Half the minimum real fragment contribution preserves every valid positive
+    // contribution while still restoring exact zero before positional corrections are applied
+    (minimum_positive_pre_scaling_support(opt) / 2.0) as f32
 }
 
 #[cfg(feature = "cmd_overlap_length_model")]
 /// Check whether fcoverage settings are scientifically compatible with a fitted package.
 ///
-/// `ignore_gap` is the only hard error because it changes which positions define overlap context.
-/// Other filter and weighting differences can be intentional when applying a model to a subset, so
-/// they produce explicit warnings without rejecting the run. Source file identities and chromosome
-/// sets are deliberately not compared.
+/// `ignore_gap` and the fragment length interval are hard errors because they change the positional
+/// overlap context represented by the fitted package. Other filtering differences can be
+/// intentional when applying a model to a subset, so they produce explicit warnings without
+/// rejecting the run. Source file identities and chromosome sets are deliberately not compared.
 fn validate_overlap_length_compatibility(
     opt: &FCoverageConfig,
     package: &OverlappingLengthsCorrectionPackage,
@@ -2083,9 +2052,8 @@ fn validate_overlap_length_compatibility(
     if opt.fragment_lengths.min_fragment_length != package.minimum_fragment_length
         || opt.fragment_lengths.max_fragment_length != package.maximum_fragment_length
     {
-        warn!(
-            target: COMMAND_TARGET,
-            "fcoverage fragment length filters ({}-{} bp) differ from the overlapping fragment length model package ({}-{} bp); continuing with the current fcoverage filters",
+        bail!(
+            "fcoverage fragment length filters ({}-{} bp) do not match the overlapping fragment length model package ({}-{} bp)",
             opt.fragment_lengths.min_fragment_length,
             opt.fragment_lengths.max_fragment_length,
             package.minimum_fragment_length,
@@ -2111,13 +2079,13 @@ fn validate_overlap_length_compatibility(
     if opt.trim_to.is_some() {
         warn!(
             target: COMMAND_TARGET,
-            "--trim-to is being combined with average overlapping fragment length normalization; the normalization weight is calculated over the original fragment span and applied to the trimmed contribution"
+            "--trim-to is being combined with average overlapping fragment length normalization; positional overlap context uses original fragment spans while the multiplier is applied to trimmed coverage"
         );
     }
     if opt.uses_length_normalization() {
         warn!(
             target: COMMAND_TARGET,
-            "--normalize-by-length is being combined with average overlapping fragment length normalization; the two scalar fragment weights are multiplied"
+            "--normalize-by-length is being combined with average overlapping fragment length normalization; length-normalized fragment coverage is accumulated before the positional multiplier is applied"
         );
     }
     Ok(())

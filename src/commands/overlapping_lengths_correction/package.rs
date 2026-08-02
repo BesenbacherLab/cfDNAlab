@@ -156,7 +156,7 @@ impl OverlappingLengthsCorrectionPackage {
                 "cfdnalab_schema": OVERLAPPING_LENGTHS_CORRECTION_SCHEMA,
                 "cfdnalab_schema_version": self.version,
                 "package_role": "sample_overlapping_fragment_length_normalization_model",
-                "correction_units": "multiplicative_fragment_weight",
+                "correction_units": "multiplicative_positional_coverage_weight",
                 "fragment_length_definition": "forward.pos_to_reverse.reference_end",
                 "validated_fragment_length_range": [100, 220],
                 "base_sigma": BASE_SIGMA,
@@ -280,12 +280,12 @@ impl OverlappingLengthsCorrectionPackage {
         Ok(package)
     }
 
-    /// Look up the multiplicative normalization weight for a positional average overlapping
-    /// fragment length.
+    /// Map a positional average fragment length to its clipped package bin index.
     ///
-    /// Values outside the fitted interval use the nearest extreme bin, matching LIONHEART's
-    /// clipped `numpy.digitize` lookup.
-    pub fn weight_for_average_length(&self, average_length: f64) -> Result<f64> {
+    /// Returning the index separately lets tiled inference retain compact integer values and defer
+    /// multiplier lookup until finalized coverage is available. Values outside the fitted interval
+    /// use the nearest extreme bin, matching LIONHEART's clipped `numpy.digitize` lookup.
+    pub(crate) fn bin_index_for_average_length(&self, average_length: f64) -> Result<usize> {
         ensure!(
             average_length.is_finite() && average_length > 0.0,
             "average overlapping fragment length must be finite and positive"
@@ -296,7 +296,21 @@ impl OverlappingLengthsCorrectionPackage {
         let bin_index = insertion
             .saturating_sub(1)
             .min(self.combined_weights.len() - 1);
-        Ok(self.combined_weights[bin_index])
+        Ok(bin_index)
+    }
+
+    /// Read a combined positional multiplier by its persisted length-bin index.
+    pub(crate) fn weight_for_bin_index(&self, bin_index: u32) -> Result<f64> {
+        self.combined_weights
+            .get(bin_index as usize)
+            .copied()
+            .with_context(|| {
+                format!(
+                    "overlap-length bin index {} is outside the {} package bins",
+                    bin_index,
+                    self.combined_weights.len()
+                )
+            })
     }
 
     /// Validate structural invariants required by fitting output and lookup application.

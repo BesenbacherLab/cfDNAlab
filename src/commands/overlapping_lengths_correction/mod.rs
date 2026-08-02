@@ -1,8 +1,8 @@
 //! LIONHEART-derived average overlapping fragment length normalization.
 //!
 //! The command performs one tiled genomic sweep, stores additive sufficient statistics, runs two
-//! in-memory mixture fits, and writes a Zarr lookup package. fcoverage applies that package with a
-//! bounded rolling adaptor that preserves the normal fragment iterator's exact order.
+//! in-memory mixture fits, and writes a Zarr lookup package. fcoverage uses bounded rolling overlap
+//! context to apply that package directly to finalized positional coverage.
 
 pub(crate) mod config;
 pub(crate) mod inference;
