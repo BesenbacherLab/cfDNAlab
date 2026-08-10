@@ -2,6 +2,8 @@
 
 Date: 2026-04-21
 
+Follow-up plan: [fragment-level nuisance outlier handling](fragment_nuisance_outliers_plan.md).
+
 ## Scope
 
 This spec defines a research-backed design direction for a possible
