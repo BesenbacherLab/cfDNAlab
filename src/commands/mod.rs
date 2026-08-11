@@ -22,6 +22,8 @@ pub(crate) mod gc_bias;
 pub(crate) mod lengths;
 #[cfg(feature = "cmd_midpoints")]
 pub(crate) mod midpoints;
+#[cfg(feature = "cmd_outliers")]
+pub(crate) mod outliers;
 #[cfg(feature = "cmd_prepare_windows")]
 pub(crate) mod prepare_windows;
 #[cfg(feature = "cmd_gc_bias")]

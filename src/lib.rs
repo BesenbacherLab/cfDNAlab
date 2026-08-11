@@ -149,6 +149,12 @@ pub mod run_like_cli {
         pub use crate::commands::coverage_weights::scaling_weights_config::ScalingWeightsArgs;
     }
 
+    #[cfg(feature = "cmd_outliers")]
+    pub mod outliers {
+        pub use crate::commands::outliers::config::{OutlierTarget, OutliersConfig};
+        pub use crate::commands::outliers::outliers::{OutliersRunResult, run_outliers};
+    }
+
     #[cfg(feature = "cmd_ends")]
     pub mod ends {
         pub use crate::commands::ends::config::EndsConfig;

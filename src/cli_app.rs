@@ -22,6 +22,8 @@ use crate::commands::gc_bias::config::GCConfig;
 use crate::commands::lengths::config::LengthsConfig;
 #[cfg(feature = "cmd_midpoints")]
 use crate::commands::midpoints::config::MidpointsConfig;
+#[cfg(feature = "cmd_outliers")]
+use crate::commands::outliers::config::OutliersConfig;
 #[cfg(feature = "cmd_prepare_windows")]
 use crate::commands::prepare_windows::config::PrepareConfig;
 #[cfg(feature = "cmd_gc_bias")]
@@ -61,6 +63,8 @@ pub(crate) enum Cmd {
     RefKmers(RefKmersConfig),
     #[cfg(feature = "cmd_transitions")]
     Transitions(TransitionsConfig),
+    #[cfg(feature = "cmd_outliers")]
+    Outliers(OutliersConfig),
     #[cfg(feature = "cmd_coverage_weights")]
     CoverageWeights(CoverageWeightsConfig),
     #[cfg(feature = "cmd_fragment_count_weights")]
@@ -106,6 +110,11 @@ pub(crate) fn run_cli() {
     let cli = Cli::from_arg_matches(&matches).expect("parse");
 
     let (log_spec, default_output_dir) = match &cli.cmd {
+        #[cfg(feature = "cmd_outliers")]
+        Cmd::Outliers(config) => (
+            config.logging.log.clone(),
+            Some(config.ioc.output_dir.as_path()),
+        ),
         #[cfg(feature = "cmd_coverage_weights")]
         Cmd::CoverageWeights(config) => (
             config.shared.logging.log.clone(),
@@ -220,6 +229,10 @@ pub(crate) fn run_cli() {
         Cmd::Transitions(config) => {
             crate::commands::transitions::transitions::run_transitions(&config, run_options)
                 .map(|_| ())
+        }
+        #[cfg(feature = "cmd_outliers")]
+        Cmd::Outliers(config) => {
+            crate::commands::outliers::outliers::run_outliers(&config, run_options).map(|_| ())
         }
         #[cfg(feature = "cmd_coverage_weights")]
         Cmd::CoverageWeights(config) => {

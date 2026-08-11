@@ -14,6 +14,7 @@ const sidebars = {
       type: 'category',
       label: 'Guides',
       items: [
+        'guides/handle_outliers_guide',
         'guides/correct_gc_bias_guide',
         'guides/genomic_smoothing_guide',
         'guides/fragment_coverage_guide',

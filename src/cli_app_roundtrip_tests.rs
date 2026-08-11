@@ -286,6 +286,35 @@ fn coverage_weights_config_roundtrips_through_rendered_cli() {
     assert_config_roundtrips!(config, CoverageWeights, "coverage-weights");
 }
 
+#[cfg(feature = "cmd_outliers")]
+#[test]
+fn outliers_config_roundtrips_through_rendered_cli() {
+    use crate::commands::outliers::config::{OutlierTarget, OutliersConfig};
+
+    let mut config = OutliersConfig::new(ioc(), chromosomes());
+    config.set_output_prefix("sample");
+    config.set_temp_dir(Some(PathBuf::from("/cluster/local-scratch")));
+    config.set_tile_size(2_000_000);
+    config.set_stride(250_000);
+    config.set_bin_size(2_000_000);
+    config.set_min_context_fragments(500);
+    config.set_tail_probability_multiplier(2.5);
+    config.set_target(OutlierTarget::Zero);
+    config.set_blacklist_flank(Some(250));
+    config.set_ignore_gap(true);
+    config.fragment_lengths_mut().min_fragment_length = 30;
+    config.fragment_lengths_mut().max_fragment_length = 500;
+    config.set_min_mapq(20);
+    config.set_require_proper_pair(true);
+    config.set_blacklist(Some(vec![
+        PathBuf::from("repeats.bed"),
+        PathBuf::from("artifacts.bed"),
+    ]));
+    config.validate().expect("valid outliers config");
+
+    assert_config_roundtrips!(config, Outliers, "outliers");
+}
+
 #[cfg(feature = "cmd_fragment_count_weights")]
 #[test]
 fn fragment_count_weights_config_roundtrips_through_rendered_cli() {

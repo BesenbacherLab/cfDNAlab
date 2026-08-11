@@ -69,8 +69,9 @@ appropriate correction target after the region has been called.
 
 Supported target concepts should include:
 
+- retain coverage equivalent to the expected local mean from the underlying
+  ZIP fitted with the right-truncated second likelihood, as the default
 - retain coverage equivalent to the detection threshold
-- retain coverage equivalent to an estimated expected mean
 - retain zero contribution from fragments associated with the region
 
 The detection method and the target mode must be recorded separately in the
@@ -184,14 +185,14 @@ Users should be able to override the automatic probability directly or apply
 a multiplier to it. Exact CLI names remain open. A multiplier greater than
 `1.0` makes calling less stringent.
 
-## Atomic coverage histograms
+## Fixed-size core coverage histograms
 
 The first BAM pass should calculate a raw positional coverage histogram for
-each contiguous atomic core and write those histograms to disk.
+each contiguous fixed-size model core and write those histograms to disk.
 
 Initial settings should match the scale used by the scaling-weight commands:
 
-- atomic core size of 500 kb
+- model core size of 500 kb
 - configurable core size
 - ordinary eligible-position and blacklist handling
 - raw coverage before GC correction or genomic scaling
@@ -200,7 +201,7 @@ The fixed 500 kb size is a starting default, not part of the scientific
 definition. `cfDNAlab` must work across species and cfDNA-like analyses with
 different reference sizes and contig structures.
 
-Each atomic histogram should record how many eligible positions have each
+Each core histogram should record how many eligible positions have each
 integer coverage. Its accompanying summary must contain enough additive
 support information to decide whether a wider fitting context contains enough
 fragments. The exact support measure remains open. Candidates include a
@@ -208,7 +209,7 @@ fragment count assigned once per fragment or eligible fragment coverage mass
 converted to an effective fragment count.
 
 Histograms from adjacent cores are additive. The genome-wide histogram is
-therefore obtained by summing the atomic histograms after the first pass. No
+therefore obtained by summing the core histograms after the first pass. No
 separate global coverage calculation is required.
 
 The global histogram should also receive the same diagnostic ZIP fits and
@@ -221,16 +222,16 @@ every position or constant-coverage run.
 
 ## Local fitting contexts
 
-Each atomic core should receive its own local ZIP model and final discrete
+Each model core should receive its own local ZIP model and final discrete
 coverage threshold.
 
 Build its fitting context as follows:
 
-1. Start with the core's atomic histogram.
-2. Expand by an atomic core on the left and an atomic core on the right.
+1. Start with the core's coverage histogram.
+2. Expand by a complete model core on the left and a complete model core on the right.
 3. Continue paired expansion until the context covers at least the configured
    minimum span and contains the configured minimum fragment support.
-4. Sum the selected atomic histograms and fit the core's ZIP model from the
+4. Sum the selected core histograms and fit the core's ZIP model from the
    combined histogram.
 
 With a 500 kb core and paired expansion, a minimum span of 5 Mb resolves to a
@@ -292,17 +293,17 @@ The command should read the BAM twice.
 
 The first pass should:
 
-- calculate the atomic coverage histograms and additive support summaries
+- calculate the per-core coverage histograms and additive support summaries
 - write the histogram data to disk
-- sum the atomic histograms into the global histogram
+- sum the core histograms into the global histogram
 - build adaptive local contexts
 - perform the two-stage ZIP fits
-- assign a final threshold to every atomic core
+- assign a final threshold to every model core
 
 The second pass should:
 
 - recalculate raw positional coverage
-- apply the finalized threshold for the current atomic core
+- apply the finalized threshold for the current model core
 - combine adjacent qualifying positions into outlier regions
 - calculate observed and target regional coverage mass
 - calculate regional keep weights
@@ -449,7 +450,7 @@ The command should also write:
 
 - an exact BED containing the called outlier regions
 - a BED containing the same regions with a configurable flank
-- the atomic coverage histograms
+- the per-core coverage histograms
 - a model summary containing the fitting context and thresholds for each core
 - global observed and fitted histogram data
 - a combined diagnostic plot of the observed histograms, fitted ZIP
@@ -461,7 +462,7 @@ region is preferable to fractional correction. Both should be retained so
 the chosen flank does not replace the original calls.
 
 Diagnostic tables should contain only information needed to reproduce or
-assess the result. The atomic histogram data need core coordinates, coverage,
+assess the result. The core histogram data need core coordinates, coverage,
 and observed eligible-position count. The model summary needs core and
 context coordinates, eligible support, model source or fallback, fitted ZIP
 parameters, `T1`, and `T2`. Zero inflation belongs in this model summary, not
@@ -515,7 +516,7 @@ report their lengths and make them easy to audit. A future implementation may
 need a warning or an optional maximum region length, but should not silently
 discard them without evidence.
 
-### Regions crossing atomic-core boundaries
+### Regions crossing model-core boundaries
 
 Thresholds may differ between adjacent cores. Qualifying positions should
 still be joined across a core boundary when they are contiguous. Their
@@ -551,7 +552,7 @@ Validation should distinguish detection quality from application behavior.
 - Check how `T1` and `T2` change with sequencing depth and downsampling.
 - Validate adaptive context expansion, minimum support, contig-edge handling,
   and global fallback on short and heavily masked contigs.
-- Verify that the global histogram is exactly the sum of eligible atomic
+- Verify that the global histogram is exactly the sum of eligible core
   histograms.
 - Verify that broad amplifications and deep deletions shift their local models
   instead of being interpreted through a genome-wide mean.
@@ -581,9 +582,9 @@ Tests should use valid fragment lengths and preserve the project's directional
 
 ### Stage 1. Histogram and model diagnostics
 
-- Calculate and persist configurable atomic coverage histograms and additive
+- Calculate and persist configurable per-core coverage histograms and additive
   support summaries in a BAM pass.
-- Build adaptive local contexts and the global histogram from atomic
+- Build adaptive local contexts and the global histogram from core
   histograms.
 - Implement the initial and right-truncated ZIP fits.
 - Calculate `T1` and `T2` from the configured survival probability.
@@ -630,7 +631,7 @@ Tests should use valid fragment lengths and preserve the project's directional
 - Detection uses raw positional coverage before GC correction and genomic
   scaling.
 - The initial detector is a local two-stage ZIP using survival probabilities.
-- Atomic histograms default to configurable 500 kb cores.
+- Coverage histograms default to configurable 500 kb model cores.
 - Every core receives an adaptive local model using at least the configured
   context span and fragment support, with a recorded fallback when necessary.
 - Automatic tail probability is based on the global number of eligible
@@ -638,6 +639,8 @@ Tests should use valid fragment lengths and preserve the project's directional
 - Coverage is calculated in two BAM passes, without a temporary genome-wide
   positional coverage track.
 - The output is sparse with implicit keep weight `1.0`.
+- The default replacement target is the underlying local ZIP mean estimated by the
+  right-truncated second fit.
 - Exact and flanked BED outputs support exclusion workflows.
 - Histograms, fitted distributions, thresholds, and a combined plot are
   required diagnostics.
@@ -663,7 +666,6 @@ Tests should use valid fragment lengths and preserve the project's directional
   or do diagnostics justify a distinct, more extreme boundary?
 - What concise CLI options should expose the automatic probability multiplier
   and a manual probability?
-- Which replacement target should be the default after an outlier is called?
 - Should regional mass use every called position equally or account for masked
   and otherwise ineligible bases?
 - How should nearby regions be merged before fragment application?

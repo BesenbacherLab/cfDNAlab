@@ -39,6 +39,7 @@ default = [
     "cmd_gc_bias",
     "cmd_lengths",
     "cmd_midpoints",
+    "cmd_outliers",
     "cmd_ref_kmers",
 ]
 cli = ["clap"]
@@ -59,6 +60,7 @@ cmd_lengths = ["cmd_gc_bias"]
 cmd_prepare_windows = []
 cmd_ref_kmers = []
 cmd_midpoints = ["cmd_gc_bias"]
+cmd_outliers = ["cmd_fcoverage", "plotters"]
 cmd_transitions = ["cmd_fragment_kmers"]
 cmd_visualize_positions = ["cmd_fragment_kmers"]
 cmd_visualize_positions_tests = ["cmd_visualize_positions"]
