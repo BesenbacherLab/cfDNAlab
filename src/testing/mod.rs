@@ -21,6 +21,7 @@
 pub mod bam;
 pub mod bed;
 pub mod gc_packages;
+pub mod outlier_weights;
 pub mod output_readers;
 pub mod reference;
 pub mod scaling;
@@ -44,6 +45,7 @@ pub use gc_packages::{
     write_constant_gc_correction_package, write_two_bin_gc_correction_package,
     write_unit_gc_correction_package, write_unit_gc_correction_package_for_range,
 };
+pub use outlier_weights::{OutlierWeightRow, write_outlier_weights_tsv};
 pub use output_readers::{
     ReferenceGCPackageMetadata, ReferenceGCPackageOutput, read_length_counts_text,
     read_length_counts_tsv, read_midpoint_zarr_counts, read_midpoint_zarr_i32_1d,

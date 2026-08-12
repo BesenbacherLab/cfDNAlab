@@ -17,8 +17,8 @@ use std::{
 use crate::commands::cli_common::WindowsArgs;
 use crate::commands::cli_common::{
     ApplyGCArgFileOnly, ApplyGCArgs, AssignToWindowArgs, ChromosomeArgs, DistributionWindowsArgs,
-    FragmentLengthArgs, GCWindowsArgs, IOCArgs, LoggingArgs, Ref2BitRequiredArgs, ScaleGenomeArgs,
-    TempDirArgs, UnpairedArgs, WindowAssigner,
+    FragmentLengthArgs, GCWindowsArgs, IOCArgs, LoggingArgs, OutlierWeightsArgs,
+    Ref2BitRequiredArgs, ScaleGenomeArgs, TempDirArgs, UnpairedArgs, WindowAssigner,
 };
 #[cfg(any(
     feature = "cmd_fragment_kmers",
@@ -154,6 +154,14 @@ pub(crate) fn push_scale_genome(args: &mut Vec<OsString>, scale_genome: &ScaleGe
         args,
         "--scaling-factors",
         scale_genome.scaling_factors.as_deref(),
+    );
+}
+
+pub(crate) fn push_outlier_weights(args: &mut Vec<OsString>, outlier_weights: &OutlierWeightsArgs) {
+    push_optional_path(
+        args,
+        "--outlier-weights",
+        outlier_weights.outlier_weights.as_deref(),
     );
 }
 

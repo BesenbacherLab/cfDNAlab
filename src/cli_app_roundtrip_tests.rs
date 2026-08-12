@@ -333,7 +333,7 @@ fn fragment_count_weights_config_roundtrips_through_rendered_cli() {
 #[test]
 fn fcoverage_config_roundtrips_through_rendered_cli() {
     use crate::{
-        commands::cli_common::DistributionWindowsArgs,
+        commands::cli_common::{DistributionWindowsArgs, OutlierWeightsArgs},
         commands::fcoverage::{config::FCoverageConfig, window_results::CoverageWindowAction},
     };
 
@@ -341,6 +341,9 @@ fn fcoverage_config_roundtrips_through_rendered_cli() {
     config.set_output_prefix("sample");
     config.set_per_window(CoverageWindowAction::Total);
     config.set_temp_dir(Some(PathBuf::from("/cluster/local-scratch")));
+    config.set_outlier_weights(OutlierWeightsArgs {
+        outlier_weights: Some(PathBuf::from("sample.outliers.keep_weights.tsv")),
+    });
     config.set_windows(DistributionWindowsArgs {
         by_size: Some(1_000_000),
         by_bed: None,

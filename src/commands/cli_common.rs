@@ -811,6 +811,43 @@ pub struct ScaleGenomeArgs {
     pub scaling_factors: Option<PathBuf>,
 }
 
+/// Optional sparse outlier keep weights applied at fragment level.
+#[cfg_attr(feature = "cli", derive(clap::Args))]
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct OutlierWeightsArgs {
+    /// Downweight fragments associated with extreme-coverage regions `[path]`
+    ///
+    /// Use the sparse `outliers.keep_weights.tsv` file produced by `cfdna outliers` to reduce the
+    /// contribution of fragments associated with detected extreme-coverage regions.
+    ///
+    /// ## Fragment weighting
+    ///
+    /// A listed interval applies its keep weight to every fragment whose complete `pos` to
+    /// `reference_end` span overlaps it. The complete fragment is weighted, including its
+    /// contributions outside the listed interval.
+    ///
+    /// Any positive overlap applies the full regional keep weight. When a fragment overlaps
+    /// multiple intervals, the smallest keep weight is used. Fragments without an overlap retain
+    /// weight `1.0`. A weight of `0.0` excludes an overlapping fragment.
+    ///
+    /// This is fragment weighting, not positional scaling.
+    ///
+    /// ## File requirements
+    ///
+    /// The tab-separated file must have a header with the columns `chromosome`, `start`, `end`,
+    /// and `keep_weight`. Column names are matched case-insensitively.
+    ///
+    /// Coordinates are 0-based and half-open `[start, end)`. Rows must be sorted and
+    /// non-overlapping within each chromosome. Omitted positions have implicit keep weight `1.0`.
+    ///
+    /// Keep weights must be finite and between `0.0` and `1.0`, inclusive.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, value_parser, help_heading = "Outlier Weighting")
+    )]
+    pub outlier_weights: Option<PathBuf>,
+}
+
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[cfg_attr(
     feature = "cli",

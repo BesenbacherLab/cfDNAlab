@@ -25,8 +25,8 @@ mod tests_clean_up_and_normalization {
 
         assert_eq!(minimum_positive_base_weight(&opt), 1.0);
         assert_eq!(minimum_positive_gc_weight(&opt), 1.0);
-        assert_eq!(minimum_positive_pre_scaling_support(&opt), 1.0);
-        assert_eq!(internal_residual_coverage_floor(&opt), 0.5);
+        assert_eq!(minimum_positive_pre_scaling_support(&opt, 1.0), 1.0);
+        assert_eq!(internal_residual_coverage_floor(&opt, 1.0), 0.5);
     }
 
     #[test]
@@ -40,11 +40,11 @@ mod tests_clean_up_and_normalization {
         assert_eq!(minimum_positive_base_weight(&opt), expected_min_support);
         assert_eq!(minimum_positive_gc_weight(&opt), 1.0);
         assert_eq!(
-            minimum_positive_pre_scaling_support(&opt),
+            minimum_positive_pre_scaling_support(&opt, 1.0),
             expected_min_support
         );
         assert_eq!(
-            internal_residual_coverage_floor(&opt),
+            internal_residual_coverage_floor(&opt, 1.0),
             (expected_min_support / 2.0) as f32
         );
     }
@@ -64,11 +64,11 @@ mod tests_clean_up_and_normalization {
             MIN_REASONABLE_GC_WEIGHT as f64
         );
         assert_eq!(
-            minimum_positive_pre_scaling_support(&opt),
+            minimum_positive_pre_scaling_support(&opt, 1.0),
             MIN_REASONABLE_GC_WEIGHT as f64
         );
         assert_eq!(
-            internal_residual_coverage_floor(&opt),
+            internal_residual_coverage_floor(&opt, 1.0),
             MIN_REASONABLE_GC_WEIGHT / 2.0
         );
     }
@@ -88,11 +88,11 @@ mod tests_clean_up_and_normalization {
             MIN_REASONABLE_GC_WEIGHT as f64
         );
         assert_eq!(
-            minimum_positive_pre_scaling_support(&opt),
+            minimum_positive_pre_scaling_support(&opt, 1.0),
             MIN_REASONABLE_GC_WEIGHT as f64
         );
         assert_eq!(
-            internal_residual_coverage_floor(&opt),
+            internal_residual_coverage_floor(&opt, 1.0),
             MIN_REASONABLE_GC_WEIGHT / 2.0
         );
     }
@@ -112,9 +112,12 @@ mod tests_clean_up_and_normalization {
         // longest allowed fragment. GC correction can lower that further down to the minimum
         // supported positive GC weight.
         let min_support = (1.0 / 1000.0) * MIN_REASONABLE_GC_WEIGHT as f64;
-        let cleanup_floor = internal_residual_coverage_floor(&opt);
+        let cleanup_floor = internal_residual_coverage_floor(&opt, 1.0);
 
-        assert_eq!(minimum_positive_pre_scaling_support(&opt), min_support);
+        assert_eq!(
+            minimum_positive_pre_scaling_support(&opt, 1.0),
+            min_support
+        );
         assert_eq!(cleanup_floor, (min_support / 2.0) as f32);
         assert!(cleanup_floor > 0.0);
         assert!((cleanup_floor as f64) < min_support);
@@ -142,12 +145,40 @@ mod tests_clean_up_and_normalization {
             minimum_positive_base_weight(&restore_mean)
         );
         assert_eq!(
-            minimum_positive_pre_scaling_support(&unit_mass),
-            minimum_positive_pre_scaling_support(&restore_mean)
+            minimum_positive_pre_scaling_support(&unit_mass, 1.0),
+            minimum_positive_pre_scaling_support(&restore_mean, 1.0)
         );
         assert_eq!(
-            internal_residual_coverage_floor(&unit_mass),
-            internal_residual_coverage_floor(&restore_mean)
+            internal_residual_coverage_floor(&unit_mass, 1.0),
+            internal_residual_coverage_floor(&restore_mean, 1.0)
+        );
+    }
+
+    #[test]
+    fn minimum_positive_outlier_weight_only_multiplies_the_existing_cleanup_bound() {
+        let mut opt = base_config();
+        opt.set_normalize_by_length(LengthNormalizationMode::UnitMass);
+        opt.fragment_lengths_mut().max_fragment_length = 500;
+        opt.set_gc(ApplyGCArgs {
+            gc_file: Some(PathBuf::from("gc_bias_correction.zarr")),
+            gc_tag: None,
+            neutralize_invalid_gc: false,
+        });
+
+        // Existing support is (1 / 500) * minimum positive GC weight. Outlier handling adds
+        // exactly the minimum positive keep-weight multiplier and leaves the final division by
+        // two unchanged.
+        let minimum_outlier_keep_weight = 0.1;
+        let expected_support =
+            (1.0 / 500.0) * MIN_REASONABLE_GC_WEIGHT as f64 * minimum_outlier_keep_weight;
+
+        assert_eq!(
+            minimum_positive_pre_scaling_support(&opt, minimum_outlier_keep_weight),
+            expected_support
+        );
+        assert_eq!(
+            internal_residual_coverage_floor(&opt, minimum_outlier_keep_weight),
+            (expected_support / 2.0) as f32
         );
     }
 }

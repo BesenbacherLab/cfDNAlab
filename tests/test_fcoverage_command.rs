@@ -17,7 +17,7 @@ use cfdnalab::run_like_cli::bam_to_bam::{
 };
 use cfdnalab::run_like_cli::common::{
     ApplyGCArgs, AssignToWindowArgs, ChromosomeArgs, DistributionWindowsArgs, IOCArgs,
-    ScaleGenomeArgs, UnpairedArgs,
+    OutlierWeightsArgs, ScaleGenomeArgs, UnpairedArgs,
 };
 #[cfg(feature = "cmd_coverage_weights")]
 use cfdnalab::run_like_cli::coverage_weights::{
@@ -32,14 +32,15 @@ use cfdnalab::run_like_cli::lengths::{
     LengthsConfig, LengthsRunResult, run_lengths as run_lengths_command,
 };
 use cfdnalab::testing::{
-    Bed4Row, Cigar, FragmentSpec, PairedFragmentSpec, ReadSpec, ScalingFactorRow, TempBam,
-    bam_from_fragments, bam_from_fragments_with_record_indexed_names,
+    Bed4Row, Cigar, FragmentSpec, OutlierWeightRow, PairedFragmentSpec, ReadSpec, ScalingFactorRow,
+    TempBam, bam_from_fragments, bam_from_fragments_with_record_indexed_names,
     build_command_produced_gc_correction_package_for_length,
     build_command_produced_gc_correction_package_for_range,
     build_command_produced_gc_correction_package_from_reference_windows,
     long_inward_fragment_series_bam, read_length_counts_tsv, read_zst_to_string,
     single_contig_inward_pair_bam, twobit_from_sequences, twobit_with_single_repeating_contig,
-    write_bed4, write_scaling_factors_tsv, write_two_bin_gc_correction_package,
+    write_bed4, write_outlier_weights_tsv, write_scaling_factors_tsv,
+    write_two_bin_gc_correction_package,
 };
 use fixtures::{LONG_FRAGMENT_LENGTH, LONG_FRAGMENT_STARTS, late_origin_gc_reference_sequence};
 use ndarray::array;
@@ -933,6 +934,119 @@ fn normalize_by_length_keeps_fractional_positional_output_without_other_weights(
 }
 
 #[test]
+fn outlier_weights_apply_the_smallest_overlapping_weight_to_the_complete_fragment() -> Result<()> {
+    // Arrange
+    // The fragment spans [20, 80). It overlaps each outlier interval by only 1 bp. Any positive
+    // overlap applies the complete regional weight, and the smaller weight 0.1 wins. The existing
+    // cleanup floor must preserve that real fractional contribution across the full fragment.
+    let bam = single_contig_inward_pair_bam()?;
+    let out_dir = TempDir::new()?;
+    let outlier_path = out_dir.path().join("outlier_weights.tsv");
+    write_outlier_weights_tsv(
+        &outlier_path,
+        &[
+            OutlierWeightRow::new("chr1", 19, 21, 0.6),
+            OutlierWeightRow::new("chr1", 79, 81, 0.1),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(3);
+    cfg.set_outlier_weights(OutlierWeightsArgs {
+        outlier_weights: Some(outlier_path),
+    });
+
+    // Act
+    let result = run(&cfg)?;
+    let output = read_zst_to_string(&result.final_out_path)?;
+
+    // Assert
+    assert_eq!(output, "chr1\t20\t80\t0.1\n");
+    Ok(())
+}
+
+#[test]
+fn outlier_overlap_inside_an_ignored_inter_mate_gap_weights_both_counted_segments() -> Result<()> {
+    // Arrange
+    // The fragment span is [20, 80), with aligned read segments [20, 40) and [60, 80). The
+    // outlier interval is only in the ignored gap. Weight lookup still uses the original complete
+    // `pos` to `reference_end` fragment span, then the existing gap handling counts both segments.
+    let bam = single_contig_inward_pair_bam()?;
+    let out_dir = TempDir::new()?;
+    let outlier_path = out_dir.path().join("gap_outlier_weights.tsv");
+    write_outlier_weights_tsv(&outlier_path, &[OutlierWeightRow::new("chr1", 45, 46, 0.1)])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(3);
+    cfg.set_ignore_gap(true);
+    cfg.set_outlier_weights(OutlierWeightsArgs {
+        outlier_weights: Some(outlier_path),
+    });
+
+    // Act
+    let result = run(&cfg)?;
+    let output = read_zst_to_string(&result.final_out_path)?;
+
+    // Assert
+    assert_eq!(output, "chr1\t20\t40\t0.1\nchr1\t60\t80\t0.1\n");
+    Ok(())
+}
+
+#[test]
+fn outlier_lookup_uses_the_original_fragment_span_before_trimming() -> Result<()> {
+    // Arrange
+    // The fragment spans [20, 121), then `at-most=61` trims its counted span to [40, 101). The
+    // outlier overlaps only [20, 21), outside the trimmed span. Fragment weighting must be resolved
+    // from the original `pos` to `reference_end` span before the existing trimming step.
+    let bam = bam_from_fragments(
+        "fcoverage_outlier_before_trim",
+        vec![("chr1".to_string(), 200)],
+        vec![PairedFragmentSpec::new(0, 20, 101, 20).build()?],
+        Vec::new(),
+    )?;
+    let out_dir = TempDir::new()?;
+    let outlier_path = out_dir.path().join("trim_outlier_weights.tsv");
+    write_outlier_weights_tsv(&outlier_path, &[OutlierWeightRow::new("chr1", 20, 21, 0.1)])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(3);
+    cfg.set_trim_to(Some(FragmentSpanTrim::AtMost { target_length: 61 }));
+    cfg.set_outlier_weights(OutlierWeightsArgs {
+        outlier_weights: Some(outlier_path),
+    });
+
+    // Act
+    let result = run(&cfg)?;
+    let output = read_zst_to_string(&result.final_out_path)?;
+
+    // Assert
+    assert_eq!(output, "chr1\t40\t101\t0.1\n");
+    Ok(())
+}
+
+#[test]
+fn zero_outlier_weight_excludes_the_complete_fragment() -> Result<()> {
+    // Arrange
+    let bam = single_contig_inward_pair_bam()?;
+    let out_dir = TempDir::new()?;
+    let outlier_path = out_dir.path().join("zero_outlier_weights.tsv");
+    write_outlier_weights_tsv(&outlier_path, &[OutlierWeightRow::new("chr1", 40, 41, 0.0)])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_outlier_weights(OutlierWeightsArgs {
+        outlier_weights: Some(outlier_path),
+    });
+
+    // Act
+    let result = run(&cfg)?;
+    let output = read_zst_to_string(&result.final_out_path)?;
+
+    // Assert
+    assert!(output.is_empty(), "zero-weight fragment should be absent");
+    Ok(())
+}
+
+#[test]
 fn normalize_by_length_by_size_total_counts_each_fragment_as_one() -> Result<()> {
     let bam = single_contig_inward_pair_bam()?;
     let out_dir = TempDir::new()?;
@@ -973,7 +1087,7 @@ fn normalize_by_length_by_size_total_counts_each_fragment_as_one() -> Result<()>
 }
 
 #[test]
-fn normalize_by_length_and_gc_file_weights_multiply_per_position() -> Result<()> {
+fn normalize_by_length_gc_and_outlier_weights_multiply_per_position() -> Result<()> {
     let bam = bam_from_fragments(
         "fcoverage_normalize_by_length_gc_file",
         vec![("chr1".to_string(), 200)],
@@ -983,6 +1097,8 @@ fn normalize_by_length_and_gc_file_weights_multiply_per_position() -> Result<()>
     let ref_twobit = twobit_with_single_repeating_contig("simple_reference", "chr1", "ACGT", 256)?;
     let out_dir = TempDir::new()?;
     let gc_path = out_dir.path().join("constant_gc_pkg.zarr");
+    let outlier_path = out_dir.path().join("outlier_weights.tsv");
+    let scaling_path = out_dir.path().join("scaling_weights.tsv");
     let package = GCCorrectionPackage {
         version: GC_CORRECTION_SCHEMA_VERSION,
         end_offset: 0,
@@ -993,6 +1109,8 @@ fn normalize_by_length_and_gc_file_weights_multiply_per_position() -> Result<()>
         correction_matrix: array![[3.0_f64]],
     };
     package.write_zarr(&gc_path)?;
+    write_outlier_weights_tsv(&outlier_path, &[OutlierWeightRow::new("chr1", 40, 41, 0.1)])?;
+    write_scaling_factors_tsv(&scaling_path, &[ScalingFactorRow::new("chr1", 0, 200, 5.0)])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
     cfg.set_decimals(6);
@@ -1003,6 +1121,12 @@ fn normalize_by_length_and_gc_file_weights_multiply_per_position() -> Result<()>
         gc_file: Some(gc_path),
         gc_tag: None,
         neutralize_invalid_gc: false,
+    });
+    cfg.set_outlier_weights(OutlierWeightsArgs {
+        outlier_weights: Some(outlier_path),
+    });
+    cfg.set_scale_genome(ScaleGenomeArgs {
+        scaling_factors: Some(scaling_path),
     });
     cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
     {
@@ -1015,7 +1139,9 @@ fn normalize_by_length_and_gc_file_weights_multiply_per_position() -> Result<()>
     // - The fragment spans [20, 81), length 61.
     // - `--normalize-by-length` gives each covered base weight 1 / 61.
     // - The constant GC package multiplies every accepted fragment by 3.0.
-    // - Final per-base coverage is therefore 3 / 61 across the full span.
+    // - The fragment overlaps a regional outlier keep weight of 0.1.
+    // - The genomic scaling factor multiplies positional coverage by 5.0.
+    // - Final per-base coverage is therefore (3 * 0.1 * 5) / 61 across the full span.
     run(&cfg)?;
 
     let output_path = out_dir.path().join(dot_join(&[
@@ -1033,7 +1159,7 @@ fn normalize_by_length_and_gc_file_weights_multiply_per_position() -> Result<()>
     assert_eq!(parts[1].parse::<u64>()?, 20);
     assert_eq!(parts[2].parse::<u64>()?, 81);
     let value = parts[3].parse::<f64>()?;
-    let expected = 3.0_f64 / 61.0_f64;
+    let expected = (3.0_f64 * 0.1_f64 * 5.0_f64) / 61.0_f64;
     assert!(
         (value - expected).abs() <= 1e-6,
         "expected value {expected} for row {}, got {value}",

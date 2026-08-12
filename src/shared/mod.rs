@@ -40,6 +40,8 @@ pub(crate) mod logging;
     feature = "cmd_midpoints"
 ))]
 pub(crate) mod midpoint;
+#[cfg(feature = "cmd_fcoverage")]
+pub(crate) mod outlier_weights;
 pub(crate) mod overlaps;
 pub(crate) mod positioning;
 #[cfg(uses_progress_reporting)]

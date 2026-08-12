@@ -23,6 +23,11 @@ use crate::shared::fragment_iterators::fragments_with_segments_from_bam;
 use crate::shared::gc_tag::{ClassifiedGCTagWeight, MIN_REASONABLE_GC_WEIGHT};
 use crate::shared::interval::{IndexedInterval, Interval};
 use crate::shared::io::{FinalOutputFiles, dot_join};
+use crate::shared::outlier_weights::{
+    ChromosomeOutlierWeights, LoadedOutlierWeights, load_outlier_weights_tsv,
+    minimum_overlapping_keep_weight,
+};
+use crate::shared::overlaps::find_overlapping_windows;
 use crate::shared::progress::ProgressFactory;
 use crate::shared::read::{default_include_read_paired_end, default_include_read_unpaired};
 use crate::shared::reference::{ReferenceReader, stage_reference_2bit};
@@ -378,6 +383,15 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
         Some(opt.ignore_gap),
     )?;
 
+    // Load sparse fragment-level outlier weights
+    let outlier_weights = if let Some(path) = &opt.outlier_weights.outlier_weights {
+        status_info!(options, target: COMMAND_TARGET, "Loading outlier keep weights");
+        load_outlier_weights_tsv(path, &chromosomes, &contigs)
+            .context("load outlier keep weights")?
+    } else {
+        LoadedOutlierWeights::identity()
+    };
+
     // Load GC correction package if specified
     if opt.gc.gc_file.is_some() {
         status_info!(options, target: COMMAND_TARGET, "Loading GC correction matrix");
@@ -398,6 +412,7 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
     );
     let masked = opt.blacklist.is_some();
     let has_scaling_or_correction = opt.scale_genome.scaling_factors.is_some()
+        || opt.outlier_weights.outlier_weights.is_some()
         || opt.gc.gc_file.is_some()
         || opt.gc.gc_tag.is_some()
         || opt.uses_length_normalization();
@@ -535,6 +550,7 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
+            let outlier_weights_chr = outlier_weights.by_chromosome.get(&tile.chr);
 
             let tile_result = if matches!(
                 window_opt,
@@ -676,6 +692,8 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
                     tile_span.as_ref(),
                     blacklist_chr,
                     scaling_chr,
+                    outlier_weights_chr,
+                    outlier_weights.minimum_positive_keep_weight,
                     gc_corrector.clone(), // Quite small memory footprint
                     gc_tag,
                     reference_reader,
@@ -697,6 +715,7 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
     drop(tiles);
     drop(blacklist_map);
     drop(scaling_map);
+    drop(outlier_weights);
     drop(gc_corrector);
 
     // Collect counters
@@ -935,6 +954,8 @@ fn process_tile(
     tile_window_span: Option<&TileWindowSpan>,
     blacklist_chr: &[Interval<u64>],
     scaling_chr: &[ScalingBin],
+    outlier_weights_chr: Option<&ChromosomeOutlierWeights>,
+    minimum_positive_outlier_keep_weight: f64,
     gc_corrector_opt: Option<GCCorrector>,
     gc_tag: Option<&str>,
     reference_reader: Option<&mut ReferenceReader>,
@@ -1019,6 +1040,27 @@ fn process_tile(
     )
     .with_local_counters();
 
+    // The lookback preserves candidate intervals when paired fragments are emitted slightly out
+    // of start order from the pairing stash
+    let mut outlier_interval_pointer = 0usize;
+    let maximum_fragment_length = opt.fragment_lengths.max_fragment_length as u64;
+    let any_positive_overlap_fraction = 1.0 / (maximum_fragment_length as f64 + 1.0);
+    let mut resolve_outlier_keep_weight = |fragment_interval: Interval<u64>| -> Result<f64> {
+        let Some(chromosome_weights) = outlier_weights_chr else {
+            return Ok(1.0);
+        };
+        let overlaps = find_overlapping_windows(
+            chrom_len,
+            &mut outlier_interval_pointer,
+            Some(chromosome_weights.intervals.as_slice()),
+            None,
+            fragment_interval,
+            any_positive_overlap_fraction,
+            maximum_fragment_length,
+        )?;
+        minimum_overlapping_keep_weight(overlaps.as_ref(), chromosome_weights)
+    };
+
     // Iterate fragments and add coverage
     // Separate branches for with/without GC correction
     if let Some(gc_corrector) = gc_corrector_opt {
@@ -1038,10 +1080,10 @@ fn process_tile(
                 continue;
             }
 
-            let fetch_relative_fragment = fragment
-                .interval
-                .try_to_u64()?
-                .shift_left(fetch_start as u64)?;
+            let aligned_fragment_interval = fragment.interval.try_to_u64()?;
+            let fetch_relative_fragment =
+                aligned_fragment_interval.shift_left(fetch_start as u64)?;
+            let outlier_keep_weight = resolve_outlier_keep_weight(aligned_fragment_interval)?;
 
             let gc_weight =
                 match gc_corrector.correct_fragment(fetch_relative_fragment, gc_prefixes)? {
@@ -1060,7 +1102,7 @@ fn process_tile(
             let was_counted = add_fragment_to_core_after_optional_trim(
                 &mut cp,
                 &fragment,
-                base_weight * gc_weight,
+                base_weight * gc_weight * outlier_keep_weight,
                 tile,
                 chrom_len as u32,
                 opt,
@@ -1081,6 +1123,7 @@ fn process_tile(
             let fragment = fragment_res.context("reading fragment")?;
             let normalization_length = normalization_length_for_fragment(&fragment, opt)?;
             let base_weight = calculate_base_weight(normalization_length);
+            let outlier_keep_weight = resolve_outlier_keep_weight(fragment.interval.try_to_u64()?)?;
 
             let gc_weight = match fragment.gc_tag.classify()? {
                 ClassifiedGCTagWeight::Usable(weight) => weight as f64,
@@ -1109,7 +1152,7 @@ fn process_tile(
             let was_counted = add_fragment_to_core_after_optional_trim(
                 &mut cp,
                 &fragment,
-                base_weight * gc_weight,
+                base_weight * gc_weight * outlier_keep_weight,
                 tile,
                 chrom_len as u32,
                 opt,
@@ -1130,12 +1173,13 @@ fn process_tile(
             let fragment = fragment_res.context("reading fragment")?;
             let normalization_length = normalization_length_for_fragment(&fragment, opt)?;
             let base_weight = calculate_base_weight(normalization_length);
+            let outlier_keep_weight = resolve_outlier_keep_weight(fragment.interval.try_to_u64()?)?;
 
             // Clip and add to tile core coverage (segments respected)
             let was_counted = add_fragment_to_core_after_optional_trim(
                 &mut cp,
                 &fragment,
-                base_weight,
+                base_weight * outlier_keep_weight,
                 tile,
                 chrom_len as u32,
                 opt,
@@ -1163,7 +1207,10 @@ fn process_tile(
     // NOTE: Must come before scaling!
     // NOTE: If we add other normalizations, we must consider its effect here!
     if let Some(cov_mut) = cp.coverage_mut() {
-        clamp_finite_coverage_below_to_zero(cov_mut, internal_residual_coverage_floor(opt));
+        clamp_finite_coverage_below_to_zero(
+            cov_mut,
+            internal_residual_coverage_floor(opt, minimum_positive_outlier_keep_weight),
+        );
     }
 
     // Apply per-bin scaling (in-place)
@@ -1922,8 +1969,13 @@ fn minimum_positive_gc_weight(opt: &FCoverageConfig) -> f64 {
 /// per-position support below the current bound. The tests intentionally exercise the current
 /// GC and length-normalization combinations so future changes have to revisit this derivation.
 #[inline]
-fn minimum_positive_pre_scaling_support(opt: &FCoverageConfig) -> f64 {
-    minimum_positive_base_weight(opt) * minimum_positive_gc_weight(opt)
+fn minimum_positive_pre_scaling_support(
+    opt: &FCoverageConfig,
+    minimum_positive_outlier_keep_weight: f64,
+) -> f64 {
+    minimum_positive_base_weight(opt)
+        * minimum_positive_gc_weight(opt)
+        * minimum_positive_outlier_keep_weight
 }
 
 /// Internal cleanup floor for fake support created by floating-point add/subtract residue.
@@ -1932,8 +1984,11 @@ fn minimum_positive_pre_scaling_support(opt: &FCoverageConfig) -> f64 {
 /// argument combination, so it can only remove values that should be impossible in exact
 /// arithmetic for this run.
 #[inline]
-fn internal_residual_coverage_floor(opt: &FCoverageConfig) -> f32 {
-    (minimum_positive_pre_scaling_support(opt) / 2.0) as f32
+fn internal_residual_coverage_floor(
+    opt: &FCoverageConfig,
+    minimum_positive_outlier_keep_weight: f64,
+) -> f32 {
+    (minimum_positive_pre_scaling_support(opt, minimum_positive_outlier_keep_weight) / 2.0) as f32
 }
 
 #[cfg(test)]

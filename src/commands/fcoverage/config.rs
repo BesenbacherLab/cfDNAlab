@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::commands::cli_common::{ApplyGCArgs, ScaleGenomeArgs};
+use crate::commands::cli_common::{ApplyGCArgs, OutlierWeightsArgs, ScaleGenomeArgs};
 use crate::commands::cli_common::{
     ChromosomeArgs, DistributionWindowsArgs, FragmentLengthArgs, IOCArgs, LoggingArgs, TempDirArgs,
     UnpairedArgs,
@@ -78,6 +78,21 @@ pub enum LengthNormalizationMode {
 /// ## Blacklisting
 ///
 /// Blacklisted positions are excluded from positional and aggregate coverage outputs.
+///
+/// ## Outlier weighting
+///
+/// Reduce the influence of sample-specific extreme coverage without masking the affected genomic
+/// positions. Instead of excluding complete regions, outlier weighting retains a fraction of the
+/// fragment support associated with each detected extreme. This preserves the affected positions
+/// for downstream analysis while preventing a small number of extreme pileups from dominating the
+/// coverage signal.
+///
+/// The correction follows the associated fragments across their complete spans, including their
+/// contributions outside the detected interval. When a fragment is associated with multiple
+/// detected regions, the strongest correction is used.
+///
+/// Outlier weights combine multiplicatively with independent GC correction and normalization
+/// weights.
 ///
 /// ## GC correction
 ///
@@ -302,6 +317,9 @@ pub struct FCoverageConfig {
     pub scale_genome: ScaleGenomeArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
+    pub outlier_weights: OutlierWeightsArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
     pub fragment_lengths: FragmentLengthArgs,
 
     /// Minimum mapping quality to include `[integer]`
@@ -366,6 +384,7 @@ impl FCoverageConfig {
             windows: DistributionWindowsArgs::default(),
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),
+            outlier_weights: OutlierWeightsArgs::default(),
             fragment_lengths: FragmentLengthArgs::default(),
             min_mapq: 30,
             require_proper_pair: false,
@@ -421,6 +440,10 @@ impl FCoverageConfig {
 
     pub fn set_scale_genome(&mut self, scale_genome: ScaleGenomeArgs) {
         self.scale_genome = scale_genome;
+    }
+
+    pub fn set_outlier_weights(&mut self, outlier_weights: OutlierWeightsArgs) {
+        self.outlier_weights = outlier_weights;
     }
 
     pub fn set_keep_zero_runs(&mut self, keep: bool) {
@@ -497,6 +520,7 @@ impl ToCliCommand for FCoverageConfig {
         push_distribution_windows(&mut args, &self.windows);
         push_chromosomes(&mut args, &self.chromosomes);
         push_scale_genome(&mut args, &self.scale_genome);
+        push_outlier_weights(&mut args, &self.outlier_weights);
         push_fragment_lengths(&mut args, &self.fragment_lengths);
         push_value(&mut args, "--min-mapq", self.min_mapq);
         push_bool(&mut args, "--require-proper-pair", self.require_proper_pair);
