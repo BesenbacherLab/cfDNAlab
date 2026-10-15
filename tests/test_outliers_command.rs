@@ -8,7 +8,7 @@ use cfdnalab::{
     run_like_cli::{
         common::{ChromosomeArgs, IOCArgs, OutlierWeightsArgs},
         fcoverage::{FCoverageConfig, run_fcoverage},
-        outliers::{OutlierTarget, OutliersConfig, run_outliers},
+        outliers::{OutlierModel, OutlierTarget, OutliersConfig, run_outliers},
     },
     testing::{PairedFragmentSpec, TempBam, TempBamBuilder, read_zst_to_string},
 };
@@ -196,6 +196,7 @@ fn base_config(bam: &Path, output_dir: &Path) -> OutliersConfig {
             chromosomes_file: None,
         },
     );
+    config.set_model(OutlierModel::Zip);
     config.set_output_prefix("sample");
     config.set_tile_size(1_000_000);
     config.set_stride(250);
@@ -298,7 +299,7 @@ fn paired_bam_produces_the_hand_derived_models_calls_and_all_outputs() -> Result
     let result = run_outliers(&config, RunOptions::new_quiet())?;
 
     assert_eq!(result.counters.base.counted_fragments, 23);
-    assert_eq!(result.output_files.len(), 7);
+    assert_eq!(result.output_files.len(), 9);
     let expected_names = [
         "sample.outliers.keep_weights.tsv",
         "sample.outliers.exact.bed",
@@ -307,6 +308,8 @@ fn paired_bam_produces_the_hand_derived_models_calls_and_all_outputs() -> Result
         "sample.outliers.models.tsv",
         "sample.outliers.global_fit.tsv",
         "sample.outliers.global_fit.png",
+        "sample.outliers.audit.tsv",
+        "sample.outliers.summary.tsv",
     ];
     let actual_names = result
         .output_files
@@ -347,14 +350,14 @@ fn paired_bam_produces_the_hand_derived_models_calls_and_all_outputs() -> Result
     let model_text = fs::read_to_string(&result.output_models)?;
     let model_lines = data_lines(&model_text);
     let model_header = model_lines[0].split('\t').collect::<Vec<_>>();
-    assert_eq!(model_header.len(), 24);
+    assert_eq!(model_header.len(), 28);
     assert_eq!(model_header[10], "initial_threshold");
     assert_eq!(model_header[15], "final_threshold");
     assert_eq!(model_header[16], "observed_positive_coverage_mean");
     assert_eq!(model_header[17], "observed_positive_coverage_variance");
     assert_eq!(
         model_header[18],
-        "underlying_zip_expected_positive_coverage_variance"
+        "underlying_expected_positive_coverage_variance"
     );
     assert_eq!(model_header[19], "positive_coverage_variance_ratio");
     assert_eq!(model_header[20], "observed_initial_tail_positions");
@@ -454,7 +457,7 @@ fn detected_outlier_weights_flatten_an_extreme_pileup_in_fcoverage() -> Result<(
 
     // Detect the pileup programmatically. Every core uses the full 10 kb chromosome as its local
     // context. The automatic tail probability is 1 / 10,000 eligible positions. Local-mean
-    // targeting should estimate the ordinary coverage near 2.7 and assign that mass to the call.
+    // targeting uses the active-component mean near 2.82. The unconditional mean remains near 2.7.
     let mut outlier_config = OutliersConfig::new(
         IOCArgs {
             bam: bam.bam_path().to_path_buf(),
@@ -466,6 +469,7 @@ fn detected_outlier_weights_flatten_an_extreme_pileup_in_fcoverage() -> Result<(
             chromosomes_file: None,
         },
     );
+    outlier_config.set_model(OutlierModel::Zip);
     outlier_config.set_output_prefix("roundtrip_detected");
     outlier_config.set_tile_size(1_000_000);
     outlier_config.set_stride(1_000);
@@ -517,6 +521,8 @@ fn detected_outlier_weights_flatten_an_extreme_pileup_in_fcoverage() -> Result<(
         ]
     );
     let underlying_mean = pileup_model[14].parse::<f64>()?;
+    let active_component_mean = pileup_model[12].parse::<f64>()?;
+    assert!((2.81..=2.83).contains(&active_component_mean));
     let final_threshold = pileup_model[15].parse::<u32>()?;
     assert!(
         (2.69..=2.71).contains(&underlying_mean),
@@ -536,7 +542,7 @@ fn detected_outlier_weights_flatten_an_extreme_pileup_in_fcoverage() -> Result<(
     let keep_weight_fields = keep_weight_lines[1].split('\t').collect::<Vec<_>>();
     assert_eq!(&keep_weight_fields[..3], &["chr1", "4400", "4550"]);
     let keep_weight = keep_weight_fields[3].parse::<f64>()?;
-    let expected_keep_weight = underlying_mean / ROUNDTRIP_RAW_OUTLIER_COVERAGE;
+    let expected_keep_weight = active_component_mean / ROUNDTRIP_RAW_OUTLIER_COVERAGE;
     assert!(
         (keep_weight - expected_keep_weight).abs() <= 1e-12,
         "expected keep weight {expected_keep_weight}, got {keep_weight}"
@@ -572,7 +578,7 @@ fn detected_outlier_weights_flatten_an_extreme_pileup_in_fcoverage() -> Result<(
         raw_coverage[ROUNDTRIP_OUTLIER_START],
         ROUNDTRIP_RAW_OUTLIER_COVERAGE
     );
-    assert!((weighted_coverage[ROUNDTRIP_OUTLIER_START] - underlying_mean).abs() <= 2e-6);
+    assert!((weighted_coverage[ROUNDTRIP_OUTLIER_START] - active_component_mean).abs() <= 2e-6);
     assert!(
         weighted_coverage.iter().copied().fold(0.0_f64, f64::max) <= ROUNDTRIP_BACKGROUND_COVERAGE
     );
@@ -580,7 +586,7 @@ fn detected_outlier_weights_flatten_an_extreme_pileup_in_fcoverage() -> Result<(
         .iter()
         .sum::<f64>();
     let expected_target_mass =
-        underlying_mean * (ROUNDTRIP_OUTLIER_END - ROUNDTRIP_OUTLIER_START) as f64;
+        active_component_mean * (ROUNDTRIP_OUTLIER_END - ROUNDTRIP_OUTLIER_START) as f64;
     assert!(
         (weighted_outlier_mass - expected_target_mass).abs() <= 0.000_3,
         "expected regional target mass {expected_target_mass}, got {weighted_outlier_mass}"
@@ -655,6 +661,7 @@ fn detected_outlier_weights_flatten_an_extreme_with_complex_poisson_like_backgro
             chromosomes_file: None,
         },
     );
+    outlier_config.set_model(OutlierModel::Zip);
     outlier_config.set_output_prefix("complex_roundtrip_detected");
     outlier_config.set_tile_size(1_000_000);
     outlier_config.set_stride(5_000);
@@ -687,6 +694,7 @@ fn detected_outlier_weights_flatten_an_extreme_with_complex_poisson_like_backgro
         &["0", "60000", "local", "60000", "1242"]
     );
     let underlying_mean = pileup_model[14].parse::<f64>()?;
+    let active_component_mean = pileup_model[12].parse::<f64>()?;
     let final_threshold = pileup_model[15].parse::<u32>()?;
     let maximum_background_coverage =
         background_values.iter().copied().fold(0.0_f64, f64::max) as u32;
@@ -720,7 +728,7 @@ fn detected_outlier_weights_flatten_an_extreme_with_complex_poisson_like_backgro
         .iter()
         .sum::<f64>();
     let expected_target_mass =
-        underlying_mean * (COMPLEX_OUTLIER_END - COMPLEX_OUTLIER_START) as f64;
+        active_component_mean * (COMPLEX_OUTLIER_END - COMPLEX_OUTLIER_START) as f64;
     let expected_keep_weight = expected_target_mass / raw_outlier_mass;
     assert!(
         (keep_weight - expected_keep_weight).abs() <= 1e-12,
@@ -807,6 +815,7 @@ fn boundaries_blacklist_and_short_contig_preserve_calls_and_record_fallback() ->
             chromosomes_file: None,
         },
     );
+    config.set_model(OutlierModel::Zip);
     config.set_output_prefix("boundaries");
     config.set_tile_size(1_000_000);
     config.set_stride(250_000);
@@ -937,5 +946,48 @@ fn local_mean_and_zero_targets_write_their_regional_mass_weights() -> Result<()>
         .parse::<f64>()?;
     assert_eq!(zero_weight, 0.0);
 
+    Ok(())
+}
+
+#[test]
+fn default_zinb_bam_run_reports_a_valid_empty_call_set() -> Result<()> {
+    // Five adjacent 30 bp fragments cover half of a 300 bp chromosome at depth 1.
+    // This underdispersed background has no extreme pileup and selects dispersion zero
+    let mut builder = TempBamBuilder::new()
+        .name("zinb_no_calls")
+        .contig("chr1", 300)
+        .use_record_indexed_read_names();
+    for start in [0, 30, 60, 90, 120] {
+        builder = builder.paired_fragment(PairedFragmentSpec::new(0, start, 30, 10));
+    }
+    let bam = builder.build()?;
+    let output_dir = TempDir::new()?;
+    let mut config = base_config(bam.bam_path(), output_dir.path());
+    config.set_model(OutlierModel::Zinb);
+    config.set_stride(300);
+    config.set_bin_size(300);
+    let result = run_outliers(&config, RunOptions::new_quiet())?;
+    let weights = fs::read_to_string(&result.output_keep_weights)?;
+    assert!(weights.contains("# model=zinb\n"));
+    assert_eq!(
+        data_lines(&weights),
+        ["chromosome\tstart\tend\tkeep_weight"]
+    );
+    let audit = fs::read_to_string(&result.output_audit)?;
+    assert_eq!(data_lines(&audit).len(), 1);
+    assert!(
+        !data_lines(&audit)[0]
+            .split('\t')
+            .any(|column| column == "keep_weight")
+    );
+    let summary = fs::read_to_string(&result.output_summary)?;
+    let rows = data_lines(&summary);
+    assert_eq!(rows.len(), 3);
+    let values: Vec<_> = rows[1].split('\t').collect();
+    assert_eq!(
+        &values[..7],
+        &["chromosome", "chr1", "300", "0", "0", "0", "0"]
+    );
+    assert_eq!(values[22], "1");
     Ok(())
 }

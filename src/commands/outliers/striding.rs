@@ -3,8 +3,9 @@ use fxhash::FxHashMap;
 use rayon::prelude::*;
 
 use crate::{
-    commands::outliers::model::{
-        CoverageCounts, TwoStageZipModel, ZipFitDiagnostics, diagnose_zip_fit, fit_two_stage_zip,
+    commands::outliers::{
+        distribution::{FitDiagnostics, TwoStageCoverageModel, diagnose_fit, fit_two_stage},
+        model::CoverageCounts,
     },
     shared::interval::Interval,
 };
@@ -116,13 +117,19 @@ impl ModelSource {
 /// Model and fit diagnostics assigned to a fixed-size model core.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CoreModel {
+    /// Fixed-size chromosome interval over which this model supplies T2 and correction targets.
     pub(crate) core: Interval<u32>,
+    /// Broader chromosome-local interval assembled to fit the model or assess fallback support.
     pub(crate) context: Interval<u32>,
+    /// Eligible positions in `context`, even when the applied model was fitted globally.
     pub(crate) eligible_positions: u64,
+    /// Accepted fragments assigned by unblacklisted midpoint to `context`.
     pub(crate) fragment_support: u64,
+    /// Whether parameters were fitted from `context` or reused from the global histogram.
     pub(crate) source: ModelSource,
-    pub(crate) zip: TwoStageZipModel,
-    pub(crate) diagnostics: ZipFitDiagnostics,
+    pub(crate) model: TwoStageCoverageModel,
+    /// Comparison of this context's original histogram with the applied model.
+    pub(crate) diagnostics: FitDiagnostics,
 }
 
 /// Sum all model-core histograms without another BAM scan.
@@ -150,7 +157,7 @@ pub(crate) fn sum_global_histogram(
 pub(crate) fn fit_core_models(
     chromosomes: &[String],
     histograms_by_chromosome: &FxHashMap<String, Vec<CoreHistogram>>,
-    global_model: TwoStageZipModel,
+    global_model: TwoStageCoverageModel,
     tail_probability: f64,
     minimum_context_span: u32,
     minimum_fragment_support: u64,
@@ -176,21 +183,26 @@ pub(crate) fn fit_core_models(
                     minimum_context_span,
                     minimum_fragment_support,
                 )?;
+                // The model core is only where thresholds apply. Fit from the assembled context,
+                // which is normally 5.5 Mb when centered with the default span and stride
                 let local_fit = context_complete
-                    .then(|| fit_two_stage_zip(&context_histogram.counts, tail_probability))
+                    .then(|| fit_two_stage(&context_histogram.counts, tail_probability, global_model.family)
+                        .with_context(|| format!("fitting {} for {chromosome} core {:?}, context {:?}, eligible positions {}, fragment support {}",
+                            global_model.family.as_str(), cores[core_index].interval.as_tuple(), context.as_tuple(),
+                            context_histogram.counts.values().sum::<u64>(), context_histogram.fragment_support)))
                     .transpose()?;
-                let (source, zip) = match local_fit {
+                let (source, model) = match local_fit {
                     Some(model) => (ModelSource::Local, model),
                     None => (ModelSource::GlobalFallback, global_model),
                 };
-                let diagnostics = diagnose_zip_fit(&context_histogram.counts, zip)?;
+                let diagnostics = diagnose_fit(&context_histogram.counts, model).with_context(|| format!("diagnosing {chromosome} context {:?}", context.as_tuple()))?;
                 Ok(CoreModel {
                     core: cores[core_index].interval,
                     context,
                     eligible_positions: context_histogram.eligible_positions()?,
                     fragment_support: context_histogram.fragment_support,
                     source,
-                    zip,
+                    model,
                     diagnostics,
                 })
             })

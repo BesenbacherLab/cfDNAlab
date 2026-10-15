@@ -98,27 +98,6 @@ impl ZipParameters {
     }
 }
 
-/// Observed positive-count dispersion and initial- and final-tail calibration for a fitted ZIP.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct ZipFitDiagnostics {
-    /// Mean among original observed positions with positive coverage.
-    pub(crate) observed_positive_coverage_mean: f64,
-    /// Population variance among original observed positions with positive coverage.
-    pub(crate) observed_positive_coverage_variance: f64,
-    /// Positive-coverage variance expected from the fitted underlying ZIP.
-    pub(crate) underlying_zip_expected_positive_coverage_variance: f64,
-    /// Observed positive-coverage variance divided by the underlying ZIP expectation.
-    pub(crate) positive_coverage_variance_ratio: f64,
-    /// Observed positions with coverage greater than or equal to `T1`.
-    pub(crate) observed_initial_tail_positions: u64,
-    /// Positions expected at or above `T1` under the initial ZIP.
-    pub(crate) expected_initial_tail_positions: f64,
-    /// Observed positions with coverage greater than or equal to `T2`.
-    pub(crate) observed_final_tail_positions: u64,
-    /// Positions expected at or above `T2` under the fitted underlying ZIP.
-    pub(crate) expected_final_tail_positions: f64,
-}
-
 /// Initial and right-truncation-corrected ZIP fits for a coverage histogram.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct TwoStageZipModel {
@@ -160,86 +139,7 @@ pub(crate) fn fit_two_stage_zip(
     })
 }
 
-/// Compare observed positive counts and both fitted tails with a two-stage ZIP model.
-pub(crate) fn diagnose_zip_fit(
-    histogram: &CoverageCounts,
-    model: TwoStageZipModel,
-) -> Result<ZipFitDiagnostics> {
-    let (positive_positions, positive_coverage_sum) = positive_summary(histogram, None)?;
-    let underlying_zip_positive_coverage_mean =
-        zero_truncated_poisson_mean(model.underlying_fit.lambda);
-    let underlying_zip_expected_positive_coverage_variance = underlying_zip_positive_coverage_mean
-        * (1.0 + model.underlying_fit.lambda - underlying_zip_positive_coverage_mean);
-    ensure!(
-        underlying_zip_expected_positive_coverage_variance.is_finite()
-            && underlying_zip_expected_positive_coverage_variance > 0.0,
-        "ZIP fit produced invalid positive-count variance {}",
-        underlying_zip_expected_positive_coverage_variance
-    );
-    let (
-        observed_positive_coverage_mean,
-        observed_positive_coverage_variance,
-        positive_coverage_variance_ratio,
-    ) = if positive_positions == 0 {
-        // An incomplete all-zero local context can validly use the global fallback model.
-        // Its positive-count diagnostics are undefined and are written as NaN
-        (f64::NAN, f64::NAN, f64::NAN)
-    } else {
-        let observed_positive_coverage_mean = positive_coverage_sum / positive_positions as f64;
-        let observed_positive_squared_deviation_sum = histogram
-            .iter()
-            .filter(|(coverage, _)| **coverage > 0)
-            .map(|(&coverage, &positions)| {
-                let deviation = coverage as f64 - observed_positive_coverage_mean;
-                deviation * deviation * positions as f64
-            })
-            .sum::<f64>();
-        let observed_positive_coverage_variance =
-            observed_positive_squared_deviation_sum / positive_positions as f64;
-        (
-            observed_positive_coverage_mean,
-            observed_positive_coverage_variance,
-            observed_positive_coverage_variance
-                / underlying_zip_expected_positive_coverage_variance,
-        )
-    };
-    let eligible_positions = histogram.values().try_fold(0_u64, |total, &positions| {
-        total
-            .checked_add(positions)
-            .context("eligible-position count overflow")
-    })?;
-    let observed_initial_tail_positions = observed_tail_positions(
-        histogram,
-        model.initial_threshold,
-        "initial-tail position count overflow",
-    )?;
-    let expected_initial_tail_positions = eligible_positions as f64
-        * model
-            .initial
-            .survival_at_or_above(model.initial_threshold)?;
-    let observed_final_tail_positions = observed_tail_positions(
-        histogram,
-        model.final_threshold,
-        "final-tail position count overflow",
-    )?;
-    let expected_final_tail_positions = eligible_positions as f64
-        * model
-            .underlying_fit
-            .survival_at_or_above(model.final_threshold)?;
-
-    Ok(ZipFitDiagnostics {
-        observed_positive_coverage_mean,
-        observed_positive_coverage_variance,
-        underlying_zip_expected_positive_coverage_variance,
-        positive_coverage_variance_ratio,
-        observed_initial_tail_positions,
-        expected_initial_tail_positions,
-        observed_final_tail_positions,
-        expected_final_tail_positions,
-    })
-}
-
-fn observed_tail_positions(
+pub(super) fn observed_tail_positions(
     histogram: &CoverageCounts,
     threshold: u32,
     overflow_message: &'static str,
@@ -266,7 +166,7 @@ fn validate_tail_probability(tail_probability: f64) -> Result<()> {
 /// `E[X | X >= 1] = lambda / (1 - exp(-lambda))`, then solves the observed zero fraction for
 /// `zero_inflation`. If that solution would require negative zero inflation, the constrained
 /// maximum is the ordinary Poisson boundary with `zero_inflation = 0`.
-fn fit_zip(histogram: &CoverageCounts) -> Result<ZipParameters> {
+pub(super) fn fit_zip(histogram: &CoverageCounts) -> Result<ZipParameters> {
     let total_positions = histogram.values().try_fold(0_u64, |total, &positions| {
         total
             .checked_add(positions)
@@ -319,7 +219,7 @@ fn fit_zip(histogram: &CoverageCounts) -> Result<ZipParameters> {
 /// `zero_inflation`, so their mean identifies `lambda`. The retained zero fraction then identifies
 /// `zero_inflation` only after accounting for the Poisson probability of retention. If the implied
 /// value would be negative, the constrained fit uses the right-truncated Poisson boundary.
-fn fit_right_truncated_zip(
+pub(super) fn fit_right_truncated_zip(
     histogram: &CoverageCounts,
     exclusion_threshold: u32,
 ) -> Result<(ZipParameters, u64)> {
@@ -390,7 +290,7 @@ fn fit_right_truncated_zip(
     ))
 }
 
-fn positive_summary(
+pub(super) fn positive_summary(
     histogram: &CoverageCounts,
     exclusive_upper_bound: Option<u32>,
 ) -> Result<(u64, f64)> {
@@ -661,7 +561,7 @@ fn log_add_exp(first_log_value: f64, second_log_value: f64) -> f64 {
 }
 
 #[inline]
-fn poisson_log_probability(lambda: f64, coverage: u32) -> f64 {
+pub(super) fn poisson_log_probability(lambda: f64, coverage: u32) -> f64 {
     -lambda + coverage as f64 * lambda.ln() - log_factorial(coverage)
 }
 
@@ -670,9 +570,17 @@ fn poisson_probability(lambda: f64, coverage: u32) -> f64 {
 }
 
 /// Calculate `ln(value!)`, using Stirling's series when direct summation would be expensive.
-fn log_factorial(value: u32) -> f64 {
+pub(super) fn log_factorial(value: u32) -> f64 {
     if value < 256 {
-        return (2..=value).map(|number| (number as f64).ln()).sum();
+        static VALUES: std::sync::OnceLock<[f64; 256]> = std::sync::OnceLock::new();
+        let values = VALUES.get_or_init(|| {
+            let mut values = [0.0; 256];
+            for index in 2..256 {
+                values[index] = values[index - 1] + (index as f64).ln();
+            }
+            values
+        });
+        return values[value as usize];
     }
 
     let value = value as f64;

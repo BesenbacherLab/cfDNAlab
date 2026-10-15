@@ -60,7 +60,7 @@ cmd_lengths = ["cmd_gc_bias"]
 cmd_prepare_windows = []
 cmd_ref_kmers = []
 cmd_midpoints = ["cmd_gc_bias"]
-cmd_outliers = ["cmd_fcoverage", "plotters"]
+cmd_outliers = ["cmd_fcoverage", "plotters", "dep:argmin", "dep:argmin-math", "dep:statrs"]
 cmd_transitions = ["cmd_fragment_kmers"]
 cmd_visualize_positions = ["cmd_fragment_kmers"]
 cmd_visualize_positions_tests = ["cmd_visualize_positions"]
@@ -69,6 +69,8 @@ cmd_wps_peaks = ["cmd_wps", "cmd_gc_bias", "staged-sg-filter"]
 
 [dependencies]
 anyhow = "1.0.98"
+argmin = { version = "0.11", default-features = false, optional = true }
+argmin-math = { version = "0.5", default-features = false, features = ["vec"], optional = true }
 arrayvec = "0.7.6"
 bincode = { version = "2.0.1", features = ["serde"] }
 # Keep unlocked `cargo install cfdnalab` off the hts-sys bindgen version that predates the
@@ -93,6 +95,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0"
 smallvec = "1.15.1"
 staged-sg-filter = { version = "0.2.3", optional = true }
+statrs = { version = "0.18", default-features = false, optional = true }
 strum = "0.27.2"
 strum_macros = "0.27.2"
 tempfile = "3.20.0"

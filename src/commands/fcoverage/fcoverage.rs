@@ -162,6 +162,16 @@ pub fn run_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
         ));
     }
 
+    if opt.outlier_weights.outlier_weights.is_some() {
+        extra_statistics.push(format!(
+            "Outlier exclusions (tile encounters): {}",
+            global_counter.outlier_excluded_fragments
+        ));
+        extra_statistics.push(format!(
+            "Outlier downweighted fragments (tile insertions): {}",
+            global_counter.outlier_downweighted_fragments
+        ));
+    }
     if options.report_statistics {
         print_fragment_run_statistics(
             &global_counter.base,
@@ -386,8 +396,26 @@ fn execute_fcoverage(opt: &FCoverageConfig, options: RunOptions) -> Result<FCove
     // Load sparse fragment-level outlier weights
     let outlier_weights = if let Some(path) = &opt.outlier_weights.outlier_weights {
         status_info!(options, target: COMMAND_TARGET, "Loading outlier keep weights");
-        load_outlier_weights_tsv(path, &chromosomes, &contigs)
-            .context("load outlier keep weights")?
+        let loaded = load_outlier_weights_tsv(path, &chromosomes, &contigs)
+            .context("load outlier keep weights")?;
+        loaded.warn_filter_differences(&[
+            ("minimum_mapping_quality", opt.min_mapq.to_string()),
+            (
+                "fragment_length_range",
+                format!(
+                    "{}-{}",
+                    opt.fragment_lengths.min_fragment_length,
+                    opt.fragment_lengths.max_fragment_length
+                ),
+            ),
+            ("ignore_gap", opt.ignore_gap.to_string()),
+            (
+                "reads_are_fragments",
+                opt.unpaired.reads_are_fragments.to_string(),
+            ),
+            ("require_proper_pair", opt.require_proper_pair.to_string()),
+        ]);
+        loaded
     } else {
         LoadedOutlierWeights::identity()
     };
@@ -1071,8 +1099,6 @@ fn process_tile(
         let fetch_end = tile.fetch_end();
         for fragment_res in iter.by_ref() {
             let fragment = fragment_res.context("reading fragment")?;
-            let normalization_length = normalization_length_for_fragment(&fragment, opt)?;
-            let base_weight = calculate_base_weight(normalization_length);
 
             if fragment.start() < fetch_start || fragment.end() > fetch_end {
                 // Fragment won't overlap the tile core (assuming correct max_fragment_length halo!)
@@ -1084,6 +1110,12 @@ fn process_tile(
             let fetch_relative_fragment =
                 aligned_fragment_interval.shift_left(fetch_start as u64)?;
             let outlier_keep_weight = resolve_outlier_keep_weight(aligned_fragment_interval)?;
+            if outlier_keep_weight == 0.0 {
+                counter.outlier_excluded_fragments += 1;
+                continue;
+            }
+            let normalization_length = normalization_length_for_fragment(&fragment, opt)?;
+            let base_weight = calculate_base_weight(normalization_length);
 
             let gc_weight =
                 match gc_corrector.correct_fragment(fetch_relative_fragment, gc_prefixes)? {
@@ -1110,6 +1142,9 @@ fn process_tile(
 
             if was_counted {
                 counter.base.counted_fragments += 1;
+                if outlier_keep_weight < 1.0 {
+                    counter.outlier_downweighted_fragments += 1;
+                }
                 if let Some(normalization_length) = normalization_length
                     && fragment_is_owned_by_tile_for_normalization_stats(&fragment, tile)
                 {
@@ -1121,9 +1156,13 @@ fn process_tile(
     } else if gc_tag.is_some() {
         for fragment_res in iter.by_ref() {
             let fragment = fragment_res.context("reading fragment")?;
+            let outlier_keep_weight = resolve_outlier_keep_weight(fragment.interval.try_to_u64()?)?;
+            if outlier_keep_weight == 0.0 {
+                counter.outlier_excluded_fragments += 1;
+                continue;
+            }
             let normalization_length = normalization_length_for_fragment(&fragment, opt)?;
             let base_weight = calculate_base_weight(normalization_length);
-            let outlier_keep_weight = resolve_outlier_keep_weight(fragment.interval.try_to_u64()?)?;
 
             let gc_weight = match fragment.gc_tag.classify()? {
                 ClassifiedGCTagWeight::Usable(weight) => weight as f64,
@@ -1160,6 +1199,9 @@ fn process_tile(
 
             if was_counted {
                 counter.base.counted_fragments += 1;
+                if outlier_keep_weight < 1.0 {
+                    counter.outlier_downweighted_fragments += 1;
+                }
                 if let Some(normalization_length) = normalization_length
                     && fragment_is_owned_by_tile_for_normalization_stats(&fragment, tile)
                 {
@@ -1171,9 +1213,13 @@ fn process_tile(
     } else {
         for fragment_res in iter.by_ref() {
             let fragment = fragment_res.context("reading fragment")?;
+            let outlier_keep_weight = resolve_outlier_keep_weight(fragment.interval.try_to_u64()?)?;
+            if outlier_keep_weight == 0.0 {
+                counter.outlier_excluded_fragments += 1;
+                continue;
+            }
             let normalization_length = normalization_length_for_fragment(&fragment, opt)?;
             let base_weight = calculate_base_weight(normalization_length);
-            let outlier_keep_weight = resolve_outlier_keep_weight(fragment.interval.try_to_u64()?)?;
 
             // Clip and add to tile core coverage (segments respected)
             let was_counted = add_fragment_to_core_after_optional_trim(
@@ -1187,6 +1233,9 @@ fn process_tile(
 
             if was_counted {
                 counter.base.counted_fragments += 1;
+                if outlier_keep_weight < 1.0 {
+                    counter.outlier_downweighted_fragments += 1;
+                }
                 if let Some(normalization_length) = normalization_length
                     && fragment_is_owned_by_tile_for_normalization_stats(&fragment, tile)
                 {

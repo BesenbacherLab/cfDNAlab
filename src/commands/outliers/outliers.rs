@@ -22,10 +22,10 @@ use crate::{
         fcoverage::fcoverage::add_fragment_clipped_to_core,
         outliers::{
             config::{OutlierTarget, OutliersConfig},
-            model::fit_two_stage_zip,
+            distribution::fit_two_stage,
+            inspection::write_call_outputs,
             outputs::{
-                OutputMetadata, OutputPaths, write_call_outputs, write_diagnostic_outputs,
-                write_histogram_output,
+                OutputMetadata, OutputPaths, write_diagnostic_outputs, write_histogram_output,
             },
             striding::{CoreHistogram, CoreModel, fit_core_models, sum_global_histogram},
         },
@@ -55,7 +55,7 @@ const COMMAND_TARGET: &str = "outliers";
 pub struct OutliersRunResult {
     /// Fragment counters from the final tiled BAM scan.
     pub counters: FCoverageCounters,
-    /// Sparse fractional fragment weights intended for the planned downstream weight loader.
+    /// Sparse fractional fragment weights consumed by fcoverage.
     pub output_keep_weights: PathBuf,
     /// Exact called regions for blacklist workflows that should not add a flank.
     pub output_exact_blacklist: PathBuf,
@@ -69,6 +69,10 @@ pub struct OutliersRunResult {
     pub output_global_fit: PathBuf,
     /// Visual assessment of the complete global histogram and per-core models used during calling.
     pub output_plot: PathBuf,
+    /// Every candidate with its proposed correction and final preservation decision.
+    pub output_audit: PathBuf,
+    /// Per-chromosome and total genomic call summaries.
+    pub output_summary: PathBuf,
     /// All final output files produced by the command.
     pub output_files: Vec<PathBuf>,
 }
@@ -91,9 +95,13 @@ impl CommandRunResult for OutliersRunResult {
 
 #[derive(Debug)]
 struct TileCoverage {
+    /// Raw positional coverage for this processing tile's core, excluding its fetch halo.
     coverage: Coverage,
     counters: FCoverageCounters,
+    /// Chromosome-wide index corresponding to the first entry in `fragment_support`.
     first_model_core_index: usize,
+    /// Histogram-pass fragment counts by model core, assigned by unblacklisted midpoint.
+    /// Empty when this tile was built without collecting fragment support.
     fragment_support: Vec<u64>,
 }
 
@@ -105,14 +113,24 @@ struct HistogramPassTileResult {
     counters: FCoverageCounters,
 }
 
+/// A contiguous run of eligible positions called against their respective model cores' T2.
+///
+/// Tile-local pieces are joined before preservation is evaluated. Statistics cover the exact
+/// called interval, without flanks or neighboring positions from the fitting context.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct CalledRegion {
+    /// Exact called bases in chromosome coordinates, using `[start, end)`.
     pub(super) interval: Interval<u32>,
+    /// Sum of raw positional coverage over this exact interval, in fragment-bases.
     pub(super) observed_mass: f64,
+    /// Sum of the selected per-position targets, which can differ between model cores.
     pub(super) target_mass: f64,
+    /// Highest raw positional coverage within this exact called interval.
+    pub(super) maximum_coverage: u32,
 }
 
 impl CalledRegion {
+    /// Retain the fraction of observed regional mass needed to reach the summed target mass.
     pub(super) fn keep_weight(&self) -> f64 {
         if self.target_mass == 0.0 {
             0.0
@@ -133,20 +151,19 @@ struct CallingPassTileResult {
 /// Detect high raw-coverage outliers and calculate regional fragment keep weights.
 ///
 /// Coverage is scanned in parallel tiles twice. The first pass builds histograms for fixed-size
-/// model cores and fits local two-stage ZIP models. The second pass applies the finalized core
+/// model cores and fits local two-stage coverage models. The second pass applies the finalized core
 /// thresholds to original raw coverage and joins qualifying positions across core and tile
 /// boundaries.
 ///
 /// For a called region, `observed_mass` is the sum of its original positional coverage and
 /// `target_mass` is the sum of its selected target coverage. The written regional weight is
 /// `min(1, target_mass / observed_mass)`. Positions omitted from the sparse TSV have implicit
-/// weight `1.0`. A future downstream loader will assign a fragment the minimum weight among regions
-/// overlapping its complete `pos` to `reference_end` span. No downstream command applies these
-/// weights yet.
+/// weight `1.0`. The fcoverage loader assigns a fragment the minimum weight among actionable regions
+/// overlapping its complete `pos` to `reference_end` span.
 ///
-/// The final ZIP parameters describe an underlying untruncated distribution even though they are
+/// The final model parameters describe an underlying untruncated distribution even though they are
 /// estimated with a likelihood conditioned on coverage below `T1`. Calls use the inclusive tail
-/// `P(X >= T2)`. The model does not account for positive-count overdispersion or spatial dependence,
+/// `P(X >= T2)`. ZINB models positive-count overdispersion but neither model accounts for spatial dependence,
 /// so the diagnostic outputs are required model checks rather than optional presentation files.
 ///
 /// Reporting is controlled by `options`. Counters describe the second pass because each pass uses
@@ -166,7 +183,7 @@ struct CallingPassTileResult {
 ///
 /// Errors
 /// ------
-/// Returns an error when inputs are invalid, a ZIP model cannot be fitted, raw coverage is not
+/// Returns an error when inputs are invalid, a selected model cannot be fitted, raw coverage is not
 /// integer-valued, or an output cannot be completed.
 pub fn run_outliers(config: &OutliersConfig, options: RunOptions) -> Result<OutliersRunResult> {
     let start_time = Instant::now();
@@ -262,6 +279,7 @@ pub fn run_outliers(config: &OutliersConfig, options: RunOptions) -> Result<Outl
     let output_metadata = OutputMetadata {
         config,
         chromosomes: &chromosomes,
+        contigs: &contigs,
         tail_probability,
         eligible_positions,
         blacklist_flank,
@@ -275,9 +293,9 @@ pub fn run_outliers(config: &OutliersConfig, options: RunOptions) -> Result<Outl
         &mut final_outputs,
     )?;
 
-    status_info!(options, target: COMMAND_TARGET, "Fitting global and local ZIP models");
-    let global_model = fit_two_stage_zip(&global_histogram.counts, tail_probability)
-        .context("fitting the global two-stage ZIP model")?;
+    status_info!(options, target: COMMAND_TARGET, "Fitting global and local coverage models");
+    let global_model = fit_two_stage(&global_histogram.counts, tail_probability, config.model)
+        .context("fitting the global two-stage coverage model")?;
     let models_by_chromosome = fit_core_models(
         &chromosomes,
         &histograms_by_chromosome,
@@ -287,7 +305,7 @@ pub fn run_outliers(config: &OutliersConfig, options: RunOptions) -> Result<Outl
         config.min_context_fragments,
     )?;
 
-    status_info!(options, target: COMMAND_TARGET, "Writing ZIP diagnostics");
+    status_info!(options, target: COMMAND_TARGET, "Writing coverage-model diagnostics");
     write_diagnostic_outputs(
         &output_metadata,
         &global_histogram,
@@ -320,10 +338,13 @@ pub fn run_outliers(config: &OutliersConfig, options: RunOptions) -> Result<Outl
 
     let (regions_by_chromosome, counters) =
         merge_calling_pass_results(&chromosomes, calling_pass_tile_results)?;
-    write_call_outputs(
+    let call_summary = write_call_outputs(
         &output_metadata,
         &contigs,
         &regions_by_chromosome,
+        &blacklist_map,
+        &histograms_by_chromosome,
+        &models_by_chromosome,
         &output_paths,
         &mut final_outputs,
     )?;
@@ -333,11 +354,22 @@ pub fn run_outliers(config: &OutliersConfig, options: RunOptions) -> Result<Outl
     status_info!(options, target: COMMAND_TARGET, "Saved outlier outputs");
 
     if options.report_statistics {
-        let called_regions = regions_by_chromosome.values().map(Vec::len).sum::<usize>();
         let extra_statistics = [
             format!("Eligible positions: {eligible_positions}"),
             format!("Tail probability: {tail_probability}"),
-            format!("Called outlier regions: {called_regions}"),
+            format!("Detection candidates: {}", call_summary.candidate_calls),
+            format!(
+                "Actionable calls: {} ({} bases, {:.6}% of eligible positions)",
+                call_summary.actionable_calls,
+                call_summary.actionable_bases,
+                call_summary.percentage(call_summary.actionable_bases)
+            ),
+            format!(
+                "Preserved calls: {} ({} bases, {:.6}% of eligible positions)",
+                call_summary.preserved_calls,
+                call_summary.preserved_bases,
+                call_summary.percentage(call_summary.preserved_bases)
+            ),
         ];
         print_fragment_run_statistics(
             &counters.base,
@@ -362,6 +394,8 @@ pub fn run_outliers(config: &OutliersConfig, options: RunOptions) -> Result<Outl
         output_models: output_paths.models,
         output_global_fit: output_paths.global_fit,
         output_plot: output_paths.plot,
+        output_audit: output_paths.audit,
+        output_summary: output_paths.summary,
         output_files,
     })
 }
@@ -399,7 +433,9 @@ fn process_histogram_pass_tile(
             .fragment_support
             .get(support_offset)
             .copied()
-            .unwrap_or(0);
+            .with_context(|| format!("missing fragment support for {} tile {:?}, model core {}, offset {}, available entries {}",
+                tile.chr, (tile.core_start(), tile.core_end()), model_core_index, support_offset,
+                tile_coverage.fragment_support.len()))?;
         histograms.push((model_core_index, histogram));
         absolute_start = overlap_end;
     }
@@ -590,7 +626,11 @@ fn merge_histogram_pass_results(
     Ok((histograms_by_chromosome, counters))
 }
 
-/// Process one parallelization tile during the outlier-calling BAM pass.
+/// Call positions in one processing tile's core using models fitted in the first pass.
+///
+/// Each model core supplies T2 and a correction target from its broader fitting context
+/// (normally 5.5 Mb for a centered context with the default settings). A call can cross model-core
+/// boundaries. The returned pieces stop at this processing tile's boundary and are joined later.
 fn process_calling_pass_tile(
     config: &OutliersConfig,
     tile: &Tile,
@@ -604,12 +644,18 @@ fn process_calling_pass_tile(
         .context("tile coverage missing during outlier calling")?;
     let mask = tile_coverage.coverage.blacklist_mask();
     let mut regions = Vec::new();
+
+    // These accumulators describe only the currently open exact call within this tile
+    // Masses and peak coverage reset whenever a non-called or blacklisted base ends the call
     let mut current_start: Option<u32> = None;
     let mut observed_mass = 0.0_f64;
     let mut target_mass = 0.0_f64;
+    // Peak raw coverage in that call, rather than a maximum over the tile or fitting context
+    let mut maximum_coverage = 0_u32;
 
     for (local_position, &coverage_value) in coverage.iter().enumerate() {
         let absolute_position = tile.core_start() + local_position as u32;
+        // The stride locates the model core whose fitted threshold applies at this position
         let core_index = (absolute_position / config.stride) as usize;
         let model = chromosome_models.get(core_index).with_context(|| {
             format!(
@@ -626,14 +672,17 @@ fn process_calling_pass_tile(
             "raw coverage must be a finite nonnegative integer, got {}",
             coverage_value
         );
-        let is_outlier = eligible && rounded_coverage >= model.zip.final_threshold as f32;
+        let is_outlier = eligible && rounded_coverage >= model.model.final_threshold as f32;
 
         if is_outlier {
             current_start.get_or_insert(absolute_position);
             observed_mass += rounded_coverage as f64;
+            maximum_coverage = maximum_coverage.max(rounded_coverage as u32);
+            // Summing per-position targets preserves their contributions when a call crosses
+            // into a core with a different fitted baseline or T2
             target_mass += match config.target {
-                OutlierTarget::LocalMean => model.zip.underlying_fit.mean(),
-                OutlierTarget::Threshold => model.zip.final_threshold as f64,
+                OutlierTarget::LocalMean => model.model.underlying_fit.component_mean,
+                OutlierTarget::Threshold => model.model.final_threshold as f64,
                 OutlierTarget::Zero => 0.0,
             };
         } else if let Some(start) = current_start.take() {
@@ -641,16 +690,20 @@ fn process_calling_pass_tile(
                 interval: Interval::new(start, absolute_position)?,
                 observed_mass,
                 target_mass,
+                maximum_coverage,
             });
             observed_mass = 0.0;
             target_mass = 0.0;
+            maximum_coverage = 0;
         }
     }
     if let Some(start) = current_start {
+        // Record the final tile-local piece so the merge pass can join it to the next tile's call
         regions.push(CalledRegion {
             interval: Interval::new(start, tile.core_end())?,
             observed_mass,
             target_mass,
+            maximum_coverage,
         });
     }
 
@@ -661,6 +714,10 @@ fn process_calling_pass_tile(
     })
 }
 
+/// Join touching exact-call pieces in chromosome/tile order before adding any flanks.
+///
+/// Masses sum across pieces, while the largest piece peak becomes the peak of the joined call.
+/// Neither a fitting-context boundary nor a processing-tile boundary splits the final call.
 fn merge_calling_pass_results(
     chromosomes: &[String],
     calling_pass_tile_results: Vec<CallingPassTileResult>,
@@ -693,6 +750,8 @@ fn merge_calling_pass_results(
                     previous.interval = previous.interval.expand_to_include(region.interval);
                     previous.observed_mass += region.observed_mass;
                     previous.target_mass += region.target_mass;
+                    previous.maximum_coverage =
+                        previous.maximum_coverage.max(region.maximum_coverage);
                     continue;
                 }
             }

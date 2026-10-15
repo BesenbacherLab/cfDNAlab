@@ -15,6 +15,24 @@ fn selected_contigs() -> Contigs {
     Contigs { contigs }
 }
 
+#[test]
+fn recorded_analysis_distinguishes_an_empty_chromosome_from_an_unanalysed_one() {
+    let file = write_input("# selected_chromosomes=[\"chr1\"]\nchromosome\tstart\tend\tkeep_weight\n");
+    let loaded = load_outlier_weights_tsv(file.path(), &["chr1".into()], &selected_contigs()).unwrap();
+    assert!(loaded.by_chromosome.is_empty());
+    let error = load_outlier_weights_tsv(file.path(), &["chr2".into()], &selected_contigs()).unwrap_err();
+    assert!(format!("{error:#}").contains("was not analysed"));
+}
+
+#[test]
+fn recorded_reference_checks_names_and_lengths_without_file_identity() {
+    let matching = write_input("# reference_contig_footprint_json=[{\"name\":\"chr1\",\"size\":100},{\"name\":\"chr2\",\"size\":80}]\n# selected_chromosomes=[\"chr1\",\"chr2\"]\nchromosome\tstart\tend\tkeep_weight\n");
+    assert!(load_outlier_weights_tsv(matching.path(), &["chr1".into()], &selected_contigs()).is_ok());
+    let mismatch = write_input("# reference_contig_footprint_json=[{\"name\":\"chr1\",\"size\":101},{\"name\":\"chr2\",\"size\":80}]\nchromosome\tstart\tend\tkeep_weight\n");
+    let error = load_outlier_weights_tsv(mismatch.path(), &["chr1".into()], &selected_contigs()).unwrap_err();
+    assert!(format!("{error:#}").contains("names/lengths differ"));
+}
+
 fn write_input(contents: &str) -> NamedTempFile {
     let mut file = NamedTempFile::new().expect("temporary outlier input should be created");
     file.write_all(contents.as_bytes())

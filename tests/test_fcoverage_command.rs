@@ -1043,6 +1043,193 @@ fn zero_outlier_weight_excludes_the_complete_fragment() -> Result<()> {
 
     // Assert
     assert!(output.is_empty(), "zero-weight fragment should be absent");
+    assert_eq!(result.counters.base.counted_fragments, 0);
+    assert_eq!(result.counters.outlier_excluded_fragments, 1);
+    assert_eq!(result.counters.outlier_downweighted_fragments, 0);
+    Ok(())
+}
+
+#[test]
+fn zero_outlier_weight_skips_missing_gc_tags_before_gc_failure_accounting() -> Result<()> {
+    let bam = single_contig_inward_pair_bam()?;
+    let output_dir = TempDir::new()?;
+    let weights = output_dir.path().join("zero.tsv");
+    write_outlier_weights_tsv(&weights, &[OutlierWeightRow::new("chr1", 40, 41, 0.0)])?;
+    let mut config = base_config(&bam.bam, output_dir.path());
+    config.set_gc(ApplyGCArgs {
+        gc_file: None,
+        gc_tag: Some("GC".into()),
+        neutralize_invalid_gc: false,
+    });
+    config.set_normalize_by_length(LengthNormalizationMode::UnitMass);
+    config.set_outlier_weights(OutlierWeightsArgs {
+        outlier_weights: Some(weights),
+    });
+    let result = run(&config)?;
+    assert_eq!(result.counters.outlier_excluded_fragments, 1);
+    assert_eq!(result.counters.base.counted_fragments, 0);
+    assert_eq!(result.counters.gc_failed_fragments, 0);
+    assert_eq!(result.counters.gc_missing_tags, 0);
+    assert_eq!(result.counters.tile_owned_normalization_fragments, 0);
+    assert_eq!(result.counters.tile_owned_normalization_length_sum, 0);
+    assert!(read_zst_to_string(&result.final_out_path)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn zero_outlier_weight_skips_insufficient_gc_bases_before_gc_failure_accounting() -> Result<()> {
+    let bam = bam_from_fragments(
+        "zero_outlier_gc_file",
+        vec![("chr1".to_string(), 200)],
+        vec![paired_fragment_on_tid(0, 20, 61, 20)],
+        Vec::new(),
+    )?;
+    let reference =
+        twobit_with_single_repeating_contig("zero_outlier_gc_ref", "chr1", "ACGT", 200)?;
+    let output_dir = TempDir::new()?;
+    let package_path = output_dir.path().join("valid_gc.zarr");
+    let package = GCCorrectionPackage {
+        version: GC_CORRECTION_SCHEMA_VERSION,
+        end_offset: 26,
+        length_edges: vec![61, 62],
+        gc_edges: vec![0, 101],
+        length_bin_frequencies: array![1.0_f64],
+        reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
+        correction_matrix: array![[1.0_f64]],
+    };
+    package.write_zarr(&package_path)?;
+    let weights = output_dir.path().join("zero.tsv");
+    write_outlier_weights_tsv(&weights, &[OutlierWeightRow::new("chr1", 40, 41, 0.0)])?;
+    let mut config = base_config(&bam.bam, output_dir.path());
+    config.set_gc(ApplyGCArgs {
+        gc_file: Some(package_path),
+        gc_tag: None,
+        neutralize_invalid_gc: false,
+    });
+    config.set_ref_2bit(Some(reference.path.clone()));
+    config.set_normalize_by_length(LengthNormalizationMode::UnitMass);
+    config.fragment_lengths_mut().min_fragment_length = 61;
+    config.fragment_lengths_mut().max_fragment_length = 61;
+
+    // The valid package removes 26 bases at each end of the 61 bp fragment, leaving 9
+    // A/C/G/T bases. GC correction requires at least 10, so this control must record a failure
+    config.set_output_prefix("gc_failure_control");
+    let control = run(&config)?;
+    assert_eq!(control.counters.gc_failed_fragments, 1);
+    assert_eq!(control.counters.outlier_excluded_fragments, 0);
+    assert_eq!(control.counters.base.counted_fragments, 0);
+    assert!(read_zst_to_string(&control.final_out_path)?.is_empty());
+
+    // Excluding the same fragment must bypass GC failure and normalization accounting
+    config.set_output_prefix("zero_excluded");
+    config.set_outlier_weights(OutlierWeightsArgs {
+        outlier_weights: Some(weights),
+    });
+    let result = run(&config)?;
+    assert_eq!(result.counters.outlier_excluded_fragments, 1);
+    assert_eq!(result.counters.gc_failed_fragments, 0);
+    assert_eq!(result.counters.base.counted_fragments, 0);
+    assert_eq!(result.counters.tile_owned_normalization_fragments, 0);
+    assert_eq!(result.counters.tile_owned_normalization_length_sum, 0);
+    assert!(read_zst_to_string(&result.final_out_path)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn gc_tag_and_partial_outlier_weights_multiply_over_the_complete_fragment() -> Result<()> {
+    let original = single_contig_inward_pair_bam()?;
+    let bam = bam_with_gc_tags(
+        &original.bam,
+        "partial_outlier_gc_tag",
+        &[Some(2.0), Some(2.0)],
+    )?;
+    let output_dir = TempDir::new()?;
+    let weights = output_dir.path().join("partial.tsv");
+    write_outlier_weights_tsv(&weights, &[OutlierWeightRow::new("chr1", 40, 41, 0.25)])?;
+    let mut config = base_config(&bam.bam, output_dir.path());
+    config.set_gc(ApplyGCArgs {
+        gc_file: None,
+        gc_tag: Some("GC".into()),
+        neutralize_invalid_gc: false,
+    });
+    config.set_outlier_weights(OutlierWeightsArgs {
+        outlier_weights: Some(weights),
+    });
+    let result = run(&config)?;
+    // Full [20,80) span receives 2 * 0.25 = 0.5 despite only a 1 bp overlap
+    assert_eq!(
+        read_zst_to_string(&result.final_out_path)?,
+        "chr1\t20\t80\t0.5\n"
+    );
+    assert_eq!(result.counters.outlier_downweighted_fragments, 1);
+    Ok(())
+}
+
+#[test]
+fn partial_outlier_weights_follow_the_fragment_across_processing_tiles() -> Result<()> {
+    let bam = bam_from_fragments(
+        "outlier_across_tiles",
+        vec![("chr1".into(), 2_000)],
+        vec![paired_fragment_on_tid(0, 990, 60, 20)],
+        Vec::new(),
+    )?;
+    let output_dir = TempDir::new()?;
+    let weights = output_dir.path().join("partial.tsv");
+    write_outlier_weights_tsv(
+        &weights,
+        &[OutlierWeightRow::new("chr1", 1_010, 1_011, 0.25)],
+    )?;
+    let mut config = base_config(&bam.bam, output_dir.path());
+    config.set_outlier_weights(OutlierWeightsArgs {
+        outlier_weights: Some(weights),
+    });
+    let result = run(&config)?;
+    let output = read_zst_to_string(&result.final_out_path)?;
+    let mut mass = 0.0;
+    let mut span = 0;
+    for row in output.lines() {
+        let fields: Vec<_> = row.split('\t').collect();
+        let start = fields[1].parse::<u32>()?;
+        let end = fields[2].parse::<u32>()?;
+        let value = fields[3].parse::<f64>()?;
+        assert!((990..1_050).contains(&start));
+        assert!(end <= 1_050);
+        assert_eq!(value, 0.25);
+        span += end - start;
+        mass += (end - start) as f64 * value;
+    }
+    assert_eq!(span, 60);
+    assert_eq!(mass, 15.0);
+    assert_eq!(result.counters.outlier_downweighted_fragments, 2);
+    Ok(())
+}
+
+#[test]
+fn outlier_lookup_keeps_earlier_intervals_when_pairs_complete_out_of_start_order() -> Result<()> {
+    // Pair B completes at reverse.pos=260 before A at reverse.pos=270, although A starts earlier
+    let bam = bam_from_fragments(
+        "outlier_pair_lookback",
+        vec![("chr1".into(), 500)],
+        vec![
+            paired_fragment_on_tid(0, 100, 200, 30),
+            paired_fragment_on_tid(0, 240, 40, 20),
+        ],
+        Vec::new(),
+    )?;
+    let output_dir = TempDir::new()?;
+    let weights = output_dir.path().join("partial.tsv");
+    write_outlier_weights_tsv(&weights, &[OutlierWeightRow::new("chr1", 110, 120, 0.25)])?;
+    let mut config = base_config(&bam.bam, output_dir.path());
+    config.set_outlier_weights(OutlierWeightsArgs {
+        outlier_weights: Some(weights),
+    });
+    let result = run(&config)?;
+    // A contributes 0.25 throughout [100,300), with an extra unit from B on [240,280)
+    assert_eq!(
+        read_zst_to_string(&result.final_out_path)?,
+        "chr1\t100\t240\t0.25\nchr1\t240\t280\t1.25\nchr1\t280\t300\t0.25\n"
+    );
+    assert_eq!(result.counters.outlier_downweighted_fragments, 1);
     Ok(())
 }
 

@@ -15,15 +15,15 @@ use fxhash::FxHashMap;
 use crate::{
     commands::outliers::{
         config::OutliersConfig,
-        model::{CoverageCounts, TwoStageZipModel, diagnose_zip_fit},
-        outliers::CalledRegion,
+        distribution::{TwoStageCoverageModel, diagnose_fit},
+        model::CoverageCounts,
         plotting::write_global_fit_plot,
         striding::{CoreHistogram, CoreModel},
     },
     shared::{
         bam::Contigs,
-        interval::{Interval, TouchingMergePolicy, push_merged_interval},
         io::{FinalOutputFiles, dot_join},
+        reference::ContigFootprintEntry,
         writers::open_zstd_auto_writer,
     },
 };
@@ -39,6 +39,8 @@ pub(super) struct OutputPaths {
     pub(super) models: PathBuf,
     pub(super) global_fit: PathBuf,
     pub(super) plot: PathBuf,
+    pub(super) audit: PathBuf,
+    pub(super) summary: PathBuf,
 }
 
 impl OutputPaths {
@@ -51,6 +53,8 @@ impl OutputPaths {
             models: output_dir.join(dot_join(&[prefix, "outliers.models.tsv"])),
             global_fit: output_dir.join(dot_join(&[prefix, "outliers.global_fit.tsv"])),
             plot: output_dir.join(dot_join(&[prefix, "outliers.global_fit.png"])),
+            audit: output_dir.join(dot_join(&[prefix, "outliers.audit.tsv"])),
+            summary: output_dir.join(dot_join(&[prefix, "outliers.summary.tsv"])),
         }
     }
 
@@ -63,6 +67,8 @@ impl OutputPaths {
             self.models.clone(),
             self.global_fit.clone(),
             self.plot.clone(),
+            self.audit.clone(),
+            self.summary.clone(),
         ]
     }
 }
@@ -71,12 +77,16 @@ impl OutputPaths {
 pub(super) struct OutputMetadata<'a> {
     pub(super) config: &'a OutliersConfig,
     pub(super) chromosomes: &'a [String],
+    pub(super) contigs: &'a Contigs,
     pub(super) tail_probability: f64,
     pub(super) eligible_positions: u64,
     pub(super) blacklist_flank: u32,
 }
 
-fn write_common_metadata(writer: &mut impl Write, metadata: &OutputMetadata<'_>) -> Result<()> {
+pub(super) fn write_common_metadata(
+    writer: &mut impl Write,
+    metadata: &OutputMetadata<'_>,
+) -> Result<()> {
     let config = metadata.config;
     writeln!(writer, "# cfdnalab_version={}", env!("CARGO_PKG_VERSION"))?;
     writeln!(writer, "# command=cfdna outliers")?;
@@ -91,7 +101,44 @@ fn write_common_metadata(writer: &mut impl Write, metadata: &OutputMetadata<'_>)
         serde_json::to_string(metadata.chromosomes)?
     )?;
     writeln!(writer, "# coordinate_system=0-based-half-open")?;
-    writeln!(writer, "# detector=two_stage_zero_inflated_poisson")?;
+    writeln!(writer, "# detector=two_stage_{}", config.model.as_str())?;
+    writeln!(writer, "# model={}", config.model.as_str())?;
+    writeln!(writer, "# local_mean_target=active_component_mean")?;
+    writeln!(
+        writer,
+        "# protection_window_size={}",
+        config.protection_window_size
+    )?;
+    writeln!(
+        writer,
+        "# min_protection_positions={}",
+        config.min_protection_positions
+    )?;
+    writeln!(
+        writer,
+        "# max_outlier_percentage={}",
+        config.max_outlier_percentage
+    )?;
+    writeln!(
+        writer,
+        "# ambiguous_region_action={}",
+        config.ambiguous_region_action.as_str()
+    )?;
+    let mut footprint: Vec<_> = metadata
+        .contigs
+        .contigs
+        .iter()
+        .map(|(name, &(_, length))| ContigFootprintEntry {
+            name: name.clone(),
+            size: length as u64,
+        })
+        .collect();
+    footprint.sort_unstable_by(|left, right| left.name.cmp(&right.name));
+    writeln!(
+        writer,
+        "# reference_contig_footprint_json={}",
+        serde_json::to_string(&footprint)?
+    )?;
     writeln!(writer, "# hysteresis=false")?;
     writeln!(writer, "# target={}", config.target.as_str())?;
     writeln!(writer, "# tail_probability={}", metadata.tail_probability)?;
@@ -135,7 +182,7 @@ fn write_common_metadata(writer: &mut impl Write, metadata: &OutputMetadata<'_>)
         writer,
         "# raw_coverage_source=uncorrected_mapped_reference_segments"
     )?;
-    writeln!(writer, "# ignore_inter_mate_gap={}", config.ignore_gap)?;
+    writeln!(writer, "# ignore_gap={}", config.ignore_gap)?;
     writeln!(
         writer,
         "# reads_are_fragments={}",
@@ -171,7 +218,7 @@ fn write_common_metadata(writer: &mut impl Write, metadata: &OutputMetadata<'_>)
 fn write_fit_diagnostic_definitions(writer: &mut impl Write) -> Result<()> {
     writeln!(
         writer,
-        "# positive_coverage_diagnostic_scope=observed values use the complete original positive-coverage histogram, including the extreme tail, while the ZIP expectation uses the underlying model estimated by the second fit"
+        "# positive_coverage_diagnostic_scope=observed values use the complete original positive-coverage histogram, including the extreme tail, while the selected model expectation uses the underlying model estimated by the second fit"
     )?;
     writeln!(
         writer,
@@ -179,15 +226,15 @@ fn write_fit_diagnostic_definitions(writer: &mut impl Write) -> Result<()> {
     )?;
     writeln!(
         writer,
-        "# underlying_zip_expected_positive_coverage_variance_definition=variance among positive values expected from the fitted underlying ZIP"
+        "# underlying_expected_positive_coverage_variance_definition=variance among positive values expected from the fitted underlying model"
     )?;
     writeln!(
         writer,
-        "# positive_coverage_variance_ratio_definition=observed_positive_coverage_variance divided by underlying_zip_expected_positive_coverage_variance"
+        "# positive_coverage_variance_ratio_definition=observed_positive_coverage_variance divided by underlying_expected_positive_coverage_variance"
     )?;
     writeln!(
         writer,
-        "# positive_coverage_variance_ratio_interpretation=near 1 is Poisson-like spread, above 1 is more variable, and below 1 is less variable. This diagnostic does not affect fitting or calling"
+        "# positive_coverage_variance_ratio_interpretation=near 1 is model-consistent spread, above 1 is more variable, and below 1 is less variable. This diagnostic does not affect fitting or calling"
     )?;
     writeln!(
         writer,
@@ -204,7 +251,7 @@ fn write_fit_diagnostic_definitions(writer: &mut impl Write) -> Result<()> {
 pub(super) fn write_diagnostic_outputs(
     metadata: &OutputMetadata<'_>,
     global_histogram: &CoreHistogram,
-    global_model: TwoStageZipModel,
+    global_model: TwoStageCoverageModel,
     models_by_chromosome: &FxHashMap<String, Vec<CoreModel>>,
     output_paths: &OutputPaths,
     final_outputs: &mut FinalOutputFiles,
@@ -216,7 +263,7 @@ pub(super) fn write_diagnostic_outputs(
     write_fit_diagnostic_definitions(&mut models_writer)?;
     writeln!(
         models_writer,
-        "chromosome\tstart\tend\tcontext_start\tcontext_end\tmodel_source\teligible_positions\tfragment_support\tinitial_lambda\tinitial_zero_inflation\tinitial_threshold\tsecond_fit_retained_positions\tunderlying_lambda\tunderlying_zero_inflation\tunderlying_mean\tfinal_threshold\tobserved_positive_coverage_mean\tobserved_positive_coverage_variance\tunderlying_zip_expected_positive_coverage_variance\tpositive_coverage_variance_ratio\tobserved_initial_tail_positions\texpected_initial_tail_positions\tobserved_final_tail_positions\texpected_final_tail_positions"
+        "chromosome\tstart\tend\tcontext_start\tcontext_end\tmodel_source\teligible_positions\tfragment_support\tinitial_component_mean\tinitial_zero_inflation\tinitial_threshold\tsecond_fit_retained_positions\tunderlying_component_mean\tunderlying_zero_inflation\tunderlying_mean\tfinal_threshold\tobserved_positive_coverage_mean\tobserved_positive_coverage_variance\tunderlying_expected_positive_coverage_variance\tpositive_coverage_variance_ratio\tobserved_initial_tail_positions\texpected_initial_tail_positions\tobserved_final_tail_positions\texpected_final_tail_positions\tinitial_dispersion\tunderlying_dispersion\tinitial_poisson_boundary\tunderlying_poisson_boundary"
     )?;
     for chromosome in metadata.chromosomes {
         let models = models_by_chromosome
@@ -225,7 +272,7 @@ pub(super) fn write_diagnostic_outputs(
         for model in models {
             writeln!(
                 models_writer,
-                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                 chromosome,
                 model.core.start(),
                 model.core.end(),
@@ -234,24 +281,28 @@ pub(super) fn write_diagnostic_outputs(
                 model.source.as_str(),
                 model.eligible_positions,
                 model.fragment_support,
-                model.zip.initial.lambda,
-                model.zip.initial.zero_inflation,
-                model.zip.initial_threshold,
-                model.zip.second_fit_retained_positions,
-                model.zip.underlying_fit.lambda,
-                model.zip.underlying_fit.zero_inflation,
-                model.zip.underlying_fit.mean(),
-                model.zip.final_threshold,
+                model.model.initial.component_mean,
+                model.model.initial.zero_inflation,
+                model.model.initial_threshold,
+                model.model.second_fit_retained_positions,
+                model.model.underlying_fit.component_mean,
+                model.model.underlying_fit.zero_inflation,
+                model.model.underlying_fit.mean(),
+                model.model.final_threshold,
                 model.diagnostics.observed_positive_coverage_mean,
                 model.diagnostics.observed_positive_coverage_variance,
                 model
                     .diagnostics
-                    .underlying_zip_expected_positive_coverage_variance,
+                    .underlying_expected_positive_coverage_variance,
                 model.diagnostics.positive_coverage_variance_ratio,
                 model.diagnostics.observed_initial_tail_positions,
                 model.diagnostics.expected_initial_tail_positions,
                 model.diagnostics.observed_final_tail_positions,
-                model.diagnostics.expected_final_tail_positions
+                model.diagnostics.expected_final_tail_positions,
+                model.model.initial.dispersion,
+                model.model.underlying_fit.dispersion,
+                model.model.initial.dispersion == 0.0,
+                model.model.underlying_fit.dispersion == 0.0
             )?;
         }
     }
@@ -261,13 +312,13 @@ pub(super) fn write_diagnostic_outputs(
 
     let global_fit_temp = final_outputs.temp_path_for(&output_paths.global_fit)?;
     let mut global_writer =
-        BufWriter::new(File::create(&global_fit_temp).context("creating global outlier ZIP TSV")?);
+        BufWriter::new(File::create(&global_fit_temp).context("creating global outlier fit TSV")?);
     write_common_metadata(&mut global_writer, metadata)?;
     write_fit_diagnostic_definitions(&mut global_writer)?;
     writeln!(
         global_writer,
-        "# initial_lambda={}",
-        global_model.initial.lambda
+        "# initial_component_mean={}",
+        global_model.initial.component_mean
     )?;
     writeln!(
         global_writer,
@@ -281,8 +332,8 @@ pub(super) fn write_diagnostic_outputs(
     )?;
     writeln!(
         global_writer,
-        "# underlying_lambda={}",
-        global_model.underlying_fit.lambda
+        "# underlying_component_mean={}",
+        global_model.underlying_fit.component_mean
     )?;
     writeln!(
         global_writer,
@@ -299,7 +350,27 @@ pub(super) fn write_diagnostic_outputs(
         "# final_threshold={}",
         global_model.final_threshold
     )?;
-    let global_diagnostics = diagnose_zip_fit(&global_histogram.counts, global_model)?;
+    writeln!(
+        global_writer,
+        "# initial_dispersion={}",
+        global_model.initial.dispersion
+    )?;
+    writeln!(
+        global_writer,
+        "# underlying_dispersion={}",
+        global_model.underlying_fit.dispersion
+    )?;
+    writeln!(
+        global_writer,
+        "# initial_poisson_boundary={}",
+        global_model.initial.dispersion == 0.0
+    )?;
+    writeln!(
+        global_writer,
+        "# underlying_poisson_boundary={}",
+        global_model.underlying_fit.dispersion == 0.0
+    )?;
+    let global_diagnostics = diagnose_fit(&global_histogram.counts, global_model)?;
     writeln!(
         global_writer,
         "# observed_positive_coverage_mean={}",
@@ -312,8 +383,8 @@ pub(super) fn write_diagnostic_outputs(
     )?;
     writeln!(
         global_writer,
-        "# underlying_zip_expected_positive_coverage_variance={}",
-        global_diagnostics.underlying_zip_expected_positive_coverage_variance
+        "# underlying_expected_positive_coverage_variance={}",
+        global_diagnostics.underlying_expected_positive_coverage_variance
     )?;
     writeln!(
         global_writer,
@@ -432,102 +503,6 @@ fn maximum_observed_coverage(observed_counts: &CoverageCounts) -> Result<u32> {
         .last_key_value()
         .map(|(&coverage, _)| coverage)
         .context("global histogram has no observed coverage values")
-}
-
-/// Write sparse regional weights and exact and flanked called-region BED files.
-pub(super) fn write_call_outputs(
-    metadata: &OutputMetadata<'_>,
-    contigs: &Contigs,
-    regions_by_chromosome: &FxHashMap<String, Vec<CalledRegion>>,
-    output_paths: &OutputPaths,
-    final_outputs: &mut FinalOutputFiles,
-) -> Result<()> {
-    let keep_weights_temp = final_outputs.temp_path_for(&output_paths.keep_weights)?;
-    let exact_blacklist_temp = final_outputs.temp_path_for(&output_paths.exact_blacklist)?;
-    let flanked_blacklist_temp = final_outputs.temp_path_for(&output_paths.flanked_blacklist)?;
-    let mut keep_writer = BufWriter::new(
-        File::create(&keep_weights_temp).context("creating outlier keep-weight TSV")?,
-    );
-    let mut exact_writer =
-        BufWriter::new(File::create(&exact_blacklist_temp).context("creating exact outlier BED")?);
-    let mut flanked_writer = BufWriter::new(
-        File::create(&flanked_blacklist_temp).context("creating flanked outlier BED")?,
-    );
-
-    write_common_metadata(&mut keep_writer, metadata)?;
-    writeln!(keep_writer, "# omitted_keep_weight=1.0")?;
-    writeln!(keep_writer, "# fragment_overlap_rule=minimum_keep_weight")?;
-    writeln!(keep_writer, "chromosome\tstart\tend\tkeep_weight")?;
-    write_common_metadata(&mut exact_writer, metadata)?;
-    writeln!(exact_writer, "# output=exact_called_regions")?;
-    write_common_metadata(&mut flanked_writer, metadata)?;
-    writeln!(flanked_writer, "# output=flanked_called_regions")?;
-
-    for chromosome in metadata.chromosomes {
-        let regions = regions_by_chromosome
-            .get(chromosome)
-            .with_context(|| format!("missing called regions for chromosome '{chromosome}'"))?;
-        for region in regions {
-            writeln!(
-                keep_writer,
-                "{}\t{}\t{}\t{}",
-                chromosome,
-                region.interval.start(),
-                region.interval.end(),
-                region.keep_weight()
-            )?;
-            writeln!(
-                exact_writer,
-                "{}\t{}\t{}",
-                chromosome,
-                region.interval.start(),
-                region.interval.end()
-            )?;
-        }
-
-        let &(_, chromosome_length) = contigs
-            .contigs
-            .get(chromosome)
-            .with_context(|| format!("missing contig metadata for '{chromosome}'"))?;
-        let mut flanked_regions = Vec::with_capacity(regions.len());
-        for region in regions {
-            let start = region
-                .interval
-                .start()
-                .saturating_sub(metadata.blacklist_flank);
-            let end = region
-                .interval
-                .end()
-                .saturating_add(metadata.blacklist_flank)
-                .min(chromosome_length);
-            push_merged_interval(
-                &mut flanked_regions,
-                Interval::new(start, end)?,
-                TouchingMergePolicy::MergeTouching,
-            );
-        }
-        for interval in flanked_regions {
-            writeln!(
-                flanked_writer,
-                "{}\t{}\t{}",
-                chromosome,
-                interval.start(),
-                interval.end()
-            )?;
-        }
-    }
-
-    keep_writer.flush()?;
-    exact_writer.flush()?;
-    flanked_writer.flush()?;
-    drop((keep_writer, exact_writer, flanked_writer));
-    final_outputs.record(keep_weights_temp, output_paths.keep_weights.clone())?;
-    final_outputs.record(exact_blacklist_temp, output_paths.exact_blacklist.clone())?;
-    final_outputs.record(
-        flanked_blacklist_temp,
-        output_paths.flanked_blacklist.clone(),
-    )?;
-    Ok(())
 }
 
 #[cfg(test)]

@@ -107,7 +107,10 @@ counter_struct!(FragmentKmersCounters;
 );
 
 #[cfg(feature = "cmd_fcoverage")]
+// Outlier exclusions count tile encounters. Downweighted counts follow counted tile insertions
 counter_struct!(FCoverageCounters;
+    outlier_excluded_fragments: u64,
+    outlier_downweighted_fragments: u64,
     tile_owned_normalization_fragments: u64,
     tile_owned_normalization_length_sum: u64,
     gc_failed_fragments: u64,

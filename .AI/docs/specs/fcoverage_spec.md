@@ -20,6 +20,11 @@
 - Scaling factors are multiplicative per-base weights loaded from TSV files with full contiguous chromosome coverage. Known GC-mode mismatches fail during load.
 - Coverage-weight TSVs can carry `ignore_gap` metadata. A mismatch with the current `fcoverage --ignore-gap` setting warns, not fails.
 
+- Sparse `--outlier-weights` apply the minimum regional keep weight across any positive overlap with the original `pos` to `reference_end` fragment span, before trimming. The full fragment is weighted.
+- A zero outlier weight skips the fragment before GC correction, normalization calculations, coverage insertion, and counted-fragment accounting. Partial weights multiply GC weights and retain existing normalization formulas and ownership rules.
+- Recorded outlier reference names/lengths and analysed chromosomes are checked. Known mismatches fail, detection-filter differences warn, and custom tables without recorded settings remain usable with warnings. BAM identities and blacklists are not compared.
+- Outlier exclusion counters count tile encounters. Downweighted counters follow counted tile insertions, rather than unique molecules.
+
 ## Length Normalization
 
 - `off`: per-base coverage mass is unnormalized.

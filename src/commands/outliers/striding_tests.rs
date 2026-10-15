@@ -4,9 +4,8 @@ fn cores(number_of_cores: usize) -> Vec<CoreHistogram> {
     (0..number_of_cores)
         .map(|index| {
             let start = index as u32 * 500_000;
-            let mut histogram = CoreHistogram::new(
-                Interval::new(start, start + 500_000).expect("valid core"),
-            );
+            let mut histogram =
+                CoreHistogram::new(Interval::new(start, start + 500_000).expect("valid core"));
             histogram.counts = [(0, 500), (1, 500)].into_iter().collect();
             histogram.fragment_support = 100;
             histogram
@@ -14,18 +13,19 @@ fn cores(number_of_cores: usize) -> Vec<CoreHistogram> {
         .collect()
 }
 
-fn example_global_model() -> TwoStageZipModel {
+fn example_global_model() -> TwoStageCoverageModel {
     let parameters = crate::commands::outliers::model::ZipParameters {
         lambda: 1.0,
         zero_inflation: 0.5,
     };
-    TwoStageZipModel {
+    crate::commands::outliers::model::TwoStageZipModel {
         initial: parameters,
         initial_threshold: 5,
         underlying_fit: parameters,
         final_threshold: 5,
         second_fit_retained_positions: 1_000,
     }
+    .into()
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn short_contig_assigns_the_global_fallback_model_to_every_core() {
     assert_eq!(chromosome_models.len(), 4);
     for model in chromosome_models {
         assert_eq!(model.source, ModelSource::GlobalFallback);
-        assert_eq!(model.zip, global_model);
+        assert_eq!(model.model, global_model);
         assert_eq!(model.context.as_tuple(), (0, 2_000_000));
     }
 }
@@ -94,12 +94,12 @@ fn short_contig_assigns_the_global_fallback_model_to_every_core() {
 #[test]
 fn complete_degenerate_context_fails_instead_of_silently_falling_back() {
     let chromosomes = vec!["chr1".to_string()];
-    let mut histogram =
-        CoreHistogram::new(Interval::new(0, 500_000).expect("valid core interval"));
+    let mut histogram = CoreHistogram::new(Interval::new(0, 500_000).expect("valid core interval"));
     histogram.counts.insert(0, 500_000);
     histogram.fragment_support = 1_000;
-    let histograms_by_chromosome =
-        [("chr1".to_string(), vec![histogram])].into_iter().collect();
+    let histograms_by_chromosome = [("chr1".to_string(), vec![histogram])]
+        .into_iter()
+        .collect();
 
     let error = fit_core_models(
         &chromosomes,
@@ -111,26 +111,27 @@ fn complete_degenerate_context_fails_instead_of_silently_falling_back() {
     )
     .expect_err("a complete all-zero context must fail its local fit");
 
-    assert!(error.to_string().contains("zero coverage"));
+    assert!(format!("{error:#}").contains("zero coverage"));
 }
 
 #[test]
 fn core_histogram_excludes_masked_positions() {
-    let mut histogram =
-        CoreHistogram::new(Interval::new(0, 4).expect("valid histogram interval"));
+    let mut histogram = CoreHistogram::new(Interval::new(0, 4).expect("valid histogram interval"));
 
     histogram
         .add_coverage(&[0.0, 1.0, 2.0, 2.0], Some(&[0, 1, 0, 0]))
         .expect("valid integer coverage");
 
     assert_eq!(histogram.counts, [(0, 1), (2, 2)].into_iter().collect());
-    assert_eq!(histogram.eligible_positions().expect("eligible positions"), 3);
+    assert_eq!(
+        histogram.eligible_positions().expect("eligible positions"),
+        3
+    );
 }
 
 #[test]
 fn rejects_coverage_at_the_f32_exact_integer_boundary() {
-    let mut histogram =
-        CoreHistogram::new(Interval::new(0, 1).expect("valid histogram interval"));
+    let mut histogram = CoreHistogram::new(Interval::new(0, 1).expect("valid histogram interval"));
 
     let error = histogram
         .add_coverage(&[16_777_216.0], None)
@@ -150,8 +151,7 @@ fn rejects_invalid_raw_coverage_values_and_mask_lengths() {
         assert!(error.to_string().contains("coverage"));
     }
 
-    let mut histogram =
-        CoreHistogram::new(Interval::new(0, 2).expect("valid histogram interval"));
+    let mut histogram = CoreHistogram::new(Interval::new(0, 2).expect("valid histogram interval"));
     let error = histogram
         .add_coverage(&[0.0, 1.0], Some(&[0]))
         .expect_err("mask and coverage lengths must agree");
@@ -160,12 +160,10 @@ fn rejects_invalid_raw_coverage_values_and_mask_lengths() {
 
 #[test]
 fn global_histogram_conserves_counts_and_fragment_support_across_chromosomes() {
-    let mut chr1_first =
-        CoreHistogram::new(Interval::new(0, 100).expect("valid first core"));
+    let mut chr1_first = CoreHistogram::new(Interval::new(0, 100).expect("valid first core"));
     chr1_first.counts = [(0, 70), (1, 30)].into_iter().collect();
     chr1_first.fragment_support = 2;
-    let mut chr1_second =
-        CoreHistogram::new(Interval::new(100, 200).expect("valid second core"));
+    let mut chr1_second = CoreHistogram::new(Interval::new(100, 200).expect("valid second core"));
     chr1_second.counts = [(0, 80), (2, 20)].into_iter().collect();
     chr1_second.fragment_support = 3;
     let mut chr2 = CoreHistogram::new(Interval::new(0, 50).expect("valid chr2 core"));
@@ -184,6 +182,9 @@ fn global_histogram_conserves_counts_and_fragment_support_across_chromosomes() {
         global.counts,
         [(0, 190), (1, 40), (2, 20)].into_iter().collect()
     );
-    assert_eq!(global.eligible_positions().expect("eligible positions"), 250);
+    assert_eq!(
+        global.eligible_positions().expect("eligible positions"),
+        250
+    );
     assert_eq!(global.fragment_support, 6);
 }

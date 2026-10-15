@@ -30,9 +30,18 @@ fn common_metadata_records_threshold_provenance_and_fragment_semantics() {
     config.set_min_context_fragments(500);
     config.set_blacklist(Some(vec![PathBuf::from("excluded.bed")]));
     let chromosomes = vec!["chr2".to_string(), "chr1".to_string()];
+    let contigs = Contigs {
+        contigs: [
+            ("chr1".to_string(), (0, 1_000)),
+            ("chr2".to_string(), (1, 2_000)),
+        ]
+        .into_iter()
+        .collect(),
+    };
     let metadata = OutputMetadata {
         config: &config,
         chromosomes: &chromosomes,
+        contigs: &contigs,
         tail_probability: 0.000_25,
         eligible_positions: 10_000,
         blacklist_flank: 1_000,
@@ -50,11 +59,9 @@ fn common_metadata_records_threshold_provenance_and_fragment_semantics() {
     assert!(text.contains("# model_core_size=250000\n"));
     assert!(text.contains("# minimum_context_span=2000000\n"));
     assert!(text.contains("# minimum_context_fragment_support=500\n"));
-    assert!(
-        text.contains(
-            "# fragment_support_definition=accepted_fragments_with_unblacklisted_midpoint\n"
-        )
-    );
+    assert!(text.contains(
+        "# fragment_support_definition=accepted_fragments_with_unblacklisted_midpoint\n"
+    ));
     assert!(text.contains("# raw_coverage_source=uncorrected_mapped_reference_segments\n"));
     assert!(text.contains("# input_blacklists=[\"excluded.bed\"]\n"));
     assert!(text.contains("# blacklist_flank=1000\n"));

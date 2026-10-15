@@ -44,7 +44,11 @@ fn rejects_paired_only_filters_when_reads_are_fragments() {
         .expect_err("unpaired reads cannot require a proper pair");
 
     assert!(ignore_gap_error.to_string().contains("--ignore-gap"));
-    assert!(proper_pair_error.to_string().contains("--require-proper-pair"));
+    assert!(
+        proper_pair_error
+            .to_string()
+            .contains("--require-proper-pair")
+    );
 }
 
 #[test]
@@ -57,5 +61,36 @@ fn rejects_model_core_larger_than_the_minimum_context_span() {
         .validate()
         .expect_err("a fitting context cannot be smaller than its core");
 
-    assert!(error.to_string().contains("stride (500000) cannot be greater"));
+    assert!(
+        error
+            .to_string()
+            .contains("stride (500000) cannot be greater")
+    );
+}
+
+#[test]
+fn initial_inspection_defaults_and_model_selection_are_serialized() {
+    let mut config = config();
+    assert_eq!(config.model, OutlierModel::Zinb);
+    assert_eq!(config.protection_window_size, 100_000);
+    assert_eq!(config.min_protection_positions, 50_000);
+    assert_eq!(config.max_outlier_percentage, 5.0);
+    assert_eq!(
+        config.ambiguous_region_action,
+        AmbiguousRegionAction::Preserve
+    );
+    config.set_model(OutlierModel::Zip);
+    let arguments = config.to_cli_args().unwrap();
+    assert!(
+        arguments
+            .windows(2)
+            .any(|pair| pair[0] == "--model" && pair[1] == "zip")
+    );
+    config.set_min_protection_positions(100_001);
+    assert!(config.validate().is_err());
+    config.set_min_protection_positions(50_000);
+    for percentage in [f64::NAN, -0.1, 100.1] {
+        config.set_max_outlier_percentage(percentage);
+        assert!(config.validate().is_err());
+    }
 }

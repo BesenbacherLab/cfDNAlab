@@ -82,17 +82,18 @@ pub enum LengthNormalizationMode {
 /// ## Outlier weighting
 ///
 /// Reduce the influence of sample-specific extreme coverage without masking the affected genomic
-/// positions. Instead of excluding complete regions, outlier weighting retains a fraction of the
-/// fragment support associated with each detected extreme. This preserves the affected positions
-/// for downstream analysis while preventing a small number of extreme pileups from dominating the
-/// coverage signal.
+/// positions. A zero weight excludes an overlapping fragment. Positive weights retain part of
+/// its contribution. Inspect representative loci because extreme coverage can have biological
+/// as well as technical causes.
 ///
 /// The correction follows the associated fragments across their complete spans, including their
 /// contributions outside the detected interval. When a fragment is associated with multiple
 /// detected regions, the strongest correction is used.
 ///
-/// Outlier weights combine multiplicatively with independent GC correction and normalization
-/// weights.
+/// Outlier weights combine multiplicatively with GC correction and normalization weights.
+///
+/// For consistent results, use the same fragment filters and blacklists for outlier detection
+/// and coverage calculation.
 ///
 /// ## GC correction
 ///

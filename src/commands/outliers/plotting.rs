@@ -5,8 +5,7 @@ use fxhash::FxHashMap;
 use plotters::prelude::*;
 
 use crate::commands::outliers::{
-    model::{CoverageCounts, TwoStageZipModel},
-    striding::CoreModel,
+    distribution::TwoStageCoverageModel, model::CoverageCounts, striding::CoreModel,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -21,6 +20,7 @@ struct LocalModelDiagnostics {
     initial_thresholds: Vec<f64>,
     final_thresholds: Vec<f64>,
     underlying_means: Vec<f64>,
+    active_component_means: Vec<f64>,
     chromosome_boundaries: Vec<usize>,
     initial_summary: ThresholdSummary,
     final_summary: ThresholdSummary,
@@ -28,23 +28,23 @@ struct LocalModelDiagnostics {
 
 /// Write global fit diagnostics together with the local models used during calling.
 ///
-/// The upper panels show the complete original global histogram and both global ZIP fits. The
+/// The upper panels show the complete original global histogram and both global coverage-model fits. The
 /// global thresholds are sample-level references only. Local threshold summaries and the lower
 /// spatial panel describe the per-core models that actually control outlier calling.
 pub(crate) fn write_global_fit_plot(
     output_path: &Path,
     observed_counts: &CoverageCounts,
-    global_model: TwoStageZipModel,
+    global_model: TwoStageCoverageModel,
     chromosomes: &[String],
     models_by_chromosome: &FxHashMap<String, Vec<CoreModel>>,
 ) -> Result<()> {
     let maximum_observed_coverage = observed_counts
         .last_key_value()
         .map(|(&coverage, _)| coverage)
-        .context("global ZIP plot has no observed coverage values")?;
+        .context("global coverage plot has no observed coverage values")?;
     ensure!(
         maximum_observed_coverage > 0,
-        "global ZIP plot has no positive coverage values"
+        "global coverage plot has no positive coverage values"
     );
     let local_diagnostics = collect_local_model_diagnostics(chromosomes, models_by_chromosome)?;
     let maximum_threshold = global_model
@@ -111,6 +111,7 @@ fn collect_local_model_diagnostics(
     let mut initial_thresholds = Vec::new();
     let mut final_thresholds = Vec::new();
     let mut underlying_means = Vec::new();
+    let mut active_component_means = Vec::new();
     let mut chromosome_boundaries = Vec::new();
 
     for chromosome in chromosomes {
@@ -121,15 +122,16 @@ fn collect_local_model_diagnostics(
             chromosome_boundaries.push(initial_thresholds.len());
         }
         for model in models {
-            initial_thresholds.push(model.zip.initial_threshold as f64);
-            final_thresholds.push(model.zip.final_threshold as f64);
-            underlying_means.push(model.zip.underlying_fit.mean());
+            initial_thresholds.push(model.model.initial_threshold as f64);
+            final_thresholds.push(model.model.final_threshold as f64);
+            underlying_means.push(model.model.underlying_fit.mean());
+            active_component_means.push(model.model.underlying_fit.component_mean);
         }
     }
 
     ensure!(
         !initial_thresholds.is_empty(),
-        "cannot plot local ZIP diagnostics without core models"
+        "cannot plot local coverage diagnostics without core models"
     );
     let initial_summary = summarize_thresholds(&initial_thresholds);
     let final_summary = summarize_thresholds(&final_thresholds);
@@ -137,6 +139,7 @@ fn collect_local_model_diagnostics(
         initial_thresholds,
         final_thresholds,
         underlying_means,
+        active_component_means,
         chromosome_boundaries,
         initial_summary,
         final_summary,
@@ -157,7 +160,7 @@ fn draw_detailed_fit_panel(
     area: &DrawingArea<BitMapBackend<'_>, plotters::coord::Shift>,
     observed_counts: &CoverageCounts,
     total_positions: f64,
-    global_model: TwoStageZipModel,
+    global_model: TwoStageCoverageModel,
     local_diagnostics: &LocalModelDiagnostics,
     maximum_coverage: u32,
     maximum_log_count: f64,
@@ -166,7 +169,12 @@ fn draw_detailed_fit_panel(
     let y_axis_end = maximum_log_count * 1.05;
     let mut chart = ChartBuilder::on(area)
         .caption(
-            "Global raw-coverage ZIP fit and threshold ranges",
+            format!(
+                "Global {} fit (dispersion: initial {:.4}, final {:.4})",
+                global_model.family.as_str().to_uppercase(),
+                global_model.initial.dispersion,
+                global_model.underlying_fit.dispersion
+            ),
             ("sans-serif", 30),
         )
         .margin(20)
@@ -196,7 +204,10 @@ fn draw_detailed_fit_panel(
     });
     chart
         .draw_series(LineSeries::new(initial_series, BLUE.stroke_width(2)))?
-        .label("Global initial ZIP reference")
+        .label(format!(
+            "Global initial {} reference",
+            global_model.family.as_str().to_uppercase()
+        ))
         .legend(|(x, y)| PathElement::new([(x, y), (x + 30, y)], BLUE.stroke_width(2)));
 
     let final_series = (0..=maximum_coverage).map(|coverage| {
@@ -208,7 +219,10 @@ fn draw_detailed_fit_panel(
     });
     chart
         .draw_series(LineSeries::new(final_series, RED.stroke_width(2)))?
-        .label("Global tail-excluded ZIP reference")
+        .label(format!(
+            "Global tail-excluded {} reference",
+            global_model.family.as_str().to_uppercase()
+        ))
         .legend(|(x, y)| PathElement::new([(x, y), (x + 30, y)], RED.stroke_width(2)));
 
     chart
@@ -306,7 +320,7 @@ fn draw_complete_histogram_panel(
     area: &DrawingArea<BitMapBackend<'_>, plotters::coord::Shift>,
     observed_counts: &CoverageCounts,
     total_positions: f64,
-    global_model: TwoStageZipModel,
+    global_model: TwoStageCoverageModel,
     local_diagnostics: &LocalModelDiagnostics,
     maximum_coverage: u32,
     maximum_log_count: f64,
@@ -409,6 +423,7 @@ fn draw_local_model_panel(
         .iter()
         .chain(&diagnostics.final_thresholds)
         .chain(&diagnostics.underlying_means)
+        .chain(&diagnostics.active_component_means)
         .copied()
         .fold(0.0_f64, f64::max)
         .max(1.0);
@@ -462,8 +477,18 @@ fn draw_local_model_panel(
         .map(|(index, &mean)| (index as f64 + 0.5, mean));
     chart
         .draw_series(mean_points.map(|point| Circle::new(point, 2, GREEN.filled())))?
-        .label("Used underlying ZIP mean")
+        .label("Used unconditional mean")
         .legend(|(x, y)| PathElement::new([(x, y), (x + 30, y)], GREEN.stroke_width(2)));
+    chart
+        .draw_series(
+            diagnostics
+                .active_component_means
+                .iter()
+                .enumerate()
+                .map(|(index, &mean)| Circle::new((index as f64 + 0.5, mean), 2, BLUE.filled())),
+        )?
+        .label("Used active-component mean")
+        .legend(|(x, y)| PathElement::new([(x, y), (x + 30, y)], BLUE.stroke_width(2)));
     chart
         .configure_series_labels()
         .background_style(WHITE.mix(0.85))

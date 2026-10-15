@@ -1,8 +1,13 @@
 # Outlier command specification
 
 `cfdna outliers` detects sample-specific regions with extreme uncorrected positional fragment
-coverage. It writes correction weights and diagnostic artifacts but does not currently apply those
-weights in another command.
+coverage. It writes correction weights and diagnostic artifacts. `fcoverage --outlier-weights`
+currently consumes the keep weights. Support in other commands is planned.
+
+The intended workflow excludes known problematic regions with an existing blacklist before
+detecting the remaining sample-specific extremes. The calls and correction weights supplement
+that blacklist. The automatic tail-probability denominator counts only unblacklisted positions
+on selected chromosomes, including positions with zero coverage.
 
 ## Coordinates, fragments, and ordering
 
@@ -20,23 +25,21 @@ the correction and BED outputs are non-overlapping within a chromosome.
 
 ## Detection model
 
-Each selected chromosome is divided into consecutive model cores of `--stride` bases, with a
-shorter final core when necessary. Each model core receives a two-stage zero-inflated Poisson
-model. A ZIP variable is a structural zero with probability `pi` and a `Poisson(lambda)` value
-otherwise:
+Each selected chromosome is divided into consecutive `--stride` cores. The default model is
+zero-inflated negative binomial (ZINB). `--model zip` selects the retained analytic ZIP fitter.
+Both use a structural-zero mixture probability `pi`. The active component has mean `mu` and
+variance `mu + dispersion * mu^2`. Dispersion zero gives Poisson and therefore ZIP.
 
-```text
-P(X = 0) = pi + (1 - pi) exp(-lambda)
-P(X = k) = (1 - pi) exp(-lambda) lambda^k / k!, k >= 1
-E[X] = (1 - pi) lambda
-```
+ZINB profiles `pi` analytically and optimizes log mean and log dispersion with three deterministic
+Nelder-Mead starts. It compares converged candidates with the explicitly fitted ZIP boundary.
+Numerical failure is an error, not an automatic model switch. Fits reaching the upper numerical
+bounds also fail. Log-space likelihood calculations preserve small retained probabilities.
 
-The first fit uses the complete context histogram. `T1` is the smallest positive integer satisfying
-the inclusive tail condition `P(X >= T1) <= alpha`. Coverage values at or above `T1` are excluded
-from the second likelihood. The second fit is conditioned on the retained support `X < T1`, but its
-parameters describe the underlying untruncated ZIP. `T2` is calculated from that underlying model
-and is the smallest positive integer satisfying `P(X >= T2) <= alpha`. Original coverage, not the
-tail-excluded histogram, is called at `X >= T2`.
+The complete context histogram supplies the initial fit. T1 is the smallest positive integer with
+`P(X >= T1) <= alpha`. Exclude observations at or above T1, then maximize the likelihood conditioned
+on `X < T1`. Its parameters describe the underlying untruncated distribution. T2 is calculated
+from that distribution using the same inclusive tail condition. Call original raw coverage at
+`X >= T2`. Preservation never adds observations back or starts another baseline fit.
 
 Local contexts expand in complete model cores until both the minimum span and midpoint-assigned
 fragment support are present. A core uses the global model only if its complete chromosome cannot
@@ -46,8 +49,8 @@ model recorded for each core.
 
 The automatic `alpha = multiplier / eligible_positions` limits the fitted sum of marginal tail
 probabilities to the multiplier. This is an expected-count interpretation, not a family-wise error
-guarantee. Positional coverages are spatially dependent, fitted parameters are uncertain, and ZIP
-cannot model positive-count overdispersion. The model and global-fit outputs provide positive-count
+guarantee. Positional coverages are spatially dependent and fitted parameters are uncertain.
+ZINB permits positive-count overdispersion but still assumes a particular extreme-tail shape. The model and global-fit outputs provide positive-count
 variance and initial- and final-tail calibration summaries that must be assessed on representative
 data.
 
@@ -73,59 +76,78 @@ produce, and how well did its positive distribution and upper tail match the obs
   requirement is unsuitable for those chromosomes.
 - `eligible_positions` and `fragment_support` describe the context used for that core. They help
   distinguish a stable fit from a small or heavily masked context.
-- `initial_lambda` is the mean of the Poisson component in the complete first fit.
+- `initial_component_mean` is the active-component mean in the complete first fit.
   `initial_zero_inflation` is its structural-zero probability.
 - `initial_threshold` is `T1`. Original observations at or above it are omitted from the second
   likelihood so that the extreme tail does not determine the baseline model.
 - `second_fit_retained_positions` is the number of original observations below `T1` available to
   that likelihood.
-- `underlying_lambda` and `underlying_zero_inflation` describe the untruncated ZIP estimated by the
-  second fit. `underlying_mean = (1 - underlying_zero_inflation) * underlying_lambda` is its expected
+- `underlying_component_mean` and `underlying_zero_inflation` describe the untruncated model estimated by the
+  second fit. `underlying_mean = (1 - underlying_zero_inflation) * underlying_component_mean` is its expected
   positional coverage, including zeros.
 - `final_threshold` is `T2`, the actual threshold used to call original positions in that core.
 
 ### Positive-coverage spread
 
-Variance measures the average squared spread of coverage values around their mean. It is not the
-uncertainty of a fitted parameter. For an ordinary `Poisson(lambda)` variable, both the mean and
-variance equal `lambda`. The diagnostic conditions on coverage being positive, however. Positive
-ZIP observations follow a zero-truncated Poisson with:
+Variance measures the average squared spread of coverage values. It is not fitted-parameter
+uncertainty. Conditional on being positive, both models exclude the structural-zero component:
 
 ```text
-positive_mean = lambda / (1 - exp(-lambda))
-positive_variance = positive_mean * (1 + lambda - positive_mean)
+positive_mean = mu / (1 - P(component = 0))
+positive_variance = positive_mean * (1 + dispersion * mu + mu - positive_mean)
 ```
 
-- `observed_positive_coverage_mean` and `observed_positive_coverage_variance` are population moments
-  calculated from all original positive coverage values in the fitting context, including values
-  in the extreme tail.
-- `underlying_zip_expected_positive_coverage_variance` is the positive-coverage variance expected from
-  `underlying_lambda` under the second-fit ZIP.
-- `positive_coverage_variance_ratio` is observed variance divided by the underlying ZIP expectation.
-  A value near `1` is Poisson-like spread, a value above `1` is more variable, and a value below `1`
-  is less variable.
+`observed_positive_coverage_mean` and `observed_positive_coverage_variance` describe the complete
+original positive histogram, including extremes. `underlying_expected_positive_coverage_variance`
+is the second-fit model's expectation. Their `positive_coverage_variance_ratio` is near 1 for
+comparable spread. It is diagnostic only. Sparse pileups and general model mismatch can both
+increase it. All-zero incomplete contexts using global fallback have unavailable observed
+positive metrics (NaN).
 
-The ratio is a coarse model diagnostic, not a hypothesis test, and it does not affect fitting or
-calling. Because its observed side includes the extreme values being detected, a high ratio can
-reflect a sparse pileup, general positive-count overdispersion, or both. It cannot distinguish those
-explanations by itself.
+`initial_dispersion`, `underlying_dispersion`, and the corresponding `*_poisson_boundary` flags
+record both fits. A selected ZINB model can fit its Poisson boundary without changing the requested
+model family.
 
 ### Tail calibration
 
 - `observed_initial_tail_positions` and `expected_initial_tail_positions` compare the original count
-  at or above `T1` with the expectation from the initial ZIP.
+  at or above `T1` with the expectation from the initial model.
 - `observed_final_tail_positions` and `expected_final_tail_positions` compare the original count at
-  or above `T2` with the expectation from the underlying second-fit ZIP.
+  or above `T2` with the expectation from the underlying second-fit model.
 
 These pairs are more direct checks of the tail used for exclusion and calling. Large observed excess
 at `T2` is expected in a context containing a genuine pileup, but widespread or systematic excess
-across samples can indicate that ZIP underestimates ordinary positive-tail variation. Adjacent
+across samples can indicate that the chosen model underestimates ordinary positive-tail variation. Adjacent
 coverage values share fragments, so neither the variance ratio nor the tail comparisons are
 independent-observation tests or p-values.
 
 A practical audit is to check fallback use and context support first, then inspect the variance
 ratio and observed-versus-expected tail counts, and finally use the global plot and complete
 histogram to determine whether discrepancies are localized pileups or broad lack of fit.
+
+## Preservation decisions
+
+Defaults are a 100 kb physical reference window, 50 kb minimum eligible support/denominator floor,
+5% cutoff, and `preserve` action. All are configurable. Every exact call starts a forward window.
+Its score is `100 * called_eligible_bases / max(eligible_bases, minimum_support)`. Each call normally
+uses the maximum across all forward windows overlapping it, including earlier windows. The
+numerator is the union of exact called bases. Eligible zeros count in the denominator.
+
+If the call's own window lacks minimum support and no supported earlier window overlaps it,
+evaluate `[max(0, call_end - window_size), call_end)`. Called bases are already known from exact
+intervals. If this backward window has enough eligible support, its score replaces undersupported
+forward evidence for that call. Otherwise retain the original forward maximum with the denominator
+floor. Record the selected window's direction, span, called bases, and actual eligible support.
+Windows are clipped at chromosome ends and never extended to collect eligible bases across gaps.
+
+Scores strictly above the cutoff flag a call. Flank all candidates, merge touching/overlapping
+flanks, and propagate a shared decision through each merged region. `preserve` withholds all member
+calls from correction and actionable BED files if any member is flagged. `correct` applies the
+individual proposed weights despite the flag. `error` stops before publishing outputs. Preserved
+candidates remain in the audit. A 100% cutoff disables density flags.
+
+The rule targets smaller residual pileups. It is a coverage-density heuristic, not a biological
+classification. Narrow biological events can be corrected and dense technical events preserved.
 
 ## Regional correction weight
 
@@ -138,13 +160,15 @@ target_mass = sum of the selected target at each position
 keep_weight = min(1, target_mass / observed_mass)
 ```
 
-The target is the core's underlying ZIP mean, its final threshold `T2`, or zero according to
-`--target`. Because models can change within a region, target mass is accumulated position by
+The local-mean target is the core's active-component mean. Other `--target` choices retain
+its final threshold T2 or use zero. Because models can change within a region, target mass is accumulated position by
 position with the model actually used there.
 
-The keep-weight TSV is sparse. Omitted positions have weight `1.0`. The planned downstream rule is
-to assign a fragment the minimum weight among regions overlapping its complete `pos` to
-`reference_end` span. No downstream command implements that rule yet.
+Selected regions retain individual exact weights. Merging does not pool masses or weight flanks.
+The keep-weight TSV is sparse. Omitted positions have weight `1.0`. `fcoverage` assigns a fragment
+the minimum weight among regions overlapping its complete `pos` to `reference_end` span.
+Any positive overlap applies the full regional weight to all counted contributions from that
+fragment, without dilution by overlap fraction.
 
 ## Output files
 
@@ -152,6 +176,7 @@ An optional output prefix is followed by a dot before each suffix below.
 
 ### Which output should be used?
 
+The BED files contain only actionable regions. Preserved candidates are retained in the audit.
 The BED files are the immediately usable exclusion outputs. They can be passed to cfDNAlab
 commands, or other tools, that accept BED blacklists. The receiving command determines whether a
 blacklisted interval masks positions, fragments, windows, or another command-specific unit.
@@ -161,9 +186,8 @@ blacklisted interval masks positions, fragments, windows, or another command-spe
 - Use `outliers.flanked.bed` when the blacklist should conservatively include nearby positions that
   may be affected by fragments associated with the pileup or when interval-boundary uncertainty is
   undesirable.
-- Use `outliers.keep_weights.tsv` for fractional correction once downstream fragment-weight loading
-  is implemented. Unlike a BED blacklist, it is intended to reduce contributions rather than remove
-  them completely.
+- Use `outliers.keep_weights.tsv` with `fcoverage --outlier-weights` for fractional fragment
+  correction. A zero keep weight excludes overlapping fragments completely.
 
 The remaining outputs are diagnostics. The histogram and model TSVs support detailed auditing, the
 global-fit TSV supports programmatic assessment, and the PNG provides quick visual quality control.
@@ -176,13 +200,12 @@ The primary sparse correction file has columns:
 chromosome  start  end  keep_weight
 ```
 
-Weights are finite and lie in `[0, 1]`. The metadata records the implicit omitted weight and planned
-minimum-over-overlaps fragment rule. This file is the planned input for fractional fragment
-correction, but no command consumes it yet.
+Weights are finite and lie in `[0, 1]`. The metadata records the implicit omitted weight and
+minimum-over-overlaps fragment rule. This file is consumed by `fcoverage --outlier-weights`.
 
 ### `outliers.exact.bed`
 
-Three BED columns contain the exact connected called regions:
+Three BED columns contain the actionable exact connected called regions:
 
 ```text
 chromosome  start  end
@@ -199,8 +222,22 @@ fragment length is used as the flank. This is the more conservative blacklist: i
 nearby positions may also be influenced by fragments associated with the extreme pileup. Flanking
 by the maximum accepted fragment length covers the greatest possible extension of an accepted
 fragment beyond an exact call. The flank is an operational exclusion buffer, not a claim that the
-added positions independently crossed the outlier threshold. Flanking does not change the exact
-BED or the keep-weight intervals.
+added positions independently crossed the outlier threshold. Exact coordinates and individual weights remain unchanged for selected calls. Flanking can change
+which calls share a preservation decision and are therefore withheld.
+
+### `outliers.audit.tsv` and `outliers.summary.tsv`
+
+The audit contains every exact candidate, observed/target masses, mean/max coverage,
+`proposed_keep_weight`, selected window evidence, merged bounds/maximum score, action, and reason.
+First/last model-core starts identify relevant rows in the model table. Connected calls can span
+multiple fits. The audit deliberately lacks the operational `keep_weight` column.
+
+The summary contains per-chromosome and total eligible positions, candidate/actionable/preserved
+call counts and exact bases/percentages, longest calls, merged-region counts, actionable flanked
+span and eligible extent, and model/fallback/Poisson-boundary core counts. Every percentage uses
+that row's eligible positions. Percentages are NaN for zero eligible support. Flanked span includes
+masked bases, while flanked eligible extent excludes them. These are genomic extents, not
+fragment counts or removed coverage mass.
 
 ### `outliers.histograms.tsv.zst`
 
@@ -233,22 +270,26 @@ context_end
 model_source
 eligible_positions
 fragment_support
-initial_lambda
+initial_component_mean
 initial_zero_inflation
 initial_threshold
 second_fit_retained_positions
-underlying_lambda
+underlying_component_mean
 underlying_zero_inflation
 underlying_mean
 final_threshold
 observed_positive_coverage_mean
 observed_positive_coverage_variance
-underlying_zip_expected_positive_coverage_variance
+underlying_expected_positive_coverage_variance
 positive_coverage_variance_ratio
 observed_initial_tail_positions
 expected_initial_tail_positions
 observed_final_tail_positions
 expected_final_tail_positions
+initial_dispersion
+underlying_dispersion
+initial_poisson_boundary
+underlying_poisson_boundary
 ```
 
 `model_source` is `local` or `global_fallback`. `eligible_positions` and `fragment_support` describe
@@ -282,7 +323,7 @@ distributions and their tail calibration.
 
 The plot contains the detailed global fitted distribution, the complete original histogram through
 the maximum observed coverage, and a chromosome-position track of every core's actual `T1`, `T2`,
-and underlying fitted mean. The global thresholds are reference annotations. Separate minimum,
+and both active-component and unconditional fitted means. The global thresholds are reference annotations. Separate minimum,
 arithmetic mean, and maximum annotations summarize the local thresholds used across cores.
 
 Use this plot for rapid visual quality control. It is a summary, while the TSV outputs retain the
@@ -294,10 +335,14 @@ Every text output begins with `# key=value` metadata. It records the package and
 selected chromosomes, coordinate convention, model and target, actual tail probability and its
 mode, automatic multiplier and denominator, core and context settings, fragment-support definition,
 tile size, fragment filters, raw coverage definition, inter-mate gap behavior, blacklist paths, and
-blacklist flank. The BED files use legal comment lines before their data rows.
+blacklist flank, preservation settings, and the sorted reference contig-name/length encoding.
+The BED files use legal comment lines before their data rows.
 
 ## Current scope
 
 The command implements detection, diagnostics, regional weights, and exact and flanked BED outputs.
-It does not implement hysteresis, a downstream weight loader, correction in other commands, or
-cohort-level merging of sample-specific calls.
+`fcoverage` implements downstream weight loading and application. Zero weights skip correction,
+length-normalization work, and counting. Partial weights retain existing normalization semantics.
+Recorded reference/chromosome mismatches fail, filter differences warn, and custom tables without
+recorded settings remain accepted with a warning. No BAM or blacklist identity is compared. Hysteresis, correction in
+additional commands, and cohort-level merging of sample-specific calls remain unimplemented.

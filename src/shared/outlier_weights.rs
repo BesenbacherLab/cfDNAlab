@@ -22,6 +22,8 @@ pub(crate) struct LoadedOutlierWeights {
     pub(crate) by_chromosome: FxHashMap<String, ChromosomeOutlierWeights>,
     /// Smallest strictly positive listed weight, including the implicit outside weight of `1.0`.
     pub(crate) minimum_positive_keep_weight: f64,
+    /// Detection settings only. No BAM identity or blacklist comparison is performed.
+    recorded_settings: FxHashMap<String, String>,
 }
 
 impl LoadedOutlierWeights {
@@ -30,6 +32,37 @@ impl LoadedOutlierWeights {
         Self {
             by_chromosome: FxHashMap::with_hasher(Default::default()),
             minimum_positive_keep_weight: 1.0,
+            recorded_settings: FxHashMap::default(),
+        }
+    }
+
+    /// Warn once about differing or unavailable detection filters. Custom tables remain usable.
+    pub(crate) fn warn_filter_differences(&self, expected: &[(&str, String)]) {
+        if self.recorded_settings.is_empty() {
+            return;
+        }
+        let mut differences = Vec::new();
+        let mut unavailable = Vec::new();
+        for (key, value) in expected {
+            match self.recorded_settings.get(*key) {
+                Some(recorded) if recorded != value => {
+                    differences.push(format!("{key}: detection={recorded}, counting={value}"))
+                }
+                None => unavailable.push(*key),
+                _ => {}
+            }
+        }
+        if !differences.is_empty() {
+            tracing::warn!(
+                "Outlier detection/counting filters differ: {}",
+                differences.join(", ")
+            );
+        }
+        if !unavailable.is_empty() {
+            tracing::warn!(
+                "Outlier table does not record these filters, so they could not be checked: {}",
+                unavailable.join(", ")
+            );
         }
     }
 }
@@ -37,8 +70,9 @@ impl LoadedOutlierWeights {
 /// Load the sparse fragment keep weights written by `cfdna outliers`.
 ///
 /// Listed intervals are retained in file order because downstream commands pass them directly to
-/// the existing linear overlap sweep. Missing intervals and missing selected chromosomes are
-/// valid and mean keep weight `1.0`.
+/// the existing linear overlap sweep. An analysed chromosome without listed intervals retains
+/// identity weight. Recorded analysis/reference mismatches fail. Missing settings in custom
+/// tables produce a warning rather than preventing their use.
 pub(crate) fn load_outlier_weights_tsv(
     path: &Path,
     chromosomes: &[String],
@@ -49,6 +83,7 @@ pub(crate) fn load_outlier_weights_tsv(
     let mut reader = BufReader::new(file);
     let mut header = String::new();
     let mut line_number = 0usize;
+    let mut recorded_settings = FxHashMap::default();
 
     loop {
         header.clear();
@@ -65,11 +100,17 @@ pub(crate) fn load_outlier_weights_tsv(
                 line_number
             );
         }
-        if trimmed.starts_with('#') {
+        if let Some(comment) = trimmed.strip_prefix('#') {
+            if let Some((key, value)) = comment.trim().split_once('=') {
+                recorded_settings.insert(key.to_string(), value.to_string());
+            }
             continue;
         }
         break;
     }
+
+    check_reference_and_chromosomes(&recorded_settings, chromosomes, contigs)
+        .with_context(|| format!("checking outlier table {}", path.display()))?;
 
     let header_fields: Vec<&str> = header
         .trim_end_matches(&['\r', '\n'][..])
@@ -216,7 +257,63 @@ pub(crate) fn load_outlier_weights_tsv(
     Ok(LoadedOutlierWeights {
         by_chromosome,
         minimum_positive_keep_weight,
+        recorded_settings,
     })
+}
+
+/// Check only recorded reference names/lengths and the explicitly analysed chromosomes.
+fn check_reference_and_chromosomes(
+    settings: &FxHashMap<String, String>,
+    chromosomes: &[String],
+    contigs: &Contigs,
+) -> Result<()> {
+    let mut unavailable = Vec::new();
+    if let Some(encoded) = settings.get("reference_contig_footprint_json") {
+        let mut footprint: Vec<crate::shared::reference::ContigFootprintEntry> =
+            serde_json::from_str(encoded)
+                .context("invalid reference_contig_footprint_json in outlier table")?;
+        let mut expected: Vec<_> = contigs
+            .contigs
+            .iter()
+            .map(
+                |(name, &(_, size))| crate::shared::reference::ContigFootprintEntry {
+                    name: name.clone(),
+                    size: size as u64,
+                },
+            )
+            .collect();
+        footprint.sort_unstable_by(|left, right| {
+            left.name.cmp(&right.name).then(left.size.cmp(&right.size))
+        });
+        expected.sort_unstable_by(|left, right| {
+            left.name.cmp(&right.name).then(left.size.cmp(&right.size))
+        });
+        ensure!(
+            footprint == expected,
+            "outlier table reference contig names/lengths differ from the counting reference"
+        );
+    } else {
+        unavailable.push("reference contig names/lengths");
+    }
+    if let Some(encoded) = settings.get("selected_chromosomes") {
+        let analysed: Vec<String> = serde_json::from_str(encoded)
+            .context("invalid selected_chromosomes in outlier table")?;
+        for chromosome in chromosomes {
+            ensure!(
+                analysed.contains(chromosome),
+                "requested chromosome '{chromosome}' was not analysed during outlier detection"
+            );
+        }
+    } else {
+        unavailable.push("analysed chromosomes");
+    }
+    if !unavailable.is_empty() {
+        tracing::warn!(
+            "Outlier table does not record {}, so these checks could not be performed. Custom tables are accepted",
+            unavailable.join(" and ")
+        );
+    }
+    Ok(())
 }
 
 /// Resolve the minimum keep weight from overlap rows produced by the common overlap sweep.

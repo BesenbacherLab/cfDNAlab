@@ -1,4 +1,5 @@
 use super::*;
+use crate::commands::outliers::distribution::diagnose_fit;
 
 fn coverage_counts(dense_counts: &[u64]) -> CoverageCounts {
     dense_counts
@@ -239,16 +240,14 @@ fn diagnostics_report_hand_derived_positive_variance_and_final_tail() {
         second_fit_retained_positions: 8,
     };
 
-    let diagnostics = diagnose_zip_fit(&histogram, model).expect("valid ZIP diagnostics");
+    let diagnostics = diagnose_fit(&histogram, model.into()).expect("valid ZIP diagnostics");
 
     // Positive values are [1, 1, 3, 3, 5], with mean 2.6 and population variance 2.24.
     assert!((diagnostics.observed_positive_coverage_mean - 2.6).abs() < 1e-12);
     assert!((diagnostics.observed_positive_coverage_variance - 2.24).abs() < 1e-12);
     // For Poisson(1), Var(X | X > 0) is approximately 0.661303.
     assert!(
-        (diagnostics.underlying_zip_expected_positive_coverage_variance
-            - 0.661_303_112_661_534)
-            .abs()
+        (diagnostics.underlying_expected_positive_coverage_variance - 0.661_303_112_661_534).abs()
             < 1e-12
     );
     assert_eq!(diagnostics.observed_initial_tail_positions, 1);
@@ -273,7 +272,7 @@ fn diagnostics_mark_positive_statistics_unavailable_for_an_all_zero_context() {
         second_fit_retained_positions: 100,
     };
 
-    let diagnostics = diagnose_zip_fit(&histogram, model).expect("fallback diagnostics");
+    let diagnostics = diagnose_fit(&histogram, model.into()).expect("fallback diagnostics");
 
     assert!(diagnostics.observed_positive_coverage_mean.is_nan());
     assert!(diagnostics.observed_positive_coverage_variance.is_nan());

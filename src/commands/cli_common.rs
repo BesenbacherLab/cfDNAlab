@@ -841,6 +841,10 @@ pub struct OutlierWeightsArgs {
     /// non-overlapping within each chromosome. Omitted positions have implicit keep weight `1.0`.
     ///
     /// Keep weights must be finite and between `0.0` and `1.0`, inclusive.
+    ///
+    /// For consistent results, generate weights from the same sample with the same reference
+    /// genome, fragment filters, and blacklists used for this run. Tables from other outlier
+    /// methods can use the same format.
     #[cfg_attr(
         feature = "cli",
         clap(long, value_parser, help_heading = "Outlier Weighting")

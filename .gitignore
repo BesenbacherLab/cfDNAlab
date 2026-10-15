@@ -52,3 +52,5 @@ downstream_tests/rust/Cargo.lock
 cfdnalab.Rcheck/
 
 r-cfdnalab.Rcheck/
+
+outliers_fragment_simulations/
