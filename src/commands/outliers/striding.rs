@@ -19,7 +19,7 @@ pub(crate) struct CoreHistogram {
     pub(crate) interval: Interval<u32>,
     /// Eligible-position counts keyed by raw positional coverage.
     pub(crate) counts: CoverageCounts,
-    /// Accepted fragments with an unblacklisted midpoint, assigned once to this core.
+    /// Accepted fragments assigned once to this core by a midpoint outside the blacklists.
     pub(crate) fragment_support: u64,
 }
 
@@ -123,7 +123,7 @@ pub(crate) struct CoreModel {
     pub(crate) context: Interval<u32>,
     /// Eligible positions in `context`, even when the applied model was fitted globally.
     pub(crate) eligible_positions: u64,
-    /// Accepted fragments assigned by unblacklisted midpoint to `context`.
+    /// Accepted fragments assigned to `context` by a midpoint outside the blacklists.
     pub(crate) fragment_support: u64,
     /// Whether parameters were fitted from `context` or reused from the global histogram.
     pub(crate) source: ModelSource,

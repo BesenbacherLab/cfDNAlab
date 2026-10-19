@@ -1,199 +1,151 @@
-# Detect Extreme Fragment Coverage Outliers
+# Handle extreme fragment coverage
 
-`cfdna outliers` detects positions with much higher raw fragment coverage than expected for the
-sample and genomic region. These extreme pileups can dominate coverage-based analyses, even when
-they cover only a small part of the genome.
+A short genomic region with extremely high fragment coverage can dominate a coverage profile.
+`cfdna outliers` finds unusually high fragment coverage and calculates weights that reduce its
+influence during counting.
 
-Use an existing blacklist to exclude known problematic regions, then use `outliers` to detect
-remaining sample-specific extremes. Apply the existing blacklist during detection and downstream
-counting. The detected regions supplement that blacklist.
+Use your usual blacklist first. This command then looks for sample-specific pileups over short
+genomic intervals outside known problematic regions. It supplements the blacklist.
 
-The default model is zero-inflated negative binomial (ZINB), which permits more ordinary coverage
-variation than Poisson. Use `--model zip` to compare ZIP with the same preservation and weighting
-rules. Both models target unusually high coverage, rather than zeros or low coverage.
+High coverage can also be biological. The command leaves broad or clustered calls uncorrected
+by default, but coverage alone cannot establish their cause. Inspect the results before adopting
+the correction in your analysis.
 
-The command does not determine why a pileup is present. High coverage can result from mismapping,
-residual duplicates, difficult reference regions, or a real biological signal. The output is
-therefore a sample-specific set of candidate regions. Broad or clustered calls are automatically
-withheld from correction by the preservation rule below.
-
-## Basic command
+## Run detection
 
 ```bash
 cfdna outliers \
-  --bam <sample>.bam \
-  --output-dir <sample_directory>/outliers \
-  --output-prefix <sample_id> \
+  --bam sample.bam \
+  --output-dir results/outliers \
+  --output-prefix sample \
   --n-threads 12 \
-  --blacklist <path>/hg38-blacklist.v2.bed
+  --blacklist blacklist.bed \
+  --plot-preserved-regions
 ```
 
-See the [`cfdna outliers` CLI reference](../generated/cli/outliers.md) for every option.
+The model estimates expected coverage from the surrounding region and calls bases that reach
+an unusually high coverage cutoff. Adjacent called bases form a call. Positions outside the
+supplied blacklists are eligible, including positions with zero coverage. Blacklisted positions
+are excluded from detection and the coverage estimate.
 
-Positions covered by an input blacklist do not influence the fitted coverage expectations and are
-not reported as outliers. A fragment that crosses a blacklisted position can still contribute at
-its other covered positions. The eligible-position count used for the automatic tail probability
-also excludes blacklisted bases. Unblacklisted positions with zero coverage remain eligible.
+The default model is zero-inflated negative binomial (ZINB), which allows extra variation in
+coverage. `--model zip` selects the simpler zero-inflated Poisson model for comparison.
+Detection uses raw fragment coverage, before GC correction or normalization.
 
-## Use the detected regions
+`--plot-preserved-regions` adds local coverage plots and requires extra BAM reads around those
+regions. Omit it if you only want the tables and the overall diagnostic plot.
 
-The command writes two actionable BED files. Preserved candidates are omitted from both:
+## Inspect the results
 
-- `outliers.exact.bed` contains only positions whose coverage reached the outlier threshold. Use
-  this when you want the least aggressive blacklist.
+The filenames below start with `sample.` when using the example's output prefix.
 
-- `outliers.flanked.bed` adds a buffer around each exact region. Use this when fragments associated
-  with the pileup may also affect nearby positions. The default buffer on each side is the maximum
-  accepted fragment length. You can change it with `--blacklist-flank`.
+- **Start with `outliers.summary.tsv`.** It reports how many calls and bases were selected for
+  correction or preserved. "Preserved" means left unchanged. Base percentages use the
+  number of eligible positions on the analysed chromosomes as their denominator.
+- **Open `outliers.global_fit.png`.** The upper panels compare the observed coverage distribution
+  with the sample-wide model. The bottom panel shows the local means and cutoffs used along
+  chromosomes. Calls spread across much of the genome, or a broad mismatch between observed and
+  fitted coverage, deserve investigation before applying the correction.
+- **Read `outliers.audit.tsv` for individual calls.** It records their coverage, proposed weight,
+  and the reason for correcting or preserving them. `outliers.models.tsv` gives the background
+  estimate and cutoff used at each location.
+- **Use `outliers.preserved_regions.tsv` to locate groups left uncorrected.** Nearby preserved
+  calls are grouped using the windows that informed their decisions. Optional numbered PNGs
+  show surrounding coverage and a closer view. These are approximate locations of preserved
+  signal, not estimated biological breakpoints.
 
-The added flanks are a practical exclusion buffer. They are not additional outlier calls. The
-command that receives either BED file determines whether the intervals exclude positions,
-fragments, windows, or another command-specific unit.
+`outliers.README.txt` accompanies every run with the settings used and explanations of every
+file and column. Coordinates follow BED conventions: starts are 0-based and ends are excluded.
 
-For example, the flanked calls can be added alongside an existing blacklist:
+### Why a short call can be preserved
+
+The preservation check considers nearby calls together. By default, it leaves calls uncorrected
+when more than 5% of a surrounding 100 kb window was called. This helps protect broader coverage
+elevations whose called bases may be scattered across many short intervals. Calls connected by
+their flanks also share the preservation decision.
+
+The percentage excludes blacklisted bases. Special handling near chromosome ends and large
+blacklisted regions prevents a tiny usable span from giving a misleadingly high percentage.
+See `--min-protection-positions` in the CLI help for that rule.
+
+A preserved group is not necessarily an amplification. Broad technical pileups may also be
+preserved, and small biological events may still be corrected. The window and percentage
+settings control this tradeoff. Lowering `--max-outlier-percentage` preserves more calls.
+
+## Apply correction weights
+
+Use the keep-weight table with `fcoverage`, keeping the detection filters and blacklist:
 
 ```bash
 cfdna fcoverage \
-  ... \
-  --blacklist <path>/hg38-blacklist.v2.bed \
-  --blacklist <sample_directory>/outliers/<sample_id>.outliers.flanked.bed
+  --bam sample.bam \
+  --output-dir results/coverage \
+  --blacklist blacklist.bed \
+  --outlier-weights results/outliers/sample.outliers.keep_weights.tsv
 ```
 
-`outliers.keep_weights.tsv` provides fractional weights as an alternative to removing complete
-regions. Its intervals are exact calls without flanking. It is a sparse file, so omitted positions
-have a weight of `1.0`. `fcoverage` currently consumes these weights. Any positive overlap of a fragment's complete `pos` to `reference_end`
-span applies the full regional weight to the whole fragment, including contributions outside
-the interval. If a fragment overlaps multiple regions, it receives the smallest keep weight.
-Support in other commands is planned.
+A keep weight is the fraction of a fragment's contribution to retain. For example, 0.1 retains
+10%, while zero excludes the fragment. The default target is the estimated background mean.
+Preserved calls are absent from the correction table.
 
-For fractional correction of the remaining extremes, retain the existing blacklist:
+Even a 1 bp overlap applies the full regional weight to the whole fragment, including its
+coverage outside the call. If a fragment overlaps several calls, it receives the smallest
+weight. The weights use exact called intervals, without flanks.
+
+GC correction can be used together with outlier weights. Their weights multiply. For the first
+inspection, start without GC correction, genomic scaling, or length normalization so coverage
+can be compared directly with the detector's mean and cutoff.
+
+### Use a blacklist instead
+
+The two BED outputs offer exclusion as an alternative to fractional weighting:
+
+- `outliers.exact.bed` contains the exact called bases selected for correction.
+- `outliers.flanked.bed` adds a buffer on each side and joins overlapping buffers. The buffer
+  defaults to the maximum accepted fragment length and can be changed with `--blacklist-flank`.
+
+Both omit preserved calls. Add either alongside your existing blacklist, for example:
 
 ```bash
 cfdna fcoverage \
-  ... \
-  --blacklist <path>/hg38-blacklist.v2.bed \
-  --outlier-weights <sample_directory>/outliers/<sample_id>.outliers.keep_weights.tsv
+  --bam sample.bam \
+  --output-dir results/coverage \
+  --blacklist blacklist.bed \
+  --blacklist results/outliers/sample.outliers.flanked.bed
 ```
 
-## Automatic preservation
+The receiving command's blacklist rules determine what is excluded. Check those rules when
+using the BED files with a different command.
 
-The first version targets smaller residual pileups. Every exact call starts a physical 100 kb
-window. Each call receives the largest called-base score from evaluated forward windows it
-overlaps, including earlier calls' windows. If any overlapping window has at least 50 kb of
-unblacklisted bases, ignore windows with fewer bases when taking the maximum. The score counts
-exact called bases before flanking, divided by eligible bases, with a 50 kb denominator floor.
-Eligible sampling zeros are included.
+## Check the effect on coverage
 
-When no overlapping forward window has at least 50 kb eligible bases, the command checks a backward
-window ending at the exact call's end. If this has sufficient eligible support, it replaces the
-undersupported forward evidence. Otherwise the forward score retains its denominator floor.
-Windows never grow across blacklisted gaps to collect eligible positions. The audit records the
-selected direction and actual support.
+Called-base percentages describe genomic extent. They do not measure how much coverage is
+removed, because weights affect complete fragments. Compare matched raw and weighted coverage
+around the largest pileups, preserved groups, and nearby background.
 
-A score strictly above 5% flags a call. All candidates are flanked, then overlapping/touching
-flanks are merged. If any member is flagged, the whole merged region is preserved and all its
-member calls are withheld from actionable weights and BEDs. Its original evidence remains in
-the audit. This does not change the baseline fit. Merging does not create pooled weights.
-
-Change these settings with `--protection-window-size`, `--min-protection-positions`,
-`--max-outlier-percentage`, and `--ambiguous-region-action`. Lower percentage cutoffs preserve
-more regions. `correct` applies proposed corrections despite a flag. `error` stops before
-publishing outputs. The default action is `preserve`. Changing `--blacklist-flank` can join calls
-into a region with a shared action.
-
-This is a density heuristic. Preserved elevations are not proven amplifications. A narrow
-biological event can still be corrected, and a dense technical event can be preserved.
-
-## Inspect preserved regions
-
-`outliers.preserved_regions.tsv` is always written. It groups preserved calls whose selected
-preservation-window spans overlap, keeping existing merged preserved regions together. Each row
-locates a group, counts its calls and exact called bases, and records a wider plotting context.
-The reported start and end include gaps between member calls. They are approximate locations
-of preserved signal, rather than estimated biological breakpoints. Reporting groups do not
-change which calls are corrected.
-
-Add `--plot-preserved-regions` to create a PNG for each group:
+Create `inspection_loci.bed` with three columns naming the chromosome, start, and end of each
+region to inspect. These commands write per-position coverage using the same inputs and filters:
 
 ```bash
-cfdna outliers --bam sample.bam --output-dir results/outliers \
-  --blacklist blacklist.bed --plot-preserved-regions
-```
-
-Each figure shows surrounding raw coverage and a closer view, with the estimated background
-mean, outlier cutoff, preserved calls, and blacklisted gaps. The track shows mean and peak
-coverage in the displayed reference bins, excluding blacklisted bases and including genuine zeros.
-Peak marks retain narrow elevations that averaging would hide.
-
-The default total context is 10 times the grouped span, with at least 100 kb. It also includes
-the selected preservation windows and stops at chromosome bounds. Change it with
-`--preserved-plot-context-multiplier` and `--preserved-plot-min-span`.
-`plot_file` names each PNG, or is `NA` when plots were not requested. Plotting adds indexed BAM
-reads restricted to these contexts. The table alone requires no additional BAM reads.
-
-## Inspect and interpret the calls
-
-Start with `outliers.global_fit.png`. It shows:
-
-1. The observed sample-wide coverage distribution and the fitted reference distributions near the
-   coverage values used for outlier detection.
-2. The complete observed coverage histogram, including the most extreme coverage values.
-3. The expected coverage and the two thresholds used across consecutive genomic regions.
-
-The sample-wide thresholds in the first two panels are references. The thresholds in the bottom
-panel are the ones that were actually used in each part of the genome. This matters when coverage
-varies across chromosomes or along a chromosome.
-
-Read `outliers.summary.tsv` for candidate, actionable, and preserved exact-base percentages on
-analysed eligible positions. Inspect `outliers.audit.tsv` for proposed weights, selected windows,
-and reasons. Then compare the plot with `outliers.exact.bed`. A small number of isolated regions above otherwise
-stable thresholds is consistent with the intended use of the detector. Calls spread across large
-parts of the genome, or a fitted distribution that differs broadly from the observed histogram,
-suggest that the model may not describe that sample well enough for automatic blacklisting.
-
-The base counts and longest-call lengths describe exact calls before flanking. In particular,
-`longest_preserved_call_bp` is the longest single preserved call, rather than the total preserved
-sequence or the length of a merged region. A short call can be preserved because nearby calls
-collectively exceed the window cutoff, or because its flanks connect it to a preserved call.
-Use the audit's `window_score`, `merged_max_score`, and `decision_reason` to distinguish these cases.
-
-The output identifies unusually high coverage, not technical noise. Before adopting the calls as a
-routine blacklist, inspect representative samples and consider whether the regions overlap known
-repeats, problematic reference regions, copy-number changes, or plausible biological signals.
-
-## First BAM inspection workflow
-
-Run detection with the existing blacklist first. The default correction target is the active
-component's fitted mean. `outliers.models.tsv` also reports the unconditional mean including
-structural zeros. A regional weight applies to complete overlapping fragments, so exact called
-percentages do not measure removed coverage or the effect on a feature set.
-
-Create a three-column `inspection_loci.bed` with regions around actionable calls, preserved
-candidates where available, and nearby background. From a repository checkout, these commands
-produce matched raw and weighted coverage for those loci:
-
-```bash
-sample_bam="sample.bam"
-known_blacklist="blacklist.bed"
-
-cfdna outliers \
-  --bam "$sample_bam" --output-dir results/outliers --output-prefix sample \
-  --blacklist "$known_blacklist" \
-  --min-mapq 30 --min-fragment-length 30 --max-fragment-length 1000
-
 cfdna fcoverage \
-  --bam "$sample_bam" --output-dir results/inspection --output-prefix raw \
-  --blacklist "$known_blacklist" \
-  --min-mapq 30 --min-fragment-length 30 --max-fragment-length 1000 \
+  --bam sample.bam --output-dir results/inspection --output-prefix raw \
+  --blacklist blacklist.bed \
   --by-bed inspection_loci.bed --per-window unique-positions --decimals 6
 
 cfdna fcoverage \
-  --bam "$sample_bam" --output-dir results/inspection --output-prefix weighted \
-  --blacklist "$known_blacklist" \
-  --min-mapq 30 --min-fragment-length 30 --max-fragment-length 1000 \
+  --bam sample.bam --output-dir results/inspection --output-prefix weighted \
+  --blacklist blacklist.bed \
   --by-bed inspection_loci.bed --per-window unique-positions --decimals 6 \
   --outlier-weights results/outliers/sample.outliers.keep_weights.tsv
+```
 
+If you changed mapping quality, fragment length, chromosome selection, or gap handling during
+detection, use the same settings in both coverage commands.
+
+From a repository checkout, `scripts/plot_outliers.R` can turn these tracks into PNG and PDF
+comparisons showing raw, weighted, and removed coverage alongside calls and cutoffs:
+
+```bash
 Rscript scripts/plot_outliers.R \
   results/inspection/raw.fcoverage.per_position.bedgraph.zst \
   results/inspection/weighted.fcoverage.per_position.bedgraph.zst \
@@ -202,137 +154,8 @@ Rscript scripts/plot_outliers.R \
   inspection_loci.bed results/inspection/locus
 ```
 
-The helper uses base R and the `zstd` executable for compressed inputs. Decompressed bedGraphs
-are also accepted. It saves PNG and PDF panels showing raw/weighted coverage, active and
-unconditional means, T2, removed coverage, and candidate decisions. The displayed removed
-percentage is based on integrated coverage over the plotted locus. It is not a fraction of
-unique molecules or a genome-wide estimate.
+The script uses base R and the `zstd` executable for compressed inputs. It also accepts
+decompressed bedGraphs.
 
-Keep chromosome selection, mapping/fragment filters, gap policy, and blacklists consistent.
-Start without GC correction, genomic scaling, or length normalization so model thresholds and
-coverage have the same units. GC weights can subsequently be multiplied with outlier weights.
-Applying outlier scaling during GC/scaling estimation is a future integration.
-
-For a model comparison, rerun detection in a separate directory with `--model zip`, keeping
-other settings fixed. Zero-weight fragments are skipped before correction and counting.
-Partial weights retain the existing normalization behavior.
-
-## Output files
-
-| Output | What it is useful for |
-| --- | --- |
-| `outliers.README.txt` | File and column explanations, with the preservation settings used in this run |
-| `outliers.audit.tsv` | Every candidate, proposed weight, selected window support, and final decision |
-| `outliers.summary.tsv` | Candidate/actionable/preserved genomic extents and model/fallback counts |
-| `outliers.preserved_regions.tsv` | Preserved calls grouped into approximate regions, with plot coordinates and filenames |
-| `outliers.preserved_regions.region_000001.png` | Optional context and close-up coverage views for each preserved group |
-| `outliers.exact.bed` | Blacklisting or inspecting the exact detected regions |
-| `outliers.flanked.bed` | Applying a more conservative blacklist around the detected regions |
-| `outliers.keep_weights.tsv` | Fractional fragment correction with `fcoverage --outlier-weights` |
-| `outliers.global_fit.png` | Checking the complete coverage distribution and how thresholds vary across the genome |
-| `outliers.models.tsv` | Finding the fitted expectation, actual threshold, and fit diagnostics for a genomic region |
-| `outliers.global_fit.tsv` | Reading the complete sample-wide observed and fitted distributions in another program |
-| `outliers.histograms.tsv.zst` | Auditing raw coverage counts and fragment support across consecutive genomic regions |
-
-All coordinates are 0-based and half-open. Text tables begin with `# key=value` lines recording
-settings and fitted values. The output README explains the columns and their interpretation.
-`analysed_chromosomes` records only the analysed chromosome names and lengths. `blacklists` records
-the supplied blacklist paths.
-
-## Detailed model diagnostics
-
-This section is only needed when you want to investigate why a region was called or assess whether
-the fitted model is appropriate for your data.
-
-Fragment coverage can contain structural zeros and extra variation in positive counts.
-ZINB combines a structural-zero component with a negative-binomial component having mean `mu`
-and variance `mu + dispersion * mu^2`. ZIP is available through `--model zip` and is the
-zero-dispersion boundary. It first fits the complete coverage
-distribution and obtains an initial threshold, `T1`. It then refits the expected coverage using
-values below `T1` while accounting for the excluded upper tail. The final threshold, `T2`, is
-calculated from this second estimate. Original positions with coverage at or above `T2` are called
-as outliers.
-
-The command estimates these values separately across the genome. In `outliers.models.tsv`, `start`
-and `end` identify the region where a model and its `final_threshold` were used. `context_start` and
-`context_end` identify the broader region whose coverage informed that model.
-
-### Coverage expectations and thresholds
-
-- `underlying_mean` is the expected raw positional coverage after accounting for both the active
-  coverage component and excess zeros.
-
-- `initial_threshold` is `T1`. It protects the expected coverage estimate from the extreme values
-  that the command is trying to detect.
-
-- `second_fit_retained_positions` is the number of positions below `T1` that were available for the
-  second fit.
-
-- `final_threshold` is `T2`, the coverage threshold actually used to call positions in that row's
-  genomic region.
-
-- `initial_component_mean` and `underlying_component_mean` are active-component means, not unconditional means
-  across all positions. `initial_zero_inflation` and `underlying_zero_inflation` describe
-  the probability assigned to the structural-zero component. The unconditional mean is
-  `(1 - zero_inflation) * component_mean`. `local-mean` correction uses the component mean.
-
-### Which data informed the model
-
-- `model_source` is `local` when nearby coverage from the same chromosome was used. It is
-  `global_fallback` when the complete chromosome could not provide the requested genomic span or
-  number of fragments, so the sample-wide model was used instead. Fallback is an audit flag. It
-  does not by itself mean that a call is wrong.
-
-- `eligible_positions` is the number of unmasked positions in the recorded context. For fallback
-  rows, the applied model was fitted globally, rather than from that chromosome context.
-
-- `fragments_by_midpoint` is the number of accepted fragments whose unblacklisted midpoint falls between
-  `context_start` and `context_end`. Together with `eligible_positions`, it shows how much position
-  and fragment data informed the row.
-
-### Positive-coverage variance
-
-The variance columns describe how much nonzero coverage varies. The expected variance uses
-the selected model conditional on coverage being positive. ZINB includes its fitted dispersion.
-`initial_dispersion` and `underlying_dispersion` record both stages, with corresponding
-`*_poisson_boundary` flags. Dispersion zero is also a valid result when ZINB was requested.
-
-- `observed_positive_coverage_mean` and `observed_positive_coverage_variance` summarize the original
-  positive coverage values, including the extreme values.
-
-- `underlying_expected_positive_coverage_variance` is the positive-coverage variance expected
-  from the fitted model.
-
-- `positive_coverage_variance_ratio` is the observed variance divided by the fitted expectation. A
-  value near `1` is consistent with model-expected spread among positive values. A value above `1`
-  means the observed positive coverage is more variable than the model expects. A value below `1`
-  means it is less variable.
-
-The variance ratio is a diagnostic, not a calling rule or a parameter uncertainty estimate.
-A high value can reflect either model mismatch or the pileups being detected, since its observed
-side includes the extreme tail.
-
-The observed positive-coverage metrics are `NaN` only when the fitted region contains no positive
-coverage values. In that case, the row uses the sample-wide fallback model.
-
-### Observed and expected tail counts
-
-The `observed_initial_tail_positions` and `expected_initial_tail_positions` columns compare the
-number of positions at or above `T1` with the fitted expectation. The corresponding `final` columns
-make the same comparison at `T2`.
-
-An observed excess at `T2` shows the high-coverage tail that produced the calls. If the observed and
-expected tails differ broadly across most genomic regions or across many representative samples,
-the selected model may be a poor description of ordinary coverage variation in that dataset.
-
-These diagnostics are not p-values. Adjacent positions share fragments and are therefore not
-independent observations.
-
-## Statistical references
-
-- [Negative-binomial parameterization and survival probabilities](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.nbinom.html)
-
-
-- [Lambert's definition of zero-inflated Poisson regression](https://www.stat.cmu.edu/technometrics/90-00/vol-34-01/v3401001.pdf)
-- [Stan's definitions for truncated discrete distributions](https://mc-stan.org/docs/reference-manual/statements.html#truncated-distributions)
-- [NIST's definition of the inclusive discrete survival function](https://www.itl.nist.gov/div898/software/dataplot/refman2/ch8/intro.pdf)
+For all detection and preservation settings, run `cfdna outliers --help` or read the
+[CLI reference](../generated/cli/outliers.md).

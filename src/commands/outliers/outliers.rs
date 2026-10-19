@@ -109,7 +109,7 @@ struct TileCoverage {
     counters: FCoverageCounters,
     /// Chromosome-wide index corresponding to the first entry in `fragment_support`.
     first_model_core_index: usize,
-    /// Histogram-pass fragment counts by model core, assigned by unblacklisted midpoint.
+    /// Histogram-pass fragment counts by model core, assigned by a midpoint outside the blacklists.
     /// Empty when this tile was built without collecting fragment support.
     fragment_support: Vec<u64>,
 }

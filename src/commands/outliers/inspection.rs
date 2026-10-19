@@ -18,7 +18,7 @@ use std::{
 /// Counts use exact eligible called bases. Flanked spans and eligible flanked bases are separate.
 #[derive(Debug, Default)]
 pub(super) struct CallSummary {
-    /// All unblacklisted bases in this summary's chromosome or combined selected chromosomes.
+    /// All eligible positions in this summary's chromosome or combined selected chromosomes.
     eligible_positions: u64,
     pub(super) candidate_calls: u64,
     pub(super) actionable_calls: u64,
@@ -378,7 +378,7 @@ pub(super) fn write_call_outputs(
             .get(chromosome)
             .with_context(|| format!("missing histograms for {chromosome}"))?;
         // Model cores partition the chromosome, so their eligible-position counts include each
-        // unblacklisted base once, even though the broader fitting contexts overlap
+        // eligible position once, even though the broader fitting contexts overlap
         let eligible_positions =
             chromosome_histograms
                 .iter()

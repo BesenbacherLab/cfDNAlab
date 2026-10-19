@@ -108,7 +108,7 @@ fn parse_positive_f64(value: &str) -> std::result::Result<f64, String> {
 /// Find sample-specific regions with unusually high fragment coverage and calculate correction weights.
 ///
 /// Use this after excluding known problematic regions with your usual blacklist. It is intended
-/// to reduce the influence of smaller, local pileups that remain in individual samples.
+/// to reduce the influence of extreme pileups over short genomic intervals in individual samples.
 ///
 /// The command writes weights for `fcoverage --outlier-weights` and BED files for excluding the
 /// detected regions. It also reports how much of the genome was called and which regions were
@@ -125,9 +125,9 @@ fn parse_positive_f64(value: &str) -> std::result::Result<f64, String> {
 /// from the second fit so they have less influence on the final cutoff. Choose the statistical
 /// model with `--model` and control how extreme coverage must be with `--tail-probability`.
 ///
-/// Positions with zero coverage contribute to the estimates but are not called as outliers.
-/// Blacklisted positions are excluded from both estimation and detection. Fragments crossing a
-/// blacklist can still contribute coverage outside it.
+/// Eligible positions are positions outside the supplied blacklists on the selected chromosomes.
+/// They contribute to the estimates even when their coverage is zero. Only high coverage is called
+/// as an outlier. Fragments crossing a blacklist can still contribute coverage outside it.
 ///
 /// ## Applying the correction
 ///
@@ -174,7 +174,7 @@ fn parse_positive_f64(value: &str) -> std::result::Result<f64, String> {
 ///   it or leaving it uncorrected.
 ///
 /// - `outliers.summary.tsv`: numbers of called regions and bases, split by whether they are
-///   selected for correction or left unchanged. Percentages are relative to unblacklisted bases.
+///   selected for correction or left unchanged. Percentages are relative to eligible positions.
 ///
 /// - `outliers.preserved_regions.tsv`: preserved calls grouped for inspection, with their
 ///   approximate spans and plotting coordinates. Use `--plot-preserved-regions` to add PNG plots.
@@ -274,7 +274,7 @@ pub struct OutliersConfig {
 
     /// Minimum number of fragments used to estimate local coverage `[integer]`
     ///
-    /// Count fragments whose midpoint is inside the surrounding region and is not blacklisted.
+    /// Count fragments whose midpoint is inside the surrounding region and outside the blacklists.
     /// If there are too few, expand beyond `--bin-size` until this number is reached.
     ///
     /// If the whole chromosome cannot provide both the requested span and fragment count, use
@@ -291,7 +291,7 @@ pub struct OutliersConfig {
     /// coverage or higher. Use smaller values for a stricter cutoff that requires more extreme
     /// coverage, and larger values for a more permissive cutoff.
     ///
-    /// When omitted, use `1 / number of unblacklisted positions` across the selected chromosomes,
+    /// When omitted, use `1 / number of eligible positions` across the selected chromosomes,
     /// including positions with zero coverage. The actual false-positive rate depends on how well
     /// the model describes the data. Values must be greater than 0 and at most 0.5.
     #[cfg_attr(
@@ -346,7 +346,7 @@ pub struct OutliersConfig {
     #[cfg_attr(feature = "cli", clap(long, default_value_t = DEFAULT_PROTECTION_WINDOW_SIZE, value_parser = clap::value_parser!(u32).range(1..), help_heading = "Preservation"))]
     pub protection_window_size: u32,
 
-    /// Minimum number of unblacklisted bases used for window percentages `[integer]`
+    /// Minimum number of eligible positions used for window percentages `[integer]`
     ///
     /// A window may have fewer usable bases near a chromosome end or a large blacklisted region.
     /// If any overlapping forward window meets this minimum, take the highest percentage from
@@ -386,7 +386,9 @@ pub struct OutliersConfig {
     /// the outlier cutoff, called positions, and blacklisted gaps.
     ///
     /// Plotting reads the BAM again only around these groups, using the detection filters.
-    /// The table is always written. Grouping is for inspection and does not change correction.
+    /// The table is always written. It groups preserved calls using overlapping preservation
+    /// windows and reports approximate locations, not biological breakpoints. Grouping is for
+    /// inspection and does not change correction.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Preserved Region Plots"))]
     pub plot_preserved_regions: bool,
 
@@ -401,7 +403,7 @@ pub struct OutliersConfig {
     /// Minimum total genomic span (bp) shown around a preserved group `[integer]`
     ///
     /// Give short calls enough surrounding coverage to inspect. This includes blacklisted gaps
-    /// and is separate from the minimum unblacklisted-base count used for preservation decisions.
+    /// and is separate from the minimum eligible-position count used for preservation decisions.
     #[cfg_attr(feature = "cli", clap(long, default_value_t = DEFAULT_PRESERVED_PLOT_MIN_SPAN, value_parser = clap::value_parser!(u32).range(1..), help_heading = "Preserved Region Plots"))]
     pub preserved_plot_min_span: u32,
 
@@ -446,7 +448,7 @@ pub struct OutliersConfig {
 
     /// Optional BED file(s) with positions excluded from coverage estimation and detection `[path]`
     ///
-    /// Supply your usual blacklist to detect the smaller sample-specific pileups that remain
+    /// Supply your usual blacklist to detect the sample-specific pileups that remain
     /// outside known problematic regions.
     #[cfg_attr(
         feature = "cli",

@@ -61,7 +61,7 @@ impl CoverageBins {
         })
     }
 
-    /// Add each unblacklisted base once, including genuine zeros, independent of chunk boundaries.
+    /// Add each eligible position once, including genuine zeros, independent of chunk boundaries.
     pub(super) fn add_coverage(
         &mut self,
         core: Interval<u32>,
@@ -109,7 +109,7 @@ pub(super) struct PreservedPlotData<'a> {
 
 /// Save an overview and a closer view with observed coverage, fitted baseline, cutoff, and masks.
 ///
-/// The blue track is the mean among unblacklisted bases in each reference bin. Grey peak marks
+/// The blue track is the mean over eligible positions in each reference bin. Grey peak marks
 /// retain narrow elevations lost by averaging. Masked spans are drawn as gaps, never as zeros.
 pub(super) fn write_preserved_region_plot(path: &Path, data: PreservedPlotData<'_>) -> Result<()> {
     let root = BitMapBackend::new(path, (1600, 900)).into_drawing_area();

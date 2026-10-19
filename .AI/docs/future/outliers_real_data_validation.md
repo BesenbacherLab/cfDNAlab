@@ -1,11 +1,11 @@
 # Outliers real-data validation list
 
-Date: 2026-10-12. Updated: 2026-10-15.
+Date: 2026-10-12. Updated: 2026-10-19.
 
 Status: Pending. These are investigations, not claims that the current correction is validated.
 
-Related work: [review verification and rectification plan](outliers_review_rectification_plan.md),
-[working decisions](outliers_claude_review_working_notes.md#8-what-still-needs-to-be-settled), and
+Related work: [review checklist and remaining decisions](outliers_review_rectification_plan.md),
+[current spec](../specs/outliers.md), and
 [fitted ZIP/ZINB comparison](outliers_fragment_simulations/zinb_comparison_report.md).
 
 The intended workflow starts with an existing blacklist and detects residual sample-specific
@@ -25,7 +25,7 @@ This list does not authorize normalization changes.
 - [ ] Check Poisson sampling zeros separately from fitted structural-zero inflation. Record
   numerical fit failures, support-driven context expansion, thresholds, and correction severity.
 - [ ] Verify that the automatic probability denominator and all fitted histograms exclude
-  blacklisted bases while retaining ordinary unblacklisted positions with zero coverage.
+  blacklisted bases while retaining ordinary eligible positions with zero coverage.
 - [ ] Compare the current two-stage fit with a single fit on the same contexts. Show first-stage
   and second-stage calls, excluded position counts and mass, fitted baselines, and changed calls.
 - [ ] Examine whether excluded tails are isolated pileups or parts of coherent biological
@@ -51,6 +51,7 @@ This list does not authorize normalization changes.
 - [ ] Build aligned locus panels with raw coverage, local fitted baseline and `T2`, exact called
   intervals and weights, fragment spans colored by resolved weight, corrected coverage, and
   coverage removed. Include the fragment endpoints so the effect outside calls is explainable.
+  The current coverage plots do not show individual fragments, so those panels remain later work.
 - [ ] Plot overlap bases and overlap fraction against assigned weight. Summarize how much removed
   coverage lies inside calls and in surrounding positions, grouped by distance from boundaries
   and fragment length.
@@ -94,15 +95,14 @@ This list does not authorize normalization changes.
   hides larger events and whether exclusion makes genuine biological events more severely corrected.
 - [ ] Assess the final preservation safeguard on all actionable outputs, including exact/flanked
   blacklists. Verify that every member of a preserved merged region is omitted consistently.
-- [ ] Evaluate the working call-start window scheme on final T2 regions, with a proposed 100 kb
-  window and initial 5% cutoff. Assign each exact call the maximum called-base percentage from all
-  evaluated windows it overlaps, including earlier calls' windows. Under the candidate support
-  rule, divide T2-called bases by the larger of the unblacklisted-base count and denominator
-  floor. Include sampling zeros and record actual eligible support. Calculate these metrics before flanking.
-  Compare fragmented events with isolated spikes and repeat-associated technical elevations.
+- [ ] Evaluate the current 100 kb call-start windows and strict 5% cutoff on final T2 calls.
+  Use the maximum only among adequately supported overlapping forward windows when any exist.
+  Otherwise try the supported backward fallback before retaining the floored forward maximum.
+  Include eligible sampling zeros and record actual support. Calculate these metrics before
+  flanking. Compare fragmented events with isolated spikes and repeat-associated technical elevations.
 - [ ] Plot the fraction tracks with calls, raw coverage, baselines, and known copy-number spans.
   Assess percentage thresholds and minimum eligible support across depths, including 0.5x.
-  Assess candidate thresholds and support settings against the initial 5% cutoff and 50 kb support setting.
+  Compare alternatives against the initial 5% cutoff and 50 kb minimum support.
 - [ ] Evaluate withholding correction from ambiguous final calls while keeping the existing
   two-stage baseline fit. Verify that preservation leaves histograms, fit parameters, T1, and
   T2 unchanged, while retaining all final detection evidence.
@@ -149,6 +149,12 @@ This list does not authorize normalization changes.
   workflows that mix corrections built with different settings. Record factor identities,
   filters, reference, and sample selection.
 
+When producer integration is requested, apply weights to observed fragment counts in both
+streaming and BED/global GC-estimation branches, alongside existing window-assignment fractions.
+Derive fragment length frequencies from the weighted counts. Do not apply fragment keep weights
+to expected reference counts. Review zero-support windows separately. This is later rollout work,
+not an additional input requirement for the current `fcoverage` consumer.
+
 ## Model fit, reporting, and performance
 
 - [ ] Audit local/global fallback use, context support, positive-count variance ratios, and
@@ -158,8 +164,7 @@ This list does not authorize normalization changes.
 - [ ] Show unchanged, downweighted, excluded, and effective kept fragment support. Verify early
   zero-weight exclusion while preserving the existing normalization formulas and ownership rules.
 - [ ] Profile BAM scans, context aggregation, numerical fitting, and output generation at shallow
-  and deeper coverage for broader performance work. The small log-factorial lookup table does not
-  require this profiling before implementation.
+  and deeper coverage for broader performance work.
 
 ## User-owned later consideration
 
