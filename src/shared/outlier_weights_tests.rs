@@ -17,7 +17,7 @@ fn selected_contigs() -> Contigs {
 
 #[test]
 fn recorded_analysis_distinguishes_an_empty_chromosome_from_an_unanalysed_one() {
-    let file = write_input("# selected_chromosomes=[\"chr1\"]\nchromosome\tstart\tend\tkeep_weight\n");
+    let file = write_input("# analysed_chromosomes=[{\"name\":\"chr1\",\"size\":100}]\nchromosome\tstart\tend\tkeep_weight\n");
     let loaded = load_outlier_weights_tsv(file.path(), &["chr1".into()], &selected_contigs()).unwrap();
     assert!(loaded.by_chromosome.is_empty());
     let error = load_outlier_weights_tsv(file.path(), &["chr2".into()], &selected_contigs()).unwrap_err();
@@ -26,11 +26,25 @@ fn recorded_analysis_distinguishes_an_empty_chromosome_from_an_unanalysed_one() 
 
 #[test]
 fn recorded_reference_checks_names_and_lengths_without_file_identity() {
-    let matching = write_input("# reference_contig_footprint_json=[{\"name\":\"chr1\",\"size\":100},{\"name\":\"chr2\",\"size\":80}]\n# selected_chromosomes=[\"chr1\",\"chr2\"]\nchromosome\tstart\tend\tkeep_weight\n");
+    let matching = write_input("# analysed_chromosomes=[{\"name\":\"chr1\",\"size\":100},{\"name\":\"chr2\",\"size\":80}]\nchromosome\tstart\tend\tkeep_weight\n");
     assert!(load_outlier_weights_tsv(matching.path(), &["chr1".into()], &selected_contigs()).is_ok());
-    let mismatch = write_input("# reference_contig_footprint_json=[{\"name\":\"chr1\",\"size\":101},{\"name\":\"chr2\",\"size\":80}]\nchromosome\tstart\tend\tkeep_weight\n");
+    let mismatch = write_input("# analysed_chromosomes=[{\"name\":\"chr1\",\"size\":101},{\"name\":\"chr2\",\"size\":80}]\nchromosome\tstart\tend\tkeep_weight\n");
     let error = load_outlier_weights_tsv(mismatch.path(), &["chr1".into()], &selected_contigs()).unwrap_err();
     assert!(format!("{error:#}").contains("names/lengths differ"));
+}
+
+#[test]
+fn counting_a_subset_checks_only_requested_chromosomes() {
+    // A run that analysed chr1 and chr2 can supply weights for chr1 alone. The counting
+    // reference contains only requested chromosomes, as it does in the command workflow
+    let file = write_input("# analysed_chromosomes=[{\"name\":\"chr1\",\"size\":100},{\"name\":\"chr2\",\"size\":80}]\nchromosome\tstart\tend\tkeep_weight\nchr1\t10\t20\t0.5\nchr2\t30\t40\t0.2\n");
+    let mut contigs = selected_contigs();
+    contigs.contigs.remove("chr2");
+
+    let loaded = load_outlier_weights_tsv(file.path(), &["chr1".into()], &contigs).unwrap();
+
+    assert_eq!(loaded.by_chromosome.len(), 1);
+    assert_eq!(loaded.by_chromosome["chr1"].keep_weights, vec![0.5]);
 }
 
 fn write_input(contents: &str) -> NamedTempFile {

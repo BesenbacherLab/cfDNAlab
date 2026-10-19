@@ -94,3 +94,36 @@ fn initial_inspection_defaults_and_model_selection_are_serialized() {
         assert!(config.validate().is_err());
     }
 }
+
+#[test]
+fn preserved_plot_settings_are_optional_validated_and_serialized() {
+    let mut config = config();
+    assert!(!config.plot_preserved_regions);
+    config.set_plot_preserved_regions(true);
+    config.set_preserved_plot_context_multiplier(2.5);
+    config.set_preserved_plot_min_span(20_000);
+    assert!(config.validate().is_ok());
+    let arguments = config.to_cli_args().unwrap();
+    assert!(
+        arguments
+            .iter()
+            .any(|argument| argument == "--plot-preserved-regions")
+    );
+    assert!(
+        arguments
+            .windows(2)
+            .any(|pair| pair[0] == "--preserved-plot-context-multiplier" && pair[1] == "2.5")
+    );
+    assert!(
+        arguments
+            .windows(2)
+            .any(|pair| pair[0] == "--preserved-plot-min-span" && pair[1] == "20000")
+    );
+    for multiplier in [f64::NAN, f64::INFINITY, 0.5] {
+        config.set_preserved_plot_context_multiplier(multiplier);
+        assert!(config.validate().is_err());
+    }
+    config.set_preserved_plot_context_multiplier(1.0);
+    config.set_preserved_plot_min_span(0);
+    assert!(config.validate().is_err());
+}

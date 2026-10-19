@@ -27,6 +27,9 @@ use crate::{
             outputs::{
                 OutputMetadata, OutputPaths, write_diagnostic_outputs, write_histogram_output,
             },
+            preserved_plotting::{CoverageBins, PreservedPlotData, write_preserved_region_plot},
+            preserved_regions::PreservedRegion,
+            readme::write_output_readme,
             striding::{CoreHistogram, CoreModel, fit_core_models, sum_global_histogram},
         },
         run_statistics::{
@@ -73,6 +76,12 @@ pub struct OutliersRunResult {
     pub output_audit: PathBuf,
     /// Per-chromosome and total genomic call summaries.
     pub output_summary: PathBuf,
+    /// Preserved calls grouped into approximate regions for inspection.
+    pub output_preserved_regions: PathBuf,
+    /// Optional coverage PNGs for the preserved reporting groups.
+    pub output_preserved_plots: Vec<PathBuf>,
+    /// Explanation of the output files, columns, and preservation decisions.
+    pub output_readme: PathBuf,
     /// All final output files produced by the command.
     pub output_files: Vec<PathBuf>,
 }
@@ -338,7 +347,7 @@ pub fn run_outliers(config: &OutliersConfig, options: RunOptions) -> Result<Outl
 
     let (regions_by_chromosome, counters) =
         merge_calling_pass_results(&chromosomes, calling_pass_tile_results)?;
-    let call_summary = write_call_outputs(
+    let (call_summary, preserved_regions) = write_call_outputs(
         &output_metadata,
         &contigs,
         &regions_by_chromosome,
@@ -349,27 +358,44 @@ pub fn run_outliers(config: &OutliersConfig, options: RunOptions) -> Result<Outl
         &mut final_outputs,
     )?;
 
+    let preserved_plots = if config.plot_preserved_regions && !preserved_regions.is_empty() {
+        status_info!(options, target: COMMAND_TARGET, "Plotting preserved regions from local BAM reads");
+        write_preserved_plots(
+            &output_metadata,
+            &preserved_regions,
+            &regions_by_chromosome,
+            &models_by_chromosome,
+            &blacklist_map,
+            &output_paths,
+            &mut final_outputs,
+        )?
+    } else {
+        Vec::new()
+    };
+    write_output_readme(&output_metadata, &output_paths, &mut final_outputs)?;
     final_outputs.move_into_place()?;
-    let output_files = output_paths.all();
+    let mut output_files = output_paths.all();
+    output_files.extend(preserved_plots.iter().cloned());
     status_info!(options, target: COMMAND_TARGET, "Saved outlier outputs");
 
     if options.report_statistics {
         let extra_statistics = [
             format!("Eligible positions: {eligible_positions}"),
-            format!("Tail probability: {tail_probability}"),
+            format!("Tail probability: {tail_probability:.6e}"),
             format!("Detection candidates: {}", call_summary.candidate_calls),
             format!(
-                "Actionable calls: {} ({} bases, {:.6}% of eligible positions)",
+                "Actionable calls: {} ({} exact bases before flanking, {:.6}% of eligible positions)",
                 call_summary.actionable_calls,
                 call_summary.actionable_bases,
                 call_summary.percentage(call_summary.actionable_bases)
             ),
             format!(
-                "Preserved calls: {} ({} bases, {:.6}% of eligible positions)",
+                "Preserved calls: {} ({} exact bases before flanking, {:.6}% of eligible positions)",
                 call_summary.preserved_calls,
                 call_summary.preserved_bases,
                 call_summary.percentage(call_summary.preserved_bases)
             ),
+            format!("Preserved inspection groups: {}", preserved_regions.len()),
         ];
         print_fragment_run_statistics(
             &counters.base,
@@ -396,8 +422,106 @@ pub fn run_outliers(config: &OutliersConfig, options: RunOptions) -> Result<Outl
         output_plot: output_paths.plot,
         output_audit: output_paths.audit,
         output_summary: output_paths.summary,
+        output_preserved_regions: output_paths.preserved_regions,
+        output_preserved_plots: preserved_plots,
+        output_readme: output_paths.readme,
         output_files,
     })
+}
+
+/// Read and plot only the recorded contexts, leaving detection counters and decisions intact.
+fn write_preserved_plots(
+    metadata: &OutputMetadata<'_>,
+    groups: &[PreservedRegion],
+    calls_by_chromosome: &FxHashMap<String, Vec<CalledRegion>>,
+    models_by_chromosome: &FxHashMap<String, Vec<CoreModel>>,
+    blacklists: &FxHashMap<String, Vec<Interval<u64>>>,
+    paths: &OutputPaths,
+    final_outputs: &mut FinalOutputFiles,
+) -> Result<Vec<PathBuf>> {
+    let mut plots = Vec::new();
+    for group in groups {
+        let &(tid, chromosome_length) = metadata
+            .contigs
+            .contigs
+            .get(&group.chromosome)
+            .with_context(|| format!("missing reference metadata for {}", group.chromosome))?;
+        let blacklist = blacklists
+            .get(&group.chromosome)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let coverage = collect_preserved_plot_coverage(
+            metadata.config,
+            group,
+            tid,
+            chromosome_length,
+            blacklist,
+        )
+        .with_context(|| {
+            format!(
+                "reading coverage for preserved {} on {}",
+                group.region_id, group.chromosome
+            )
+        })?;
+        let calls = calls_by_chromosome
+            .get(&group.chromosome)
+            .with_context(|| format!("missing calls for {}", group.chromosome))?;
+        let models = models_by_chromosome
+            .get(&group.chromosome)
+            .with_context(|| format!("missing models for {}", group.chromosome))?;
+        let destination = paths.preserved_plot(&group.region_id);
+        let temporary = final_outputs.temp_path_for(&destination)?;
+        write_preserved_region_plot(
+            &temporary,
+            PreservedPlotData {
+                region: group,
+                coverage: &coverage,
+                calls,
+                models,
+                blacklist,
+            },
+        )?;
+        final_outputs.record(temporary, destination.clone())?;
+        plots.push(destination);
+    }
+    Ok(plots)
+}
+
+/// Reuse detector coverage construction in bounded chunks with complete fragment fetch halos.
+fn collect_preserved_plot_coverage(
+    config: &OutliersConfig,
+    group: &PreservedRegion,
+    tid: i32,
+    chromosome_length: u32,
+    blacklist: &[Interval<u64>],
+) -> Result<CoverageBins> {
+    let mut bins = CoverageBins::for_plot(group.plot_interval)?;
+    let mut start = group.plot_interval.start();
+    let mut chunk_index = 0;
+    while start < group.plot_interval.end() {
+        let end = start
+            .saturating_add(config.tile_size)
+            .min(group.plot_interval.end());
+        let core = Interval::new(start, end)?;
+        let halo = config.fragment_lengths.max_fragment_length;
+        let fetch = Interval::new(
+            start.saturating_sub(halo),
+            end.saturating_add(halo).min(chromosome_length),
+        )?;
+        let tile = Tile::new(group.chromosome.clone(), tid, chunk_index, core, fetch)?;
+        let tile_coverage = build_tile_coverage(config, &tile, blacklist, false)?;
+        bins.add_coverage(
+            core,
+            tile_coverage
+                .coverage
+                .coverage()
+                .context("preserved plot coverage was not finalized")?,
+            tile_coverage.coverage.blacklist_mask(),
+        )?;
+        start = end;
+        chunk_index += 1;
+    }
+    Ok(bins)
 }
 
 /// Process one parallelization tile during the histogram-building BAM pass.

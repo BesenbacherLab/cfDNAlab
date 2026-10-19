@@ -6,5 +6,8 @@ pub(crate) mod outliers;
 mod outputs;
 mod plotting;
 mod preservation;
+mod preserved_plotting;
+mod preserved_regions;
+mod readme;
 mod striding;
 mod zinb;

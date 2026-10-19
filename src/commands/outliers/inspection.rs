@@ -4,6 +4,7 @@ use super::{
     outliers::CalledRegion,
     outputs::{OutputMetadata, OutputPaths, write_common_metadata},
     preservation::{ChromosomeDecisions, IntervalLengths, evaluate_regions},
+    preserved_regions::{PreservedRegion, collect_preserved_regions},
     striding::{CoreHistogram, CoreModel, ModelSource},
 };
 use crate::shared::{bam::Contigs, interval::Interval, io::FinalOutputFiles};
@@ -231,13 +232,14 @@ pub(super) fn write_call_outputs(
     models: &FxHashMap<String, Vec<CoreModel>>,
     paths: &OutputPaths,
     final_outputs: &mut FinalOutputFiles,
-) -> Result<CallSummary> {
+) -> Result<(CallSummary, Vec<PreservedRegion>)> {
     let destinations = [
         &paths.keep_weights,
         &paths.exact_blacklist,
         &paths.flanked_blacklist,
         &paths.audit,
         &paths.summary,
+        &paths.preserved_regions,
     ];
     let temporary = destinations
         .iter()
@@ -247,7 +249,15 @@ pub(super) fn write_call_outputs(
         .iter()
         .map(|path| Ok(BufWriter::new(File::create(path)?)))
         .collect::<Result<Vec<_>>>()?;
-    let [keep, exact, flanked, audit, summary_writer] = writers.as_mut_slice() else {
+    let [
+        keep,
+        exact,
+        flanked,
+        audit,
+        summary_writer,
+        preserved_writer,
+    ] = writers.as_mut_slice()
+    else {
         unreachable!()
     };
     for writer in [
@@ -256,6 +266,7 @@ pub(super) fn write_call_outputs(
         &mut *flanked,
         &mut *audit,
         &mut *summary_writer,
+        &mut *preserved_writer,
     ] {
         write_common_metadata(writer, metadata)?;
     }
@@ -267,21 +278,18 @@ pub(super) fn write_call_outputs(
     writeln!(flanked, "# output=actionable_merged_flanked_regions")?;
     writeln!(
         audit,
-        "# window_score_definition=100*called_eligible_bases/max(eligible_bases,min_protection_positions)"
-    )?;
-    writeln!(
-        audit,
         "chromosome\tstart\tend\tobserved_mass\ttarget_mass\tmean_coverage\tmax_coverage\tproposed_keep_weight\twindow_score\twindow_start\twindow_end\twindow_eligible_positions\twindow_called_positions\twindow_direction\tcall_flagged\tmerged_start\tmerged_end\tmerged_max_score\taction\tdecision_reason\tfirst_model_core_start\tlast_model_core_start"
     )?;
     writeln!(
         summary_writer,
-        "# percentage_denominator=eligible_positions_in_this_row\n# flanked_span_includes_masked_bases=true\n# percentages_are_genomic_extent_not_removed_signal=true\n# unavailable_percentage=NaN_when_no_eligible_positions"
+        "scope\tchromosome\teligible_positions\tcandidate_calls\tactionable_calls\tpreserved_calls\tcandidate_bases\tcandidate_percentage\tactionable_bases\tactionable_percentage\tpreserved_bases\tpreserved_percentage\tlongest_candidate_call_bp\tlongest_actionable_call_bp\tlongest_preserved_call_bp\tactionable_merged_regions\tpreserved_merged_regions\tactionable_flanked_span\tactionable_flanked_eligible_bases\tactionable_flanked_eligible_percentage\tmodel_cores\tglobal_fallback_cores\tpoisson_boundary_cores"
     )?;
     writeln!(
-        summary_writer,
-        "scope\tchromosome\teligible_positions\tcandidate_calls\tactionable_calls\tpreserved_calls\tcandidate_bases\tcandidate_percentage\tactionable_bases\tactionable_percentage\tpreserved_bases\tpreserved_percentage\tlongest_candidate\tlongest_actionable\tlongest_preserved\tactionable_merged_regions\tpreserved_merged_regions\tactionable_flanked_span\tactionable_flanked_eligible_bases\tactionable_flanked_eligible_percentage\tmodel_cores\tglobal_fallback_cores\tpoisson_boundary_cores"
+        preserved_writer,
+        "region_id\tchromosome\tstart\tend\tcalls\tcalled_bases\tmaximum_window_percentage\twindow_start\twindow_end\tplot_start\tplot_end\tplot_file"
     )?;
     let mut total = CallSummary::default();
+    let mut preserved_regions = Vec::new();
     for chromosome in metadata.chromosomes {
         let regions = regions_by_chromosome
             .get(chromosome)
@@ -298,6 +306,43 @@ pub(super) fn write_call_outputs(
         let decisions = evaluate_regions(metadata.config, regions, blacklist, chromosome_length)
             .with_context(|| format!("preservation decisions for {chromosome}"))?;
         write_audit_rows(audit, chromosome, regions, &decisions, metadata)?;
+        let reporting_groups = collect_preserved_regions(
+            chromosome,
+            regions,
+            &decisions,
+            metadata.config,
+            chromosome_length,
+            preserved_regions.len() + 1,
+        )?;
+        for group in &reporting_groups {
+            let plot_file = if metadata.config.plot_preserved_regions {
+                paths
+                    .preserved_plot(&group.region_id)
+                    .file_name()
+                    .context("preserved plot path has no filename")?
+                    .to_string_lossy()
+                    .into_owned()
+            } else {
+                "NA".to_string()
+            };
+            writeln!(
+                preserved_writer,
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                group.region_id,
+                chromosome,
+                group.interval.start(),
+                group.interval.end(),
+                group.call_indices.len(),
+                group.called_bases,
+                group.maximum_window_percentage,
+                group.window_span.start(),
+                group.window_span.end(),
+                group.plot_interval.start(),
+                group.plot_interval.end(),
+                plot_file
+            )?;
+        }
+        preserved_regions.extend(reporting_groups);
         for (region, decision) in regions.iter().zip(&decisions.calls) {
             if decisions.merged_regions[decision.merged_region_index].preserved {
                 continue;
@@ -363,7 +408,7 @@ pub(super) fn write_call_outputs(
     for (temporary, destination) in temporary.into_iter().zip(destinations) {
         final_outputs.record(temporary, destination.clone())?;
     }
-    Ok(total)
+    Ok((total, preserved_regions))
 }
 
 #[cfg(test)]

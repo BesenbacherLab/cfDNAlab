@@ -74,7 +74,7 @@ produce, and how well did its positive distribution and upper tail match the obs
 - `model_source` is `local` when the core's chromosome supplied the required fitting context and
   `global_fallback` otherwise. Frequent fallback means the configured span or fragment-support
   requirement is unsuitable for those chromosomes.
-- `eligible_positions` and `fragment_support` describe the context used for that core. They help
+- `eligible_positions` and `fragments_by_midpoint` describe the context used for that core. They help
   distinguish a stable fit from a small or heavily masked context.
 - `initial_component_mean` is the active-component mean in the complete first fit.
   `initial_zero_inflation` is its structural-zero probability.
@@ -129,12 +129,13 @@ histogram to determine whether discrepancies are localized pileups or broad lack
 
 Defaults are a 100 kb physical reference window, 50 kb minimum eligible support/denominator floor,
 5% cutoff, and `preserve` action. All are configurable. Every exact call starts a forward window.
-Its score is `100 * called_eligible_bases / max(eligible_bases, minimum_support)`. Each call normally
-uses the maximum across all forward windows overlapping it, including earlier windows. The
-numerator is the union of exact called bases. Eligible zeros count in the denominator.
+Its score is `100 * called_eligible_bases / max(eligible_bases, minimum_support)`. If any overlapping
+forward window has at least the minimum eligible support, each call uses the maximum only among
+those supported windows, including earlier windows. Undersupported windows cannot override them.
+The numerator is the union of exact called bases. Eligible zeros count in the denominator.
 
-If the call's own window lacks minimum support and no supported earlier window overlaps it,
-evaluate `[max(0, call_end - window_size), call_end)`. Called bases are already known from exact
+If no overlapping forward window has minimum support, evaluate
+`[max(0, call_end - window_size), call_end)`. Called bases are already known from exact
 intervals. If this backward window has enough eligible support, its score replaces undersupported
 forward evidence for that call. Otherwise retain the original forward maximum with the denominator
 floor. Record the selected window's direction, span, called bases, and actual eligible support.
@@ -173,6 +174,10 @@ fragment, without dilution by overlap fraction.
 ## Output files
 
 An optional output prefix is followed by a dot before each suffix below.
+
+`outliers.README.txt` accompanies each run with a file guide, column definitions, and the actual
+preservation settings. Human-readable diagnostic explanations belong there rather than in repeated
+setting-like metadata comments.
 
 ### Which output should be used?
 
@@ -238,18 +243,42 @@ span and eligible extent, and model/fallback/Poisson-boundary core counts. Every
 that row's eligible positions. Percentages are NaN for zero eligible support. Flanked span includes
 masked bases, while flanked eligible extent excludes them. These are genomic extents, not
 fragment counts or removed coverage mass.
+The `longest_candidate_call_bp`, `longest_actionable_call_bp`, and `longest_preserved_call_bp`
+columns are maximum single exact call lengths before flanking. The total row takes their maxima
+over chromosomes. Short calls can be preserved through a shared window score or merged flanks.
+
+### `outliers.preserved_regions.tsv` and optional PNGs
+
+The preserved-region table is always written, including a header when empty. Columns are
+`region_id`, `chromosome`, `start`, `end`, `calls`, `called_bases`, `maximum_window_percentage`,
+`window_start`, `window_end`, `plot_start`, `plot_end`, and `plot_file`.
+Each existing merged preserved region remains intact. Join groups transitively when the spans
+containing their selected windows overlap. Merely touching window spans remain separate.
+Group bounds contain exact member calls, including gaps but without flanks. `called_bases` sums
+only exact lengths. These are inspection groups, not inferred biological breakpoints.
+
+Plot contexts are centered on grouped call bounds with configurable total-width multiplier 10
+and minimum span 100 kb. Include the selected window span and clip to chromosome bounds.
+The context is recorded even without plots. `plot_file` is `NA` unless plots were requested.
+`--plot-preserved-regions` writes a numbered PNG per group. Indexed BAM reads cover only plot
+contexts, processed in chunks bounded by `--tile-size` with the same filters and fragment halos.
+Plot reads do not affect detection counters. At most 2,000 reference bins retain mean and peak
+coverage over unblacklisted bases, including true zeros. Masks are unavailable, not zeros.
+Context and close-up panels show the active-component mean, T2, preserved calls, and masked gaps.
+Table and PNGs participate in final-output registration. Reporting does not change corrections.
 
 ### `outliers.histograms.tsv.zst`
 
 The sparse per-core histograms have columns:
 
 ```text
-chromosome  start  end  fragment_support  coverage  observed_positions
+chromosome  start  end  fragments_by_midpoint  coverage  observed_positions
 ```
 
-`fragment_support` is the number of accepted fragments with an unblacklisted midpoint, assigned
+`fragments_by_midpoint` is the number of accepted fragments with an unblacklisted midpoint, assigned
 once to the model core containing that midpoint. `observed_positions` is the number of eligible
 positions at that exact integer raw coverage. Missing coverage values have zero observed positions.
+The fragment count repeats across coverage rows within a core and must not be summed across them.
 The sum of `observed_positions` within a core is its eligible-position count. A fully blacklisted
 core is retained as an explicit `coverage=0, observed_positions=0` row so its interval and zero
 fragment support remain visible.
@@ -269,7 +298,7 @@ context_start
 context_end
 model_source
 eligible_positions
-fragment_support
+fragments_by_midpoint
 initial_component_mean
 initial_zero_inflation
 initial_threshold
@@ -292,7 +321,7 @@ initial_poisson_boundary
 underlying_poisson_boundary
 ```
 
-`model_source` is `local` or `global_fallback`. `eligible_positions` and `fragment_support` describe
+`model_source` is `local` or `global_fallback`. `eligible_positions` and `fragments_by_midpoint` describe
 the recorded fitting context. `initial_threshold` is `T1`, `final_threshold` is `T2`, and
 `second_fit_retained_positions` counts observations with `X < T1`. The positive-coverage metrics and
 their interpretation are defined above. The initial and final tail columns compare observed and
@@ -331,11 +360,14 @@ exact values needed for detailed or automated assessment.
 
 ## Shared text metadata
 
-Every text output begins with `# key=value` metadata. It records the package and command, input BAM,
-selected chromosomes, coordinate convention, model and target, actual tail probability and its
-mode, automatic multiplier and denominator, core and context settings, fragment-support definition,
-tile size, fragment filters, raw coverage definition, inter-mate gap behavior, blacklist paths, and
-blacklist flank, preservation settings, and the sorted reference contig-name/length encoding.
+Every text table begins with `# key=value` metadata. It records the package and command, input BAM,
+coordinate convention, model and target, actual tail probability and its mode, automatic multiplier
+and denominator, core and context settings, tile size, fragment filters, raw coverage definition,
+inter-mate gap behavior, blacklist flank, and preservation settings.
+`analysed_chromosomes` contains the sorted analysed names and lengths as JSON objects with `name`
+and `size` fields. This replaces separate name-only and reference-length records. Counting can use
+a subset of these chromosomes. Each requested chromosome must be recorded with a matching length.
+`blacklists` records the supplied blacklist paths. Diagnostic explanations are in the output README.
 The BED files use legal comment lines before their data rows.
 
 ## Current scope

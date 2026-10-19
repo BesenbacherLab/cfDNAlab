@@ -41,6 +41,8 @@ pub(super) struct OutputPaths {
     pub(super) plot: PathBuf,
     pub(super) audit: PathBuf,
     pub(super) summary: PathBuf,
+    pub(super) preserved_regions: PathBuf,
+    pub(super) readme: PathBuf,
 }
 
 impl OutputPaths {
@@ -55,6 +57,9 @@ impl OutputPaths {
             plot: output_dir.join(dot_join(&[prefix, "outliers.global_fit.png"])),
             audit: output_dir.join(dot_join(&[prefix, "outliers.audit.tsv"])),
             summary: output_dir.join(dot_join(&[prefix, "outliers.summary.tsv"])),
+            preserved_regions: output_dir
+                .join(dot_join(&[prefix, "outliers.preserved_regions.tsv"])),
+            readme: output_dir.join(dot_join(&[prefix, "outliers.README.txt"])),
         }
     }
 
@@ -69,7 +74,15 @@ impl OutputPaths {
             self.plot.clone(),
             self.audit.clone(),
             self.summary.clone(),
+            self.preserved_regions.clone(),
+            self.readme.clone(),
         ]
+    }
+
+    /// Give each optional preserved-region PNG the same prefix as its summary table.
+    pub(super) fn preserved_plot(&self, region_id: &str) -> PathBuf {
+        self.preserved_regions
+            .with_extension(format!("{region_id}.png"))
     }
 }
 
@@ -94,11 +107,6 @@ pub(super) fn write_common_metadata(
         writer,
         "# input_alignment={}",
         serde_json::to_string(&config.ioc.bam.to_string_lossy())?
-    )?;
-    writeln!(
-        writer,
-        "# selected_chromosomes={}",
-        serde_json::to_string(metadata.chromosomes)?
     )?;
     writeln!(writer, "# coordinate_system=0-based-half-open")?;
     writeln!(writer, "# detector=two_stage_{}", config.model.as_str())?;
@@ -136,11 +144,26 @@ pub(super) fn write_common_metadata(
     footprint.sort_unstable_by(|left, right| left.name.cmp(&right.name));
     writeln!(
         writer,
-        "# reference_contig_footprint_json={}",
+        "# analysed_chromosomes={}",
         serde_json::to_string(&footprint)?
     )?;
     writeln!(writer, "# hysteresis=false")?;
     writeln!(writer, "# target={}", config.target.as_str())?;
+    writeln!(
+        writer,
+        "# plot_preserved_regions={}",
+        config.plot_preserved_regions
+    )?;
+    writeln!(
+        writer,
+        "# preserved_plot_context_multiplier={}",
+        config.preserved_plot_context_multiplier
+    )?;
+    writeln!(
+        writer,
+        "# preserved_plot_min_span={}",
+        config.preserved_plot_min_span
+    )?;
     writeln!(writer, "# tail_probability={}", metadata.tail_probability)?;
     writeln!(
         writer,
@@ -176,10 +199,6 @@ pub(super) fn write_common_metadata(
     writeln!(writer, "# tile_size={}", config.tile_size)?;
     writeln!(
         writer,
-        "# fragment_support_definition=accepted_fragments_with_unblacklisted_midpoint"
-    )?;
-    writeln!(
-        writer,
         "# raw_coverage_source=uncorrected_mapped_reference_segments"
     )?;
     writeln!(writer, "# ignore_gap={}", config.ignore_gap)?;
@@ -203,46 +222,13 @@ pub(super) fn write_common_metadata(
     let blacklist_paths = config.blacklist.as_deref().unwrap_or_default();
     writeln!(
         writer,
-        "# input_blacklists={}",
+        "# blacklists={}",
         serde_json::to_string(
             &blacklist_paths
                 .iter()
                 .map(|path| path.to_string_lossy())
                 .collect::<Vec<_>>()
         )?
-    )?;
-    Ok(())
-}
-
-/// Explain the fit diagnostics in each output that carries them.
-fn write_fit_diagnostic_definitions(writer: &mut impl Write) -> Result<()> {
-    writeln!(
-        writer,
-        "# positive_coverage_diagnostic_scope=observed values use the complete original positive-coverage histogram, including the extreme tail, while the selected model expectation uses the underlying model estimated by the second fit"
-    )?;
-    writeln!(
-        writer,
-        "# observed_positive_coverage_variance_definition=population mean squared deviation among original positions with coverage greater than zero"
-    )?;
-    writeln!(
-        writer,
-        "# underlying_expected_positive_coverage_variance_definition=variance among positive values expected from the fitted underlying model"
-    )?;
-    writeln!(
-        writer,
-        "# positive_coverage_variance_ratio_definition=observed_positive_coverage_variance divided by underlying_expected_positive_coverage_variance"
-    )?;
-    writeln!(
-        writer,
-        "# positive_coverage_variance_ratio_interpretation=near 1 is model-consistent spread, above 1 is more variable, and below 1 is less variable. This diagnostic does not affect fitting or calling"
-    )?;
-    writeln!(
-        writer,
-        "# tail_diagnostic_definition=observed and expected positions at or above T1 and T2. These are more direct checks of calling-tail calibration"
-    )?;
-    writeln!(
-        writer,
-        "# unavailable_positive_coverage_diagnostics=NaN when an all-zero incomplete context uses the global fallback model"
     )?;
     Ok(())
 }
@@ -260,10 +246,9 @@ pub(super) fn write_diagnostic_outputs(
     let mut models_writer =
         BufWriter::new(File::create(&models_temp).context("creating outlier model-summary TSV")?);
     write_common_metadata(&mut models_writer, metadata)?;
-    write_fit_diagnostic_definitions(&mut models_writer)?;
     writeln!(
         models_writer,
-        "chromosome\tstart\tend\tcontext_start\tcontext_end\tmodel_source\teligible_positions\tfragment_support\tinitial_component_mean\tinitial_zero_inflation\tinitial_threshold\tsecond_fit_retained_positions\tunderlying_component_mean\tunderlying_zero_inflation\tunderlying_mean\tfinal_threshold\tobserved_positive_coverage_mean\tobserved_positive_coverage_variance\tunderlying_expected_positive_coverage_variance\tpositive_coverage_variance_ratio\tobserved_initial_tail_positions\texpected_initial_tail_positions\tobserved_final_tail_positions\texpected_final_tail_positions\tinitial_dispersion\tunderlying_dispersion\tinitial_poisson_boundary\tunderlying_poisson_boundary"
+        "chromosome\tstart\tend\tcontext_start\tcontext_end\tmodel_source\teligible_positions\tfragments_by_midpoint\tinitial_component_mean\tinitial_zero_inflation\tinitial_threshold\tsecond_fit_retained_positions\tunderlying_component_mean\tunderlying_zero_inflation\tunderlying_mean\tfinal_threshold\tobserved_positive_coverage_mean\tobserved_positive_coverage_variance\tunderlying_expected_positive_coverage_variance\tpositive_coverage_variance_ratio\tobserved_initial_tail_positions\texpected_initial_tail_positions\tobserved_final_tail_positions\texpected_final_tail_positions\tinitial_dispersion\tunderlying_dispersion\tinitial_poisson_boundary\tunderlying_poisson_boundary"
     )?;
     for chromosome in metadata.chromosomes {
         let models = models_by_chromosome
@@ -314,7 +299,6 @@ pub(super) fn write_diagnostic_outputs(
     let mut global_writer =
         BufWriter::new(File::create(&global_fit_temp).context("creating global outlier fit TSV")?);
     write_common_metadata(&mut global_writer, metadata)?;
-    write_fit_diagnostic_definitions(&mut global_writer)?;
     writeln!(
         global_writer,
         "# initial_component_mean={}",
@@ -460,7 +444,7 @@ pub(super) fn write_histogram_output(
     write_common_metadata(&mut writer, metadata)?;
     writeln!(
         writer,
-        "chromosome\tstart\tend\tfragment_support\tcoverage\tobserved_positions"
+        "chromosome\tstart\tend\tfragments_by_midpoint\tcoverage\tobserved_positions"
     )?;
     for chromosome in metadata.chromosomes {
         let histograms = histograms_by_chromosome

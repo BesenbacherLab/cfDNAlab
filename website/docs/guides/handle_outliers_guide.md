@@ -60,8 +60,8 @@ cfdna fcoverage \
 ```
 
 `outliers.keep_weights.tsv` provides fractional weights as an alternative to removing complete
-regions. It is a sparse file, so omitted positions have a weight of `1.0`. `fcoverage` currently
-consumes these weights. Any positive overlap of a fragment's complete `pos` to `reference_end`
+regions. Its intervals are exact calls without flanking. It is a sparse file, so omitted positions
+have a weight of `1.0`. `fcoverage` currently consumes these weights. Any positive overlap of a fragment's complete `pos` to `reference_end`
 span applies the full regional weight to the whole fragment, including contributions outside
 the interval. If a fragment overlaps multiple regions, it receives the smallest keep weight.
 Support in other commands is planned.
@@ -79,14 +79,16 @@ cfdna fcoverage \
 
 The first version targets smaller residual pileups. Every exact call starts a physical 100 kb
 window. Each call receives the largest called-base score from evaluated forward windows it
-overlaps, including earlier calls' windows. The score counts exact called bases before flanking,
-divided by eligible bases, with a 50 kb denominator floor. Eligible sampling zeros are included.
+overlaps, including earlier calls' windows. If any overlapping window has at least 50 kb of
+unblacklisted bases, ignore windows with fewer bases when taking the maximum. The score counts
+exact called bases before flanking, divided by eligible bases, with a 50 kb denominator floor.
+Eligible sampling zeros are included.
 
-When its forward window has fewer than 50 kb eligible bases and no supported earlier window
-overlaps the call, the command checks a backward window ending at the exact call's end. If this
-has sufficient eligible support, it replaces the undersupported forward evidence. Otherwise the
-forward score retains its denominator floor. Windows never grow across blacklisted gaps to
-collect eligible positions. The audit records the selected direction and actual support.
+When no overlapping forward window has at least 50 kb eligible bases, the command checks a backward
+window ending at the exact call's end. If this has sufficient eligible support, it replaces the
+undersupported forward evidence. Otherwise the forward score retains its denominator floor.
+Windows never grow across blacklisted gaps to collect eligible positions. The audit records the
+selected direction and actual support.
 
 A score strictly above 5% flags a call. All candidates are flanked, then overlapping/touching
 flanks are merged. If any member is flagged, the whole merged region is preserved and all its
@@ -101,6 +103,33 @@ into a region with a shared action.
 
 This is a density heuristic. Preserved elevations are not proven amplifications. A narrow
 biological event can still be corrected, and a dense technical event can be preserved.
+
+## Inspect preserved regions
+
+`outliers.preserved_regions.tsv` is always written. It groups preserved calls whose selected
+preservation-window spans overlap, keeping existing merged preserved regions together. Each row
+locates a group, counts its calls and exact called bases, and records a wider plotting context.
+The reported start and end include gaps between member calls. They are approximate locations
+of preserved signal, rather than estimated biological breakpoints. Reporting groups do not
+change which calls are corrected.
+
+Add `--plot-preserved-regions` to create a PNG for each group:
+
+```bash
+cfdna outliers --bam sample.bam --output-dir results/outliers \
+  --blacklist blacklist.bed --plot-preserved-regions
+```
+
+Each figure shows surrounding raw coverage and a closer view, with the estimated background
+mean, outlier cutoff, preserved calls, and blacklisted gaps. The track shows mean and peak
+coverage in the displayed reference bins, excluding blacklisted bases and including genuine zeros.
+Peak marks retain narrow elevations that averaging would hide.
+
+The default total context is 10 times the grouped span, with at least 100 kb. It also includes
+the selected preservation windows and stops at chromosome bounds. Change it with
+`--preserved-plot-context-multiplier` and `--preserved-plot-min-span`.
+`plot_file` names each PNG, or is `NA` when plots were not requested. Plotting adds indexed BAM
+reads restricted to these contexts. The table alone requires no additional BAM reads.
 
 ## Inspect and interpret the calls
 
@@ -121,6 +150,12 @@ and reasons. Then compare the plot with `outliers.exact.bed`. A small number of 
 stable thresholds is consistent with the intended use of the detector. Calls spread across large
 parts of the genome, or a fitted distribution that differs broadly from the observed histogram,
 suggest that the model may not describe that sample well enough for automatic blacklisting.
+
+The base counts and longest-call lengths describe exact calls before flanking. In particular,
+`longest_preserved_call_bp` is the longest single preserved call, rather than the total preserved
+sequence or the length of a merged region. A short call can be preserved because nearby calls
+collectively exceed the window cutoff, or because its flanks connect it to a preserved call.
+Use the audit's `window_score`, `merged_max_score`, and `decision_reason` to distinguish these cases.
 
 The output identifies unusually high coverage, not technical noise. Before adopting the calls as a
 routine blacklist, inspect representative samples and consider whether the regions overlap known
@@ -186,8 +221,11 @@ Partial weights retain the existing normalization behavior.
 
 | Output | What it is useful for |
 | --- | --- |
+| `outliers.README.txt` | File and column explanations, with the preservation settings used in this run |
 | `outliers.audit.tsv` | Every candidate, proposed weight, selected window support, and final decision |
 | `outliers.summary.tsv` | Candidate/actionable/preserved genomic extents and model/fallback counts |
+| `outliers.preserved_regions.tsv` | Preserved calls grouped into approximate regions, with plot coordinates and filenames |
+| `outliers.preserved_regions.region_000001.png` | Optional context and close-up coverage views for each preserved group |
 | `outliers.exact.bed` | Blacklisting or inspecting the exact detected regions |
 | `outliers.flanked.bed` | Applying a more conservative blacklist around the detected regions |
 | `outliers.keep_weights.tsv` | Fractional fragment correction with `fcoverage --outlier-weights` |
@@ -196,8 +234,10 @@ Partial weights retain the existing normalization behavior.
 | `outliers.global_fit.tsv` | Reading the complete sample-wide observed and fitted distributions in another program |
 | `outliers.histograms.tsv.zst` | Auditing raw coverage counts and fragment support across consecutive genomic regions |
 
-All coordinates are 0-based and half-open. Text outputs begin with `# key=value` lines that record
-the command settings and definitions needed to interpret the columns.
+All coordinates are 0-based and half-open. Text tables begin with `# key=value` lines recording
+settings and fitted values. The output README explains the columns and their interpretation.
+`analysed_chromosomes` records only the analysed chromosome names and lengths. `blacklists` records
+the supplied blacklist paths.
 
 ## Detailed model diagnostics
 
@@ -246,7 +286,7 @@ and `end` identify the region where a model and its `final_threshold` were used.
 - `eligible_positions` is the number of unmasked positions in the recorded context. For fallback
   rows, the applied model was fitted globally, rather than from that chromosome context.
 
-- `fragment_support` is the number of accepted fragments whose unblacklisted midpoint falls between
+- `fragments_by_midpoint` is the number of accepted fragments whose unblacklisted midpoint falls between
   `context_start` and `context_end`. Together with `eligible_positions`, it shows how much position
   and fragment data informed the row.
 

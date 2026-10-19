@@ -14,15 +14,17 @@ pub const DEFAULT_TAIL_PROBABILITY_MULTIPLIER: f64 = 1.0;
 pub const DEFAULT_PROTECTION_WINDOW_SIZE: u32 = 100_000;
 pub const DEFAULT_MIN_PROTECTION_POSITIONS: u32 = 50_000;
 pub const DEFAULT_MAX_OUTLIER_PERCENTAGE: f64 = 5.0;
+pub const DEFAULT_PRESERVED_PLOT_CONTEXT_MULTIPLIER: f64 = 10.0;
+pub const DEFAULT_PRESERVED_PLOT_MIN_SPAN: u32 = 100_000;
 
-/// Marginal coverage distribution fitted in both stages of detection.
+/// Statistical model used to estimate the expected range of fragment coverage.
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutlierModel {
-    /// Allow positive-count overdispersion, including the zero-dispersion ZIP boundary.
+    /// Zero-inflated negative binomial, allowing extra variation in coverage.
     #[default]
     Zinb,
-    /// Fit the zero-inflated Poisson model without positive-count overdispersion.
+    /// Zero-inflated Poisson, for comparison with a simpler coverage model.
     Zip,
 }
 
@@ -35,16 +37,16 @@ impl OutlierModel {
     }
 }
 
-/// Action shared by all calls in a merged region exceeding the preservation cutoff.
+/// How to handle regions where too much nearby sequence is called as an outlier.
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AmbiguousRegionAction {
-    /// Omit the merged region from correction weights and actionable blacklists.
+    /// Leave these regions uncorrected and omit them from the output weights and BED files.
     #[default]
     Preserve,
-    /// Apply the proposed correction despite the density flag.
+    /// Correct these regions in the same way as other outliers.
     Correct,
-    /// Stop without publishing outputs when a merged region exceeds the cutoff.
+    /// Stop without publishing results if any region exceeds the percentage cutoff.
     Error,
 }
 
@@ -58,16 +60,16 @@ impl AmbiguousRegionAction {
     }
 }
 
-/// Coverage level retained after a region is called as an outlier.
+/// Coverage level used to calculate the correction for an outlier region.
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutlierTarget {
-    /// Retain the active-component mean estimated by the second fit, excluding structural-zero dilution.
+    /// Reduce coverage toward the estimated background mean.
     #[default]
     LocalMean,
-    /// Retain coverage equal to the final discrete calling threshold.
+    /// Reduce coverage toward the cutoff used to detect outliers.
     Threshold,
-    /// Give every fragment overlapping the region a keep weight of zero.
+    /// Exclude every fragment overlapping the outlier region when applying the weights.
     Zero,
 }
 
@@ -103,95 +105,111 @@ fn parse_positive_f64(value: &str) -> std::result::Result<f64, String> {
     Ok(parsed)
 }
 
-/// Detect smaller sample-specific pileups remaining after ordinary blacklisting.
+/// Find sample-specific regions with unusually high fragment coverage and calculate correction weights.
 ///
-/// The first tiled BAM pass builds raw positional coverage histograms in fixed cores. Neighboring
-/// cores supply an adaptive local fitting context. A two-stage zero-inflated negative-binomial
-/// (ZINB) model supplies thresholds, then a second BAM pass calls exact high-coverage intervals.
-/// Use `--model zip` to compare the zero-inflated Poisson model with the same preservation rules.
+/// Use this after excluding known problematic regions with your usual blacklist. It is intended
+/// to reduce the influence of smaller, local pileups that remain in individual samples.
 ///
-/// Only high coverage is called. Eligible zeros remain in fitting and in window denominators.
-/// Input-blacklisted positions are excluded from fitting, calling, and the automatic probability
-/// denominator. Fragments crossing masked bases still contribute at their other covered positions.
+/// The command writes weights for `fcoverage --outlier-weights` and BED files for excluding the
+/// detected regions. It also reports how much of the genome was called and which regions were
+/// left uncorrected. Inspect the results before adopting the correction in an analysis pipeline.
 ///
-/// ## Model and correction
+/// ## How outliers are found
 ///
-/// ZINB combines structural zeros with a negative-binomial component having mean `mu` and variance
-/// `mu + dispersion * mu^2`. Dispersion zero is ZIP. Both models first fit the complete histogram,
-/// calculate T1, exclude coverage >= T1, and refit using the likelihood conditioned on X < T1.
-/// T2 is the smallest positive integer with inclusive underlying tail P(X >= T2) at or below the
-/// chosen probability. Preservation never adds excluded observations back to the baseline fit.
+/// Coverage is the number of fragments covering a genomic position, before GC correction or other
+/// weighting. For each part of a chromosome, the command estimates the expected range of coverage
+/// from a larger surrounding region. Positions at or above the resulting coverage cutoff are called as
+/// outliers. Adjacent called positions are joined into regions.
 ///
-/// The automatic probability is 1 / eligible positions. Its interpretation is a fitted expected
-/// position count, conditional on the model assumptions. It is not a family-wise error guarantee
-/// and does not incorporate fitted-parameter uncertainty or model misspecification. Shared fragment
-/// spans make adjacent coverage dependent. Inspect the observed-versus-fitted diagnostics.
+/// The coverage model is fitted twice. After the first fit, the most extreme values are excluded
+/// from the second fit so they have less influence on the final cutoff. Choose the statistical
+/// model with `--model` and control how extreme coverage must be with `--tail-probability`.
 ///
-/// Complete local contexts must fit successfully. Only a chromosome unable to meet the requested
-/// span or fragment support uses the global fallback. Numerical failures report their context.
+/// Positions with zero coverage contribute to the estimates but are not called as outliers.
+/// Blacklisted positions are excluded from both estimation and detection. Fragments crossing a
+/// blacklist can still contribute coverage outside it.
 ///
-/// `local-mean` targets the fitted active-component mean, not the unconditional mean diluted by
-/// structural zeros. Both means are reported. Each region's weight is its summed target coverage
-/// divided by summed observed coverage, capped at 1. In `fcoverage --outlier-weights`, any positive
-/// overlap applies the full regional weight to the complete original fragment. Multiple overlaps
-/// use the minimum weight. A zero weight excludes the fragment before correction and counting.
+/// ## Applying the correction
 ///
-/// ## Preserving broad or clustered elevations
+/// Each selected outlier region gets a keep weight between 0 and 1. A weight of 0.1 retains 10%
+/// of a fragment's contribution, while 0 excludes the fragment. By default, weights aim to reduce
+/// the region's coverage toward the estimated background mean. See `--target` for alternatives.
 ///
-/// Start a physical window at each exact call's start. A call uses the maximum called-base score
-/// across all evaluated forward windows it overlaps, including earlier calls' windows. The score
-/// is 100 * called eligible bases / max(eligible bases, --min-protection-positions).
+/// `fcoverage` applies the full regional weight to every overlapping fragment, including its
+/// contribution outside the outlier region. Even a 1 bp overlap applies the full weight. If a
+/// fragment overlaps multiple regions, the smallest weight is used. Other fragments are unchanged.
+/// Use the same fragment filters and blacklists when detecting outliers and applying the weights.
 ///
-/// If a call has no sufficiently supported forward window, try a window ending at its exact end.
-/// Use that backward window if it has enough eligible bases. Otherwise keep the forward score
-/// with the denominator floor. Windows are clipped at chromosome ends and never extended across
-/// blacklisted gaps to collect eligible bases. The audit records the selected window and support.
+/// ## Broad coverage elevations
 ///
-/// A score strictly above `--max-outlier-percentage` flags the call. Flank every candidate, then
-/// merge overlapping and touching flanks. Under `preserve`, any flagged member protects the whole
-/// merged region. Its exact calls are withheld from weights and actionable BED files, and retained
-/// in the audit. Flanking therefore affects shared decisions as well as blacklist extent.
+/// High coverage can also reflect biological changes, such as copy-number amplification. To help
+/// avoid correcting broad elevations, the command checks how much of the surrounding sequence was
+/// called as an outlier. Regions exceeding `--max-outlier-percentage` are left uncorrected unless
+/// you choose a different `--ambiguous-region-action`. They remain listed in the audit file.
 ///
-/// This heuristic targets smaller residual pileups. It does not identify biological causes.
-/// Narrow biological elevations can still be corrected, and dense technical events can be
-/// preserved. The preservation window measures extent and does not supply a correction baseline.
+/// A window starts at each called region. Each region uses the highest outlier percentage from
+/// any of these windows that overlaps it, including windows started by earlier regions. Window
+/// size is set by `--protection-window-size`. Blacklisted bases are excluded from the percentage,
+/// but zero-coverage positions are included. Windows below `--min-protection-positions` are ignored
+/// whenever another overlapping window meets that minimum.
 ///
-/// ## Diagnostics and files
+/// Calls are also extended on both sides by `--blacklist-flank`. Overlapping or touching extended
+/// regions are joined. If any part is being left uncorrected, all calls in the joined region are
+/// left uncorrected. The weights themselves still apply to the original, unextended calls.
 ///
-/// With an optional `<prefix>.`, the command writes:
+/// This rule measures the extent of the coverage elevation. It cannot identify its biological or
+/// technical cause. Small biological events may still be corrected, and broad technical pileups
+/// may be left uncorrected. It does not change the surrounding coverage estimate.
 ///
-/// - `outliers.keep_weights.tsv`: actionable sparse weights consumed by fcoverage
+/// ## Output files
 ///
-/// - `outliers.exact.bed` and `outliers.flanked.bed`: actionable exact and merged flanked blacklists
+/// An optional `--output-prefix` is followed by a dot before these filenames:
 ///
-/// - `outliers.audit.tsv`: every candidate, proposed weight, window support, and final decision
+/// - `outliers.keep_weights.tsv`: weights to use with `fcoverage --outlier-weights`.
 ///
-/// - `outliers.summary.tsv`: per-chromosome and total call counts, bases, and eligible-base percentages
+/// - `outliers.exact.bed` and `outliers.flanked.bed`: regions to exclude, without and with flanking.
+///   Both omit the regions being left uncorrected.
 ///
-/// - `outliers.histograms.tsv.zst`: raw per-core coverage histograms and unblacklisted-midpoint fragment support
+/// - `outliers.audit.tsv`: every called region, its proposed weight, and the reason for correcting
+///   it or leaving it uncorrected.
 ///
-/// - `outliers.models.tsv`: local parameters, thresholds, context/fallback use, and fit diagnostics
+/// - `outliers.summary.tsv`: numbers of called regions and bases, split by whether they are
+///   selected for correction or left unchanged. Percentages are relative to unblacklisted bases.
 ///
-/// - `outliers.global_fit.tsv` and `outliers.global_fit.png`: global distribution and local-threshold diagnostics
+/// - `outliers.preserved_regions.tsv`: preserved calls grouped for inspection, with their
+///   approximate spans and plotting coordinates. Use `--plot-preserved-regions` to add PNG plots.
 ///
-/// Positive-count variance ratios compare original observed positive values, including the tail,
-/// with the chosen second-fit model's positive-count variance. Near 1 means comparable spread.
-/// Tail counts at T1/T2 provide additional diagnostics. These values do not change calling.
-/// All-zero incomplete contexts using global fallback have unavailable positive diagnostics (NaN).
+/// - `outliers.models.tsv`, `outliers.global_fit.tsv`, and `outliers.global_fit.png`: coverage
+///   estimates, detection cutoffs, and a plot comparing observed coverage with the fitted models.
 ///
-/// Genomic call percentages do not measure the signal removed by complete-fragment weighting.
-/// Compare unweighted and weighted fcoverage with the same filters and blacklists to inspect that
-/// effect. Current support is limited to fcoverage. Consistent outlier-weighted GC/scaling
-/// estimation is a future integration, not a prerequisite for multiplying existing GC weights.
+/// - `outliers.histograms.tsv.zst`: counts of positions at each coverage level, for each
+///   `--stride` interval.
 ///
-/// Text outputs have `# key=value` settings comments. Coordinates are 0-based and half-open.
-/// Rows follow selected chromosome order, then position. See the guide for an inspection workflow.
+/// - `outliers.README.txt`: explanations of the files, columns, and preservation decisions.
 ///
-/// ## Fragment spans
+/// Genomic intervals use 0-based start coordinates and exclude the end coordinate, as in BED files.
 ///
-/// Paired fragments span `forward.pos` to `reverse.reference_end`. Unpaired fragments span
-/// `read.pos` to `read.reference_end`. Coverage respects mapped reference segments, so reference
-/// D/N gaps do not contribute. `--ignore-gap` controls only the paired inter-mate gap.
+/// The percentage of called genomic bases differs from the fraction of coverage removed, because
+/// weights follow complete fragments. Compare unweighted and weighted `fcoverage` results to
+/// assess the effect on your analysis. The current fragment-weighting integration is in `fcoverage`.
+///
+/// ## Example
+///
+/// `cfdna outliers --bam sample.bam --output-dir outliers --blacklist blacklist.bed`
+///
+/// Apply the resulting weights with the same filters and blacklist:
+///
+/// `cfdna fcoverage --bam sample.bam --output-dir coverage --blacklist blacklist.bed --outlier-weights outliers/outliers.keep_weights.tsv`
+///
+/// ## Fragment span definition
+///
+/// **Paired-end**: `[forward.pos, reverse.reference_end)`, from the first aligned position on
+/// the forward read to the last aligned position on the reverse read.
+///
+/// **Unpaired**, where each read is a fragment: `[read.pos, read.reference_end)`.
+///
+/// Deletions and skipped reference regions do not contribute coverage unless covered by the
+/// other read. `--ignore-gap` additionally excludes the gap between paired reads.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct OutliersConfig {
@@ -229,112 +247,178 @@ pub struct OutliersConfig {
     )]
     pub tile_size: u32,
 
-    /// Size (bp) of each fixed coverage-histogram core `[integer]`
+    /// Spacing (bp) of local coverage estimates along each chromosome `[integer]`
     ///
-    /// Every core receives a local model and final discrete coverage threshold. Smaller cores
-    /// follow local baseline changes more closely but produce more model rows.
+    /// Split each chromosome into intervals of this size. Each interval uses a single coverage
+    /// cutoff estimated from a larger surrounding region, whose minimum size is `--bin-size`.
+    /// Smaller values update the cutoff more frequently but require more model fits.
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value_t = DEFAULT_STRIDE, value_parser = clap::value_parser!(u32).range(1..), help_heading = "Core")
     )]
     pub stride: u32,
 
-    /// Minimum span (bp) used to fit each local coverage model `[integer]`
+    /// Minimum total size (bp) of the region used to estimate local coverage `[integer]`
     ///
-    /// Contexts expand by a complete `--stride` core on each available side. The realized span can
-    /// therefore be larger than this value. With the defaults, centered contexts span 5.5 Mb.
+    /// Start with the central interval defined by `--stride`, then add an interval on each side
+    /// until the total span reaches this minimum. For example, 500 kb intervals with a 5 Mb
+    /// minimum give centered spans of 0.5, 1.5, 2.5, ..., 5.5 Mb.
+    ///
+    /// At chromosome ends, expansion continues on the available side. The region can grow further
+    /// if needed to include `--min-context-fragments` fragments.
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value_t = DEFAULT_BIN_SIZE, value_parser = clap::value_parser!(u32).range(1..), help_heading = "Core")
     )]
     pub bin_size: u32,
 
-    /// Minimum accepted fragments required in a local fitting context `[integer]`
+    /// Minimum number of fragments used to estimate local coverage `[integer]`
     ///
-    /// Fragment support counts accepted fragments whose midpoint is not blacklisted, assigning
-    /// each fragment to a single core. Contexts continue expanding after reaching `--bin-size`
-    /// until this support is present. A core falls back to the global model only when its complete
-    /// chromosome still lacks the configured span or support. A complete context that cannot be
-    /// fitted is reported as an error.
+    /// Count fragments whose midpoint is inside the surrounding region and is not blacklisted.
+    /// If there are too few, expand beyond `--bin-size` until this number is reached.
+    ///
+    /// If the whole chromosome cannot provide both the requested span and fragment count, use
+    /// the coverage model estimated from all selected chromosomes instead.
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value_t = DEFAULT_MIN_CONTEXT_FRAGMENTS, value_parser = clap::value_parser!(u64).range(1..), help_heading = "Core")
     )]
     pub min_context_fragments: u64,
 
-    /// Manual upper-tail probability used to define outlier coverage `[number]`
+    /// Probability cutoff for calling unusually high coverage `[number]`
     ///
-    /// Without this option, the probability is `1 / number of eligible positions`. A position is
-    /// called when its model survival probability `P(coverage >= observed)` is at most this value.
+    /// Call a position when the fitted model gives this probability or less of seeing its
+    /// coverage or higher. Use smaller values for a stricter cutoff that requires more extreme
+    /// coverage, and larger values for a more permissive cutoff.
+    ///
+    /// When omitted, use `1 / number of unblacklisted positions` across the selected chromosomes,
+    /// including positions with zero coverage. The actual false-positive rate depends on how well
+    /// the model describes the data. Values must be greater than 0 and at most 0.5.
     #[cfg_attr(
         feature = "cli",
         clap(long, value_parser = parse_probability, help_heading = "Outlier Model")
     )]
     pub tail_probability: Option<f64>,
 
-    /// Multiply the automatic upper-tail probability `[number]`
+    /// Adjust the automatically chosen probability cutoff `[number]`
     ///
-    /// Values above `1.0` lower the coverage threshold and call more positions. This multiplier is
-    /// applied only to the automatic `1 / eligible positions` probability.
+    /// Multiply the automatic cutoff by this value. Values above `1.0` make detection more
+    /// permissive, while values below `1.0` make it stricter. Cannot be used with a manually
+    /// supplied `--tail-probability`.
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value_t = DEFAULT_TAIL_PROBABILITY_MULTIPLIER, value_parser = parse_positive_f64, conflicts_with = "tail_probability", help_heading = "Outlier Model")
     )]
     pub tail_probability_multiplier: f64,
 
-    /// Coverage target retained inside called outlier regions `[string]`
+    /// Coverage level used to calculate how much to downweight an outlier region `[string]`
     ///
-    /// `local-mean` uses the active-component mean from the underlying local model estimated
-    /// by the second fit. `threshold` retains the final discrete calling
-    /// threshold. `zero` excludes every fragment overlapping a called region when the weights are
-    /// applied downstream.
+    /// `local-mean` uses the estimated background mean. The model handles additional zero-coverage
+    /// positions separately, so those extra zeros do not lower this target. Both the background
+    /// mean and the mean including those zeros are reported in `outliers.models.tsv`.
+    ///
+    /// `threshold` uses the cutoff for detecting outliers as the target coverage. `zero`
+    /// excludes every fragment overlapping the region when the weights are applied.
     #[cfg_attr(
         feature = "cli",
         clap(long, value_enum, default_value_t = OutlierTarget::LocalMean, help_heading = "Outlier Model")
     )]
     pub target: OutlierTarget,
 
-    /// Coverage model used for the initial fit and right-truncated refit `[string]`
+    /// Statistical model used to estimate the expected range of coverage `[string]`
     ///
-    /// ZINB allows extra variation in positive coverage. ZIP is available for direct comparisons.
+    /// `zinb` is a zero-inflated negative binomial model. It allows coverage to vary more than
+    /// a Poisson model. `zip` is a zero-inflated Poisson model, available for comparison.
+    /// Both account for positions with zero coverage and use the same two fitting steps.
     #[cfg_attr(feature = "cli", clap(long, value_enum, default_value_t = OutlierModel::Zinb, help_heading = "Outlier Model"))]
     pub model: OutlierModel,
 
-    /// Physical reference span of each call-start preservation window `[integer]`
+    /// Window size (bp) used to recognize broad or clustered coverage elevations `[integer]`
     ///
-    /// Smaller windows preserve more localized clusters. This window does not define the fit.
+    /// Start a window of this size at each called region. Each region uses the highest percentage
+    /// of outlier bases from these windows that overlap it, including earlier regions' windows.
+    /// Use only windows meeting `--min-protection-positions` when any overlap the call.
+    /// Smaller values focus this check on more localized elevations.
+    ///
+    /// Windows stop at chromosome ends. Blacklisted bases are excluded from the counts without
+    /// extending the genomic span. This setting is separate from the coverage-estimation region
+    /// controlled by `--bin-size`.
     #[cfg_attr(feature = "cli", clap(long, default_value_t = DEFAULT_PROTECTION_WINDOW_SIZE, value_parser = clap::value_parser!(u32).range(1..), help_heading = "Preservation"))]
     pub protection_window_size: u32,
 
-    /// Minimum eligible-base denominator and support needed to avoid a backward fallback `[integer]`
+    /// Minimum number of unblacklisted bases used for window percentages `[integer]`
     ///
-    /// Short or masked windows use this floor. Low support alone does not preserve a region.
-    /// This value must not exceed `--protection-window-size`.
+    /// A window may have fewer usable bases near a chromosome end or a large blacklisted region.
+    /// If any overlapping forward window meets this minimum, take the highest percentage from
+    /// those windows and ignore windows with fewer bases.
+    ///
+    /// If none qualifies, also check a window ending at the call's end. Use it if it meets the
+    /// minimum. Otherwise, take the highest percentage from the original windows, dividing each
+    /// outlier-base count by at least this many bases.
+    ///
+    /// This prevents a very short window from producing a large percentage based on little
+    /// sequence. Having too few bases alone does not keep a region uncorrected.
+    /// Cannot exceed `--protection-window-size`.
     #[cfg_attr(feature = "cli", clap(long, default_value_t = DEFAULT_MIN_PROTECTION_POSITIONS, value_parser = clap::value_parser!(u32).range(1..), help_heading = "Preservation"))]
     pub min_protection_positions: u32,
 
-    /// Maximum called-base score before a merged region is flagged `[number]`
+    /// Maximum percentage of outlier bases allowed in a surrounding window `[number]`
     ///
-    /// Scores strictly above this percentage are flagged. Lower values preserve more regions.
-    /// A value of 100 disables density-based preservation.
+    /// Percentages strictly above this value trigger `--ambiguous-region-action`. With `preserve`,
+    /// the affected regions are left uncorrected. Equality does not trigger the action.
+    /// With `preserve`, lower values leave more regions uncorrected. A value of 100 disables this check.
     #[cfg_attr(feature = "cli", clap(long, default_value_t = DEFAULT_MAX_OUTLIER_PERCENTAGE, help_heading = "Preservation"))]
     pub max_outlier_percentage: f64,
 
-    /// Action for merged regions with a member above the percentage cutoff `[string]`
+    /// How to handle broad or clustered coverage elevations `[string]`
+    ///
+    /// Applies when a region's window exceeds `--max-outlier-percentage`. `preserve` leaves it
+    /// uncorrected, `correct` treats it as an ordinary outlier, and `error` stops the command.
+    /// Regions joined after `--blacklist-flank` share the same action. Preserved calls remain in
+    /// `outliers.audit.tsv` and are omitted from the weights and BED files.
     #[cfg_attr(feature = "cli", clap(long, value_enum, default_value_t = AmbiguousRegionAction::Preserve, help_heading = "Preservation"))]
     pub ambiguous_region_action: AmbiguousRegionAction,
 
-    /// Flank (bp) added to the separate blacklist BED `[integer]`
+    /// Plot coverage around each group of preserved calls `[flag]`
     ///
-    /// When omitted, the maximum accepted fragment length is used. The exact unflanked BED and
-    /// weighted interval TSV retain exact coordinates. Merged regions share preservation decisions.
+    /// Add a PNG with surrounding coverage and a closer view of each group listed in
+    /// `outliers.preserved_regions.tsv`. Show raw coverage, the estimated background mean,
+    /// the outlier cutoff, called positions, and blacklisted gaps.
+    ///
+    /// Plotting reads the BAM again only around these groups, using the detection filters.
+    /// The table is always written. Grouping is for inspection and does not change correction.
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Preserved Region Plots"))]
+    pub plot_preserved_regions: bool,
+
+    /// Multiply the grouped region's span to choose the total plot width `[number]`
+    ///
+    /// Center this wider view on the grouped calls. Include the preservation windows and at least
+    /// `--preserved-plot-min-span` bases, and stop at chromosome bounds. Values must be at least 1.
+    /// Plot coordinates are recorded in the table even when plots are not requested.
+    #[cfg_attr(feature = "cli", clap(long, default_value_t = DEFAULT_PRESERVED_PLOT_CONTEXT_MULTIPLIER, value_parser = parse_positive_f64, help_heading = "Preserved Region Plots"))]
+    pub preserved_plot_context_multiplier: f64,
+
+    /// Minimum total genomic span (bp) shown around a preserved group `[integer]`
+    ///
+    /// Give short calls enough surrounding coverage to inspect. This includes blacklisted gaps
+    /// and is separate from the minimum unblacklisted-base count used for preservation decisions.
+    #[cfg_attr(feature = "cli", clap(long, default_value_t = DEFAULT_PRESERVED_PLOT_MIN_SPAN, value_parser = clap::value_parser!(u32).range(1..), help_heading = "Preserved Region Plots"))]
+    pub preserved_plot_min_span: u32,
+
+    /// Extend outlier regions by this many bases on each side in the flanked BED `[integer]`
+    ///
+    /// When omitted, use the maximum accepted fragment length. Overlapping or touching extended
+    /// regions are joined. If any call in a joined region is being left uncorrected, the other
+    /// calls in that region are also left uncorrected.
+    ///
+    /// Weights and the exact BED keep the original, unextended coordinates.
     #[cfg_attr(
         feature = "cli",
         clap(long, value_parser = clap::value_parser!(u32), help_heading = "Outlier Model")
     )]
     pub blacklist_flank: Option<u32>,
 
-    /// Ignore the inter-mate gap when calculating raw coverage `[flag]`
+    /// Ignore the gap between paired reads when calculating coverage `[flag]`
     ///
     /// Cannot be used with `--reads-are-fragments`.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
@@ -360,7 +444,10 @@ pub struct OutliersConfig {
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
     pub require_proper_pair: bool,
 
-    /// Optional BED file(s) with positions excluded from fitting and calling `[path]`
+    /// Optional BED file(s) with positions excluded from coverage estimation and detection `[path]`
+    ///
+    /// Supply your usual blacklist to detect the smaller sample-specific pileups that remain
+    /// outside known problematic regions.
     #[cfg_attr(
         feature = "cli",
         clap(short = 'b', long, value_parser, num_args = 1.., action = clap::ArgAction::Append, help_heading = "Filtering")
@@ -393,6 +480,9 @@ impl OutliersConfig {
             min_protection_positions: DEFAULT_MIN_PROTECTION_POSITIONS,
             max_outlier_percentage: DEFAULT_MAX_OUTLIER_PERCENTAGE,
             ambiguous_region_action: AmbiguousRegionAction::Preserve,
+            plot_preserved_regions: false,
+            preserved_plot_context_multiplier: DEFAULT_PRESERVED_PLOT_CONTEXT_MULTIPLIER,
+            preserved_plot_min_span: DEFAULT_PRESERVED_PLOT_MIN_SPAN,
             blacklist_flank: None,
             ignore_gap: false,
             chromosomes,
@@ -474,6 +564,21 @@ impl OutliersConfig {
         self.ambiguous_region_action = action;
     }
 
+    /// Enable or disable the optional preserved-region coverage PNGs.
+    pub fn set_plot_preserved_regions(&mut self, enabled: bool) {
+        self.plot_preserved_regions = enabled;
+    }
+
+    /// Set the multiplier used to choose the total preserved-region plot span.
+    pub fn set_preserved_plot_context_multiplier(&mut self, multiplier: f64) {
+        self.preserved_plot_context_multiplier = multiplier;
+    }
+
+    /// Set the minimum reference span of preserved-region plot contexts.
+    pub fn set_preserved_plot_min_span(&mut self, span: u32) {
+        self.preserved_plot_min_span = span;
+    }
+
     /// Set the flank for the flanked BED, or use the maximum accepted fragment length by default.
     pub fn set_blacklist_flank(&mut self, blacklist_flank: Option<u32>) {
         self.blacklist_flank = blacklist_flank;
@@ -506,6 +611,15 @@ impl OutliersConfig {
 
     pub(crate) fn validate(&self) -> Result<()> {
         self.fragment_lengths.validate()?;
+        anyhow::ensure!(
+            self.preserved_plot_context_multiplier.is_finite()
+                && self.preserved_plot_context_multiplier >= 1.0,
+            "--preserved-plot-context-multiplier must be finite and at least 1"
+        );
+        anyhow::ensure!(
+            self.preserved_plot_min_span > 0,
+            "--preserved-plot-min-span must be greater than zero"
+        );
         anyhow::ensure!(
             self.protection_window_size > 0,
             "protection_window_size must be positive"
@@ -617,6 +731,21 @@ impl ToCliCommand for OutliersConfig {
             &mut args,
             "--ambiguous-region-action",
             self.ambiguous_region_action.as_str(),
+        );
+        push_bool(
+            &mut args,
+            "--plot-preserved-regions",
+            self.plot_preserved_regions,
+        );
+        push_value(
+            &mut args,
+            "--preserved-plot-context-multiplier",
+            self.preserved_plot_context_multiplier,
+        );
+        push_value(
+            &mut args,
+            "--preserved-plot-min-span",
+            self.preserved_plot_min_span,
         );
         if let Some(flank) = self.blacklist_flank {
             push_value(&mut args, "--blacklist-flank", flank);

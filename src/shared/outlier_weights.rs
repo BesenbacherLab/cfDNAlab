@@ -267,50 +267,33 @@ fn check_reference_and_chromosomes(
     chromosomes: &[String],
     contigs: &Contigs,
 ) -> Result<()> {
-    let mut unavailable = Vec::new();
-    if let Some(encoded) = settings.get("reference_contig_footprint_json") {
-        let mut footprint: Vec<crate::shared::reference::ContigFootprintEntry> =
-            serde_json::from_str(encoded)
-                .context("invalid reference_contig_footprint_json in outlier table")?;
-        let mut expected: Vec<_> = contigs
-            .contigs
-            .iter()
-            .map(
-                |(name, &(_, size))| crate::shared::reference::ContigFootprintEntry {
-                    name: name.clone(),
-                    size: size as u64,
-                },
-            )
-            .collect();
-        footprint.sort_unstable_by(|left, right| {
-            left.name.cmp(&right.name).then(left.size.cmp(&right.size))
-        });
-        expected.sort_unstable_by(|left, right| {
-            left.name.cmp(&right.name).then(left.size.cmp(&right.size))
-        });
-        ensure!(
-            footprint == expected,
-            "outlier table reference contig names/lengths differ from the counting reference"
-        );
-    } else {
-        unavailable.push("reference contig names/lengths");
-    }
-    if let Some(encoded) = settings.get("selected_chromosomes") {
-        let analysed: Vec<String> = serde_json::from_str(encoded)
-            .context("invalid selected_chromosomes in outlier table")?;
-        for chromosome in chromosomes {
-            ensure!(
-                analysed.contains(chromosome),
-                "requested chromosome '{chromosome}' was not analysed during outlier detection"
-            );
-        }
-    } else {
-        unavailable.push("analysed chromosomes");
-    }
-    if !unavailable.is_empty() {
+    let Some(encoded) = settings.get("analysed_chromosomes") else {
         tracing::warn!(
-            "Outlier table does not record {}, so these checks could not be performed. Custom tables are accepted",
-            unavailable.join(" and ")
+            "Outlier table does not record analysed chromosome names and lengths, so these checks could not be performed. Custom tables are accepted"
+        );
+        return Ok(());
+    };
+    let analysed: Vec<crate::shared::reference::ContigFootprintEntry> =
+        serde_json::from_str(encoded).context("invalid analysed_chromosomes in outlier table")?;
+    // Detection may cover more chromosomes than this counting run. Check only the requested
+    // chromosomes, whose names and lengths also distinguish an empty result from absent analysis
+    for chromosome in chromosomes {
+        let recorded = analysed
+            .iter()
+            .find(|entry| entry.name == *chromosome)
+            .with_context(|| {
+                format!(
+                    "requested chromosome '{chromosome}' was not analysed during outlier detection"
+                )
+            })?;
+        let &(_, length) = contigs
+            .contigs
+            .get(chromosome)
+            .with_context(|| format!("missing reference length for chromosome '{chromosome}'"))?;
+        ensure!(
+            recorded.size == u64::from(length),
+            "outlier table reference names/lengths differ from the counting reference for '{chromosome}': detection={}, counting={length}",
+            recorded.size
         );
     }
     Ok(())

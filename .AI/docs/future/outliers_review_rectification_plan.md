@@ -1,6 +1,6 @@
 # Outliers review verification and rectification plan
 
-Date: 2026-10-12. Updated: 2026-10-15.
+Date: 2026-10-12. Updated: 2026-10-19.
 
 Status: The first BAM-inspection milestone is implemented. Project tests are authored and
 compiled, not executed by the agent. The historical review verification below remains the
@@ -11,15 +11,23 @@ record of the original branch state, not a claim that all 14 items have been com
 Current choices supersede earlier open defaults below: ZINB is the default, `--model zip` retains
 the analytic ZIP fitter, local-mean targets the active component, and both means are reported.
 Preservation uses call-start 100 kb physical windows, a 50 kb support/denominator floor, a strict
-5% cutoff, and preserve action. An unsupported boundary call tries the backward window ending
-at its exact end. Known exact intervals supply called bases. A sufficiently supported backward
-window replaces undersupported forward evidence. Otherwise retain the forward maximum and floor.
+5% cutoff, and preserve action. When any overlapping forward window meets the minimum eligible
+support, take the maximum only among supported windows. If none qualifies, try the backward window
+ending at the call's exact end. Known exact intervals supply called bases. A sufficiently supported
+backward window replaces undersupported forward evidence. Otherwise retain the forward maximum and floor.
 Flank all candidates, merge, and apply a shared decision to every member.
 
 The command now writes complete audit and genomic-summary TSVs, and fcoverage skips zero weights
 before correction/counting while retaining normalization formulas. Recorded reference and analysed
 chromosome checks are focused. BAM identities and blacklists are not compared. The guide includes
 matched raw/weighted commands and `scripts/plot_outliers.R` for local PNG/PDF inspection.
+
+An always-written `outliers.preserved_regions.tsv` groups preserved calls for inspection by
+overlapping selected window spans, keeping each merged preserved region intact. Optional
+`--plot-preserved-regions` PNGs use local indexed BAM reads with unchanged filters, in bounded
+chunks. Context defaults to 10 times the grouped span and at least 100 kb, includes its selected
+windows, and stops at chromosome bounds. Context and close-up panels show mean/peak raw coverage,
+the fitted baseline, T2, preserved calls, and masked gaps. This reporting does not change actions.
 
 This milestone stops at BAM inspection. Remaining scientific validation, smarter regional evidence,
 other consumers, calibration producers, normalization changes, and merge readiness remain later work.
@@ -59,7 +67,8 @@ record of proposed work and must not be inferred complete from this milestone.
   T1 exclusion, correctly normalized right-truncated refit, and T2 calculation. Preservation
   is decided after final calling and does not put observations back into the baseline fit.
 - Start a 100 kb window at each exact call's start. Assign each call the maximum called-base
-  score across evaluated forward windows it overlaps, with the supported backward fallback.
+  score among overlapping forward windows meeting minimum eligible support whenever any exist.
+  Otherwise try the supported backward fallback before retaining the floored forward maximum.
   The initial cutoff is 5%, with a 50 kb support/denominator floor.
 - Calculate percentages before flanking. Flank all candidate calls, then merge overlapping
   and touching intervals. If any member requires preservation, preserve the entire merged

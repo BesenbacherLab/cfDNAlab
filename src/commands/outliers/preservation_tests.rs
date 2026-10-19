@@ -54,9 +54,96 @@ fn isolated_boundary_call_uses_supported_backward_context() {
 fn supported_earlier_window_avoids_backward_fallback() {
     let regions = [call(110_000, 110_030), call(196_000, 200_000)];
     let decisions = evaluate_regions(&config(), &regions, &[], 200_000).unwrap();
-    assert!(!decisions.calls[1].window.backward);
-    // The short forward window still participates in the ordinary maximum with its floor
-    assert_eq!(decisions.calls[1].window.score, 8.0);
+    let window = decisions.calls[1].window;
+    // The earlier window has 4,030 called bases in 90 kb. Prefer its supported 4.478%
+    // over the later call's short window, whose 4,000 bases would give a floored 8%
+    assert!(!window.backward);
+    assert_eq!(window.interval.as_tuple(), (110_000, 200_000));
+    assert_eq!(window.eligible_positions, 90_000);
+    assert_eq!(window.called_positions, 4_030);
+    assert!((window.score - 100.0 * 4_030.0 / 90_000.0).abs() < 1e-12);
+    assert!(!decisions.calls[1].flagged);
+}
+
+#[test]
+fn supported_current_window_beats_an_earlier_undersupported_maximum() {
+    let regions = [call(100_000, 103_000), call(190_000, 190_100)];
+    let blacklist = Interval::from_tuples(&[(110_000_u64, 185_000)]).unwrap();
+
+    let decisions = evaluate_regions(&config(), &regions, &blacklist, 400_000).unwrap();
+
+    // The first forward window has only 25 kb eligible and 3,100 called bases, giving
+    // 6.2% with the 50 kb floor. Its originating call instead uses a supported backward
+    // window containing 3,000 called bases in 100 kb, giving 3%
+    assert!(decisions.calls[0].window.backward);
+    assert_eq!(decisions.calls[0].window.interval.as_tuple(), (3_000, 103_000));
+    assert_eq!(decisions.calls[0].window.score, 3.0);
+    // The later call's own supported window contains only its 100 called bases.
+    // The earlier unsupported 6.2% window must not override this 0.1% evidence
+    let window = decisions.calls[1].window;
+    assert!(!window.backward);
+    assert_eq!(window.interval.as_tuple(), (190_000, 290_000));
+    assert_eq!(window.eligible_positions, 100_000);
+    assert_eq!(window.called_positions, 100);
+    assert!((window.score - 0.1).abs() < 1e-12);
+    assert!(decisions.calls.iter().all(|decision| !decision.flagged));
+    assert!(decisions.merged_regions.iter().all(|region| !region.preserved));
+}
+
+#[test]
+fn a_window_at_minimum_support_participates_in_the_maximum() {
+    let regions = [call(100_000, 103_000), call(190_000, 190_100)];
+    let blacklist = Interval::from_tuples(&[(110_000_u64, 160_000)]).unwrap();
+
+    let decisions = evaluate_regions(&config(), &regions, &blacklist, 400_000).unwrap();
+
+    // Exactly 50 kb remains in the first window. It qualifies, so both calls use
+    // its 3,100 / 50,000 = 6.2% rather than the later window's supported 0.1%
+    for decision in &decisions.calls {
+        assert_eq!(decision.window.interval.as_tuple(), (100_000, 200_000));
+        assert_eq!(decision.window.eligible_positions, 50_000);
+        assert_eq!(decision.window.called_positions, 3_100);
+        assert!((decision.window.score - 6.2).abs() < 1e-12);
+        assert!(!decision.window.backward);
+        assert!(decision.flagged);
+    }
+}
+
+#[test]
+fn unsupported_windows_retain_their_maximum_when_no_supported_alternative_exists() {
+    let regions = [call(100_000, 101_000), call(110_000, 112_000)];
+    let blacklist = Interval::from_tuples(&[(0_u64, 90_000), (120_000, 200_000)]).unwrap();
+
+    let decisions = evaluate_regions(&config(), &regions, &blacklist, 200_000).unwrap();
+
+    // Only a 30 kb eligible island exists, so no forward or backward window can qualify.
+    // The first forward window contains 3,000 called bases and scores 6% with the floor.
+    // The second contains 2,000 and scores 4%. Both calls retain the first window's 6%
+    for decision in &decisions.calls {
+        assert_eq!(decision.window.interval.as_tuple(), (100_000, 200_000));
+        assert_eq!(decision.window.eligible_positions, 20_000);
+        assert_eq!(decision.window.called_positions, 3_000);
+        assert_eq!(decision.window.score, 6.0);
+        assert!(!decision.window.backward);
+        assert!(decision.flagged);
+    }
+}
+
+#[test]
+fn a_supported_window_ending_at_the_call_start_is_not_an_alternative() {
+    let regions = [call(10_000, 16_000), call(110_000, 111_000)];
+
+    let decisions = evaluate_regions(&config(), &regions, &[], 130_000).unwrap();
+
+    // The first forward window ends exactly at the second call's start. It cannot
+    // prevent fallback. The second call's backward window contains 5,000 bases from
+    // the first call and its own 1,000 bases in 100 kb, giving 6%
+    let window = decisions.calls[1].window;
+    assert!(window.backward);
+    assert_eq!(window.interval.as_tuple(), (11_000, 111_000));
+    assert_eq!(window.eligible_positions, 100_000);
+    assert_eq!(window.called_positions, 6_000);
+    assert_eq!(window.score, 6.0);
 }
 
 #[test]

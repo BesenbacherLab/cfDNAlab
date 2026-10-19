@@ -299,7 +299,7 @@ fn paired_bam_produces_the_hand_derived_models_calls_and_all_outputs() -> Result
     let result = run_outliers(&config, RunOptions::new_quiet())?;
 
     assert_eq!(result.counters.base.counted_fragments, 23);
-    assert_eq!(result.output_files.len(), 9);
+    assert_eq!(result.output_files.len(), 11);
     let expected_names = [
         "sample.outliers.keep_weights.tsv",
         "sample.outliers.exact.bed",
@@ -310,6 +310,8 @@ fn paired_bam_produces_the_hand_derived_models_calls_and_all_outputs() -> Result
         "sample.outliers.global_fit.png",
         "sample.outliers.audit.tsv",
         "sample.outliers.summary.tsv",
+        "sample.outliers.preserved_regions.tsv",
+        "sample.outliers.README.txt",
     ];
     let actual_names = result
         .output_files
@@ -324,14 +326,13 @@ fn paired_bam_produces_the_hand_derived_models_calls_and_all_outputs() -> Result
     assert!(result.output_files.iter().all(|path| path.is_file()));
 
     let histogram_text = read_zst_to_string(&result.output_histograms)?;
-    assert!(histogram_text.contains("# selected_chromosomes=[\"chr1\"]\n"));
-    assert!(histogram_text.contains(
-        "# fragment_support_definition=accepted_fragments_with_unblacklisted_midpoint\n"
-    ));
+    assert!(
+        histogram_text.contains("# analysed_chromosomes=[{\"name\":\"chr1\",\"size\":1000}]\n")
+    );
     let histogram_lines = data_lines(&histogram_text);
     assert_eq!(
         histogram_lines[0],
-        "chromosome\tstart\tend\tfragment_support\tcoverage\tobserved_positions"
+        "chromosome\tstart\tend\tfragments_by_midpoint\tcoverage\tobserved_positions"
     );
     assert_eq!(
         &histogram_lines[1..],
@@ -351,6 +352,7 @@ fn paired_bam_produces_the_hand_derived_models_calls_and_all_outputs() -> Result
     let model_lines = data_lines(&model_text);
     let model_header = model_lines[0].split('\t').collect::<Vec<_>>();
     assert_eq!(model_header.len(), 28);
+    assert_eq!(model_header[7], "fragments_by_midpoint");
     assert_eq!(model_header[10], "initial_threshold");
     assert_eq!(model_header[15], "final_threshold");
     assert_eq!(model_header[16], "observed_positive_coverage_mean");
@@ -380,7 +382,7 @@ fn paired_bam_produces_the_hand_derived_models_calls_and_all_outputs() -> Result
     }
 
     let global_text = fs::read_to_string(&result.output_global_fit)?;
-    assert!(global_text.contains("# positive_coverage_variance_ratio_definition="));
+    assert!(!global_text.contains("# positive_coverage_diagnostic_scope="));
     assert!(global_text.contains("# initial_threshold=7\n"));
     assert!(global_text.contains("# final_threshold=2\n"));
     assert!(global_text.contains("# observed_initial_tail_positions=30\n"));
@@ -425,6 +427,93 @@ fn paired_bam_produces_the_hand_derived_models_calls_and_all_outputs() -> Result
     assert!(plot.len() > 8);
     assert_eq!(&plot[..8], b"\x89PNG\r\n\x1a\n");
 
+    let readme = fs::read_to_string(&result.output_readme)?;
+    for filename in expected_names {
+        assert!(readme.contains(filename.trim_start_matches("sample.")));
+    }
+    assert!(readme.contains("Model: zip\n"));
+    assert!(readme.contains("Flank on each side: 50 bp\n"));
+    assert!(readme.contains("Preservation cutoff: strictly greater than 5%\n"));
+    assert!(readme.contains("longest_preserved_call_bp"));
+    assert!(readme.contains("merged_with_preserved_call"));
+    assert!(readme.contains("positive_coverage_variance_ratio"));
+
+    let summary = fs::read_to_string(&result.output_summary)?;
+    assert!(data_lines(&summary)[0].contains("longest_preserved_call_bp"));
+    assert_eq!(
+        data_lines(&fs::read_to_string(&result.output_preserved_regions)?).len(),
+        1
+    );
+    assert!(result.output_preserved_plots.is_empty());
+
+    Ok(())
+}
+
+#[test]
+fn preserved_region_table_is_automatic_and_coverage_plots_are_optional() -> Result<()> {
+    let bam = paired_outlier_fixture()?;
+    let output_dir = TempDir::new()?;
+    let mut config = base_config(bam.bam_path(), output_dir.path());
+    // The 30 called bases give 0.06% with the 50 kb floor, above this explicit cutoff
+    config.set_max_outlier_percentage(0.01);
+
+    let table_only = run_outliers(&config, RunOptions::new_quiet())?;
+    let text = fs::read_to_string(&table_only.output_preserved_regions)?;
+    let lines = data_lines(&text);
+    assert_eq!(lines.len(), 2);
+    assert_eq!(
+        lines[1].split('\t').collect::<Vec<_>>(),
+        vec![
+            "region_000001",
+            "chr1",
+            "100",
+            "130",
+            "1",
+            "30",
+            "0.06",
+            "100",
+            "1000",
+            "0",
+            "1000",
+            "NA",
+        ]
+    );
+    assert!(table_only.output_preserved_plots.is_empty());
+    assert_eq!(
+        data_lines(&fs::read_to_string(&table_only.output_keep_weights)?).len(),
+        1
+    );
+    assert!(data_lines(&fs::read_to_string(&table_only.output_exact_blacklist)?).is_empty());
+
+    config.set_plot_preserved_regions(true);
+    config.set_output_prefix("plotted");
+    let plotted = run_outliers(&config, RunOptions::new_quiet())?;
+    assert_eq!(
+        plotted.counters.base.counted_fragments,
+        table_only.counters.base.counted_fragments
+    );
+    assert_eq!(plotted.output_preserved_plots.len(), 1);
+    assert_eq!(plotted.output_files.len(), 12);
+    let plot_path = &plotted.output_preserved_plots[0];
+    assert!(plotted.output_files.contains(plot_path));
+    let image = fs::read(plot_path)?;
+    assert_eq!(&image[..8], b"\x89PNG\r\n\x1a\n");
+    assert_eq!(u32::from_be_bytes(image[16..20].try_into()?), 1600);
+    assert_eq!(u32::from_be_bytes(image[20..24].try_into()?), 900);
+    let plotted_text = fs::read_to_string(&plotted.output_preserved_regions)?;
+    let fields = data_lines(&plotted_text)[1].split('\t').collect::<Vec<_>>();
+    assert_eq!(
+        &fields[..11],
+        &lines[1].split('\t').collect::<Vec<_>>()[..11]
+    );
+    assert_eq!(
+        fields[11],
+        "plotted.outliers.preserved_regions.region_000001.png"
+    );
+    assert_eq!(
+        plot_path.file_name().and_then(|name| name.to_str()),
+        Some(fields[11])
+    );
     Ok(())
 }
 

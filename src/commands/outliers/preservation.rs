@@ -121,6 +121,9 @@ fn window_evidence(
 ///
 /// Input calls are the chromosome's sorted, joined exact intervals. The default 100 kb windows
 /// measure their local genomic extent. They do not replace the broader context used to fit T2.
+/// When any overlapping forward window has enough eligible bases, take the maximum only among
+/// those supported windows. Otherwise try a supported backward window before using the floored
+/// maximum among undersupported forward windows.
 pub(super) fn evaluate_regions(
     config: &OutliersConfig,
     regions: &[CalledRegion],
@@ -157,30 +160,31 @@ pub(super) fn evaluate_regions(
         .collect::<Result<Vec<_>>>()?;
 
     let mut calls = Vec::with_capacity(regions.len());
-    // Retain the highest-scoring forward window overlapping the current call, including windows
-    // started by earlier calls. Later calls cannot start inside an already joined exact call
+    // Rank supported forward windows ahead of all undersupported ones, then take the highest
+    // score within that group. Include earlier calls' windows while they overlap the current call
+    // Later calls cannot start inside an already joined exact call
     let mut active = BinaryHeap::new();
-    // Furthest end of an earlier forward window with enough eligible support, independent of score
-    let mut supported_window_end = 0_u32;
     for (call_index, region) in regions.iter().enumerate() {
         let own = windows[call_index];
+        // Support takes precedence over score so a small window cannot override usable evidence
         // Nonnegative finite f64 scores have the same ordering as their bit representations.
         // Reverse index breaks score ties in favor of the earliest evaluated window
-        active.push((own.score.to_bits(), Reverse(call_index)));
-        while let Some(&(_, Reverse(index))) = active.peek() {
+        active.push((
+            own.eligible_positions >= config.min_protection_positions as u64,
+            own.score.to_bits(),
+            Reverse(call_index),
+        ));
+        while let Some(&(_, _, Reverse(index))) = active.peek() {
             if windows[index].interval.end() > region.interval.start() {
                 break;
             }
             active.pop();
         }
-        let &(_, Reverse(best_index)) = active
+        let &(has_supported_window, _, Reverse(best_index)) = active
             .peek()
             .expect("the current call supplies an overlapping window");
         let mut selected = windows[best_index];
-        let has_supported_earlier_window = supported_window_end > region.interval.start();
-        if own.eligible_positions < config.min_protection_positions as u64
-            && !has_supported_earlier_window
-        {
+        if !has_supported_window {
             // A short forward window can still receive enough support by looking left from the
             // call's end. Known exact calls supply the numerator without another coverage pass
             let backward_interval = Interval::new(
@@ -202,9 +206,6 @@ pub(super) fn evaluate_regions(
                 // It does not create another ordinary window or recursively change earlier calls
                 selected = backward;
             }
-        }
-        if own.eligible_positions >= config.min_protection_positions as u64 {
-            supported_window_end = supported_window_end.max(own.interval.end());
         }
         calls.push(CallDecision {
             window: selected,
