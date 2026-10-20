@@ -176,7 +176,10 @@ fn right_truncated_fit_uses_the_poisson_boundary_and_matches_the_retained_mean()
     assert_eq!(fit.zero_inflation, 0.0);
     // The complete retained sample has mean (400 + 2 * 100) / 1,000 = 0.6. The fitted
     // underlying lambda is slightly above 0.6 because its likelihood conditions on X < 4.
-    assert!((truncated_poisson_mean(fit.lambda, 0, 3) - 0.6).abs() < 1e-12);
+    // Cancel exp(-lambda) from the finite Poisson sums, independently of the fitting helper
+    let conditional_mean = (fit.lambda + fit.lambda.powi(2) + fit.lambda.powi(3) / 2.0)
+        / (1.0 + fit.lambda + fit.lambda.powi(2) / 2.0 + fit.lambda.powi(3) / 6.0);
+    assert!((conditional_mean - 0.6).abs() < 1e-12);
     assert!(fit.lambda > 0.6);
 }
 

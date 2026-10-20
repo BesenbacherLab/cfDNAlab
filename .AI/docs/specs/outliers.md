@@ -51,17 +51,23 @@ midpoints. Partial cores are combined across processing tiles. Missing support i
 not zero support.
 
 A local fitting context starts with its core and expands by complete cores on both available
-sides until it meets both `--bin-size` and `--min-context-fragments`. With 500 kb cores, centered
-spans grow as 0.5, 1.5, ..., 5.5 Mb for a 5 Mb minimum. Ends expand on the available side.
+sides until it meets both `--bin-size` eligible bases and `--min-context-fragments` midpoint
+fragments. Eligible zeros count toward the base minimum. Blacklisted bases do not, so the
+physical span may be wider. Without masking, 500 kb cores give centered spans of
+0.5, 1.5, ..., 5.5 Mb for a 5 Mb minimum. Ends expand on the available side.
 A core uses the sample-wide model only when its whole chromosome cannot meet both requirements.
 A sufficiently supported local context that cannot be fitted must fail explicitly. Determine
-global fallback need from each full chromosome's physical span and summed midpoint support,
+global fallback need from each full chromosome's summed eligible bases and midpoint support,
 considering only chromosomes with eligible bases. A wholly blacklisted chromosome cannot require
 a pooled fit. Fully blacklisted grid slots never shift neighboring core indices or coordinates.
+During fitting, count eligibility once per immutable core histogram and accumulate context totals
+from those counts. Do not repeatedly sum the growing histogram to decide whether to expand.
 Fit the pooled model once only if needed. Keep the pooled histogram for alpha and observations
 regardless. Local fitting receives the model family independently of the optional global model.
 Collect independent required local fit failures across selected chromosomes before returning
 diagnostics. Unused contexts are never fitted and cannot fail an otherwise valid analysis.
+These context requirements do not change the physical windows used for preservation.
+The current `minimum_context_span` metadata key records the eligible-base minimum.
 
 `start` and `end` in the model table bound the core where that model is applied.
 `context_start`, `context_end`, `eligible_positions`, and `fragments_by_midpoint` describe the
@@ -291,6 +297,9 @@ replaced or newly present. Report any diagnostic-writing failure alongside the o
 Existing successful files are retained after analysis failures. Error files use fixed names per
 prefix and attempt identifiers. Reports list only companions from their attempt. Successful retries
 may leave old error files or optional PNGs. Consumers must check the current exit status.
+Check all current diagnostic destinations before publishing any of them. Each destination must
+be absent or a regular file. A blocked report or companion leaves existing diagnostics untouched.
+This preflight does not roll back later I/O failures or change the shared publisher.
 
 ### Preserved inspection groups and plots
 

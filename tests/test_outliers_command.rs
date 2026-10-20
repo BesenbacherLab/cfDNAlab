@@ -1133,6 +1133,8 @@ fn fully_blacklisted_cores_have_histogram_slots_but_no_model_rows_or_summary_cou
     fs::write(&blacklist, "chr1\t250\t500\nchr1\t750\t1000\n")?;
     let mut config = base_config(bam.bam_path(), output.path());
     config.set_blacklist(Some(vec![blacklist]));
+    // The two remaining 250 bp cores together supply the requested 500 eligible bases
+    config.set_bin_size(500);
 
     let result = run_outliers(&config, RunOptions::new_quiet())?;
 
@@ -1155,6 +1157,73 @@ fn fully_blacklisted_cores_have_histogram_slots_but_no_model_rows_or_summary_cou
         // Two of the four 250 bp cores remain eligible. ZIP models are Poisson boundaries
         assert_eq!(fields[2], "500");
         assert_eq!(&fields[20..23], &["2", "0", "2"]);
+    }
+    Ok(())
+}
+
+#[test]
+fn local_contexts_expand_past_masks_until_the_eligible_minimum_is_met() -> Result<()> {
+    let bam = paired_outlier_fixture()?;
+    let output = TempDir::new()?;
+    let blacklist = output.path().join("mask.bed");
+    fs::write(&blacklist, "chr1\t250\t500\n")?;
+    let mut config = base_config(bam.bam_path(), output.path());
+    config.set_blacklist(Some(vec![blacklist]));
+    config.set_bin_size(500);
+    // Keep enough positive coverage levels below T1 to identify the second ZIP fit
+    config.set_tail_probability(Some(1e-6));
+
+    let result = run_outliers(&config, RunOptions::new_quiet())?;
+
+    let models = fs::read_to_string(result.output_models)?;
+    let rows = data_lines(&models);
+    assert_eq!(rows.len(), 4);
+    // Whole-core growth retains physical coordinates while omitting masked observations
+    // The first context must pass through the masked core to gather its second 250 bases
+    for (row, expected) in rows[1..].iter().zip([
+        ["0", "250", "0", "750", "local", "500", "22"],
+        ["500", "750", "250", "1000", "local", "500", "1"],
+        ["750", "1000", "500", "1000", "local", "500", "1"],
+    ]) {
+        let fields: Vec<_> = row.split('\t').collect();
+        assert_eq!(&fields[1..8], &expected);
+    }
+    let global = fs::read_to_string(result.output_global_fit)?;
+    assert!(global.contains("# global_fit_status=not_needed\n"));
+    Ok(())
+}
+
+#[test]
+fn insufficient_eligible_bases_require_global_fallback_even_on_a_long_enough_chromosome()
+-> Result<()> {
+    let bam = paired_outlier_fixture()?;
+    let output = TempDir::new()?;
+    let blacklist = output.path().join("mask.bed");
+    fs::write(&blacklist, "chr1\t900\t1000\n")?;
+    let mut config = base_config(bam.bam_path(), output.path());
+    config.set_blacklist(Some(vec![blacklist]));
+
+    let result = run_outliers(&config, RunOptions::new_quiet())?;
+
+    // The physical chromosome reaches the 1 kb minimum, but only 900 bases are eligible
+    // All fragments remain eligible. Fragment support cannot compensate for missing bases
+    let models = fs::read_to_string(result.output_models)?;
+    let rows = data_lines(&models);
+    assert_eq!(rows.len(), 5);
+    for row in &rows[1..] {
+        let fields: Vec<_> = row.split('\t').collect();
+        assert_eq!(
+            &fields[3..8],
+            &["0", "1000", "global_fallback", "900", "23"]
+        );
+    }
+    let global = fs::read_to_string(result.output_global_fit)?;
+    assert!(global.contains("# global_fit_status=required_for_fallback\n"));
+    let summary = fs::read_to_string(result.output_summary)?;
+    for row in data_lines(&summary).into_iter().skip(1) {
+        let fields: Vec<_> = row.split('\t').collect();
+        assert_eq!(fields[2], "900");
+        assert_eq!(&fields[20..22], &["4", "4"]);
     }
     Ok(())
 }
@@ -1616,6 +1685,8 @@ fn model_failures_write_readable_context_histograms_and_withhold_success_files()
     )?;
     config.set_blacklist(Some(vec![blacklist]));
     config.set_ignore_gap(true);
+    // Each chromosome retains 980 eligible bases. Require all of them for local failure evidence
+    config.set_bin_size(980);
     let error = run_outliers(&config, RunOptions::new_quiet()).unwrap_err();
     assert!(format!("{error:#}").contains("zero coverage"));
     let report = fs::read_to_string(output.path().join("sample.outliers.error.txt"))?;
@@ -1687,7 +1758,12 @@ fn fcoverage_checks_recorded_reference_and_distinguishes_empty_from_unanalysed_c
 fn a_failure_saving_diagnostics_keeps_the_original_analysis_error_visible() -> Result<()> {
     let bam = paired_outlier_fixture()?;
     let output = TempDir::new()?;
-    fs::create_dir(output.path().join("sample.outliers.error.txt"))?;
+    let blocked_report = output.path().join("sample.outliers.error.txt");
+    fs::create_dir(&blocked_report)?;
+    fs::write(
+        blocked_report.join("existing.txt"),
+        "keep existing contents",
+    )?;
     let mut config = base_config(bam.bam_path(), output.path());
     config.set_max_outlier_percentage(0.01);
     config.set_ambiguous_region_action(AmbiguousRegionAction::Error);
@@ -1697,6 +1773,11 @@ fn a_failure_saving_diagnostics_keeps_the_original_analysis_error_visible() -> R
     assert!(message.contains("exceeds cutoff 0.01%"));
     assert!(message.contains("also failed to save failure diagnostics"));
     assert!(message.contains("regular file"));
+    assert!(message.contains(blocked_report.to_str().unwrap()));
+    assert_eq!(
+        fs::read_to_string(blocked_report.join("existing.txt"))?,
+        "keep existing contents"
+    );
     assert!(
         !output
             .path()

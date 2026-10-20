@@ -819,8 +819,8 @@ fn merge_histogram_pass_results(
 /// Call positions in one processing tile's core using models fitted in the first pass.
 ///
 /// Each core with eligible bases supplies T2 and a correction target from its broader fitting
-/// context (normally 5.5 Mb for a centered context with the default settings). Fully blacklisted
-/// cores need no model and end any open call. Calls can cross other model-core boundaries.
+/// context, expanded until enough eligible bases and midpoint fragments are available. Fully
+/// blacklisted cores need no model and end any open call. Calls can cross other model-core boundaries.
 /// The returned pieces stop at this processing tile's boundary and are joined later.
 fn process_calling_pass_tile(
     config: &OutliersConfig,

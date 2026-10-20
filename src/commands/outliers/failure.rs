@@ -7,7 +7,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 
 use super::config::OutliersConfig;
 use crate::{
@@ -44,6 +44,8 @@ impl std::error::Error for AnalysisFailures {}
 ///
 /// The text report identifies its companion files, so artifacts from earlier attempts cannot
 /// be mistaken for evidence from this attempt. Normal results from previous runs stay intact.
+/// Check every destination before moving any artifact so a blocked report cannot publish its
+/// companions first. Later I/O failures can still interrupt the shared best-effort file moves.
 pub(super) fn write_failure_report(
     config: &OutliersConfig,
     error: &anyhow::Error,
@@ -107,7 +109,7 @@ pub(super) fn write_failure_report(
         )?;
     } else {
         writeln!(writer, "Evidence from this attempt:")?;
-        for companion in companions {
+        for companion in &companions {
             writeln!(writer, "{}", companion.display())?;
         }
     }
@@ -118,6 +120,25 @@ pub(super) fn write_failure_report(
     writer.flush()?;
     drop(writer);
     outputs.record(temporary, path.clone())?;
+    // Diagnose invalid destinations before the shared helper can move any companion files
+    for destination in companions.iter().chain(std::iter::once(&path)) {
+        match std::fs::symlink_metadata(destination) {
+            Ok(metadata) => ensure!(
+                metadata.is_file(),
+                "failure diagnostic destination is not a regular file: {}",
+                destination.display()
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "checking failure diagnostic destination {}",
+                        destination.display()
+                    )
+                });
+            }
+        }
+    }
     outputs.move_into_place()?;
     Ok(path)
 }

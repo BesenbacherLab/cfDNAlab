@@ -6,7 +6,7 @@ fn cores(number_of_cores: usize) -> Vec<CoreHistogram> {
             let start = index as u32 * 500_000;
             let mut histogram =
                 CoreHistogram::new(Interval::new(start, start + 500_000).expect("valid core"));
-            histogram.counts = [(0, 500), (1, 500)].into_iter().collect();
+            histogram.counts = [(0, 250_000), (1, 250_000)].into_iter().collect();
             histogram.fragment_support = 100;
             histogram
         })
@@ -17,12 +17,14 @@ fn cores(number_of_cores: usize) -> Vec<CoreHistogram> {
 fn centered_context_expands_to_five_point_five_megabases() {
     let histograms = cores(13);
 
-    let (combined, context, complete) =
-        build_context(&histograms, 6, 5_000_000, 1_000).expect("valid context");
+    let (combined, context, eligible_positions, complete) =
+        build_context(&histograms, &[500_000; 13], 6, 5_000_000, 1_000).expect("valid context");
 
     assert!(complete);
     assert_eq!(context.as_tuple(), (500_000, 6_000_000));
     assert_eq!(context.len(), 5_500_000);
+    assert_eq!(combined.eligible_positions().unwrap(), 5_500_000);
+    assert_eq!(eligible_positions, 5_500_000);
     assert_eq!(combined.fragment_support, 1_100);
 }
 
@@ -30,32 +32,220 @@ fn centered_context_expands_to_five_point_five_megabases() {
 fn edge_context_continues_on_available_side() {
     let histograms = cores(13);
 
-    let (combined, context, complete) =
-        build_context(&histograms, 0, 5_000_000, 1_000).expect("valid edge context");
+    // Either edge needs ten whole cores. Each contributes 500 kb eligible and 100 fragments
+    for (core_index, expected_context) in [(0, (0, 5_000_000)), (12, (1_500_000, 6_500_000))] {
+        let (combined, context, eligible_positions, complete) =
+            build_context(&histograms, &[500_000; 13], core_index, 5_000_000, 1_000)
+                .expect("valid edge context");
 
-    assert!(complete);
-    assert_eq!(context.as_tuple(), (0, 5_000_000));
-    assert_eq!(combined.fragment_support, 1_000);
+        assert!(complete);
+        assert_eq!(context.as_tuple(), expected_context);
+        assert_eq!(eligible_positions, 5_000_000);
+        assert_eq!(combined.eligible_positions().unwrap(), 5_000_000);
+        assert_eq!(combined.fragment_support, 1_000);
+    }
+}
+
+#[test]
+fn a_single_core_at_both_support_minima_needs_no_expansion_or_fallback() {
+    let histograms = cores(1);
+
+    for (minimum_positions, minimum_fragments, expected_complete) in [
+        (500_000, 100, true),
+        (500_001, 100, false),
+        (500_000, 101, false),
+    ] {
+        let (combined, context, eligible_positions, complete) = build_context(
+            &histograms,
+            &[500_000],
+            0,
+            minimum_positions,
+            minimum_fragments,
+        )
+        .unwrap();
+
+        assert_eq!(complete, expected_complete);
+        assert_eq!(context.as_tuple(), (0, 500_000));
+        assert_eq!(eligible_positions, 500_000);
+        assert_eq!(
+            combined.counts,
+            [(0, 250_000), (1, 250_000)].into_iter().collect()
+        );
+        assert_eq!(combined.fragment_support, 100);
+        assert_eq!(
+            needs_global_fallback(
+                &histograms,
+                &[500_000],
+                minimum_positions,
+                minimum_fragments,
+            )
+            .unwrap(),
+            !expected_complete
+        );
+    }
 }
 
 #[test]
 fn incomplete_contig_is_marked_for_global_fallback() {
     let histograms = cores(4);
 
-    let (combined, context, complete) =
-        build_context(&histograms, 1, 5_000_000, 1_000).expect("valid short context");
+    let (combined, context, eligible_positions, complete) =
+        build_context(&histograms, &[500_000; 4], 1, 5_000_000, 1_000)
+            .expect("valid short context");
 
     assert!(!complete);
     assert_eq!(context.as_tuple(), (0, 2_000_000));
+    assert_eq!(eligible_positions, 2_000_000);
     assert_eq!(combined.fragment_support, 400);
 }
 
 #[test]
-fn fallback_need_checks_full_chromosome_span_and_summed_support() {
+fn fallback_need_checks_full_chromosome_eligible_positions_and_summed_support() {
     let histograms = cores(4);
-    assert!(!needs_global_fallback(&histograms, 2_000_000, 400).unwrap());
-    assert!(needs_global_fallback(&histograms, 2_000_001, 400).unwrap());
-    assert!(needs_global_fallback(&histograms, 2_000_000, 401).unwrap());
+    assert!(!needs_global_fallback(&histograms, &[500_000; 4], 2_000_000, 400).unwrap());
+    assert!(needs_global_fallback(&histograms, &[500_000; 4], 2_000_001, 400).unwrap());
+    assert!(needs_global_fallback(&histograms, &[500_000; 4], 2_000_000, 401).unwrap());
+}
+
+#[test]
+fn masked_positions_require_wider_centered_contexts() {
+    let mut histograms = cores(13);
+    for (index, histogram) in histograms.iter_mut().enumerate() {
+        if index != 6 {
+            histogram.counts = [(0, 125_000), (1, 125_000)].into_iter().collect();
+        }
+    }
+
+    let mut eligible_positions_by_core = [250_000; 13];
+    eligible_positions_by_core[6] = 500_000;
+    let (combined, context, eligible_positions, complete) =
+        build_context(&histograms, &eligible_positions_by_core, 6, 2_000_000, 100).unwrap();
+
+    // The central 500 kb plus six half-eligible neighbors supply exactly 2 Mb eligible
+    // Five cores span 2.5 Mb physically but contain only 1.5 Mb eligible positions
+    assert!(complete);
+    assert_eq!(context.as_tuple(), (1_500_000, 5_000_000));
+    assert_eq!(combined.eligible_positions().unwrap(), 2_000_000);
+    assert_eq!(eligible_positions, 2_000_000);
+    assert_eq!(
+        combined.counts,
+        [(0, 1_000_000), (1, 1_000_000)].into_iter().collect()
+    );
+    assert_eq!(combined.fragment_support, 700);
+}
+
+#[test]
+fn edge_context_crosses_masked_cores_without_counting_them_as_support() {
+    let mut histograms = cores(7);
+    for histogram in &mut histograms[1..5] {
+        histogram.counts.clear();
+        histogram.fragment_support = 0;
+    }
+
+    let (combined, context, eligible_positions, complete) = build_context(
+        &histograms,
+        &[500_000, 0, 0, 0, 0, 500_000, 500_000],
+        0,
+        1_000_000,
+        100,
+    )
+    .unwrap();
+
+    // Cores 0 and 5 supply 1 Mb eligible. The intervening 2 Mb mask stays in the coordinates
+    assert!(complete);
+    assert_eq!(context.as_tuple(), (0, 3_000_000));
+    assert_eq!(combined.eligible_positions().unwrap(), 1_000_000);
+    assert_eq!(eligible_positions, 1_000_000);
+    assert_eq!(combined.fragment_support, 200);
+}
+
+#[test]
+fn eligible_zeros_count_toward_context_size_independently_of_fragment_support() {
+    let mut histograms = cores(3);
+    histograms[1].counts = [(0, 500_000)].into_iter().collect();
+
+    let (combined, context, eligible_positions, complete) =
+        build_context(&histograms, &[500_000; 3], 0, 1_000_000, 200).unwrap();
+
+    assert!(complete);
+    assert_eq!(context.as_tuple(), (0, 1_000_000));
+    assert_eq!(
+        combined.counts,
+        [(0, 750_000), (1, 250_000)].into_iter().collect()
+    );
+    assert_eq!(combined.eligible_positions().unwrap(), 1_000_000);
+    assert_eq!(eligible_positions, 1_000_000);
+    assert_eq!(combined.fragment_support, 200);
+}
+
+#[test]
+fn enough_eligible_positions_does_not_bypass_fragment_support() {
+    let histograms = cores(5);
+
+    for (minimum_fragments, expected_complete) in [(500, true), (501, false)] {
+        let (combined, context, eligible_positions, complete) =
+            build_context(&histograms, &[500_000; 5], 2, 500_000, minimum_fragments).unwrap();
+
+        assert_eq!(complete, expected_complete);
+        assert_eq!(context.as_tuple(), (0, 2_500_000));
+        assert_eq!(combined.eligible_positions().unwrap(), 2_500_000);
+        assert_eq!(eligible_positions, 2_500_000);
+        assert_eq!(combined.fragment_support, 500);
+    }
+}
+
+#[test]
+fn physically_long_chromosome_requires_fallback_when_eligible_bases_are_insufficient() {
+    let mut histograms = cores(4);
+    histograms[1].counts = [(0, 250_000)].into_iter().collect();
+
+    // A 2 Mb chromosome has 1.75 Mb eligible. One additional required base needs fallback
+    let eligible_positions_by_core = [500_000, 250_000, 500_000, 500_000];
+    assert!(
+        !needs_global_fallback(&histograms, &eligible_positions_by_core, 1_750_000, 400).unwrap()
+    );
+    assert!(
+        needs_global_fallback(&histograms, &eligible_positions_by_core, 1_750_001, 400).unwrap()
+    );
+    let (combined, context, eligible_positions, complete) =
+        build_context(&histograms, &eligible_positions_by_core, 1, 1_750_001, 400).unwrap();
+    assert!(!complete);
+    assert_eq!(context.as_tuple(), (0, 2_000_000));
+    assert_eq!(combined.eligible_positions().unwrap(), 1_750_000);
+    assert_eq!(eligible_positions, 1_750_000);
+    assert_eq!(combined.fragment_support, 400);
+}
+
+#[test]
+fn partially_masked_terminal_core_contributes_only_its_observed_eligible_bases() {
+    let mut histograms = cores(2);
+    let mut terminal = CoreHistogram::new(Interval::new(1_000_000, 1_000_030).unwrap());
+    terminal.counts = [(0, 10), (1, 10)].into_iter().collect();
+    terminal.fragment_support = 1;
+    histograms.push(terminal);
+
+    // The last 30 bp core contributes 20 eligible bases, rather than its physical length or stride
+    for (minimum_positions, expected_complete) in [(1_000_020, true), (1_000_021, false)] {
+        let (combined, context, eligible_positions, complete) = build_context(
+            &histograms,
+            &[500_000, 500_000, 20],
+            2,
+            minimum_positions,
+            201,
+        )
+        .unwrap();
+
+        assert_eq!(complete, expected_complete);
+        assert_eq!(context.as_tuple(), (0, 1_000_030));
+        assert_eq!(combined.eligible_positions().unwrap(), 1_000_020);
+        assert_eq!(eligible_positions, 1_000_020);
+        assert_eq!(combined.fragment_support, 201);
+        assert_eq!(
+            needs_global_fallback(&histograms, &[500_000, 500_000, 20], minimum_positions, 201)
+                .unwrap(),
+            !expected_complete
+        );
+    }
 }
 
 #[test]
@@ -120,7 +310,7 @@ fn fully_blacklisted_cores_keep_empty_grid_slots_between_eligible_models() {
         let model = models[index].as_ref().unwrap();
         assert_eq!(model.core.as_tuple(), bounds);
         assert_eq!(model.context.as_tuple(), bounds);
-        assert_eq!(model.eligible_positions, 1_000);
+        assert_eq!(model.eligible_positions, 500_000);
     }
 }
 
@@ -174,18 +364,22 @@ fn global_fallback_is_assigned_only_to_cores_with_eligible_positions() {
         &pooled,
         OutlierModel::Zip,
         0.01,
-        2_000_000,
+        1_000_000,
         100,
     )
     .unwrap();
 
-    // The chromosome is only 1.5 Mb long, so its sole eligible core needs the pooled model
+    // The 1.5 Mb chromosome supplies only 500 kb eligible bases toward the requested 1 Mb
+    // Its sole eligible core needs the pooled model. Neither masked core acquires a model
     let models = &fitted.by_chromosome["chr1"];
     assert_eq!(models.len(), 3);
     assert!(models[0].is_none());
     assert!(models[2].is_none());
     let model = models[1].as_ref().unwrap();
     assert_eq!(model.core.as_tuple(), (500_000, 1_000_000));
+    assert_eq!(model.context.as_tuple(), (0, 1_500_000));
+    assert_eq!(model.eligible_positions, 500_000);
+    assert_eq!(model.fragment_support, 100);
     assert_eq!(model.source, ModelSource::GlobalFallback);
     assert_eq!(Some(model.model), fitted.global);
 }
@@ -208,7 +402,7 @@ fn unused_context_does_not_add_a_failure_for_an_eligible_zero_coverage_core() {
         &pooled,
         OutlierModel::Zip,
         0.01,
-        1_000_000,
+        500_000,
         1_000,
     )
     .unwrap_err();
@@ -489,7 +683,12 @@ fn histogram_and_support_overflow_are_errors_instead_of_wrapped_counts() {
     assert!(error.to_string().contains("histogram count overflow"));
 
     histogram.counts = [(0, u64::MAX), (1, 1)].into_iter().collect();
-    assert!(histogram.eligible_positions().is_err());
+    let error = histogram.eligible_positions().unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("eligible-position count overflow")
+    );
 
     let mut support = CoreHistogram::new(interval);
     support.fragment_support = u64::MAX;
@@ -497,4 +696,50 @@ fn histogram_and_support_overflow_are_errors_instead_of_wrapped_counts() {
     extra_support.fragment_support = 1;
     let error = support.add_histogram(&extra_support).unwrap_err();
     assert!(error.to_string().contains("fragment support overflow"));
+}
+
+#[test]
+fn fallback_support_checks_reject_overflow_and_empty_core_lists() {
+    assert!(
+        needs_global_fallback(&[], &[], 1, 1)
+            .unwrap_err()
+            .to_string()
+            .contains("no model-core histograms")
+    );
+
+    let mut histograms = cores(2);
+    histograms[0].counts = [(0, u64::MAX)].into_iter().collect();
+    histograms[1].counts = [(1, 1)].into_iter().collect();
+    let error = needs_global_fallback(&histograms, &[u64::MAX, 1], 1, 1).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("eligible-position count overflow")
+    );
+
+    histograms[0].counts = [(0, 500_000)].into_iter().collect();
+    histograms[0].fragment_support = u64::MAX;
+    histograms[1].fragment_support = 1;
+    let error = needs_global_fallback(&histograms, &[500_000, 1], 1, 1).unwrap_err();
+    assert!(error.to_string().contains("fragment support overflow"));
+}
+
+#[test]
+fn incremental_context_eligibility_rejects_overflow_across_different_coverage_bins() {
+    let mut histograms = cores(2);
+    histograms[0].counts = [(0, u64::MAX)].into_iter().collect();
+    histograms[1].counts = [(1, 1)].into_iter().collect();
+    for histogram in &mut histograms {
+        histogram.fragment_support = 0;
+    }
+
+    // Missing fragment support forces expansion. Neither individual frequency overflows
+    // Adding the second core would overflow only the total eligible-position count
+    let error = build_context(&histograms, &[u64::MAX, 1], 0, 1, 1).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("context eligible-position count overflow")
+    );
 }

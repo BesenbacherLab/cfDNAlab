@@ -101,6 +101,14 @@ fn clipped_plot_chunks_keep_absolute_coverage_and_mask_offsets() {
         (2, 14.0, 8.0, 105),
         (1, 10.0, 10.0, 106),
     ];
+    assert_eq!(bins.bins.len(), expected.len());
+    assert_eq!(
+        bins.bins
+            .iter()
+            .map(|bin| bin.interval.as_tuple())
+            .collect::<Vec<_>>(),
+        vec![(102, 104), (104, 106), (106, 108)]
+    );
     for (bin, (positions, sum, maximum, peak_position)) in bins.bins.iter().zip(expected) {
         assert_eq!(bin.eligible_positions, positions);
         assert_eq!(bin.coverage_sum, sum);

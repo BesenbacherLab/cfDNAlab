@@ -14,7 +14,7 @@ Finalize CLI terminology during manual code verification. These are proposals, n
 | --- | --- |
 | `--protection-window-size` | `--preservation-window-size` |
 | `--min-protection-positions` | `--min-preservation-positions` |
-| `--bin-size` | `--min-context-span` |
+| `--bin-size` | `--min-context-bases` |
 | `--ambiguous-region-action` | `--preservation-action` |
 | `--max-outlier-percentage` | `--max-called-percentage` |
 
@@ -23,6 +23,8 @@ unless there is a concrete reason to rename it. Apply approved names together ac
 serialization, metadata, producer/consumer checks, help, the generated README, guides and generated
 references. Preserve the distinction between GC-estimator outlier controls and fragment keep weights
 during producer integration.
+The context option and its metadata must describe eligible bases, including zeros, rather than
+physical span. Review `minimum_context_span` in the same naming pass.
 
 Feature/default/release-status changes remain the owner's decision. The owner and supervisor also
 need to choose biological retention criteria, supported event sizes, sample types and depths.

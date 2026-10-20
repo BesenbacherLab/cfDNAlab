@@ -162,25 +162,38 @@ pub(crate) fn sum_global_histogram(
 /// Fit cores with eligible bases from adaptively expanded, chromosome-local histogram contexts.
 ///
 /// Fully blacklisted cores retain an empty slot and require neither local nor global fitting.
-/// The global model is used only when the complete chromosome cannot meet the required span and
-/// fragment support. A complete local context whose two-stage fit fails returns that error rather
-/// than silently changing its model source.
+/// The global model is used only when the complete chromosome cannot meet both the required
+/// eligible-position count and fragment support. Eligible zeros count toward context size.
+/// A complete local context whose two-stage fit fails returns that error rather than silently
+/// changing its model source.
 pub(crate) fn fit_core_models(
     chromosomes: &[String],
     histograms_by_chromosome: &FxHashMap<String, Vec<CoreHistogram>>,
     global_histogram: &CoreHistogram,
     family: OutlierModel,
     tail_probability: f64,
-    minimum_context_span: u32,
+    minimum_eligible_positions: u32,
     minimum_fragment_support: u64,
 ) -> Result<FittedModels> {
     let mut needs_global = false;
+    let mut eligible_positions_by_chromosome = FxHashMap::default();
     for chromosome in chromosomes {
         let cores = histograms_by_chromosome
             .get(chromosome)
             .with_context(|| format!("missing core histograms for {chromosome}"))?;
-        needs_global |=
-            needs_global_fallback(cores, minimum_context_span, minimum_fragment_support)?;
+        // Histograms stay immutable during fitting. Count eligibility once per core and reuse
+        // it for fallback, empty-slot checks, context growth, and recorded context support
+        let eligible_positions = cores
+            .iter()
+            .map(CoreHistogram::eligible_positions)
+            .collect::<Result<Vec<_>>>()?;
+        needs_global |= needs_global_fallback(
+            cores,
+            &eligible_positions,
+            minimum_eligible_positions,
+            minimum_fragment_support,
+        )?;
+        eligible_positions_by_chromosome.insert(chromosome.clone(), eligible_positions);
     }
     let mut messages = Vec::new();
     let mut failed_histograms = String::from(
@@ -207,20 +220,22 @@ pub(crate) fn fit_core_models(
     let mut models_by_chromosome = FxHashMap::default();
     for chromosome in chromosomes {
         let cores = &histograms_by_chromosome[chromosome];
+        let eligible_positions_by_core = &eligible_positions_by_chromosome[chromosome];
         // Collect every independent local result before returning failures. Histogram processing
         // is cheap compared with another BAM pass and supplies all failing contexts at once
         let results = (0..cores.len())
             .into_par_iter()
             .map(|core_index| {
                 let core = cores[core_index].interval;
-                if cores[core_index].eligible_positions()? == 0 {
+                if eligible_positions_by_core[core_index] == 0 {
                     // Keep this grid slot without constructing or fitting an unused context
-                    return Ok((core, core, CoreHistogram::new(core), None));
+                    return Ok((core, core, 0, CoreHistogram::new(core), None));
                 }
-                let (mut histogram, context, complete) = build_context(
+                let (mut histogram, context, eligible_positions, complete) = build_context(
                     cores,
+                    eligible_positions_by_core,
                     core_index,
-                    minimum_context_span,
+                    minimum_eligible_positions,
                     minimum_fragment_support,
                 )?;
                 let fit = if complete {
@@ -233,7 +248,7 @@ pub(crate) fn fit_core_models(
                     Ok(CoreModel {
                         core,
                         context,
-                        eligible_positions: histogram.eligible_positions()?,
+                        eligible_positions,
                         fragment_support: histogram.fragment_support,
                         source: if complete {
                             ModelSource::Local
@@ -249,14 +264,14 @@ pub(crate) fn fit_core_models(
                 if !matches!(&result, Some(Err(_))) {
                     histogram.counts.clear();
                 }
-                Ok((core, context, histogram, result))
+                Ok((core, context, eligible_positions, histogram, result))
             })
             .collect::<Vec<Result<_>>>();
         let mut chromosome_models = Vec::with_capacity(cores.len());
         for result in results {
             match result {
-                Ok((core, context, histogram, Some(Err(error)))) => {
-                    messages.push(format!("{chromosome} core {:?}, context {:?}, {} fit, alpha={tail_probability}, eligible positions {}, fragment support {}: {error:#}", core.as_tuple(), context.as_tuple(), family.as_str(), histogram.eligible_positions()?, histogram.fragment_support));
+                Ok((core, context, eligible_positions, histogram, Some(Err(error)))) => {
+                    messages.push(format!("{chromosome} core {:?}, context {:?}, {} fit, alpha={tail_probability}, eligible positions {}, fragment support {}: {error:#}", core.as_tuple(), context.as_tuple(), family.as_str(), eligible_positions, histogram.fragment_support));
                     append_failed_histogram(
                         &mut failed_histograms,
                         chromosome,
@@ -266,9 +281,9 @@ pub(crate) fn fit_core_models(
                     );
                     chromosome_models.push(None);
                 }
-                Ok((_, _, _, Some(Ok(model)))) => chromosome_models.push(Some(model)),
+                Ok((_, _, _, _, Some(Ok(model)))) => chromosome_models.push(Some(model)),
                 // A fully blacklisted core or an already recorded required global failure
-                Ok((_, _, _, None)) => chromosome_models.push(None),
+                Ok((_, _, _, _, None)) => chromosome_models.push(None),
                 Err(error) => {
                     messages.push(format!("{chromosome} context construction: {error:#}"));
                     chromosome_models.push(None);
@@ -292,33 +307,34 @@ pub(crate) fn fit_core_models(
     })
 }
 
-/// A full chromosome supplies the maximum possible local span and midpoint support.
+/// A full chromosome supplies the maximum possible local eligible-position and midpoint support.
 ///
 /// A wholly blacklisted chromosome has no positions needing a model, so it cannot require fallback.
 fn needs_global_fallback(
     cores: &[CoreHistogram],
-    minimum_span: u32,
-    minimum_support: u64,
+    eligible_positions_by_core: &[u64],
+    minimum_eligible_positions: u32,
+    minimum_fragment_support: u64,
 ) -> Result<bool> {
-    let first = cores
-        .first()
-        .context("chromosome has no model-core histograms")?;
-    let last = cores
-        .last()
-        .context("chromosome has no model-core histograms")?;
-    if !cores
-        .iter()
-        .any(|core| core.counts.values().any(|&positions| positions > 0))
-    {
+    ensure!(!cores.is_empty(), "chromosome has no model-core histograms");
+    let eligible_positions =
+        eligible_positions_by_core
+            .iter()
+            .try_fold(0_u64, |total, &positions| {
+                total
+                    .checked_add(positions)
+                    .context("chromosome eligible-position count overflow")
+            })?;
+    if eligible_positions == 0 {
         return Ok(false);
     }
-    let span = first.interval.expand_to_include(last.interval).len();
     let support = cores.iter().try_fold(0_u64, |total, core| {
         total
             .checked_add(core.fragment_support)
             .context("chromosome fragment support overflow")
     })?;
-    Ok(span < minimum_span || support < minimum_support)
+    Ok(eligible_positions < u64::from(minimum_eligible_positions)
+        || support < minimum_fragment_support)
 }
 
 /// Preserve sparse failing-context counts without requiring decompression or a whole-run scan.
@@ -351,41 +367,54 @@ fn append_failed_histogram(
     }
 }
 
+/// Grow a contiguous chromosome context until both eligible bases and midpoint fragments suffice.
+///
+/// Expand by whole cores on each available side. Masked positions retain their genomic span but
+/// contribute no observations. Eligible positions with zero coverage still count toward the minimum.
+/// The immutable per-core counts are summed incrementally, avoiding repeated histogram scans.
 fn build_context(
     cores: &[CoreHistogram],
+    eligible_positions_by_core: &[u64],
     core_index: usize,
-    minimum_context_span: u32,
+    minimum_eligible_positions: u32,
     minimum_fragment_support: u64,
-) -> Result<(CoreHistogram, Interval<u32>, bool)> {
+) -> Result<(CoreHistogram, Interval<u32>, u64, bool)> {
     let mut left_index = core_index;
     let mut right_index = core_index;
     let mut combined = CoreHistogram::new(cores[core_index].interval);
     combined.add_histogram(&cores[core_index])?;
+    let mut eligible_positions = eligible_positions_by_core[core_index];
 
     loop {
         let context = Interval::new(
             cores[left_index].interval.start(),
             cores[right_index].interval.end(),
         )?;
-        let has_required_span = context.len() >= minimum_context_span;
+        let has_required_positions = eligible_positions >= u64::from(minimum_eligible_positions);
         let has_required_fragments = combined.fragment_support >= minimum_fragment_support;
-        if has_required_span && has_required_fragments {
-            return Ok((combined, context, true));
+        if has_required_positions && has_required_fragments {
+            return Ok((combined, context, eligible_positions, true));
         }
 
         let mut expanded = false;
         if left_index > 0 {
             left_index -= 1;
             combined.add_histogram(&cores[left_index])?;
+            eligible_positions = eligible_positions
+                .checked_add(eligible_positions_by_core[left_index])
+                .context("context eligible-position count overflow")?;
             expanded = true;
         }
         if right_index + 1 < cores.len() {
             right_index += 1;
             combined.add_histogram(&cores[right_index])?;
+            eligible_positions = eligible_positions
+                .checked_add(eligible_positions_by_core[right_index])
+                .context("context eligible-position count overflow")?;
             expanded = true;
         }
         if !expanded {
-            return Ok((combined, context, false));
+            return Ok((combined, context, eligible_positions, false));
         }
     }
 }

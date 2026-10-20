@@ -32,8 +32,8 @@ fn common_metadata_records_settings_and_analysed_chromosome_lengths() {
     let chromosomes = vec!["chr2".to_string(), "chr1".to_string()];
     let contigs = Contigs {
         contigs: [
-            ("chr1".to_string(), (0, 1_000)),
-            ("chr2".to_string(), (1, 2_000)),
+            ("chr1".to_string(), (0, 4_000)),
+            ("chr2".to_string(), (1, 6_000)),
         ]
         .into_iter()
         .collect(),
@@ -51,7 +51,7 @@ fn common_metadata_records_settings_and_analysed_chromosome_lengths() {
     write_common_metadata(&mut written, &metadata).expect("valid metadata");
     let text = String::from_utf8(written).expect("UTF-8 metadata");
 
-    assert!(text.contains("# analysed_chromosomes=[{\"name\":\"chr1\",\"size\":1000},{\"name\":\"chr2\",\"size\":2000}]\n"));
+    assert!(text.contains("# analysed_chromosomes=[{\"name\":\"chr1\",\"size\":4000},{\"name\":\"chr2\",\"size\":6000}]\n"));
     assert!(!text.contains("selected_chromosomes="));
     assert!(!text.contains("reference_contig_footprint_json="));
     assert!(text.contains("# tail_probability=0.00025\n"));

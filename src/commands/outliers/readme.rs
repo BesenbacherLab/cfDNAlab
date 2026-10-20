@@ -169,12 +169,16 @@ If you supplied an output prefix, it appears before each filename below.
     The first two panels compare the sample-wide fit with observed coverage when a
     global fallback is required. Both show the same raw histogram, using linear and
     logarithmic coverage axes. Local threshold summaries include only fitted models.
+    Thick vertical lines show their mean cutoff. Thin lines show their minimum and maximum.
+    T1 and T2 markers can overlap when their values are close.
     The lower panels show applied cutoffs and fitted means on separate scales along
-    labeled chromosomes. Their x coordinate is the cumulative grid-core index in selected
+    labeled chromosomes, with legends below the axes. A model core is a fixed `--stride`
+    interval where a model is applied. Its fitting context can span several cores.
+    The x coordinate is the cumulative grid-core index in selected
     chromosome order. Fully blacklisted intervals remain gaps at their original positions.
     The unconditional mean is diagnostic.
     The active-component mean is the correction target only for `--target local-mean`.
-    Sample-wide cutoffs in the first two panels are references, not universal cutoffs
+    Global-model cutoffs in the first two panels are references, not universal cutoffs
     applied everywhere. Local cutoffs are recorded in `outliers.models.tsv`.
 
 `outliers.global_fit.tsv`
@@ -243,7 +247,7 @@ blacklist, including blacklisted bases and gaps between their calls.
 `model_cores` counts the `--stride` intervals that received a coverage model.
 Fully blacklisted intervals are excluded from all three model counts.
 `global_fallback_cores` counts intervals that used the sample-wide model because their
-chromosome could not provide the requested span and fragment count for a local fit.
+chromosome could not provide the requested eligible-base and fragment counts for a local fit.
 `poisson_boundary_cores` counts intervals where the second fit found no extra
 negative-binomial variation. All ZIP fits fall in this group. ZINB can also do so.
 
@@ -328,8 +332,13 @@ Both account for additional zero-coverage positions, as explained below.
 `chromosome`, `start`, and `end` locate the interval where this model was applied.
 `context_start` and `context_end` locate the larger region used to estimate it.
 `model_source` is `local` when that chromosome supplied enough context. It is
-`global_fallback` when the whole chromosome could not meet the requested context span
+`global_fallback` when the whole chromosome could not meet the requested eligible-base minimum
 and fragment count, so the sample-wide model was used.
+
+`--bin-size` sets the minimum number of eligible bases in a fitting context. Blacklisted
+bases do not count, but eligible zero-coverage bases do. Contexts expand by complete cores
+on both available sides until this minimum and `--min-context-fragments` are met.
+Their physical span can therefore be larger than `--bin-size`.
 
 `eligible_positions` and `fragments_by_midpoint` describe the recorded chromosome
 context, including for fallback rows. `fragments_by_midpoint` counts accepted fragments
@@ -464,6 +473,7 @@ Metadata names and counters
 `model_core_size` maps to `--stride`, `minimum_context_span` to `--bin-size`,
 `minimum_context_fragment_support` to `--min-context-fragments`, `minimum_mapping_quality`
 to `--min-mapq`, and `fragment_length_range` to the accepted fragment length limits.
+Despite its current name, `minimum_context_span` records an eligible-base minimum, not a physical span.
 `detector` records the two-stage algorithm as well as family. Automatic-only
 `automatic_probability_denominator` and `tail_probability_multiplier` are `NA` with manual alpha. `eligible_positions` remains
 available. Names will be reviewed together with the CLI and consumers.

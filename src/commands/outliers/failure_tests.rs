@@ -114,7 +114,7 @@ fn blocked_companion_reports_its_destination_without_touching_normal_results() {
     let failure = write_failure_report(&config, &error).unwrap_err();
 
     let diagnostic = format!("{failure:#}");
-    assert!(diagnostic.contains("moving output file"), "{diagnostic}");
+    assert!(diagnostic.contains("regular file"), "{diagnostic}");
     assert!(
         diagnostic.contains(histogram.to_str().unwrap()),
         "{diagnostic}"
@@ -124,4 +124,55 @@ fn blocked_companion_reports_its_destination_without_touching_normal_results() {
         "previous normal results"
     );
     assert!(histogram.is_dir());
+    assert!(
+        !directory
+            .path()
+            .join("sample.outliers.error_audit.tsv")
+            .exists()
+    );
+    assert!(!directory.path().join("sample.outliers.error.txt").exists());
+}
+
+#[test]
+fn any_blocked_destination_leaves_all_previous_diagnostics_untouched() {
+    for blocked_index in 0..3 {
+        let directory = tempfile::tempdir().unwrap();
+        let mut config = report_config(directory.path());
+        config.set_output_prefix("sample");
+        let paths = ["error_histogram.tsv", "error_audit.tsv", "error.txt"]
+            .map(|suffix| directory.path().join(format!("sample.outliers.{suffix}")));
+        for (index, path) in paths.iter().enumerate() {
+            if index == blocked_index {
+                std::fs::create_dir(path).unwrap();
+            } else {
+                std::fs::write(path, "previous diagnostic").unwrap();
+            }
+        }
+        let error = anyhow::Error::new(AnalysisFailures {
+            stage: "model fitting",
+            messages: vec!["current analysis failed".into()],
+            histogram: Some("current histogram\n".into()),
+            audit: Some("current audit\n".into()),
+        });
+
+        let diagnostic = write_failure_report(&config, &error).unwrap_err();
+
+        let message = format!("{diagnostic:#}");
+        assert!(message.contains("regular file"), "{message}");
+        assert!(
+            message.contains(paths[blocked_index].to_str().unwrap()),
+            "{message}"
+        );
+        for (index, path) in paths.iter().enumerate() {
+            if index == blocked_index {
+                assert!(path.is_dir());
+            } else {
+                assert_eq!(
+                    std::fs::read_to_string(path).unwrap(),
+                    "previous diagnostic"
+                );
+            }
+        }
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 3);
+    }
 }

@@ -28,6 +28,43 @@ fn rejects_manual_probability_with_nondefault_automatic_multiplier() {
 }
 
 #[test]
+fn automatic_multiplier_must_be_finite_and_positive() {
+    let mut config = config();
+    for multiplier in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -1.0] {
+        config.set_tail_probability_multiplier(multiplier);
+        let error = config.validate().unwrap_err();
+        assert!(error.to_string().contains("tail_probability_multiplier"));
+    }
+    for multiplier in [0.5, 1.0, 2.5] {
+        config.set_tail_probability_multiplier(multiplier);
+        config
+            .validate()
+            .expect("positive finite automatic multiplier");
+    }
+}
+
+#[test]
+fn manual_probability_accepts_its_upper_bound_and_rejects_invalid_values() {
+    let mut config = config();
+    for probability in [
+        f64::NAN,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        0.0,
+        -0.1,
+        0.500_001,
+    ] {
+        config.set_tail_probability(Some(probability));
+        let error = config.validate().unwrap_err();
+        assert!(error.to_string().contains("tail_probability"));
+    }
+    for probability in [1e-12, 0.5] {
+        config.set_tail_probability(Some(probability));
+        config.validate().expect("manual probability in (0, 0.5]");
+    }
+}
+
+#[test]
 fn rejects_paired_only_filters_when_reads_are_fragments() {
     let mut ignore_gap_config = config();
     ignore_gap_config.unpaired.reads_are_fragments = true;
@@ -52,14 +89,14 @@ fn rejects_paired_only_filters_when_reads_are_fragments() {
 }
 
 #[test]
-fn rejects_model_core_larger_than_the_minimum_context_span() {
+fn rejects_model_core_larger_than_the_minimum_eligible_context_size() {
     let mut config = config();
     config.set_stride(500_000);
     config.set_bin_size(250_000);
 
     let error = config
         .validate()
-        .expect_err("a fitting context cannot be smaller than its core");
+        .expect_err("the eligible context minimum must be at least the core size");
 
     assert!(
         error

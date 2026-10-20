@@ -226,14 +226,7 @@ fn draw_detailed_fit_panel(
     let y_axis_end = maximum_log_count * 1.05;
     let mut chart = ChartBuilder::on(area)
         .caption(
-            global_model
-                .map(|model| {
-                    format!(
-                        "Raw coverage histogram with global {} fits",
-                        model.family.as_str().to_uppercase()
-                    )
-                })
-                .unwrap_or_else(|| "Raw coverage histogram (linear coverage axis)".to_string()),
+            "Raw coverage histogram (linear coverage axis)",
             ("sans-serif", 32),
         )
         .margin(20)
@@ -342,9 +335,9 @@ fn draw_detailed_fit_panel(
             INITIAL_THRESHOLD_COLOR.stroke_width(3),
         )))?
         .label(format!(
-            "T1 initial cutoff, core min/mean/max: {}/{:.1}/{}",
-            local_diagnostics.initial_summary.minimum,
+            "T1 cutoff: mean {:.1} (thick), min/max {}/{} (thin)",
             local_diagnostics.initial_summary.mean_across_cores,
+            local_diagnostics.initial_summary.minimum,
             local_diagnostics.initial_summary.maximum
         ))
         .legend(|(left, top)| {
@@ -375,9 +368,9 @@ fn draw_detailed_fit_panel(
             FINAL_THRESHOLD_COLOR.stroke_width(3),
         )))?
         .label(format!(
-            "T2 final cutoff, core min/mean/max: {}/{:.1}/{}",
-            local_diagnostics.final_summary.minimum,
+            "T2 cutoff: mean {:.1} (thick), min/max {}/{} (thin)",
             local_diagnostics.final_summary.mean_across_cores,
+            local_diagnostics.final_summary.minimum,
             local_diagnostics.final_summary.maximum
         ))
         .legend(|(left, top)| {
@@ -390,6 +383,7 @@ fn draw_detailed_fit_panel(
     chart
         .configure_series_labels()
         .label_font(("sans-serif", 22))
+        .position(SeriesLabelPosition::UpperRight)
         .background_style(WHITE.mix(0.85))
         .border_style(BLACK)
         .draw()?;
@@ -409,7 +403,7 @@ fn draw_complete_histogram_panel(
     let y_axis_end = maximum_log_count * 1.05;
     let mut chart = ChartBuilder::on(area)
         .caption(
-            "Same raw coverage histogram (log coverage axis)",
+            "Raw coverage histogram (log coverage axis)",
             ("sans-serif", 32),
         )
         .margin(20)
@@ -509,19 +503,36 @@ fn draw_complete_histogram_panel(
         )))?;
     }
     for (label, color) in [
-        ("T1 initial cutoff: min/mean/max", INITIAL_THRESHOLD_COLOR),
-        ("T2 final cutoff: min/mean/max", FINAL_THRESHOLD_COLOR),
+        (
+            format!(
+                "T1 cutoff: mean {:.1} (thick), min/max {}/{} (thin)",
+                local_diagnostics.initial_summary.mean_across_cores,
+                local_diagnostics.initial_summary.minimum,
+                local_diagnostics.initial_summary.maximum
+            ),
+            INITIAL_THRESHOLD_COLOR,
+        ),
+        (
+            format!(
+                "T2 cutoff: mean {:.1} (thick), min/max {}/{} (thin)",
+                local_diagnostics.final_summary.mean_across_cores,
+                local_diagnostics.final_summary.minimum,
+                local_diagnostics.final_summary.maximum
+            ),
+            FINAL_THRESHOLD_COLOR,
+        ),
     ] {
         chart
             .draw_series(std::iter::empty::<PathElement<(f64, f64)>>())?
             .label(label)
             .legend(move |(left, top)| {
-                PathElement::new([(left, top), (left + 30, top)], color.stroke_width(2))
+                PathElement::new([(left, top), (left + 30, top)], color.stroke_width(3))
             });
     }
     chart
         .configure_series_labels()
         .label_font(("sans-serif", 22))
+        .position(SeriesLabelPosition::UpperRight)
         .background_style(WHITE.mix(0.85))
         .border_style(BLACK)
         .draw()?;
@@ -532,12 +543,20 @@ fn draw_complete_histogram_panel(
 ///
 /// Chromosome names are centered over their cores and alternate between two rows to leave
 /// room for neighboring short chromosomes. Both tracks retain the same core order and boundaries.
+/// Legends sit below the axes so they cannot obscure data or chromosome labels.
 fn draw_local_model_panel(
     area: &DrawingArea<BitMapBackend<'_>, plotters::coord::Shift>,
     diagnostics: &LocalModelDiagnostics,
     title: &str,
     series: [(&str, &[Option<f64>], RGBColor); 2],
 ) -> Result<()> {
+    let (chart_area, legend_area) = area.split_vertically(area.dim_in_pixel().1.saturating_sub(45));
+    let (legend_width, legend_height) = legend_area.dim_in_pixel();
+    let legend_column_width = legend_width / series.len() as u32;
+    let legend_text_style = ("sans-serif", 22)
+        .into_font()
+        .color(&BLACK)
+        .pos(Pos::new(HPos::Left, VPos::Center));
     let number_of_cores = diagnostics.initial_thresholds.len();
     let maximum_value = series
         .iter()
@@ -546,7 +565,7 @@ fn draw_local_model_panel(
         .max(f64::EPSILON);
     // Leave two rows above the data for chromosome labels, independent of the coverage scale
     let y_axis_end = maximum_value * 1.35;
-    let mut chart = ChartBuilder::on(area)
+    let mut chart = ChartBuilder::on(&chart_area)
         .caption(title, ("sans-serif", 32))
         .margin(20)
         .x_label_area_size(75)
@@ -593,22 +612,24 @@ fn draw_local_model_panel(
     for (series_index, (label, values, color)) in series.into_iter().enumerate() {
         // A larger first marker remains visible when both fitted quantities coincide
         let radius = if series_index == 0 { 3 } else { 2 };
-        chart
-            .draw_series(values.iter().enumerate().filter_map(|(index, &value)| {
-                value.map(|value| Circle::new((index as f64 + 0.5, value), radius, color.filled()))
-            }))?
-            .label(label)
-            .legend(move |(left, top)| {
-                PathElement::new([(left, top), (left + 30, top)], color.stroke_width(2))
-            });
+        chart.draw_series(values.iter().enumerate().filter_map(|(index, &value)| {
+            value.map(|value| Circle::new((index as f64 + 0.5, value), radius, color.filled()))
+        }))?;
+
+        let label_width = legend_area.estimate_text_size(label, &legend_text_style)?.0 as i32;
+        let column_start = series_index as i32 * legend_column_width as i32;
+        let legend_left = column_start + (legend_column_width as i32 - label_width - 40) / 2;
+        let legend_top = legend_height as i32 / 2;
+        legend_area.draw(&PathElement::new(
+            [(legend_left, legend_top), (legend_left + 30, legend_top)],
+            color.stroke_width(2),
+        ))?;
+        legend_area.draw(&Text::new(
+            label,
+            (legend_left + 40, legend_top),
+            legend_text_style.clone(),
+        ))?;
     }
-    chart
-        .configure_series_labels()
-        .label_font(("sans-serif", 22))
-        .position(SeriesLabelPosition::LowerRight)
-        .background_style(WHITE.mix(0.85))
-        .border_style(BLACK)
-        .draw()?;
     Ok(())
 }
 

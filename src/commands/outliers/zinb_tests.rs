@@ -160,12 +160,19 @@ fn truncated_profile_ignores_excluded_counts_and_normalizes_sample_size() {
 
 #[test]
 fn profile_rejects_empty_zero_only_and_overflowing_retained_samples() {
-    for histogram in [
-        CoverageCounts::new(),
-        [(0, 0), (1, 0)].into_iter().collect(),
-        [(0, 10), (1, 0), (3, 100)].into_iter().collect(),
+    for (histogram, expected_reason) in [
+        (CoverageCounts::new(), "without retained eligible positions"),
+        (
+            [(0, 0), (1, 0)].into_iter().collect(),
+            "without retained eligible positions",
+        ),
+        (
+            [(0, 10), (1, 0), (3, 100)].into_iter().collect(),
+            "every retained position has zero coverage",
+        ),
     ] {
-        assert!(ProfiledHistogram::new(&histogram, Some(3)).is_err());
+        let error = ProfiledHistogram::new(&histogram, Some(3)).err().unwrap();
+        assert!(error.to_string().contains(expected_reason), "{error:#}");
     }
     let overflowing = [(0, u64::MAX), (1, 1)].into_iter().collect();
     let error = ProfiledHistogram::new(&overflowing, None).err().unwrap();

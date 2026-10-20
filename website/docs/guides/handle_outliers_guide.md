@@ -46,10 +46,12 @@ counts each accepted alignment separately. Alignment D/N gaps contribute no cove
 `--ignore-gap` also omits the inter-mate gap. These positions remain eligible unless masked.
 The detector does not read reference sequence, so unmasked reference gaps remain eligible zeros.
 
-Local contexts expand until their span and accepted midpoint fragment support are sufficient.
+Local contexts expand until they contain enough eligible bases and accepted midpoint fragments.
+`--bin-size` sets the eligible-base minimum, including zeros. Blacklisted bases do not count,
+so heavily masked regions need a wider physical context.
 A chromosome that cannot provide both uses a pooled model from all selected chromosomes.
 No pooled model is fitted when every chromosome has enough support. Automatic alpha depends
-on the selected eligible span. Detect once over the intended chromosomes and consume subsets.
+on the selected eligible bases. Detect once over the intended chromosomes and consume subsets.
 Using the same manual alpha in separate runs cannot reproduce a different pooled fallback.
 
 ## Inspect the results

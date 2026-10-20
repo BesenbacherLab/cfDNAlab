@@ -272,7 +272,7 @@ pub struct OutliersConfig {
     /// Spacing (bp) of local coverage estimates along each chromosome `[integer]`
     ///
     /// Split each chromosome into intervals of this size. Each interval uses a single coverage
-    /// cutoff estimated from a larger surrounding region, whose minimum size is `--bin-size`.
+    /// cutoff estimated from a larger surrounding region, whose eligible-base minimum is `--bin-size`.
     /// Smaller values update the cutoff more frequently but require more model fits.
     #[cfg_attr(
         feature = "cli",
@@ -280,11 +280,12 @@ pub struct OutliersConfig {
     )]
     pub stride: u32,
 
-    /// Minimum total size (bp) of the region used to estimate local coverage `[integer]`
+    /// Minimum number of eligible bases used to estimate local coverage `[integer]`
     ///
     /// Start with the central interval defined by `--stride`, then add an interval on each side
-    /// until the total span reaches this minimum. For example, 500 kb intervals with a 5 Mb
-    /// minimum give centered spans of 0.5, 1.5, 2.5, ..., 5.5 Mb.
+    /// until their eligible bases reach this minimum. Include zero-coverage bases, but exclude
+    /// blacklisted bases. The physical span can therefore be larger. Without blacklists, 500 kb
+    /// intervals with a 5 Mb minimum give centered spans of 0.5, 1.5, 2.5, ..., 5.5 Mb.
     ///
     /// At chromosome ends, expansion continues on the available side. The region can grow further
     /// if needed to include `--min-context-fragments` fragments.
@@ -297,9 +298,9 @@ pub struct OutliersConfig {
     /// Minimum number of fragments used to estimate local coverage `[integer]`
     ///
     /// Count fragments whose midpoint is inside the surrounding region and outside the blacklists.
-    /// If there are too few, expand beyond `--bin-size` until this number is reached.
+    /// If there are too few, keep expanding after the eligible-base minimum is reached.
     ///
-    /// If the whole chromosome cannot provide both the requested span and fragment count, use
+    /// If the whole chromosome cannot provide both the eligible-base minimum and fragment count, use
     /// the coverage model estimated from all selected chromosomes instead.
     #[cfg_attr(
         feature = "cli",
@@ -540,7 +541,7 @@ impl OutliersConfig {
         self.stride = stride;
     }
 
-    /// Set the minimum genomic span of each adaptive local fitting context.
+    /// Set the minimum eligible-base count of each adaptive local fitting context, including zeros.
     pub fn set_bin_size(&mut self, bin_size: u32) {
         self.bin_size = bin_size;
     }

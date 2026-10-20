@@ -31,11 +31,22 @@ fn earlier_window_maximum_updates_later_calls_and_cutoff_equality_is_not_flagged
     let regions = [call(10_000, 12_500), call(20_000, 22_500)];
     let decisions = evaluate_regions(&config(), &regions, &[], 500_000).unwrap();
     // The first window contains 5,000 called bases in 100,000 eligible bases, exactly 5%
+    assert_eq!(decisions.calls.len(), 2);
+    assert_eq!(decisions.merged_regions.len(), 2);
     for decision in &decisions.calls {
         assert_eq!(decision.window.score, 5.0);
-        assert_eq!(decision.window.interval.start(), 10_000);
+        assert_eq!(decision.window.interval.as_tuple(), (10_000, 110_000));
+        assert_eq!(decision.window.called_positions, 5_000);
+        assert_eq!(decision.window.eligible_positions, 100_000);
+        assert!(!decision.window.backward);
         assert!(!decision.flagged);
     }
+    assert!(
+        decisions
+            .merged_regions
+            .iter()
+            .all(|region| !region.preserved)
+    );
 }
 
 #[test]
@@ -207,15 +218,16 @@ fn preservation_propagates_through_all_touching_flanks() {
 
 #[test]
 fn empty_call_set_and_interval_prefix_boundaries_are_valid() {
-    assert!(
-        evaluate_regions(&config(), &[], &[], 200_000)
-            .unwrap()
-            .calls
-            .is_empty()
-    );
+    let empty = evaluate_regions(&config(), &[], &[], 200_000).unwrap();
+    assert!(empty.calls.is_empty());
+    assert!(empty.merged_regions.is_empty());
     let lengths =
         IntervalLengths::new(Interval::from_tuples(&[(10_u64, 20), (15, 30), (40, 50)]).unwrap());
     assert_eq!(lengths.within(Interval::new(20, 40).unwrap()), 10);
     assert_eq!(lengths.within(Interval::new(30, 40).unwrap()), 0);
     assert_eq!(lengths.within(Interval::new(0, 100).unwrap()), 30);
+    assert_eq!(lengths.within(Interval::new(10, 20).unwrap()), 10);
+    assert_eq!(lengths.within(Interval::new(15, 30).unwrap()), 15);
+    // Half-open [29,41) includes only base 29 from the first union and base 40 from the second
+    assert_eq!(lengths.within(Interval::new(29, 41).unwrap()), 2);
 }

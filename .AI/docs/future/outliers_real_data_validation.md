@@ -37,12 +37,13 @@ This list does not authorize normalization changes.
   and filtering. Separate sampling noise, structural zeros, technical excess, and copy-number
   changes. The simulated CV values are not measured library estimates. Assess spatial scale
   and tail shape rather than substituting observed count CV for underlying rate CV.
-- [ ] Compare minimum fitting spans of 5, 10 and 20 Mb at the same 500 kb stride, masks and tail
-  probability. Reuse saved core histograms for fitting comparisons. Include the control's chr1
+- [ ] Compare fitting minima of 5, 10 and 20 million eligible bases at the same 500 kb stride,
+  masks and tail probability. Reuse saved core histograms for fitting comparisons. Include the control's chr1
   region near 16.6 Mb and chr21's first usable cores at 8.5-10 Mb, whose supplied models have
   T2=464 and contexts containing only 719,053 eligible bases.
-  Assess whether context expansion should require eligible-base support alongside physical span
-  and midpoint-assigned fragments. Track actual context spans, fitted means, dispersion, optimizer
+  Context expansion now requires the configured eligible-base minimum and midpoint-assigned
+  fragment support. Reassess these previously undersupported regions. Track eligible support,
+  actual physical context spans, fitted means, dispersion, optimizer
   agreement and T1/T2. Check whether a localized excess raises cutoffs
   across neighboring cores, and whether larger contexts dilute that effect or spread it farther.
   Include broad copy-number changes before choosing a default. Smoother cutoffs alone do not
