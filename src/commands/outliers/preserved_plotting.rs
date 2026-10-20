@@ -112,7 +112,7 @@ pub(super) struct PreservedPlotData<'a> {
     pub(super) region: &'a PreservedRegion,
     pub(super) coverage: &'a CoverageBins,
     pub(super) close_up: &'a CoverageBins,
-    pub(super) models: &'a [CoreModel],
+    pub(super) models: &'a [Option<CoreModel>],
     pub(super) blacklist: &'a [Interval<u64>],
     pub(super) calls: &'a [CalledRegion],
     pub(super) decisions: &'a ChromosomeDecisions,
@@ -184,6 +184,7 @@ fn draw_coverage_panel(
     let models = data
         .models
         .iter()
+        .flatten()
         .filter(|model| model.core.intersects(interval))
         .collect::<Vec<_>>();
     let maximum = bins

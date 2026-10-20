@@ -83,8 +83,141 @@ fn supported_local_models_skip_the_pooled_fit() {
     assert!(
         models["chr1"]
             .iter()
-            .all(|model| model.source == ModelSource::Local)
+            .all(|model| model.as_ref().unwrap().source == ModelSource::Local)
     );
+}
+
+#[test]
+fn fully_blacklisted_cores_keep_empty_grid_slots_between_eligible_models() {
+    let chromosomes = vec!["chr1".to_string()];
+    let mut histograms = cores(5);
+    for index in [0, 2, 4] {
+        histograms[index].counts.clear();
+        histograms[index].fragment_support = 0;
+    }
+    let histograms = [("chr1".to_string(), histograms)].into_iter().collect();
+    let pooled = sum_global_histogram(&histograms).unwrap();
+
+    let fitted = fit_core_models(
+        &chromosomes,
+        &histograms,
+        &pooled,
+        OutlierModel::Zip,
+        0.01,
+        500_000,
+        100,
+    )
+    .unwrap();
+
+    // Masking the first, middle and last cores must not move either remaining grid slot
+    let models = &fitted.by_chromosome["chr1"];
+    assert!(fitted.global.is_none());
+    assert_eq!(models.len(), 5);
+    for index in [0, 2, 4] {
+        assert!(models[index].is_none());
+    }
+    for (index, bounds) in [(1, (500_000, 1_000_000)), (3, (1_500_000, 2_000_000))] {
+        let model = models[index].as_ref().unwrap();
+        assert_eq!(model.core.as_tuple(), bounds);
+        assert_eq!(model.context.as_tuple(), bounds);
+        assert_eq!(model.eligible_positions, 1_000);
+    }
+}
+
+#[test]
+fn fully_blacklisted_chromosome_does_not_request_an_unused_global_fit() {
+    let chromosomes = vec!["chr1".to_string(), "masked".to_string()];
+    let mut masked = cores(1);
+    // A stored zero-count bin is also empty support, rather than observed zero coverage
+    masked[0].counts = [(0, 0)].into_iter().collect();
+    masked[0].fragment_support = 0;
+    let histograms = [
+        ("chr1".to_string(), cores(2)),
+        ("masked".to_string(), masked),
+    ]
+    .into_iter()
+    .collect();
+    let mut unusable_pooled = CoreHistogram::new(Interval::new(0, 1).unwrap());
+    unusable_pooled.counts.insert(0, 1_000);
+
+    let fitted = fit_core_models(
+        &chromosomes,
+        &histograms,
+        &unusable_pooled,
+        OutlierModel::Zip,
+        0.01,
+        500_000,
+        100,
+    )
+    .unwrap();
+
+    assert!(fitted.global.is_none());
+    assert!(fitted.by_chromosome["chr1"].iter().all(Option::is_some));
+    assert_eq!(fitted.by_chromosome["masked"].len(), 1);
+    assert!(fitted.by_chromosome["masked"][0].is_none());
+}
+
+#[test]
+fn global_fallback_is_assigned_only_to_cores_with_eligible_positions() {
+    let chromosomes = vec!["chr1".to_string()];
+    let mut histograms = cores(3);
+    for index in [0, 2] {
+        histograms[index].counts.clear();
+        histograms[index].fragment_support = 0;
+    }
+    let histograms = [("chr1".to_string(), histograms)].into_iter().collect();
+    let pooled = sum_global_histogram(&histograms).unwrap();
+
+    let fitted = fit_core_models(
+        &chromosomes,
+        &histograms,
+        &pooled,
+        OutlierModel::Zip,
+        0.01,
+        2_000_000,
+        100,
+    )
+    .unwrap();
+
+    // The chromosome is only 1.5 Mb long, so its sole eligible core needs the pooled model
+    let models = &fitted.by_chromosome["chr1"];
+    assert_eq!(models.len(), 3);
+    assert!(models[0].is_none());
+    assert!(models[2].is_none());
+    let model = models[1].as_ref().unwrap();
+    assert_eq!(model.core.as_tuple(), (500_000, 1_000_000));
+    assert_eq!(model.source, ModelSource::GlobalFallback);
+    assert_eq!(Some(model.model), fitted.global);
+}
+
+#[test]
+fn unused_context_does_not_add_a_failure_for_an_eligible_zero_coverage_core() {
+    let chromosomes = vec!["chr1".to_string()];
+    let masked = CoreHistogram::new(Interval::new(0, 500_000).unwrap());
+    let mut observed_zero = CoreHistogram::new(Interval::new(500_000, 1_000_000).unwrap());
+    observed_zero.counts.insert(0, 500_000);
+    observed_zero.fragment_support = 1_000;
+    let histograms = [("chr1".to_string(), vec![masked, observed_zero])]
+        .into_iter()
+        .collect();
+    let pooled = sum_global_histogram(&histograms).unwrap();
+
+    let error = fit_core_models(
+        &chromosomes,
+        &histograms,
+        &pooled,
+        OutlierModel::Zip,
+        0.01,
+        1_000_000,
+        1_000,
+    )
+    .unwrap_err();
+
+    // Real eligible zeros still fail their required fit. The masked core needs no fit at all
+    let failures = error.downcast_ref::<AnalysisFailures>().unwrap();
+    assert_eq!(failures.messages.len(), 1);
+    assert!(failures.messages[0].contains("core (500000, 1000000)"));
+    assert!(failures.messages[0].contains("zero coverage"));
 }
 
 #[test]
@@ -140,6 +273,7 @@ fn short_contig_assigns_the_global_fallback_model_to_every_core() {
     let chromosome_models = models.get("chr1").expect("chromosome models");
     assert_eq!(chromosome_models.len(), 4);
     for model in chromosome_models {
+        let model = model.as_ref().unwrap();
         assert_eq!(model.source, ModelSource::GlobalFallback);
         assert_eq!(Some(model.model), global_model);
         assert_eq!(model.context.as_tuple(), (0, 2_000_000));

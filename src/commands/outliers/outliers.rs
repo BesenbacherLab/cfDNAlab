@@ -484,7 +484,7 @@ fn write_preserved_plots(
     groups: &[PreservedRegion],
     calls_by_chromosome: &FxHashMap<String, Vec<CalledRegion>>,
     decisions_by_chromosome: &FxHashMap<String, ChromosomeDecisions>,
-    models_by_chromosome: &FxHashMap<String, Vec<CoreModel>>,
+    models_by_chromosome: &FxHashMap<String, Vec<Option<CoreModel>>>,
     blacklists: &FxHashMap<String, Vec<Interval<u64>>>,
     paths: &OutputPaths,
     final_outputs: &mut FinalOutputFiles,
@@ -818,14 +818,15 @@ fn merge_histogram_pass_results(
 
 /// Call positions in one processing tile's core using models fitted in the first pass.
 ///
-/// Each model core supplies T2 and a correction target from its broader fitting context
-/// (normally 5.5 Mb for a centered context with the default settings). A call can cross model-core
-/// boundaries. The returned pieces stop at this processing tile's boundary and are joined later.
+/// Each core with eligible bases supplies T2 and a correction target from its broader fitting
+/// context (normally 5.5 Mb for a centered context with the default settings). Fully blacklisted
+/// cores need no model and end any open call. Calls can cross other model-core boundaries.
+/// The returned pieces stop at this processing tile's boundary and are joined later.
 fn process_calling_pass_tile(
     config: &OutliersConfig,
     tile: &Tile,
     blacklist: &[Interval<u64>],
-    chromosome_models: &[CoreModel],
+    chromosome_models: &[Option<CoreModel>],
 ) -> Result<CallingPassTileResult> {
     let tile_coverage = build_tile_coverage(config, tile, blacklist, false)?;
     let coverage = tile_coverage
@@ -847,12 +848,6 @@ fn process_calling_pass_tile(
         let absolute_position = tile.core_start() + local_position as u32;
         // The stride locates the model core whose fitted threshold applies at this position
         let core_index = (absolute_position / config.stride) as usize;
-        let model = chromosome_models.get(core_index).with_context(|| {
-            format!(
-                "missing core model {} for chromosome '{}' position {}",
-                core_index, tile.chr, absolute_position
-            )
-        })?;
         let eligible = mask.is_none_or(|values| values[local_position] == 0);
         let rounded_coverage = coverage_value.round();
         ensure!(
@@ -862,9 +857,27 @@ fn process_calling_pass_tile(
             "raw coverage must be a finite nonnegative integer, got {}",
             coverage_value
         );
-        let is_outlier = eligible && rounded_coverage >= model.model.final_threshold as f32;
+        // Fully blacklisted cores have no model. Every eligible position, including a zero,
+        // must still resolve its original grid slot rather than silently skipping missing fits
+        let model = if eligible {
+            Some(
+                chromosome_models
+                    .get(core_index)
+                    .and_then(Option::as_ref)
+                    .with_context(|| {
+                        format!(
+                            "missing core model {} for chromosome '{}' eligible position {}",
+                            core_index, tile.chr, absolute_position
+                        )
+                    })?,
+            )
+        } else {
+            None
+        };
 
-        if is_outlier {
+        if let Some(model) =
+            model.filter(|model| rounded_coverage >= model.model.final_threshold as f32)
+        {
             current_start.get_or_insert(absolute_position);
             observed_mass += rounded_coverage as f64;
             maximum_coverage = maximum_coverage.max(rounded_coverage as u32);

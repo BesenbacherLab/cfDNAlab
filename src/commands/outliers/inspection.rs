@@ -210,17 +210,19 @@ fn summarize_calls(
     decisions: &ChromosomeDecisions,
     eligible_positions: u64,
     masked: &IntervalLengths,
-    models: &[CoreModel],
+    models: &[Option<CoreModel>],
 ) -> CallSummary {
     let mut summary = CallSummary {
         eligible_positions,
-        model_cores: models.len() as u64,
+        model_cores: models.iter().flatten().count() as u64,
         global_fallback_cores: models
             .iter()
+            .flatten()
             .filter(|model| model.source == ModelSource::GlobalFallback)
             .count() as u64,
         poisson_boundary_cores: models
             .iter()
+            .flatten()
             .filter(|model| model.model.underlying_fit.dispersion == 0.0)
             .count() as u64,
         ..CallSummary::default()
@@ -325,7 +327,7 @@ pub(super) fn write_call_outputs(
     decisions_by_chromosome: &FxHashMap<String, ChromosomeDecisions>,
     blacklists: &FxHashMap<String, Vec<Interval<u64>>>,
     histograms: &FxHashMap<String, Vec<CoreHistogram>>,
-    models: &FxHashMap<String, Vec<CoreModel>>,
+    models: &FxHashMap<String, Vec<Option<CoreModel>>>,
     paths: &OutputPaths,
     final_outputs: &mut FinalOutputFiles,
 ) -> Result<(CallSummary, Vec<PreservedRegion>)> {

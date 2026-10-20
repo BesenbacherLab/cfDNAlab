@@ -158,7 +158,8 @@ If you supplied an output prefix, it appears before each filename below.
     preserved-region table, or use a fresh prefix for each attempt.
 
 `outliers.models.tsv`
-    The coverage model and cutoff used in each consecutive `--stride` interval.
+    The coverage model and cutoff used in each `--stride` interval with eligible bases.
+    Fully blacklisted intervals have no model and are omitted from this table.
     Each model is usually estimated from a larger surrounding region, its context.
     Use this table to find the background mean and cutoff at a particular location.
     The model-column reference below also explains the fit diagnostics.
@@ -166,11 +167,12 @@ If you supplied an output prefix, it appears before each filename below.
 `outliers.global_fit.png`
     A quick overview of the observed coverage distribution and fitted models.
     The first two panels compare the sample-wide fit with observed coverage when a
-    global fallback is required. Otherwise they show observations and local threshold
-    summaries, explicitly labeled "global fit not needed".
-    The bottom panel shows the fitted means and applied cutoffs along labeled chromosomes.
-    Its x coordinate is the cumulative model-core index in selected chromosome order,
-    matching consecutive rows in `outliers.models.tsv`. The unconditional mean is diagnostic.
+    global fallback is required. Both show the same raw histogram, using linear and
+    logarithmic coverage axes. Local threshold summaries include only fitted models.
+    The lower panels show applied cutoffs and fitted means on separate scales along
+    labeled chromosomes. Their x coordinate is the cumulative grid-core index in selected
+    chromosome order. Fully blacklisted intervals remain gaps at their original positions.
+    The unconditional mean is diagnostic.
     The active-component mean is the correction target only for `--target local-mean`.
     Sample-wide cutoffs in the first two panels are references, not universal cutoffs
     applied everywhere. Local cutoffs are recorded in `outliers.models.tsv`.
@@ -239,6 +241,7 @@ blacklist, including blacklisted bases and gaps between their calls.
 `eligible_positions` in the same row.
 
 `model_cores` counts the `--stride` intervals that received a coverage model.
+Fully blacklisted intervals are excluded from all three model counts.
 `global_fallback_cores` counts intervals that used the sample-wide model because their
 chromosome could not provide the requested span and fragment count for a local fit.
 `poisson_boundary_cores` counts intervals where the second fit found no extra

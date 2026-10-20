@@ -258,7 +258,7 @@ pub(super) fn write_diagnostic_outputs(
     metadata: &OutputMetadata<'_>,
     global_histogram: &CoreHistogram,
     global_model: Option<TwoStageCoverageModel>,
-    models_by_chromosome: &FxHashMap<String, Vec<CoreModel>>,
+    models_by_chromosome: &FxHashMap<String, Vec<Option<CoreModel>>>,
     output_paths: &OutputPaths,
     final_outputs: &mut FinalOutputFiles,
 ) -> Result<()> {
@@ -274,7 +274,7 @@ pub(super) fn write_diagnostic_outputs(
         let models = models_by_chromosome
             .get(chromosome)
             .with_context(|| format!("missing models for chromosome '{chromosome}'"))?;
-        for model in models {
+        for model in models.iter().flatten() {
             write!(
                 models_writer,
                 "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",

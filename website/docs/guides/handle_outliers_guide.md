@@ -111,6 +111,11 @@ A keep weight is the fraction of a fragment's contribution to retain. For exampl
 10%, while zero excludes the fragment. The default target is the estimated background mean.
 Preserved calls are absent from the correction table.
 
+Weighting can be useful when retaining contributions from the same genomic regions matters,
+such as coverage comparisons over fixed reference bins. It reduces the contribution of observed
+fragments. It does not identify which fragments caused the technical excess or reconstruct
+the region's true fragment composition.
+
 Even a 1 bp overlap applies the full regional weight to the whole fragment, including its
 coverage outside the call. If a fragment overlaps several calls, it receives the smallest
 weight. The weights use exact called intervals, without flanks.
@@ -125,9 +130,42 @@ GC correction can be used together with outlier weights. Their weights multiply.
 inspection, start without GC correction, genomic scaling, or length normalization so coverage
 can be compared directly with the detector's mean and cutoff.
 
-### Use a blacklist instead
+### Estimate GC and scaling corrections with outlier weights
 
-The two BED outputs offer exclusion as an alternative to fractional weighting:
+When using `outliers`, supply its keep-weight table to `gc-bias`, `coverage-weights` and
+`fragment-count-weights` whenever you use those commands to estimate corrections for the sample.
+**This is required even when you blacklist the called regions in the final analysis.** Choosing
+which regions to measure is separate from estimating the correction factors.
+
+GC estimation compares the sample's fragment distribution with a reference-genome expectation.
+Blacklisting outliers only in the sample can change its GC composition relative to that reference
+and produce artificial GC corrections. Apply the outlier weights to observed fragments.
+Keep the usual blacklists consistent between `ref-gc-bias` and `gc-bias`, and do not apply
+sample-specific outlier weights to `ref-gc-bias`.
+
+For scaling, unweighted peaks can raise the estimated background across a much wider region,
+causing ordinary neighboring signal to be downweighted. Substituting a blacklist changes the
+amount of usable sequence and can lower fragment totals in the affected bins. Use outlier
+weights when estimating the background, then choose weighting or blacklisting for the final
+measurement.
+
+Detect outliers first. If using GC correction, estimate it with the outlier weights. Estimate
+scaling factors with those same outlier weights and the GC correction if your analysis uses it.
+
+### Use a blacklist for the final measurement
+
+If losing the called positions is acceptable, blacklisting can be simpler than interpreting
+weighted coverage, especially when the calls cover only a small amount of sequence. For coverage
+profiles and regional means, exclude masked positions from the measurement rather than treating
+them as observed zeros.
+
+For fragment length or end motif analyses, exclusion is suitable when the affected fragments'
+composition is unreliable. Removing a region also removes its contribution to those features.
+For counts inside versus outside reference tracks, account for the usable sequence in each group.
+A small excluded fraction of the genome can be a larger fraction of a particular track, and
+adjusting for usable sequence does not restore the missing region's motif or length composition.
+
+Choose between these BED files:
 
 - `outliers.exact.bed` contains the exact called bases selected for correction.
 - `outliers.flanked.bed` adds a buffer on each side and joins overlapping buffers. The buffer

@@ -189,7 +189,11 @@ fn actual_plot_chunk_loop_preserves_a_boundary_peak_masks_and_close_up_resolutio
 ///
 /// Models are assigned explicitly so these tests isolate calling from statistical estimation.
 #[cfg(feature = "testing")]
-fn calling_pass_fixture() -> (crate::testing::TempBam, OutliersConfig, Vec<CoreModel>) {
+fn calling_pass_fixture() -> (
+    crate::testing::TempBam,
+    OutliersConfig,
+    Vec<Option<CoreModel>>,
+) {
     use crate::{
         commands::{
             cli_common::{ChromosomeArgs, IOCArgs},
@@ -245,7 +249,7 @@ fn calling_pass_fixture() -> (crate::testing::TempBam, OutliersConfig, Vec<CoreM
                 underlying_optimizer: None,
             };
             let core = Interval::new(start, end).unwrap();
-            CoreModel {
+            Some(CoreModel {
                 core,
                 context: core,
                 eligible_positions: 100,
@@ -255,7 +259,7 @@ fn calling_pass_fixture() -> (crate::testing::TempBam, OutliersConfig, Vec<CoreM
                 // Diagnostics are unused during calling but must still be valid fixture data
                 diagnostics: diagnose_fit(&[(0, 50), (1, 50)].into_iter().collect(), model)
                     .unwrap(),
-            }
+            })
         })
         .collect();
     (bam, config, models)
@@ -332,15 +336,57 @@ fn masked_model_boundary_splits_calls_and_resets_their_masses() {
 
 #[cfg(feature = "testing")]
 #[test]
+fn fully_blacklisted_core_needs_no_model_and_preserves_neighboring_call_coordinates() {
+    let (_bam, mut config, models) = calling_pass_fixture();
+    config.set_target(OutlierTarget::LocalMean);
+    let whole = Interval::new(0, 1_000_300).unwrap();
+    let tile = Tile::new("chr1".into(), 0, 0, whole, whole).unwrap();
+
+    for (masked_index, mask, expected_interval, observed_mass, target_mass) in [
+        (0, (0_u64, 1_000_000), (1_000_000, 1_000_040), 400.0, 160.0),
+        (1, (1_000_000, 1_000_300), (999_980, 1_000_000), 200.0, 40.0),
+    ] {
+        let mut model_slots = models.clone();
+        model_slots[masked_index] = None;
+        let blacklist = Interval::from_tuples(&[mask]).unwrap();
+
+        let result = process_calling_pass_tile(&config, &tile, &blacklist, &model_slots).unwrap();
+
+        // Ten 60 bp fragments cross the boundary. Masking leaves 40 right or 20 left bases
+        assert_eq!(result.regions.len(), 1);
+        let call = &result.regions[0];
+        assert_eq!(call.interval.as_tuple(), expected_interval);
+        assert_eq!(call.observed_mass, observed_mass);
+        assert_eq!(call.target_mass, target_mass);
+    }
+}
+
+#[cfg(feature = "testing")]
+#[test]
+fn eligible_zero_coverage_position_still_requires_a_model() {
+    let (_bam, config, mut models) = calling_pass_fixture();
+    models[0] = None;
+    let whole = Interval::new(0, 1_000_300).unwrap();
+    let tile = Tile::new("chr1".into(), 0, 0, whole, whole).unwrap();
+
+    let error = process_calling_pass_tile(&config, &tile, &[], &models).unwrap_err();
+
+    // Position zero has no fragments but remains eligible, so a missing model is an error
+    assert!(error.to_string().contains("missing core model 0"));
+    assert!(error.to_string().contains("eligible position 0"));
+}
+
+#[cfg(feature = "testing")]
+#[test]
 fn model_boundary_uses_the_new_threshold_inclusively_without_a_coverage_change() {
     let (_bam, mut config, mut models) = calling_pass_fixture();
     config.set_target(OutlierTarget::LocalMean);
     let whole = Interval::new(0, 1_000_300).unwrap();
     let tile = Tile::new("chr1".into(), 0, 0, whole, whole).unwrap();
 
-    models[1].model.final_threshold = 10;
+    models[1].as_mut().unwrap().model.final_threshold = 10;
     let equal = process_calling_pass_tile(&config, &tile, &[], &models).unwrap();
-    models[1].model.final_threshold = 11;
+    models[1].as_mut().unwrap().model.final_threshold = 11;
     let below = process_calling_pass_tile(&config, &tile, &[], &models).unwrap();
 
     assert_eq!(equal.regions.len(), 1);

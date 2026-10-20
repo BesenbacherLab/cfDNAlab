@@ -971,7 +971,7 @@ fn detected_outlier_weights_flatten_an_extreme_with_complex_poisson_like_backgro
 }
 
 #[test]
-fn boundaries_blacklist_and_short_contig_preserve_calls_and_record_fallback() -> Result<()> {
+fn boundaries_preserve_calls_and_fully_blacklisted_contigs_do_not_request_fallback() -> Result<()> {
     let bam = boundary_blacklist_and_fallback_fixture()?;
     let output_dir = TempDir::new()?;
     let blacklist_path = output_dir.path().join("input_blacklist.bed");
@@ -1040,29 +1040,30 @@ fn boundaries_blacklist_and_short_contig_preserve_calls_and_record_fallback() ->
 
     let models_text = fs::read_to_string(&result.output_models)?;
     let model_lines = data_lines(&models_text);
-    let chr2_fields = model_lines
-        .iter()
-        .skip(1)
-        .map(|line| line.split('\t').collect::<Vec<_>>())
-        .find(|fields| fields[0] == "chr2")
-        .context("chr2 model row")?;
-    assert_eq!(chr2_fields[5], "global_fallback");
-    assert_eq!(&chr2_fields[3..5], &["0", "1000"]);
-    assert_eq!(chr2_fields[6], "0");
-    assert_eq!(chr2_fields[7], "0");
-    assert_eq!(chr2_fields[16], "NaN");
-    assert_eq!(chr2_fields[17], "NaN");
-    assert_eq!(chr2_fields[19], "NaN");
+    assert_eq!(model_lines.len(), 6);
+    assert!(
+        model_lines
+            .iter()
+            .skip(1)
+            .map(|line| line.split('\t').collect::<Vec<_>>())
+            .all(|fields| fields[0] == "chr1" && fields[5] == "local")
+    );
 
     let global_fit = fs::read_to_string(&result.output_global_fit)?;
-    assert!(global_fit.contains("# global_fit_status=required_for_fallback\n"));
-    assert!(global_fit.contains("# initial_component_mean="));
-    assert!(global_fit.contains("# final_threshold=2\n"));
+    assert!(global_fit.contains("# global_fit_status=not_needed\n"));
+    assert!(!global_fit.contains("# initial_component_mean="));
     for row in data_lines(&global_fit).into_iter().skip(1) {
         let fields: Vec<_> = row.split('\t').collect();
-        assert!(fields[2].parse::<f64>()?.is_finite());
-        assert!(fields[3].parse::<f64>()?.is_finite());
+        assert_eq!(&fields[2..], &["NA", "NA"]);
     }
+    let summary = fs::read_to_string(&result.output_summary)?;
+    let masked_summary = data_lines(&summary)
+        .into_iter()
+        .find(|row| row.starts_with("chromosome\tchr2\t"))
+        .context("fully blacklisted chromosome summary")?;
+    let fields: Vec<_> = masked_summary.split('\t').collect();
+    assert_eq!(fields[2], "0");
+    assert_eq!(&fields[20..23], &["0", "0", "0"]);
 
     let exact_text = fs::read_to_string(&result.output_exact_blacklist)?;
     assert_eq!(
@@ -1089,6 +1090,72 @@ fn boundaries_blacklist_and_short_contig_preserve_calls_and_record_fallback() ->
         (weight - 0.1).abs() < 1e-12
     }));
 
+    Ok(())
+}
+
+#[test]
+fn eligible_short_chromosome_still_records_required_global_fallback() -> Result<()> {
+    let bam = paired_outlier_fixture()?;
+    let output = TempDir::new()?;
+    let mut config = base_config(bam.bam_path(), output.path());
+    // The 1 kb chromosome cannot supply the requested 2 kb context. Its observations are
+    // unchanged from the hand-derived ZIP fixture: 880 zeros, 90 ones and 30 twenties
+    config.set_bin_size(2_000);
+
+    let result = run_outliers(&config, RunOptions::new_quiet())?;
+
+    let models = fs::read_to_string(result.output_models)?;
+    let rows = data_lines(&models);
+    assert_eq!(rows.len(), 5);
+    for row in rows.into_iter().skip(1) {
+        let fields: Vec<_> = row.split('\t').collect();
+        assert_eq!(fields[5], "global_fallback");
+        assert_eq!(&fields[3..5], &["0", "1000"]);
+        assert_eq!(fields[6], "1000");
+        assert_eq!(fields[15], "2");
+    }
+    let global = fs::read_to_string(result.output_global_fit)?;
+    assert!(global.contains("# global_fit_status=required_for_fallback\n"));
+    assert!(global.contains("# final_threshold=2\n"));
+    assert_eq!(
+        data_lines(&fs::read_to_string(result.output_exact_blacklist)?),
+        ["chr1\t100\t130"]
+    );
+    Ok(())
+}
+
+#[test]
+fn fully_blacklisted_cores_have_histogram_slots_but_no_model_rows_or_summary_counts() -> Result<()>
+{
+    let bam = paired_outlier_fixture()?;
+    let output = TempDir::new()?;
+    let blacklist = output.path().join("mask.bed");
+    fs::write(&blacklist, "chr1\t250\t500\nchr1\t750\t1000\n")?;
+    let mut config = base_config(bam.bam_path(), output.path());
+    config.set_blacklist(Some(vec![blacklist]));
+
+    let result = run_outliers(&config, RunOptions::new_quiet())?;
+
+    let histogram = read_zst_to_string(&result.output_histograms)?;
+    let histogram_rows = data_lines(&histogram);
+    assert!(histogram_rows.contains(&"chr1\t250\t500\t0\t0\t0"));
+    assert!(histogram_rows.contains(&"chr1\t750\t1000\t0\t0\t0"));
+    let models = fs::read_to_string(result.output_models)?;
+    let model_rows = data_lines(&models);
+    assert_eq!(model_rows.len(), 3);
+    for (row, bounds) in model_rows[1..].iter().zip([["0", "250"], ["500", "750"]]) {
+        let fields: Vec<_> = row.split('\t').collect();
+        assert_eq!(&fields[1..3], &bounds);
+        assert_eq!(fields[5], "local");
+        assert_eq!(fields[6], "500");
+    }
+    let summary = fs::read_to_string(result.output_summary)?;
+    for row in data_lines(&summary).into_iter().skip(1) {
+        let fields: Vec<_> = row.split('\t').collect();
+        // Two of the four 250 bp cores remain eligible. ZIP models are Poisson boundaries
+        assert_eq!(fields[2], "500");
+        assert_eq!(&fields[20..23], &["2", "0", "2"]);
+    }
     Ok(())
 }
 

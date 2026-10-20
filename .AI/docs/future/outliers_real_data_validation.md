@@ -37,6 +37,16 @@ This list does not authorize normalization changes.
   and filtering. Separate sampling noise, structural zeros, technical excess, and copy-number
   changes. The simulated CV values are not measured library estimates. Assess spatial scale
   and tail shape rather than substituting observed count CV for underlying rate CV.
+- [ ] Compare minimum fitting spans of 5, 10 and 20 Mb at the same 500 kb stride, masks and tail
+  probability. Reuse saved core histograms for fitting comparisons. Include the control's chr1
+  region near 16.6 Mb and chr21's first usable cores at 8.5-10 Mb, whose supplied models have
+  T2=464 and contexts containing only 719,053 eligible bases.
+  Assess whether context expansion should require eligible-base support alongside physical span
+  and midpoint-assigned fragments. Track actual context spans, fitted means, dispersion, optimizer
+  agreement and T1/T2. Check whether a localized excess raises cutoffs
+  across neighboring cores, and whether larger contexts dilute that effect or spread it farther.
+  Include broad copy-number changes before choosing a default. Smoother cutoffs alone do not
+  establish better detection or biological retention.
 - [ ] Compare ZIP and the working ZINB model on identical contexts, first examining detection
   and then the final preservation/correction policy. Record fitted dispersion, pi, both means,
   T1/T2, and observed-versus-fitted tails. Assess weakly determined dispersion at low depth.
@@ -150,11 +160,16 @@ This list does not authorize normalization changes.
 
 ## Correction order and recorded settings
 
+Integration across applicable commands is required before release, as recorded in the
+[integration plan](outliers_remaining_work.md#required-integration-before-release). GC/scaling
+estimation must use outlier weights even when the final measurement uses blacklisting.
+The comparisons below assess effects and limitations. They do not gate this design decision.
+
 - [ ] Compare matched raw, outlier-only, GC-only, and combined coverage at selected loci with the
   same fragment filters and masks. Check GC content, mappability, promoter/CpG annotations where
   useful, and independent copy-gain evidence against matched background. Multiplying weights alone
-  does not demonstrate harmful double correction. Keep these consumer comparisons separate from
-  the deferred producer-integration and restore-mean questions.
+  does not demonstrate harmful double correction. Distinguish consumer effects from producer
+  estimation and the separately deferred restore-mean question.
 - [ ] Compare scaling and GC corrections estimated before and after applying residual outlier
   weights, with the same existing blacklist. Show surrounding bins as well as the pileup itself.
   Quantify residual excess mass relative to each smoothing context before judging its importance.
@@ -164,11 +179,8 @@ This list does not authorize normalization changes.
   workflows that mix corrections built with different settings. Record factor identities,
   filters, reference, and sample selection.
 
-When producer integration is requested, apply weights to observed fragment counts in both
-streaming and BED/global GC-estimation branches, alongside existing window-assignment fractions.
-Derive fragment length frequencies from the weighted counts. Do not apply fragment keep weights
-to expected reference counts. Review zero-support windows separately. This is later rollout work,
-not an additional input requirement for the current `fcoverage` consumer.
+Implementation tasks belong in the integration plan. Keep zero-support windows explicit when
+assessing weighted GC estimation and scaling.
 
 ## Model fit, reporting, and performance
 

@@ -39,8 +39,11 @@ Plot-context coordinates are always recorded. Text metadata records `plotting_av
 ## Processing and fitting contexts
 
 `--tile-size` controls BAM processing tiles and memory use. `--stride` controls consecutive
-model cores, each with a histogram, model, and calling threshold. The first BAM pass builds
-core histograms. The second applies fitted models to raw coverage. Connected calls are joined
+model cores, each with a histogram. Cores with eligible bases receive a model and calling threshold.
+Fully blacklisted cores retain their original grid slots but have no model, thresholds or fitting
+context. Do not fit them or request global fallback on their behalf. Eligible zero-coverage bases
+still require a model. The first BAM pass builds core histograms. The second applies fitted models
+to eligible raw coverage and requires a model at every eligible position. Connected calls are joined
 across both tile and core boundaries, preserving observed and target masses.
 
 Assign accepted fragments once to the core containing their midpoint, excluding blacklisted
@@ -52,10 +55,13 @@ sides until it meets both `--bin-size` and `--min-context-fragments`. With 500 k
 spans grow as 0.5, 1.5, ..., 5.5 Mb for a 5 Mb minimum. Ends expand on the available side.
 A core uses the sample-wide model only when its whole chromosome cannot meet both requirements.
 A sufficiently supported local context that cannot be fitted must fail explicitly. Determine
-global fallback need from each full chromosome's physical span and summed midpoint support.
+global fallback need from each full chromosome's physical span and summed midpoint support,
+considering only chromosomes with eligible bases. A wholly blacklisted chromosome cannot require
+a pooled fit. Fully blacklisted grid slots never shift neighboring core indices or coordinates.
 Fit the pooled model once only if needed. Keep the pooled histogram for alpha and observations
 regardless. Local fitting receives the model family independently of the optional global model.
-Collect independent local fit failures across selected chromosomes before returning diagnostics.
+Collect independent required local fit failures across selected chromosomes before returning
+diagnostics. Unused contexts are never fitted and cannot fail an otherwise valid analysis.
 
 `start` and `end` in the model table bound the core where that model is applied.
 `context_start`, `context_end`, `eligible_positions`, and `fragments_by_midpoint` describe the
@@ -211,6 +217,9 @@ active locus. Extra structural zeros elsewhere in the context do not lower that 
 This is a correction choice, not an implication that a positive or threshold-crossing count has
 conditional expectation `mu`. Keep the same target definition at shallow and high depth.
 
+A keep weight is a retained contribution, not a probability that a fragment is genuine.
+A regional mass target does not imply that each position or downstream feature is set to its mean.
+
 Accumulate target mass using the model applied at each position, including when a connected call
 crosses cores. Calls selected for correction retain individual weights.
 
@@ -244,13 +253,15 @@ comments. Genomic intervals use the coordinate convention above.
 | `outliers.summary.tsv` | Chromosome and total eligible bases, candidate/actionable/preserved exact counts and percentages, longest single calls, merged-region counts, actionable flanked extents, and model/fallback/boundary counts. |
 | `outliers.preserved_regions.tsv` | Always-written preserved inspection groups and plot coordinates, including a header when empty. |
 | `outliers.preserved_regions.region_000001.png` | Optional local coverage figure for each inspection group. |
-| `outliers.models.tsv` | One row per core with context, support, both fits, applied threshold, and diagnostics defined above. |
+| `outliers.models.tsv` | One row per core containing eligible bases, with context, support, both fits, applied threshold, and diagnostics defined above. Fully blacklisted cores are omitted. |
 | `outliers.histograms.tsv.zst` | Sparse per-core raw coverage histograms and midpoint-assigned fragment counts. |
 | `outliers.global_fit.tsv` | Complete pooled observed histogram. Expected counts and parameter metadata only when a global fallback fit was needed. Otherwise expected columns are `NA` and `global_fit_status=not_needed`. |
 | `outliers.global_fit.png` | Global observed/fitted views and genomic tracks of local T1/T2 and both means. Requires the `plotters` feature. |
 | `outliers.README.txt` | File and column explanations with the actual preservation settings. |
 
 Summary percentages use the same row's `eligible_positions` and are `NaN` when it is zero.
+Model, fallback and Poisson-boundary counts include only cores with an actual model, excluding
+fully blacklisted grid slots. A wholly blacklisted chromosome reports zero for all three counts.
 Exact bases exclude flanks and gaps. Flanked spans include blacklisted bases and joined gaps,
 while eligible flanked extent excludes blacklists. Longest-call columns are maximum individual
 exact lengths before flanking. The total row takes maxima for those columns, not sums.
@@ -260,6 +271,12 @@ Histograms have columns `chromosome`, `start`, `end`, `fragments_by_midpoint`, `
 those repetitions. Missing coverage levels have no positions. A fully blacklisted core has an
 explicit `coverage=0, observed_positions=0` row. Global-fit rows instead include every integer
 coverage through the observed maximum, even zero-count gaps. Never truncate the observed tail.
+
+The global diagnostic PNG shows the same pooled raw histogram on linear and logarithmic coverage
+axes, then separate tracks for local cutoffs and fitted means. Fully blacklisted cores remain gaps
+at their original cumulative grid indices, including wholly blacklisted chromosomes. Threshold
+minima, means and maxima use only actual models. Optional preserved-region plots likewise omit
+unused models from fitted tracks and axis scaling.
 
 Analysis and report-writing failures publish only distinct `outliers.error.txt` and available
 `outliers.error_histogram.tsv` or `outliers.error_audit.tsv`. The human report includes settings,
@@ -300,15 +317,10 @@ Reporting changes no detection or correction decisions. Table and optional PNGs 
 
 `fcoverage` multiplies outlier weights with GC-file or GC-tag weights and existing normalization
 weights. This does not require reconstructing raw coverage in the consumer or assuming that
-the corrections are statistically independent. Producing GC/scaling files from the same
-outlier-weighted fragments remains future integration. Residual extremes may affect those
-calibration estimates. Their practical influence must be measured after ordinary blacklisting.
-When producer integration is added, estimate and apply corrections from a consistent weighted
-fragment signal. Preserve current normalization formulas and ownership in the meantime.
-
-Keep additional consumers, GC/scaling producer integration, normalization changes, smarter
-preservation evidence, hysteresis, and cohort aggregation outside this inspection milestone.
-Move overlap-resolver state out of `fcoverage` only when another consumer needs it.
+the corrections are statistically independent. GC/scaling producers and other consumers do not
+yet accept keep weights. Their agreed integration is recorded in the
+[integration plan](../future/outliers_remaining_work.md#required-integration-before-release).
+Preserve current normalization formulas and ownership.
 The user must explicitly request any investigation or change to restore-mean weighting.
 
 ## Recorded settings

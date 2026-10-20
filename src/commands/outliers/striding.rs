@@ -138,7 +138,8 @@ pub(crate) struct CoreModel {
 #[derive(Debug)]
 pub(crate) struct FittedModels {
     pub(crate) global: Option<TwoStageCoverageModel>,
-    pub(crate) by_chromosome: FxHashMap<String, Vec<CoreModel>>,
+    /// Original core-index slots. Fully blacklisted cores have no fitted model.
+    pub(crate) by_chromosome: FxHashMap<String, Vec<Option<CoreModel>>>,
 }
 
 /// Sum all model-core histograms without another BAM scan.
@@ -158,8 +159,9 @@ pub(crate) fn sum_global_histogram(
     Ok(global)
 }
 
-/// Fit every core from an adaptively expanded, chromosome-local histogram context.
+/// Fit cores with eligible bases from adaptively expanded, chromosome-local histogram contexts.
 ///
+/// Fully blacklisted cores retain an empty slot and require neither local nor global fitting.
 /// The global model is used only when the complete chromosome cannot meet the required span and
 /// fragment support. A complete local context whose two-stage fit fails returns that error rather
 /// than silently changing its model source.
@@ -210,13 +212,17 @@ pub(crate) fn fit_core_models(
         let results = (0..cores.len())
             .into_par_iter()
             .map(|core_index| {
+                let core = cores[core_index].interval;
+                if cores[core_index].eligible_positions()? == 0 {
+                    // Keep this grid slot without constructing or fitting an unused context
+                    return Ok((core, core, CoreHistogram::new(core), None));
+                }
                 let (mut histogram, context, complete) = build_context(
                     cores,
                     core_index,
                     minimum_context_span,
                     minimum_fragment_support,
                 )?;
-                let core = cores[core_index].interval;
                 let fit = if complete {
                     Some(fit_two_stage(&histogram.counts, tail_probability, family))
                 } else {
@@ -246,7 +252,7 @@ pub(crate) fn fit_core_models(
                 Ok((core, context, histogram, result))
             })
             .collect::<Vec<Result<_>>>();
-        let mut chromosome_models = Vec::new();
+        let mut chromosome_models = Vec::with_capacity(cores.len());
         for result in results {
             match result {
                 Ok((core, context, histogram, Some(Err(error)))) => {
@@ -258,11 +264,14 @@ pub(crate) fn fit_core_models(
                         context,
                         &histogram,
                     );
+                    chromosome_models.push(None);
                 }
-                Ok((_, _, _, Some(Ok(model)))) => chromosome_models.push(model),
-                Ok((_, _, _, None)) => {} // The required global failure is already recorded once
+                Ok((_, _, _, Some(Ok(model)))) => chromosome_models.push(Some(model)),
+                // A fully blacklisted core or an already recorded required global failure
+                Ok((_, _, _, None)) => chromosome_models.push(None),
                 Err(error) => {
-                    messages.push(format!("{chromosome} context construction: {error:#}"))
+                    messages.push(format!("{chromosome} context construction: {error:#}"));
+                    chromosome_models.push(None);
                 }
             }
         }
@@ -284,6 +293,8 @@ pub(crate) fn fit_core_models(
 }
 
 /// A full chromosome supplies the maximum possible local span and midpoint support.
+///
+/// A wholly blacklisted chromosome has no positions needing a model, so it cannot require fallback.
 fn needs_global_fallback(
     cores: &[CoreHistogram],
     minimum_span: u32,
@@ -295,6 +306,12 @@ fn needs_global_fallback(
     let last = cores
         .last()
         .context("chromosome has no model-core histograms")?;
+    if !cores
+        .iter()
+        .any(|core| core.counts.values().any(|&positions| positions > 0))
+    {
+        return Ok(false);
+    }
     let span = first.interval.expand_to_include(last.interval).len();
     let support = cores.iter().try_fold(0_u64, |total, core| {
         total
