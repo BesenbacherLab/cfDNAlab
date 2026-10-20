@@ -105,6 +105,28 @@ fn parse_positive_f64(value: &str) -> std::result::Result<f64, String> {
     Ok(parsed)
 }
 
+/// Parse the plot multiplier using the same bounds as programmatic validation.
+#[cfg(feature = "cli")]
+fn parse_context_multiplier(value: &str) -> std::result::Result<f64, String> {
+    let parsed = parse_positive_f64(value)?;
+    if parsed < 1.0 {
+        return Err("plot context multiplier must be at least 1".to_string());
+    }
+    Ok(parsed)
+}
+
+/// Reject invalid preservation percentages before opening any input files.
+#[cfg(feature = "cli")]
+fn parse_percentage(value: &str) -> std::result::Result<f64, String> {
+    let parsed = value
+        .parse::<f64>()
+        .map_err(|_| format!("'{value}' is not a valid percentage"))?;
+    if !parsed.is_finite() || !(0.0..=100.0).contains(&parsed) {
+        return Err("percentage must be finite and in 0..=100".to_string());
+    }
+    Ok(parsed)
+}
+
 /// Find sample-specific regions with unusually high fragment coverage and calculate correction weights.
 ///
 /// Use this after excluding known problematic regions with your usual blacklist. It is intended
@@ -367,13 +389,15 @@ pub struct OutliersConfig {
     /// Percentages strictly above this value trigger `--ambiguous-region-action`. With `preserve`,
     /// the affected regions are left uncorrected. Equality does not trigger the action.
     /// With `preserve`, lower values leave more regions uncorrected. A value of 100 disables this check.
-    #[cfg_attr(feature = "cli", clap(long, default_value_t = DEFAULT_MAX_OUTLIER_PERCENTAGE, help_heading = "Preservation"))]
+    #[cfg_attr(feature = "cli", clap(long, default_value_t = DEFAULT_MAX_OUTLIER_PERCENTAGE, value_parser = parse_percentage, help_heading = "Preservation"))]
     pub max_outlier_percentage: f64,
 
     /// How to handle broad or clustered coverage elevations `[string]`
     ///
     /// Applies when a region's window exceeds `--max-outlier-percentage`. `preserve` leaves it
-    /// uncorrected, `correct` treats it as an ordinary outlier, and `error` stops the command.
+    /// uncorrected, `correct` treats it as an ordinary outlier, and `error` reports every failing
+    /// region after the second BAM pass and stops without publishing normal results. A readable
+    /// `outliers.error.txt` and an `outliers.error_audit.tsv` explain the failures.
     /// Regions joined after `--blacklist-flank` share the same action. Preserved calls remain in
     /// `outliers.audit.tsv` and are omitted from the weights and BED files.
     #[cfg_attr(feature = "cli", clap(long, value_enum, default_value_t = AmbiguousRegionAction::Preserve, help_heading = "Preservation"))]
@@ -397,7 +421,7 @@ pub struct OutliersConfig {
     /// Center this wider view on the grouped calls. Include the preservation windows and at least
     /// `--preserved-plot-min-span` bases, and stop at chromosome bounds. Values must be at least 1.
     /// Plot coordinates are recorded in the table even when plots are not requested.
-    #[cfg_attr(feature = "cli", clap(long, default_value_t = DEFAULT_PRESERVED_PLOT_CONTEXT_MULTIPLIER, value_parser = parse_positive_f64, help_heading = "Preserved Region Plots"))]
+    #[cfg_attr(feature = "cli", clap(long, default_value_t = DEFAULT_PRESERVED_PLOT_CONTEXT_MULTIPLIER, value_parser = parse_context_multiplier, help_heading = "Preserved Region Plots"))]
     pub preserved_plot_context_multiplier: f64,
 
     /// Minimum total genomic span (bp) shown around a preserved group `[integer]`
@@ -613,6 +637,11 @@ impl OutliersConfig {
 
     pub(crate) fn validate(&self) -> Result<()> {
         self.fragment_lengths.validate()?;
+        #[cfg(not(feature = "plotters"))]
+        anyhow::ensure!(
+            !self.plot_preserved_regions,
+            "--plot-preserved-regions requires a build with the plotters feature. Omit this option to write the analysis tables without PNGs"
+        );
         anyhow::ensure!(
             self.preserved_plot_context_multiplier.is_finite()
                 && self.preserved_plot_context_multiplier >= 1.0,

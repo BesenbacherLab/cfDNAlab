@@ -22,19 +22,20 @@ struct LocalModelDiagnostics {
     underlying_means: Vec<f64>,
     active_component_means: Vec<f64>,
     chromosome_boundaries: Vec<usize>,
+    chromosome_labels: Vec<(usize, String)>,
     initial_summary: ThresholdSummary,
     final_summary: ThresholdSummary,
 }
 
 /// Write global fit diagnostics together with the local models used during calling.
 ///
-/// The upper panels show the complete original global histogram and both global coverage-model fits. The
-/// global thresholds are sample-level references only. Local threshold summaries and the lower
-/// spatial panel describe the per-core models that actually control outlier calling.
+/// The upper panels show the complete original pooled histogram. Fitted curves appear only when
+/// a chromosome needs global fallback. Their thresholds are sample-level references. Local
+/// threshold summaries and the lower spatial panel describe the models used for calling.
 pub(crate) fn write_global_fit_plot(
     output_path: &Path,
     observed_counts: &CoverageCounts,
-    global_model: TwoStageCoverageModel,
+    global_model: Option<TwoStageCoverageModel>,
     chromosomes: &[String],
     models_by_chromosome: &FxHashMap<String, Vec<CoreModel>>,
 ) -> Result<()> {
@@ -48,8 +49,8 @@ pub(crate) fn write_global_fit_plot(
     );
     let local_diagnostics = collect_local_model_diagnostics(chromosomes, models_by_chromosome)?;
     let maximum_threshold = global_model
-        .initial_threshold
-        .max(global_model.final_threshold)
+        .map(|model| model.initial_threshold.max(model.final_threshold))
+        .unwrap_or(0)
         .max(local_diagnostics.initial_summary.maximum)
         .max(local_diagnostics.final_summary.maximum);
     let maximum_diagnostic_coverage = maximum_observed_coverage.max(maximum_threshold);
@@ -63,9 +64,17 @@ pub(crate) fn write_global_fit_plot(
             let observed = observed_counts.get(&coverage).copied().unwrap_or(0) as f64;
             [
                 (observed + 1.0).log10(),
-                (total_positions * global_model.initial.probability_mass(coverage) + 1.0).log10(),
-                (total_positions * global_model.underlying_fit.probability_mass(coverage) + 1.0)
-                    .log10(),
+                global_model
+                    .map(|model| {
+                        (total_positions * model.initial.probability_mass(coverage) + 1.0).log10()
+                    })
+                    .unwrap_or(0.0),
+                global_model
+                    .map(|model| {
+                        (total_positions * model.underlying_fit.probability_mass(coverage) + 1.0)
+                            .log10()
+                    })
+                    .unwrap_or(0.0),
             ]
         })
         .fold(0.0_f64, f64::max)
@@ -113,6 +122,7 @@ fn collect_local_model_diagnostics(
     let mut underlying_means = Vec::new();
     let mut active_component_means = Vec::new();
     let mut chromosome_boundaries = Vec::new();
+    let mut chromosome_labels = Vec::new();
 
     for chromosome in chromosomes {
         let models = models_by_chromosome
@@ -121,6 +131,7 @@ fn collect_local_model_diagnostics(
         if !initial_thresholds.is_empty() && !models.is_empty() {
             chromosome_boundaries.push(initial_thresholds.len());
         }
+        chromosome_labels.push((initial_thresholds.len(), chromosome.clone()));
         for model in models {
             initial_thresholds.push(model.model.initial_threshold as f64);
             final_thresholds.push(model.model.final_threshold as f64);
@@ -141,6 +152,7 @@ fn collect_local_model_diagnostics(
         underlying_means,
         active_component_means,
         chromosome_boundaries,
+        chromosome_labels,
         initial_summary,
         final_summary,
     })
@@ -160,7 +172,7 @@ fn draw_detailed_fit_panel(
     area: &DrawingArea<BitMapBackend<'_>, plotters::coord::Shift>,
     observed_counts: &CoverageCounts,
     total_positions: f64,
-    global_model: TwoStageCoverageModel,
+    global_model: Option<TwoStageCoverageModel>,
     local_diagnostics: &LocalModelDiagnostics,
     maximum_coverage: u32,
     maximum_log_count: f64,
@@ -169,12 +181,16 @@ fn draw_detailed_fit_panel(
     let y_axis_end = maximum_log_count * 1.05;
     let mut chart = ChartBuilder::on(area)
         .caption(
-            format!(
-                "Global {} fit (dispersion: initial {:.4}, final {:.4})",
-                global_model.family.as_str().to_uppercase(),
-                global_model.initial.dispersion,
-                global_model.underlying_fit.dispersion
-            ),
+            global_model
+                .map(|model| {
+                    format!(
+                        "Global {} reference (dispersion: initial {:.4}, final {:.4})",
+                        model.family.as_str().to_uppercase(),
+                        model.initial.dispersion,
+                        model.underlying_fit.dispersion
+                    )
+                })
+                .unwrap_or_else(|| "Global observed histogram (global fit not needed)".to_string()),
             ("sans-serif", 30),
         )
         .margin(20)
@@ -196,61 +212,63 @@ fn draw_detailed_fit_panel(
         .label("Observed")
         .legend(|(x, y)| PathElement::new([(x, y), (x + 30, y)], BLACK.stroke_width(3)));
 
-    let initial_series = (0..=maximum_coverage).map(|coverage| {
-        (
-            coverage as f64,
-            (total_positions * global_model.initial.probability_mass(coverage) + 1.0).log10(),
-        )
-    });
-    chart
-        .draw_series(LineSeries::new(initial_series, BLUE.stroke_width(2)))?
-        .label(format!(
-            "Global initial {} reference",
-            global_model.family.as_str().to_uppercase()
-        ))
-        .legend(|(x, y)| PathElement::new([(x, y), (x + 30, y)], BLUE.stroke_width(2)));
+    if let Some(global_model) = global_model {
+        let initial_series = (0..=maximum_coverage).map(|coverage| {
+            (
+                coverage as f64,
+                (total_positions * global_model.initial.probability_mass(coverage) + 1.0).log10(),
+            )
+        });
+        chart
+            .draw_series(LineSeries::new(initial_series, BLUE.stroke_width(2)))?
+            .label(format!(
+                "Global initial {} reference",
+                global_model.family.as_str().to_uppercase()
+            ))
+            .legend(|(x, y)| PathElement::new([(x, y), (x + 30, y)], BLUE.stroke_width(2)));
 
-    let final_series = (0..=maximum_coverage).map(|coverage| {
-        (
-            coverage as f64,
-            (total_positions * global_model.underlying_fit.probability_mass(coverage) + 1.0)
-                .log10(),
-        )
-    });
-    chart
-        .draw_series(LineSeries::new(final_series, RED.stroke_width(2)))?
-        .label(format!(
-            "Global tail-excluded {} reference",
-            global_model.family.as_str().to_uppercase()
-        ))
-        .legend(|(x, y)| PathElement::new([(x, y), (x + 30, y)], RED.stroke_width(2)));
+        let final_series = (0..=maximum_coverage).map(|coverage| {
+            (
+                coverage as f64,
+                (total_positions * global_model.underlying_fit.probability_mass(coverage) + 1.0)
+                    .log10(),
+            )
+        });
+        chart
+            .draw_series(LineSeries::new(final_series, RED.stroke_width(2)))?
+            .label(format!(
+                "Global tail-excluded {} reference",
+                global_model.family.as_str().to_uppercase()
+            ))
+            .legend(|(x, y)| PathElement::new([(x, y), (x + 30, y)], RED.stroke_width(2)));
 
-    chart
-        .draw_series(std::iter::once(PathElement::new(
-            [
-                (global_model.initial_threshold as f64, 0.0),
-                (global_model.initial_threshold as f64, y_axis_end),
-            ],
-            BLUE.mix(0.45).stroke_width(1),
-        )))?
-        .label(format!(
-            "Global reference T1 = {}",
-            global_model.initial_threshold
-        ))
-        .legend(|(x, y)| PathElement::new([(x, y), (x + 30, y)], BLUE.mix(0.45)));
-    chart
-        .draw_series(std::iter::once(PathElement::new(
-            [
-                (global_model.final_threshold as f64, 0.0),
-                (global_model.final_threshold as f64, y_axis_end),
-            ],
-            RED.mix(0.45).stroke_width(1),
-        )))?
-        .label(format!(
-            "Global reference T2 = {}",
-            global_model.final_threshold
-        ))
-        .legend(|(x, y)| PathElement::new([(x, y), (x + 30, y)], RED.mix(0.45)));
+        chart
+            .draw_series(std::iter::once(PathElement::new(
+                [
+                    (global_model.initial_threshold as f64, 0.0),
+                    (global_model.initial_threshold as f64, y_axis_end),
+                ],
+                BLUE.mix(0.45).stroke_width(1),
+            )))?
+            .label(format!(
+                "Global reference T1 = {}",
+                global_model.initial_threshold
+            ))
+            .legend(|(x, y)| PathElement::new([(x, y), (x + 30, y)], BLUE.mix(0.45)));
+        chart
+            .draw_series(std::iter::once(PathElement::new(
+                [
+                    (global_model.final_threshold as f64, 0.0),
+                    (global_model.final_threshold as f64, y_axis_end),
+                ],
+                RED.mix(0.45).stroke_width(1),
+            )))?
+            .label(format!(
+                "Global reference T2 = {}",
+                global_model.final_threshold
+            ))
+            .legend(|(x, y)| PathElement::new([(x, y), (x + 30, y)], RED.mix(0.45)));
+    }
 
     for threshold in [
         local_diagnostics.initial_summary.minimum as f64,
@@ -320,7 +338,7 @@ fn draw_complete_histogram_panel(
     area: &DrawingArea<BitMapBackend<'_>, plotters::coord::Shift>,
     observed_counts: &CoverageCounts,
     total_positions: f64,
-    global_model: TwoStageCoverageModel,
+    global_model: Option<TwoStageCoverageModel>,
     local_diagnostics: &LocalModelDiagnostics,
     maximum_coverage: u32,
     maximum_log_count: f64,
@@ -344,38 +362,49 @@ fn draw_complete_histogram_panel(
         let count = observed_counts.get(&coverage).copied().unwrap_or(0);
         (count > 0).then(|| (transform_coverage(coverage), (count as f64 + 1.0).log10()))
     });
-    chart.draw_series(
-        observed_series.map(|point| Circle::new(point, 2, BLACK.mix(0.75).filled())),
-    )?;
+    chart
+        .draw_series(observed_series.map(|point| Circle::new(point, 2, BLACK.mix(0.75).filled())))?
+        .label("Observed")
+        .legend(|(left, top)| Circle::new((left + 15, top), 3, BLACK.filled()));
 
-    let initial_series = (0..=maximum_coverage).map(|coverage| {
-        (
-            transform_coverage(coverage),
-            (total_positions * global_model.initial.probability_mass(coverage) + 1.0).log10(),
-        )
-    });
-    chart.draw_series(LineSeries::new(
-        initial_series,
-        BLUE.mix(0.7).stroke_width(2),
-    ))?;
-    let final_series = (0..=maximum_coverage).map(|coverage| {
-        (
-            transform_coverage(coverage),
-            (total_positions * global_model.underlying_fit.probability_mass(coverage) + 1.0)
-                .log10(),
-        )
-    });
-    chart.draw_series(LineSeries::new(final_series, RED.mix(0.7).stroke_width(2)))?;
+    if let Some(global_model) = global_model {
+        let initial_series = (0..=maximum_coverage).map(|coverage| {
+            (
+                transform_coverage(coverage),
+                (total_positions * global_model.initial.probability_mass(coverage) + 1.0).log10(),
+            )
+        });
+        chart
+            .draw_series(LineSeries::new(
+                initial_series,
+                BLUE.mix(0.7).stroke_width(2),
+            ))?
+            .label("Global initial fit / T1")
+            .legend(|(left, top)| PathElement::new([(left, top), (left + 30, top)], BLUE));
+        let final_series = (0..=maximum_coverage).map(|coverage| {
+            (
+                transform_coverage(coverage),
+                (total_positions * global_model.underlying_fit.probability_mass(coverage) + 1.0)
+                    .log10(),
+            )
+        });
+        chart
+            .draw_series(LineSeries::new(final_series, RED.mix(0.7).stroke_width(2)))?
+            .label("Global underlying fit / T2")
+            .legend(|(left, top)| PathElement::new([(left, top), (left + 30, top)], RED));
 
+        for (threshold, color) in [
+            (global_model.initial_threshold, BLUE),
+            (global_model.final_threshold, RED),
+        ] {
+            let position = transform_coverage(threshold);
+            chart.draw_series(std::iter::once(PathElement::new(
+                [(position, 0.0), (position, y_axis_end)],
+                color.mix(0.45),
+            )))?;
+        }
+    }
     for (threshold, style) in [
-        (
-            global_model.initial_threshold as f64,
-            BLUE.mix(0.45).stroke_width(1),
-        ),
-        (
-            global_model.final_threshold as f64,
-            RED.mix(0.45).stroke_width(1),
-        ),
         (
             local_diagnostics.initial_summary.minimum as f64,
             CYAN.mix(0.45).stroke_width(1),
@@ -410,6 +439,22 @@ fn draw_complete_histogram_panel(
             style,
         )))?;
     }
+    for (label, color) in [
+        ("Local T1 min/mean/max", CYAN),
+        ("Local T2 min/mean/max", MAGENTA),
+    ] {
+        chart
+            .draw_series(std::iter::empty::<PathElement<(f64, f64)>>())?
+            .label(label)
+            .legend(move |(left, top)| {
+                PathElement::new([(left, top), (left + 30, top)], color.stroke_width(2))
+            });
+    }
+    chart
+        .configure_series_labels()
+        .background_style(WHITE.mix(0.85))
+        .border_style(BLACK)
+        .draw()?;
     Ok(())
 }
 
@@ -452,6 +497,13 @@ fn draw_local_model_panel(
         )))?;
     }
 
+    for (start, chromosome) in &diagnostics.chromosome_labels {
+        chart.draw_series(std::iter::once(Text::new(
+            chromosome.clone(),
+            (*start as f64 + 0.5, maximum_value * 0.95),
+            ("sans-serif", 14),
+        )))?;
+    }
     let initial_points = diagnostics
         .initial_thresholds
         .iter()
@@ -477,7 +529,7 @@ fn draw_local_model_panel(
         .map(|(index, &mean)| (index as f64 + 0.5, mean));
     chart
         .draw_series(mean_points.map(|point| Circle::new(point, 2, GREEN.filled())))?
-        .label("Used unconditional mean")
+        .label("Unconditional mean (diagnostic)")
         .legend(|(x, y)| PathElement::new([(x, y), (x + 30, y)], GREEN.stroke_width(2)));
     chart
         .draw_series(
@@ -487,7 +539,7 @@ fn draw_local_model_panel(
                 .enumerate()
                 .map(|(index, &mean)| Circle::new((index as f64 + 0.5, mean), 2, BLUE.filled())),
         )?
-        .label("Used active-component mean")
+        .label("Active-component mean (local-mean target only)")
         .legend(|(x, y)| PathElement::new([(x, y), (x + 30, y)], BLUE.stroke_width(2)));
     chart
         .configure_series_labels()

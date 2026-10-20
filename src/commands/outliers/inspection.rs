@@ -1,6 +1,8 @@
 //! Actionable call files and complete audit/summary outputs for BAM inspection.
 
 use super::{
+    config::AmbiguousRegionAction,
+    failure::AnalysisFailures,
     outliers::CalledRegion,
     outputs::{OutputMetadata, OutputPaths, write_common_metadata},
     preservation::{ChromosomeDecisions, IntervalLengths, evaluate_regions},
@@ -38,6 +40,99 @@ pub(super) struct CallSummary {
     model_cores: u64,
     global_fallback_cores: u64,
     poisson_boundary_cores: u64,
+}
+
+/// Evaluate every selected chromosome before enforcing the ambiguity error policy.
+///
+/// This is cheap processing of the complete second-pass calls. The error audit contains only
+/// failed merged regions and their member evidence, with contributing calls listed explicitly.
+pub(super) fn collect_decisions(
+    metadata: &OutputMetadata<'_>,
+    regions: &FxHashMap<String, Vec<CalledRegion>>,
+    blacklists: &FxHashMap<String, Vec<Interval<u64>>>,
+) -> Result<FxHashMap<String, ChromosomeDecisions>> {
+    let mut decisions_by_chromosome = FxHashMap::default();
+    let mut messages = Vec::new();
+    let mut audit = Vec::new();
+    writeln!(
+        audit,
+        "# scope=all_failed_merged_regions_only\n# action=withheld_error\n# cutoff_percentage={}\n# denominator_floor={}\n# window_called_positions counts overlapping bases of all exact candidates\n# contributing_calls lists complete call intervals before clipping to the selected window\n# window_score=100 * window_called_positions / max(window_eligible_positions, denominator_floor)\nchromosome\tmerged_start\tmerged_end\tcall_start\tcall_end\tcall_flagged\twindow_start\twindow_end\twindow_direction\twindow_eligible_positions\twindow_called_positions\twindow_score\tproposed_keep_weight\taction\tcontributing_calls",
+        metadata.config.max_outlier_percentage, metadata.config.min_protection_positions
+    )?;
+    for chromosome in metadata.chromosomes {
+        let calls = regions
+            .get(chromosome)
+            .with_context(|| format!("missing calls for {chromosome}"))?;
+        let length = metadata
+            .contigs
+            .contigs
+            .get(chromosome)
+            .with_context(|| format!("missing contig {chromosome}"))?
+            .1;
+        let blacklist = blacklists
+            .get(chromosome)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let decisions = evaluate_regions(metadata.config, calls, blacklist, length)?;
+        if metadata.config.ambiguous_region_action == AmbiguousRegionAction::Error {
+            for merged in decisions
+                .merged_regions
+                .iter()
+                .filter(|region| region.flagged)
+            {
+                messages.push(format!("{chromosome}:{}-{}: window score {}% exceeds cutoff {}% ({} member calls). All corrections withheld", merged.interval.start(), merged.interval.end(), merged.maximum_score, metadata.config.max_outlier_percentage, merged.members.len()));
+                for index in merged.members.clone() {
+                    let call = &calls[index];
+                    let decision = &decisions.calls[index];
+                    let window = decision.window;
+                    let contributors = calls
+                        .iter()
+                        .filter(|candidate| candidate.interval.intersects(window.interval))
+                        .map(|candidate| {
+                            format!(
+                                "{}-{}",
+                                candidate.interval.start(),
+                                candidate.interval.end()
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    writeln!(
+                        audit,
+                        "{chromosome}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\twithheld_error\t{}",
+                        merged.interval.start(),
+                        merged.interval.end(),
+                        call.interval.start(),
+                        call.interval.end(),
+                        decision.flagged,
+                        window.interval.start(),
+                        window.interval.end(),
+                        if window.backward {
+                            "backward"
+                        } else {
+                            "forward"
+                        },
+                        window.eligible_positions,
+                        window.called_positions,
+                        window.score,
+                        call.keep_weight(),
+                        contributors
+                    )?;
+                }
+            }
+        }
+        decisions_by_chromosome.insert(chromosome.clone(), decisions);
+    }
+    if !messages.is_empty() {
+        return Err(AnalysisFailures {
+            stage: "ambiguity policy after the second BAM pass",
+            messages,
+            histogram: None,
+            audit: Some(String::from_utf8(audit)?),
+        }
+        .into());
+    }
+    Ok(decisions_by_chromosome)
 }
 
 impl CallSummary {
@@ -227,6 +322,7 @@ pub(super) fn write_call_outputs(
     metadata: &OutputMetadata<'_>,
     contigs: &Contigs,
     regions_by_chromosome: &FxHashMap<String, Vec<CalledRegion>>,
+    decisions_by_chromosome: &FxHashMap<String, ChromosomeDecisions>,
     blacklists: &FxHashMap<String, Vec<Interval<u64>>>,
     histograms: &FxHashMap<String, Vec<CoreHistogram>>,
     models: &FxHashMap<String, Vec<CoreModel>>,
@@ -303,19 +399,21 @@ pub(super) fn write_call_outputs(
             .get(chromosome)
             .map(Vec::as_slice)
             .unwrap_or_default();
-        let decisions = evaluate_regions(metadata.config, regions, blacklist, chromosome_length)
-            .with_context(|| format!("preservation decisions for {chromosome}"))?;
-        write_audit_rows(audit, chromosome, regions, &decisions, metadata)?;
+        let decisions = decisions_by_chromosome
+            .get(chromosome)
+            .with_context(|| format!("missing preservation decisions for {chromosome}"))?;
+        write_audit_rows(audit, chromosome, regions, decisions, metadata)?;
         let reporting_groups = collect_preserved_regions(
             chromosome,
             regions,
-            &decisions,
+            decisions,
             metadata.config,
             chromosome_length,
             preserved_regions.len() + 1,
         )?;
         for group in &reporting_groups {
-            let plot_file = if metadata.config.plot_preserved_regions {
+            let plot_file = if cfg!(feature = "plotters") && metadata.config.plot_preserved_regions
+            {
                 paths
                     .preserved_plot(&group.region_id)
                     .file_name()
@@ -329,7 +427,7 @@ pub(super) fn write_call_outputs(
                 preserved_writer,
                 "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                 group.region_id,
-                chromosome,
+                group.chromosome,
                 group.interval.start(),
                 group.interval.end(),
                 group.call_indices.len(),
@@ -392,7 +490,7 @@ pub(super) fn write_call_outputs(
             .with_context(|| format!("missing models for {chromosome}"))?;
         let summary = summarize_calls(
             regions,
-            &decisions,
+            decisions,
             eligible_positions,
             &IntervalLengths::new(blacklist.to_vec()),
             chromosome_models,

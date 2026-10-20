@@ -166,3 +166,35 @@ fn downstream_run_options_control_status_and_equivalent_cli_tracing() -> Result<
 
     Ok(())
 }
+
+#[test]
+fn outlier_filter_differences_warn_without_rejecting_a_custom_table() -> Result<()> {
+    use cfdnalab::run_like_cli::common::OutlierWeightsArgs;
+    let bam = single_contig_inward_pair_bam()?;
+    let output = TempDir::new()?;
+    let weights = output.path().join("weights.tsv");
+    std::fs::write(
+        &weights,
+        "# minimum_mapping_quality=30\n# fragment_length_range=10-200\n# ignore_gap=false\n# reads_are_fragments=false\n# require_proper_pair=false\nchromosome\tstart\tend\tkeep_weight\n",
+    )?;
+    let mut config = fcoverage_config(&bam.bam, output.path(), "filter_warning");
+    config.set_require_proper_pair(false);
+    config.set_outlier_weights(OutlierWeightsArgs {
+        outlier_weights: Some(weights.clone()),
+    });
+    let logs = capture_fcoverage_logs(&config, RunOptions::new_quiet())?;
+    assert!(logs.contains("Outlier detection/counting filters differ"));
+    assert!(logs.contains("minimum_mapping_quality: detection=30, counting=0"));
+    assert!(!logs.contains("could not be checked"));
+    assert!(!logs.contains("fragment_length_range: detection="));
+
+    std::fs::write(
+        &weights,
+        "# minimum_mapping_quality=0\n# fragment_length_range=10-200\n# ignore_gap=false\n# reads_are_fragments=false\n# require_proper_pair=false\nchromosome\tstart\tend\tkeep_weight\n",
+    )?;
+    config.set_output_prefix("matching_filters");
+    let matching = capture_fcoverage_logs(&config, RunOptions::new_quiet())?;
+    assert!(!matching.contains("filters differ"));
+    assert!(!matching.contains("could not be checked"));
+    Ok(())
+}

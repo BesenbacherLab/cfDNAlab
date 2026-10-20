@@ -80,7 +80,7 @@ Then, you can add blacklist filtering, GC correction and more. See the [examples
 
 The following commands are currently available:
 
-`cfdna fcoverage`, `cfdna midpoints`, `cfdna ends`, `cfdna lengths`, `cfdna gc-bias`, `cfdna ref-gc-bias`, `cfdna fragment-count-weights`, `cfdna coverage-weights`, `cfdna ref-kmers`, `cfdna bam-to-bam`, `cfdna bam-to-frag`, `cfdna frag-to-bam`.
+`cfdna outliers`, `cfdna fcoverage`, `cfdna midpoints`, `cfdna ends`, `cfdna lengths`, `cfdna gc-bias`, `cfdna ref-gc-bias`, `cfdna fragment-count-weights`, `cfdna coverage-weights`, `cfdna ref-kmers`, `cfdna bam-to-bam`, `cfdna bam-to-frag`, `cfdna frag-to-bam`.
 
 <p align="center">
   <img src="cfdnalab_command_overview.png" width="100%" alt="Overview of main commands" />
@@ -130,6 +130,10 @@ Extract fragmentomics features:
   <dd>Count fragment lengths.<br>In paired-end, the length is defined as <code>end(reverse) - start(forward)</code> for inwardly directed pairs only.</dd>
   <hr>
 </dl>
+
+### Outlier inspection
+
+`cfdna outliers` detects sample-specific high-coverage regions and writes fragment weights for `fcoverage --outlier-weights`, actionable BED files, and inspection tables and plots. Coverage alone cannot distinguish technical pileups from biological gains. See the [outlier guide](website/docs/guides/handle_outliers_guide.md) for inspection, application, and failure diagnostics.
 
 ### Normalization
 

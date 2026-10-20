@@ -113,7 +113,46 @@ fn rejects_histogram_without_positive_coverage() {
     let error = fit_two_stage_zip(&coverage_counts(&[1_000]), 0.01)
         .expect_err("all-zero histogram should not produce a ZIP fit");
 
-    assert!(error.to_string().contains("zero coverage"));
+    // The fitting stage adds context without replacing the reason for rejecting the data
+    // Inspect that reason directly and check the full diagnostic used by the CLI and error report
+    let cause = error.root_cause().to_string();
+    assert!(
+        cause.contains("every eligible position has zero coverage"),
+        "{error:#}"
+    );
+    let diagnostic = format!("{error:#}");
+    assert!(
+        diagnostic.contains("initial complete-histogram ZIP fit"),
+        "{diagnostic}"
+    );
+    assert!(diagnostic.contains("zero coverage"), "{diagnostic}");
+}
+
+#[test]
+fn zero_frequency_positive_bins_do_not_make_an_all_zero_histogram_fittable() {
+    // Coverage keys with zero observations supply no positive support
+    let histogram = [(0, 1_000), (1, 0), (u32::MAX, 0)].into_iter().collect();
+
+    let error = fit_zip(&histogram).expect_err("zero-frequency entries are not observations");
+
+    assert!(
+        error
+            .root_cause()
+            .to_string()
+            .contains("every eligible position has zero coverage"),
+        "{error:#}"
+    );
+}
+
+#[test]
+fn empty_histogram_is_reported_as_missing_observations_rather_than_observed_zero_coverage() {
+    let error = fit_two_stage_zip(&CoverageCounts::new(), 0.01)
+        .expect_err("an empty histogram should not produce a ZIP fit");
+
+    // No observations and observed zeros are different diagnoses, even though neither can fit
+    let cause = error.root_cause().to_string();
+    assert!(cause.contains("no eligible positions"), "{error:#}");
+    assert!(!cause.contains("zero coverage"), "{error:#}");
 }
 
 #[test]
@@ -281,4 +320,11 @@ fn diagnostics_mark_positive_statistics_unavailable_for_an_all_zero_context() {
     assert!(diagnostics.expected_initial_tail_positions > 0.0);
     assert_eq!(diagnostics.observed_final_tail_positions, 0);
     assert!(diagnostics.expected_final_tail_positions > 0.0);
+}
+
+#[test]
+fn two_retained_levels_cannot_identify_zip_parameters() {
+    let histogram = [(0, 90), (1, 10)].into_iter().collect();
+    let error = fit_right_truncated_zip(&histogram, 2).unwrap_err();
+    assert!(error.to_string().contains("unidentified"));
 }

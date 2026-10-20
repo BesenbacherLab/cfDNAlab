@@ -52,6 +52,7 @@ jobs:
             cmd_gc_bias
             cmd_lengths
             cmd_midpoints
+            cmd_outliers
             cmd_ref_kmers
           )
 

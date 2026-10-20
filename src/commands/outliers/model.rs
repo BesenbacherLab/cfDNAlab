@@ -124,10 +124,12 @@ pub(crate) fn fit_two_stage_zip(
     tail_probability: f64,
 ) -> Result<TwoStageZipModel> {
     validate_tail_probability(tail_probability)?;
-    let initial = fit_zip(histogram)?;
+    let initial = fit_zip(histogram).context("initial complete-histogram ZIP fit")?;
     let initial_threshold = zip_upper_tail_threshold(initial, tail_probability)?;
     let (underlying_fit, second_fit_retained_positions) =
-        fit_right_truncated_zip(histogram, initial_threshold)?;
+        fit_right_truncated_zip(histogram, initial_threshold).with_context(|| format!(
+            "second ZIP fit below T1={initial_threshold}, alpha={tail_probability}, initial mean={}, pi={}. A smaller tail probability can retain more positive coverage levels",
+            initial.lambda, initial.zero_inflation))?;
     let final_threshold = zip_upper_tail_threshold(underlying_fit, tail_probability)?;
 
     Ok(TwoStageZipModel {
@@ -197,7 +199,7 @@ pub(super) fn fit_zip(histogram: &CoverageCounts) -> Result<ZipParameters> {
     if zero_inflation_denominator > 0.0 {
         let zero_inflation =
             (observed_zero_fraction - poisson_zero_probability) / zero_inflation_denominator;
-        if zero_inflation >= 0.0 && zero_inflation < 1.0 {
+        if (0.0..1.0).contains(&zero_inflation) {
             return Ok(ZipParameters {
                 lambda,
                 zero_inflation,
@@ -227,6 +229,10 @@ pub(super) fn fit_right_truncated_zip(
         exclusion_threshold > 1,
         "initial ZIP threshold {} leaves no positive coverage values for the second fit",
         exclusion_threshold
+    );
+    ensure!(
+        exclusion_threshold != 2,
+        "unidentified second fit at T1=2: retained levels 0 and 1 cannot determine a component mean and structural-zero probability separately"
     );
     let retained_positions =
         histogram
@@ -265,7 +271,7 @@ pub(super) fn fit_right_truncated_zip(
         let zero_inflation = (retained_zero_fraction * poisson_retention_probability
             - poisson_zero_probability)
             / zero_inflation_denominator;
-        if zero_inflation >= 0.0 && zero_inflation < 1.0 {
+        if (0.0..1.0).contains(&zero_inflation) {
             return Ok((
                 ZipParameters {
                     lambda,
@@ -498,9 +504,7 @@ fn poisson_upper_tail_threshold(lambda: f64, tail_probability: f64) -> Result<u3
     let mut failing_lower_bound = threshold;
     let mut search_step = 1_u32;
     let mut passing_upper_bound = loop {
-        let candidate = failing_lower_bound
-            .checked_add(search_step)
-            .unwrap_or(u32::MAX);
+        let candidate = failing_lower_bound.saturating_add(search_step);
         let candidate_log_survival = poisson_log_survival_at_or_above(lambda, candidate)?;
         if candidate_log_survival <= log_tail_probability {
             break candidate;

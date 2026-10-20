@@ -122,6 +122,8 @@ fn help_text_is_available_for_all_enabled_release_commands() -> Result<()> {
     release_commands.push("fcoverage");
     #[cfg(feature = "cmd_midpoints")]
     release_commands.push("midpoints");
+    #[cfg(feature = "cmd_outliers")]
+    release_commands.push("outliers");
     #[cfg(feature = "cmd_bam_to_bam")]
     release_commands.push("bam-to-bam");
     #[cfg(feature = "cmd_bam_to_frag")]

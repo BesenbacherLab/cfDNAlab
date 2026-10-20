@@ -127,6 +127,7 @@ const HIST_BAR_COLOR: RGBColor = RGBColor(161, 174, 177);
 /// -------
 /// - `Result<()>`:
 ///   Ok when the plot is written.
+#[cfg(any(feature = "cmd_midpoints", test))]
 pub(crate) fn write_heatmap<P: AsRef<Path>>(
     out_path: P,
     title: &str,

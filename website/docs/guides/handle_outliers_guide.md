@@ -33,7 +33,24 @@ coverage. `--model zip` selects the simpler zero-inflated Poisson model for comp
 Detection uses raw fragment coverage, before GC correction or normalization.
 
 `--plot-preserved-regions` adds local coverage plots and requires extra BAM reads around those
-regions. Omit it if you only want the tables and the overall diagnostic plot.
+regions. Detection uses two BAM passes. Model fitting and preservation use their recorded
+histograms and calls. Plotting adds local rereads, which can become substantial with many
+groups. Progress logs identify each group and requested span. The close-up uses finer bins
+from the same reread and includes nearby corrected calls as well as preserved calls.
+Omit plotting if you only want the tables and the overall diagnostic plot.
+
+Unmapped, secondary, supplementary, duplicate and QC-failed alignments are excluded. Mapping
+quality and fragment length filters apply. Pairs need mapped mates on the same chromosome
+and opposite strands. Requiring a proper-pair flag is optional. `--reads-are-fragments`
+counts each accepted alignment separately. Alignment D/N gaps contribute no coverage, and
+`--ignore-gap` also omits the inter-mate gap. These positions remain eligible unless masked.
+The detector does not read reference sequence, so unmasked reference gaps remain eligible zeros.
+
+Local contexts expand until their span and accepted midpoint fragment support are sufficient.
+A chromosome that cannot provide both uses a pooled model from all selected chromosomes.
+No pooled model is fitted when every chromosome has enough support. Automatic alpha depends
+on the selected eligible span. Detect once over the intended chromosomes and consume subsets.
+Using the same manual alpha in separate runs cannot reproduce a different pooled fallback.
 
 ## Inspect the results
 
@@ -43,7 +60,9 @@ The filenames below start with `sample.` when using the example's output prefix.
   correction or preserved. "Preserved" means left unchanged. Base percentages use the
   number of eligible positions on the analysed chromosomes as their denominator.
 - **Open `outliers.global_fit.png`.** The upper panels compare the observed coverage distribution
-  with the sample-wide model. The bottom panel shows the local means and cutoffs used along
+  with the sample-wide model when a chromosome needs global fallback. Otherwise the plot
+  states that the global fit was not needed, and its TSV keeps observed counts with `NA`
+  for unavailable fitted counts. The bottom panel shows the local means and cutoffs used along
   chromosomes. Calls spread across much of the genome, or a broad mismatch between observed and
   fitted coverage, deserve investigation before applying the correction.
 - **Read `outliers.audit.tsv` for individual calls.** It records their coverage, proposed weight,
@@ -66,7 +85,11 @@ their flanks also share the preservation decision.
 
 The percentage excludes blacklisted bases. Special handling near chromosome ends and large
 blacklisted regions prevents a tiny usable span from giving a misleadingly high percentage.
-See `--min-protection-positions` in the CLI help for that rule.
+See `--min-protection-positions` in the CLI help for that rule. In a fully eligible default
+100 kb window, an isolated contiguous call longer than 5 kb exceeds the cutoff. Exactly
+5 kb does not. Smaller eligible spans can lower that boundary toward 2.5 kb at the denominator
+floor. Nearby calls and merged flanks can preserve shorter calls. An event's biological width
+is not necessarily the number of its bases that cross the calling threshold.
 
 A preserved group is not necessarily an amplification. Broad technical pileups may also be
 preserved, and small biological events may still be corrected. The window and percentage
@@ -92,6 +115,12 @@ Even a 1 bp overlap applies the full regional weight to the whole fragment, incl
 coverage outside the call. If a fragment overlaps several calls, it receives the smallest
 weight. The weights use exact called intervals, without flanks.
 
+This can reduce ordinary neighboring signal. For stationary starts, fixed contiguous 30 bp
+fragments, a single 1 bp call and weight 0.2, ordinary coverage 30 becomes 6 at the call,
+6.8 a base outside it, 18 at distance 15, and 30 at distance 30. This calculation describes
+ordinary background under those assumptions. Variable fragment lengths, alignment gaps,
+artifact fragments, other calls and other corrections can change the observed shape.
+
 GC correction can be used together with outlier weights. Their weights multiply. For the first
 inspection, start without GC correction, genomic scaling, or length normalization so coverage
 can be compared directly with the detector's mean and cutoff.
@@ -114,8 +143,9 @@ cfdna fcoverage \
   --blacklist results/outliers/sample.outliers.flanked.bed
 ```
 
-The receiving command's blacklist rules determine what is excluded. Check those rules when
-using the BED files with a different command.
+In `fcoverage`, blacklists mask coverage positions. A fragment can still contribute outside
+the masked interval. Outlier weights instead reduce the complete overlapping fragment. The
+receiving command's rules determine what is excluded when using BED files elsewhere.
 
 ## Check the effect on coverage
 

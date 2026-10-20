@@ -12,7 +12,7 @@ use argmin::{
 use statrs::function::gamma::ln_gamma;
 
 use super::{
-    distribution::CoverageParameters,
+    distribution::{CoverageParameters, OptimizerDiagnostics, upper_tail_threshold},
     model::{
         CoverageCounts, fit_right_truncated_zip, fit_zip, log_factorial, poisson_log_probability,
     },
@@ -21,6 +21,14 @@ use super::{
 const MINIMUM_LOG_PARAMETER: f64 = -20.0;
 const MAXIMUM_DISPERSION: f64 = 100.0;
 const LIKELIHOOD_TOLERANCE: f64 = 1e-12;
+const NEAR_OPTIMAL_COST_TOLERANCE: f64 = 1e-10;
+
+/// Selected parameters and numerical agreement among comparable converged starts.
+#[derive(Debug)]
+pub(super) struct ZinbFit {
+    pub(super) parameters: CoverageParameters,
+    pub(super) diagnostics: OptimizerDiagnostics,
+}
 
 /// Sparse retained observations, normalized so optimizer tolerances are independent of span.
 #[derive(Clone)]
@@ -156,7 +164,8 @@ impl CostFunction for ProfiledHistogram {
 pub(super) fn fit_zinb(
     histogram: &CoverageCounts,
     truncation: Option<u32>,
-) -> Result<CoverageParameters> {
+    tail_probability: f64,
+) -> Result<ZinbFit> {
     let problem = ProfiledHistogram::new(histogram, truncation)?;
     // Fit dispersion = 0 on exactly the same retained observations, so the Poisson boundary
     // competes with positive-dispersion fits through their average log likelihoods
@@ -165,8 +174,10 @@ pub(super) fn fit_zinb(
         None => fit_zip(histogram)?,
     }
     .into();
+    check_truncated_identification(histogram, truncation, boundary)?;
     let (mut best_cost, _) = problem.evaluate(boundary.component_mean, 0.0)?;
     let mut best = boundary;
+    let mut candidates = vec![(best_cost, boundary)];
     let initial_log_mean = boundary
         .component_mean
         .ln()
@@ -178,12 +189,22 @@ pub(super) fn fit_zinb(
     let mut outcomes = Vec::new();
     for initial_dispersion in [0.0005_f64, 0.02, 0.3] {
         let initial_log_dispersion = initial_dispersion.ln();
-        let solver = NelderMead::new(vec![
+        let vertices = vec![
             vec![initial_log_mean, initial_log_dispersion],
             vec![initial_log_mean + 0.05, initial_log_dispersion],
             vec![initial_log_mean, initial_log_dispersion + 0.2],
-        ])
-        .with_sd_tolerance(1e-13)?;
+        ];
+        // Argmin evaluates initial vertices with an internal unwrap. Validate them here so
+        // a likelihood error is reported with its start instead of panicking during setup
+        for vertex in &vertices {
+            let cost = problem.cost(vertex).with_context(|| {
+                format!(
+                    "preflighting ZINB start dispersion={initial_dispersion}, vertex={vertex:?}"
+                )
+            })?;
+            ensure!(cost.is_finite(), "nonfinite ZINB initial vertex {vertex:?}");
+        }
+        let solver = NelderMead::new(vertices).with_sd_tolerance(1e-13)?;
         let result = Executor::new(problem.clone(), solver)
             .configure(|state| state.max_iters(2_000))
             .ctrlc(false)
@@ -203,16 +224,22 @@ pub(super) fn fit_zinb(
         let parameters = state
             .get_best_param()
             .context("converged ZINB optimizer has no parameters")?;
+        let component_mean = parameters[0].exp();
+        let dispersion = parameters[1].exp();
+        let (checked_cost, zero_inflation) = problem.evaluate(component_mean, dispersion)?;
+        ensure!(
+            checked_cost.is_finite(),
+            "converged ZINB likelihood is not finite"
+        );
+        let candidate = CoverageParameters {
+            component_mean,
+            dispersion,
+            zero_inflation,
+        };
+        candidates.push((checked_cost, candidate));
         if cost < best_cost - LIKELIHOOD_TOLERANCE {
-            let component_mean = parameters[0].exp();
-            let dispersion = parameters[1].exp();
-            let (_, zero_inflation) = problem.evaluate(component_mean, dispersion)?;
-            best = CoverageParameters {
-                component_mean,
-                dispersion,
-                zero_inflation,
-            };
-            best_cost = cost;
+            best = candidate;
+            best_cost = checked_cost;
         }
     }
     ensure!(
@@ -234,7 +261,79 @@ pub(super) fn fit_zinb(
         best.dispersion == 0.0 || best.component_mean < problem.maximum_log_mean.exp() * 0.999,
         "fitted ZINB mean reached its numerical upper bound"
     );
-    Ok(best)
+    let (checked_cost, _) = problem.evaluate(best.component_mean, best.dispersion)?;
+    ensure!(
+        checked_cost.is_finite(),
+        "selected ZINB likelihood is not finite"
+    );
+    let threshold = upper_tail_threshold(best, tail_probability)?;
+    let mut diagnostics = OptimizerDiagnostics {
+        average_cost_tolerance: NEAR_OPTIMAL_COST_TOLERANCE,
+        converged_starts,
+        unfinished_starts: outcomes.len() - converged_starts,
+        near_optimal_candidates: 0,
+        component_mean_range: [best.component_mean; 2],
+        dispersion_range: [best.dispersion; 2],
+        zero_inflation_range: [best.zero_inflation; 2],
+        threshold_range: [threshold; 2],
+    };
+    for (cost, candidate) in candidates {
+        if (cost - best_cost).abs() > NEAR_OPTIMAL_COST_TOLERANCE {
+            continue;
+        }
+        if candidate.dispersion >= MAXIMUM_DISPERSION * 0.999
+            || (candidate.dispersion > 0.0
+                && candidate.component_mean >= problem.maximum_log_mean.exp() * 0.999)
+        {
+            continue;
+        }
+        diagnostics.near_optimal_candidates += 1;
+        for (range, value) in [
+            (
+                &mut diagnostics.component_mean_range,
+                candidate.component_mean,
+            ),
+            (&mut diagnostics.dispersion_range, candidate.dispersion),
+            (
+                &mut diagnostics.zero_inflation_range,
+                candidate.zero_inflation,
+            ),
+        ] {
+            range[0] = range[0].min(value);
+            range[1] = range[1].max(value);
+        }
+        let candidate_threshold = upper_tail_threshold(candidate, tail_probability)
+            .with_context(|| format!("threshold for near-optimal ZINB candidate {candidate:?}"))?;
+        diagnostics.threshold_range[0] = diagnostics.threshold_range[0].min(candidate_threshold);
+        diagnostics.threshold_range[1] = diagnostics.threshold_range[1].max(candidate_threshold);
+    }
+    Ok(ZinbFit {
+        parameters: best,
+        diagnostics,
+    })
+}
+
+/// Reject the interior three-level ridge while keeping constrained Poisson boundaries.
+///
+/// With retained levels 0,1,2, positive counts determine only P(2)/P(1).
+/// Excess zeros above the fitted truncated Poisson can be explained by either dispersion
+/// or structural zeros. Those tied explanations need not have the same untruncated tail.
+fn check_truncated_identification(
+    histogram: &CoverageCounts,
+    truncation: Option<u32>,
+    poisson_boundary: CoverageParameters,
+) -> Result<()> {
+    let has_ones = histogram.get(&1).is_some_and(|&count| count > 0);
+    let has_twos = histogram.get(&2).is_some_and(|&count| count > 0);
+    ensure!(
+        truncation != Some(3)
+            || !has_ones
+            || !has_twos
+            || poisson_boundary.zero_inflation <= LIKELIHOOD_TOLERANCE,
+        "unidentified ZINB second fit at T1=3: a dispersion/structural-zero ridge gives tied retained fits with different full tails (truncated ZIP pi={})",
+        poisson_boundary.zero_inflation
+    );
+    Ok(())
 }
 
 /// Stable NB2 log mass, including the exact Poisson boundary.

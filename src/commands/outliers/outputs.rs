@@ -17,7 +17,6 @@ use crate::{
         config::OutliersConfig,
         distribution::{TwoStageCoverageModel, diagnose_fit},
         model::CoverageCounts,
-        plotting::write_global_fit_plot,
         striding::{CoreHistogram, CoreModel},
     },
     shared::{
@@ -30,6 +29,9 @@ use crate::{
 
 const HISTOGRAM_ZSTD_LEVEL: i32 = 3;
 
+#[cfg(feature = "plotters")]
+use super::plotting::write_global_fit_plot;
+
 #[derive(Debug)]
 pub(super) struct OutputPaths {
     pub(super) keep_weights: PathBuf,
@@ -38,6 +40,7 @@ pub(super) struct OutputPaths {
     pub(super) histograms: PathBuf,
     pub(super) models: PathBuf,
     pub(super) global_fit: PathBuf,
+    #[cfg(feature = "plotters")]
     pub(super) plot: PathBuf,
     pub(super) audit: PathBuf,
     pub(super) summary: PathBuf,
@@ -54,6 +57,7 @@ impl OutputPaths {
             histograms: output_dir.join(dot_join(&[prefix, "outliers.histograms.tsv.zst"])),
             models: output_dir.join(dot_join(&[prefix, "outliers.models.tsv"])),
             global_fit: output_dir.join(dot_join(&[prefix, "outliers.global_fit.tsv"])),
+            #[cfg(feature = "plotters")]
             plot: output_dir.join(dot_join(&[prefix, "outliers.global_fit.png"])),
             audit: output_dir.join(dot_join(&[prefix, "outliers.audit.tsv"])),
             summary: output_dir.join(dot_join(&[prefix, "outliers.summary.tsv"])),
@@ -64,19 +68,23 @@ impl OutputPaths {
     }
 
     pub(super) fn all(&self) -> Vec<PathBuf> {
-        vec![
+        let mut paths = vec![
             self.keep_weights.clone(),
             self.exact_blacklist.clone(),
             self.flanked_blacklist.clone(),
             self.histograms.clone(),
             self.models.clone(),
             self.global_fit.clone(),
-            self.plot.clone(),
+        ];
+        #[cfg(feature = "plotters")]
+        paths.push(self.plot.clone());
+        paths.extend([
             self.audit.clone(),
             self.summary.clone(),
             self.preserved_regions.clone(),
             self.readme.clone(),
-        ]
+        ]);
+        paths
     }
 
     /// Give each optional preserved-region PNG the same prefix as its summary table.
@@ -147,8 +155,12 @@ pub(super) fn write_common_metadata(
         "# analysed_chromosomes={}",
         serde_json::to_string(&footprint)?
     )?;
-    writeln!(writer, "# hysteresis=false")?;
     writeln!(writer, "# target={}", config.target.as_str())?;
+    writeln!(
+        writer,
+        "# plotting_available={}",
+        cfg!(feature = "plotters")
+    )?;
     writeln!(
         writer,
         "# plot_preserved_regions={}",
@@ -177,12 +189,20 @@ pub(super) fn write_common_metadata(
     writeln!(
         writer,
         "# tail_probability_multiplier={}",
-        config.tail_probability_multiplier
+        if config.tail_probability.is_none() {
+            config.tail_probability_multiplier.to_string()
+        } else {
+            "NA".to_string()
+        }
     )?;
     writeln!(
         writer,
         "# automatic_probability_denominator={}",
-        metadata.eligible_positions
+        if config.tail_probability.is_none() {
+            metadata.eligible_positions.to_string()
+        } else {
+            "NA".to_string()
+        }
     )?;
     writeln!(
         writer,
@@ -233,11 +253,11 @@ pub(super) fn write_common_metadata(
     Ok(())
 }
 
-/// Write per-core models, the complete global observed and fitted histogram, and the combined plot.
+/// Write per-core models and the complete global histogram, plus a plot when plotting is compiled.
 pub(super) fn write_diagnostic_outputs(
     metadata: &OutputMetadata<'_>,
     global_histogram: &CoreHistogram,
-    global_model: TwoStageCoverageModel,
+    global_model: Option<TwoStageCoverageModel>,
     models_by_chromosome: &FxHashMap<String, Vec<CoreModel>>,
     output_paths: &OutputPaths,
     final_outputs: &mut FinalOutputFiles,
@@ -248,16 +268,16 @@ pub(super) fn write_diagnostic_outputs(
     write_common_metadata(&mut models_writer, metadata)?;
     writeln!(
         models_writer,
-        "chromosome\tstart\tend\tcontext_start\tcontext_end\tmodel_source\teligible_positions\tfragments_by_midpoint\tinitial_component_mean\tinitial_zero_inflation\tinitial_threshold\tsecond_fit_retained_positions\tunderlying_component_mean\tunderlying_zero_inflation\tunderlying_mean\tfinal_threshold\tobserved_positive_coverage_mean\tobserved_positive_coverage_variance\tunderlying_expected_positive_coverage_variance\tpositive_coverage_variance_ratio\tobserved_initial_tail_positions\texpected_initial_tail_positions\tobserved_final_tail_positions\texpected_final_tail_positions\tinitial_dispersion\tunderlying_dispersion\tinitial_poisson_boundary\tunderlying_poisson_boundary"
+        "chromosome\tstart\tend\tcontext_start\tcontext_end\tmodel_source\teligible_positions\tfragments_by_midpoint\tinitial_component_mean\tinitial_zero_inflation\tinitial_threshold\tsecond_fit_retained_positions\tunderlying_component_mean\tunderlying_zero_inflation\tunderlying_mean\tfinal_threshold\tobserved_positive_coverage_mean\tobserved_positive_coverage_variance\tunderlying_expected_positive_coverage_variance\tpositive_coverage_variance_ratio\tobserved_initial_tail_positions\texpected_initial_tail_positions\tobserved_final_tail_positions\texpected_final_tail_positions\tinitial_dispersion\tunderlying_dispersion\tinitial_poisson_boundary\tunderlying_poisson_boundary\tfinal_threshold_exceeds_initial\tinitial_optimizer_diagnostics\tunderlying_optimizer_diagnostics"
     )?;
     for chromosome in metadata.chromosomes {
         let models = models_by_chromosome
             .get(chromosome)
             .with_context(|| format!("missing models for chromosome '{chromosome}'"))?;
         for model in models {
-            writeln!(
+            write!(
                 models_writer,
-                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                 chromosome,
                 model.core.start(),
                 model.core.end(),
@@ -287,7 +307,24 @@ pub(super) fn write_diagnostic_outputs(
                 model.model.initial.dispersion,
                 model.model.underlying_fit.dispersion,
                 model.model.initial.dispersion == 0.0,
-                model.model.underlying_fit.dispersion == 0.0
+                model.model.underlying_fit.dispersion == 0.0,
+                model.model.final_threshold > model.model.initial_threshold
+            )?;
+            writeln!(
+                models_writer,
+                "\t{}\t{}",
+                model
+                    .model
+                    .initial_optimizer
+                    .map(|diagnostics| serde_json::to_string(&diagnostics))
+                    .transpose()?
+                    .unwrap_or_else(|| "NA".to_string()),
+                model
+                    .model
+                    .underlying_optimizer
+                    .map(|diagnostics| serde_json::to_string(&diagnostics))
+                    .transpose()?
+                    .unwrap_or_else(|| "NA".to_string())
             )?;
         }
     }
@@ -301,100 +338,126 @@ pub(super) fn write_diagnostic_outputs(
     write_common_metadata(&mut global_writer, metadata)?;
     writeln!(
         global_writer,
-        "# initial_component_mean={}",
-        global_model.initial.component_mean
+        "# global_fit_status={}",
+        if global_model.is_some() {
+            "required_for_fallback"
+        } else {
+            "not_needed"
+        }
     )?;
-    writeln!(
-        global_writer,
-        "# initial_zero_inflation={}",
-        global_model.initial.zero_inflation
-    )?;
-    writeln!(
-        global_writer,
-        "# initial_threshold={}",
-        global_model.initial_threshold
-    )?;
-    writeln!(
-        global_writer,
-        "# underlying_component_mean={}",
-        global_model.underlying_fit.component_mean
-    )?;
-    writeln!(
-        global_writer,
-        "# underlying_zero_inflation={}",
-        global_model.underlying_fit.zero_inflation
-    )?;
-    writeln!(
-        global_writer,
-        "# underlying_mean={}",
-        global_model.underlying_fit.mean()
-    )?;
-    writeln!(
-        global_writer,
-        "# final_threshold={}",
-        global_model.final_threshold
-    )?;
-    writeln!(
-        global_writer,
-        "# initial_dispersion={}",
-        global_model.initial.dispersion
-    )?;
-    writeln!(
-        global_writer,
-        "# underlying_dispersion={}",
-        global_model.underlying_fit.dispersion
-    )?;
-    writeln!(
-        global_writer,
-        "# initial_poisson_boundary={}",
-        global_model.initial.dispersion == 0.0
-    )?;
-    writeln!(
-        global_writer,
-        "# underlying_poisson_boundary={}",
-        global_model.underlying_fit.dispersion == 0.0
-    )?;
-    let global_diagnostics = diagnose_fit(&global_histogram.counts, global_model)?;
-    writeln!(
-        global_writer,
-        "# observed_positive_coverage_mean={}",
-        global_diagnostics.observed_positive_coverage_mean
-    )?;
-    writeln!(
-        global_writer,
-        "# observed_positive_coverage_variance={}",
-        global_diagnostics.observed_positive_coverage_variance
-    )?;
-    writeln!(
-        global_writer,
-        "# underlying_expected_positive_coverage_variance={}",
-        global_diagnostics.underlying_expected_positive_coverage_variance
-    )?;
-    writeln!(
-        global_writer,
-        "# positive_coverage_variance_ratio={}",
-        global_diagnostics.positive_coverage_variance_ratio
-    )?;
-    writeln!(
-        global_writer,
-        "# observed_initial_tail_positions={}",
-        global_diagnostics.observed_initial_tail_positions
-    )?;
-    writeln!(
-        global_writer,
-        "# expected_initial_tail_positions={}",
-        global_diagnostics.expected_initial_tail_positions
-    )?;
-    writeln!(
-        global_writer,
-        "# observed_final_tail_positions={}",
-        global_diagnostics.observed_final_tail_positions
-    )?;
-    writeln!(
-        global_writer,
-        "# expected_final_tail_positions={}",
-        global_diagnostics.expected_final_tail_positions
-    )?;
+    if let Some(global_model) = global_model {
+        writeln!(
+            global_writer,
+            "# initial_component_mean={}",
+            global_model.initial.component_mean
+        )?;
+        writeln!(
+            global_writer,
+            "# initial_zero_inflation={}",
+            global_model.initial.zero_inflation
+        )?;
+        writeln!(
+            global_writer,
+            "# initial_threshold={}",
+            global_model.initial_threshold
+        )?;
+        writeln!(
+            global_writer,
+            "# underlying_component_mean={}",
+            global_model.underlying_fit.component_mean
+        )?;
+        writeln!(
+            global_writer,
+            "# underlying_zero_inflation={}",
+            global_model.underlying_fit.zero_inflation
+        )?;
+        writeln!(
+            global_writer,
+            "# underlying_mean={}",
+            global_model.underlying_fit.mean()
+        )?;
+        writeln!(
+            global_writer,
+            "# final_threshold={}",
+            global_model.final_threshold
+        )?;
+        writeln!(
+            global_writer,
+            "# initial_dispersion={}",
+            global_model.initial.dispersion
+        )?;
+        writeln!(
+            global_writer,
+            "# underlying_dispersion={}",
+            global_model.underlying_fit.dispersion
+        )?;
+        writeln!(
+            global_writer,
+            "# initial_poisson_boundary={}",
+            global_model.initial.dispersion == 0.0
+        )?;
+        writeln!(
+            global_writer,
+            "# underlying_poisson_boundary={}",
+            global_model.underlying_fit.dispersion == 0.0
+        )?;
+        writeln!(
+            global_writer,
+            "# initial_optimizer_diagnostics={}",
+            serde_json::to_string(&global_model.initial_optimizer)?
+        )?;
+        writeln!(
+            global_writer,
+            "# underlying_optimizer_diagnostics={}",
+            serde_json::to_string(&global_model.underlying_optimizer)?
+        )?;
+        let global_diagnostics = diagnose_fit(&global_histogram.counts, global_model)?;
+        writeln!(
+            global_writer,
+            "# observed_positive_coverage_mean={}",
+            global_diagnostics.observed_positive_coverage_mean
+        )?;
+        writeln!(
+            global_writer,
+            "# observed_positive_coverage_variance={}",
+            global_diagnostics.observed_positive_coverage_variance
+        )?;
+        writeln!(
+            global_writer,
+            "# underlying_expected_positive_coverage_variance={}",
+            global_diagnostics.underlying_expected_positive_coverage_variance
+        )?;
+        writeln!(
+            global_writer,
+            "# positive_coverage_variance_ratio={}",
+            global_diagnostics.positive_coverage_variance_ratio
+        )?;
+        writeln!(
+            global_writer,
+            "# observed_initial_tail_positions={}",
+            global_diagnostics.observed_initial_tail_positions
+        )?;
+        writeln!(
+            global_writer,
+            "# expected_initial_tail_positions={}",
+            global_diagnostics.expected_initial_tail_positions
+        )?;
+        writeln!(
+            global_writer,
+            "# observed_final_tail_positions={}",
+            global_diagnostics.observed_final_tail_positions
+        )?;
+        writeln!(
+            global_writer,
+            "# expected_final_tail_positions={}",
+            global_diagnostics.expected_final_tail_positions
+        )?;
+    } else {
+        writeln!(
+            global_writer,
+            "# unavailable_fit_columns=NA because no core needs a global fallback model"
+        )?;
+    }
     writeln!(
         global_writer,
         "coverage\tobserved_positions\tinitial_fitted_positions\tunderlying_fitted_positions"
@@ -403,28 +466,33 @@ pub(super) fn write_diagnostic_outputs(
     let maximum_observed_coverage = maximum_observed_coverage(&global_histogram.counts)?;
     for coverage in 0..=maximum_observed_coverage {
         let observed = global_histogram.counts.get(&coverage).copied().unwrap_or(0);
-        writeln!(
-            global_writer,
-            "{}\t{}\t{}\t{}",
-            coverage,
-            observed,
-            global_positions * global_model.initial.probability_mass(coverage),
-            global_positions * global_model.underlying_fit.probability_mass(coverage)
-        )?;
+        if let Some(model) = global_model {
+            writeln!(
+                global_writer,
+                "{coverage}\t{observed}\t{}\t{}",
+                global_positions * model.initial.probability_mass(coverage),
+                global_positions * model.underlying_fit.probability_mass(coverage)
+            )?;
+        } else {
+            writeln!(global_writer, "{coverage}\t{observed}\tNA\tNA")?;
+        }
     }
     global_writer.flush()?;
     drop(global_writer);
     final_outputs.record(global_fit_temp, output_paths.global_fit.clone())?;
 
-    let plot_temp = final_outputs.temp_path_for(&output_paths.plot)?;
-    write_global_fit_plot(
-        &plot_temp,
-        &global_histogram.counts,
-        global_model,
-        metadata.chromosomes,
-        models_by_chromosome,
-    )?;
-    final_outputs.record(plot_temp, output_paths.plot.clone())?;
+    #[cfg(feature = "plotters")]
+    {
+        let plot_temp = final_outputs.temp_path_for(&output_paths.plot)?;
+        write_global_fit_plot(
+            &plot_temp,
+            &global_histogram.counts,
+            global_model,
+            metadata.chromosomes,
+            models_by_chromosome,
+        )?;
+        final_outputs.record(plot_temp, output_paths.plot.clone())?;
+    }
     Ok(())
 }
 

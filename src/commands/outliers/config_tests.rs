@@ -102,7 +102,18 @@ fn preserved_plot_settings_are_optional_validated_and_serialized() {
     config.set_plot_preserved_regions(true);
     config.set_preserved_plot_context_multiplier(2.5);
     config.set_preserved_plot_min_span(20_000);
-    assert!(config.validate().is_ok());
+    #[cfg(feature = "plotters")]
+    config
+        .validate()
+        .expect("plotting is available in this build");
+    #[cfg(not(feature = "plotters"))]
+    assert!(
+        config
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("plotters")
+    );
     let arguments = config.to_cli_args().unwrap();
     assert!(
         arguments
@@ -119,6 +130,11 @@ fn preserved_plot_settings_are_optional_validated_and_serialized() {
             .windows(2)
             .any(|pair| pair[0] == "--preserved-plot-min-span" && pair[1] == "20000")
     );
+    // Context coordinates are included in the inspection table even without PNG generation
+    config.set_plot_preserved_regions(false);
+    config
+        .validate()
+        .expect("table-only inspection is available in every build");
     for multiplier in [f64::NAN, f64::INFINITY, 0.5] {
         config.set_preserved_plot_context_multiplier(multiplier);
         assert!(config.validate().is_err());
@@ -126,4 +142,32 @@ fn preserved_plot_settings_are_optional_validated_and_serialized() {
     config.set_preserved_plot_context_multiplier(1.0);
     config.set_preserved_plot_min_span(0);
     assert!(config.validate().is_err());
+}
+
+#[cfg(not(feature = "plotters"))]
+#[test]
+fn unavailable_plotting_is_rejected_before_opening_the_bam() {
+    let mut config = config();
+    config.set_plot_preserved_regions(true);
+
+    let error = config
+        .validate()
+        .expect_err("an explicit PNG request must not be ignored");
+
+    assert!(error.to_string().contains("--plot-preserved-regions"));
+    assert!(error.to_string().contains("plotters"));
+}
+
+#[cfg(feature = "cli")]
+#[test]
+fn cli_plot_multiplier_and_percentage_parsers_match_validation_bounds() {
+    for value in ["0.5", "NaN", "inf", "-1"] {
+        assert!(parse_context_multiplier(value).is_err());
+    }
+    assert_eq!(parse_context_multiplier("1").unwrap(), 1.0);
+    for value in ["-1", "100.1", "NaN", "inf"] {
+        assert!(parse_percentage(value).is_err());
+    }
+    assert_eq!(parse_percentage("0").unwrap(), 0.0);
+    assert_eq!(parse_percentage("100").unwrap(), 100.0);
 }

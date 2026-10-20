@@ -114,6 +114,22 @@ pub(crate) struct TwoStageCoverageModel {
     pub(crate) final_threshold: u32,
     /// Eligible positions below T1 in this fitting histogram, including zero-coverage positions.
     pub(crate) second_fit_retained_positions: u64,
+    /// Numerical agreement across converged near-optimal starts, not uncertainty intervals.
+    pub(crate) initial_optimizer: Option<OptimizerDiagnostics>,
+    pub(crate) underlying_optimizer: Option<OptimizerDiagnostics>,
+}
+
+/// Ranges across converged candidates within the average likelihood tolerance of the winner.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+pub(crate) struct OptimizerDiagnostics {
+    pub(crate) average_cost_tolerance: f64,
+    pub(crate) converged_starts: usize,
+    pub(crate) unfinished_starts: usize,
+    pub(crate) near_optimal_candidates: usize,
+    pub(crate) component_mean_range: [f64; 2],
+    pub(crate) dispersion_range: [f64; 2],
+    pub(crate) zero_inflation_range: [f64; 2],
+    pub(crate) threshold_range: [u32; 2],
 }
 
 impl From<TwoStageZipModel> for TwoStageCoverageModel {
@@ -125,6 +141,8 @@ impl From<TwoStageZipModel> for TwoStageCoverageModel {
             underlying_fit: model.underlying_fit.into(),
             final_threshold: model.final_threshold,
             second_fit_retained_positions: model.second_fit_retained_positions,
+            initial_optimizer: None,
+            underlying_optimizer: None,
         }
     }
 }
@@ -138,16 +156,23 @@ pub(crate) fn fit_two_stage(
     if family == OutlierModel::Zip {
         return fit_two_stage_zip(histogram, probability).map(Into::into);
     }
-    let initial = fit_zinb(histogram, None).context("initial complete ZINB fit")?;
+    let initial_fit =
+        fit_zinb(histogram, None, probability).context("initial complete ZINB fit")?;
+    let initial = initial_fit.parameters;
     let initial_threshold = upper_tail_threshold(initial, probability)?;
     ensure!(
         initial_threshold > 1,
-        "initial ZINB threshold {initial_threshold} at probability {probability} leaves no positive second-fit support. Choose a smaller tail probability"
+        "initial ZINB threshold T1={initial_threshold} at alpha={probability} leaves no positive second-fit support (initial mean={}, dispersion={}, pi={}). Choose a smaller tail probability",
+        initial.component_mean,
+        initial.dispersion,
+        initial.zero_inflation
     );
     // Excluding the initial tail changes the fitted background only. Preservation is decided
     // after calling, and preserved candidates are never added back for another baseline fit
-    let underlying_fit = fit_zinb(histogram, Some(initial_threshold))
-        .with_context(|| format!("right-truncated ZINB refit below T1={initial_threshold}"))?;
+    let second_fit = fit_zinb(histogram, Some(initial_threshold), probability)
+        .with_context(|| format!("second ZINB fit below T1={initial_threshold}, alpha={probability}, initial mean={}, dispersion={}, pi={}. A smaller tail probability can retain more positive coverage levels",
+            initial.component_mean, initial.dispersion, initial.zero_inflation))?;
+    let underlying_fit = second_fit.parameters;
     let final_threshold = upper_tail_threshold(underlying_fit, probability)?;
     let second_fit_retained_positions =
         histogram
@@ -164,6 +189,8 @@ pub(crate) fn fit_two_stage(
         underlying_fit,
         final_threshold,
         second_fit_retained_positions,
+        initial_optimizer: Some(initial_fit.diagnostics),
+        underlying_optimizer: Some(second_fit.diagnostics),
     })
 }
 

@@ -72,6 +72,37 @@ fn chromosomes() -> ChromosomeArgs {
     }
 }
 
+#[test]
+fn outliers_command_presence_matches_its_command_feature() {
+    let command = build_docs_command();
+
+    assert_eq!(
+        command.find_subcommand("outliers").is_some(),
+        cfg!(feature = "cmd_outliers")
+    );
+}
+
+#[cfg(feature = "cmd_outliers")]
+#[test]
+fn outliers_config_renders_with_or_without_plotting_support() {
+    use cfdnalab::run_like_cli::outliers::{OutlierModel, OutliersConfig};
+
+    let mut config = OutliersConfig::new(ioc(), chromosomes());
+    config.set_model(OutlierModel::Zip);
+    config.set_preserved_plot_context_multiplier(2.5);
+    config.set_plot_preserved_regions(cfg!(feature = "plotters"));
+
+    let args = assert_cli_accepts(config.to_cli_args().unwrap(), "outliers");
+
+    assert_contains_pair(&args, "--model", "zip");
+    assert_contains_pair(&args, "--preserved-plot-context-multiplier", "2.5");
+    assert_eq!(
+        args.iter()
+            .any(|argument| argument == "--plot-preserved-regions"),
+        cfg!(feature = "plotters")
+    );
+}
+
 #[cfg(feature = "cmd_bam_to_bam")]
 #[test]
 fn bam_to_bam_config_renders_cli_call() {

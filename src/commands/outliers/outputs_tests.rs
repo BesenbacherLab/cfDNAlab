@@ -64,4 +64,40 @@ fn common_metadata_records_settings_and_analysed_chromosome_lengths() {
     assert!(text.contains("# raw_coverage_source=uncorrected_mapped_reference_segments\n"));
     assert!(text.contains("# blacklists=[\"excluded.bed\"]\n"));
     assert!(text.contains("# blacklist_flank=1000\n"));
+    assert!(text.contains(&format!(
+        "# plotting_available={}\n",
+        cfg!(feature = "plotters")
+    )));
+}
+
+#[test]
+fn output_manifest_includes_png_only_when_the_build_can_write_it() {
+    let paths = OutputPaths::new(Path::new("results"), "sample");
+    let mut expected = vec![
+        "sample.outliers.keep_weights.tsv",
+        "sample.outliers.exact.bed",
+        "sample.outliers.flanked.bed",
+        "sample.outliers.histograms.tsv.zst",
+        "sample.outliers.models.tsv",
+        "sample.outliers.global_fit.tsv",
+    ];
+    if cfg!(feature = "plotters") {
+        expected.push("sample.outliers.global_fit.png");
+    }
+    expected.extend([
+        "sample.outliers.audit.tsv",
+        "sample.outliers.summary.tsv",
+        "sample.outliers.preserved_regions.tsv",
+        "sample.outliers.README.txt",
+    ]);
+
+    let manifest = paths.all();
+
+    assert_eq!(
+        manifest,
+        expected
+            .iter()
+            .map(|name| Path::new("results").join(name))
+            .collect::<Vec<_>>()
+    );
 }

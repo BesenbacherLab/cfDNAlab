@@ -4,7 +4,9 @@ use rayon::prelude::*;
 
 use crate::{
     commands::outliers::{
+        config::OutlierModel,
         distribution::{FitDiagnostics, TwoStageCoverageModel, diagnose_fit, fit_two_stage},
+        failure::AnalysisFailures,
         model::CoverageCounts,
     },
     shared::interval::Interval,
@@ -132,6 +134,13 @@ pub(crate) struct CoreModel {
     pub(crate) diagnostics: FitDiagnostics,
 }
 
+/// Local models and the pooled fit, present only when needed for chromosome fallback.
+#[derive(Debug)]
+pub(crate) struct FittedModels {
+    pub(crate) global: Option<TwoStageCoverageModel>,
+    pub(crate) by_chromosome: FxHashMap<String, Vec<CoreModel>>,
+}
+
 /// Sum all model-core histograms without another BAM scan.
 pub(crate) fn sum_global_histogram(
     histograms_by_chromosome: &FxHashMap<String, Vec<CoreHistogram>>,
@@ -157,60 +166,172 @@ pub(crate) fn sum_global_histogram(
 pub(crate) fn fit_core_models(
     chromosomes: &[String],
     histograms_by_chromosome: &FxHashMap<String, Vec<CoreHistogram>>,
-    global_model: TwoStageCoverageModel,
+    global_histogram: &CoreHistogram,
+    family: OutlierModel,
     tail_probability: f64,
     minimum_context_span: u32,
     minimum_fragment_support: u64,
-) -> Result<FxHashMap<String, Vec<CoreModel>>> {
-    let mut models_by_chromosome =
-        FxHashMap::with_capacity_and_hasher(histograms_by_chromosome.len(), Default::default());
-
+) -> Result<FittedModels> {
+    let mut needs_global = false;
     for chromosome in chromosomes {
         let cores = histograms_by_chromosome
             .get(chromosome)
-            .with_context(|| format!("missing core histograms for chromosome '{chromosome}'"))?;
-        ensure!(
-            !cores.is_empty(),
-            "chromosome '{}' has no model-core histograms",
-            chromosome
-        );
-        let chromosome_models = (0..cores.len())
+            .with_context(|| format!("missing core histograms for {chromosome}"))?;
+        needs_global |=
+            needs_global_fallback(cores, minimum_context_span, minimum_fragment_support)?;
+    }
+    let mut messages = Vec::new();
+    let mut failed_histograms = String::from(
+        "# GLOBAL pools all selected chromosomes and has no genomic coordinates (NA)\n# coverage is raw positional coverage, observed_positions counts eligible bases\nchromosome\tcore_start\tcore_end\tcontext_start\tcontext_end\tfragments_by_midpoint\tcoverage\tobserved_positions\n",
+    );
+    let global_model = if needs_global {
+        match fit_two_stage(&global_histogram.counts, tail_probability, family) {
+            Ok(model) => Some(model),
+            Err(error) => {
+                messages.push(format!("required global {} fit, alpha={tail_probability}, eligible positions {}, fragment support {}: {error:#}", family.as_str(), global_histogram.eligible_positions()?, global_histogram.fragment_support));
+                append_failed_histogram(
+                    &mut failed_histograms,
+                    "GLOBAL",
+                    global_histogram.interval,
+                    global_histogram.interval,
+                    global_histogram,
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let mut models_by_chromosome = FxHashMap::default();
+    for chromosome in chromosomes {
+        let cores = &histograms_by_chromosome[chromosome];
+        // Collect every independent local result before returning failures. Histogram processing
+        // is cheap compared with another BAM pass and supplies all failing contexts at once
+        let results = (0..cores.len())
             .into_par_iter()
             .map(|core_index| {
-                let (context_histogram, context, context_complete) = build_context(
+                let (mut histogram, context, complete) = build_context(
                     cores,
                     core_index,
                     minimum_context_span,
                     minimum_fragment_support,
                 )?;
-                // The model core is only where thresholds apply. Fit from the assembled context,
-                // which is normally 5.5 Mb when centered with the default span and stride
-                let local_fit = context_complete
-                    .then(|| fit_two_stage(&context_histogram.counts, tail_probability, global_model.family)
-                        .with_context(|| format!("fitting {} for {chromosome} core {:?}, context {:?}, eligible positions {}, fragment support {}",
-                            global_model.family.as_str(), cores[core_index].interval.as_tuple(), context.as_tuple(),
-                            context_histogram.counts.values().sum::<u64>(), context_histogram.fragment_support)))
-                    .transpose()?;
-                let (source, model) = match local_fit {
-                    Some(model) => (ModelSource::Local, model),
-                    None => (ModelSource::GlobalFallback, global_model),
+                let core = cores[core_index].interval;
+                let fit = if complete {
+                    Some(fit_two_stage(&histogram.counts, tail_probability, family))
+                } else {
+                    global_model.map(Ok)
                 };
-                let diagnostics = diagnose_fit(&context_histogram.counts, model).with_context(|| format!("diagnosing {chromosome} context {:?}", context.as_tuple()))?;
-                Ok(CoreModel {
-                    core: cores[core_index].interval,
-                    context,
-                    eligible_positions: context_histogram.eligible_positions()?,
-                    fragment_support: context_histogram.fragment_support,
-                    source,
-                    model,
-                    diagnostics,
-                })
+                let result = fit.map(|fit| -> Result<CoreModel> {
+                    let model = fit?;
+                    Ok(CoreModel {
+                        core,
+                        context,
+                        eligible_positions: histogram.eligible_positions()?,
+                        fragment_support: histogram.fragment_support,
+                        source: if complete {
+                            ModelSource::Local
+                        } else {
+                            ModelSource::GlobalFallback
+                        },
+                        diagnostics: diagnose_fit(&histogram.counts, model)?,
+                        model,
+                    })
+                });
+                // Retain coverage counts only for failed contexts while collecting all results
+                // Successful models already carry their support and numerical diagnostics
+                if !matches!(&result, Some(Err(_))) {
+                    histogram.counts.clear();
+                }
+                Ok((core, context, histogram, result))
             })
-            .collect::<Result<Vec<_>>>()?;
+            .collect::<Vec<Result<_>>>();
+        let mut chromosome_models = Vec::new();
+        for result in results {
+            match result {
+                Ok((core, context, histogram, Some(Err(error)))) => {
+                    messages.push(format!("{chromosome} core {:?}, context {:?}, {} fit, alpha={tail_probability}, eligible positions {}, fragment support {}: {error:#}", core.as_tuple(), context.as_tuple(), family.as_str(), histogram.eligible_positions()?, histogram.fragment_support));
+                    append_failed_histogram(
+                        &mut failed_histograms,
+                        chromosome,
+                        core,
+                        context,
+                        &histogram,
+                    );
+                }
+                Ok((_, _, _, Some(Ok(model)))) => chromosome_models.push(model),
+                Ok((_, _, _, None)) => {} // The required global failure is already recorded once
+                Err(error) => {
+                    messages.push(format!("{chromosome} context construction: {error:#}"))
+                }
+            }
+        }
         models_by_chromosome.insert(chromosome.clone(), chromosome_models);
     }
+    if !messages.is_empty() {
+        return Err(AnalysisFailures {
+            stage: "coverage model fitting after the first BAM pass",
+            messages,
+            histogram: Some(failed_histograms),
+            audit: None,
+        }
+        .into());
+    }
+    Ok(FittedModels {
+        global: global_model,
+        by_chromosome: models_by_chromosome,
+    })
+}
 
-    Ok(models_by_chromosome)
+/// A full chromosome supplies the maximum possible local span and midpoint support.
+fn needs_global_fallback(
+    cores: &[CoreHistogram],
+    minimum_span: u32,
+    minimum_support: u64,
+) -> Result<bool> {
+    let first = cores
+        .first()
+        .context("chromosome has no model-core histograms")?;
+    let last = cores
+        .last()
+        .context("chromosome has no model-core histograms")?;
+    let span = first.interval.expand_to_include(last.interval).len();
+    let support = cores.iter().try_fold(0_u64, |total, core| {
+        total
+            .checked_add(core.fragment_support)
+            .context("chromosome fragment support overflow")
+    })?;
+    Ok(span < minimum_span || support < minimum_support)
+}
+
+/// Preserve sparse failing-context counts without requiring decompression or a whole-run scan.
+fn append_failed_histogram(
+    output: &mut String,
+    chromosome: &str,
+    core: Interval<u32>,
+    context: Interval<u32>,
+    histogram: &CoreHistogram,
+) {
+    use std::fmt::Write;
+    for (coverage, positions) in &histogram.counts {
+        let coordinates = if chromosome == "GLOBAL" {
+            "NA\tNA\tNA\tNA".to_string()
+        } else {
+            format!(
+                "{}\t{}\t{}\t{}",
+                core.start(),
+                core.end(),
+                context.start(),
+                context.end()
+            )
+        };
+        writeln!(
+            output,
+            "{chromosome}\t{coordinates}\t{}\t{coverage}\t{positions}",
+            histogram.fragment_support
+        )
+        .expect("writing to a string cannot fail");
+    }
 }
 
 fn build_context(

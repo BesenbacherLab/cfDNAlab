@@ -72,3 +72,67 @@ fn bins_cover_partial_last_bins_and_bound_the_number_of_plot_points() {
         );
     }
 }
+
+#[test]
+fn clipped_plot_chunks_keep_absolute_coverage_and_mask_offsets() {
+    let mut bins = CoverageBins::new(Interval::new(102, 108).unwrap(), 2).unwrap();
+
+    bins.add_coverage(
+        Interval::new(100, 105).unwrap(),
+        &[100.0, 200.0, 2.0, 4.0, 6.0],
+        Some(&[0, 0, 0, 1, 0]),
+    )
+    .unwrap();
+    bins.add_coverage(
+        Interval::new(105, 110).unwrap(),
+        &[8.0, 10.0, 12.0, 300.0, 400.0],
+        Some(&[0, 0, 1, 0, 0]),
+    )
+    .unwrap();
+    // Touching chunks contain no positions in the half-open plot interval
+    bins.add_coverage(Interval::new(100, 102).unwrap(), &[900.0, 900.0], None)
+        .unwrap();
+    bins.add_coverage(Interval::new(108, 110).unwrap(), &[900.0, 900.0], None)
+        .unwrap();
+
+    // The bins contain [2], [6,8], [10]. Mask offsets refer to input chunks, not plot starts
+    let expected = [
+        (1, 2.0, 2.0, 102),
+        (2, 14.0, 8.0, 105),
+        (1, 10.0, 10.0, 106),
+    ];
+    for (bin, (positions, sum, maximum, peak_position)) in bins.bins.iter().zip(expected) {
+        assert_eq!(bin.eligible_positions, positions);
+        assert_eq!(bin.coverage_sum, sum);
+        assert_eq!(bin.mean(), Some(sum / positions as f64));
+        assert_eq!(bin.maximum, maximum);
+        assert_eq!(bin.maximum_position, peak_position);
+    }
+}
+
+#[test]
+fn tied_plot_peaks_keep_the_first_eligible_position_across_chunks() {
+    let mut bins = CoverageBins::new(Interval::new(100, 108).unwrap(), 4).unwrap();
+
+    bins.add_coverage(
+        Interval::new(100, 102).unwrap(),
+        &[99.0, 5.0],
+        Some(&[1, 0]),
+    )
+    .unwrap();
+    bins.add_coverage(
+        Interval::new(102, 108).unwrap(),
+        &[5.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        Some(&[0, 0, 1, 0, 0, 0]),
+    )
+    .unwrap();
+
+    assert_eq!(bins.bins[0].maximum_position, 101);
+    assert_eq!(bins.bins[0].maximum, 5.0);
+    assert_eq!(bins.bins[0].eligible_positions, 3);
+    assert_eq!(bins.bins[0].coverage_sum, 10.0);
+    // An all-zero bin's peak must also point at an observed eligible base
+    assert_eq!(bins.bins[1].maximum_position, 105);
+    assert_eq!(bins.bins[1].mean(), Some(0.0));
+    assert_eq!(bins.bins[1].eligible_positions, 3);
+}

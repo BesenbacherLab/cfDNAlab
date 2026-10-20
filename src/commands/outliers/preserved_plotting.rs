@@ -1,6 +1,9 @@
 //! Coverage summaries and optional PNG views around preserved reporting groups.
 
-use super::{outliers::CalledRegion, preserved_regions::PreservedRegion, striding::CoreModel};
+use super::{
+    outliers::CalledRegion, preservation::ChromosomeDecisions, preserved_regions::PreservedRegion,
+    striding::CoreModel,
+};
 use crate::shared::interval::Interval;
 use anyhow::{Context, Result, ensure};
 use plotters::{coord::Shift, prelude::*};
@@ -9,7 +12,7 @@ use std::path::Path;
 const MAXIMUM_PLOT_BINS: u32 = 2_000;
 
 /// Coverage over one reference bin. Blacklisted positions do not contribute to any metric.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct CoverageBin {
     interval: Interval<u32>,
     coverage_sum: f64,
@@ -27,6 +30,7 @@ impl CoverageBin {
 }
 
 /// Fixed genomic bins spanning a plot context, accumulated across disjoint processing chunks.
+#[derive(Debug, PartialEq)]
 pub(super) struct CoverageBins {
     interval: Interval<u32>,
     bin_size: u32,
@@ -69,14 +73,19 @@ impl CoverageBins {
         mask: Option<&[u8]>,
     ) -> Result<()> {
         ensure!(
-            self.interval.contains_interval(core) && core.len() as usize == coverage.len(),
+            core.len() as usize == coverage.len(),
             "plot coverage does not match its requested genomic interval"
         );
         ensure!(
             mask.is_none_or(|values| values.len() == coverage.len()),
             "plot coverage and blacklist mask have different lengths"
         );
-        for (offset, &value) in coverage.iter().enumerate() {
+        let Some(overlap) = core.intersection(self.interval) else {
+            return Ok(());
+        };
+        let first = (overlap.start() - core.start()) as usize;
+        let end = (overlap.end() - core.start()) as usize;
+        for (offset, &value) in coverage.iter().enumerate().take(end).skip(first) {
             if mask.is_some_and(|values| values[offset] != 0) {
                 continue;
             }
@@ -102,9 +111,22 @@ impl CoverageBins {
 pub(super) struct PreservedPlotData<'a> {
     pub(super) region: &'a PreservedRegion,
     pub(super) coverage: &'a CoverageBins,
+    pub(super) close_up: &'a CoverageBins,
     pub(super) models: &'a [CoreModel],
     pub(super) blacklist: &'a [Interval<u64>],
     pub(super) calls: &'a [CalledRegion],
+    pub(super) decisions: &'a ChromosomeDecisions,
+}
+
+/// Resolve the independently binned close-up within the already requested BAM context.
+pub(super) fn close_up_interval(region: &PreservedRegion) -> Result<Interval<u32>> {
+    let padding = (region.interval.len() / 10).max(100);
+    Interval::new(
+        region.interval.start().saturating_sub(padding),
+        region.interval.end().saturating_add(padding),
+    )?
+    .intersection(region.plot_interval)
+    .context("preserved plot close-up is outside its context")
 }
 
 /// Save an overview and a closer view with observed coverage, fitted baseline, cutoff, and masks.
@@ -131,16 +153,16 @@ pub(super) fn write_preserved_region_plot(path: &Path, data: PreservedPlotData<'
         &panels[0],
         data.region.plot_interval,
         "Surrounding coverage",
+        data.coverage,
         &data,
     )?;
-    let padding = (data.region.interval.len() / 10).max(100);
-    let zoom = Interval::new(
-        data.region.interval.start().saturating_sub(padding),
-        data.region.interval.end().saturating_add(padding),
-    )?
-    .intersection(data.region.plot_interval)
-    .context("preserved plot close-up is outside its context")?;
-    draw_coverage_panel(&panels[1], zoom, "Closer view of the grouped calls", &data)?;
+    draw_coverage_panel(
+        &panels[1],
+        data.close_up.interval,
+        "Closer view of the grouped calls",
+        data.close_up,
+        &data,
+    )?;
     root.present()
         .with_context(|| format!("writing preserved-region plot {}", path.display()))?;
     Ok(())
@@ -151,10 +173,10 @@ fn draw_coverage_panel(
     area: &DrawingArea<BitMapBackend<'_>, Shift>,
     interval: Interval<u32>,
     title: &str,
+    coverage: &CoverageBins,
     data: &PreservedPlotData<'_>,
 ) -> Result<()> {
-    let bins = data
-        .coverage
+    let bins = coverage
         .bins
         .iter()
         .filter(|bin| bin.interval.intersects(interval))
@@ -186,7 +208,7 @@ fn draw_coverage_panel(
     let coordinate = |position: u32| f64::from(position) / 1000.0;
     let mut chart = ChartBuilder::on(area)
         .caption(
-            format!("{title} ({} bp coverage bins)", data.coverage.bin_size),
+            format!("{title} ({} bp coverage bins)", coverage.bin_size),
             ("sans-serif", 17),
         )
         .margin(12)
@@ -211,28 +233,37 @@ fn draw_coverage_panel(
         .y_desc("Fragment coverage")
         .draw()?;
 
-    chart
-        .draw_series(data.region.call_indices.iter().filter_map(|&index| {
-            data.calls[index]
-                .interval
-                .intersection(interval)
-                .map(|overlap| {
-                    Rectangle::new(
-                        [
-                            (coordinate(overlap.start()), 0.0),
-                            (coordinate(overlap.end()), maximum),
-                        ],
-                        RGBColor(240, 190, 60).mix(0.23).filled(),
-                    )
-                })
-        }))?
-        .label("Preserved calls")
-        .legend(|(legend_x, legend_y)| {
-            Rectangle::new(
-                [(legend_x, legend_y - 4), (legend_x + 18, legend_y + 4)],
-                RGBColor(240, 190, 60).mix(0.5).filled(),
-            )
-        });
+    for (preserved, label, color) in [
+        (true, "Preserved calls", RGBColor(240, 190, 60)),
+        (false, "Corrected calls", RGBColor(180, 70, 180)),
+    ] {
+        chart
+            .draw_series(data.calls.iter().zip(&data.decisions.calls).filter_map(
+                |(call, decision)| {
+                    if data.decisions.merged_regions[decision.merged_region_index].preserved
+                        != preserved
+                    {
+                        return None;
+                    }
+                    call.interval.intersection(interval).map(|overlap| {
+                        Rectangle::new(
+                            [
+                                (coordinate(overlap.start()), 0.0),
+                                (coordinate(overlap.end()), maximum),
+                            ],
+                            color.mix(0.23).filled(),
+                        )
+                    })
+                },
+            ))?
+            .label(label)
+            .legend(move |(legend_x, legend_y)| {
+                Rectangle::new(
+                    [(legend_x, legend_y - 4), (legend_x + 18, legend_y + 4)],
+                    color.mix(0.5).filled(),
+                )
+            });
+    }
     chart
         .draw_series(bins.iter().filter_map(|bin| {
             let mean = bin.mean()?;
@@ -283,7 +314,7 @@ fn draw_coverage_panel(
                 GREEN.stroke_width(2),
             ))
         }))?
-        .label("Background mean")
+        .label("Active-component mean (local-mean target only)")
         .legend(|(legend_x, legend_y)| {
             PathElement::new(
                 [(legend_x, legend_y), (legend_x + 18, legend_y)],

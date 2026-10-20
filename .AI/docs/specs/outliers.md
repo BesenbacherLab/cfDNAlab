@@ -8,6 +8,20 @@ CLI help is the user-facing option reference. Each run's `outliers.README.txt` e
 and columns. This spec records the implementation invariants. Remaining decisions and simulation
 evidence are linked from [the review checklist](../future/outliers_review_rectification_plan.md).
 
+## Cargo features
+
+`cmd_outliers` enables the command and its public runner, independently of `cli` and `plotters`.
+It requires `cmd_fcoverage` for shared fragment coverage construction and the optional `argmin`,
+`argmin-math` and `statrs` dependencies for ZINB fitting. `cli` adds Clap parsing and dispatch.
+Equivalent CLI rendering remains available without `cli`.
+
+`plotters` compiles both PNG writers and preserved-context BAM rereads. Without it, all numerical
+analysis and text outputs remain available. The normal output manifest contains ten text files,
+`OutliersRunResult.output_plot` is `None`, and preserved-region `plot_file` values are `NA`.
+With it, `output_plot` is `Some(path)` and the global PNG is included in the manifest.
+`--plot-preserved-regions` requires `plotters` and otherwise fails validation before BAM access.
+Plot-context coordinates are always recorded. Text metadata records `plotting_available`.
+
 ## Coordinates and fragment coverage
 
 - Intervals are 0-based and half-open. Rows follow selected chromosome order, then genomic order.
@@ -37,7 +51,11 @@ A local fitting context starts with its core and expands by complete cores on bo
 sides until it meets both `--bin-size` and `--min-context-fragments`. With 500 kb cores, centered
 spans grow as 0.5, 1.5, ..., 5.5 Mb for a 5 Mb minimum. Ends expand on the available side.
 A core uses the sample-wide model only when its whole chromosome cannot meet both requirements.
-A sufficiently supported local context that cannot be fitted must fail explicitly.
+A sufficiently supported local context that cannot be fitted must fail explicitly. Determine
+global fallback need from each full chromosome's physical span and summed midpoint support.
+Fit the pooled model once only if needed. Keep the pooled histogram for alpha and observations
+regardless. Local fitting receives the model family independently of the optional global model.
+Collect independent local fit failures across selected chromosomes before returning diagnostics.
 
 `start` and `end` in the model table bound the core where that model is applied.
 `context_start`, `context_end`, `eligible_positions`, and `fragments_by_midpoint` describe the
@@ -69,8 +87,23 @@ Both models follow the same two-stage procedure:
 Fail explicitly if T1 leaves insufficient positive support. Do not raise T1 silently or bypass
 refitting. Preservation is decided after calling and never adds observations back to the fit.
 
-! Warning: ZIP's insufficient-support errors currently omit the chosen tail probability and
-advice to reduce it. This remains implementation work in the review checklist.
+Reject T1=2 for both free-zero mixtures. With retained levels 0 and 1, their underlying
+component mean and zero-inflation probability are not separately determined. For ZINB at T1=3
+with observed levels 1 and 2, reject a truncated ZIP boundary candidate with positive pi above
+`1e-12`. It identifies an interior dispersion/zero-inflation ridge with different full tails.
+Keep equality, numerical near-equality and valid constrained boundary fits. These guards do
+not establish identification in every larger-support or near-boundary case.
+
+Preflight all initial optimizer vertices before argmin setup. Likelihood errors remain fatal,
+including trial errors. Re-evaluate converged and selected candidates for finite likelihood.
+ZINB optimizer diagnostics record converged/unfinished counts and parameter/threshold ranges
+across valid near-optimal candidates, including the ZIP boundary when comparable. The average
+negative-log-likelihood tolerance is recorded (`1e-10`). These are numerical comparisons,
+not confidence intervals. An unfinished start with materially better cost remains an error.
+
+Second-fit errors include T1, alpha and first-fit parameters. Smaller alpha may retain more
+positive support, but does not fix an initial-fit failure. Never clamp T2 to T1. Persist
+`final_threshold_exceeds_initial` as an inspection flag.
 
 Keeping a called elevation uncorrected does not make it the background for detecting other
 pileups. Only values at or above T1 are excluded from refitting. Lower values still contribute,
@@ -153,7 +186,8 @@ Scores strictly above the cutoff flag a call. Equality does not. A 100% cutoff d
 Flank all candidate calls, clip to chromosome bounds, and merge touching or overlapping flanks.
 Preserve membership through transitive merges. If any member is flagged, apply the configured
 action to every member: `preserve` omits their weights and actionable BED regions, `correct`
-retains individual proposed weights, and `error` stops before publishing outputs.
+retains individual proposed weights, and `error` reports every failing merged region across
+selected chromosomes after the second BAM pass before stopping without normal results.
 All candidates and decisions remain in the audit when outputs are written.
 
 Do not subtract preserved bases from flanks, pool masses into merged-region weights, or add
@@ -189,7 +223,9 @@ contribution from the fragment, without dilution by overlap fraction.
 Zero outlier weights skip GC correction, length-normalization work, trimming, coverage insertion,
 and counted-fragment accounting. Partial weights multiply GC weights and retain existing
 normalization formulas and ownership rules. Exclusion counters count tile encounters.
-Downweighted counters follow counted tile insertions, not unique molecules.
+Downweighted counters follow counted tile insertions, not unique molecules. Zero-weight
+exclusion encounters can differ between GC modes because of padding-only fragments. This
+reporting discrepancy is deferred and does not establish a coverage difference.
 
 Called-base percentages measure genomic extent. Whole-fragment weighting also affects bases
 outside calls, so audit masses and genomic percentages do not measure total coverage reduction.
@@ -210,8 +246,8 @@ comments. Genomic intervals use the coordinate convention above.
 | `outliers.preserved_regions.region_000001.png` | Optional local coverage figure for each inspection group. |
 | `outliers.models.tsv` | One row per core with context, support, both fits, applied threshold, and diagnostics defined above. |
 | `outliers.histograms.tsv.zst` | Sparse per-core raw coverage histograms and midpoint-assigned fragment counts. |
-| `outliers.global_fit.tsv` | Complete sample-wide observed histogram and expected position counts under both fits. |
-| `outliers.global_fit.png` | Global observed/fitted views and genomic tracks of local T1/T2 and both means. |
+| `outliers.global_fit.tsv` | Complete pooled observed histogram. Expected counts and parameter metadata only when a global fallback fit was needed. Otherwise expected columns are `NA` and `global_fit_status=not_needed`. |
+| `outliers.global_fit.png` | Global observed/fitted views and genomic tracks of local T1/T2 and both means. Requires the `plotters` feature. |
 | `outliers.README.txt` | File and column explanations with the actual preservation settings. |
 
 Summary percentages use the same row's `eligible_positions` and are `NaN` when it is zero.
@@ -224,6 +260,20 @@ Histograms have columns `chromosome`, `start`, `end`, `fragments_by_midpoint`, `
 those repetitions. Missing coverage levels have no positions. A fully blacklisted core has an
 explicit `coverage=0, observed_positions=0` row. Global-fit rows instead include every integer
 coverage through the observed maximum, even zero-count gaps. Never truncate the observed tail.
+
+Analysis and report-writing failures publish only distinct `outliers.error.txt` and available
+`outliers.error_histogram.tsv` or `outliers.error_audit.tsv`. The human report includes settings,
+stage, original errors and companion paths. Histograms are uncompressed sparse counts for failing
+contexts. Pooled rows use `GLOBAL` and `NA` coordinates. Ambiguity audits cover every failed merged
+region and its member evidence, with window contributors and actions marked `withheld_error`. They omit
+unrelated successful decisions. Use already collected evidence without extra BAM scans.
+
+Normal files are staged until all analysis and reporting finish, then published with the shared
+`FinalOutputFiles::move_into_place` helper. Publication errors can leave some normal outputs
+replaced or newly present. Report any diagnostic-writing failure alongside the original error.
+Existing successful files are retained after analysis failures. Error files use fixed names per
+prefix and attempt identifiers. Reports list only companions from their attempt. Successful retries
+may leave old error files or optional PNGs. Consumers must check the current exit status.
 
 ### Preserved inspection groups and plots
 
@@ -239,10 +289,12 @@ Plot contexts do not affect grouping. `plot_file` is `NA` unless plots were requ
 
 `--plot-preserved-regions` rereads only these contexts using unchanged detection filters, in
 chunks bounded by `--tile-size` with complete fragment fetch halos. Reads do not enter detection
-statistics. At most 2,000 reference bins retain mean and peak coverage over eligible positions,
-including genuine zeros. Retain peak positions. Blacklisted spans are unavailable, not zeros.
-Context and close-up panels show active mean, T2, member calls, and masks. Reporting changes no
-detection or correction decisions. Table and optional PNGs use final-output registration.
+statistics. Overview and close-up each use at most 2,000 independently chosen reference bins,
+accumulated from the same chunks. Retain mean, peak and peak position over eligible positions,
+including genuine zeros. Blacklisted spans are unavailable, not zeros. Both panels show active
+mean, T2, all visible candidate calls with actual decisions, and masks. Progress identifies each
+group and requested reread span. Old optional PNGs are not removed when reusing a prefix.
+Reporting changes no detection or correction decisions. Table and optional PNGs use final-output registration.
 
 ## Correction combinations and current scope
 
@@ -267,6 +319,9 @@ settings, fragment filters, raw coverage and gap definitions, blacklists, and pr
 only, including those without calls. Downstream counting may select a subset. Known requested
 chromosome or reference-length mismatches fail. Filter differences warn. Custom tables without
 recorded settings remain usable with a warning. Do not compare BAM identities or blacklists.
+`automatic_probability_denominator` and `tail_probability_multiplier` are `NA` with manual alpha.
+Obsolete hysteresis metadata is omitted. `detector` retains the two-stage algorithm identity. Document existing CLI/metadata
+mappings until the owner reviews renaming both together.
 
 ## Mathematical references
 

@@ -2,13 +2,15 @@
 
 use std::{collections::BTreeMap, fs, path::Path};
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
 use cfdnalab::{
     RunOptions,
     run_like_cli::{
         common::{ChromosomeArgs, IOCArgs, OutlierWeightsArgs},
         fcoverage::{FCoverageConfig, run_fcoverage},
-        outliers::{OutlierModel, OutlierTarget, OutliersConfig, run_outliers},
+        outliers::{
+            AmbiguousRegionAction, OutlierModel, OutlierTarget, OutliersConfig, run_outliers,
+        },
     },
     testing::{PairedFragmentSpec, TempBam, TempBamBuilder, read_zst_to_string},
 };
@@ -299,20 +301,25 @@ fn paired_bam_produces_the_hand_derived_models_calls_and_all_outputs() -> Result
     let result = run_outliers(&config, RunOptions::new_quiet())?;
 
     assert_eq!(result.counters.base.counted_fragments, 23);
-    assert_eq!(result.output_files.len(), 11);
-    let expected_names = [
+    assert_eq!(
+        result.output_files.len(),
+        10 + usize::from(cfg!(feature = "plotters"))
+    );
+    let mut expected_names = vec![
         "sample.outliers.keep_weights.tsv",
         "sample.outliers.exact.bed",
         "sample.outliers.flanked.bed",
         "sample.outliers.histograms.tsv.zst",
         "sample.outliers.models.tsv",
         "sample.outliers.global_fit.tsv",
-        "sample.outliers.global_fit.png",
         "sample.outliers.audit.tsv",
         "sample.outliers.summary.tsv",
         "sample.outliers.preserved_regions.tsv",
         "sample.outliers.README.txt",
     ];
+    if cfg!(feature = "plotters") {
+        expected_names.insert(6, "sample.outliers.global_fit.png");
+    }
     let actual_names = result
         .output_files
         .iter()
@@ -351,7 +358,7 @@ fn paired_bam_produces_the_hand_derived_models_calls_and_all_outputs() -> Result
     let model_text = fs::read_to_string(&result.output_models)?;
     let model_lines = data_lines(&model_text);
     let model_header = model_lines[0].split('\t').collect::<Vec<_>>();
-    assert_eq!(model_header.len(), 28);
+    assert_eq!(model_header.len(), 31);
     assert_eq!(model_header[7], "fragments_by_midpoint");
     assert_eq!(model_header[10], "initial_threshold");
     assert_eq!(model_header[15], "final_threshold");
@@ -383,10 +390,8 @@ fn paired_bam_produces_the_hand_derived_models_calls_and_all_outputs() -> Result
 
     let global_text = fs::read_to_string(&result.output_global_fit)?;
     assert!(!global_text.contains("# positive_coverage_diagnostic_scope="));
-    assert!(global_text.contains("# initial_threshold=7\n"));
-    assert!(global_text.contains("# final_threshold=2\n"));
-    assert!(global_text.contains("# observed_initial_tail_positions=30\n"));
-    assert!(global_text.contains("# observed_final_tail_positions=30\n"));
+    assert!(global_text.contains("# global_fit_status=not_needed\n"));
+    assert!(!global_text.contains("# initial_threshold="));
     let global_lines = data_lines(&global_text);
     assert_eq!(
         global_lines[0],
@@ -404,8 +409,7 @@ fn paired_bam_produces_the_hand_derived_models_calls_and_all_outputs() -> Result
             _ => 0,
         };
         assert_eq!(observed, expected_observed);
-        ensure!(fields[2].parse::<f64>()?.is_finite());
-        ensure!(fields[3].parse::<f64>()?.is_finite());
+        assert_eq!(&fields[2..], &["NA", "NA"]);
     }
 
     let keep_text = fs::read_to_string(&result.output_keep_weights)?;
@@ -423,9 +427,27 @@ fn paired_bam_produces_the_hand_derived_models_calls_and_all_outputs() -> Result
     let flanked_text = fs::read_to_string(&result.output_flanked_blacklist)?;
     assert_eq!(data_lines(&flanked_text), ["chr1\t50\t180"]);
 
-    let plot = fs::read(&result.output_plot)?;
-    assert!(plot.len() > 8);
-    assert_eq!(&plot[..8], b"\x89PNG\r\n\x1a\n");
+    #[cfg(feature = "plotters")]
+    {
+        let plot = fs::read(
+            result
+                .output_plot
+                .as_ref()
+                .context("compiled plotting support")?,
+        )?;
+        assert!(plot.len() > 8);
+        assert_eq!(&plot[..8], b"\x89PNG\r\n\x1a\n");
+    }
+    #[cfg(not(feature = "plotters"))]
+    {
+        assert!(result.output_plot.is_none());
+        assert!(
+            !output_dir
+                .path()
+                .join("sample.outliers.global_fit.png")
+                .exists()
+        );
+    }
 
     let readme = fs::read_to_string(&result.output_readme)?;
     for filename in expected_names {
@@ -484,36 +506,93 @@ fn preserved_region_table_is_automatic_and_coverage_plots_are_optional() -> Resu
         1
     );
     assert!(data_lines(&fs::read_to_string(&table_only.output_exact_blacklist)?).is_empty());
+    assert!(data_lines(&fs::read_to_string(&table_only.output_flanked_blacklist)?).is_empty());
+    let audit = fs::read_to_string(&table_only.output_audit)?;
+    let audit_fields: Vec<_> = data_lines(&audit)[1].split('\t').collect();
+    assert_eq!(&audit_fields[18..20], &["preserve", "density_above_cutoff"]);
 
+    #[cfg(feature = "plotters")]
+    {
+        config.set_plot_preserved_regions(true);
+        config.set_output_prefix("plotted");
+        let plotted = run_outliers(&config, RunOptions::new_quiet())?;
+        assert_eq!(
+            plotted.counters.base.counted_fragments,
+            table_only.counters.base.counted_fragments
+        );
+        assert_eq!(plotted.output_preserved_plots.len(), 1);
+        assert_eq!(plotted.output_files.len(), 12);
+        let plot_path = &plotted.output_preserved_plots[0];
+        assert!(plotted.output_files.contains(plot_path));
+        let image = fs::read(plot_path)?;
+        assert_eq!(&image[..8], b"\x89PNG\r\n\x1a\n");
+        assert_eq!(u32::from_be_bytes(image[16..20].try_into()?), 1600);
+        assert_eq!(u32::from_be_bytes(image[20..24].try_into()?), 900);
+        let plotted_text = fs::read_to_string(&plotted.output_preserved_regions)?;
+        let fields = data_lines(&plotted_text)[1].split('\t').collect::<Vec<_>>();
+        assert_eq!(
+            &fields[..11],
+            &lines[1].split('\t').collect::<Vec<_>>()[..11]
+        );
+        assert_eq!(
+            fields[11],
+            "plotted.outliers.preserved_regions.region_000001.png"
+        );
+        assert_eq!(
+            plot_path.file_name().and_then(|name| name.to_str()),
+            Some(fields[11])
+        );
+    }
+    Ok(())
+}
+
+#[cfg(not(feature = "plotters"))]
+#[test]
+fn text_only_run_does_not_claim_or_overwrite_a_plot_from_an_earlier_run() -> Result<()> {
+    let bam = paired_outlier_fixture()?;
+    let output = TempDir::new()?;
+    let previous_plot = output.path().join("sample.outliers.global_fit.png");
+    fs::write(&previous_plot, b"plot from an earlier run")?;
+    let config = base_config(bam.bam_path(), output.path());
+
+    let result = run_outliers(&config, RunOptions::new_quiet())?;
+
+    assert!(result.output_plot.is_none());
+    assert!(result.output_preserved_plots.is_empty());
+    assert_eq!(result.output_files.len(), 10);
+    assert!(!result.output_files.contains(&previous_plot));
+    assert_eq!(fs::read(previous_plot)?, b"plot from an earlier run");
+    let models = fs::read_to_string(result.output_models)?;
+    assert!(models.contains("# plotting_available=false\n"));
+    Ok(())
+}
+
+#[cfg(not(feature = "plotters"))]
+#[test]
+fn requested_pngs_fail_before_reading_an_unavailable_input_bam() -> Result<()> {
+    let output = TempDir::new()?;
+    let mut config = base_config(Path::new("must_not_be_opened.bam"), output.path());
     config.set_plot_preserved_regions(true);
-    config.set_output_prefix("plotted");
-    let plotted = run_outliers(&config, RunOptions::new_quiet())?;
-    assert_eq!(
-        plotted.counters.base.counted_fragments,
-        table_only.counters.base.counted_fragments
+
+    let error = run_outliers(&config, RunOptions::new_quiet()).unwrap_err();
+
+    let diagnostic = format!("{error:#}");
+    assert!(
+        diagnostic.contains("--plot-preserved-regions"),
+        "{diagnostic}"
     );
-    assert_eq!(plotted.output_preserved_plots.len(), 1);
-    assert_eq!(plotted.output_files.len(), 12);
-    let plot_path = &plotted.output_preserved_plots[0];
-    assert!(plotted.output_files.contains(plot_path));
-    let image = fs::read(plot_path)?;
-    assert_eq!(&image[..8], b"\x89PNG\r\n\x1a\n");
-    assert_eq!(u32::from_be_bytes(image[16..20].try_into()?), 1600);
-    assert_eq!(u32::from_be_bytes(image[20..24].try_into()?), 900);
-    let plotted_text = fs::read_to_string(&plotted.output_preserved_regions)?;
-    let fields = data_lines(&plotted_text)[1].split('\t').collect::<Vec<_>>();
-    assert_eq!(
-        &fields[..11],
-        &lines[1].split('\t').collect::<Vec<_>>()[..11]
+    assert!(diagnostic.contains("plotters"), "{diagnostic}");
+    assert!(
+        !output
+            .path()
+            .join("sample.outliers.keep_weights.tsv")
+            .exists()
     );
-    assert_eq!(
-        fields[11],
-        "plotted.outliers.preserved_regions.region_000001.png"
-    );
-    assert_eq!(
-        plot_path.file_name().and_then(|name| name.to_str()),
-        Some(fields[11])
-    );
+    assert!(!output.path().join("sample.outliers.models.tsv").exists());
+    let report = fs::read_to_string(output.path().join("sample.outliers.error.txt"))?;
+    assert!(report.contains("--plot-preserved-regions"));
+    assert!(report.contains("plotters"));
+    assert_eq!(fs::read_dir(output.path())?.count(), 1);
     Ok(())
 }
 
@@ -631,6 +710,10 @@ fn detected_outlier_weights_flatten_an_extreme_pileup_in_fcoverage() -> Result<(
     let keep_weight_fields = keep_weight_lines[1].split('\t').collect::<Vec<_>>();
     assert_eq!(&keep_weight_fields[..3], &["chr1", "4400", "4550"]);
     let keep_weight = keep_weight_fields[3].parse::<f64>()?;
+    // Nonzero structural zeros make this fixture discriminate the active-component target
+    // from the unconditional mean, unlike the sparse pi=0 fixture
+    assert!(pileup_model[13].parse::<f64>()? > 0.01);
+    assert!((active_component_mean - underlying_mean).abs() > 0.1);
     let expected_keep_weight = active_component_mean / ROUNDTRIP_RAW_OUTLIER_COVERAGE;
     assert!(
         (keep_weight - expected_keep_weight).abs() <= 1e-12,
@@ -971,6 +1054,16 @@ fn boundaries_blacklist_and_short_contig_preserve_calls_and_record_fallback() ->
     assert_eq!(chr2_fields[17], "NaN");
     assert_eq!(chr2_fields[19], "NaN");
 
+    let global_fit = fs::read_to_string(&result.output_global_fit)?;
+    assert!(global_fit.contains("# global_fit_status=required_for_fallback\n"));
+    assert!(global_fit.contains("# initial_component_mean="));
+    assert!(global_fit.contains("# final_threshold=2\n"));
+    for row in data_lines(&global_fit).into_iter().skip(1) {
+        let fields: Vec<_> = row.split('\t').collect();
+        assert!(fields[2].parse::<f64>()?.is_finite());
+        assert!(fields[3].parse::<f64>()?.is_finite());
+    }
+
     let exact_text = fs::read_to_string(&result.output_exact_blacklist)?;
     assert_eq!(
         data_lines(&exact_text),
@@ -1011,16 +1104,15 @@ fn local_mean_and_zero_targets_write_their_regional_mass_weights() -> Result<()>
     let local_model_fields = data_lines(&local_model_text)[1]
         .split('\t')
         .collect::<Vec<_>>();
-    let underlying_mean = local_model_fields[14].parse::<f64>()?;
+    let active_component_mean = local_model_fields[12].parse::<f64>()?;
     let local_weight_text = fs::read_to_string(&local_result.output_keep_weights)?;
     let local_weight = data_lines(&local_weight_text)[1]
         .split('\t')
         .nth(3)
         .context("local-mean keep weight")?
         .parse::<f64>()?;
-    // Every called position has coverage 20 and the same underlying fitted mean, so the regional
-    // mass ratio reduces exactly to underlying_mean / 20.
-    assert!((local_weight - underlying_mean / 20.0).abs() < 1e-12);
+    // Every called position has coverage 20, so the ratio uses the active mean / 20
+    assert!((local_weight - active_component_mean / 20.0).abs() < 1e-12);
     assert!(local_weight > 0.004 && local_weight < 0.005);
 
     let zero_output_dir = TempDir::new()?;
@@ -1078,5 +1170,477 @@ fn default_zinb_bam_run_reports_a_valid_empty_call_set() -> Result<()> {
         &["chromosome", "chr1", "300", "0", "0", "0", "0"]
     );
     assert_eq!(values[22], "1");
+    Ok(())
+}
+
+#[test]
+fn ambiguity_errors_report_all_regions_across_chromosomes_and_preserve_previous_outputs()
+-> Result<()> {
+    let mut builder = TempBamBuilder::new()
+        .name("multiple_ambiguities")
+        .contig("chr1", 1_000)
+        .contig("chr2", 1_000)
+        .use_record_indexed_read_names();
+    for chromosome in 0..2 {
+        for start in [0, 600, 900] {
+            builder = builder.paired_fragment(PairedFragmentSpec::new(chromosome, start, 30, 10));
+        }
+        for start in [100, 400] {
+            for _ in 0..20 {
+                builder =
+                    builder.paired_fragment(PairedFragmentSpec::new(chromosome, start, 30, 10));
+            }
+        }
+    }
+    let bam = builder.build()?;
+    let output = TempDir::new()?;
+    let mut config = base_config(bam.bam_path(), output.path());
+    config.chromosomes.chromosomes = Some(vec!["chr1".into(), "chr2".into()]);
+    config.set_max_outlier_percentage(0.01);
+    config.set_ambiguous_region_action(AmbiguousRegionAction::Correct);
+    let successful = run_outliers(&config, RunOptions::new_quiet())?;
+    let audit = fs::read_to_string(&successful.output_audit)?;
+    assert_eq!(data_lines(&audit).len(), 5);
+    for row in data_lines(&audit).into_iter().skip(1) {
+        let fields: Vec<_> = row.split('\t').collect();
+        assert_eq!(
+            &fields[18..20],
+            &["correct", "flagged_region_correction_requested"]
+        );
+    }
+    let previous = successful
+        .output_files
+        .iter()
+        .map(|path| Ok((path.clone(), fs::read(path)?)))
+        .collect::<Result<Vec<_>>>()?;
+    config.set_ambiguous_region_action(AmbiguousRegionAction::Error);
+    config.set_plot_preserved_regions(cfg!(feature = "plotters"));
+    for prefix in ["sample", "failed"] {
+        config.set_output_prefix(prefix);
+        let error = run_outliers(&config, RunOptions::new_quiet()).unwrap_err();
+        assert!(format!("{error:#}").contains("4 failure(s)"));
+        let report =
+            fs::read_to_string(output.path().join(format!("{prefix}.outliers.error.txt")))?;
+        assert!(report.contains("after the second BAM pass"));
+        assert!(report.contains("Analysis failures publish no new normal results"));
+        let audit = fs::read_to_string(
+            output
+                .path()
+                .join(format!("{prefix}.outliers.error_audit.tsv")),
+        )?;
+        assert_eq!(data_lines(&audit).len(), 5);
+        for (chromosome, start) in [
+            ("chr1", "100"),
+            ("chr1", "400"),
+            ("chr2", "100"),
+            ("chr2", "400"),
+        ] {
+            assert!(data_lines(&audit).into_iter().skip(1).any(|row| {
+                let fields: Vec<_> = row.split('\t').collect();
+                fields[0] == chromosome && fields[3] == start && fields[13] == "withheld_error"
+            }));
+        }
+    }
+    for (path, contents) in previous {
+        assert_eq!(fs::read(path)?, contents);
+    }
+    for entry in fs::read_dir(output.path())? {
+        let name = entry?.file_name().to_string_lossy().into_owned();
+        if name.starts_with("failed.") {
+            assert!(name.contains(".error"), "unexpected success file {name}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn successful_retry_publishes_current_corrections_without_reusing_failure_artifacts() -> Result<()>
+{
+    let bam = paired_outlier_fixture()?;
+    let output = TempDir::new()?;
+    let mut config = base_config(bam.bam_path(), output.path());
+    config.set_max_outlier_percentage(0.01);
+    config.set_ambiguous_region_action(AmbiguousRegionAction::Error);
+
+    let failure = run_outliers(&config, RunOptions::new_quiet()).unwrap_err();
+    assert!(format!("{failure:#}").contains("1 failure(s)"));
+    let error_report = output.path().join("sample.outliers.error.txt");
+    let error_audit = output.path().join("sample.outliers.error_audit.tsv");
+    let previous_report = fs::read(&error_report)?;
+    let previous_audit = fs::read(&error_audit)?;
+    assert_eq!(fs::read_dir(output.path())?.count(), 2);
+
+    config.set_ambiguous_region_action(AmbiguousRegionAction::Correct);
+    let successful = run_outliers(&config, RunOptions::new_quiet())?;
+
+    // The sole call has 30 bases at coverage 20. T2=2 targets mass 60 instead of 600
+    let weights = fs::read_to_string(&successful.output_keep_weights)?;
+    let weight_rows = data_lines(&weights);
+    assert_eq!(weight_rows.len(), 2);
+    let fields: Vec<_> = weight_rows[1].split('\t').collect();
+    assert_eq!(&fields[..3], &["chr1", "100", "130"]);
+    assert!((fields[3].parse::<f64>()? - 0.1).abs() < 1e-12);
+    assert_eq!(
+        data_lines(&fs::read_to_string(&successful.output_exact_blacklist)?),
+        ["chr1\t100\t130"]
+    );
+    let audit = fs::read_to_string(&successful.output_audit)?;
+    let audit_rows = data_lines(&audit);
+    assert_eq!(audit_rows.len(), 2);
+    let fields: Vec<_> = audit_rows[1].split('\t').collect();
+    assert_eq!(
+        &fields[18..20],
+        &["correct", "flagged_region_correction_requested"]
+    );
+    assert!(successful.output_files.iter().all(|path| path.is_file()));
+    assert!(!successful.output_files.contains(&error_report));
+    assert!(!successful.output_files.contains(&error_audit));
+    // Error files retain their original contents and remain identifiable as an earlier attempt
+    assert_eq!(fs::read(error_report)?, previous_report);
+    assert_eq!(fs::read(error_audit)?, previous_audit);
+    Ok(())
+}
+
+#[test]
+fn automatic_alpha_uses_masked_selected_positions_and_matches_manual_alpha() -> Result<()> {
+    let bam = paired_outlier_fixture()?;
+    let output = TempDir::new()?;
+    let blacklist = output.path().join("mask.bed");
+    fs::write(&blacklist, "chr1\t900\t1000\n")?;
+    let mut config = base_config(bam.bam_path(), output.path());
+    config.set_blacklist(Some(vec![blacklist]));
+    config.set_tail_probability(None);
+    for multiplier in [1.0, 2.0] {
+        config.set_output_prefix(&format!("automatic_{multiplier}"));
+        config.set_tail_probability_multiplier(multiplier);
+        let automatic = run_outliers(&config, RunOptions::new_quiet())?;
+        let metadata = fs::read_to_string(&automatic.output_models)?;
+        assert!(metadata.contains("# eligible_positions=900\n"));
+        assert!(metadata.contains("# automatic_probability_denominator=900\n"));
+        let recorded = metadata
+            .lines()
+            .find_map(|line| line.strip_prefix("# tail_probability="))
+            .unwrap()
+            .parse::<f64>()?;
+        assert!((recorded - multiplier / 900.0).abs() < 1e-15);
+        config.set_tail_probability_multiplier(1.0);
+        config.set_tail_probability(Some(multiplier / 900.0));
+        config.set_output_prefix(&format!("manual_{multiplier}"));
+        let manual = run_outliers(&config, RunOptions::new_quiet())?;
+        let manual_metadata = fs::read_to_string(&manual.output_models)?;
+        assert!(manual_metadata.contains("# automatic_probability_denominator=NA\n"));
+        assert!(manual_metadata.contains("# tail_probability_multiplier=NA\n"));
+        assert_eq!(data_lines(&metadata), data_lines(&manual_metadata));
+        assert_eq!(
+            data_lines(&fs::read_to_string(&automatic.output_keep_weights)?),
+            data_lines(&fs::read_to_string(&manual.output_keep_weights)?)
+        );
+        config.set_tail_probability(None);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_core_straddling_processing_tiles_conserves_histogram_support_and_joined_calls() -> Result<()> {
+    let mut builder = TempBamBuilder::new()
+        .name("straddling_core")
+        .contig("chr1", 2_000_030)
+        .use_record_indexed_read_names();
+    for start in [100, 700_000] {
+        builder = builder.paired_fragment(PairedFragmentSpec::new(0, start, 30, 10));
+    }
+    for _ in 0..20 {
+        builder = builder.paired_fragment(PairedFragmentSpec::new(0, 999_990, 30, 10));
+    }
+    let bam = builder.build()?;
+    let output = TempDir::new()?;
+    let mut config = base_config(bam.bam_path(), output.path());
+    config.set_stride(600_000);
+    config.set_bin_size(2_000_030);
+    config.set_tail_probability(Some(1e-6));
+    config.set_blacklist_flank(Some(0));
+    let first = run_outliers(&config, RunOptions::new_quiet())?;
+    let histogram = read_zst_to_string(&first.output_histograms)?;
+    let split_core = data_lines(&histogram)
+        .into_iter()
+        .filter(|row| row.starts_with("chr1\t600000\t"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        split_core,
+        [
+            "chr1\t600000\t1200000\t21\t0\t599940",
+            "chr1\t600000\t1200000\t21\t1\t30",
+            "chr1\t600000\t1200000\t21\t20\t30"
+        ]
+    );
+    assert_eq!(
+        data_lines(&fs::read_to_string(&first.output_exact_blacklist)?),
+        ["chr1\t999990\t1000020"]
+    );
+    let weights = fs::read_to_string(&first.output_keep_weights)?;
+    assert_eq!(data_lines(&weights)[1], "chr1\t999990\t1000020\t0.1");
+    config.set_tile_size(2_000_000);
+    config.set_output_prefix("larger_tiles");
+    let second = run_outliers(&config, RunOptions::new_quiet())?;
+    assert_eq!(
+        data_lines(&histogram),
+        data_lines(&read_zst_to_string(&second.output_histograms)?)
+    );
+    assert_eq!(
+        data_lines(&weights),
+        data_lines(&fs::read_to_string(&second.output_keep_weights)?)
+    );
+    assert_eq!(
+        data_lines(&fs::read_to_string(&first.output_models)?),
+        data_lines(&fs::read_to_string(&second.output_models)?)
+    );
+    Ok(())
+}
+
+#[test]
+fn positive_dispersion_zinb_is_exercised_through_the_command() -> Result<()> {
+    // 30 bp blocks with n0=2^13 and nk=2^(12-k), k=1..12, approximate
+    // mean=1, dispersion=1, pi=1/3. At alpha=.01 the geometric tail crosses at 7
+    let mut builder = TempBamBuilder::new()
+        .name("zinb_blocks")
+        .contig("chr1", (3 * (1_u32 << 12) - 1) * 30)
+        .use_record_indexed_read_names();
+    let mut start = (1_i64 << 13) * 30;
+    for coverage in 1..=12 {
+        for _ in 0..(1_u32 << (12 - coverage)) {
+            for _ in 0..coverage {
+                builder = builder.paired_fragment(PairedFragmentSpec::new(0, start, 30, 10));
+            }
+            start += 30;
+        }
+    }
+    let bam = builder.build()?;
+    let output = TempDir::new()?;
+    let mut config = base_config(bam.bam_path(), output.path());
+    config.set_model(OutlierModel::Zinb);
+    config.set_stride(start as u32);
+    config.set_bin_size(start as u32);
+    config.set_tail_probability(Some(0.01));
+    config.set_max_outlier_percentage(100.0);
+    let result = run_outliers(&config, RunOptions::new_quiet())?;
+    let models = fs::read_to_string(&result.output_models)?;
+    let row: Vec<_> = data_lines(&models)[1].split('\t').collect();
+    assert_eq!(row[5], "local");
+    assert_eq!(row[10], "7");
+    assert_eq!(row[15], "7");
+    assert!((row[24].parse::<f64>()? - 1.0).abs() < 0.05);
+    assert!((row[25].parse::<f64>()? - 1.0).abs() < 0.05);
+    let diagnostics: serde_json::Value = serde_json::from_str(row[30])?;
+    let converged = diagnostics["converged_starts"].as_u64().unwrap();
+    let unfinished = diagnostics["unfinished_starts"].as_u64().unwrap();
+    assert!((1..=3).contains(&converged));
+    assert_eq!(converged + unfinished, 3);
+    assert!(diagnostics["near_optimal_candidates"].as_u64().unwrap() >= 1);
+    assert_eq!(diagnostics["threshold_range"], serde_json::json!([7, 7]));
+    assert_eq!(
+        data_lines(&fs::read_to_string(&result.output_keep_weights)?).len(),
+        2
+    );
+    Ok(())
+}
+
+#[test]
+fn output_publication_failure_reports_the_blocked_destination() -> Result<()> {
+    let bam = paired_outlier_fixture()?;
+    let output = TempDir::new()?;
+    let blocked = output.path().join("sample.outliers.summary.tsv");
+    fs::create_dir(&blocked)?;
+    let config = base_config(bam.bam_path(), output.path());
+    let error = run_outliers(&config, RunOptions::new_quiet()).unwrap_err();
+    let diagnostic = format!("{error:#}");
+    assert!(diagnostic.contains("moving output file"), "{diagnostic}");
+    assert!(
+        diagnostic.contains(blocked.to_str().context("UTF-8 test path")?),
+        "{diagnostic}"
+    );
+    assert!(blocked.is_dir());
+    let report = fs::read_to_string(output.path().join("sample.outliers.error.txt"))?;
+    assert!(report.contains("moving output file"));
+    assert!(report.contains(blocked.to_str().context("UTF-8 test path")?));
+    Ok(())
+}
+
+#[test]
+fn reads_as_fragments_counts_each_accepted_read_without_pair_assembly() -> Result<()> {
+    let mut builder = TempBamBuilder::new()
+        .name("independent_reads")
+        .contig("chr1", 1_000)
+        .use_record_indexed_read_names();
+    for start in [0, 300, 600] {
+        builder = builder.paired_fragment(PairedFragmentSpec::new(0, start, 30, 30));
+    }
+    for _ in 0..20 {
+        builder = builder.paired_fragment(PairedFragmentSpec::new(0, 100, 30, 30));
+    }
+    let bam = builder.build()?;
+    let output = TempDir::new()?;
+    let mut config = base_config(bam.bam_path(), output.path());
+    config.unpaired.reads_are_fragments = true;
+    let result = run_outliers(&config, RunOptions::new_quiet())?;
+    assert_eq!(result.counters.base.counted_fragments, 46);
+    let histogram = read_zst_to_string(&result.output_histograms)?;
+    assert!(histogram.contains("# reads_are_fragments=true\n"));
+    assert!(data_lines(&histogram).contains(&"chr1\t0\t250\t42\t2\t30"));
+    assert!(data_lines(&histogram).contains(&"chr1\t0\t250\t42\t40\t30"));
+    assert_eq!(
+        data_lines(&fs::read_to_string(&result.output_exact_blacklist)?),
+        ["chr1\t100\t130"]
+    );
+    Ok(())
+}
+
+#[test]
+fn full_fragment_weights_reduce_ordinary_coverage_outside_a_one_base_call() -> Result<()> {
+    // One 30 bp fragment begins at every base, giving coverage 30 away from chromosome ends
+    // The one-base call [150,151) weights starts 121..=150 by .2, so coverage recovers linearly
+    let mut builder = TempBamBuilder::new()
+        .name("ordinary_shoulders")
+        .contig("chr1", 400)
+        .use_record_indexed_read_names();
+    for start in 0..=250 {
+        builder = builder.paired_fragment(PairedFragmentSpec::new(0, start, 30, 10));
+    }
+    let bam = builder.build()?;
+    let output = TempDir::new()?;
+    let weights = output.path().join("custom_weights.tsv");
+    fs::write(
+        &weights,
+        "chromosome\tstart\tend\tkeep_weight\nchr1\t150\t151\t0.2\n",
+    )?;
+    let mut config = roundtrip_fcoverage_config(bam.bam_path(), output.path(), "shoulders");
+    config.fragment_lengths_mut().min_fragment_length = 30;
+    config.fragment_lengths_mut().max_fragment_length = 30;
+    config.set_outlier_weights(OutlierWeightsArgs {
+        outlier_weights: Some(weights),
+    });
+    let result = run_fcoverage(&config, RunOptions::new_quiet())?;
+    let coverage = dense_bedgraph_with_length(&read_zst_to_string(&result.final_out_path)?, 400);
+    assert!((coverage[150] - 6.0).abs() < 1e-5);
+    for (left, right, expected) in [(149, 151, 6.8), (135, 165, 18.0), (120, 180, 30.0)] {
+        assert!((coverage[left] - expected).abs() < 1e-5);
+        assert!((coverage[right] - expected).abs() < 1e-5);
+    }
+    Ok(())
+}
+
+#[test]
+fn model_failures_write_readable_context_histograms_and_withhold_success_files() -> Result<()> {
+    let bam = TempBamBuilder::new()
+        .name("zero_contexts")
+        .contig("chr1", 1_000)
+        .contig("chr2", 1_000)
+        .paired_fragment(PairedFragmentSpec::new(0, 0, 30, 10))
+        .paired_fragment(PairedFragmentSpec::new(1, 0, 30, 10))
+        .build()?;
+    let output = TempDir::new()?;
+    let mut config = base_config(bam.bam_path(), output.path());
+    config.chromosomes.chromosomes = Some(vec!["chr1".into(), "chr2".into()]);
+    // Counted segments are masked, but the midpoint at 15 remains eligible for support
+    // Excluding the inter-mate gap therefore leaves a supported all-zero fitting context
+    let blacklist = output.path().join("mask.bed");
+    fs::write(
+        &blacklist,
+        "chr1\t0\t10\nchr1\t20\t30\nchr2\t0\t10\nchr2\t20\t30\n",
+    )?;
+    config.set_blacklist(Some(vec![blacklist]));
+    config.set_ignore_gap(true);
+    let error = run_outliers(&config, RunOptions::new_quiet()).unwrap_err();
+    assert!(format!("{error:#}").contains("zero coverage"));
+    let report = fs::read_to_string(output.path().join("sample.outliers.error.txt"))?;
+    assert!(report.contains("after the first BAM pass"));
+    assert!(report.contains("chr1 core"));
+    assert!(report.contains("chr2 core"));
+    let histogram = fs::read_to_string(output.path().join("sample.outliers.error_histogram.tsv"))?;
+    assert_eq!(data_lines(&histogram).len(), 9);
+    assert!(
+        data_lines(&histogram)
+            .iter()
+            .any(|row| row.starts_with("chr2\t750\t1000\t0\t1000\t1\t0\t980"))
+    );
+    for entry in fs::read_dir(output.path())? {
+        let name = entry?.file_name().to_string_lossy().into_owned();
+        if name.starts_with("sample.") {
+            assert!(name.contains(".error"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn fcoverage_checks_recorded_reference_and_distinguishes_empty_from_unanalysed_chromosomes()
+-> Result<()> {
+    let bam = paired_outlier_fixture()?;
+    let output = TempDir::new()?;
+    let weights = output.path().join("recorded_weights.tsv");
+    let mut config = roundtrip_fcoverage_config(bam.bam_path(), output.path(), "analysed_empty");
+    config.fragment_lengths_mut().min_fragment_length = 30;
+    config.fragment_lengths_mut().max_fragment_length = 30;
+    config.set_outlier_weights(OutlierWeightsArgs {
+        outlier_weights: Some(weights.clone()),
+    });
+    fs::write(
+        &weights,
+        "# analysed_chromosomes=[{\"name\":\"chr1\",\"size\":1000},{\"name\":\"chr2\",\"size\":800}]\nchromosome\tstart\tend\tkeep_weight\n",
+    )?;
+    let result = run_fcoverage(&config, RunOptions::new_quiet())?;
+    assert_eq!(result.counters.base.counted_fragments, 23);
+    assert_eq!(result.counters.outlier_excluded_fragments, 0);
+    assert_eq!(result.counters.outlier_downweighted_fragments, 0);
+    let coverage = dense_bedgraph_with_length(&read_zst_to_string(&result.final_out_path)?, 1_000);
+    assert_eq!(coverage[100], 20.0);
+    for (prefix, recorded, expected) in [
+        (
+            "wrong_length",
+            "[{\"name\":\"chr1\",\"size\":1001}]",
+            "names/lengths differ",
+        ),
+        (
+            "not_analysed",
+            "[{\"name\":\"chr2\",\"size\":800}]",
+            "was not analysed",
+        ),
+    ] {
+        fs::write(
+            &weights,
+            format!("# analysed_chromosomes={recorded}\nchromosome\tstart\tend\tkeep_weight\n"),
+        )?;
+        config.set_output_prefix(prefix);
+        let error = run_fcoverage(&config, RunOptions::new_quiet()).unwrap_err();
+        assert!(format!("{error:#}").contains(expected));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_failure_saving_diagnostics_keeps_the_original_analysis_error_visible() -> Result<()> {
+    let bam = paired_outlier_fixture()?;
+    let output = TempDir::new()?;
+    fs::create_dir(output.path().join("sample.outliers.error.txt"))?;
+    let mut config = base_config(bam.bam_path(), output.path());
+    config.set_max_outlier_percentage(0.01);
+    config.set_ambiguous_region_action(AmbiguousRegionAction::Error);
+    let error = run_outliers(&config, RunOptions::new_quiet()).unwrap_err();
+    let message = format!("{error:#}");
+    assert!(message.contains("ambiguity policy after the second BAM pass"));
+    assert!(message.contains("exceeds cutoff 0.01%"));
+    assert!(message.contains("also failed to save failure diagnostics"));
+    assert!(message.contains("regular file"));
+    assert!(
+        !output
+            .path()
+            .join("sample.outliers.keep_weights.tsv")
+            .exists()
+    );
+    assert!(
+        !output
+            .path()
+            .join("sample.outliers.error_audit.tsv")
+            .exists()
+    );
     Ok(())
 }

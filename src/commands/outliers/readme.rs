@@ -145,13 +145,17 @@ If you supplied an output prefix, it appears before each filename below.
 
 `outliers.preserved_regions.region_000001.png` (one numbered PNG per group)
     Added with `--plot-preserved-regions`. Each figure shows surrounding coverage and
-    a closer view, with the background mean, outlier cutoff, and preserved calls.
+    a separately binned closer view, with the active-component mean, outlier cutoff,
+    and all nearby candidates colored by preservation or correction.
     Blue segments show mean coverage within bins. Grey marks show the bin peaks so
     narrow pileups remain visible. The bin width is printed above each panel.
     Blacklisted spans are shaded grey. They are excluded from the mean and peak,
     while genuine zero-coverage bases are included.
     Plotting reads the BAM again around these groups using the detection filters.
-    These extra reads are not added to the detection statistics.
+    These extra reads are not added to the detection statistics. Progress logs identify
+    each group and its requested span. Many overlapping contexts can cause substantial rereading.
+    Reusing a prefix does not remove old optional PNGs. Use only files listed in this run's
+    preserved-region table, or use a fresh prefix for each attempt.
 
 `outliers.models.tsv`
     The coverage model and cutoff used in each consecutive `--stride` interval.
@@ -161,8 +165,13 @@ If you supplied an output prefix, it appears before each filename below.
 
 `outliers.global_fit.png`
     A quick overview of the observed coverage distribution and fitted models.
-    The first two panels compare the sample-wide fit with observed coverage.
-    The bottom panel shows the local means and cutoffs actually used along chromosomes.
+    The first two panels compare the sample-wide fit with observed coverage when a
+    global fallback is required. Otherwise they show observations and local threshold
+    summaries, explicitly labeled "global fit not needed".
+    The bottom panel shows the fitted means and applied cutoffs along labeled chromosomes.
+    Its x coordinate is the cumulative model-core index in selected chromosome order,
+    matching consecutive rows in `outliers.models.tsv`. The unconditional mean is diagnostic.
+    The active-component mean is the correction target only for `--target local-mean`.
     Sample-wide cutoffs in the first two panels are references, not universal cutoffs
     applied everywhere. Local cutoffs are recorded in `outliers.models.tsv`.
 
@@ -172,7 +181,9 @@ If you supplied an output prefix, it appears before each filename below.
     `coverage` is the number of fragments covering a base. `observed_positions` counts
     bases with that coverage. `initial_fitted_positions` and `underlying_fitted_positions`
     give the expected counts from the first and second fits, respectively.
-    The leading comments record the sample-wide model parameters and diagnostics.
+    A global model is fitted only if a chromosome needs fallback. The leading
+    `global_fit_status=not_needed` comment identifies skipped fits. Then expected-count columns are `NA`
+    and global fit parameters are omitted. Observed counts are always retained.
 
 `outliers.histograms.tsv.zst`
     Zstandard-compressed counts of bases at each raw coverage level, split by
@@ -371,6 +382,91 @@ comparison at T2 using the second fit. More calls than expected can reflect pile
 A widespread excess across contexts can also suggest that the model's cutoff is too
 low for ordinary coverage. Neighbouring bases share fragments, so these comparisons
 are not independent statistical tests.
+
+`final_threshold_exceeds_initial` flags T2 > T1. Correcting for truncation can raise
+rather than lower the fitted threshold. This is not itself an error and is never clamped.
+`initial_optimizer_diagnostics` and `underlying_optimizer_diagnostics` are JSON objects
+for ZINB, or `NA` for ZIP. They record converged and unfinished starts and ranges across
+valid converged candidates within the recorded average negative-log-likelihood tolerance
+of the selected fit, including the explicit ZIP boundary when comparable. Ranges cover
+component mean, dispersion, structural-zero probability, and that stage's tail threshold.
+They describe numerical agreement, not confidence intervals or proof of identification.
+
+Runtime, filters, and reference gaps
+-----------------------------------
+Detection scans the selected BAM regions twice. Histograms and model fitting follow the
+first pass. Calling and preservation follow the second. Optional preserved-region plots
+reread their local contexts, in bounded chunks, with the same fragment filters.
+Unmapped, secondary, supplementary, duplicate, and QC-failed alignments are excluded.
+MAPQ and fragment length limits apply. Paired detection also requires mapped mates on
+the same chromosome with opposite strands. Proper-pair flags are required only when
+requested. With `--reads-are-fragments`, each accepted alignment is counted separately.
+
+The BAM supplies reference lengths, but the detector does not read reference sequence.
+Unmasked reference gaps remain eligible zero-coverage positions. Alignment D/N gaps
+contribute no coverage. `--ignore-gap` also excludes the inter-mate gap from coverage.
+These gaps remain eligible unless blacklisted. Blacklisting masks positions, not whole
+fragments: fragments crossing a mask can still contribute outside it. `fcoverage` likewise
+masks positional coverage, whereas outlier weights apply to entire overlapping fragments.
+
+A short or unsupported chromosome borrows the pooled model from all selected chromosomes,
+not an autosomes-only pool. When all cores have local support, no pooled fit is attempted.
+Automatic alpha depends on eligible bases in the selected chromosomes. Detect once over
+the intended set and apply the weights to subsets. A common manual alpha removes that
+selection dependence only for alpha, not for any pooled fallback parameters.
+
+Interpreting the preservation boundary
+--------------------------------------
+An isolated contiguous call longer than 5 kb in a fully eligible default 100 kb window
+exceeds 5% and is preserved. Exactly 5 kb is equality and does not trigger preservation.
+Masks or clipped windows with smaller denominators can lower this length toward 2.5 kb
+at the 50 kb denominator floor. Nearby calls or joined flanks can preserve shorter calls.
+A biological event's full width is not its called-base count. Scattered threshold crossings
+inside a genuine gain can still remain below the cutoff and receive correction.
+
+Failures and troubleshooting
+-----------------------------
+Analysis or report-writing failures publish no new normal tables, BEDs, PNGs, weights, or
+this README. Completed normal files are staged until analysis and reporting finish.
+An error while moving completed files to their final names can leave a partial set of new results.
+
+Use `outliers.error.txt` after a failure. It records the failed stage, settings, original
+error and companion paths. Fit failures additionally save plain `outliers.error_histogram.tsv`
+with each failing context's coverage counts. Global rows pool all selected chromosomes
+and have `NA` coordinates. Second-fit errors include T1, alpha and initial parameters.
+After the second pass, `--ambiguous-region-action error` reports every failed merged region
+across all selected chromosomes in `outliers.error_audit.tsv`. It includes member calls,
+selected windows, eligible/called counts, scores, cutoff, and contributing exact calls.
+Actions are `withheld_error`. The table covers failed regions only, not successful decisions.
+No additional BAM pass or plots are needed to collect these failures.
+
+Error filenames have the same optional prefix and never reuse success filenames. Retries
+replace matching error files. Their attempt identifiers distinguish stale companions.
+A successful retry may leave old error files and optional PNGs. Earlier successful normal
+files also remain intact after an analysis failure, so check the exit status and current
+attempt, rather than treating any pre-existing file as evidence of this attempt's success.
+If saving diagnostics also fails, the terminal reports both errors.
+
+An initial-fit failure cannot be repaired just by lowering alpha: alpha is used afterward.
+Inspect filters, zero coverage and context counts. Increasing local contexts may help local
+support but cannot change the pooled histogram. A smaller alpha can retain more positive
+coverage levels for an insufficient or unidentified second fit. T1=2 cannot identify either
+free-zero mixture. At T1=3, ZINB rejects the interior dispersion/zero-inflation ridge while
+retaining valid constrained boundary fits. The ridge means different model parameters fit
+the retained counts equally well but predict different full tails. No threshold is raised
+or model substituted silently. ZIP is a different assumption, not a universal recovery mode.
+
+Metadata names and counters
+---------------------------
+`model_core_size` maps to `--stride`, `minimum_context_span` to `--bin-size`,
+`minimum_context_fragment_support` to `--min-context-fragments`, `minimum_mapping_quality`
+to `--min-mapq`, and `fragment_length_range` to the accepted fragment length limits.
+`detector` records the two-stage algorithm as well as family. Automatic-only
+`automatic_probability_denominator` and `tail_probability_multiplier` are `NA` with manual alpha. `eligible_positions` remains
+available. Names will be reviewed together with the CLI and consumers.
+Zero-weight exclusion counters count tile encounters. Padding-only fragments can make these
+counts differ across GC modes, without demonstrating a difference in their counted coverage.
+The counter discrepancy is documented for later work.
 
 Genomic extent and coverage reduction
 ------------------------------------

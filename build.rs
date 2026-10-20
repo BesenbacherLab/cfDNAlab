@@ -80,7 +80,6 @@ fn main() {
             "cmd_fragment_kmers",
             "cmd_lengths",
             "cmd_midpoints",
-            "cmd_outliers",
             "cmd_prepare_windows",
         ],
     );

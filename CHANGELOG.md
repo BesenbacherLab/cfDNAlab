@@ -9,6 +9,8 @@ This is the changelog for the main CLI tool. You can find the changelog for the 
 
 ## Unreleased
 
+ - Adds `cfdna outliers` for inspecting unusually high raw fragment coverage, with two-stage ZIP/ZINB fits, preservation evidence, actionable BEDs and fragment weights consumed by `fcoverage --outlier-weights`. Biological retention still needs assessment on the intended data and settings.
+
  - The "Equivalent CLI" string for `cfdna fcoverage` no longer contains `--normalize-by-length off` when that argument was not specified. The correct way to avoid `--normalize-by-length` is to just not set it. The `off` option is the internal name for this.
 
 <br />

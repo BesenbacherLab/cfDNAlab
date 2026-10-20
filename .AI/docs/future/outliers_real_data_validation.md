@@ -6,7 +6,7 @@ Status: Pending. These are investigations, not claims that the current correctio
 
 Related work: [review checklist and remaining decisions](outliers_review_rectification_plan.md),
 [current spec](../specs/outliers.md), and
-[fitted ZIP/ZINB comparison](outliers_fragment_simulations/zinb_comparison_report.md).
+[fitted ZIP/ZINB comparison](outliers_historical_simulation_evidence.md).
 
 The intended workflow starts with an existing blacklist and detects residual sample-specific
 extremes. Current data are about 0.5x. Validate the required range of 0.1x through 200x, recording
@@ -17,6 +17,17 @@ version uses a 5% cutoff, 100 kb physical windows, and a 50 kb support/denominat
 supported backward fallback. These initial choices still need biological assessment. The earlier
 10% simulations retain their historical settings.
 This list does not authorize normalization changes.
+
+## Short report for the owner and supervisor
+
+- [x] Wrote [the short discussion report](outliers_biological_release_criteria_report.md).
+  It explains neighboring signal loss, genuine gains and GC interaction, separates existing
+  evidence from hypotheses, and proposes measurements and questions without choosing tolerances.
+- [x] Preserved a tracked [historical methods/outcomes note](outliers_historical_simulation_evidence.md).
+  It records the 10% cutoff and Python optimizer rather than presenting them as current Rust evidence.
+- [ ] The owner and supervisor choose the biological event sizes, acceptable losses, downstream
+  measurements, sample types and depth range that define a useful result. No new real-BAM
+  comparison was performed in this implementation task. The investigation list below remains open.
 
 ## Depth range and baseline estimation
 
@@ -55,6 +66,10 @@ This list does not authorize normalization changes.
 - [ ] Plot overlap bases and overlap fraction against assigned weight. Summarize how much removed
   coverage lies inside calls and in surrounding positions, grouped by distance from boundaries
   and fragment length.
+  Compare the expected ordinary-background contribution with total observed corrected coverage.
+  The linear recovery example assumes stationary starts, a fixed contiguous counted fragment span,
+  an isolated constant-weight call, and no other corrections. Variable lengths, alignment gaps,
+  artifact fragments, and nearby calls can change the observed shape.
 - [ ] Compare full correction, overlap-fraction-diluted whole-fragment correction, and positional
   correction on the same detected regions. Define each candidate mathematically before comparing
   it. Assess changes to regional mass and neighboring signal, rather than assuming all choices
@@ -89,6 +104,10 @@ This list does not authorize normalization changes.
   alongside likely technical pileups and healthy/control samples.
 - [ ] Plot the event span, local fitting contexts, `T1`, `T2`, calls, weights, and correction.
   Look for fragmented calls within a broader elevated event as well as long connected calls.
+  Prioritize sparse calls within moderate genuine gains and technical spikes within gains. Record
+  biological signal lost separately from technical signal removed, using independent evidence
+  or known simulated fragment origins where available. Compare events near 2.5 kb and 5 kb
+  preservation boundaries with wider events. The current called-base percentage is not the event span.
 - [ ] Compare tumor fractions, event widths, coverage depths, and event positions relative to
   model cores. Include strong and moderate copy gains. State the mixture assumptions connecting
   copy number to observed relative coverage. Evaluate whether contamination of the fitting context
@@ -140,6 +159,11 @@ This list does not authorize normalization changes.
 
 ## Correction order and recorded settings (O-002 and O-004)
 
+- [ ] Compare matched raw, outlier-only, GC-only, and combined coverage at selected loci with the
+  same fragment filters and masks. Check GC content, mappability, promoter/CpG annotations where
+  useful, and independent copy-gain evidence against matched background. Multiplying weights alone
+  does not demonstrate harmful double correction. Keep these consumer comparisons separate from
+  the deferred producer-integration and restore-mean questions.
 - [ ] Compare scaling and GC corrections estimated before and after applying residual outlier
   weights, with the same existing blacklist. Show surrounding bins as well as the pileup itself.
   Quantify residual excess mass relative to each smoothing context before judging its importance.

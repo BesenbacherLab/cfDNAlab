@@ -114,3 +114,168 @@ fn longest_preserved_is_a_single_exact_call_not_cluster_extent_or_total_bases() 
     assert_eq!(total.preserved_bases, 12_702);
     assert_eq!(total.longest_preserved, 651);
 }
+
+/// Build exact candidates with a known proposed weight of 1/20, without fitting a model.
+fn audit_call(start: u32, end: u32) -> CalledRegion {
+    CalledRegion {
+        interval: Interval::new(start, end).unwrap(),
+        observed_mass: f64::from(end - start) * 20.0,
+        target_mass: f64::from(end - start),
+        maximum_coverage: 20,
+    }
+}
+
+#[test]
+fn error_audit_collects_all_chromosomes_and_clips_only_the_contribution_count() {
+    let mut config = OutliersConfig::new(
+        IOCArgs {
+            bam: "unused.bam".into(),
+            output_dir: "unused".into(),
+            n_threads: 1,
+        },
+        ChromosomeArgs {
+            chromosomes: Some(vec!["chr2".into(), "chr1".into()]),
+            chromosomes_file: None,
+        },
+    );
+    config.set_blacklist_flank(Some(0));
+    config.set_ambiguous_region_action(AmbiguousRegionAction::Error);
+    let chromosomes = vec!["chr2".into(), "chr1".into()];
+    let contigs = Contigs {
+        contigs: [("chr1".into(), (0, 500_000)), ("chr2".into(), (1, 500_000))]
+            .into_iter()
+            .collect(),
+    };
+    let metadata = OutputMetadata {
+        config: &config,
+        chromosomes: &chromosomes,
+        contigs: &contigs,
+        tail_probability: 1e-6,
+        eligible_positions: 1_000_000,
+        blacklist_flank: 0,
+    };
+    let calls = [
+        (
+            "chr1".into(),
+            vec![
+                audit_call(10_000, 16_000),
+                audit_call(109_990, 110_030),
+                audit_call(300_000, 300_030),
+            ],
+        ),
+        ("chr2".into(), vec![audit_call(50_000, 56_000)]),
+    ]
+    .into_iter()
+    .collect();
+
+    let error = collect_decisions(&metadata, &calls, &FxHashMap::default()).unwrap_err();
+
+    let failures = error.downcast_ref::<AnalysisFailures>().unwrap();
+    assert_eq!(failures.messages.len(), 3);
+    assert!(failures.messages[0].starts_with("chr2:50000-56000:"));
+    assert!(failures.messages[1].starts_with("chr1:10000-16000:"));
+    assert!(failures.messages[2].starts_with("chr1:109990-110030:"));
+    assert!(failures.histogram.is_none());
+    let rows: Vec<Vec<_>> = failures
+        .audit
+        .as_ref()
+        .unwrap()
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .skip(1)
+        .map(|line| line.split('\t').collect())
+        .collect();
+    assert_eq!(rows.len(), 3);
+    assert!(
+        rows.iter()
+            .all(|row| row.len() == 15 && row[13] == "withheld_error")
+    );
+    assert_eq!(rows[0][0], "chr2");
+    // The first window includes 6,000 bp from the first call and only 10 bp from the second
+    // Both use that 6.01% window, even though the complete second call spans 40 bp
+    for row in &rows[1..] {
+        assert_eq!(row[0], "chr1");
+        assert_eq!(row[5], "true");
+        assert_eq!(
+            &row[6..11],
+            &["10000", "110000", "forward", "100000", "6010"]
+        );
+        assert!((row[11].parse::<f64>().unwrap() - 6.01).abs() < 1e-12);
+        assert!((row[12].parse::<f64>().unwrap() - 0.05).abs() < 1e-12);
+        assert_eq!(row[14], "10000-16000,109990-110030");
+    }
+    assert_eq!(&rows[1][1..5], &["10000", "16000", "10000", "16000"]);
+    assert_eq!(&rows[2][1..5], &["109990", "110030", "109990", "110030"]);
+    assert!(!failures.audit.as_ref().unwrap().contains("300000"));
+}
+
+#[test]
+fn error_audit_includes_unflagged_members_of_a_failed_transitive_flank_group() {
+    let mut config = OutliersConfig::new(
+        IOCArgs {
+            bam: "unused.bam".into(),
+            output_dir: "unused".into(),
+            n_threads: 1,
+        },
+        ChromosomeArgs {
+            chromosomes: Some(vec!["chr1".into()]),
+            chromosomes_file: None,
+        },
+    );
+    config.set_blacklist_flank(Some(60_000));
+    config.set_ambiguous_region_action(AmbiguousRegionAction::Error);
+    let chromosomes = vec!["chr1".into()];
+    let contigs = Contigs {
+        contigs: [("chr1".into(), (0, 700_000))].into_iter().collect(),
+    };
+    let metadata = OutputMetadata {
+        config: &config,
+        chromosomes: &chromosomes,
+        contigs: &contigs,
+        tail_probability: 1e-6,
+        eligible_positions: 700_000,
+        blacklist_flank: 60_000,
+    };
+    let calls = [(
+        "chr1".into(),
+        vec![
+            audit_call(10_000, 16_000),
+            audit_call(136_000, 136_030),
+            audit_call(256_030, 256_060),
+            audit_call(450_000, 450_030),
+        ],
+    )]
+    .into_iter()
+    .collect();
+
+    let error = collect_decisions(&metadata, &calls, &FxHashMap::default()).unwrap_err();
+
+    let failures = error.downcast_ref::<AnalysisFailures>().unwrap();
+    assert_eq!(failures.messages.len(), 1);
+    assert!(failures.messages[0].contains("3 member calls"));
+    let rows: Vec<Vec<_>> = failures
+        .audit
+        .as_ref()
+        .unwrap()
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .skip(1)
+        .map(|line| line.split('\t').collect())
+        .collect();
+    assert_eq!(rows.len(), 3);
+    // Flanks [0,76000), [76000,196030), [196030,316060) touch transitively
+    // Only the first call has a 6% window. The two sparse neighbors each have a 0.03% window
+    for row in &rows {
+        assert_eq!(&row[1..3], &["0", "316060"]);
+        assert_eq!(row[13], "withheld_error");
+    }
+    assert_eq!(
+        rows.iter().map(|row| row[5]).collect::<Vec<_>>(),
+        vec!["true", "false", "false"]
+    );
+    assert_eq!(
+        rows.iter().map(|row| row[3]).collect::<Vec<_>>(),
+        vec!["10000", "136000", "256030"]
+    );
+    assert!(!failures.audit.as_ref().unwrap().contains("450000"));
+}

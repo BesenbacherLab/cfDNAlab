@@ -89,6 +89,28 @@ fn assert_contains_pair(args: &[String], flag: &str, value: &str) {
     );
 }
 
+#[cfg(feature = "cmd_outliers")]
+#[test]
+fn outliers_renders_without_cli_or_plotting_requirements() {
+    use cfdnalab::run_like_cli::outliers::{OutlierModel, OutliersConfig};
+
+    let mut config = OutliersConfig::new(ioc(), chromosomes());
+    config.set_model(OutlierModel::Zip);
+    config.set_temp_dir(Some(PathBuf::from(TEMP_DIR)));
+    config.set_preserved_plot_context_multiplier(2.5);
+
+    let (args, _command) = render_no_cli_command(&config, "outliers");
+
+    assert_contains_pair(&args, "--model", "zip");
+    assert_contains_pair(&args, "--temp-dir", TEMP_DIR);
+    assert_contains_pair(&args, "--preserved-plot-context-multiplier", "2.5");
+    assert!(
+        !args
+            .iter()
+            .any(|argument| argument == "--plot-preserved-regions")
+    );
+}
+
 #[cfg(feature = "cmd_bam_to_bam")]
 #[test]
 fn bam_to_bam_renders_without_cli_feature() {

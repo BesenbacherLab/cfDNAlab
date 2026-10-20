@@ -76,7 +76,10 @@ fn supported_current_window_beats_an_earlier_undersupported_maximum() {
     // 6.2% with the 50 kb floor. Its originating call instead uses a supported backward
     // window containing 3,000 called bases in 100 kb, giving 3%
     assert!(decisions.calls[0].window.backward);
-    assert_eq!(decisions.calls[0].window.interval.as_tuple(), (3_000, 103_000));
+    assert_eq!(
+        decisions.calls[0].window.interval.as_tuple(),
+        (3_000, 103_000)
+    );
     assert_eq!(decisions.calls[0].window.score, 3.0);
     // The later call's own supported window contains only its 100 called bases.
     // The earlier unsupported 6.2% window must not override this 0.1% evidence
@@ -87,7 +90,12 @@ fn supported_current_window_beats_an_earlier_undersupported_maximum() {
     assert_eq!(window.called_positions, 100);
     assert!((window.score - 0.1).abs() < 1e-12);
     assert!(decisions.calls.iter().all(|decision| !decision.flagged));
-    assert!(decisions.merged_regions.iter().all(|region| !region.preserved));
+    assert!(
+        decisions
+            .merged_regions
+            .iter()
+            .all(|region| !region.preserved)
+    );
 }
 
 #[test]
@@ -192,7 +200,9 @@ fn preservation_propagates_through_all_touching_flanks() {
             .preserved
     );
     config.set_ambiguous_region_action(AmbiguousRegionAction::Error);
-    assert!(evaluate_regions(&config, &regions, &[], 500_000).is_err());
+    let evidence = evaluate_regions(&config, &regions, &[], 500_000).unwrap();
+    assert!(evidence.merged_regions[0].flagged);
+    assert!(!evidence.merged_regions[0].preserved);
 }
 
 #[test]

@@ -5,7 +5,7 @@ use super::{
     outliers::CalledRegion,
 };
 use crate::shared::interval::{Interval, TouchingMergePolicy, merge_intervals};
-use anyhow::{Result, ensure};
+use anyhow::Result;
 use std::{cmp::Reverse, collections::BinaryHeap, ops::Range};
 
 /// Selected evidence for a call. Its numerator always uses known exact called intervals.
@@ -253,12 +253,8 @@ pub(super) fn evaluate_regions(
         calls[call_index].merged_region_index = merged_regions.len() - 1;
     }
     for merged in &mut merged_regions {
-        ensure!(
-            !merged.flagged || config.ambiguous_region_action != AmbiguousRegionAction::Error,
-            "merged outlier region {:?} exceeds max_outlier_percentage={}. ambiguous_region_action=error prevents output publication",
-            merged.interval.as_tuple(),
-            config.max_outlier_percentage
-        );
+        // Error policy is enforced after every selected chromosome has been evaluated so one
+        // failed run can report every offending region without repeating the BAM scans
         merged.preserved =
             merged.flagged && config.ambiguous_region_action == AmbiguousRegionAction::Preserve;
     }
