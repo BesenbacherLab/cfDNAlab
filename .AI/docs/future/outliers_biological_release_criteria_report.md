@@ -43,7 +43,6 @@ cases and retained several broad gains. It also
 removed about 58% of biological signal in a tested 10 kb gain. That is a serious counterexample
 to assuming biological safety. Those simulations used an older 10% preservation cutoff and a
 different ZINB optimizer. They do not measure the current 5% rule or validate the Rust fitter.
-See the [recorded methods and outcomes](outliers_historical_simulation_evidence.md).
 
 ## Measurements to agree on
 

@@ -5,8 +5,8 @@ after ordinary blacklisting. It writes sparse correction weights, exact and flan
 and inspection outputs. `fcoverage --outlier-weights` is the current downstream integration.
 
 CLI help is the user-facing option reference. Each run's `outliers.README.txt` explains files
-and columns. This spec records the implementation invariants. Remaining decisions and simulation
-evidence are linked from [the review checklist](../future/outliers_review_rectification_plan.md).
+and columns. This spec records the implementation invariants. Unresolved decisions and future
+work are in the [remaining-work plan](../future/outliers_remaining_work.md).
 
 ## Cargo features
 

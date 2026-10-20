@@ -1,12 +1,10 @@
 # Outliers real-data validation list
 
-Date: 2026-10-12. Updated: 2026-10-19.
-
 Status: Pending. These are investigations, not claims that the current correction is validated.
 
-Related work: [review checklist and remaining decisions](outliers_review_rectification_plan.md),
-[current spec](../specs/outliers.md), and
-[fitted ZIP/ZINB comparison](outliers_historical_simulation_evidence.md).
+Related work: [remaining decisions and code work](outliers_remaining_work.md),
+[current spec](../specs/outliers.md), and the
+[short biological discussion report](outliers_biological_release_criteria_report.md).
 
 The intended workflow starts with an existing blacklist and detects residual sample-specific
 extremes. Current data are about 0.5x. Validate the required range of 0.1x through 200x, recording
@@ -14,20 +12,14 @@ both nominal sequencing depth and counted positional fragment coverage. Support 
 has not yet been established by these investigations. These comparisons are later work, not
 prerequisites for the active-component target or initial ZINB default. The first BAM-inspection
 version uses a 5% cutoff, 100 kb physical windows, and a 50 kb support/denominator floor, with the
-supported backward fallback. These initial choices still need biological assessment. The earlier
-10% simulations retain their historical settings.
+supported backward fallback. These initial choices still need biological assessment.
 This list does not authorize normalization changes.
 
-## Short report for the owner and supervisor
+## Decisions for the owner and supervisor
 
-- [x] Wrote [the short discussion report](outliers_biological_release_criteria_report.md).
-  It explains neighboring signal loss, genuine gains and GC interaction, separates existing
-  evidence from hypotheses, and proposes measurements and questions without choosing tolerances.
-- [x] Preserved a tracked [historical methods/outcomes note](outliers_historical_simulation_evidence.md).
-  It records the 10% cutoff and Python optimizer rather than presenting them as current Rust evidence.
 - [ ] The owner and supervisor choose the biological event sizes, acceptable losses, downstream
-  measurements, sample types and depth range that define a useful result. No new real-BAM
-  comparison was performed in this implementation task. The investigation list below remains open.
+  measurements, sample types and depth range that define a useful result. The discussion report
+  proposes questions without selecting tolerances. The investigation list below remains open.
 
 ## Depth range and baseline estimation
 
@@ -81,7 +73,7 @@ This list does not authorize normalization changes.
   Show examples where the rule is useful and examples where it removes unwanted neighboring
   signal. Do not select only examples that support the current design.
 
-## Replacement target and reference gaps (O-001)
+## Replacement target and reference gaps
 
 - [ ] Compare unconditional ZIP mean `(1 - pi) * lambda`, Poisson-component mean `lambda`,
   and positive conditional mean `lambda / (1 - exp(-lambda))`. Label their meanings explicitly.
@@ -98,7 +90,7 @@ This list does not authorize normalization changes.
   of correction severity on fitted pi. Assess the agreed lambda target against the previous
   unconditional target. The default target choice is already made theoretically.
 
-## Biological amplifications and spatial calling (O-003)
+## Biological amplifications and spatial calling
 
 - [ ] Include independently annotated focal amplifications and broad copy-number changes,
   alongside likely technical pileups and healthy/control samples.
@@ -135,10 +127,9 @@ This list does not authorize normalization changes.
 - [ ] Assess the chosen preservation cutoff and minimum eligible-position setting across
   depths and window sizes. Measure the actual fragment-weighted signal removed from known
   biological events, including sparse calls at shallow depth and fragments crossing boundaries.
-- [ ] Include cases near the current preservation boundary. In the historical 10% simulation, the 10 kb gain at
-  mean 200/CV 0.1 scored 10.063% under ZIP and 9.983% under ZINB in the first replicate,
-  producing preservation versus about 58% signal loss. Assess such interactions using the
-  working model and the final evidence rule. Also compare sustained coverage evidence if selected.
+- [ ] Include cases near the current preservation boundary, where a small change in called-base
+  percentage can change whether a biological gain is corrected. Measure signal loss using the
+  working model and current settings. Also compare sustained coverage evidence if selected.
 - [ ] Verify that user changes to window size, percentage cutoff, minimum support, and ambiguity
   action have the effects explained in CLI help. Include threshold equality and chromosome-end
   windows in the hand-derived behavioral cases.
@@ -157,7 +148,7 @@ This list does not authorize normalization changes.
 - [ ] Decide whether independent protected-region annotations or another explicit policy are
   needed. Do not describe corrected candidate loci as proven technical artifacts.
 
-## Correction order and recorded settings (O-002 and O-004)
+## Correction order and recorded settings
 
 - [ ] Compare matched raw, outlier-only, GC-only, and combined coverage at selected loci with the
   same fragment filters and masks. Check GC content, mappability, promoter/CpG annotations where
@@ -195,9 +186,8 @@ not an additional input requirement for the current `fcoverage` consumer.
 - [ ] Consider whether outlier keep weights should affect restore-mean normalization statistics.
   This is deferred to the user, not scheduled agent work. Do not investigate or implement it unless
   the user explicitly requests it. The working expectation is that residual outliers do not
-  materially change the relevant global fragment length distribution. Normalization remains
-  unchanged in the review rectification work, apart from excluded zero-weight fragments never
-  reaching existing counting/accounting.
+  materially change the relevant global fragment length distribution. Normalization changes
+  require a separate explicit request.
 
 Record the sample/locus selection, settings, annotations, plots, observations, and unresolved
 counterexamples for each investigation. Keep this list pending until those artifacts exist.
