@@ -55,6 +55,8 @@ pub(crate) mod scale_genome;
 pub(crate) mod temp_chrom_names;
 pub(crate) mod thread_pool;
 pub(crate) mod tiled_run;
+#[cfg(any(feature = "cmd_coverage_weights", feature = "cmd_outliers"))]
+pub(crate) mod triangular;
 #[cfg(feature = "cmd_fragment_kmers")]
 pub(crate) mod visualization;
 #[cfg(any(

@@ -152,7 +152,7 @@ pub mod run_like_cli {
     #[cfg(feature = "cmd_outliers")]
     pub mod outliers {
         pub use crate::commands::outliers::config::{
-            AmbiguousRegionAction, OutlierModel, OutlierTarget, OutliersConfig,
+            AmbiguousRegionAction, ContextWeighting, OutlierModel, OutlierTarget, OutliersConfig,
         };
         pub use crate::commands::outliers::outliers::{OutliersRunResult, run_outliers};
     }

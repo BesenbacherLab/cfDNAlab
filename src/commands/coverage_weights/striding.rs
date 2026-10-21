@@ -1,7 +1,7 @@
 use anyhow::Result;
 use fxhash::FxHashMap;
 
-use crate::shared::interval::Interval;
+use crate::shared::{interval::Interval, triangular::TriangularWeightCache};
 
 /// Treat support smaller than this as zero so tiny numerical residues do not participate
 /// in the global mean or blow up during inversion
@@ -56,30 +56,6 @@ fn is_effectively_zero(value: f64) -> bool {
     value.abs() < SUPPORT_FLOOR
 }
 
-/// Build the triangular integer weights, centered in the kernel.
-///
-/// Suppose `half_window = (bin_size / stride) - 1`, then `total_window = 2 * half_window + 1`.
-///
-/// E.g., `half_window = 2  ->  [1, 2, 3, 2, 1]`
-fn triangular_weights(half_window: usize) -> Vec<usize> {
-    // Total number of weights in the symmetric kernel
-    let w_len = 2 * half_window + 1;
-    let mut weights = Vec::with_capacity(w_len);
-
-    // Build the triangle by walking from left to right.
-    // For indices <= center, weights increase; then they decrease symmetrically.
-    for k in 0..w_len {
-        if k <= half_window {
-            // Left side (including center): 1, 2, ..., half_window+1
-            weights.push(k + 1);
-        } else {
-            // Right side mirrors the left: ..., 2, 1
-            weights.push((2 * half_window - k) + 1);
-        }
-    }
-    weights
-}
-
 /// Fill `bins[i].smoothed_value` with a triangularly weighted average
 /// of the center stride value and surrounding stride values.
 ///
@@ -131,7 +107,14 @@ fn triangular_weights(half_window: usize) -> Vec<usize> {
 ///   Large window size; used only to derive the kernel radius.
 /// - stride:
 ///   Stride size; used only to derive the kernel radius.
-pub(crate) fn fill_triangular_overlap(bins: &mut Vec<StrideBin>, bin_size: u32, stride: u32) {
+/// - weight_cache:
+///   Reuses each integer triangle across chromosomes in the current command run.
+pub(crate) fn fill_triangular_overlap(
+    bins: &mut Vec<StrideBin>,
+    bin_size: u32,
+    stride: u32,
+    weight_cache: &TriangularWeightCache,
+) -> Result<()> {
     // Kernel radius in *stride-bins*
     // If radius is 0, no neighbors -> identity
     let half_window = (bin_size / stride).saturating_sub(1) as usize;
@@ -140,11 +123,11 @@ pub(crate) fn fill_triangular_overlap(bins: &mut Vec<StrideBin>, bin_size: u32, 
         for b in bins.iter_mut() {
             b.smoothed_value = b.stride_value;
         }
-        return;
+        return Ok(());
     }
 
-    // Precompute the triangular weights-kernel once: `[1,2,...,half_window+1,...,2,1]`
-    let weights = triangular_weights(half_window);
+    // Reuse the shared triangular profile: `[1,2,...,half_window+1,...,2,1]`
+    let weights = weight_cache.get(half_window)?;
     let n = bins.len();
 
     // Slide the kernel across all centers i
@@ -198,6 +181,7 @@ pub(crate) fn fill_triangular_overlap(bins: &mut Vec<StrideBin>, bin_size: u32, 
             f32::NAN
         };
     }
+    Ok(())
 }
 
 /// Calculate `StrideBin::scaling_factor` from each bin's smoothed value.

@@ -54,7 +54,7 @@ A local fitting context starts with its core and expands by complete cores on bo
 sides until it meets both `--bin-size` eligible bases and `--min-context-fragments` midpoint
 fragments. Eligible zeros count toward the base minimum. Blacklisted bases do not, so the
 physical span may be wider. Without masking, 500 kb cores give centered spans of
-0.5, 1.5, ..., 5.5 Mb for a 5 Mb minimum. Ends expand on the available side.
+0.5, 1.5, ..., 7.5 Mb for the 7 Mb minimum. Ends expand on the available side.
 A core uses the sample-wide model only when its whole chromosome cannot meet both requirements.
 A sufficiently supported local context that cannot be fitted must fail explicitly. Determine
 global fallback need from each full chromosome's summed eligible bases and midpoint support,
@@ -68,6 +68,24 @@ Collect independent required local fit failures across selected chromosomes befo
 diagnostics. Unused contexts are never fitted and cannot fail an otherwise valid analysis.
 These context requirements do not change the physical windows used for preservation.
 The current `minimum_context_span` metadata key records the eligible-base minimum.
+
+`--context-weighting` selects `triangular` (default) or `uniform`. Construct the context using
+unweighted eligible bases and midpoint fragment support, regardless of the weighting choice.
+Triangular fitting multiplies each core's histogram frequencies by `radius + 1 - distance`,
+where distance is the number of grid steps from the central core and radius is the farthest
+included core's distance. The symmetric profile is `[1, 2, ..., radius + 1, ..., 2, 1]`.
+At chromosome ends keep the peak on the core being estimated and retain the shared slope on
+both available sides. Masked cores retain their distance but contribute no observations.
+Sparse or partial cores contribute only their observed eligible-position frequencies.
+Do not multiply by an eligible fraction again. Do not weight or discretize raw coverage levels.
+Integer multipliers preserve rare levels exactly. Their common normalization cancels from ZIP
+estimates and ZINB's average likelihood, including the right-truncated second fit.
+Build weighted frequencies from cached core histograms without additional BAM passes.
+Both fitting stages use the same distance weights. Global fallback fits are always unweighted.
+Record `context_weighting` in output metadata. Report actual retained positions below the fitted
+T1, not multiplied fitting frequencies. Observed fit diagnostics also remain unweighted and
+therefore describe the whole recorded context, rather than the weighted fitting distribution.
+Failure histograms include both unweighted `observed_positions` and `fitting_frequency`.
 
 `start` and `end` in the model table bound the core where that model is applied.
 `context_start`, `context_end`, `eligible_positions`, and `fragments_by_midpoint` describe the

@@ -289,7 +289,7 @@ fn coverage_weights_config_roundtrips_through_rendered_cli() {
 #[cfg(feature = "cmd_outliers")]
 #[test]
 fn outliers_config_roundtrips_through_rendered_cli() {
-    use crate::commands::outliers::config::{OutlierTarget, OutliersConfig};
+    use crate::commands::outliers::config::{ContextWeighting, OutlierTarget, OutliersConfig};
 
     let mut config = OutliersConfig::new(ioc(), chromosomes());
     config.set_output_prefix("sample");
@@ -297,6 +297,7 @@ fn outliers_config_roundtrips_through_rendered_cli() {
     config.set_tile_size(2_000_000);
     config.set_stride(250_000);
     config.set_bin_size(2_000_000);
+    config.set_context_weighting(ContextWeighting::Uniform);
     config.set_min_context_fragments(500);
     config.set_tail_probability_multiplier(2.5);
     config.set_target(OutlierTarget::Zero);

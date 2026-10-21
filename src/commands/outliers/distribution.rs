@@ -112,7 +112,8 @@ pub(crate) struct TwoStageCoverageModel {
     pub(crate) underlying_fit: CoverageParameters,
     /// Inclusive T2 cutoff applied to original positional coverage during the calling pass.
     pub(crate) final_threshold: u32,
-    /// Eligible positions below T1 in this fitting histogram, including zero-coverage positions.
+    /// Histogram frequency below T1, including zero coverage. Local models replace weighted
+    /// fitting frequencies with the actual retained-position count before reporting.
     pub(crate) second_fit_retained_positions: u64,
     /// Numerical agreement across converged near-optimal starts, not uncertainty intervals.
     pub(crate) initial_optimizer: Option<OptimizerDiagnostics>,

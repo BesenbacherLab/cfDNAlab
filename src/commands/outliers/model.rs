@@ -51,7 +51,10 @@ const MIN_POSITIVE_LAMBDA: f64 = 1e-12;
 const CONDITIONAL_MEAN_TOLERANCE: f64 = 1e-12;
 const LOG_TWO_PI: f64 = 1.837_877_066_409_345_3;
 
-/// Sparse eligible-position counts keyed by integer raw coverage.
+/// Sparse histogram frequencies keyed by integer raw coverage.
+///
+/// Raw histograms count eligible positions. Local fitting can multiply those frequencies
+/// by integer distance weights without changing the coverage levels or rounding observations.
 pub(crate) type CoverageCounts = BTreeMap<u32, u64>;
 
 /// Parameters of an underlying, untruncated zero-inflated Poisson distribution.

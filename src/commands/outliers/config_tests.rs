@@ -15,6 +15,50 @@ fn config() -> OutliersConfig {
 }
 
 #[test]
+fn context_defaults_and_weighting_choices_are_serialized() {
+    let mut config = config();
+    assert_eq!(config.bin_size, 7_000_000);
+    assert_eq!(config.context_weighting, ContextWeighting::Triangular);
+
+    for (weighting, expected_argument) in [
+        (ContextWeighting::Triangular, "triangular"),
+        (ContextWeighting::Uniform, "uniform"),
+    ] {
+        config.set_context_weighting(weighting);
+        let arguments = config.to_cli_args().unwrap();
+        assert!(
+            arguments
+                .windows(2)
+                .any(|pair| { pair[0] == "--context-weighting" && pair[1] == expected_argument })
+        );
+        assert!(
+            arguments
+                .windows(2)
+                .any(|pair| { pair[0] == "--bin-size" && pair[1] == "7000000" })
+        );
+        config.validate().expect("valid context defaults");
+    }
+}
+
+#[cfg(feature = "cli")]
+#[test]
+fn cli_context_defaults_match_programmatic_defaults_and_reject_unknown_weighting() {
+    use clap::{Args, FromArgMatches};
+
+    let arguments = ["outliers", "--bam", "input.bam", "--output-dir", "out"];
+    let command = OutliersConfig::augment_args(clap::Command::new("outliers"));
+    let matches = command.clone().try_get_matches_from(arguments).unwrap();
+    let parsed = OutliersConfig::from_arg_matches(&matches).unwrap();
+    assert_eq!(parsed.bin_size, 7_000_000);
+    assert_eq!(parsed.context_weighting, ContextWeighting::Triangular);
+
+    let mut invalid_arguments = arguments.to_vec();
+    invalid_arguments.extend(["--context-weighting", "unknown"]);
+    let error = command.try_get_matches_from(invalid_arguments).unwrap_err();
+    assert_eq!(error.kind(), clap::error::ErrorKind::InvalidValue);
+}
+
+#[test]
 fn rejects_manual_probability_with_nondefault_automatic_multiplier() {
     let mut config = config();
     config.set_tail_probability(Some(0.01));

@@ -9,7 +9,8 @@ use cfdnalab::{
         common::{ChromosomeArgs, IOCArgs, OutlierWeightsArgs},
         fcoverage::{FCoverageConfig, run_fcoverage},
         outliers::{
-            AmbiguousRegionAction, OutlierModel, OutlierTarget, OutliersConfig, run_outliers,
+            AmbiguousRegionAction, ContextWeighting, OutlierModel, OutlierTarget, OutliersConfig,
+            run_outliers,
         },
     },
     testing::{PairedFragmentSpec, TempBam, TempBamBuilder, read_zst_to_string},
@@ -203,6 +204,9 @@ fn base_config(bam: &Path, output_dir: &Path) -> OutliersConfig {
     config.set_tile_size(1_000_000);
     config.set_stride(250);
     config.set_bin_size(1_000);
+    // Existing exact expectations describe equal influence across the fitting context
+    // Triangular weighting has its own fixture with independently derived frequencies
+    config.set_context_weighting(ContextWeighting::Uniform);
     config.set_min_context_fragments(1);
     config.set_tail_probability(Some(0.05));
     config.set_target(OutlierTarget::Threshold);
@@ -472,6 +476,55 @@ fn paired_bam_produces_the_hand_derived_models_calls_and_all_outputs() -> Result
 }
 
 #[test]
+fn triangular_contexts_fit_hand_derived_frequencies_and_report_unweighted_counts() -> Result<()> {
+    let bam = paired_outlier_fixture()?;
+    let output = TempDir::new()?;
+    let mut config = base_config(bam.bam_path(), output.path());
+    config.set_context_weighting(ContextWeighting::Triangular);
+
+    let result = run_outliers(&config, RunOptions::new_quiet())?;
+    let models = fs::read_to_string(&result.output_models)?;
+    assert!(models.contains("# context_weighting=triangular\n"));
+    let rows = data_lines(&models);
+    assert_eq!(rows.len(), 5);
+    // All four contexts cover the chromosome. Their integer triangles are
+    // [4,3,2,1], [2,3,2,1], [1,2,3,2] and [1,2,3,4]
+    // The raw per-core histograms are {0:190,1:30,20:30}, {0:220,1:30},
+    // {0:220,1:30}, {0:250}. These give the following weighted zero fractions
+    // and positive means, before any fitting or exclusion of the coverage-20 pileup
+    let expected_zero_fractions = [
+        2110.0 / 2500.0,
+        1730.0 / 2000.0,
+        1790.0 / 2000.0,
+        2290.0 / 2500.0,
+    ];
+    let expected_positive_means = [89.0 / 13.0, 47.0 / 9.0, 26.0 / 7.0, 26.0 / 7.0];
+    for (core_index, row) in rows[1..].iter().enumerate() {
+        let fields: Vec<_> = row.split('\t').collect();
+        assert_eq!(fields[5], "local");
+        assert_eq!(fields[6], "1000");
+        assert_eq!(fields[7], "23");
+        let component_mean = fields[8].parse::<f64>()?;
+        let zero_inflation = fields[9].parse::<f64>()?;
+        assert!(zero_inflation > 0.0);
+        // An interior ZIP fit matches the observed zero fraction and positive mean
+        let fitted_positive_mean = component_mean / -(-component_mean).exp_m1();
+        assert!((fitted_positive_mean - expected_positive_means[core_index]).abs() < 1e-9);
+        let fitted_zero_fraction =
+            zero_inflation + (1.0 - zero_inflation) * (-component_mean).exp();
+        assert!((fitted_zero_fraction - expected_zero_fractions[core_index]).abs() < 1e-12);
+        let initial_threshold = fields[10].parse::<u32>()?;
+        assert!(initial_threshold > 2 && initial_threshold <= 20);
+        // Each fit excludes the same 30 actual bases, despite their different multipliers
+        assert_eq!(fields[11], "970");
+        assert_eq!(fields[20], "30");
+    }
+    let readme = fs::read_to_string(output.path().join("sample.outliers.README.txt"))?;
+    assert!(readme.contains("Local context weighting: triangular\n"));
+    Ok(())
+}
+
+#[test]
 fn preserved_region_table_is_automatic_and_coverage_plots_are_optional() -> Result<()> {
     let bam = paired_outlier_fixture()?;
     let output_dir = TempDir::new()?;
@@ -638,6 +691,7 @@ fn detected_outlier_weights_flatten_an_extreme_pileup_in_fcoverage() -> Result<(
         },
     );
     outlier_config.set_model(OutlierModel::Zip);
+    outlier_config.set_context_weighting(ContextWeighting::Uniform);
     outlier_config.set_output_prefix("roundtrip_detected");
     outlier_config.set_tile_size(1_000_000);
     outlier_config.set_stride(1_000);
@@ -834,6 +888,7 @@ fn detected_outlier_weights_flatten_an_extreme_with_complex_poisson_like_backgro
         },
     );
     outlier_config.set_model(OutlierModel::Zip);
+    outlier_config.set_context_weighting(ContextWeighting::Uniform);
     outlier_config.set_output_prefix("complex_roundtrip_detected");
     outlier_config.set_tile_size(1_000_000);
     outlier_config.set_stride(5_000);
@@ -989,6 +1044,7 @@ fn boundaries_preserve_calls_and_fully_blacklisted_contigs_do_not_request_fallba
     );
     config.set_model(OutlierModel::Zip);
     config.set_output_prefix("boundaries");
+    config.set_context_weighting(ContextWeighting::Uniform);
     config.set_tile_size(1_000_000);
     config.set_stride(250_000);
     config.set_bin_size(1_000_000);

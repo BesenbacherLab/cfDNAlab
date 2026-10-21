@@ -4,12 +4,12 @@ use rayon::prelude::*;
 
 use crate::{
     commands::outliers::{
-        config::OutlierModel,
+        config::{ContextWeighting, OutlierModel},
         distribution::{FitDiagnostics, TwoStageCoverageModel, diagnose_fit, fit_two_stage},
         failure::AnalysisFailures,
         model::CoverageCounts,
     },
-    shared::interval::Interval,
+    shared::{interval::Interval, triangular::TriangularWeightCache},
 };
 
 const MAXIMUM_EXACT_RAW_COVERAGE: f32 = 16_777_215.0;
@@ -165,7 +165,8 @@ pub(crate) fn sum_global_histogram(
 /// The global model is used only when the complete chromosome cannot meet both the required
 /// eligible-position count and fragment support. Eligible zeros count toward context size.
 /// A complete local context whose two-stage fit fails returns that error rather than silently
-/// changing its model source.
+/// changing its model source. Context weighting changes fitting frequencies in both stages,
+/// while support counts and comparisons with observed coverage remain unweighted.
 pub(crate) fn fit_core_models(
     chromosomes: &[String],
     histograms_by_chromosome: &FxHashMap<String, Vec<CoreHistogram>>,
@@ -174,6 +175,7 @@ pub(crate) fn fit_core_models(
     tail_probability: f64,
     minimum_eligible_positions: u32,
     minimum_fragment_support: u64,
+    context_weighting: ContextWeighting,
 ) -> Result<FittedModels> {
     let mut needs_global = false;
     let mut eligible_positions_by_chromosome = FxHashMap::default();
@@ -197,7 +199,7 @@ pub(crate) fn fit_core_models(
     }
     let mut messages = Vec::new();
     let mut failed_histograms = String::from(
-        "# GLOBAL pools all selected chromosomes and has no genomic coordinates (NA)\n# coverage is raw positional coverage, observed_positions counts eligible bases\nchromosome\tcore_start\tcore_end\tcontext_start\tcontext_end\tfragments_by_midpoint\tcoverage\tobserved_positions\n",
+        "# GLOBAL pools all selected chromosomes and has no genomic coordinates (NA)\n# coverage is raw positional coverage, observed_positions counts unweighted eligible bases\n# fitting_frequency includes local integer triangle multipliers, whose common normalization cancels in the fit\nchromosome\tcore_start\tcore_end\tcontext_start\tcontext_end\tfragments_by_midpoint\tcoverage\tobserved_positions\tfitting_frequency\n",
     );
     let global_model = if needs_global {
         match fit_two_stage(&global_histogram.counts, tail_probability, family) {
@@ -210,6 +212,7 @@ pub(crate) fn fit_core_models(
                     global_histogram.interval,
                     global_histogram.interval,
                     global_histogram,
+                    None,
                 );
                 None
             }
@@ -218,6 +221,7 @@ pub(crate) fn fit_core_models(
         None
     };
     let mut models_by_chromosome = FxHashMap::default();
+    let triangular_weight_cache = TriangularWeightCache::default();
     for chromosome in chromosomes {
         let cores = &histograms_by_chromosome[chromosome];
         let eligible_positions_by_core = &eligible_positions_by_chromosome[chromosome];
@@ -229,7 +233,7 @@ pub(crate) fn fit_core_models(
                 let core = cores[core_index].interval;
                 if eligible_positions_by_core[core_index] == 0 {
                     // Keep this grid slot without constructing or fitting an unused context
-                    return Ok((core, core, 0, CoreHistogram::new(core), None));
+                    return Ok((core, core, 0, CoreHistogram::new(core), None, None));
                 }
                 let (mut histogram, context, eligible_positions, complete) = build_context(
                     cores,
@@ -238,13 +242,44 @@ pub(crate) fn fit_core_models(
                     minimum_eligible_positions,
                     minimum_fragment_support,
                 )?;
+                let mut weighted_counts = if complete
+                    && context_weighting == ContextWeighting::Triangular
+                {
+                    Some(
+                        triangular_context_counts(cores, core_index, context, &triangular_weight_cache).with_context(|| {
+                            format!(
+                                "core {:?}, context {:?}: constructing triangular fitting frequencies",
+                                core.as_tuple(),
+                                context.as_tuple()
+                            )
+                        })?,
+                    )
+                } else {
+                    None
+                };
                 let fit = if complete {
-                    Some(fit_two_stage(&histogram.counts, tail_probability, family))
+                    Some(fit_two_stage(
+                        weighted_counts.as_ref().unwrap_or(&histogram.counts),
+                        tail_probability,
+                        family,
+                    ))
                 } else {
                     global_model.map(Ok)
                 };
                 let result = fit.map(|fit| -> Result<CoreModel> {
-                    let model = fit?;
+                    let mut model = fit?;
+                    if complete {
+                        // Integer kernel multipliers are fitting frequencies, not extra bases
+                        // Report the actual positions below this weighted fit's T1
+                        model.second_fit_retained_positions = histogram
+                            .counts
+                            .range(..model.initial_threshold)
+                            .try_fold(0_u64, |total, (_, &positions)| {
+                                total
+                                    .checked_add(positions)
+                                    .context("retained-position count overflow")
+                            })?;
+                    }
                     Ok(CoreModel {
                         core,
                         context,
@@ -263,14 +298,22 @@ pub(crate) fn fit_core_models(
                 // Successful models already carry their support and numerical diagnostics
                 if !matches!(&result, Some(Err(_))) {
                     histogram.counts.clear();
+                    weighted_counts = None;
                 }
-                Ok((core, context, eligible_positions, histogram, result))
+                Ok((core, context, eligible_positions, histogram, weighted_counts, result))
             })
             .collect::<Vec<Result<_>>>();
         let mut chromosome_models = Vec::with_capacity(cores.len());
         for result in results {
             match result {
-                Ok((core, context, eligible_positions, histogram, Some(Err(error)))) => {
+                Ok((
+                    core,
+                    context,
+                    eligible_positions,
+                    histogram,
+                    weighted_counts,
+                    Some(Err(error)),
+                )) => {
                     messages.push(format!("{chromosome} core {:?}, context {:?}, {} fit, alpha={tail_probability}, eligible positions {}, fragment support {}: {error:#}", core.as_tuple(), context.as_tuple(), family.as_str(), eligible_positions, histogram.fragment_support));
                     append_failed_histogram(
                         &mut failed_histograms,
@@ -278,12 +321,13 @@ pub(crate) fn fit_core_models(
                         core,
                         context,
                         &histogram,
+                        weighted_counts.as_ref(),
                     );
                     chromosome_models.push(None);
                 }
-                Ok((_, _, _, _, Some(Ok(model)))) => chromosome_models.push(Some(model)),
+                Ok((_, _, _, _, _, Some(Ok(model)))) => chromosome_models.push(Some(model)),
                 // A fully blacklisted core or an already recorded required global failure
-                Ok((_, _, _, _, None)) => chromosome_models.push(None),
+                Ok((_, _, _, _, _, None)) => chromosome_models.push(None),
                 Err(error) => {
                     messages.push(format!("{chromosome} context construction: {error:#}"));
                     chromosome_models.push(None);
@@ -344,6 +388,7 @@ fn append_failed_histogram(
     core: Interval<u32>,
     context: Interval<u32>,
     histogram: &CoreHistogram,
+    fitting_counts: Option<&CoverageCounts>,
 ) {
     use std::fmt::Write;
     for (coverage, positions) in &histogram.counts {
@@ -360,11 +405,57 @@ fn append_failed_histogram(
         };
         writeln!(
             output,
-            "{chromosome}\t{coordinates}\t{}\t{coverage}\t{positions}",
-            histogram.fragment_support
+            "{chromosome}\t{coordinates}\t{}\t{coverage}\t{positions}\t{}",
+            histogram.fragment_support,
+            fitting_counts.unwrap_or(&histogram.counts)[coverage]
         )
         .expect("writing to a string cannot fail");
     }
+}
+
+/// Pool core histograms using a triangle centered on the core whose model is being estimated.
+///
+/// If the farthest context core is `radius` grid steps away, its multiplier is 1 and the
+/// central multiplier is `radius + 1`. At chromosome ends retain that same distance rule
+/// rather than moving the peak to the context midpoint. Masked cores retain their grid
+/// distance but contribute no observations. Partial cores contribute only their actual bases.
+///
+/// Integer multipliers preserve every observed coverage level without rounding frequencies.
+/// Dividing all frequencies by their sum gives the normalized triangle. That common factor
+/// cancels from ZIP estimates and from the average likelihood optimized for ZINB.
+fn triangular_context_counts(
+    cores: &[CoreHistogram],
+    core_index: usize,
+    context: Interval<u32>,
+    weight_cache: &TriangularWeightCache,
+) -> Result<CoverageCounts> {
+    let first_index = cores.partition_point(|core| core.interval.end() <= context.start());
+    let end_index = cores.partition_point(|core| core.interval.start() < context.end());
+    ensure!(
+        first_index <= core_index && core_index < end_index,
+        "triangular context does not contain its center core"
+    );
+    let radius = (core_index - first_index).max(end_index - 1 - core_index);
+    // Skip the unavailable left part of the shared profile without moving its peak
+    let weights_start = radius - (core_index - first_index);
+    let weights = weight_cache.get(radius)?;
+    let mut counts = CoverageCounts::new();
+    for (core, &weight) in cores[first_index..end_index]
+        .iter()
+        .zip(&weights[weights_start..])
+    {
+        let multiplier = u64::try_from(weight)?;
+        for (&coverage, &positions) in &core.counts {
+            let fitting_frequency = positions
+                .checked_mul(multiplier)
+                .context("triangular fitting-frequency multiplication overflow")?;
+            let combined_frequency = counts.entry(coverage).or_default();
+            *combined_frequency = combined_frequency
+                .checked_add(fitting_frequency)
+                .context("triangular fitting-frequency sum overflow")?;
+        }
+    }
+    Ok(counts)
 }
 
 /// Grow a contiguous chromosome context until both eligible bases and midpoint fragments suffice.

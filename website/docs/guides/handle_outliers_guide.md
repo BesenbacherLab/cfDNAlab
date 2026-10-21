@@ -49,6 +49,9 @@ The detector does not read reference sequence, so unmasked reference gaps remain
 Local contexts expand until they contain enough eligible bases and accepted midpoint fragments.
 `--bin-size` sets the eligible-base minimum, including zeros. Blacklisted bases do not count,
 so heavily masked regions need a wider physical context.
+By default, contexts contain at least 7 Mb eligible bases and use triangular weighting,
+giving nearby sequence more influence to follow local coverage changes such as amplifications.
+Use `--context-weighting uniform` to give every eligible base equal influence.
 A chromosome that cannot provide both uses a pooled model from all selected chromosomes.
 No pooled model is fitted when every chromosome has enough support. Automatic alpha depends
 on the selected eligible bases. Detect once over the intended chromosomes and consume subsets.

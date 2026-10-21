@@ -7,7 +7,7 @@ use crate::{ToCliCommand, cli_command::helpers::*};
 use anyhow::{Result, bail};
 
 pub const DEFAULT_STRIDE: u32 = 500_000;
-pub const DEFAULT_BIN_SIZE: u32 = 5_000_000;
+pub const DEFAULT_BIN_SIZE: u32 = 7_000_000;
 pub const DEFAULT_TILE_SIZE: u32 = 10_000_000;
 pub const DEFAULT_MIN_CONTEXT_FRAGMENTS: u64 = 1_000;
 pub const DEFAULT_TAIL_PROBABILITY_MULTIPLIER: f64 = 1.0;
@@ -33,6 +33,26 @@ impl OutlierModel {
         match self {
             Self::Zinb => "zinb",
             Self::Zip => "zip",
+        }
+    }
+}
+
+/// How surrounding model cores contribute to a local coverage estimate.
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ContextWeighting {
+    /// Give every eligible base in the context equal influence.
+    Uniform,
+    /// Give nearby cores more influence, decreasing linearly with distance from the center core.
+    #[default]
+    Triangular,
+}
+
+impl ContextWeighting {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Uniform => "uniform",
+            Self::Triangular => "triangular",
         }
     }
 }
@@ -285,7 +305,7 @@ pub struct OutliersConfig {
     /// Start with the central interval defined by `--stride`, then add an interval on each side
     /// until their eligible bases reach this minimum. Include zero-coverage bases, but exclude
     /// blacklisted bases. The physical span can therefore be larger. Without blacklists, 500 kb
-    /// intervals with a 5 Mb minimum give centered spans of 0.5, 1.5, 2.5, ..., 5.5 Mb.
+    /// intervals with a 7 Mb minimum give centered spans of 0.5, 1.5, 2.5, ..., 7.5 Mb.
     ///
     /// At chromosome ends, expansion continues on the available side. The region can grow further
     /// if needed to include `--min-context-fragments` fragments.
@@ -294,6 +314,19 @@ pub struct OutliersConfig {
         clap(long, default_value_t = DEFAULT_BIN_SIZE, value_parser = clap::value_parser!(u32).range(1..), help_heading = "Core")
     )]
     pub bin_size: u32,
+
+    /// Weight surrounding coverage observations by distance from the central interval `[choice]`
+    ///
+    /// Triangular weighting gives the central `--stride` interval the most influence, decreasing
+    /// linearly by whole intervals toward the context edges. Both fitting stages use these weights.
+    /// This keeps the estimate local while borrowing information from a wider region.
+    /// Uniform weighting gives every eligible base equal influence.
+    ///
+    /// Coverage values and the eligible-base and fragment support minima are not weighted.
+    /// At chromosome ends the triangle stays centered on the interval being estimated, using
+    /// only the available side. Sample-wide fallback models are always fitted without weighting.
+    #[cfg_attr(feature = "cli", clap(long, value_enum, default_value_t = ContextWeighting::Triangular, help_heading = "Core"))]
+    pub context_weighting: ContextWeighting,
 
     /// Minimum number of fragments used to estimate local coverage `[integer]`
     ///
@@ -498,6 +531,7 @@ impl OutliersConfig {
             tile_size: DEFAULT_TILE_SIZE,
             stride: DEFAULT_STRIDE,
             bin_size: DEFAULT_BIN_SIZE,
+            context_weighting: ContextWeighting::Triangular,
             min_context_fragments: DEFAULT_MIN_CONTEXT_FRAGMENTS,
             tail_probability: None,
             tail_probability_multiplier: DEFAULT_TAIL_PROBABILITY_MULTIPLIER,
@@ -544,6 +578,11 @@ impl OutliersConfig {
     /// Set the minimum eligible-base count of each adaptive local fitting context, including zeros.
     pub fn set_bin_size(&mut self, bin_size: u32) {
         self.bin_size = bin_size;
+    }
+
+    /// Select how surrounding cores contribute to both local fitting stages.
+    pub fn set_context_weighting(&mut self, weighting: ContextWeighting) {
+        self.context_weighting = weighting;
     }
 
     /// Set the minimum midpoint-assigned fragment support for a local fitting context.
@@ -728,6 +767,11 @@ impl ToCliCommand for OutliersConfig {
         push_value(&mut args, "--tile-size", self.tile_size);
         push_value(&mut args, "--stride", self.stride);
         push_value(&mut args, "--bin-size", self.bin_size);
+        push_value(
+            &mut args,
+            "--context-weighting",
+            self.context_weighting.as_str(),
+        );
         push_value(
             &mut args,
             "--min-context-fragments",

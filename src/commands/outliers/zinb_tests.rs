@@ -159,6 +159,23 @@ fn truncated_profile_ignores_excluded_counts_and_normalizes_sample_size() {
 }
 
 #[test]
+fn complete_profile_normalizes_integer_fitting_frequencies_without_changing_the_likelihood() {
+    // At mean=1 and dispersion=1 the NB component is geometric, with masses
+    // [1/2,1/4,1/8] at [0,1,2]. Both histograms have fractions [1/2,1/3,1/6]
+    // Their zero fraction matches the component, giving pi=0 and cost (5/3)*ln(2)
+    for histogram in [
+        [(0, 6), (1, 4), (2, 2)].into_iter().collect(),
+        [(0, 42), (1, 28), (2, 14)].into_iter().collect(),
+    ] {
+        let problem = ProfiledHistogram::new(&histogram, None).unwrap();
+        let (cost, zero_inflation) = problem.evaluate(1.0, 1.0).unwrap();
+
+        assert!((cost - (5.0 / 3.0) * 2.0_f64.ln()).abs() < 1e-12);
+        assert!(zero_inflation.abs() < 1e-12);
+    }
+}
+
+#[test]
 fn profile_rejects_empty_zero_only_and_overflowing_retained_samples() {
     for (histogram, expected_reason) in [
         (CoverageCounts::new(), "without retained eligible positions"),

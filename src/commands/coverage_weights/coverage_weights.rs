@@ -25,6 +25,7 @@ use crate::{
         interval::Interval,
         io::{FinalOutputFiles, dot_join, open_text_reader},
         tiled_run::RunTempDirs,
+        triangular::TriangularWeightCache,
     },
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -310,11 +311,12 @@ pub(crate) fn run_with_fcoverage(
         opt.stride,
     )?;
 
+    let triangular_weight_cache = TriangularWeightCache::default();
     for chromosome in &chromosomes {
         let bins = bins_by_chr
             .get_mut(chromosome)
             .with_context(|| format!("missing stride bins for chromosome '{}'", chromosome))?;
-        fill_triangular_overlap(bins, opt.bin_size, opt.stride);
+        fill_triangular_overlap(bins, opt.bin_size, opt.stride, &triangular_weight_cache)?;
     }
 
     let mean_weighted_average_overlap =

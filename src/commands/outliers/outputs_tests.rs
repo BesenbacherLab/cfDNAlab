@@ -27,6 +27,7 @@ fn common_metadata_records_settings_and_analysed_chromosome_lengths() {
     config.set_tail_probability_multiplier(2.5);
     config.set_stride(250_000);
     config.set_bin_size(2_000_000);
+    config.set_context_weighting(super::super::config::ContextWeighting::Uniform);
     config.set_min_context_fragments(500);
     config.set_blacklist(Some(vec![PathBuf::from("excluded.bed")]));
     let chromosomes = vec!["chr2".to_string(), "chr1".to_string()];
@@ -60,6 +61,7 @@ fn common_metadata_records_settings_and_analysed_chromosome_lengths() {
     assert!(text.contains("# automatic_probability_denominator=10000\n"));
     assert!(text.contains("# model_core_size=250000\n"));
     assert!(text.contains("# minimum_context_span=2000000\n"));
+    assert!(text.contains("# context_weighting=uniform\n"));
     assert!(text.contains("# minimum_context_fragment_support=500\n"));
     assert!(text.contains("# raw_coverage_source=uncorrected_mapped_reference_segments\n"));
     assert!(text.contains("# blacklists=[\"excluded.bed\"]\n"));

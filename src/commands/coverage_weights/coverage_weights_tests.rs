@@ -488,7 +488,7 @@ fn fill_triangular_overlap_preserves_constant_support_with_short_final_bin() -> 
     ];
 
     // Act
-    fill_triangular_overlap(&mut bins, 30, 10);
+    fill_triangular_overlap(&mut bins, 30, 10, &TriangularWeightCache::default())?;
 
     // Assert
     for bin in &bins {
@@ -537,7 +537,7 @@ fn fill_triangular_overlap_skips_nan_stride_averages_when_smoothing() -> Result<
     ];
 
     // Act
-    fill_triangular_overlap(&mut bins, 20, 10);
+    fill_triangular_overlap(&mut bins, 20, 10, &TriangularWeightCache::default())?;
 
     // Assert:
     // With bin-size=20 and stride=10, the triangular kernel is [1,2,1].
@@ -592,7 +592,7 @@ fn fill_triangular_overlap_weights_stride_averages_by_eligible_positions() -> Re
     ];
 
     // Act
-    fill_triangular_overlap(&mut bins, 20, 10);
+    fill_triangular_overlap(&mut bins, 20, 10, &TriangularWeightCache::default())?;
 
     // Assert
     assert!(

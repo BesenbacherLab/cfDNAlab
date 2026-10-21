@@ -22,6 +22,12 @@ pub(super) fn write_output_readme(
     let config = metadata.config;
     writeln!(writer, "cfDNAlab outlier results\n")?;
     writeln!(writer, "Model: {}", config.model.as_str())?;
+    writeln!(writer, "Minimum eligible context: {} bp", config.bin_size)?;
+    writeln!(
+        writer,
+        "Local context weighting: {}",
+        config.context_weighting.as_str()
+    )?;
     writeln!(writer, "Correction target: {}", config.target.as_str())?;
     writeln!(
         writer,
@@ -161,6 +167,9 @@ If you supplied an output prefix, it appears before each filename below.
     The coverage model and cutoff used in each `--stride` interval with eligible bases.
     Fully blacklisted intervals have no model and are omitted from this table.
     Each model is usually estimated from a larger surrounding region, its context.
+    By default, both fitting stages give nearby cores more influence using triangular
+    distance weights. Coverage levels remain raw fragment counts. The context's base
+    and fragment support counts remain unweighted. Sample-wide fallback fits are unweighted.
     Use this table to find the background mean and cutoff at a particular location.
     The model-column reference below also explains the fit diagnostics.
 
@@ -339,6 +348,10 @@ and fragment count, so the sample-wide model was used.
 bases do not count, but eligible zero-coverage bases do. Contexts expand by complete cores
 on both available sides until this minimum and `--min-context-fragments` are met.
 Their physical span can therefore be larger than `--bin-size`.
+`--context-weighting triangular` gives nearby cores more influence in both fits.
+The central multiplier is highest and decreases equally with each grid step on either side.
+Chromosome ends shorten the triangle without moving its peak. `uniform` gives each eligible
+base equal influence. These weights change histogram frequencies, not raw coverage levels.
 
 `eligible_positions` and `fragments_by_midpoint` describe the recorded chromosome
 context, including for fallback rows. `fragments_by_midpoint` counts accepted fragments
@@ -352,8 +365,8 @@ on the estimated background. The second fit accounts for that omission when esti
 the full coverage distribution. It supplies the final calling cutoff, T2.
 
 `initial_threshold` is T1. `second_fit_retained_positions` counts bases below T1 used
-for the second fit. `final_threshold` is T2. A base is called when its raw coverage
-is at or above T2. Columns starting with `initial_` describe the first fit, while
+for the second fit, without distance multipliers. `final_threshold` is T2. A base is
+called when its raw coverage is at or above T2. Columns starting with `initial_` describe the first fit, while
 those starting with `underlying_` describe the background estimated by the second fit.
 
 Both models separate extra zeros from a coverage component that can itself produce
@@ -370,6 +383,8 @@ Model fit diagnostics
 ---------------------
 These columns help assess whether the model describes ordinary coverage well enough.
 They do not change the calls or prove that a called region is a technical artifact.
+Observed counts and moments are unweighted summaries of the complete recorded context.
+With triangular fitting, they can differ from the distribution emphasized by the fitted model.
 
 `initial_dispersion` and `underlying_dispersion` describe the extra variation allowed
 in the coverage component of each fit. Its variance is mean + dispersion * mean^2.

@@ -349,6 +349,7 @@ fn run_outliers_inner(config: &OutliersConfig, options: RunOptions) -> Result<Ou
         tail_probability,
         config.bin_size,
         config.min_context_fragments,
+        config.context_weighting,
     )?;
 
     status_info!(options, target: COMMAND_TARGET, "Writing coverage-model diagnostics");

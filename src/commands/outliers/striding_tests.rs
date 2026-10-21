@@ -29,6 +29,259 @@ fn centered_context_expands_to_five_point_five_megabases() {
 }
 
 #[test]
+fn seven_megabase_minimum_keeps_the_symmetric_whole_core_expansion_rule() {
+    let histograms = cores(17);
+
+    let (combined, context, eligible_positions, complete) =
+        build_context(&histograms, &[500_000; 17], 8, 7_000_000, 1_000).unwrap();
+
+    // Thirteen centered cores supply only 6.5 Mb. Fifteen supply 7.5 Mb
+    assert!(complete);
+    assert_eq!(context.as_tuple(), (500_000, 8_000_000));
+    assert_eq!(eligible_positions, 7_500_000);
+    assert_eq!(combined.fragment_support, 1_500);
+    assert_eq!(combined.eligible_positions().unwrap(), 7_500_000);
+}
+
+#[test]
+fn triangular_frequencies_follow_distance_without_changing_coverage_levels() {
+    let mut histograms = cores(5);
+    for (index, histogram) in histograms.iter_mut().enumerate() {
+        histogram.counts = [(index as u32, index as u64 + 1)].into_iter().collect();
+    }
+    let original = histograms.clone();
+
+    let weighted = triangular_context_counts(
+        &histograms,
+        2,
+        Interval::new(0, 2_500_000).unwrap(),
+        &TriangularWeightCache::default(),
+    )
+    .unwrap();
+
+    // Multiply frequencies [1,2,3,4,5] by the triangle [1,2,3,2,1]
+    // The single observation at coverage zero remains present at the outer edge
+    assert_eq!(
+        weighted,
+        [(0, 1), (1, 4), (2, 9), (3, 8), (4, 5)]
+            .into_iter()
+            .collect()
+    );
+    assert_eq!(histograms, original);
+}
+
+#[test]
+fn histogram_pooling_excludes_cores_outside_the_recorded_context() {
+    let mut histograms = cores(5);
+    histograms[0].counts = [(100, 1)].into_iter().collect();
+    histograms[1].counts = [(1, 2)].into_iter().collect();
+    histograms[2].counts = [(1, 3)].into_iter().collect();
+    histograms[3].counts = [(1, 5)].into_iter().collect();
+    histograms[4].counts = [(200, 1)].into_iter().collect();
+
+    let weighted = triangular_context_counts(
+        &histograms,
+        2,
+        Interval::new(500_000, 2_000_000).unwrap(),
+        &TriangularWeightCache::default(),
+    )
+    .unwrap();
+
+    // Pool the three included cores at coverage 1: 2*1 + 3*2 + 5*1 = 13
+    // The high-coverage observations outside the recorded context must not enter the fit
+    assert_eq!(weighted, [(1, 13)].into_iter().collect());
+}
+
+#[test]
+fn triangle_keeps_masked_distances_and_uses_actual_support_of_sparse_and_partial_cores() {
+    let mut histograms = cores(5);
+    histograms[0].counts = [(0, 10)].into_iter().collect();
+    histograms[1].counts.clear();
+    histograms[2].counts = [(2, 1)].into_iter().collect();
+    histograms[3].counts = [(3, 2)].into_iter().collect();
+    histograms[4].interval = Interval::new(2_000_000, 2_000_030).unwrap();
+    histograms[4].counts = [(4, 5)].into_iter().collect();
+
+    let weighted = triangular_context_counts(
+        &histograms,
+        2,
+        Interval::new(0, 2_000_030).unwrap(),
+        &TriangularWeightCache::default(),
+    )
+    .unwrap();
+
+    // The empty core still occupies a distance step. Do not multiply frequencies by an
+    // eligible fraction again, or give the sparse central core the mass of a complete core
+    assert_eq!(
+        weighted,
+        [(0, 10), (2, 3), (3, 4), (4, 5)].into_iter().collect()
+    );
+}
+
+#[test]
+fn both_fitting_stages_use_the_selected_weighting_but_report_actual_position_counts() {
+    let mut histograms = cores(3);
+    for (core_index, histogram) in histograms.iter_mut().enumerate() {
+        let start = core_index as u32 * 100;
+        histogram.interval = Interval::new(start, start + 100).unwrap();
+        histogram.counts = [(0, 50), (1, 25), (2, 25)].into_iter().collect();
+        histogram.fragment_support = 1;
+    }
+    histograms[1].counts = [(1, 50), (2, 49), (20, 1)].into_iter().collect();
+    let chromosomes = vec!["chr1".to_string()];
+    let histograms = [("chr1".to_string(), histograms)].into_iter().collect();
+    let pooled = sum_global_histogram(&histograms).unwrap();
+
+    // Uniform frequencies have initial mean 318/300 and retained mean 298/299
+    // Triangular frequencies have initial mean 486/400 and retained mean 446/398
+    for (weighting, expected_initial_mean, expected_retained_mean) in [
+        (ContextWeighting::Uniform, 1.06, 298.0 / 299.0),
+        (ContextWeighting::Triangular, 1.215, 223.0 / 199.0),
+    ] {
+        let fitted = fit_core_models(
+            &chromosomes,
+            &histograms,
+            &pooled,
+            OutlierModel::Zip,
+            0.05,
+            300,
+            3,
+            weighting,
+        )
+        .unwrap();
+
+        let model = fitted.by_chromosome["chr1"][1].as_ref().unwrap();
+        // The center's [1,2,1] triangle gives frequencies {0:100,1:150,2:148,20:2}
+        // Both samples have too few zeros for positive pi. Their Poisson fits have
+        // P(X>=3) > 0.05 and P(X>=4) < 0.05, so T1 is exactly 4 for either choice
+        assert_eq!(model.source, ModelSource::Local);
+        assert_eq!(model.core.as_tuple(), (100, 200));
+        assert_eq!(model.context.as_tuple(), (0, 300));
+        assert!((model.model.initial.component_mean - expected_initial_mean).abs() < 1e-12);
+        assert_eq!(model.model.initial.zero_inflation, 0.0);
+        assert_eq!(model.model.initial_threshold, 4);
+        assert_eq!(model.eligible_positions, 300);
+        assert_eq!(model.fragment_support, 3);
+        assert_eq!(model.model.second_fit_retained_positions, 299);
+        assert_eq!(model.diagnostics.observed_initial_tail_positions, 1);
+        // Observed positive counts remain unweighted: 100 ones, 99 twos and a single 20
+        // Their mean is 318/200 = 1.59 and variance is 896/200 - 1.59^2 = 1.9519
+        assert!((model.diagnostics.observed_positive_coverage_mean - 1.59).abs() < 1e-12);
+        assert!((model.diagnostics.observed_positive_coverage_variance - 1.9519).abs() < 1e-12);
+        // The second fit has pi=0 too. Its conditional mean on X<4 must equal the
+        // retained mean under the selected weighting. This is the closed-form
+        // truncated Poisson mean, independent of the fitter's conditional-mean helper
+        let mean = model.model.underlying_fit.component_mean;
+        let conditional_mean = (mean + mean.powi(2) + mean.powi(3) / 2.0)
+            / (1.0 + mean + mean.powi(2) / 2.0 + mean.powi(3) / 6.0);
+        assert_eq!(model.model.underlying_fit.zero_inflation, 0.0);
+        assert!((conditional_mean - expected_retained_mean).abs() < 1e-10);
+        assert!(fitted.global.is_none());
+    }
+}
+
+#[test]
+fn triangular_multipliers_do_not_supply_missing_position_or_fragment_support() {
+    let mut histograms = cores(3);
+    histograms[1].counts.clear();
+    histograms[1].fragment_support = 0;
+    let chromosomes = vec!["chr1".to_string()];
+    let histograms = [("chr1".to_string(), histograms)].into_iter().collect();
+    let pooled = sum_global_histogram(&histograms).unwrap();
+
+    for (minimum_positions, minimum_fragments) in [(1_000_001, 1), (1_000_000, 201)] {
+        let fitted = fit_core_models(
+            &chromosomes,
+            &histograms,
+            &pooled,
+            OutlierModel::Zip,
+            0.01,
+            minimum_positions,
+            minimum_fragments,
+            ContextWeighting::Triangular,
+        )
+        .unwrap();
+
+        // The two eligible cores supply exactly 1 Mb and 200 fragments. Multipliers cannot
+        // supply an additional required base or fragment, or change the unweighted pooled fit
+        let pooled_model = fitted.global.unwrap();
+        assert!((pooled_model.initial.component_mean - 0.5).abs() < 1e-12);
+        assert_eq!(pooled_model.initial.zero_inflation, 0.0);
+        assert!(fitted.by_chromosome["chr1"][1].is_none());
+        for core_index in [0, 2] {
+            let model = fitted.by_chromosome["chr1"][core_index].as_ref().unwrap();
+            assert_eq!(model.source, ModelSource::GlobalFallback);
+            assert_eq!(model.eligible_positions, 1_000_000);
+            assert_eq!(model.fragment_support, 200);
+            assert_eq!(model.model, pooled_model);
+        }
+    }
+}
+
+#[test]
+fn failed_triangular_contexts_record_raw_counts_and_the_fitting_frequencies_separately() {
+    let mut histograms = cores(3);
+    for histogram in &mut histograms {
+        histogram.counts = [(0, 500_000)].into_iter().collect();
+    }
+    let chromosomes = vec!["chr1".to_string()];
+    let histograms = [("chr1".to_string(), histograms)].into_iter().collect();
+    let pooled = sum_global_histogram(&histograms).unwrap();
+
+    let error = fit_core_models(
+        &chromosomes,
+        &histograms,
+        &pooled,
+        OutlierModel::Zip,
+        0.01,
+        1_500_000,
+        300,
+        ContextWeighting::Triangular,
+    )
+    .unwrap_err();
+
+    let failures = error.downcast_ref::<AnalysisFailures>().unwrap();
+    assert_eq!(failures.messages.len(), 3);
+    // Each context has 1.5 Mb actual zeros. Edge multipliers [3,2,1] sum to 6
+    // The central triangle [1,2,1] sums to 4, giving different fitting frequencies
+    let rows: Vec<_> = failures
+        .histogram
+        .as_ref()
+        .unwrap()
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .skip(1)
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            "chr1\t0\t500000\t0\t1500000\t300\t0\t1500000\t3000000",
+            "chr1\t500000\t1000000\t0\t1500000\t300\t0\t1500000\t2000000",
+            "chr1\t1000000\t1500000\t0\t1500000\t300\t0\t1500000\t3000000",
+        ]
+    );
+}
+
+#[test]
+fn triangular_frequencies_reject_multiplication_and_sum_overflow() {
+    let mut histograms = cores(2);
+    let weight_cache = TriangularWeightCache::default();
+    let context = Interval::new(0, 1_000_000).unwrap();
+    histograms[0].counts = [(1, u64::MAX / 2 + 1)].into_iter().collect();
+    histograms[1].counts = [(1, 1)].into_iter().collect();
+
+    // The center's multiplier is 2, overflowing before the neighboring frequency is added
+    let error = triangular_context_counts(&histograms, 0, context, &weight_cache).unwrap_err();
+    assert!(error.to_string().contains("multiplication overflow"));
+
+    // Multiplication now gives MAX-1, but adding the neighbor's two positions still overflows
+    histograms[0].counts = [(1, u64::MAX / 2)].into_iter().collect();
+    histograms[1].counts = [(1, 2)].into_iter().collect();
+    let error = triangular_context_counts(&histograms, 0, context, &weight_cache).unwrap_err();
+    assert!(error.to_string().contains("sum overflow"));
+}
+
+#[test]
 fn edge_context_continues_on_available_side() {
     let histograms = cores(13);
 
@@ -266,6 +519,7 @@ fn supported_local_models_skip_the_pooled_fit() {
         0.01,
         500_000,
         100,
+        ContextWeighting::Uniform,
     )
     .unwrap();
     assert!(global.is_none());
@@ -296,6 +550,7 @@ fn fully_blacklisted_cores_keep_empty_grid_slots_between_eligible_models() {
         0.01,
         500_000,
         100,
+        ContextWeighting::Uniform,
     )
     .unwrap();
 
@@ -338,6 +593,7 @@ fn fully_blacklisted_chromosome_does_not_request_an_unused_global_fit() {
         0.01,
         500_000,
         100,
+        ContextWeighting::Uniform,
     )
     .unwrap();
 
@@ -366,6 +622,7 @@ fn global_fallback_is_assigned_only_to_cores_with_eligible_positions() {
         0.01,
         1_000_000,
         100,
+        ContextWeighting::Uniform,
     )
     .unwrap();
 
@@ -404,6 +661,7 @@ fn unused_context_does_not_add_a_failure_for_an_eligible_zero_coverage_core() {
         0.01,
         500_000,
         1_000,
+        ContextWeighting::Uniform,
     )
     .unwrap_err();
 
@@ -429,6 +687,7 @@ fn a_required_pooled_fit_failure_is_reported_with_its_histogram() {
         0.01,
         1_000_000,
         1,
+        ContextWeighting::Uniform,
     )
     .unwrap_err();
     let failures = error.downcast_ref::<AnalysisFailures>().unwrap();
@@ -461,6 +720,7 @@ fn short_contig_assigns_the_global_fallback_model_to_every_core() {
         0.01,
         5_000_000,
         1_000,
+        ContextWeighting::Uniform,
     )
     .expect("global fallback models");
 
@@ -492,6 +752,7 @@ fn complete_degenerate_context_fails_instead_of_silently_falling_back() {
         0.01,
         500_000,
         1_000,
+        ContextWeighting::Uniform,
     )
     .expect_err("a complete all-zero context must fail its local fit");
 
@@ -598,6 +859,7 @@ fn required_global_failure_does_not_hide_independent_local_failures() {
         0.01,
         500_000,
         100,
+        ContextWeighting::Uniform,
     )
     .unwrap_err();
 
@@ -619,9 +881,9 @@ fn required_global_failure_does_not_hide_independent_local_failures() {
     assert_eq!(
         rows,
         vec![
-            "GLOBAL\tNA\tNA\tNA\tNA\t200\t0\t1250000",
-            "chr_local\t0\t500000\t0\t500000\t100\t0\t500000",
-            "chr_local\t500000\t1000000\t500000\t1000000\t100\t0\t500000",
+            "GLOBAL\tNA\tNA\tNA\tNA\t200\t0\t1250000\t1250000",
+            "chr_local\t0\t500000\t0\t500000\t100\t0\t500000\t500000",
+            "chr_local\t500000\t1000000\t500000\t1000000\t100\t0\t500000\t500000",
         ]
     );
     assert!(failures.audit.is_none());
@@ -651,6 +913,7 @@ fn failed_context_histograms_exclude_successful_local_contexts() {
         0.01,
         500_000,
         100,
+        ContextWeighting::Uniform,
     )
     .unwrap_err();
 
