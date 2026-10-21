@@ -13,6 +13,8 @@ use crate::{
 };
 
 const MAXIMUM_EXACT_RAW_COVERAGE: f32 = 16_777_215.0;
+/// A blended fitting frequency has one million units per eligible base before rounding.
+const BLENDED_FREQUENCY_SCALE: f64 = 1_000_000.0;
 
 /// Raw eligible-position coverage histogram for a fixed-size model core.
 #[derive(Debug, Clone, PartialEq)]
@@ -177,6 +179,7 @@ pub(crate) fn fit_core_models(
     minimum_fragment_support: u64,
     context_weighting: ContextWeighting,
 ) -> Result<FittedModels> {
+    let triangular_fraction = context_weighting.triangular_fraction()?;
     let mut needs_global = false;
     let mut eligible_positions_by_chromosome = FxHashMap::default();
     for chromosome in chromosomes {
@@ -199,7 +202,7 @@ pub(crate) fn fit_core_models(
     }
     let mut messages = Vec::new();
     let mut failed_histograms = String::from(
-        "# GLOBAL pools all selected chromosomes and has no genomic coordinates (NA)\n# coverage is raw positional coverage, observed_positions counts unweighted eligible bases\n# fitting_frequency includes local integer triangle multipliers, whose common normalization cancels in the fit\nchromosome\tcore_start\tcore_end\tcontext_start\tcontext_end\tfragments_by_midpoint\tcoverage\tobserved_positions\tfitting_frequency\n",
+        "# GLOBAL pools all selected chromosomes and has no genomic coordinates (NA)\n# coverage is raw positional coverage, observed_positions counts unweighted eligible bases\n# fitting_frequency includes local distance weighting and blend discretization, whose common normalization cancels in the fit\nchromosome\tcore_start\tcore_end\tcontext_start\tcontext_end\tfragments_by_midpoint\tcoverage\tobserved_positions\tfitting_frequency\n",
     );
     let global_model = if needs_global {
         match fit_two_stage(&global_histogram.counts, tail_probability, family) {
@@ -242,18 +245,26 @@ pub(crate) fn fit_core_models(
                     minimum_eligible_positions,
                     minimum_fragment_support,
                 )?;
-                let mut weighted_counts = if complete
-                    && context_weighting == ContextWeighting::Triangular
-                {
-                    Some(
-                        triangular_context_counts(cores, core_index, context, &triangular_weight_cache).with_context(|| {
-                            format!(
-                                "core {:?}, context {:?}: constructing triangular fitting frequencies",
-                                core.as_tuple(),
-                                context.as_tuple()
-                            )
-                        })?,
+                let mut weighted_counts = if complete && triangular_fraction > 0.0 {
+                    let triangular_counts = triangular_context_counts(
+                        cores,
+                        core_index,
+                        context,
+                        &triangular_weight_cache,
                     )
+                    .with_context(|| {
+                        format!(
+                            "core {:?}, context {:?}: constructing triangular fitting frequencies",
+                            core.as_tuple(),
+                            context.as_tuple()
+                        )
+                    })?;
+                    Some(blend_context_counts(
+                        &histogram.counts,
+                        triangular_counts,
+                        eligible_positions,
+                        triangular_fraction,
+                    )?)
                 } else {
                     None
                 };
@@ -300,7 +311,14 @@ pub(crate) fn fit_core_models(
                     histogram.counts.clear();
                     weighted_counts = None;
                 }
-                Ok((core, context, eligible_positions, histogram, weighted_counts, result))
+                Ok((
+                    core,
+                    context,
+                    eligible_positions,
+                    histogram,
+                    weighted_counts,
+                    result,
+                ))
             })
             .collect::<Vec<Result<_>>>();
         let mut chromosome_models = Vec::with_capacity(cores.len());
@@ -456,6 +474,64 @@ fn triangular_context_counts(
         }
     }
     Ok(counts)
+}
+
+/// Mix uniform and triangular histograms after normalizing their total fitting frequencies.
+///
+/// For fraction `fraction`, each effective frequency is `(1-fraction)*raw +
+/// fraction*triangular*eligible_positions/triangular_total`. This keeps the requested mixture
+/// independent of masking or the absolute triangle multipliers. Both stages then fit this
+/// same histogram, with the second retaining only coverage below the context's T1.
+///
+/// Intermediate blends use one million integer units per effective base. Round frequencies
+/// only after pooling, preserving each positive coverage frequency with at least one unit.
+/// The rounding error is at most one millionth of a base per coverage level. Coverage levels
+/// themselves never change. Exact endpoints reuse the original integer histograms.
+fn blend_context_counts(
+    uniform_counts: &CoverageCounts,
+    mut triangular_counts: CoverageCounts,
+    eligible_positions: u64,
+    fraction: f64,
+) -> Result<CoverageCounts> {
+    if fraction == 0.0 {
+        return Ok(uniform_counts.clone());
+    }
+    if fraction == 1.0 {
+        return Ok(triangular_counts);
+    }
+    let triangular_total = triangular_counts
+        .values()
+        .try_fold(0_u64, |total, &frequency| {
+            total
+                .checked_add(frequency)
+                .context("triangular fitting-frequency total overflow")
+        })?;
+    ensure!(
+        eligible_positions > 0 && triangular_total > 0,
+        "cannot blend empty context histograms"
+    );
+    let triangular_normalization = eligible_positions as f64 / triangular_total as f64;
+    let mut discretized_total = 0_u64;
+    for (&coverage, frequency) in &mut triangular_counts {
+        let observed_positions = *uniform_counts
+            .get(&coverage)
+            .context("triangular coverage level missing from raw context histogram")?;
+        let blended_frequency = ((1.0 - fraction) * observed_positions as f64
+            + fraction * triangular_normalization * *frequency as f64)
+            * BLENDED_FREQUENCY_SCALE;
+        ensure!(
+            blended_frequency.is_finite()
+                && blended_frequency >= 0.0
+                && blended_frequency < u64::MAX as f64,
+            "invalid blended fitting frequency {blended_frequency} at coverage {coverage}"
+        );
+        // Never erase a rare observed level merely because its distance weight is small
+        *frequency = (blended_frequency.round() as u64).max(u64::from(observed_positions > 0));
+        discretized_total = discretized_total
+            .checked_add(*frequency)
+            .context("blended fitting-frequency total overflow")?;
+    }
+    Ok(triangular_counts)
 }
 
 /// Grow a contiguous chromosome context until both eligible bases and midpoint fragments suffice.

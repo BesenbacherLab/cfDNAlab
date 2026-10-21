@@ -69,7 +69,8 @@ diagnostics. Unused contexts are never fitted and cannot fail an otherwise valid
 These context requirements do not change the physical windows used for preservation.
 The current `minimum_context_span` metadata key records the eligible-base minimum.
 
-`--context-weighting` selects `triangular` (default) or `uniform`. Construct the context using
+`--context-weighting` selects `triangular` (default), `uniform`, or `triangular=<fraction>`
+with a finite fraction in [0, 1]. Construct the context using
 unweighted eligible bases and midpoint fragment support, regardless of the weighting choice.
 Triangular fitting multiplies each core's histogram frequencies by `radius + 1 - distance`,
 where distance is the number of grid steps from the central core and radius is the farthest
@@ -81,7 +82,16 @@ Do not multiply by an eligible fraction again. Do not weight or discretize raw c
 Integer multipliers preserve rare levels exactly. Their common normalization cancels from ZIP
 estimates and ZINB's average likelihood, including the right-truncated second fit.
 Build weighted frequencies from cached core histograms without additional BAM passes.
+For blends, normalize the uniform and triangular histograms separately before mixing them.
+With raw counts H, triangular counts W, totals N and M, and fraction f, the effective
+frequency is `(1-f)*H + f*(N/M)*W`. Thus 0.2 means 80% uniform and 20% triangular even
+with unequal eligible support. Discretize these effective frequencies at one million units
+per base, rounding each coverage level once and retaining at least one unit for every observed
+level. The rounding error per level is at most one unit. Exact fractions 0 and 1 reuse uniform
+and triangular integer counts respectively. Raw coverage levels are never discretized or changed.
 Both fitting stages use the same distance weights. Global fallback fits are always unweighted.
+The second fit excludes coverage >= the central model's T1 throughout its entire context.
+Do not apply neighboring cores' own T1 thresholds when constructing this second fit.
 Record `context_weighting` in output metadata. Report actual retained positions below the fitted
 T1, not multiplied fitting frequencies. Observed fit diagnostics also remain unweighted and
 therefore describe the whole recorded context, rather than the weighted fitting distribution.

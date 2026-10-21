@@ -26,7 +26,7 @@ pub(super) fn write_output_readme(
     writeln!(
         writer,
         "Local context weighting: {}",
-        config.context_weighting.as_str()
+        config.context_weighting
     )?;
     writeln!(writer, "Correction target: {}", config.target.as_str())?;
     writeln!(
@@ -352,6 +352,9 @@ Their physical span can therefore be larger than `--bin-size`.
 The central multiplier is highest and decreases equally with each grid step on either side.
 Chromosome ends shorten the triangle without moving its peak. `uniform` gives each eligible
 base equal influence. These weights change histogram frequencies, not raw coverage levels.
+`triangular=0.2` blends 80% uniform and 20% triangular influence after normalizing
+both histograms to equal totals. A fraction of 0 gives uniform weighting and 1 gives
+fully triangular weighting.
 
 `eligible_positions` and `fragments_by_midpoint` describe the recorded chromosome
 context, including for fallback rows. `fragments_by_midpoint` counts accepted fragments
@@ -359,9 +362,9 @@ whose midpoint is between `context_start` and `context_end` and outside the supp
 blacklists. It does not count all fragments overlapping the context. Contexts overlap,
 so do not sum these counts across model rows.
 
-The model is fitted twice. The first fit estimates an initial cutoff, T1. Coverage
-at or above T1 is omitted from the second fit so extreme values have less influence
-on the estimated background. The second fit accounts for that omission when estimating
+The model is fitted twice. The first fit estimates an initial cutoff, T1. Throughout
+the context, coverage at or above T1 is omitted from the second fit so extreme values
+have less influence on the estimated background. The second fit accounts for that omission when estimating
 the full coverage distribution. It supplies the final calling cutoff, T2.
 
 `initial_threshold` is T1. `second_fit_retained_positions` counts bases below T1 used

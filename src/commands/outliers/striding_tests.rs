@@ -119,6 +119,69 @@ fn triangle_keeps_masked_distances_and_uses_actual_support_of_sparse_and_partial
 }
 
 #[test]
+fn blend_fraction_normalizes_actual_eligible_support_before_mixing() {
+    // A left core supplies 100 zeros, the center supplies 50 ones, and the right
+    // core is masked. The [1,2,1] profile therefore has 200 fitting observations
+    let uniform = [(0, 100), (1, 50)].into_iter().collect();
+    let triangular = [(0, 100), (1, 100)].into_iter().collect();
+
+    let blended = blend_context_counts(&uniform, triangular, 150, 0.2).unwrap();
+
+    // Equal-total mixing gives 0.8*{100,50} + 0.2*(150/200)*{100,100} = {95,55}
+    // A common million-fold scale preserves fractional frequencies before integer fitting
+    assert_eq!(
+        blended,
+        [(0, 95_000_000), (1, 55_000_000)].into_iter().collect()
+    );
+    assert_eq!(blended.values().sum::<u64>(), 150_000_000);
+    assert_eq!(uniform, [(0, 100), (1, 50)].into_iter().collect());
+}
+
+#[test]
+fn blend_endpoints_preserve_the_original_integer_frequencies_exactly() {
+    let uniform = [(0, 100), (1, 50)].into_iter().collect();
+    let triangular: CoverageCounts = [(0, 100), (1, 100)].into_iter().collect();
+
+    assert_eq!(
+        blend_context_counts(&uniform, triangular.clone(), 150, 0.0).unwrap(),
+        uniform
+    );
+    assert_eq!(
+        blend_context_counts(&uniform, triangular.clone(), 150, 1.0).unwrap(),
+        triangular
+    );
+}
+
+#[test]
+fn blending_identical_distributions_preserves_their_relative_frequencies() {
+    let uniform = [(1, 99), (20, 1)].into_iter().collect();
+    let triangular = [(1, 198), (20, 2)].into_iter().collect();
+
+    let blended = blend_context_counts(&uniform, triangular, 100, 0.2).unwrap();
+
+    assert_eq!(
+        blended,
+        [(1, 99_000_000), (20, 1_000_000)].into_iter().collect()
+    );
+}
+
+#[test]
+fn blend_discretization_keeps_a_rare_coverage_level_with_subunit_frequency() {
+    let uniform = [(0, 999_999_999), (100, 1)].into_iter().collect();
+    let triangular = [(0, 999_999_999_000_000_000), (100, 1)]
+        .into_iter()
+        .collect();
+
+    let blended =
+        blend_context_counts(&uniform, triangular, 1_000_000_000, 1.0 - f64::EPSILON).unwrap();
+
+    // The rare level has approximately 0.001 scaled units. Rounding it to zero would
+    // erase an observed coverage level. Keep the smallest positive fitting frequency
+    assert_eq!(blended[&100], 1);
+    assert_eq!(blended.len(), 2);
+}
+
+#[test]
 fn both_fitting_stages_use_the_selected_weighting_but_report_actual_position_counts() {
     let mut histograms = cores(3);
     for (core_index, histogram) in histograms.iter_mut().enumerate() {
@@ -134,9 +197,18 @@ fn both_fitting_stages_use_the_selected_weighting_but_report_actual_position_cou
 
     // Uniform frequencies have initial mean 318/300 and retained mean 298/299
     // Triangular frequencies have initial mean 486/400 and retained mean 446/398
+    // A 20% blend gives {0:95,1:102.5,2:101.4,20:1.1}. Its initial mean is
+    // 327.3/300 = 1.091 and its retained mean is 305.3/298.9 = 3053/2989
     for (weighting, expected_initial_mean, expected_retained_mean) in [
         (ContextWeighting::Uniform, 1.06, 298.0 / 299.0),
         (ContextWeighting::Triangular, 1.215, 223.0 / 199.0),
+        (
+            ContextWeighting::TriangularBlend(0.2),
+            1.091,
+            3053.0 / 2989.0,
+        ),
+        (ContextWeighting::TriangularBlend(0.0), 1.06, 298.0 / 299.0),
+        (ContextWeighting::TriangularBlend(1.0), 1.215, 223.0 / 199.0),
     ] {
         let fitted = fit_core_models(
             &chromosomes,
@@ -152,8 +224,8 @@ fn both_fitting_stages_use_the_selected_weighting_but_report_actual_position_cou
 
         let model = fitted.by_chromosome["chr1"][1].as_ref().unwrap();
         // The center's [1,2,1] triangle gives frequencies {0:100,1:150,2:148,20:2}
-        // Both samples have too few zeros for positive pi. Their Poisson fits have
-        // P(X>=3) > 0.05 and P(X>=4) < 0.05, so T1 is exactly 4 for either choice
+        // All choices have too few zeros for positive pi. Their Poisson fits have
+        // P(X>=3) > 0.05 and P(X>=4) < 0.05, so T1 is exactly 4 for every choice
         assert_eq!(model.source, ModelSource::Local);
         assert_eq!(model.core.as_tuple(), (100, 200));
         assert_eq!(model.context.as_tuple(), (0, 300));
@@ -178,6 +250,46 @@ fn both_fitting_stages_use_the_selected_weighting_but_report_actual_position_cou
         assert!((conditional_mean - expected_retained_mean).abs() < 1e-10);
         assert!(fitted.global.is_none());
     }
+}
+
+#[test]
+fn second_fit_excludes_a_neighboring_cores_tail_even_when_the_center_has_no_outliers() {
+    let mut histograms = cores(2);
+    for (core_index, histogram) in histograms.iter_mut().enumerate() {
+        let start = core_index as u32 * 100;
+        histogram.interval = Interval::new(start, start + 100).unwrap();
+        histogram.fragment_support = 1;
+    }
+    histograms[0].counts = [(0, 50), (1, 49), (20, 1)].into_iter().collect();
+    histograms[1].counts = [(0, 50), (1, 50)].into_iter().collect();
+    let chromosomes = vec!["chr1".to_string()];
+    let histograms = [("chr1".to_string(), histograms)].into_iter().collect();
+    let pooled = sum_global_histogram(&histograms).unwrap();
+
+    let fitted = fit_core_models(
+        &chromosomes,
+        &histograms,
+        &pooled,
+        OutlierModel::Zip,
+        0.05,
+        200,
+        1,
+        ContextWeighting::Uniform,
+    )
+    .unwrap();
+
+    let model = fitted.by_chromosome["chr1"][1].as_ref().unwrap();
+    // Full-context mean is (99+20)/200 = 0.595, with too few zeros for pi>0
+    // Poisson(0.595) has P(X>=2)>0.05 and P(X>=3)<0.05, so T1=3
+    assert!((model.model.initial.component_mean - 0.595).abs() < 1e-12);
+    assert_eq!(model.model.initial_threshold, 3);
+    assert_eq!(model.model.second_fit_retained_positions, 199);
+    // Only the neighbor has an extreme base. The second fit must still exclude it
+    // The remaining {0:100,1:99} has conditional mean 99/199 on X<3
+    let mean = model.model.underlying_fit.component_mean;
+    let conditional_mean = (mean + mean.powi(2)) / (1.0 + mean + mean.powi(2) / 2.0);
+    assert_eq!(model.model.underlying_fit.zero_inflation, 0.0);
+    assert!((conditional_mean - 99.0 / 199.0).abs() < 1e-10);
 }
 
 #[test]

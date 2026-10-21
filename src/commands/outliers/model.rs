@@ -54,7 +54,8 @@ const LOG_TWO_PI: f64 = 1.837_877_066_409_345_3;
 /// Sparse histogram frequencies keyed by integer raw coverage.
 ///
 /// Raw histograms count eligible positions. Local fitting can multiply those frequencies
-/// by integer distance weights without changing the coverage levels or rounding observations.
+/// by integer distance weights or discretize blended fitting frequencies. Neither operation
+/// changes the raw coverage levels.
 pub(crate) type CoverageCounts = BTreeMap<u32, u64>;
 
 /// Parameters of an underlying, untruncated zero-inflated Poisson distribution.

@@ -525,6 +525,45 @@ fn triangular_contexts_fit_hand_derived_frequencies_and_report_unweighted_counts
 }
 
 #[test]
+fn blended_contexts_report_the_blend_and_fit_normalized_histogram_frequencies() -> Result<()> {
+    let bam = paired_outlier_fixture()?;
+    let output = TempDir::new()?;
+    let mut config = base_config(bam.bam_path(), output.path());
+    config.set_context_weighting(ContextWeighting::TriangularBlend(0.2));
+
+    let result = run_outliers(&config, RunOptions::new_quiet())?;
+
+    let models = fs::read_to_string(&result.output_models)?;
+    assert!(models.contains("# context_weighting=triangular=0.2\n"));
+    let rows = data_lines(&models);
+    assert_eq!(rows.len(), 5);
+    // The raw histogram is {0:880,1:90,20:30}. Normalize each triangular
+    // histogram to 1000 positions, then mix 80% raw and 20% triangular
+    // The resulting {zero,one,twenty} frequencies are
+    // {872.8,93.6,33.6}, {877,93,30}, {883,90,27}, {887.2,86.4,26.4}
+    let expected_zero_fractions = [0.8728, 0.877, 0.883, 0.8872];
+    let expected_positive_means = [319.0 / 53.0, 231.0 / 41.0, 70.0 / 13.0, 256.0 / 47.0];
+    for (core_index, row) in rows[1..].iter().enumerate() {
+        let fields: Vec<_> = row.split('\t').collect();
+        let component_mean = fields[8].parse::<f64>()?;
+        let zero_inflation = fields[9].parse::<f64>()?;
+        assert!(zero_inflation > 0.0);
+        let fitted_positive_mean = component_mean / -(-component_mean).exp_m1();
+        let fitted_zero_fraction =
+            zero_inflation + (1.0 - zero_inflation) * (-component_mean).exp();
+        assert!((fitted_positive_mean - expected_positive_means[core_index]).abs() < 1e-9);
+        assert!((fitted_zero_fraction - expected_zero_fractions[core_index]).abs() < 1e-12);
+        assert_eq!(fields[6], "1000");
+        // Every context excludes the same 30 actual coverage-20 bases, not 30 scaled units
+        assert_eq!(fields[11], "970");
+        assert_eq!(fields[20], "30");
+    }
+    let readme = fs::read_to_string(result.output_readme)?;
+    assert!(readme.contains("Local context weighting: triangular=0.2\n"));
+    Ok(())
+}
+
+#[test]
 fn preserved_region_table_is_automatic_and_coverage_plots_are_optional() -> Result<()> {
     let bam = paired_outlier_fixture()?;
     let output_dir = TempDir::new()?;

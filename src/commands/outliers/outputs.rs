@@ -211,11 +211,7 @@ pub(super) fn write_common_metadata(
     )?;
     writeln!(writer, "# model_core_size={}", config.stride)?;
     writeln!(writer, "# minimum_context_span={}", config.bin_size)?;
-    writeln!(
-        writer,
-        "# context_weighting={}",
-        config.context_weighting.as_str()
-    )?;
+    writeln!(writer, "# context_weighting={}", config.context_weighting)?;
     writeln!(
         writer,
         "# minimum_context_fragment_support={}",

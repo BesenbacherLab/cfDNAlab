@@ -1,10 +1,10 @@
-use std::path::PathBuf;
+use std::{fmt, path::PathBuf, str::FromStr};
 
 use crate::commands::cli_common::{
     ChromosomeArgs, FragmentLengthArgs, IOCArgs, LoggingArgs, TempDirArgs, UnpairedArgs,
 };
 use crate::{ToCliCommand, cli_command::helpers::*};
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 
 pub const DEFAULT_STRIDE: u32 = 500_000;
 pub const DEFAULT_BIN_SIZE: u32 = 7_000_000;
@@ -38,22 +38,63 @@ impl OutlierModel {
 }
 
 /// How surrounding model cores contribute to a local coverage estimate.
-#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum ContextWeighting {
     /// Give every eligible base in the context equal influence.
     Uniform,
     /// Give nearby cores more influence, decreasing linearly with distance from the center core.
     #[default]
     Triangular,
+    /// Blend normalized uniform and triangular histograms using this triangular fraction.
+    TriangularBlend(f64),
 }
 
 impl ContextWeighting {
-    pub(crate) fn as_str(self) -> &'static str {
+    /// Return the triangular contribution, rejecting invalid programmatic blend settings.
+    pub(crate) fn triangular_fraction(self) -> Result<f64> {
+        let fraction = match self {
+            Self::Uniform => 0.0,
+            Self::Triangular => 1.0,
+            Self::TriangularBlend(fraction) => fraction,
+        };
+        ensure!(
+            fraction.is_finite() && (0.0..=1.0).contains(&fraction),
+            "context weighting blend fraction must be finite and in [0, 1], got {fraction}"
+        );
+        Ok(fraction)
+    }
+}
+
+impl fmt::Display for ContextWeighting {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Uniform => "uniform",
-            Self::Triangular => "triangular",
+            Self::Uniform => formatter.write_str("uniform"),
+            Self::Triangular => formatter.write_str("triangular"),
+            Self::TriangularBlend(fraction) => write!(formatter, "triangular={fraction}"),
         }
+    }
+}
+
+impl FromStr for ContextWeighting {
+    type Err = anyhow::Error;
+
+    fn from_str(argument: &str) -> Result<Self> {
+        let weighting = match argument {
+            "uniform" => Self::Uniform,
+            "triangular" => Self::Triangular,
+            _ => {
+                let fraction = argument.strip_prefix("triangular=").context(
+                    "use uniform, triangular, or triangular=<fraction> with a fraction in [0, 1]",
+                )?;
+                Self::TriangularBlend(
+                    fraction
+                        .parse()
+                        .context("parsing context weighting blend fraction")?,
+                )
+            }
+        };
+        weighting.triangular_fraction()?;
+        Ok(weighting)
     }
 }
 
@@ -322,10 +363,14 @@ pub struct OutliersConfig {
     /// This keeps the estimate local while borrowing information from a wider region.
     /// Uniform weighting gives every eligible base equal influence.
     ///
+    /// Use `triangular=0.2` for an 80% uniform and 20% triangular blend. Normalize both
+    /// histograms before blending, so masking does not change the requested proportions.
+    /// Fractions range from 0 (uniform) to 1 (fully triangular).
+    ///
     /// Coverage values and the eligible-base and fragment support minima are not weighted.
     /// At chromosome ends the triangle stays centered on the interval being estimated, using
     /// only the available side. Sample-wide fallback models are always fitted without weighting.
-    #[cfg_attr(feature = "cli", clap(long, value_enum, default_value_t = ContextWeighting::Triangular, help_heading = "Core"))]
+    #[cfg_attr(feature = "cli", clap(long, default_value_t = ContextWeighting::Triangular, help_heading = "Core"))]
     pub context_weighting: ContextWeighting,
 
     /// Minimum number of fragments used to estimate local coverage `[integer]`
@@ -677,6 +722,7 @@ impl OutliersConfig {
 
     pub(crate) fn validate(&self) -> Result<()> {
         self.fragment_lengths.validate()?;
+        self.context_weighting.triangular_fraction()?;
         #[cfg(not(feature = "plotters"))]
         anyhow::ensure!(
             !self.plot_preserved_regions,
@@ -767,11 +813,7 @@ impl ToCliCommand for OutliersConfig {
         push_value(&mut args, "--tile-size", self.tile_size);
         push_value(&mut args, "--stride", self.stride);
         push_value(&mut args, "--bin-size", self.bin_size);
-        push_value(
-            &mut args,
-            "--context-weighting",
-            self.context_weighting.as_str(),
-        );
+        push_value(&mut args, "--context-weighting", self.context_weighting);
         push_value(
             &mut args,
             "--min-context-fragments",

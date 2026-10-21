@@ -23,6 +23,7 @@ fn context_defaults_and_weighting_choices_are_serialized() {
     for (weighting, expected_argument) in [
         (ContextWeighting::Triangular, "triangular"),
         (ContextWeighting::Uniform, "uniform"),
+        (ContextWeighting::TriangularBlend(0.2), "triangular=0.2"),
     ] {
         config.set_context_weighting(weighting);
         let arguments = config.to_cli_args().unwrap();
@@ -55,7 +56,78 @@ fn cli_context_defaults_match_programmatic_defaults_and_reject_unknown_weighting
     let mut invalid_arguments = arguments.to_vec();
     invalid_arguments.extend(["--context-weighting", "unknown"]);
     let error = command.try_get_matches_from(invalid_arguments).unwrap_err();
-    assert_eq!(error.kind(), clap::error::ErrorKind::InvalidValue);
+    assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
+}
+
+#[test]
+fn context_weighting_parses_and_roundtrips_blend_fractions_including_endpoints() {
+    for (argument, fraction) in [
+        ("triangular=0", 0.0),
+        ("triangular=0.2", 0.2),
+        ("triangular=1", 1.0),
+        ("triangular=1e-3", 0.001),
+    ] {
+        let weighting: ContextWeighting = argument.parse().unwrap();
+
+        assert_eq!(weighting, ContextWeighting::TriangularBlend(fraction));
+        assert_eq!(
+            weighting.to_string().parse::<ContextWeighting>().unwrap(),
+            weighting
+        );
+        assert!((weighting.triangular_fraction().unwrap() - fraction).abs() < f64::EPSILON);
+    }
+}
+
+#[test]
+fn context_weighting_rejects_invalid_blends_in_cli_and_programmatic_configs() {
+    for argument in [
+        "triangular=",
+        "triangular=text",
+        "triangular=NaN",
+        "triangular=inf",
+        "triangular=-inf",
+        "triangular=-0.01",
+        "triangular=1.01",
+        "uniform=0.2",
+    ] {
+        assert!(argument.parse::<ContextWeighting>().is_err(), "{argument}");
+    }
+    let mut config = config();
+    for fraction in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.01, 1.01] {
+        config.set_context_weighting(ContextWeighting::TriangularBlend(fraction));
+
+        let error = config.validate().unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("context weighting blend fraction")
+        );
+    }
+}
+
+#[cfg(feature = "cli")]
+#[test]
+fn rendered_blended_context_weighting_parses_through_clap() {
+    use clap::{Args, FromArgMatches};
+
+    for fraction in [0.0, 0.2, 1.0] {
+        let mut config = config();
+        config.set_context_weighting(ContextWeighting::TriangularBlend(fraction));
+        let arguments = config.to_cli_args().unwrap();
+        let command = OutliersConfig::augment_args(clap::Command::new("outliers"));
+
+        // The standalone argument parser starts at the subcommand name after `cfdna`
+        let matches = command
+            .try_get_matches_from(arguments.into_iter().skip(1))
+            .unwrap();
+        let parsed = OutliersConfig::from_arg_matches(&matches).unwrap();
+
+        assert_eq!(
+            parsed.context_weighting,
+            ContextWeighting::TriangularBlend(fraction)
+        );
+    }
 }
 
 #[test]
