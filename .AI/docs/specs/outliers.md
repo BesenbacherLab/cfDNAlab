@@ -54,7 +54,7 @@ A local fitting context starts with its core and expands by complete cores on bo
 sides until it meets both `--bin-size` eligible bases and `--min-context-fragments` midpoint
 fragments. Eligible zeros count toward the base minimum. Blacklisted bases do not, so the
 physical span may be wider. Without masking, 500 kb cores give centered spans of
-0.5, 1.5, ..., 7.5 Mb for the 7 Mb minimum. Ends expand on the available side.
+0.5, 1.5, ..., 5.5 Mb for the default 5 Mb minimum. Ends expand on the available side.
 A core uses the sample-wide model only when its whole chromosome cannot meet both requirements.
 A sufficiently supported local context that cannot be fitted must fail explicitly. Determine
 global fallback need from each full chromosome's summed eligible bases and midpoint support,
@@ -69,7 +69,7 @@ diagnostics. Unused contexts are never fitted and cannot fail an otherwise valid
 These context requirements do not change the physical windows used for preservation.
 The current `minimum_context_span` metadata key records the eligible-base minimum.
 
-`--context-weighting` selects `triangular` (default), `uniform`, or `triangular=<fraction>`
+`--context-weighting` selects `uniform` (default), `triangular`, or `triangular=<fraction>`
 with a finite fraction in [0, 1]. Construct the context using
 unweighted eligible bases and midpoint fragment support, regardless of the weighting choice.
 Triangular fitting multiplies each core's histogram frequencies by `radius + 1 - distance`,

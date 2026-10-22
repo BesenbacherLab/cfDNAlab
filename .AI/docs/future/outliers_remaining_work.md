@@ -25,7 +25,7 @@ references. Preserve the distinction between GC-estimator outlier controls and f
 during producer integration.
 The context option and its metadata must describe eligible bases, including zeros, rather than
 physical span. Review `minimum_context_span` in the same naming pass.
-Clarify whole-core rounding in that review. A 7 Mb eligible-base minimum gives 7.5 Mb centered
+Clarify whole-core rounding in that review. A 5 Mb eligible-base minimum gives 5.5 Mb centered
 contexts on an unmasked 500 kb grid because expansion retains a central core and equal numbers
 of neighbors. The owner flagged this distinction as unintuitive. Keep the current expansion
 rule until the intended option semantics are settled.

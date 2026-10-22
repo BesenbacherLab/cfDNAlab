@@ -167,9 +167,10 @@ If you supplied an output prefix, it appears before each filename below.
     The coverage model and cutoff used in each `--stride` interval with eligible bases.
     Fully blacklisted intervals have no model and are omitted from this table.
     Each model is usually estimated from a larger surrounding region, its context.
-    By default, both fitting stages give nearby cores more influence using triangular
-    distance weights. Coverage levels remain raw fragment counts. The context's base
-    and fragment support counts remain unweighted. Sample-wide fallback fits are unweighted.
+    By default, both fitting stages give each eligible base equal influence. Optional
+    triangular distance weights give nearby cores more influence. Coverage levels remain
+    raw fragment counts. The context's base and fragment support counts remain unweighted.
+    Sample-wide fallback fits are unweighted.
     Use this table to find the background mean and cutoff at a particular location.
     The model-column reference below also explains the fit diagnostics.
 

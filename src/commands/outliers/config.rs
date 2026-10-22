@@ -7,7 +7,7 @@ use crate::{ToCliCommand, cli_command::helpers::*};
 use anyhow::{Context, Result, bail, ensure};
 
 pub const DEFAULT_STRIDE: u32 = 500_000;
-pub const DEFAULT_BIN_SIZE: u32 = 7_000_000;
+pub const DEFAULT_BIN_SIZE: u32 = 5_000_000;
 pub const DEFAULT_TILE_SIZE: u32 = 10_000_000;
 pub const DEFAULT_MIN_CONTEXT_FRAGMENTS: u64 = 1_000;
 pub const DEFAULT_TAIL_PROBABILITY_MULTIPLIER: f64 = 1.0;
@@ -41,9 +41,9 @@ impl OutlierModel {
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum ContextWeighting {
     /// Give every eligible base in the context equal influence.
+    #[default]
     Uniform,
     /// Give nearby cores more influence, decreasing linearly with distance from the center core.
-    #[default]
     Triangular,
     /// Blend normalized uniform and triangular histograms using this triangular fraction.
     TriangularBlend(f64),
@@ -346,7 +346,7 @@ pub struct OutliersConfig {
     /// Start with the central interval defined by `--stride`, then add an interval on each side
     /// until their eligible bases reach this minimum. Include zero-coverage bases, but exclude
     /// blacklisted bases. The physical span can therefore be larger. Without blacklists, 500 kb
-    /// intervals with a 7 Mb minimum give centered spans of 0.5, 1.5, 2.5, ..., 7.5 Mb.
+    /// intervals with a 5 Mb minimum give centered spans of 0.5, 1.5, 2.5, ..., 5.5 Mb.
     ///
     /// At chromosome ends, expansion continues on the available side. The region can grow further
     /// if needed to include `--min-context-fragments` fragments.
@@ -370,7 +370,7 @@ pub struct OutliersConfig {
     /// Coverage values and the eligible-base and fragment support minima are not weighted.
     /// At chromosome ends the triangle stays centered on the interval being estimated, using
     /// only the available side. Sample-wide fallback models are always fitted without weighting.
-    #[cfg_attr(feature = "cli", clap(long, default_value_t = ContextWeighting::Triangular, help_heading = "Core"))]
+    #[cfg_attr(feature = "cli", clap(long, default_value_t = ContextWeighting::Uniform, help_heading = "Core"))]
     pub context_weighting: ContextWeighting,
 
     /// Minimum number of fragments used to estimate local coverage `[integer]`
@@ -576,7 +576,7 @@ impl OutliersConfig {
             tile_size: DEFAULT_TILE_SIZE,
             stride: DEFAULT_STRIDE,
             bin_size: DEFAULT_BIN_SIZE,
-            context_weighting: ContextWeighting::Triangular,
+            context_weighting: ContextWeighting::Uniform,
             min_context_fragments: DEFAULT_MIN_CONTEXT_FRAGMENTS,
             tail_probability: None,
             tail_probability_multiplier: DEFAULT_TAIL_PROBABILITY_MULTIPLIER,
