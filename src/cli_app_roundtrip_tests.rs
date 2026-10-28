@@ -478,6 +478,7 @@ fn ends_config_roundtrips_through_rendered_cli() {
     config.set_min_mapq(20);
     config.set_tile_size(1_000_000);
     config.set_temp_dir(Some(PathBuf::from("/cluster/local-scratch")));
+    config.set_side(crate::commands::ends::config_structs::EndSideSelection::ThreePrime);
 
     assert_config_roundtrips!(config, Ends, "ends");
 }

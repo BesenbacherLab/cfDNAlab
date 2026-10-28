@@ -3,6 +3,35 @@ use std::str::FromStr;
 #[cfg(feature = "cli")]
 use clap::ValueEnum;
 
+/// Select the molecular end whose motifs should be counted.
+///
+/// Strand-specific selection assumes R1 starts at the original strand's 5' end and R2 starts at
+/// its 3' end. In reads-as-fragments mode, the read's own orientation defines these ends.
+#[cfg_attr(feature = "cli", derive(ValueEnum))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EndSideSelection {
+    /// Count both ends with the existing end-inward orientation.
+    #[default]
+    Both,
+    /// Count the original strand's 5' end.
+    #[cfg_attr(feature = "cli", value(name = "5p"))]
+    FivePrime,
+    /// Count the original strand's 3' end.
+    #[cfg_attr(feature = "cli", value(name = "3p"))]
+    ThreePrime,
+}
+
+impl EndSideSelection {
+    /// Return the spelling used by the CLI and settings JSON.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Both => "both",
+            Self::FivePrime => "5p",
+            Self::ThreePrime => "3p",
+        }
+    }
+}
+
 const BASE_QUALITY_FILTER_USAGE: &str = concat!(
     "Use '<agg> in <scope> <op> <threshold>' with ",
     "<agg> in {'min', 'mean', 'max'}, ",

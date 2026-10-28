@@ -300,16 +300,18 @@ fn midpoints_renders_without_cli_feature() {
 #[cfg(feature = "cmd_ends")]
 #[test]
 fn ends_renders_without_cli_feature() {
-    use cfdnalab::run_like_cli::ends::EndsConfig;
+    use cfdnalab::run_like_cli::ends::{EndSideSelection, EndsConfig};
 
     let mut config = EndsConfig::new(ioc(), chromosomes(), 2, 2);
     config.set_min_mapq(20);
     config.set_tile_size(1_000_000);
     config.set_temp_dir(Some(PathBuf::from(TEMP_DIR)));
+    config.set_side(EndSideSelection::FivePrime);
 
     let (args, _command) = render_no_cli_command(&config, "ends");
     assert_contains_pair(&args, "--source-inside", "read");
     assert_contains_pair(&args, "--temp-dir", TEMP_DIR);
+    assert_contains_pair(&args, "--side", "5p");
 }
 
 #[cfg(feature = "cmd_ref_kmers")]

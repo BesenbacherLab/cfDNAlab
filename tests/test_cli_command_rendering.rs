@@ -301,14 +301,16 @@ fn midpoints_config_renders_cli_call() {
 #[cfg(feature = "cmd_ends")]
 #[test]
 fn ends_config_renders_cli_call() {
-    use cfdnalab::run_like_cli::ends::EndsConfig;
+    use cfdnalab::run_like_cli::ends::{EndSideSelection, EndsConfig};
 
     let mut config = EndsConfig::new(ioc(), chromosomes(), 2, 2);
     config.set_min_mapq(20);
     config.set_tile_size(1_000_000);
+    config.set_side(EndSideSelection::ThreePrime);
 
     let args = assert_cli_accepts(config.to_cli_args().unwrap(), "ends");
     assert_contains_pair(&args, "--source-inside", "read");
+    assert_contains_pair(&args, "--side", "3p");
 }
 
 #[cfg(feature = "cmd_fragment_kmers")]
