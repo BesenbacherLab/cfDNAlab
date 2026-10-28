@@ -1,6 +1,6 @@
 #![cfg(feature = "cmd_ends")]
 
-//! Molecular side selection through the public runner and output loader.
+//! Molecular single-stranded end selection through the public runner and output loader.
 
 use anyhow::Result;
 use cfdnalab::{
@@ -8,7 +8,7 @@ use cfdnalab::{
     output_loaders::{EndMotifStorageMode, EndsOutput, load_ends_output},
     run_like_cli::{
         common::{BlacklistStrategy, ChromosomeArgs, IOCArgs, IndelMotifFilterPolicy},
-        ends::{EndSideSelection, EndsConfig, KmerSource, run_ends},
+        ends::{SingleStrandedEndSelection, EndsConfig, KmerSource, run_ends},
     },
     testing::{
         Bed4Row, Cigar, FragmentSpec, PairedFragmentSpec, TempBam, TempTwoBit,
@@ -22,8 +22,8 @@ use tempfile::TempDir;
 ///
 /// BAM stores bases in reference orientation. Left read bases begin ACGA, and right read
 /// bases end TGCC. Swapping mate-role flags changes molecular orientation without moving
-/// either alignment, which distinguishes molecular side selection from genomic left/right.
-fn side_fragment(original_is_reverse: bool) -> Result<FragmentSpec> {
+/// either alignment, which distinguishes molecular single-stranded end selection from genomic left/right.
+fn ss_end_fragment(original_is_reverse: bool) -> Result<FragmentSpec> {
     let mut fragment = paired_fragment(&PairedFragmentSpec::new(0, 40, 40, 20))?;
     fragment.forward.seq[..4].copy_from_slice(b"ACGA");
     fragment.reverse.seq[16..].copy_from_slice(b"TGCC");
@@ -37,26 +37,26 @@ fn side_fragment(original_is_reverse: bool) -> Result<FragmentSpec> {
 /// Reference alleles differ from the reads, so reference-backed extraction has its own oracle.
 ///
 /// At the left boundary: AAGC | CTGA. At the right boundary: GACT | TCAG.
-fn side_reference() -> Result<TempTwoBit> {
+fn ss_end_reference() -> Result<TempTwoBit> {
     let mut sequence = vec![b'A'; 200];
     sequence[36..44].copy_from_slice(b"AAGCCTGA");
     sequence[76..84].copy_from_slice(b"GACTTCAG");
     twobit_from_sequences(
-        "side_reference",
+        "ss_end_reference",
         vec![("chr1".into(), String::from_utf8(sequence)?)],
     )
 }
 
-fn side_bam(fragment: FragmentSpec) -> Result<TempBam> {
+fn ss_end_bam(fragment: FragmentSpec) -> Result<TempBam> {
     bam_from_fragments(
-        "side_pair",
+        "ss_end_pair",
         vec![("chr1".into(), 200)],
         vec![fragment],
         vec![],
     )
 }
 
-fn side_config(bam: &Path, output_dir: &Path, inside: usize, outside: usize) -> EndsConfig {
+fn ss_end_config(bam: &Path, output_dir: &Path, inside: usize, outside: usize) -> EndsConfig {
     let mut config = EndsConfig::new(
         IOCArgs {
             bam: bam.into(),
@@ -91,18 +91,18 @@ fn assert_global_counts(output: &EndsOutput, expected: &[(&str, f64)]) {
 }
 
 #[test]
-fn side_default_and_explicit_both_preserve_pooled_counts() -> Result<()> {
+fn ss_end_default_and_explicit_both_preserve_pooled_counts() -> Result<()> {
     // Both retains left ACGA and reverse-complements right TGCC to GGCA
     // The right outside TCAG becomes CTGA. Mate-role swaps must not change pooled results
-    let reference = side_reference()?;
+    let reference = ss_end_reference()?;
     for original_is_reverse in [false, true] {
-        let bam = side_bam(side_fragment(original_is_reverse)?)?;
+        let bam = ss_end_bam(ss_end_fragment(original_is_reverse)?)?;
         for explicit_both in [false, true] {
             let output_dir = TempDir::new()?;
-            let mut config = side_config(&bam.bam, output_dir.path(), 4, 4);
-            assert_eq!(config.side, EndSideSelection::Both);
+            let mut config = ss_end_config(&bam.bam, output_dir.path(), 4, 4);
+            assert_eq!(config.ss_end, SingleStrandedEndSelection::Both);
             if explicit_both {
-                config.set_side(EndSideSelection::Both);
+                config.set_ss_end(SingleStrandedEndSelection::Both);
             }
             config.ref_2bit = Some(reference.path.clone());
             let result = run_ends(&config, RunOptions::new_quiet())?;
@@ -118,30 +118,30 @@ fn side_default_and_explicit_both_preserve_pooled_counts() -> Result<()> {
 }
 
 #[test]
-fn side_paired_motifs_follow_original_strand_in_dense_and_sparse_outputs() -> Result<()> {
+fn ss_end_paired_motifs_follow_original_strand_in_dense_and_sparse_outputs() -> Result<()> {
     // Reverse-strand EM3 is RC(ACGA)=TCGT, not the genomic right-end sequence
     // Unequal halves use left outside GC / inside ACG and right outside TC / inside GCC
     let cases = [
-        (false, EndSideSelection::FivePrime, 4, 0, "_ACGA"),
-        (false, EndSideSelection::ThreePrime, 4, 0, "_TGCC"),
-        (true, EndSideSelection::FivePrime, 4, 0, "_GGCA"),
-        (true, EndSideSelection::ThreePrime, 4, 0, "_TCGT"),
-        (false, EndSideSelection::FivePrime, 0, 4, "AAGC_"),
-        (false, EndSideSelection::ThreePrime, 0, 4, "TCAG_"),
-        (true, EndSideSelection::FivePrime, 0, 4, "CTGA_"),
-        (true, EndSideSelection::ThreePrime, 0, 4, "GCTT_"),
-        (false, EndSideSelection::FivePrime, 3, 2, "GC_ACG"),
-        (false, EndSideSelection::ThreePrime, 3, 2, "TC_GCC"),
-        (true, EndSideSelection::FivePrime, 3, 2, "GA_GGC"),
-        (true, EndSideSelection::ThreePrime, 3, 2, "GC_CGT"),
+        (false, SingleStrandedEndSelection::FivePrime, 4, 0, "_ACGA"),
+        (false, SingleStrandedEndSelection::ThreePrime, 4, 0, "_TGCC"),
+        (true, SingleStrandedEndSelection::FivePrime, 4, 0, "_GGCA"),
+        (true, SingleStrandedEndSelection::ThreePrime, 4, 0, "_TCGT"),
+        (false, SingleStrandedEndSelection::FivePrime, 0, 4, "AAGC_"),
+        (false, SingleStrandedEndSelection::ThreePrime, 0, 4, "TCAG_"),
+        (true, SingleStrandedEndSelection::FivePrime, 0, 4, "CTGA_"),
+        (true, SingleStrandedEndSelection::ThreePrime, 0, 4, "GCTT_"),
+        (false, SingleStrandedEndSelection::FivePrime, 3, 2, "GC_ACG"),
+        (false, SingleStrandedEndSelection::ThreePrime, 3, 2, "TC_GCC"),
+        (true, SingleStrandedEndSelection::FivePrime, 3, 2, "GA_GGC"),
+        (true, SingleStrandedEndSelection::ThreePrime, 3, 2, "GC_CGT"),
     ];
-    let reference = side_reference()?;
-    for (original_is_reverse, side, inside, outside, expected) in cases {
-        let bam = side_bam(side_fragment(original_is_reverse)?)?;
+    let reference = ss_end_reference()?;
+    for (original_is_reverse, ss_end, inside, outside, expected) in cases {
+        let bam = ss_end_bam(ss_end_fragment(original_is_reverse)?)?;
         for dense in [false, true] {
             let output_dir = TempDir::new()?;
-            let mut config = side_config(&bam.bam, output_dir.path(), inside, outside);
-            config.side = side;
+            let mut config = ss_end_config(&bam.bam, output_dir.path(), inside, outside);
+            config.ss_end = ss_end;
             config.all_motifs = dense;
             if outside > 0 {
                 config.ref_2bit = Some(reference.path.clone());
@@ -170,22 +170,22 @@ fn side_paired_motifs_follow_original_strand_in_dense_and_sparse_outputs() -> Re
             let settings: serde_json::Value = serde_json::from_str(&fs::read_to_string(
                 output_dir.path().join("sample.end_settings.json"),
             )?)?;
-            assert_eq!(settings["side"], side.as_str());
+            assert_eq!(settings["ss_end"], ss_end.as_str());
         }
     }
     Ok(())
 }
 
 #[test]
-fn side_three_prime_reference_backed_halves_keep_outside_inside_order() -> Result<()> {
+fn ss_end_three_prime_reference_backed_halves_keep_outside_inside_order() -> Result<()> {
     // Forward original: outside TCAG, reference inside GACT
     // Reverse original: RC(AAGC)=GCTT outside and RC(CTGA)=TCAG inside
-    let reference = side_reference()?;
+    let reference = ss_end_reference()?;
     for (original_is_reverse, expected) in [(false, "TCAG_GACT"), (true, "GCTT_TCAG")] {
-        let bam = side_bam(side_fragment(original_is_reverse)?)?;
+        let bam = ss_end_bam(ss_end_fragment(original_is_reverse)?)?;
         let output_dir = TempDir::new()?;
-        let mut config = side_config(&bam.bam, output_dir.path(), 4, 4);
-        config.side = EndSideSelection::ThreePrime;
+        let mut config = ss_end_config(&bam.bam, output_dir.path(), 4, 4);
+        config.ss_end = SingleStrandedEndSelection::ThreePrime;
         config.source_inside = KmerSource::Reference;
         config.ref_2bit = Some(reference.path.clone());
         let result = run_ends(&config, RunOptions::new_quiet())?;
@@ -198,7 +198,7 @@ fn side_three_prime_reference_backed_halves_keep_outside_inside_order() -> Resul
 }
 
 #[test]
-fn side_unpaired_full_fragment_reads_use_their_own_strand() -> Result<()> {
+fn ss_end_unpaired_full_fragment_reads_use_their_own_strand() -> Result<()> {
     // A full-fragment read has the same stored ends ACGA...TGCC on either alignment strand
     // Forward molecular ends are ACGA/TGCC, reverse molecular ends are GGCA/TCGT
     for original_is_reverse in [false, true] {
@@ -208,14 +208,14 @@ fn side_unpaired_full_fragment_reads_use_their_own_strand() -> Result<()> {
         read.is_reverse = original_is_reverse;
         read.flags = 0;
         let bam = bam_from_fragments(
-            "side_single",
+            "ss_end_single",
             vec![("chr1".into(), 200)],
             vec![],
             vec![read],
         )?;
-        for (side, expected) in [
+        for (ss_end, expected) in [
             (
-                EndSideSelection::FivePrime,
+                SingleStrandedEndSelection::FivePrime,
                 if original_is_reverse {
                     "_GGCA"
                 } else {
@@ -223,7 +223,7 @@ fn side_unpaired_full_fragment_reads_use_their_own_strand() -> Result<()> {
                 },
             ),
             (
-                EndSideSelection::ThreePrime,
+                SingleStrandedEndSelection::ThreePrime,
                 if original_is_reverse {
                     "_TCGT"
                 } else {
@@ -232,9 +232,9 @@ fn side_unpaired_full_fragment_reads_use_their_own_strand() -> Result<()> {
             ),
         ] {
             let output_dir = TempDir::new()?;
-            let mut config = side_config(&bam.bam, output_dir.path(), 4, 0);
+            let mut config = ss_end_config(&bam.bam, output_dir.path(), 4, 0);
             config.unpaired.reads_are_fragments = true;
-            config.side = side;
+            config.ss_end = ss_end;
             let result = run_ends(&config, RunOptions::new_quiet())?;
             assert_global_counts(
                 &load_ends_output(result.motif_output_path)?,
@@ -247,7 +247,7 @@ fn side_unpaired_full_fragment_reads_use_their_own_strand() -> Result<()> {
 }
 
 #[test]
-fn side_specific_counting_errors_on_ambiguous_mate_roles_but_both_keeps_counting() -> Result<()> {
+fn ss_end_specific_counting_errors_on_ambiguous_mate_roles_but_both_keeps_counting() -> Result<()> {
     for (left_role, right_role) in [
         (0, 0x80),
         (0x40, 0),
@@ -255,20 +255,20 @@ fn side_specific_counting_errors_on_ambiguous_mate_roles_but_both_keeps_counting
         (0x80, 0x80),
         (0xc0, 0x80),
     ] {
-        let mut fragment = side_fragment(false)?;
+        let mut fragment = ss_end_fragment(false)?;
         fragment.forward.flags = (fragment.forward.flags & !0xc0) | left_role;
         fragment.reverse.flags = (fragment.reverse.flags & !0xc0) | right_role;
-        let bam = side_bam(fragment)?;
-        for side in [
-            EndSideSelection::Both,
-            EndSideSelection::FivePrime,
-            EndSideSelection::ThreePrime,
+        let bam = ss_end_bam(fragment)?;
+        for ss_end in [
+            SingleStrandedEndSelection::Both,
+            SingleStrandedEndSelection::FivePrime,
+            SingleStrandedEndSelection::ThreePrime,
         ] {
             let output_dir = TempDir::new()?;
-            let mut config = side_config(&bam.bam, output_dir.path(), 4, 0);
-            config.side = side;
+            let mut config = ss_end_config(&bam.bam, output_dir.path(), 4, 0);
+            config.ss_end = ss_end;
             let result = run_ends(&config, RunOptions::new_quiet());
-            if side == EndSideSelection::Both {
+            if ss_end == SingleStrandedEndSelection::Both {
                 assert_global_counts(
                     &load_ends_output(result?.motif_output_path)?,
                     &[("_ACGA", 1.0), ("_GGCA", 1.0)],
@@ -279,7 +279,7 @@ fn side_specific_counting_errors_on_ambiguous_mate_roles_but_both_keeps_counting
                     error.contains("requires exactly one R1 and one R2"),
                     "{error}"
                 );
-                assert!(error.contains(side.as_str()), "{error}");
+                assert!(error.contains(ss_end.as_str()), "{error}");
             }
         }
     }
@@ -287,11 +287,11 @@ fn side_specific_counting_errors_on_ambiguous_mate_roles_but_both_keeps_counting
 }
 
 #[test]
-fn side_selected_and_grouped_motifs_match_the_three_prime_orientation() -> Result<()> {
+fn ss_end_selected_and_grouped_motifs_match_the_three_prime_orientation() -> Result<()> {
     // The reverse original's 3' end is GCTT_TCGT. Its uncomplemented AAGC_ACGA
     // must not count, even when listed as a separate motif or target group
-    let bam = side_bam(side_fragment(true)?)?;
-    let reference = side_reference()?;
+    let bam = ss_end_bam(ss_end_fragment(true)?)?;
+    let reference = ss_end_reference()?;
     for grouped in [false, true] {
         for dense in [false, true] {
             let output_dir = TempDir::new()?;
@@ -304,8 +304,8 @@ fn side_selected_and_grouped_motifs_match_the_three_prime_orientation() -> Resul
                     "GCTT_TCGT\nAAGC_ACGA\n"
                 },
             )?;
-            let mut config = side_config(&bam.bam, output_dir.path(), 4, 4);
-            config.side = EndSideSelection::ThreePrime;
+            let mut config: EndsConfig = ss_end_config(&bam.bam, output_dir.path(), 4, 4);
+            config.ss_end = SingleStrandedEndSelection::ThreePrime;
             config.ref_2bit = Some(reference.path.clone());
             config.motifs_file = Some(motifs_file);
             config.all_motifs = dense;
@@ -323,16 +323,16 @@ fn side_selected_and_grouped_motifs_match_the_three_prime_orientation() -> Resul
 }
 
 #[test]
-fn side_endpoint_assignment_uses_selected_coordinates_across_tiles_and_groups() -> Result<()> {
+fn ss_end_endpoint_assignment_uses_selected_coordinates_across_tiles_and_groups() -> Result<()> {
     // The left endpoint is base 40 and the right endpoint is base 79
     // For bins of size 50 these belong to rows 0 and 1. The same row order is
     // used by the alphabetically named BED groups left/right
     for original_is_reverse in [false, true] {
-        let bam = side_bam(side_fragment(original_is_reverse)?)?;
+        let bam = ss_end_bam(ss_end_fragment(original_is_reverse)?)?;
         for grouped in [false, true] {
             let output_dir = TempDir::new()?;
-            let mut config = side_config(&bam.bam, output_dir.path(), 4, 0);
-            config.side = EndSideSelection::ThreePrime;
+            let mut config = ss_end_config(&bam.bam, output_dir.path(), 4, 0);
+            config.ss_end = SingleStrandedEndSelection::ThreePrime;
             if grouped {
                 let windows = output_dir.path().join("sites.bed");
                 write_bed4(
@@ -370,17 +370,17 @@ fn side_endpoint_assignment_uses_selected_coordinates_across_tiles_and_groups() 
 }
 
 #[test]
-fn side_selection_preserves_fragment_wide_base_quality_filters() -> Result<()> {
+fn ss_end_selection_preserves_fragment_wide_base_quality_filters() -> Result<()> {
     // Unselected R1 has quality 10 and selected R2 has quality 40
     // The full-fragment mean is 25, so a fragment threshold of 30 still rejects it
     // An end-only threshold of 30 removes R1 but retains the requested R2 end
-    let mut fragment = side_fragment(false)?;
+    let mut fragment = ss_end_fragment(false)?;
     fragment.forward.base_quality = 10;
-    let bam = side_bam(fragment)?;
+    let bam = ss_end_bam(fragment)?;
     for (filter, expected_count) in [("mean in fragment >= 30", 0), ("mean in end >= 30", 1)] {
         let output_dir = TempDir::new()?;
-        let mut config = side_config(&bam.bam, output_dir.path(), 4, 0);
-        config.side = EndSideSelection::ThreePrime;
+        let mut config = ss_end_config(&bam.bam, output_dir.path(), 4, 0);
+        config.ss_end = SingleStrandedEndSelection::ThreePrime;
         config.bq_filter = vec![filter.parse().expect("valid base quality filter")];
         let result = run_ends(&config, RunOptions::new_quiet())?;
         let output = load_ends_output(result.motif_output_path)?;
@@ -399,18 +399,18 @@ fn side_selection_preserves_fragment_wide_base_quality_filters() -> Result<()> {
 }
 
 #[test]
-fn side_selection_respects_selected_end_clipping() -> Result<()> {
+fn ss_end_selection_respects_selected_end_clipping() -> Result<()> {
     for affected_end_is_right in [false, true] {
-        let mut fragment = side_fragment(false)?;
+        let mut fragment = ss_end_fragment(false)?;
         if affected_end_is_right {
             fragment.reverse.cigar = vec![Cigar::Match(16), Cigar::SoftClip(4)];
         } else {
             fragment.forward.cigar = vec![Cigar::SoftClip(4), Cigar::Match(16)];
         }
-        let bam = side_bam(fragment)?;
+        let bam = ss_end_bam(fragment)?;
         let output_dir = TempDir::new()?;
-        let mut config = side_config(&bam.bam, output_dir.path(), 4, 0);
-        config.side = EndSideSelection::ThreePrime;
+        let mut config = ss_end_config(&bam.bam, output_dir.path(), 4, 0);
+        config.ss_end = SingleStrandedEndSelection::ThreePrime;
         let result = run_ends(&config, RunOptions::new_quiet())?;
         assert_global_counts(
             &load_ends_output(result.motif_output_path)?,
@@ -430,15 +430,15 @@ fn side_selection_respects_selected_end_clipping() -> Result<()> {
 }
 
 #[test]
-fn side_selection_preserves_fragment_wide_indel_filters() -> Result<()> {
+fn ss_end_selection_preserves_fragment_wide_indel_filters() -> Result<()> {
     // The unselected left end has an insertion within its first four bases
     // skip-affected-fragment must still reject the whole fragment
-    let mut fragment = side_fragment(false)?;
+    let mut fragment = ss_end_fragment(false)?;
     fragment.forward.cigar = vec![Cigar::Match(3), Cigar::Ins(1), Cigar::Match(16)];
-    let bam = side_bam(fragment)?;
+    let bam = ss_end_bam(fragment)?;
     let output_dir = TempDir::new()?;
-    let mut config = side_config(&bam.bam, output_dir.path(), 4, 0);
-    config.side = EndSideSelection::ThreePrime;
+    let mut config = ss_end_config(&bam.bam, output_dir.path(), 4, 0);
+    config.ss_end = SingleStrandedEndSelection::ThreePrime;
     config.indel_filter = IndelMotifFilterPolicy::SkipAffectedFragment;
     let result = run_ends(&config, RunOptions::new_quiet())?;
     assert_global_counts(&load_ends_output(result.motif_output_path)?, &[]);
@@ -447,9 +447,9 @@ fn side_selection_preserves_fragment_wide_indel_filters() -> Result<()> {
 }
 
 #[test]
-fn side_selected_end_blacklist_validation_does_not_count_the_other_end() -> Result<()> {
-    let bam = side_bam(side_fragment(false)?)?;
-    let reference = side_reference()?;
+fn ss_end_selected_end_blacklist_validation_does_not_count_the_other_end() -> Result<()> {
+    let bam = ss_end_bam(ss_end_fragment(false)?)?;
+    let reference = ss_end_reference()?;
     for (masked_start, expected_count) in [(40, 1), (79, 0)] {
         let output_dir = TempDir::new()?;
         let blacklist = output_dir.path().join("blacklist.bed");
@@ -457,8 +457,8 @@ fn side_selected_end_blacklist_validation_does_not_count_the_other_end() -> Resu
             &blacklist,
             &[Bed4Row::new("chr1", masked_start, masked_start + 1, "mask")],
         )?;
-        let mut config = side_config(&bam.bam, output_dir.path(), 4, 0);
-        config.side = EndSideSelection::ThreePrime;
+        let mut config = ss_end_config(&bam.bam, output_dir.path(), 4, 0);
+        config.ss_end = SingleStrandedEndSelection::ThreePrime;
         config.ref_2bit = Some(reference.path.clone());
         config.blacklist = Some(vec![blacklist]);
         config.blacklist_strategy = BlacklistStrategy::All;
@@ -478,9 +478,9 @@ fn side_selected_end_blacklist_validation_does_not_count_the_other_end() -> Resu
 
 #[cfg(feature = "cli")]
 #[test]
-fn side_cli_accepts_only_documented_values_and_defaults_to_both() -> Result<()> {
-    let bam = side_bam(side_fragment(false)?)?;
-    for side in [
+fn ss_end_cli_accepts_only_documented_values_and_defaults_to_both() -> Result<()> {
+    let bam = ss_end_bam(ss_end_fragment(false)?)?;
+    for ss_end in [
         None,
         Some("both"),
         Some("5p"),
@@ -509,11 +509,11 @@ fn side_cli_accepts_only_documented_values_and_defaults_to_both() -> Result<()> 
                 "--n-threads",
                 "1",
             ]);
-        if let Some(side) = side {
-            command.args(["--side", side]);
+        if let Some(ss_end) = ss_end {
+            command.args(["--ss-end", ss_end]);
         }
         let output = command.output()?;
-        if matches!(side, Some("left" | "right" | "3P")) {
+        if matches!(ss_end, Some("left" | "right" | "3P")) {
             assert!(!output.status.success());
             assert!(String::from_utf8_lossy(&output.stderr).contains("invalid value"));
         } else {
@@ -523,7 +523,7 @@ fn side_cli_accepts_only_documented_values_and_defaults_to_both() -> Result<()> 
                 String::from_utf8_lossy(&output.stderr)
             );
             let counts = load_ends_output(output_dir.path().join("sample.end_motifs.zarr"))?;
-            match side {
+            match ss_end {
                 Some("5p") => assert_global_counts(&counts, &[("_ACGA", 1.0)]),
                 Some("3p") => assert_global_counts(&counts, &[("_TGCC", 1.0)]),
                 _ => assert_global_counts(&counts, &[("_ACGA", 1.0), ("_GGCA", 1.0)]),
@@ -534,19 +534,19 @@ fn side_cli_accepts_only_documented_values_and_defaults_to_both() -> Result<()> 
 }
 
 #[test]
-fn side_selected_long_motifs_use_original_orientation_in_the_subspace_codec() -> Result<()> {
+fn ss_end_selected_long_motifs_use_original_orientation_in_the_subspace_codec() -> Result<()> {
     // Thirty inside bases exceed the full radix-5 codec limit
     // The reverse original's 3' inside reference is RC(CTGA + 26 A) = 26 T + TCAG
     // Its outside half is RC(AAGC) = GCTT. The uncomplemented label must not count
-    let bam = side_bam(side_fragment(true)?)?;
-    let reference = side_reference()?;
+    let bam = ss_end_bam(ss_end_fragment(true)?)?;
+    let reference = ss_end_reference()?;
     let output_dir = TempDir::new()?;
     let expected = format!("GCTT_{}TCAG", "T".repeat(26));
     let uncomplemented = format!("AAGC_CTGA{}", "A".repeat(26));
     let motifs_file = output_dir.path().join("long_motifs.tsv");
     fs::write(&motifs_file, format!("{expected}\n{uncomplemented}\n"))?;
-    let mut config = side_config(&bam.bam, output_dir.path(), 30, 4);
-    config.side = EndSideSelection::ThreePrime;
+    let mut config = ss_end_config(&bam.bam, output_dir.path(), 30, 4);
+    config.ss_end = SingleStrandedEndSelection::ThreePrime;
     config.source_inside = KmerSource::Reference;
     config.ref_2bit = Some(reference.path.clone());
     config.motifs_file = Some(motifs_file);

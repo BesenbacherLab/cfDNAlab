@@ -7,7 +7,7 @@
 use crate::{
     commands::ends::{
         config::EndsConfig,
-        config_structs::{ClipStrategy, EndSideSelection, KmerSource, WindowMotifAssigner},
+        config_structs::{ClipStrategy, SingleStrandedEndSelection, KmerSource, WindowMotifAssigner},
         counting::{EndCountsByWindow, EndMotifCounts, SelectedEndCountsByWindow},
     },
     shared::{
@@ -33,7 +33,7 @@ use std::sync::Arc;
 /// preloaded tile-local reference slice.
 pub(crate) struct TileMotifContext<'a> {
     /// Molecular end selection shared by ordinary and motifs-file counting
-    side: EndSideSelection,
+    ss_end: SingleStrandedEndSelection,
     /// Absolute genomic start of `reference_bases`
     reference_start: u64,
     /// Tile reference bases, already blacklist-masked when needed
@@ -205,7 +205,7 @@ pub(crate) fn build_tile_motif_context<'a>(
 
     if !needs_reference_bases {
         return Ok(TileMotifContext {
-            side: opt.side,
+            ss_end: opt.ss_end,
             reference_start,
             reference_bases: None,
             inside_spec,
@@ -243,7 +243,7 @@ pub(crate) fn build_tile_motif_context<'a>(
     };
 
     Ok(TileMotifContext {
-        side: opt.side,
+        ss_end: opt.ss_end,
         reference_start,
         reference_bases: Some(reference_bases),
         inside_spec,
@@ -346,7 +346,7 @@ pub(crate) fn count_fragment_in_window(
 ///
 /// The lookup key includes the `reverse_on_decode` state. That keeps observations in different
 /// orientations distinct, so reverse-complement-related motif labels can still map to different
-/// groups when the motifs file says so, including when a molecular side is selected.
+/// groups when the motifs file says so, including when a molecular single-stranded end is selected.
 ///
 /// Parameters
 /// ----------
@@ -431,16 +431,16 @@ fn count_encoded_fragment_ends_in_window(
         return Ok(counted_end_flags);
     }
 
-    let (count_left, count_right, orientation_override) = match motif_context.side {
-        EndSideSelection::Both => (true, true, None),
-        side => {
+    let (count_left, count_right, orientation_override) = match motif_context.ss_end {
+        SingleStrandedEndSelection::Both => (true, true, None),
+        ss_end => {
             let original_is_reverse = fragment.original_strand_is_reverse.with_context(|| {
                 format!(
-                    "--side {} requires exactly one R1 and one R2 with unambiguous first/last-in-template flags for paired fragments (fragment {}-{}). Use --side both for pooled counting without strand identity",
-                    side.as_str(), fragment.start(), fragment.end()
+                    "--ss-end {} requires exactly one R1 and one R2 with unambiguous first/last-in-template flags for paired fragments (fragment {}-{}). Use --ss-end both for pooled counting without strand identity",
+                    ss_end.as_str(), fragment.start(), fragment.end()
                 )
             })?;
-            let selected_is_right = if side == EndSideSelection::FivePrime {
+            let selected_is_right = if ss_end == SingleStrandedEndSelection::FivePrime {
                 original_is_reverse
             } else {
                 !original_is_reverse

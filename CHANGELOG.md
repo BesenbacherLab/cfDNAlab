@@ -9,7 +9,7 @@ This is the changelog for the main CLI tool. You can find the changelog for the 
 
 ## Unreleased
 
- - Adds `--side both|5p|3p` to `cfdna ends`. The default `both` preserves pooled counting. Explicit sides select the original strand's 5' or 3' endpoint and orient motif halves along that strand, enabling EM5/PREM and EM3/POEM extraction when the library protocol preserves the relevant ends.
+ - Adds `--ss-end both|5p|3p` to `cfdna ends`. The default `both` preserves pooled counting. Explicit sides select the original strand's 5' or 3' endpoint and orient motif halves along that strand, enabling EM5/PREM and EM3/POEM extraction when the library protocol preserves the relevant ends.
 
  - The "Equivalent CLI" string for `cfdna fcoverage` no longer contains `--normalize-by-length off` when that argument was not specified. The correct way to avoid `--normalize-by-length` is to just not set it. The `off` option is the internal name for this.
 

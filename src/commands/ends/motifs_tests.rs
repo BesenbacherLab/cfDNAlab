@@ -19,7 +19,7 @@ fn half_spec_for_k(k: u8) -> SelectedMotifHalfSpec {
 
 fn read_only_motif_context(k_inside: u8) -> TileMotifContext<'static> {
     TileMotifContext {
-        side: EndSideSelection::Both,
+        ss_end: SingleStrandedEndSelection::Both,
         reference_start: 0,
         reference_bases: None,
         inside_spec: Some(half_spec_for_k(k_inside)),
@@ -61,7 +61,7 @@ fn reference_motif_context_with_chrom_len(
     };
 
     TileMotifContext {
-        side: EndSideSelection::Both,
+        ss_end: SingleStrandedEndSelection::Both,
         reference_start: 0,
         reference_bases: Some(seq.to_vec()),
         inside_spec,
@@ -550,7 +550,7 @@ fn validate_blacklist_for_read_inside_code_returns_masked_reference_code_for_rea
     apply_blacklist_mask_to_seq(&mut reference_bases, &blacklist, 0);
     let inside_codes = build_precomputed_reference_codes(Some(&inside_spec), &reference_bases);
     let motif_context = TileMotifContext {
-        side: EndSideSelection::Both,
+        ss_end: SingleStrandedEndSelection::Both,
         reference_start: 0,
         reference_bases: Some(reference_bases),
         inside_spec: Some(inside_spec.clone()),
@@ -591,7 +591,7 @@ fn validate_blacklist_for_read_inside_code_ignores_clipped_only_prefix_in_includ
     apply_blacklist_mask_to_seq(&mut reference_bases, &blacklist, 0);
     let inside_codes = build_precomputed_reference_codes(Some(&inside_spec), &reference_bases);
     let motif_context = TileMotifContext {
-        side: EndSideSelection::Both,
+        ss_end: SingleStrandedEndSelection::Both,
         reference_start: 0,
         reference_bases: Some(reference_bases),
         inside_spec: Some(inside_spec.clone()),

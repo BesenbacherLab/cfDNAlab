@@ -20,12 +20,12 @@ macro_rules! ends_long_about {
         concat!(
             "Count fragment end- and breakpoint-motifs in a BAM-file.\n\n",
             "For each fragment end, it extracts the `--k-outside` bases just outside the fragment and the ",
-            "`--k-inside` bases just inside the fragment. With `--side both`, right-end bases are ",
-            "reverse-complemented together into the existing end-inward orientation. With `--side 5p` ",
-            "or `--side 3p`, motif halves follow the original strand's 5'->3' orientation. ",
+            "`--k-inside` bases just inside the fragment. With `--ss-end both`, right-end bases are ",
+            "reverse-complemented together into the existing end-inward orientation. With `--ss-end 5p` ",
+            "or `--ss-end 3p`, motif halves follow the original strand's 5'->3' orientation. ",
             "Labels always use `\"<outside>_<inside>\"`.\n\n",
             "## Visualization of counting\n\n",
-            "The following shows the counting for aligned fragment ends with `--side both`:\n\n",
+            "The following shows the counting for aligned fragment ends with `--ss-end both`:\n\n",
             r#"For `--k-inside 2 --k-outside 2`:
 
 ```text
@@ -168,7 +168,7 @@ pub struct EndsConfig {
         feature = "cli",
         clap(long, value_enum, default_value = "both", help_heading = "Motifs")
     )]
-    pub side: EndSideSelection,
+    pub ss_end: SingleStrandedEndSelection,
 
     /// Whether to get the inside-fragment bases from the read or the reference `[string]`
     ///
@@ -413,7 +413,7 @@ impl EndsConfig {
             ref_2bit: None,
             k_inside,
             k_outside,
-            side: EndSideSelection::Both,
+            ss_end: SingleStrandedEndSelection::Both,
             source_inside: KmerSource::Read,
             clip: ClippingArgs {
                 clip_strategy: ClipStrategy::Skip,
@@ -448,8 +448,8 @@ impl EndsConfig {
     }
 
     /// Select which molecular end contributes motifs.
-    pub fn set_side(&mut self, side: EndSideSelection) {
-        self.side = side;
+    pub fn set_ss_end(&mut self, ss_end: SingleStrandedEndSelection) {
+        self.ss_end = ss_end;
     }
 
     pub fn set_indel_filter(&mut self, filter: IndelMotifFilterPolicy) {
@@ -511,7 +511,7 @@ impl ToCliCommand for EndsConfig {
         push_optional_path(&mut args, "--ref-2bit", self.ref_2bit.as_deref());
         push_value(&mut args, "--k-inside", self.k_inside);
         push_value(&mut args, "--k-outside", self.k_outside);
-        push_value(&mut args, "--side", self.side.as_str());
+        push_value(&mut args, "--ss-end", self.ss_end.as_str());
         push_value(
             &mut args,
             "--source-inside",

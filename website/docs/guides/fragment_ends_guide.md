@@ -26,7 +26,7 @@ For Nanopore-like single-end data, where each read represents a fragment, the al
 
 ## Select the molecular 5' or 3' end
 
-`--side both` retains the pooled counting and end-inward orientation illustrated above. `--side 5p` and `--side 3p` count only the selected molecular end, with each motif half written in the original strand's 5'->3' orientation. Genomic left and right are not interchangeable with molecular 5' and 3'.
+`--ss-end both` retains the pooled counting and end-inward orientation illustrated above. `--ss-end 5p` and `--ss-end 3p` count only the selected molecular end, with each motif half written in the original strand's 5'->3' orientation. Genomic left and right are not interchangeable with molecular 5' and 3'.
 
 For paired-end data, these modes assume that R1 anchors the original strand's 5' end and R2 anchors its 3' end. Pairs without exactly one R1 and one R2 cause an error when strand-specific counting is requested. With `--reads-are-fragments`, the full-fragment read's alignment orientation defines its molecular ends.
 
@@ -34,7 +34,7 @@ Native 3' end analysis requires a library protocol that preserved those ends and
 
 For four-base motifs, select the feature with:
 
-| Feature | `--side` | `--k-inside` | `--k-outside` |
+| Feature | `--ss-end` | `--k-inside` | `--k-outside` |
 | --- | --- | --- | --- |
 | EM5 | `5p` | `4` | `0` |
 | PREM | `5p` | `0` | `4` |
@@ -45,14 +45,14 @@ For example, extract EM3 from the read sequences and POEM from the matching refe
 
 ```bash
 cfdna ends --bam sample.bam --output-dir EM3 \
-  --side 3p --k-inside 4 --k-outside 0
+  --ss-end 3p --k-inside 4 --k-outside 0
 
 cfdna ends --bam sample.bam --output-dir POEM \
   --ref-2bit genome.2bit \
-  --side 3p --k-inside 0 --k-outside 4
+  --ss-end 3p --k-inside 0 --k-outside 4
 ```
 
-Labels always remain `<outside>_<inside>`, including the separator when a half is empty. For `--side 3p`, combined labels therefore represent `POEM_EM3`. A combined run with `--side 3p --k-inside 4 --k-outside 4` can supply both profiles by summing over the other half downstream, but its counts include only ends for which both halves were valid. This can differ from separate extractions.
+Labels always remain `<outside>_<inside>`, including the separator when a half is empty. For `--ss-end 3p`, combined labels therefore represent `POEM_EM3`. A combined run with `--ss-end 3p --k-inside 4 --k-outside 4` can supply both profiles by summing over the other half downstream, but its counts include only ends for which both halves were valid. This can differ from separate extractions.
 
 > [!NOTE]
 > The selected side is recorded in `end_settings.json`. Output filenames and Zarr layout remain the same, so use distinct output directories or prefixes for separate profiles.

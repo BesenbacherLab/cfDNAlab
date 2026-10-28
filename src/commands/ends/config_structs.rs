@@ -9,7 +9,7 @@ use clap::ValueEnum;
 /// its 3' end. In reads-as-fragments mode, the read's own orientation defines these ends.
 #[cfg_attr(feature = "cli", derive(ValueEnum))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum EndSideSelection {
+pub enum SingleStrandedEndSelection {
     /// Count both ends with the existing end-inward orientation.
     #[default]
     Both,
@@ -21,7 +21,7 @@ pub enum EndSideSelection {
     ThreePrime,
 }
 
-impl EndSideSelection {
+impl SingleStrandedEndSelection {
     /// Return the spelling used by the CLI and settings JSON.
     pub fn as_str(self) -> &'static str {
         match self {

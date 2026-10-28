@@ -6,9 +6,9 @@
 
 - Each end motif is labeled as `<outside>_<inside>`.
 - `k_inside` and `k_outside` may be zero independently, but both cannot be zero for useful output.
-- With `--side both`, the left end is decoded as `outside || inside`.
-- With `--side both`, the right end is decoded from stored `inside || outside`, then reverse-complemented so final labels retain the existing fragment-end-inward 5'->3' orientation.
-- `--side both|5p|3p` defaults to `both`. Explicit sides select R1's endpoint for `5p` and R2's endpoint for `3p`, assuming R1 anchors the original strand's 5' end. A strand-specific paired fragment must identify exactly one R1 and one R2, otherwise counting errors.
+- With `--ss-end both`, the left end is decoded as `outside || inside`.
+- With `--ss-end both`, the right end is decoded from stored `inside || outside`, then reverse-complemented so final labels retain the existing fragment-end-inward 5'->3' orientation.
+- `--ss-end both|5p|3p` defaults to `both`. Explicit ss ends select R1's endpoint for `5p` and R2's endpoint for `3p`, assuming R1 anchors the original strand's 5' end. A strand-specific paired fragment must identify exactly one R1 and one R2, otherwise counting errors.
 - For `--reads-are-fragments`, the full-fragment read's alignment orientation defines its molecular ends. Explicit sides orient each motif half along the original strand's 5'->3' direction, independently of genomic left/right. Labels remain `<outside>_<inside>`, representing `PREM_EM5` for `5p` and `POEM_EM3` for `3p`.
 - Selection affects end contributions, not fragment coordinates or fragment-wide filters. Native 3' interpretations require a library protocol that preserved those boundaries.
 - Motifs containing `N` or sentinel invalid bases are dropped during final decoding.
@@ -101,7 +101,7 @@
 - Fixed-size and BED row metadata includes `chromosome`, `row_chromosome`, `row_start_bp`, `row_end_bp`, and `blacklisted_fraction`. Chromosome names are stored as JSON labels on `chromosome`, and `row_chromosome` indexes that chromosome axis.
 - Grouped-BED row metadata includes `group`, `eligible_windows`, and `blacklisted_fraction`. Group names are stored as JSON labels on `group`, and grouped rows require contiguous zero-based group indices matching count rows.
 - Sparse COO shape dimensions are described by `sparse/sparse_dimension`, whose JSON labels are `["row", "motif"]`.
-- Settings JSON is `<prefix>.end_settings.json` and records motif lengths, selected `side`, `--all-motifs`, motifs-file path and mode when used, inside source, clip strategy, window assignment, indel filter, effective indel filter, base-quality filters, and experimental complement collapse when enabled.
+- Settings JSON is `<prefix>.end_settings.json` and records motif lengths, selected `--ss-end`, `--all-motifs`, motifs-file path and mode when used, inside source, clip strategy, window assignment, indel filter, effective indel filter, base-quality filters, and experimental complement collapse when enabled.
 
 ## Open Notes
 
