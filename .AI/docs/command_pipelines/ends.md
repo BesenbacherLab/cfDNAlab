@@ -52,7 +52,7 @@ flowchart TD
 
 ## Motif Model
 
-For each kept fragment end, `ends` combines the requested outside-reference bases with the requested inside-fragment bases. Inside bases can come from the reads or from the reference. Right-end motifs are reverse-complemented so both ends use the same fragment-end-inward 5' to 3' orientation. Motif labels are written as `<outside>_<inside>`.
+For each kept fragment end, `ends` combines the requested outside-reference bases with the requested inside-fragment bases. Inside bases can come from the reads or from the reference. With `--ss-end both`, right-end motifs are reverse-complemented so both ends retain the same fragment-end-inward 5' to 3' orientation. Explicit `--ss-end 5p` or `--ss-end 3p` selects the molecular endpoint and orients each half along the original strand, assuming R1 anchors its 5' end and R2 anchors its 3' end. Full-fragment unpaired reads use their alignment orientation instead. Motif labels remain `<outside>_<inside>`, representing `PREM_EM5` for `5p` and `POEM_EM3` for `3p`.
 
 ## Window Model
 

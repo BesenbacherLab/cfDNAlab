@@ -24,6 +24,39 @@ For Nanopore-like single-end data, where each read represents a fragment, the al
 
 `cfdna ends` writes motifs as `"<outside>_<inside>"`. To achieve this, the right-side motifs are reverse complemented together. For the above example, we would get the count: `AT_CG: 1, GA_TG: 1`.
 
+## Select the molecular 5' or 3' end
+
+`--ss-end both` retains the pooled counting and end-inward orientation illustrated above. `--ss-end 5p` and `--ss-end 3p` count only the selected molecular end, with each motif half written in the original strand's 5'->3' orientation. Genomic left and right are not interchangeable with molecular 5' and 3'.
+
+For paired-end data, these modes assume that R1 anchors the original strand's 5' end and R2 anchors its 3' end. Pairs without exactly one R1 and one R2 cause an error when strand-specific counting is requested. With `--reads-are-fragments`, the full-fragment read's alignment orientation defines its molecular ends.
+
+Native 3' end analysis requires a library protocol that preserved those ends and the R1/R2 convention above. UMIs alone do not establish that the native ends were preserved. This option cannot recover boundaries altered by end repair. Fragment-wide filters still apply to the full fragment, including its unselected end.
+
+For four-base motifs, select the feature with:
+
+| Feature | `--ss-end` | `--k-inside` | `--k-outside` |
+| --- | --- | --- | --- |
+| EM5 | `5p` | `4` | `0` |
+| PREM | `5p` | `0` | `4` |
+| EM3 | `3p` | `4` | `0` |
+| POEM | `3p` | `0` | `4` |
+
+For example, extract EM3 from the read sequences and POEM from the matching reference assembly in separate runs:
+
+```bash
+cfdna ends --bam sample.bam --output-dir EM3 \
+  --ss-end 3p --k-inside 4 --k-outside 0
+
+cfdna ends --bam sample.bam --output-dir POEM \
+  --ref-2bit genome.2bit \
+  --ss-end 3p --k-inside 0 --k-outside 4
+```
+
+Labels always remain `<outside>_<inside>`, including the separator when a half is empty. For `--ss-end 3p`, combined labels therefore represent `POEM_EM3`. A combined run with `--ss-end 3p --k-inside 4 --k-outside 4` can supply both profiles by summing over the other half downstream, but its counts include only ends for which both halves were valid. This can differ from separate extractions.
+
+> [!NOTE]
+> The selected side is recorded in `end_settings.json`. Output filenames and Zarr layout remain the same, so use distinct output directories or prefixes for separate profiles.
+
 ## Handling clipped ends
 
 When the ends of fragments have been soft-clipped, it indicates that something couldn't be aligned properly. `cfdna ends` defaults to *not* counting motifs in soft-clipped ends. This reduces the risk of counting motifs that do not correspond to the actual ends of the DNA molecules. 

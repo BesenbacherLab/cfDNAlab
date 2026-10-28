@@ -20,11 +20,12 @@ macro_rules! ends_long_about {
         concat!(
             "Count fragment end- and breakpoint-motifs in a BAM-file.\n\n",
             "For each fragment end, it extracts the `--k-outside` bases just outside the fragment and the ",
-            "`--k-inside` bases just inside the fragment. For the right fragment end, these are ",
-            "reverse-complemented together. Finally, they are combined to the reference 5'->3'-oriented ",
-            "`\"<outside>_<inside>\"` motif.\n\n",
+            "`--k-inside` bases just inside the fragment. With `--ss-end both`, right-end bases are ",
+            "reverse-complemented together into the existing end-inward orientation. With `--ss-end 5p` ",
+            "or `--ss-end 3p`, motif halves follow the original strand's 5'->3' orientation. ",
+            "Labels always use `\"<outside>_<inside>\"`.\n\n",
             "## Visualization of counting\n\n",
-            "The following shows the counting for aligned fragment ends:\n\n",
+            "The following shows the counting for aligned fragment ends with `--ss-end both`:\n\n",
             r#"For `--k-inside 2 --k-outside 2`:
 
 ```text
@@ -146,6 +147,28 @@ pub struct EndsConfig {
     /// Number of bases to use from outside the fragment `[integer]`
     #[cfg_attr(feature = "cli", clap(long, required = true, help_heading = "Motifs"))]
     pub k_outside: usize,
+
+    /// Select both ends or the original strand's 5' or 3' end `[both|5p|3p]`
+    ///
+    /// `both` pools both fragment ends using the existing end-inward orientation.
+    ///
+    /// `5p` and `3p` assume R1 anchors the original strand's 5' end and R2 anchors its 3' end.
+    /// Each pair must contain exactly one R1 and one R2. For `--reads-are-fragments`, the read's
+    /// own alignment orientation defines its 5' and 3' ends.
+    ///
+    /// Strand-specific motif halves are written in the original strand's 5'->3' orientation.
+    /// Labels remain `<outside>_<inside>`. For `5p` these represent PREM and EM5, while for `3p`
+    /// they represent POEM and EM3. Use `--k-inside 4 --k-outside 0` for EM3 or EM5 alone, or
+    /// `--k-inside 0 --k-outside 4` for POEM or PREM alone.
+    ///
+    /// Native 3' end analysis requires library preparation that preserved those ends.
+    /// This option cannot restore ends altered by end repair. Fragment-wide filters still
+    /// consider the full fragment, including its unselected end.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, value_enum, default_value = "both", help_heading = "Motifs")
+    )]
+    pub ss_end: SingleStrandedEndSelection,
 
     /// Whether to get the inside-fragment bases from the read or the reference `[string]`
     ///
@@ -390,6 +413,7 @@ impl EndsConfig {
             ref_2bit: None,
             k_inside,
             k_outside,
+            ss_end: SingleStrandedEndSelection::Both,
             source_inside: KmerSource::Read,
             clip: ClippingArgs {
                 clip_strategy: ClipStrategy::Skip,
@@ -421,6 +445,11 @@ impl EndsConfig {
             },
             logging: LoggingArgs::default(),
         }
+    }
+
+    /// Select which molecular end contributes motifs.
+    pub fn set_ss_end(&mut self, ss_end: SingleStrandedEndSelection) {
+        self.ss_end = ss_end;
     }
 
     pub fn set_indel_filter(&mut self, filter: IndelMotifFilterPolicy) {
@@ -482,6 +511,7 @@ impl ToCliCommand for EndsConfig {
         push_optional_path(&mut args, "--ref-2bit", self.ref_2bit.as_deref());
         push_value(&mut args, "--k-inside", self.k_inside);
         push_value(&mut args, "--k-outside", self.k_outside);
+        push_value(&mut args, "--ss-end", self.ss_end.as_str());
         push_value(
             &mut args,
             "--source-inside",

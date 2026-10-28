@@ -7,7 +7,7 @@
 use crate::{
     commands::ends::{
         config::EndsConfig,
-        config_structs::{ClipStrategy, KmerSource, WindowMotifAssigner},
+        config_structs::{ClipStrategy, SingleStrandedEndSelection, KmerSource, WindowMotifAssigner},
         counting::{EndCountsByWindow, EndMotifCounts, SelectedEndCountsByWindow},
     },
     shared::{
@@ -25,13 +25,15 @@ use crate::{
 use anyhow::{Context, Result};
 use std::sync::Arc;
 
-/// Reference-backed motif resources for one tile.
+/// Motif selection and reference-backed resources for one tile.
 ///
 /// This groups the per-tile state needed to validate and encode end motifs:
 /// optional masked reference bases, optional encoded motif-half lookup tables,
 /// and the metadata needed to translate absolute genomic motif starts into the
 /// preloaded tile-local reference slice.
 pub(crate) struct TileMotifContext<'a> {
+    /// Molecular end selection shared by ordinary and motifs-file counting
+    ss_end: SingleStrandedEndSelection,
     /// Absolute genomic start of `reference_bases`
     reference_start: u64,
     /// Tile reference bases, already blacklist-masked when needed
@@ -203,6 +205,7 @@ pub(crate) fn build_tile_motif_context<'a>(
 
     if !needs_reference_bases {
         return Ok(TileMotifContext {
+            ss_end: opt.ss_end,
             reference_start,
             reference_bases: None,
             inside_spec,
@@ -240,6 +243,7 @@ pub(crate) fn build_tile_motif_context<'a>(
     };
 
     Ok(TileMotifContext {
+        ss_end: opt.ss_end,
         reference_start,
         reference_bases: Some(reference_bases),
         inside_spec,
@@ -340,9 +344,9 @@ pub(crate) fn count_fragment_in_window(
 /// produced. Instead of inserting every valid motif key, it looks the key up in the motifs-file
 /// selection and only increments a target when the key is present.
 ///
-/// The lookup key includes the `reverse_on_decode` state. That means right-end observations are not
-/// accidentally treated as left-end motifs, and reverse-complement-related motif labels can still
-/// map to different groups when the motifs file says so.
+/// The lookup key includes the `reverse_on_decode` state. That keeps observations in different
+/// orientations distinct, so reverse-complement-related motif labels can still map to different
+/// groups when the motifs file says so, including when a molecular single-stranded end is selected.
 ///
 /// Parameters
 /// ----------
@@ -427,11 +431,37 @@ fn count_encoded_fragment_ends_in_window(
         return Ok(counted_end_flags);
     }
 
-    if let Some(left_end) = fragment.left_end.as_ref() {
+    let (count_left, count_right, orientation_override) = match motif_context.ss_end {
+        SingleStrandedEndSelection::Both => (true, true, None),
+        ss_end => {
+            let original_is_reverse = fragment.original_strand_is_reverse.with_context(|| {
+                format!(
+                    "--ss-end {} requires exactly one R1 and one R2 with unambiguous first/last-in-template flags for paired fragments (fragment {}-{}). Use --ss-end both for pooled counting without strand identity",
+                    ss_end.as_str(), fragment.start(), fragment.end()
+                )
+            })?;
+            let selected_is_right = if ss_end == SingleStrandedEndSelection::FivePrime {
+                original_is_reverse
+            } else {
+                !original_is_reverse
+            };
+            (
+                !selected_is_right,
+                selected_is_right,
+                Some(original_is_reverse),
+            )
+        }
+    };
+
+    if count_left && let Some(left_end) = fragment.left_end.as_ref() {
         if end_is_selected_by_window(left_end, EndSide::Left, window_interval, assign_by) {
-            if let Some(key) =
-                maybe_encode_end_motif_key(left_end, EndSide::Left, motif_context, source_inside)?
-            {
+            if let Some(key) = maybe_encode_end_motif_key(
+                left_end,
+                EndSide::Left,
+                motif_context,
+                source_inside,
+                orientation_override.unwrap_or(false),
+            )? {
                 if record_encoded_end_count(EndSide::Left, key, weight)? {
                     counted_end_flags.left_counted = true;
                 }
@@ -439,11 +469,15 @@ fn count_encoded_fragment_ends_in_window(
         }
     }
 
-    if let Some(right_end) = fragment.right_end.as_ref() {
+    if count_right && let Some(right_end) = fragment.right_end.as_ref() {
         if end_is_selected_by_window(right_end, EndSide::Right, window_interval, assign_by) {
-            if let Some(key) =
-                maybe_encode_end_motif_key(right_end, EndSide::Right, motif_context, source_inside)?
-            {
+            if let Some(key) = maybe_encode_end_motif_key(
+                right_end,
+                EndSide::Right,
+                motif_context,
+                source_inside,
+                orientation_override.unwrap_or(true),
+            )? {
                 if record_encoded_end_count(EndSide::Right, key, weight)? {
                     counted_end_flags.right_counted = true;
                 }
@@ -498,6 +532,8 @@ fn end_is_selected_by_window(
 ///   Tile-local reference resources
 /// - `source_inside`:
 ///   Whether inside bases come from the read or the reference
+/// - `reverse_on_decode`:
+///   Whether to reverse-complement each half into the selected output orientation
 ///
 /// Returns
 /// -------
@@ -508,6 +544,7 @@ fn maybe_encode_end_motif_key(
     end_side: EndSide,
     motif_context: &TileMotifContext<'_>,
     source_inside: KmerSource,
+    reverse_on_decode: bool,
 ) -> Result<Option<EncodedMotifKey>> {
     let inside_code = encode_inside_code(end, end_side, motif_context, source_inside)?;
     let outside_code = encode_outside_code(end.boundary_pos as u64, end_side, motif_context)?;
@@ -520,7 +557,7 @@ fn maybe_encode_end_motif_key(
     Ok(Some(EncodedMotifKey {
         inside_code,
         outside_code,
-        reverse_on_decode: matches!(end_side, EndSide::Right),
+        reverse_on_decode,
     }))
 }
 

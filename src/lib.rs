@@ -154,8 +154,8 @@ pub mod run_like_cli {
         pub use crate::commands::ends::config::EndsConfig;
         pub use crate::commands::ends::config_structs::{
             AssignMotifToWindowArgs, BaseQualityAggregation, BaseQualityComparisonOp,
-            BaseQualityFilter, BaseQualityFilterScope, ClipStrategy, ClippingArgs, KmerSource,
-            WindowMotifAssigner,
+            BaseQualityFilter, BaseQualityFilterScope, ClipStrategy, ClippingArgs,
+            SingleStrandedEndSelection, KmerSource, WindowMotifAssigner,
         };
         pub use crate::commands::ends::ends::{EndsRunResult, run_ends};
     }

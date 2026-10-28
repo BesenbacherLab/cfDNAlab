@@ -97,8 +97,8 @@ pub(crate) fn decode_end_motif_counts(
     let mut decoded = FxHashMap::default();
 
     for (&key, &value) in &counts.counts {
-        // Decode motif such that right-end motifs are reverse-complemented
-        // into their 5'->3' orientation
+        // Decode each motif into its selected 5'->3' orientation
+        // Pooled counting orients ends inward, while explicit sides follow the original strand
         let full_motif = decode_full_motif(key, inside_spec, outside_spec);
         // Collapse to the same-orientation complement when requested
         // This keeps the outside_inside order contract
@@ -153,13 +153,11 @@ pub(crate) fn format_end_motif_label(
 
 /// Decode one counted key back into its full motif string.
 ///
-/// The two encoded halves are decoded in storage order first:
-/// - left ends: `outside || inside`
-/// - right ends: `inside || outside`
-///
-/// Then the full joined string is reverse-complemented when `reverse_on_decode`
-/// is set, so the final motif always runs from the fragment end inward in
-/// 5'->3' orientation.
+/// Each encoded half is stored in genomic reference orientation. When `reverse_on_decode` is
+/// set, joining `inside || outside` before reverse-complementing gives reverse-complemented
+/// halves in the public `outside || inside` order. Otherwise the halves are joined directly.
+/// Pooled counting sets this flag for right ends. Explicit side selection instead sets it from
+/// the original strand's orientation, so 3' motifs retain their molecular 5'->3' sequence.
 ///
 /// Parameters
 /// ----------

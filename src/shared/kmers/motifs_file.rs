@@ -789,9 +789,10 @@ fn encoded_keys_for_motif(
 
 /// Build the encoded lookup keys produced by one public end-motif label.
 ///
-/// The left key is the motif as written. The right key uses reverse complements for both halves and
-/// sets `reverse_on_decode = true`, matching the state produced by right-end counting. These two
-/// states must remain separate because users may assign them to different groups.
+/// The forward key is the motif as written. The reverse key uses reverse complements for both
+/// halves and sets `reverse_on_decode = true`. In pooled counting this is the right-end state.
+/// With explicit molecular side selection it follows the original strand's orientation instead.
+/// These two states must remain separate because users may assign them to different groups.
 #[cfg(feature = "cmd_ends")]
 fn encoded_keys_for_end_motif(
     motif: &ParsedSelectedMotifLabel,
@@ -814,7 +815,7 @@ fn encoded_keys_for_end_motif(
         reverse_on_decode: false,
     };
 
-    // Right-end counting stores the reverse-complement state and marks it for decode reversal
+    // Reverse-oriented counting stores the reverse-complement state and marks it for reversal
     let right_inside = rev_complement(&motif.inside);
     let right_outside = rev_complement(&motif.outside);
     let right_key = EncodedMotifKey {

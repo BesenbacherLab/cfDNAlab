@@ -6,8 +6,11 @@
 
 - Each end motif is labeled as `<outside>_<inside>`.
 - `k_inside` and `k_outside` may be zero independently, but both cannot be zero for useful output.
-- The left end is decoded as `outside || inside`.
-- The right end is decoded from stored `inside || outside`, then reverse-complemented so final labels are oriented from the fragment end inward in reference 5'->3' orientation.
+- With `--ss-end both`, the left end is decoded as `outside || inside`.
+- With `--ss-end both`, the right end is decoded from stored `inside || outside`, then reverse-complemented so final labels retain the existing fragment-end-inward 5'->3' orientation.
+- `--ss-end both|5p|3p` defaults to `both`. Explicit ss ends select R1's endpoint for `5p` and R2's endpoint for `3p`, assuming R1 anchors the original strand's 5' end. A strand-specific paired fragment must identify exactly one R1 and one R2, otherwise counting errors.
+- For `--reads-are-fragments`, the full-fragment read's alignment orientation defines its molecular ends. Explicit sides orient each motif half along the original strand's 5'->3' direction, independently of genomic left/right. Labels remain `<outside>_<inside>`, representing `PREM_EM5` for `5p` and `POEM_EM3` for `3p`.
+- Selection affects end contributions, not fragment coordinates or fragment-wide filters. Native 3' interpretations require a library protocol that preserved those boundaries.
 - Motifs containing `N` or sentinel invalid bases are dropped during final decoding.
 - `--source-inside read` uses sequenced inside bases.
 - `--source-inside reference` uses reference bases and requires `--ref-2bit`.
@@ -22,7 +25,7 @@
 - File target order is first-seen file order. For grouped files, group order is first-seen group order.
 - The file path uses selected half-motif codecs. K values that fit radix-5 use the full radix-5 codec so sparse keys can still use the ordinary end-motif representation. Larger k values use byte-backed selected subspace lookup rather than enumerating the complete motif set.
 - Selected counting skips unlisted observed motifs before inserting sparse count entries.
-- Right-end lookup keeps the reverse-complemented encoded state distinct from left-end lookup. The file can therefore assign a motif and its reverse complement to different targets.
+- Lookup keeps forward and reverse-complemented encoded states distinct. Pooled counting chooses orientation by genomic end, while explicit sides use original-strand orientation. The file can therefore assign a motif and its reverse complement to different targets.
 - `--all-motifs` with `--motifs-file` keeps every file-defined target in the final axis, including unobserved motifs or groups. Without `--all-motifs`, unobserved file targets are dropped from sparse output.
 - `--motifs-file` cannot be combined with `--collapse-complement`. Use the group column to define any custom collapsing.
 
@@ -98,7 +101,7 @@
 - Fixed-size and BED row metadata includes `chromosome`, `row_chromosome`, `row_start_bp`, `row_end_bp`, and `blacklisted_fraction`. Chromosome names are stored as JSON labels on `chromosome`, and `row_chromosome` indexes that chromosome axis.
 - Grouped-BED row metadata includes `group`, `eligible_windows`, and `blacklisted_fraction`. Group names are stored as JSON labels on `group`, and grouped rows require contiguous zero-based group indices matching count rows.
 - Sparse COO shape dimensions are described by `sparse/sparse_dimension`, whose JSON labels are `["row", "motif"]`.
-- Settings JSON is `<prefix>.end_settings.json` and records motif lengths, `--all-motifs`, motifs-file path and mode when used, inside source, clip strategy, window assignment, indel filter, effective indel filter, base-quality filters, and experimental complement collapse when enabled.
+- Settings JSON is `<prefix>.end_settings.json` and records motif lengths, selected `--ss-end`, `--all-motifs`, motifs-file path and mode when used, inside source, clip strategy, window assignment, indel filter, effective indel filter, base-quality filters, and experimental complement collapse when enabled.
 
 ## Open Notes
 

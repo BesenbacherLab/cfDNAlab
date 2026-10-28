@@ -1,11 +1,11 @@
 use super::*;
+use crate::commands::ends::counting::decode_end_motif_counts;
 use crate::shared::{
     blacklist::apply_blacklist_mask_to_seq,
     fragment::ends_fragment::{FragmentWithEnds, ResolvedFragmentEnd},
     kmers::kmer_codec::{KmerSpec, build_kmer_specs},
     tiled_run::Tile,
 };
-use crate::commands::ends::counting::decode_end_motif_counts;
 use fxhash::FxHashMap;
 
 fn spec_for_k(k: u8) -> KmerSpec {
@@ -19,6 +19,7 @@ fn half_spec_for_k(k: u8) -> SelectedMotifHalfSpec {
 
 fn read_only_motif_context(k_inside: u8) -> TileMotifContext<'static> {
     TileMotifContext {
+        ss_end: SingleStrandedEndSelection::Both,
         reference_start: 0,
         reference_bases: None,
         inside_spec: Some(half_spec_for_k(k_inside)),
@@ -60,6 +61,7 @@ fn reference_motif_context_with_chrom_len(
     };
 
     TileMotifContext {
+        ss_end: SingleStrandedEndSelection::Both,
         reference_start: 0,
         reference_bases: Some(seq.to_vec()),
         inside_spec,
@@ -78,6 +80,7 @@ fn fragment_with_two_ends(
     right_inside: &[u8],
 ) -> FragmentWithEnds {
     FragmentWithEnds {
+        original_strand_is_reverse: None,
         interval: Interval::new(left_boundary_pos, right_boundary_pos).expect("valid interval"),
         assignment_interval: Interval::new(left_boundary_pos, right_boundary_pos)
             .expect("valid assignment interval"),
@@ -547,6 +550,7 @@ fn validate_blacklist_for_read_inside_code_returns_masked_reference_code_for_rea
     apply_blacklist_mask_to_seq(&mut reference_bases, &blacklist, 0);
     let inside_codes = build_precomputed_reference_codes(Some(&inside_spec), &reference_bases);
     let motif_context = TileMotifContext {
+        ss_end: SingleStrandedEndSelection::Both,
         reference_start: 0,
         reference_bases: Some(reference_bases),
         inside_spec: Some(inside_spec.clone()),
@@ -576,7 +580,8 @@ fn validate_blacklist_for_read_inside_code_returns_masked_reference_code_for_rea
 }
 
 #[test]
-fn validate_blacklist_for_read_inside_code_ignores_clipped_only_prefix_in_include_at_aligned_boundary_mode() {
+fn validate_blacklist_for_read_inside_code_ignores_clipped_only_prefix_in_include_at_aligned_boundary_mode()
+ {
     // Arrange: the blacklist masks genomic position 1, but this left end only validates the
     // aligned-overlapping suffix at position 2. The clipped-only prefix must not trigger skipping.
     let inside_radix_spec = spec_for_k(2);
@@ -586,6 +591,7 @@ fn validate_blacklist_for_read_inside_code_ignores_clipped_only_prefix_in_includ
     apply_blacklist_mask_to_seq(&mut reference_bases, &blacklist, 0);
     let inside_codes = build_precomputed_reference_codes(Some(&inside_spec), &reference_bases);
     let motif_context = TileMotifContext {
+        ss_end: SingleStrandedEndSelection::Both,
         reference_start: 0,
         reference_bases: Some(reference_bases),
         inside_spec: Some(inside_spec.clone()),

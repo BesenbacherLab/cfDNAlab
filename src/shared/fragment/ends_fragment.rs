@@ -47,6 +47,11 @@ pub(crate) struct FragmentWithEnds {
     pub(crate) interval: Interval<u32>,
     /// Boundary-adjusted interval used for window assignment when clip strategy changes the ends.
     pub(crate) assignment_interval: Interval<u32>,
+    /// Original strand orientation, inferred from R1 or from a full-fragment unpaired read.
+    ///
+    /// Missing when paired reads do not identify exactly one R1 and one R2. Keeping that state
+    /// explicit lets pooled counting retain its behavior while strand-specific counting errors.
+    pub(crate) original_strand_is_reverse: Option<bool>,
     pub(crate) gc_tag: GCTagValue,
     pub(crate) left_end: Option<ResolvedFragmentEnd>,
     pub(crate) right_end: Option<ResolvedFragmentEnd>,
@@ -92,6 +97,8 @@ pub(crate) struct EndReadInfo {
     pub(crate) tid: i32,
     pub(crate) interval: Interval<u32>,
     pub(crate) is_reverse: bool,
+    pub(crate) is_first_in_template: bool,
+    pub(crate) is_last_in_template: bool,
     pub(crate) left_soft_clip_bp: u32,
     pub(crate) right_soft_clip_bp: u32,
     pub(crate) left_motif_has_indels: bool,
@@ -139,6 +146,8 @@ impl EndReadInfo {
             tid: r.tid(),
             interval: Interval::new(r.pos() as u32, r.reference_end() as u32)?,
             is_reverse: r.is_reverse(),
+            is_first_in_template: r.is_first_in_template(),
+            is_last_in_template: r.is_last_in_template(),
             left_soft_clip_bp: edge_info.left_soft_clip_bp,
             right_soft_clip_bp: edge_info.right_soft_clip_bp,
             left_motif_has_indels: motif_has_indels(
@@ -278,9 +287,20 @@ pub(crate) fn collect_fragment_with_ends(
     let assignment_interval =
         Interval::new(left_assignment_boundary_pos, right_assignment_boundary_pos).ok()?;
 
+    // Molecular orientation follows R1 rather than genomic left/right or iterator arrival order
+    let original_strand_is_reverse = match (
+        (a.is_first_in_template, a.is_last_in_template),
+        (b.is_first_in_template, b.is_last_in_template),
+    ) {
+        ((true, false), (false, true)) => Some(a.is_reverse),
+        ((false, true), (true, false)) => Some(b.is_reverse),
+        _ => None,
+    };
+
     Some(FragmentWithEnds {
         interval,
         assignment_interval,
+        original_strand_is_reverse,
         gc_tag,
         left_end,
         right_end,
@@ -362,6 +382,7 @@ pub(crate) fn collect_fragment_with_ends_from_single_read(
         interval,
         assignment_interval,
         gc_tag: read.gc_tag,
+        original_strand_is_reverse: Some(read.is_reverse),
         left_end,
         right_end,
     })

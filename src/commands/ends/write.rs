@@ -52,6 +52,7 @@ pub(crate) fn write_end_settings_json(
     let settings_entries: Vec<String> = [
         format!("  \"k_inside\": {}", opt.k_inside),
         format!("  \"k_outside\": {}", opt.k_outside),
+        format!("  \"ss_end\": \"{}\"", opt.ss_end.as_str()),
         format!("  \"all_motifs\": {}", opt.all_motifs),
         format!(
             "  \"motifs_file\": {}",

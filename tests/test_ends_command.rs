@@ -1089,6 +1089,7 @@ fn expected_settings_json(
     let mut expected = Map::new();
     expected.insert("k_inside".to_string(), json!(k_inside));
     expected.insert("k_outside".to_string(), json!(k_outside));
+    expected.insert("ss_end".to_string(), json!("both"));
     expected.insert("all_motifs".to_string(), json!(all_motifs));
     expected.insert("motifs_file".to_string(), Value::Null);
     expected.insert("motifs_file_mode".to_string(), Value::Null);

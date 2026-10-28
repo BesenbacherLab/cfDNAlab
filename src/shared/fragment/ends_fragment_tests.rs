@@ -17,6 +17,8 @@ mod test_fragment_with_ends_1 {
             tid: 0,
             interval: Interval::new(10, 24).expect("valid interval"),
             is_reverse: false,
+            is_first_in_template: false,
+            is_last_in_template: false,
             left_soft_clip_bp,
             right_soft_clip_bp,
             left_motif_has_indels: false,
@@ -1868,5 +1870,107 @@ mod test_fragment_with_ends_2 {
             )
             .is_none()
         );
+    }
+}
+
+mod strand_identity_tests {
+    use super::super::*;
+
+    fn end_read(is_reverse: bool, first: bool, last: bool) -> EndReadInfo {
+        let start = if is_reverse { 60 } else { 40 };
+        EndReadInfo {
+            tid: 0,
+            interval: Interval::new(start, start + 20).expect("valid read span"),
+            is_reverse,
+            is_first_in_template: first,
+            is_last_in_template: last,
+            left_soft_clip_bp: 0,
+            right_soft_clip_bp: 0,
+            left_motif_has_indels: false,
+            right_motif_has_indels: false,
+            has_hard_clip: false,
+            seq: vec![b'A'; 20],
+            qualities: Some(vec![40; 20]),
+            gc_tag: GCTagValue::default(),
+        }
+    }
+
+    #[test]
+    fn original_strand_follows_r1_regardless_of_arrival_order() {
+        // The fragment stays forward.pos=40 to reverse.reference_end=80
+        // Swapping R1/R2 changes molecular orientation, while swapping arrival order does not
+        for original_is_reverse in [false, true] {
+            let forward = end_read(false, !original_is_reverse, original_is_reverse);
+            let reverse = end_read(true, original_is_reverse, !original_is_reverse);
+            for (first, second) in [(&forward, &reverse), (&reverse, &forward)] {
+                let fragment = collect_fragment_with_ends(
+                    first,
+                    second,
+                    ClipStrategy::Aligned,
+                    KmerSource::Read,
+                    IndelMotifFilterPolicy::Auto,
+                    4,
+                    20,
+                    &[],
+                )
+                .expect("valid pair");
+                assert_eq!(
+                    fragment.original_strand_is_reverse,
+                    Some(original_is_reverse)
+                );
+                assert_eq!(fragment.interval.as_tuple(), (40, 80));
+                assert_eq!(fragment.assignment_interval, fragment.interval);
+            }
+        }
+    }
+
+    #[test]
+    fn ambiguous_mate_roles_remain_explicit_without_discarding_pooled_fragments() {
+        for roles in [
+            (false, false, false, true),
+            (true, false, true, false),
+            (true, true, false, true),
+        ] {
+            let forward = end_read(false, roles.0, roles.1);
+            let reverse = end_read(true, roles.2, roles.3);
+            let fragment = collect_fragment_with_ends(
+                &forward,
+                &reverse,
+                ClipStrategy::Aligned,
+                KmerSource::Read,
+                IndelMotifFilterPolicy::Auto,
+                4,
+                20,
+                &[],
+            )
+            .expect("pooled counting still accepts the pair");
+            assert_eq!(fragment.original_strand_is_reverse, None);
+            assert!(fragment.left_end.is_some());
+            assert!(fragment.right_end.is_some());
+        }
+    }
+
+    #[test]
+    fn original_strand_survives_removal_of_the_read_one_end() {
+        // R1 quality 10 fails the end threshold. R2 quality 40 passes
+        // Removing R1's motif must not erase its original-strand identity
+        let mut forward = end_read(false, true, false);
+        forward.qualities = Some(vec![10; 20]);
+        let reverse = end_read(true, false, true);
+        let filter: BaseQualityFilter = "mean in end >= 30".parse().expect("valid filter");
+        let fragment = collect_fragment_with_ends(
+            &forward,
+            &reverse,
+            ClipStrategy::Aligned,
+            KmerSource::Read,
+            IndelMotifFilterPolicy::Auto,
+            4,
+            20,
+            &[filter],
+        )
+        .expect("R2 end survives");
+        assert_eq!(fragment.original_strand_is_reverse, Some(false));
+        assert!(fragment.left_end.is_none());
+        assert!(fragment.right_end.is_some());
     }
 }

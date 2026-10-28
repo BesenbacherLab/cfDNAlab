@@ -4,10 +4,7 @@ use crate::{
         cli_common::{ChromosomeArgs, IOCArgs},
         ends::config_structs::BaseQualityFilter,
     },
-    shared::{
-        indel_mode::IndelMotifFilterPolicy,
-        kmers::motifs_file::SelectedMotifColumnKind,
-    },
+    shared::{indel_mode::IndelMotifFilterPolicy, kmers::motifs_file::SelectedMotifColumnKind},
 };
 use serde_json::{Map, Value, json};
 use std::path::Path;
@@ -45,6 +42,7 @@ fn expected_settings_json(
     let mut expected = Map::new();
     expected.insert("k_inside".to_string(), json!(k_inside));
     expected.insert("k_outside".to_string(), json!(k_outside));
+    expected.insert("ss_end".to_string(), json!("both"));
     expected.insert("all_motifs".to_string(), json!(false));
     expected.insert("motifs_file".to_string(), Value::Null);
     expected.insert("motifs_file_mode".to_string(), Value::Null);
@@ -66,6 +64,7 @@ fn write_end_settings_json_writes_minimal_interpretation_metadata() {
     // Arrange: the minimal default config has
     // - k_inside: 1
     // - k_outside: 0
+    // - ss_end: both
     // - all_motifs: false
     // - no motifs file
     // - inside source: read
