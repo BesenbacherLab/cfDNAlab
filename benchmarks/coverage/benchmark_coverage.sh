@@ -2,15 +2,15 @@
 #SBATCH --job-name=cfdna-coverage
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=12
+#SBATCH --cpus-per-task=32
 #SBATCH --threads-per-core=1
 #SBATCH --exclusive
 #SBATCH --mem=0
 #SBATCH --no-requeue
 
 # Reserve the whole node for the full benchmark series: --exclusive requests all
-# CPUs, and --mem=0 requests all node memory. The 12 CPUs per task ensure the node
-# supports the largest run. Each srun below still binds its own 1/4/8/12 CPUs
+# CPUs, and --mem=0 requests all node memory. The 32 CPUs per task ensure the node
+# supports the largest run. Each srun below still binds its own 1/4/8/12/32 CPUs
 # Use a partition that honors exclusive allocations, as partition policy takes
 # precedence over the job's sharing request
 # https://slurm.schedmd.com/sbatch.html#OPT_exclusive
@@ -28,13 +28,13 @@
 # these regional counts from per-base depth. They measure different quantities
 #
 # Example submission from the repository root:
-#   conda pack -n finaletoolkit -o /faststorage/project/finaletoolkit.tar.gz
+#   bash benchmarks/install_tools.sh /path/to/benchmark-tools
 #   export BENCH_BAM=/faststorage/project/sample.bam
 #   export BENCH_CFDNA=/path/to/cfdna
 #   export BENCH_MOSDEPTH=/path/to/mosdepth
-#   export BENCH_SAMTOOLS=/path/to/samtools
+#   export BENCH_SAMTOOLS_ARCHIVE=/path/to/benchmark-tools/samtools.tar.gz
 #   export BENCH_PANDEPTH=/path/to/pandepth
-#   export BENCH_FINALE_ARCHIVE=/faststorage/project/finaletoolkit.tar.gz
+#   export BENCH_FINALE_ARCHIVE=/path/to/benchmark-tools/finaletoolkit.tar.gz
 #   export BENCH_LOCAL_ROOT=/path/to/node-local-scratch
 #   export BENCH_OUTPUT=/faststorage/project/coverage.tsv
 #   sbatch --constraint=gen6 --exclusive --mem=0 --time=12:00:00 \
@@ -51,15 +51,16 @@ export LC_ALL=C
 # The native executables must work with node-local or system shared libraries
 # BENCH_FINALE_ARCHIVE contains a Linux Conda environment with FinaleToolkit
 # installed, packed with conda-pack so Python and its packages can run locally
+# BENCH_SAMTOOLS_ARCHIVE similarly includes samtools and its shared libraries
 : "${SLURM_JOB_ID:?Submit this script with sbatch}"
 : "${BENCH_BAM:?Set the input BAM path}"
 : "${BENCH_LOCAL_ROOT:?Set an existing node-local scratch directory}"
 : "${BENCH_OUTPUT:?Set the path of a new output TSV}"
 : "${BENCH_FINALE_ARCHIVE:?Set the path of the packed FinaleToolkit environment}"
+: "${BENCH_SAMTOOLS_ARCHIVE:?Set the path of the packed samtools environment}"
 BENCH_INDEX=${BENCH_INDEX:-${BENCH_BAM}.bai}
 BENCH_CFDNA=${BENCH_CFDNA:-$(command -v cfdna)}
 BENCH_MOSDEPTH=${BENCH_MOSDEPTH:-$(command -v mosdepth)}
-BENCH_SAMTOOLS=${BENCH_SAMTOOLS:-$(command -v samtools)}
 BENCH_PANDEPTH=${BENCH_PANDEPTH:-$(command -v pandepth)}
 if [[ "$BENCH_INDEX" != *.bai ]]; then
     echo "FinaleToolkit requires a BAI index. Set BENCH_INDEX to its .bai path." >&2
@@ -68,7 +69,7 @@ fi
 
 # Repetition 1-3 is warmup for every method/core combination
 # Repetition 4-13 is measured. All rows remain in the TSV for downstream filtering
-cores_to_run=(1 4 8 12)
+cores_to_run=(1 4 8 12 32)
 warmups=3
 measured_repetitions=10
 total_repetitions=$((warmups + measured_repetitions))
@@ -96,13 +97,16 @@ cp -L "$BENCH_BAM" "$BENCH_WORK/sample.bam"
 cp -L "$BENCH_INDEX" "$BENCH_WORK/sample.bam.${BENCH_INDEX##*.}"
 cp -L "$BENCH_CFDNA" "$BENCH_WORK/bin/cfdna"
 cp -L "$BENCH_MOSDEPTH" "$BENCH_WORK/bin/mosdepth"
-cp -L "$BENCH_SAMTOOLS" "$BENCH_WORK/bin/samtools"
 cp -L "$BENCH_PANDEPTH" "$BENCH_WORK/bin/pandepth"
+# sbatch uses a spool copy of this script. Submit from the repository root
+cp "$SLURM_SUBMIT_DIR/benchmarks/measure_memory.py" "$BENCH_WORK/measure_memory.py"
 
 # Unpack the complete Python environment before timing, fixing its old paths
 # Copying only the finaletoolkit launcher would still use the original Python
 # See https://conda.github.io/conda-pack/ for the archive preparation procedure
 mkdir -p "$BENCH_WORK/finale-env" "$BENCH_WORK/cache" "$BENCH_WORK/matplotlib"
+# Ignore ~/.local Python packages and inherited import paths so imports stay
+# inside the staged environment. See the installation notes in ../README.md
 export PYTHONNOUSERSITE=1
 unset PYTHONPATH PYTHONHOME
 export XDG_CACHE_HOME="$BENCH_WORK/cache"
@@ -113,10 +117,17 @@ export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_TH
 tar -xzf "$BENCH_FINALE_ARCHIVE" -C "$BENCH_WORK/finale-env"
 "$BENCH_WORK/finale-env/bin/python" "$BENCH_WORK/finale-env/bin/conda-unpack"
 
+# Keep samtools inside its environment so it finds the packed shared libraries
+mkdir -p "$BENCH_WORK/samtools-env"
+tar -xzf "$BENCH_SAMTOOLS_ARCHIVE" -C "$BENCH_WORK/samtools-env"
+# conda-unpack needs only Python's standard library. Reuse the staged Python
+# instead of installing Python in the samtools environment just for this step
+"$BENCH_WORK/finale-env/bin/python" "$BENCH_WORK/samtools-env/bin/conda-unpack"
+
 # Generate a shared BED4 of 500 kb windows, including each shorter final window
 # idxstats obtains contig lengths from the BAM index. Skip its unmapped '*' row
 # This setup is outside every timer. Both regional methods read the same BED
-"$BENCH_WORK/bin/samtools" idxstats "$BENCH_WORK/sample.bam" |
+"$BENCH_WORK/samtools-env/bin/samtools" idxstats "$BENCH_WORK/sample.bam" |
     awk 'BEGIN {OFS="\t"} $1 != "*" {
         for (window_start=0; window_start<$2; window_start+=500000) {
             window_end=window_start+500000
@@ -141,7 +152,7 @@ fi
 # Record versions in each TSV row, replacing any tabs/newlines with spaces
 BENCH_CFDNA_VERSION=$("$BENCH_WORK/bin/cfdna" --version 2>&1 | tr '\t\n' '  ')
 BENCH_MOSDEPTH_VERSION=$("$BENCH_WORK/bin/mosdepth" --version 2>&1 | tr '\t\n' '  ')
-BENCH_SAMTOOLS_VERSION=$("$BENCH_WORK/bin/samtools" --version-only 2>&1 | tr '\t\n' '  ')
+BENCH_SAMTOOLS_VERSION=$("$BENCH_WORK/samtools-env/bin/samtools" --version-only 2>&1 | tr '\t\n' '  ')
 BENCH_FINALE_VERSION=$("$BENCH_WORK/finale-env/bin/finaletoolkit" --version 2>&1 | tr '\t\n' '  ')
 # PanDepth reports its version in the -h help text, without a --version option
 BENCH_PANDEPTH_VERSION=$("$BENCH_WORK/bin/pandepth" -h 2>&1 |
@@ -160,7 +171,8 @@ fi
 # step_exit_code also catches placement failures or a missing output track
 header=$'run_order\trepetition\twarmup\tmethod\tworkload\ttool_version\tcores\ttool_threads'
 header+=$'\tnode\tcpu_model\tcpu_ids\tphysical_core_ids\tjob_id\tstep_id\tstarted_utc'
-header+=$'\twall_seconds\tuser_seconds\tsystem_seconds\tmax_rss_kib\ttool_exit_code\tstep_exit_code'
+header+=$'\twall_seconds\tuser_seconds\tsystem_seconds\tmax_rss_kib\ttool_exit_code'
+header+=$'\tsampled_peak_rss_kib\tsampled_mean_rss_kib\tmemory_samples\tmemory_interval_seconds\tstep_exit_code'
 printf '%s\n' "$header" > "$BENCH_OUTPUT"
 
 # Shuffle the method/core combinations within each repetition block
@@ -182,7 +194,7 @@ for ((repetition=1; repetition<=total_repetitions; repetition++)); do
     while IFS=$'\t' read -r method cores; do
         run_order=$((run_order + 1))
         step_exit_code=0
-        rm -f "$BENCH_WORK/time.tsv"
+        rm -f "$BENCH_WORK/time.tsv" "$BENCH_WORK/memory.tsv"
         workload=per-base
         if [[ "$method" == cfdnalab-region-counts || "$method" == finaletoolkit-coverage ]]; then
             workload=region-counts-500kb
@@ -249,11 +261,8 @@ if [[ "$method" == cfdnalab || "$method" == cfdnalab-autosomes ]]; then
     track="$BENCH_WORK/coverage/fcoverage.per_position.bedgraph.zst"
 elif [[ "$method" == mosdepth ]]; then
     # mosdepth has a main calculation thread plus extra decompression threads
-    # Use 0,3,4,4 extra threads for 1,4,8,12 cores, capping decompression at four
+    # Give decompression the same available budget as the other tools
     tool_threads=$((cores - 1))
-    if ((tool_threads > 4)); then
-        tool_threads=4
-    fi
     tool_version=$BENCH_MOSDEPTH_VERSION
     # Ordinary mode excludes inter-mate gaps and retains normal CIGAR processing
     # The flag mask removes unmapped, secondary, supplementary, failed and duplicate
@@ -264,7 +273,7 @@ elif [[ "$method" == mosdepth ]]; then
         "$BENCH_WORK/coverage/coverage" "$BENCH_WORK/sample.bam")
     track="$BENCH_WORK/coverage/coverage.per-base.bed.gz"
 elif [[ "$method" == samtools-depth ]]; then
-    # Leave a core for the main calculation, requesting 0,3,7,11 decoding threads
+    # Leave a core for the main calculation, requesting cores - 1 decoding threads
     # -s removes mate overlap, -aa includes zero-depth bases on all contigs
     # -q is base quality and -Q is MAPQ. No -J means deletions are excluded
     # Match basic flags without imposing proper pairs. samtools depth has no
@@ -274,7 +283,7 @@ elif [[ "$method" == samtools-depth ]]; then
     tool_threads=$((cores - 1))
     tool_version=$BENCH_SAMTOOLS_VERSION
     track="$BENCH_WORK/coverage/samtools.depth.tsv"
-    command=("$BENCH_WORK/bin/samtools" depth -@ "$tool_threads"
+    command=("$BENCH_WORK/samtools-env/bin/samtools" depth -@ "$tool_threads"
         -aa -s -q 0 -Q 30 -G 3852 --require-flags 1
         -o "$track" "$BENCH_WORK/sample.bam")
 elif [[ "$method" == pandepth ]]; then
@@ -335,7 +344,8 @@ fi
 # Time only the native command, including creation and compression of its track
 # Scheduler startup, placement checks and cleanup are outside this timer
 tool_exit_code=0
-/usr/bin/time --quiet --format "$prefix\t%e\t%U\t%S\t%M\t%x" \
+"$BENCH_WORK/finale-env/bin/python" "$BENCH_WORK/measure_memory.py" "$BENCH_WORK/memory.tsv" \
+    /usr/bin/time --quiet --format "$prefix\t%e\t%U\t%S\t%M\t%x" \
     --output "$BENCH_WORK/time.tsv" "${command[@]}" \
     > "$BENCH_WORK/tool.log" 2>&1 || tool_exit_code=$?
 if ((tool_exit_code != 0)); then
@@ -356,7 +366,9 @@ STEP
                 "$run_order" "$repetition" "$is_warmup" "$method" "$workload" "$cores" "$SLURM_JOB_ID" \
                 > "$BENCH_WORK/time.tsv"
         fi
-        printf '%s\t%s\n' "$(cat "$BENCH_WORK/time.tsv")" "$step_exit_code" >> "$BENCH_OUTPUT"
+        memory_values=$'NA\tNA\tNA\tNA'
+        if [[ -s "$BENCH_WORK/memory.tsv" ]]; then memory_values=$(cat "$BENCH_WORK/memory.tsv"); fi
+        printf '%s\t%s\t%s\n' "$(cat "$BENCH_WORK/time.tsv")" "$memory_values" "$step_exit_code" >> "$BENCH_OUTPUT"
         if ((step_exit_code != 0)); then
             echo "Run $run_order failed. Completed rows are in $BENCH_OUTPUT" >&2
             exit "$step_exit_code"
