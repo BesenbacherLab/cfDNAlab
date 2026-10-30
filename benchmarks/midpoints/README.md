@@ -54,18 +54,18 @@ sbatch --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET benchmarks/midpoints/ben
     benchmarks/midpoints/compare_midpoints.py "$BENCH_RESULTS/profiles" \
     > "$BENCH_RESULTS/concordance.tsv"
 
-# Then benchmark the same calls with more cores and repetitions
-export BENCH_RESULTS=/path/to/midpoint-timing
-export BENCH_CORES="1 4 8 12 32"
+# Submit a separate job and results directory for each core setting
+export BENCH_RESULTS=/path/to/midpoint-timing-4cores
+export BENCH_CORES=4
 export BENCH_PILOT=0
 export BENCH_WARMUPS=2
 export BENCH_REPETITIONS=5
 sbatch --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET benchmarks/midpoints/benchmark_midpoints.sh
 ```
 
-Set the generation selector and wall time from the cluster settings and full-matrix pilot. Split long blocks and pin sequential jobs to the same physical node as described in [the shared run controls](../README.md#runs-and-budgets). `BENCH_INDEX` and `BENCH_FASTA_INDEX` can override the usual index paths. `BENCH_MIN_LENGTH`, `BENCH_MAX_LENGTH` and `BENCH_MIN_MAPQ` override the common filters. `BENCH_METHODS="cfdnalab griffin"` selects the two tools.
+Set the generation selector and wall time from the cluster settings and full-matrix pilot. Split by core budget and then by method as needed to fit the allocation limit, using matched hardware as described in [the shared run controls](../README.md#runs-and-budgets). `BENCH_INDEX` and `BENCH_FASTA_INDEX` can override the usual index paths. `BENCH_MIN_LENGTH`, `BENCH_MAX_LENGTH` and `BENCH_MIN_MAPQ` override the common filters. `BENCH_METHODS="cfdnalab griffin"` selects the two tools.
 
-The runner reserves an exclusive node and all its memory. Sequential `srun --jobid` steps use that allocation and check their actual node and allowed logical/physical CPU IDs. Hard confinement also depends on Slurm's cgroup setup. All inputs and Griffin's environment are staged on local scratch before warmups. Methods run in contiguous blocks with warmups before measurements. Core budgets shuffle within each repetition. No caches are evicted. Both tools use exactly the chromosomes present in the supplied site set, while the BAM retains its other chromosomes and records.
+The runner reserves an exclusive node and all its memory. Sequential `srun --jobid` steps use that allocation and check their actual node and allowed logical/physical CPU IDs. Hard confinement also depends on Slurm's cgroup setup. All inputs and Griffin's environment are staged on local scratch before warmups. Methods run in contiguous blocks with warmups before measurements at the job's single core count. Submit separate jobs and results directories for the other core settings. No caches are evicted. Both tools use exactly the chromosomes present in the supplied site set, while the BAM retains its other chromosomes and records.
 
 The only timing result is `timings.tsv`, with a row for every run, including warmups and failures. Native profiles are also retained under `profiles/cfdnalab/` and `profiles/griffin/` from the first measured repetition at the capture core budget. Other temporary files and logs are deleted. Errors are printed to the Slurm log. Source files are not modified or downloaded.
 

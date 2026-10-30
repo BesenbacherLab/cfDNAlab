@@ -5,15 +5,19 @@ Run boundaries carry base weights. Temporary per-contig run files reconcile
 different native contig orders and keep memory bounded. Regional counts are
 compared separately by their exact shared BED coordinates. Requires zstd for
 cfDNAlab tracks and the comparison environment for regional length tables.
+Always save exact base-weighted residual counts to residuals.tsv beside profiles/.
+Summary metrics go to stdout. Base-resolution MAE is the primary similarity measure.
 """
 
 import argparse
-from contextlib import contextmanager
+from collections import Counter
+from contextlib import ExitStack, closing, contextmanager
 import csv
 import gzip
 from itertools import combinations
 import math
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -136,22 +140,23 @@ def zero_filled_runs(path, chromosome_length):
 
 
 class Correlation:
-    """Accumulate paired values with stable online covariance and variance."""
+    """Accumulate weighted paired values with stable covariance and variance."""
 
     def __init__(self):
         self.count = 0
         self.left_mean = self.right_mean = 0.0
         self.left_variance = self.right_variance = self.covariance = 0.0
 
-    def add(self, left, right):
-        """Add an equally weighted bin or regional count."""
-        self.count += 1
+    def add(self, left, right, weight=1):
+        """Weight constant depth runs by bases, or regional counts equally."""
+        self.count += weight
         left_delta, right_delta = left - self.left_mean, right - self.right_mean
-        self.left_mean += left_delta / self.count
-        self.right_mean += right_delta / self.count
-        self.left_variance += left_delta * (left - self.left_mean)
-        self.right_variance += right_delta * (right - self.right_mean)
-        self.covariance += left_delta * (right - self.right_mean)
+        relative_weight = weight / self.count
+        self.left_mean += left_delta * relative_weight
+        self.right_mean += right_delta * relative_weight
+        self.left_variance += weight * left_delta * (left - self.left_mean)
+        self.right_variance += weight * right_delta * (right - self.right_mean)
+        self.covariance += weight * left_delta * (right - self.right_mean)
 
     def value(self):
         """Constant profiles have undefined correlation, including equal zeros."""
@@ -160,20 +165,30 @@ class Correlation:
         return max(-1.0, min(1.0, self.covariance / math.sqrt(self.left_variance * self.right_variance)))
 
 
-def compare_tracks(left_paths, right_paths, scope):
-    """Integrate base errors and 10 kb bin means over a shared declared scope."""
+def flush_residual_counts(database, counts):
+    """Merge a bounded batch into exact residual counts stored on disk."""
+    database.executemany(
+        "INSERT INTO residual_counts (residual, bases) VALUES (?, ?) "
+        "ON CONFLICT(residual) DO UPDATE SET bases = residual_counts.bases + excluded.bases",
+        counts.items(),
+    )
+    counts.clear()
+
+
+def compare_tracks(left_paths, right_paths, scope, residual_database):
+    """Integrate errors, Pearson and residual counts at base resolution."""
     bases = identical = union_bases = union_identical = 0
     below = above = 0
     absolute_error = squared_error = signed_error = left_total = right_total = 0.0
     correlation = Correlation()
+    residual_counts = Counter()
     for chromosome, length in scope.items():
         left_runs = iter(zero_filled_runs(left_paths[chromosome], length))
         right_runs = iter(zero_filled_runs(right_paths[chromosome], length))
         left_run, right_run = next(left_runs), next(right_runs)
-        position = bin_start = 0
-        bin_left = bin_right = 0.0
+        position = 0
         while position < length:
-            end = min(left_run[1], right_run[1], bin_start + 10000, length)
+            end = min(left_run[1], right_run[1], length)
             weight = end - position
             left, right = left_run[2], right_run[2]
             difference = left - right
@@ -189,17 +204,17 @@ def compare_tracks(left_paths, right_paths, scope):
             signed_error += difference * weight
             left_total += left * weight
             right_total += right * weight
-            bin_left += left * weight
-            bin_right += right * weight
+            # Length weights give Pearson over individual bases without binning
+            correlation.add(left, right, weight)
+            residual_counts[difference] += weight
+            if len(residual_counts) >= 4096:
+                flush_residual_counts(residual_database, residual_counts)
             position = end
-            if end == min(bin_start + 10000, length):
-                # The final shorter bin uses its actual width, with equal bin weight
-                correlation.add(bin_left / (end - bin_start), bin_right / (end - bin_start))
-                bin_start, bin_left, bin_right = end, 0.0, 0.0
             if end == left_run[1] and end < length:
                 left_run = next(left_runs)
             if end == right_run[1] and end < length:
                 right_run = next(right_runs)
+    flush_residual_counts(residual_database, residual_counts)
     return {
         "bases": bases, "fraction_identical": identical / bases,
         "mae": absolute_error / bases, "rmse": math.sqrt(squared_error / bases),
@@ -210,7 +225,7 @@ def compare_tracks(left_paths, right_paths, scope):
         "union_mae": absolute_error / union_bases if union_bases else "NA",
         "union_rmse": math.sqrt(squared_error / union_bases) if union_bases else "NA",
         "left_integrated_depth": left_total, "right_integrated_depth": right_total,
-        "bins_10kb": correlation.count, "pearson_r_10kb": correlation.value(),
+        "pearson_r_1bp": correlation.value(),
     }
 
 
@@ -265,8 +280,18 @@ def main():
     arguments = parser.parse_args()
     directories = sorted(path for path in arguments.profiles.iterdir() if path.is_dir())
     rows = []
-    with tempfile.TemporaryDirectory(prefix="coverage-concordance-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="coverage-concordance-") as temporary, ExitStack() as resources:
         tracks, regions = {}, {}
+        output = resources.enter_context((arguments.profiles.parent / "residuals.tsv").open("w"))
+        residual_writer = csv.DictWriter(output, delimiter="\t", lineterminator="\n", fieldnames=[
+            "left_profile", "right_profile", "quantity", "same_native_scope", "chromosomes",
+            "residual", "bases", "fraction_of_bases",
+        ])
+        residual_writer.writeheader()
+        residual_database = resources.enter_context(closing(sqlite3.connect(Path(temporary) / "residuals.sqlite")))
+        # Bound the database cache as well as the Python residual-count batch
+        residual_database.execute("PRAGMA cache_size = -2048")
+        residual_database.execute("CREATE TABLE residual_counts (residual REAL PRIMARY KEY, bases INTEGER NOT NULL)")
         regional_directories = [path for path in directories if "region-counts" in path.name or path.name == "finaletoolkit-coverage"]
         if regional_directories:
             with (arguments.profiles.parent / "regions.bed").open() as source:
@@ -293,10 +318,16 @@ def main():
             scope = {chromosome: length for chromosome, length in left_scope.items() if chromosome in right_scope}
             if not scope or any(right_scope[chromosome] != length for chromosome, length in scope.items()):
                 raise ValueError("Empty shared scope or mismatched chromosome lengths")
-            rows.append({"left_profile": left_name, "right_profile": right_name,
-                         "quantity": "fragment-coverage" if "fragment" in left_name else "read-depth",
-                         "same_native_scope": same_scope, "chromosomes": ",".join(scope),
-                         **compare_tracks(left_paths, right_paths, scope)})
+            comparison = {"left_profile": left_name, "right_profile": right_name,
+                          "quantity": "fragment-coverage" if "fragment" in left_name else "read-depth",
+                          "same_native_scope": same_scope, "chromosomes": ",".join(scope)}
+            metrics = compare_tracks(left_paths, right_paths, scope, residual_database)
+            rows.append({**comparison, **metrics})
+            for residual, bases in residual_database.execute("SELECT residual, bases FROM residual_counts ORDER BY residual"):
+                residual_writer.writerow({**comparison, "residual": residual, "bases": bases,
+                                          "fraction_of_bases": bases / metrics["bases"]})
+            residual_database.execute("DELETE FROM residual_counts")
+            residual_database.commit()
         for left_name, right_name in combinations(regions, 2):
             rows.append({"left_profile": left_name, "right_profile": right_name, "quantity": "regional-fragment-counts",
                          "same_native_scope": True, "chromosomes": ",".join(sorted({key[0] for key in regions[left_name]})),

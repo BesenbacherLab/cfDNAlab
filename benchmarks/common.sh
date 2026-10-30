@@ -15,14 +15,14 @@ benchmark_picard_version() {
 }
 
 benchmark_controls() {
-    # A pilot keeps the selected method/core matrix and changes repetitions only
+    # A pilot keeps this job's selected methods and core count, changing repetitions only
     export BENCH_PILOT=${BENCH_PILOT:-0}
     if [[ "$BENCH_PILOT" != 0 && "$BENCH_PILOT" != 1 ]]; then
         echo 'BENCH_PILOT must be 0 or 1.' >&2
         return 1
     fi
-    if [[ ${BENCH_SERIAL_ENDPOINTS:-1} != 0 && ${BENCH_SERIAL_ENDPOINTS:-1} != 1 ]]; then
-        echo 'BENCH_SERIAL_ENDPOINTS must be 0 or 1.' >&2
+    if [[ ! ${BENCH_CORES:-} =~ ^[1-9][0-9]*$ ]]; then
+        echo 'Set BENCH_CORES to a single positive core count for this job.' >&2
         return 1
     fi
     if [[ -n ${BENCH_EXPECTED_NODE:-} && $(hostname) != "$BENCH_EXPECTED_NODE" ]]; then
@@ -98,24 +98,13 @@ benchmark_record_setup() {
 }
 
 benchmark_schedule() {
-    # Each method gets contiguous warmups and measurements. Only cores shuffle
-    local method repetition cores is_warmup
+    # Run every selected method at this job's core count, with warmups first
+    local method repetition is_warmup
     for method in "${methods_to_run[@]}"; do
-        if [[ ${BENCH_SERIAL_ENDPOINTS:-1} == 1 && ( "$method" == cfdnapro* || "$method" == finaletoolkit ) && ${BENCH_FEATURE:-} == lengths && " $BENCH_CORES " != *' 1 '* && " $BENCH_CORES " != *' 32 '* ]]; then
-            echo "Select core budget 1 or 32 for $method, or set BENCH_SERIAL_ENDPOINTS=0." >&2
-            return 1
-        fi
         for ((repetition=1; repetition<=BENCH_WARMUPS+BENCH_REPETITIONS; repetition++)); do
             is_warmup=false
             if ((repetition <= BENCH_WARMUPS)); then is_warmup=true; fi
-            for cores in "${cores_to_run[@]}"; do
-                if [[ ${BENCH_SERIAL_ENDPOINTS:-1} == 1 && ( "$method" == cfdnapro* || "$method" == finaletoolkit ) && ${BENCH_FEATURE:-} == lengths ]]; then
-                    if ((cores != 1 && cores != 32)); then continue; fi
-                fi
-                printf '%s\n' "$cores"
-            done | shuf | while read -r cores; do
-                printf '%s\t%s\t%s\t%s\n' "$method" "$cores" "$repetition" "$is_warmup"
-            done
+            printf '%s\t%s\t%s\t%s\n' "$method" "$BENCH_CORES" "$repetition" "$is_warmup"
         done
     done
 }
@@ -145,7 +134,7 @@ benchmark_time_command() {
 benchmark_finish_run() {
     # Append outside srun, preserving failures before any scratch cleanup
     local method=$1 cores=$2 repetition=$3 is_warmup=$4 step_exit_code=$5
-    local io_values=$'NA\tNA\tNA' profile capture_cores=$BENCH_CAPTURE_CORES selected_cores
+    local io_values=$'NA\tNA\tNA' profile capture_cores=$BENCH_CAPTURE_CORES
     if [[ -s "$BENCH_WORK/io.tsv" ]]; then io_values=$(cat "$BENCH_WORK/io.tsv"); fi
     printf '%s\t%s\t%s\t%s\n' "$(cat "$BENCH_WORK/time.tsv")" "$io_values" "$BENCH_PILOT" "$step_exit_code" >> "$BENCH_RESULTS/timings.tsv"
     if ((step_exit_code != 0)); then
@@ -155,11 +144,6 @@ benchmark_finish_run() {
         done
         echo "Run $run_order failed. Completed rows and diagnostics are in $BENCH_RESULTS" >&2
         return "$step_exit_code"
-    fi
-    if [[ ${BENCH_SERIAL_ENDPOINTS:-1} == 1 && ${BENCH_FEATURE:-} == lengths && ( "$method" == cfdnapro* || "$method" == finaletoolkit ) ]]; then
-        for selected_cores in "${cores_to_run[@]}"; do
-            if ((selected_cores == 1 || selected_cores == 32)); then capture_cores=$selected_cores; break; fi
-        done
     fi
     if [[ "$method" != freia && "$is_warmup" == false ]] && ((repetition == BENCH_WARMUPS+1 && cores == capture_cores)); then
         profile=$(cat "$BENCH_WORK/profile.path")

@@ -61,11 +61,13 @@ Picard's version probe accepts its documented status 1 only with a recognizable 
 
 Follow the [input preparation](data/README.md), then the [coverage](coverage/README.md), [lengths](lengths/README.md), [end-motif](ends/README.md) or [midpoint](midpoints/README.md) instructions. Submit **from the repository root** so `SLURM_SUBMIT_DIR` locates helpers. Jobs reserve an exclusive node and all its memory. Node generation, partition and wall time must match the cluster.
 
-All runners accept `BENCH_METHODS`, `BENCH_CORES` (default `1 4 8 12 32`), `BENCH_WARMUPS` (2) and `BENCH_REPETITIONS` (5 measured). `BENCH_PILOT=1` selects zero warmups and one measurement for each requested method/core combination. Use a new `BENCH_RESULTS` directory for every job. Only selected tools are required, plus the samtools archive and setup Python. References are required only by selected methods that use them.
+All runners require `BENCH_CORES` to specify a single core count for that job. The experiment uses **1, 4, 12 and 32 in separate jobs**. Set `BENCH_METHODS` to the methods for that allocation, `BENCH_WARMUPS` (2) and `BENCH_REPETITIONS` (5 measured). `BENCH_PILOT=1` selects zero warmups and one measurement at the job's core count. Use a new `BENCH_RESULTS` directory for every job. Only selected tools are required, plus the samtools archive and setup Python. References are required only by selected methods that use them.
 
-Each method runs as a contiguous block, with its warmups before measurements. Core budgets shuffle within each repetition. cfDNAPro and FinaleToolkit lengths are measured only at the requested 1/32-core endpoints because their counting paths are serial. Set `BENCH_SERIAL_ENDPOINTS=0` to measure them across another requested matrix. Other methods use the full requested matrix.
+The four budgets retain the serial baseline, 4 cores for mosdepth's documented limited scaling, the suggested 12-core configuration, and 32 cores for the upper scaling point. Mosdepth's [guide](https://github.com/brentp/mosdepth/blob/v0.3.14/README.md#speed-and-memory-comparison) describes a plateau near four decompression threads. The runner passes `cores - 1` additional decompression threads, so its 4-core allocation uses three.
 
-First check wiring/relocation/fonts with a small input. Then run the complete production method/core matrix once on the actual input to budget all invocations. Pilot cfDNAPro's memory progressively, starting near 0.1x, before choosing the common node. A full-matrix pilot itself can exceed a short allocation. Split it too when needed.
+Each selected method runs as a contiguous block at the job's core count, with its warmups before measurements. No method is automatically excluded. For cfDNAPro and FinaleToolkit lengths, first compare **1 versus 4 cores in separate jobs**. If wall time and effective CPU use show no benefit beyond run-to-run variation, stop higher-core measurements for that workload and report the tested 1/4-core result. If they improve, add 12- and 32-core jobs. This is an experimental decision, not an automatic scheduler rule.
+
+First check wiring/relocation/fonts with a small input. Then pilot the selected methods at each planned core count in separate jobs on the actual input to budget all invocations. Pilot cfDNAPro's memory progressively, starting near 0.1x, before choosing the common node. Even a single-core-setting pilot can exceed a short allocation when many slow methods are selected. Split methods too when needed.
 
 ```bash
 python3 benchmarks/summarize_timings.py /path/to/pilot/timings.tsv \
@@ -74,13 +76,30 @@ python3 benchmarks/summarize_timings.py /path/to/pilot/timings.tsv \
 
 The estimate sums every observed method/core combination and adds 25% by default. Add staging/cleanup separately. It cannot budget configurations absent from its inputs. At 12 minutes per cfDNAlab run and 120 minutes per slow-tool run, those two tools at **one core alone** need 15 h 24 min for two warmups plus five measurements. Other methods/core budgets add to that total.
 
-Split oversized series by method, then by core budget if needed. Pin the sequential jobs to the **same physical node** and set `BENCH_EXPECTED_NODE` so the runner verifies it. Each new job includes its own warmups. For example, after setting input/tool paths:
+For a 24-hour allocation limit, start with a separate job per feature/core budget, then split by method when needed. In minutes, budget `H + 1.25 * 7 * sum(method_runtime_at_this_core_count)`, where `H` covers staging, profile preservation and cleanup. Seven invocations include two warmups and five measurements. With no allowance for `H`, selected methods must total at most about 164.6 minutes per pass to fit 24 hours.
+
+The following working scaling scenario starts at **12 minutes per cfDNAlab configuration and 120 minutes per competitor at 1 core**. It assumes linear speedup for parallel paths, with mosdepth's speedup capped at 4x, and adds 25%. The two apparently serial length tools retain 120 minutes per run for their initial 1/4-core budgets. Linear scaling is optimistic for partially parallel or I/O-limited commands, including samtools and Picard. Replace these assumptions with pilot measurements. Times are rounded up to the next minute and exclude `H`.
+
+| Feature/core job | 1 core | 4 cores | 12 cores | 32 cores |
+| --- | --- | --- | --- | --- |
+| Coverage, 3 cfDNAlab + 5 competitors | 92 h 45 min | 23 h 12 min | 13 h 34 min | 10 h 34 min |
+| Lengths: cfDNAlab/native, autosomes, samtools, Picard | 38 h 30 min | 9 h 38 min | 3 h 13 min | 1 h 13 min |
+| cfDNAPro lengths, its own job | 17 h 30 min | 17 h 30 min | Decide after 1/4 | Decide after 1/4 |
+| FinaleToolkit lengths, its own job | 17 h 30 min | 17 h 30 min | Decide after 1/4 | Decide after 1/4 |
+| End motifs, 2 cfDNAlab + 1 competitor | 21 h | 5 h 15 min | 1 h 45 min | 40 min |
+| Midpoints, 1 cfDNAlab + 1 competitor | 19 h 15 min | 4 h 49 min | 1 h 37 min | 37 min |
+
+Every table cell describes a separate feature/method-block job at exactly that column's core count. The two serial length tools are included as separate 1- and 4-core jobs. Their 12/32-core measurements are deferred pending the comparison. The other lengths block uses `BENCH_METHODS="cfdnalab cfdnalab-autosomes samtools picard"`. The script runs any methods explicitly selected, at any requested single core count.
+
+The 1-core coverage and other-lengths jobs still need method splits. The 4-core coverage estimate leaves less than 49 minutes for `H`, so split it further if staging and preservation need longer. At 1 core, a 120-minute method alone needs 14 hours raw or 17 h 30 min with margin. Pairing it with a 12-minute cfDNAlab configuration needs 15 h 24 min raw or 19 h 15 min with margin. Two 120-minute methods already need 28 hours raw. Use the actual pilot sum to choose blocks within each core count.
+
+Prefer the same physical node across jobs when available. Otherwise use matched hardware and retain the node identity with every timing. Cross-core speedups then also reflect variation between nodes. Each new job includes its own warmups. To pin a specific node, after setting input/tool paths:
 
 ```bash
 export BENCH_METHODS=cfdnapro
-export BENCH_CORES="1 32"
+export BENCH_CORES=1
 export BENCH_EXPECTED_NODE=chosen-node
-export BENCH_RESULTS=/path/to/lengths-cfdnapro
+export BENCH_RESULTS=/path/to/lengths-cfdnapro-1core
 sbatch --nodelist="$BENCH_EXPECTED_NODE" --time=YOUR_PILOT_BASED_BUDGET \
     benchmarks/lengths/benchmark_lengths.sh
 ```
@@ -117,4 +136,4 @@ Inputs and environments are copied to local scratch before warmups. Scheduler st
 
 ## Prepared regression checks
 
-The hand-derived fixtures in [tests/test_benchmarks.py](tests/test_benchmarks.py) cover coverage formats/weights/scope, regional row identity, scheduling, installer resumption, Picard status, Slurm joins, reconstructed TLEN signs and FrEIA exclusion. They were not run during implementation. On Linux, use the comparison Python with zstd on PATH to run `python -m unittest discover -s benchmarks/tests`. The reconstruction cases require pysam and explicitly skip when it is unavailable. Linux environment solves, relocation, fonts and real Slurm accounting still need the small wiring pilot.
+The hand-derived fixtures in [tests/test_benchmarks.py](tests/test_benchmarks.py) cover coverage formats/weights/scope, residual distributions, base-resolution Pearson, regional row identity, scheduling, installer resumption, Picard status, Slurm joins, reconstructed TLEN signs and FrEIA exclusion. They were not run during implementation. On Linux, use the comparison Python with zstd on PATH to run `python -m unittest discover -s benchmarks/tests`. The reconstruction cases require pysam and explicitly skip when it is unavailable. Linux environment solves, relocation, fonts and real Slurm accounting still need the small wiring pilot.

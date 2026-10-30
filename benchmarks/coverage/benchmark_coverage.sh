@@ -8,9 +8,9 @@
 #SBATCH --mem=0
 #SBATCH --no-requeue
 
-# Reserve the whole node for the full benchmark series: --exclusive requests all
+# Reserve the whole node for this job's method blocks: --exclusive requests all
 # CPUs, and --mem=0 requests all node memory. The 32 CPUs per task ensure the node
-# supports the largest run. Each srun below still binds its own 1/4/8/12/32 CPUs
+# supports the largest run. Each srun binds this job's single selected core count
 # Use a partition that honors exclusive allocations, as partition policy takes
 # precedence over the job's sharing request
 # https://slurm.schedmd.com/sbatch.html#OPT_exclusive
@@ -60,7 +60,7 @@ BENCH_FEATURE=coverage
 : "${BENCH_RESULTS:?Set a new results directory}"
 : "${BENCH_SAMTOOLS_ARCHIVE:?Set the path of the packed samtools environment}"
 BENCH_INDEX=${BENCH_INDEX:-${BENCH_BAM}.bai}
-BENCH_CORES=${BENCH_CORES:-1 4 8 12 32}
+: "${BENCH_CORES:?Set a single core budget for this job: 1, 4, 12 or 32}"
 BENCH_WARMUPS=${BENCH_WARMUPS:-2}
 BENCH_REPETITIONS=${BENCH_REPETITIONS:-5}
 BENCH_METHODS=${BENCH_METHODS:-cfdnalab-fragment mosdepth-fragment cfdnalab mosdepth samtools-depth pandepth cfdnalab-region-counts finaletoolkit-coverage}

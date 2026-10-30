@@ -25,7 +25,7 @@ BENCH_FEATURE=ends
 : "${BENCH_LOCAL_ROOT:?Set an existing node-local scratch directory}"
 : "${BENCH_RESULTS:?Set a new results directory}"
 BENCH_INDEX=${BENCH_INDEX:-${BENCH_BAM}.bai}
-BENCH_CORES=${BENCH_CORES:-1 4 8 12 32}
+: "${BENCH_CORES:?Set a single core budget for this job: 1, 4, 12 or 32}"
 BENCH_WARMUPS=${BENCH_WARMUPS:-2}
 BENCH_REPETITIONS=${BENCH_REPETITIONS:-5}
 BENCH_METHODS=${BENCH_METHODS:-cfdnalab-reference cfdnalab-reference-proper finaletoolkit}

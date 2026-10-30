@@ -74,7 +74,110 @@ class CoverageTests(unittest.TestCase):
         self.assertAlmostEqual(float(row["rmse"]), math.sqrt(.1))
         self.assertEqual(int(row["nonzero_union_bases"]), 10)
         self.assertAlmostEqual(float(row["union_mae"]), 1)
-        self.assertEqual(row["pearson_r_10kb"], "NA")
+        self.assertEqual(row["pearson_r_1bp"], "NA")
+
+    def test_residual_distribution_preserves_sign_and_counts_genomic_bases(self):
+        # Residuals -2, 0, +1 cover 20, 70, 30 bases across both contigs
+        # MAE=(40+30)/120=7/12, RMSE=sqrt(110/120), signed mean=-10/120
+        scope = "chr1\t100\nchr2\t20\n"
+        self.profile("cfdnalab", "chr1\t0\t10\t3\nchr2\t0\t20\t1\n", scope)
+        self.profile("mosdepth", "chr2\t0\t20\t0\nchr1\t0\t30\t2\nchr1\t30\t100\t0\n", scope)
+        output = self.profiles.parent / "residuals.tsv"
+
+        result = self.compare()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        summary = next(csv.DictReader(result.stdout.splitlines(), delimiter="\t"))
+        with output.open() as source:
+            residuals = list(csv.DictReader(source, delimiter="\t"))
+        self.assertEqual([float(row["residual"]) for row in residuals], [-2, 0, 1])
+        self.assertEqual([int(row["bases"]) for row in residuals], [20, 70, 30])
+        for row, expected_fraction in zip(residuals, (1 / 6, 7 / 12, 1 / 4)):
+            self.assertAlmostEqual(float(row["fraction_of_bases"]), expected_fraction)
+            self.assertEqual(row["left_profile"], "cfdnalab")
+            self.assertEqual(row["right_profile"], "mosdepth")
+            self.assertEqual(row["quantity"], "read-depth")
+            self.assertEqual(row["chromosomes"], "chr1,chr2")
+            self.assertEqual(row["same_native_scope"], "True")
+        self.assertEqual(int(summary["bases"]), 120)
+        self.assertAlmostEqual(float(summary["mae"]), 7 / 12)
+        self.assertAlmostEqual(float(summary["rmse"]), math.sqrt(11 / 12))
+        self.assertAlmostEqual(float(summary["mean_signed_difference"]), -1 / 12)
+
+    def test_residual_distribution_includes_all_zero_profiles(self):
+        # An omitted sparse zero track and an explicit zero track cover 15,000 bases
+        self.profile("cfdnalab", "", "chr1\t15000\n")
+        self.profile("mosdepth", "chr1\t0\t15000\t0\n", "chr1\t15000\n")
+        output = self.profiles.parent / "residuals.tsv"
+
+        result = self.compare()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with output.open() as source:
+            residuals = list(csv.DictReader(source, delimiter="\t"))
+        self.assertEqual(len(residuals), 1)
+        self.assertEqual(float(residuals[0]["residual"]), 0)
+        self.assertEqual(int(residuals[0]["bases"]), 15000)
+        self.assertEqual(float(residuals[0]["fraction_of_bases"]), 1)
+        summary = next(csv.DictReader(result.stdout.splitlines(), delimiter="\t"))
+        self.assertEqual(float(summary["mae"]), 0)
+        self.assertEqual(summary["union_mae"], "NA")
+        self.assertEqual(summary["pearson_r_1bp"], "NA")
+        # Rerunning regenerates the fixed output rather than appending or failing
+        repeated = self.compare()
+        self.assertEqual(repeated.returncode, 0, repeated.stderr)
+        with output.open() as source:
+            regenerated = list(csv.DictReader(source, delimiter="\t"))
+        self.assertEqual(regenerated, residuals)
+
+    def test_residual_distribution_preserves_fractional_differences(self):
+        # Residual -.25 covers 75 bases and +.5 covers 25: MAE=.3125
+        self.profile("cfdnalab", "chr1\t0\t25\t1.25\nchr1\t25\t100\t0.5\n")
+        self.profile("mosdepth", "chr1\t0\t100\t0.75\n")
+        output = self.profiles.parent / "residuals.tsv"
+
+        result = self.compare()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with output.open() as source:
+            residuals = list(csv.DictReader(source, delimiter="\t"))
+        self.assertEqual([float(row["residual"]) for row in residuals], [-.25, .5])
+        self.assertEqual([int(row["bases"]) for row in residuals], [75, 25])
+        summary = next(csv.DictReader(result.stdout.splitlines(), delimiter="\t"))
+        self.assertAlmostEqual(float(summary["mae"]), .3125)
+        self.assertEqual(summary["pearson_r_1bp"], "NA")
+
+    def test_residual_counts_survive_large_value_sets_and_multiple_pairs(self):
+        # Depths 0..4096 each cover a base, then depth 1 covers ten more
+        # The repeated residual must accumulate after a batch spills to disk
+        scope = "chr1\t4107\n"
+        self.profile("cfdnalab", "", scope)
+        depths = "".join(f"chr1\t{position}\t{position + 1}\t{position}\n" for position in range(4097))
+        self.profile("mosdepth", depths + "chr1\t4097\t4107\t1\n", scope)
+        self.profile("pandepth", "".join(f"chr1\t{position}\t0\n" for position in range(4107)), scope)
+        output = self.profiles.parent / "residuals.tsv"
+
+        result = self.compare()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        comparisons = {}
+        with output.open() as source:
+            for row in csv.DictReader(source, delimiter="\t"):
+                comparisons.setdefault((row["left_profile"], row["right_profile"]), []).append(row)
+        self.assertEqual(len(comparisons), 3)
+        negative = comparisons[("cfdnalab", "mosdepth")]
+        zero = comparisons[("cfdnalab", "pandepth")]
+        positive = comparisons[("mosdepth", "pandepth")]
+        self.assertEqual([float(row["residual"]) for row in negative], list(range(-4096, 1)))
+        self.assertEqual([int(row["bases"]) for row in negative], [1] * 4095 + [11, 1])
+        self.assertEqual([float(row["residual"]) for row in positive], list(range(4097)))
+        self.assertEqual([int(row["bases"]) for row in positive], [1, 11] + [1] * 4095)
+        self.assertEqual(len(zero), 1)
+        self.assertEqual(float(zero[0]["residual"]), 0)
+        self.assertEqual(int(zero[0]["bases"]), 4107)
+        for residuals in comparisons.values():
+            self.assertEqual(sum(int(row["bases"]) for row in residuals), 4107)
+            self.assertAlmostEqual(sum(float(row["fraction_of_bases"]) for row in residuals), 1)
 
     def test_tile_boundaries_contig_order_and_concatenated_frames_are_equivalent(self):
         scope = "chr1\t100\nchr2\t80\n"
@@ -115,15 +218,18 @@ class CoverageTests(unittest.TestCase):
             self.profile("cfdnalab", contents)
             self.assertNotEqual(self.compare().returncode, 0)
 
-    def test_short_final_bin_uses_actual_width(self):
-        # Two bins have means (1, 3) and (2, 6), so r=1
+    def test_pearson_uses_individual_bases_instead_of_binned_means(self):
+        # In 1000-base units, weights are (10,3,2) for pairs (1,2), (3,6), (3,0)
+        # Sums: left=25, right=38, left squared=55, right squared=148, product=74
+        # Pearson=(15*74-25*38)/sqrt((15*55-625)*(15*148-1444))=4/sqrt(97)
+        # The 10 kb means would instead give r=1, hiding within-bin disagreement
         # Errors are 1 on 10,000 bases and 3 on 5,000 bases
         self.profile("cfdnalab", "chr1\t0\t10000\t1\nchr1\t10000\t15000\t3\n", "chr1\t15000\n")
-        self.profile("mosdepth", "chr1\t0\t10000\t2\nchr1\t10000\t15000\t6\n", "chr1\t15000\n")
+        self.profile("mosdepth", "chr1\t0\t10000\t2\nchr1\t10000\t13000\t6\nchr1\t13000\t15000\t0\n", "chr1\t15000\n")
         result = self.compare()
         self.assertEqual(result.returncode, 0, result.stderr)
         row = next(csv.DictReader(result.stdout.splitlines(), delimiter="\t"))
-        self.assertAlmostEqual(float(row["pearson_r_10kb"]), 1)
+        self.assertAlmostEqual(float(row["pearson_r_1bp"]), 4 / math.sqrt(97))
         self.assertAlmostEqual(float(row["mae"]), 5 / 3)
         self.assertAlmostEqual(float(row["rmse"]), math.sqrt(11 / 3))
 
@@ -131,11 +237,19 @@ class CoverageTests(unittest.TestCase):
         self.profile("cfdnalab", "chr1\t0\t100\t1\n", "chr1\t100\nchr2\t80\n")
         self.profile("mosdepth", "chr1\t0\t100\t1\n")
         self.assertNotEqual(self.compare().returncode, 0)
+        output = self.profiles.parent / "residuals.tsv"
         result = self.compare("--common-scope")
         self.assertEqual(result.returncode, 0, result.stderr)
         row = next(csv.DictReader(result.stdout.splitlines(), delimiter="\t"))
         self.assertEqual(row["same_native_scope"], "False")
         self.assertEqual(row["chromosomes"], "chr1")
+        with output.open() as source:
+            residuals = list(csv.DictReader(source, delimiter="\t"))
+        self.assertEqual(len(residuals), 1)
+        self.assertEqual(float(residuals[0]["residual"]), 0)
+        self.assertEqual(int(residuals[0]["bases"]), 100)
+        self.assertEqual(residuals[0]["chromosomes"], "chr1")
+        self.assertEqual(residuals[0]["same_native_scope"], "False")
 
     def test_regional_comparison_checks_coordinates_and_raw_counts(self):
         # Counts (2, 1) versus (1, 3) give differences (1, -2), MAE 1.5
@@ -155,6 +269,9 @@ class CoverageTests(unittest.TestCase):
         self.assertAlmostEqual(float(row["rmse"]), math.sqrt(2.5))
         self.assertEqual(float(row["regional_total_ratio"]), .75)
         self.assertEqual(float(row["pearson_r_regions"]), -1)
+        # Regional-only comparisons keep the automatic residual file header-only
+        with (self.profiles.parent / "residuals.tsv").open() as source:
+            self.assertEqual(list(csv.DictReader(source, delimiter="\t")), [])
         # A shifted endpoint must fail rather than align by row number
         with gzip.open(right / "finaletoolkit.coverage.bed.gz", "wt") as destination:
             destination.write("chr1\t0\t51\t.\t1\nchr1\t50\t100\t.\t3\n")
@@ -200,23 +317,37 @@ class TimingTests(unittest.TestCase):
 class RunControlTests(unittest.TestCase):
     """Check scheduling and Picard's unusual version status without tool installs."""
 
-    def test_serial_endpoints_and_method_blocks(self):
+    def test_each_job_runs_all_selected_methods_at_a_single_core_setting(self):
         script = '''source "$BENCH_COMMON"
+benchmark_controls
 BENCH_FEATURE=lengths
-BENCH_CORES="1 4 8 12 32"
 BENCH_WARMUPS=2
 BENCH_REPETITIONS=5
-cores_to_run=(1 4 8 12 32)
 methods_to_run=(cfdnalab cfdnapro finaletoolkit)
 benchmark_schedule
 '''
-        result = subprocess.run(["bash", "-euc", script], env={**os.environ, "BENCH_COMMON": str(BENCHMARKS / "common.sh")}, capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        rows = list(csv.reader(result.stdout.splitlines(), delimiter="\t"))
-        self.assertEqual(len(rows), 63)  # 35 + 14 + 14
-        self.assertEqual([row[0] for row in rows], ["cfdnalab"] * 35 + ["cfdnapro"] * 14 + ["finaletoolkit"] * 14)
-        self.assertEqual(sum(row[3] == "true" for row in rows), 18)
-        self.assertEqual({row[1] for row in rows[35:]}, {"1", "32"})
+        for cores in (1, 4, 12, 32):
+            with self.subTest(cores=cores):
+                result = subprocess.run(["bash", "-euc", script], env={
+                    **os.environ, "BENCH_COMMON": str(BENCHMARKS / "common.sh"),
+                    "BENCH_CORES": str(cores), "BENCH_PILOT": "0", "BENCH_EXPECTED_NODE": "",
+                    "BENCH_SETUP_PYTHON": sys.executable,
+                }, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                rows = list(csv.reader(result.stdout.splitlines(), delimiter="\t"))
+                # Three selected methods each get two warmups and five measurements
+                self.assertEqual(len(rows), 21)
+                self.assertEqual([row[0] for row in rows], ["cfdnalab"] * 7 + ["cfdnapro"] * 7 + ["finaletoolkit"] * 7)
+                self.assertEqual(sum(row[3] == "true" for row in rows), 6)
+                self.assertEqual({row[1] for row in rows}, {str(cores)})
+
+    def test_multiple_core_settings_are_rejected_for_a_single_job(self):
+        result = subprocess.run(["bash", "-euc", 'source "$BENCH_COMMON"; benchmark_controls'], env={
+            **os.environ, "BENCH_COMMON": str(BENCHMARKS / "common.sh"), "BENCH_CORES": "1 4",
+            "BENCH_PILOT": "0", "BENCH_EXPECTED_NODE": "", "BENCH_SETUP_PYTHON": sys.executable,
+        }, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("single positive core count", result.stderr)
 
     def test_picard_accepts_only_expected_status_and_version(self):
         with tempfile.TemporaryDirectory() as temporary:

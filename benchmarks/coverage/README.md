@@ -41,21 +41,25 @@ Full compressed cfDNAlab/mosdepth tracks are preserved after the first measured 
 
 The comparator requires equal declared scope unless `--common-scope` explicitly allows intersection. Every result records evaluated chromosomes and whether the original scopes match. A missing chromosome in a sparse cfDNAlab track means zero only when declared in its processed scope. Other formats must contain complete runs/positions for every declared contig, so truncated files fail. Runs must be sorted within each contiguous chromosome block, non-overlapping, in bounds and finite/nonnegative. Temporary coalesced run files reconcile arbitrary contig order without allocating per-base arrays. Set `TMPDIR` to suitable scratch for this untimed comparison. zstd reads all concatenated frames.
 
-Base metrics are weighted by genomic bases: identical fraction, MAE/RMSE, mean signed difference and fractions with cfDNAlab/left values above or below the other profile. Nonzero-union metrics exclude bases where both are zero. The 10 kb Pearson correlation uses integrated mean depth, with the actual width of each shorter final bin and equal weight per bin. Constant-profile correlations and empty-union metrics are `NA`. Read-depth and fragment-coverage tracks are not pooled.
+The primary similarity measure is **base-resolution MAE**: `sum(abs(left_depth - right_depth)) / evaluated_bases`, summing over individual bases in the evaluated scope, including shared zeros. This is the average absolute depth difference per base, without binning or normalization. Constant runs are weighted by their genomic lengths, so bedGraph segmentation does not change the result.
+
+RMSE, identical fraction, mean signed difference and fractions with cfDNAlab/left values above or below the other profile are secondary diagnostics. Nonzero-union metrics exclude bases where both are zero. The secondary `pearson_r_1bp` correlates individual-base depths using genomic run lengths as weights, without binning. Constant-profile correlations and empty-union metrics are `NA`. Read-depth and fragment-coverage tracks are not pooled.
+
+Every comparison saves the full residual distribution to `residuals.tsv` beside `profiles/`, replacing that generated file on reruns. It contains profile pair, quantity, scope, residual `left - right`, `bases` and `fraction_of_bases` for all supported per-base pairs. Rows are sorted by residual within each pair and include zero residuals. Counts are weighted by genomic bases and fractions divide by all evaluated bases, matching the primary MAE's scope. Bounded batches merge into temporary SQLite storage under `TMPDIR`. This provides the values for a residual histogram without expanding tracks into arrays. Regional counts remain separate and produce no residual-distribution rows.
 
 Regional comparison requires the exact unique chromosome/start/end rows in the shared `regions.bed`. It reports totals, total ratio, net difference, MAE/RMSE, identical fraction and correlation. Summed regional counts are **not unique-fragment totals**, because a boundary-crossing fragment can count in adjacent windows.
 
 ## Production measurements
 
-Use `BENCH_PILOT=1` on the actual production method/core matrix to estimate all work, splitting pilots when necessary. Then set `BENCH_PILOT=0`, two warmups and five measurements, and submit method/core blocks with pilot-based budgets on the same physical node. See [shared run controls and Slurm memory](../README.md#runs-and-budgets). `BENCH_MIN_MAPQ`, `BENCH_MIN_LENGTH` and `BENCH_MAX_LENGTH` override the filters. The timing TSV records applied/unsupported length filtering, proper-pair selection and scope.
+Use `BENCH_PILOT=1` on the actual production method/core matrix to estimate all work, splitting pilots when necessary. Then set `BENCH_PILOT=0`, two warmups and five measurements, and submit core/method blocks that fit the allocation limit on matched hardware. Prefer the same physical node when available. See [shared run controls and Slurm memory](../README.md#runs-and-budgets). `BENCH_MIN_MAPQ`, `BENCH_MIN_LENGTH` and `BENCH_MAX_LENGTH` override the filters. The timing TSV records applied/unsupported length filtering, proper-pair selection and scope.
 
 Keep process-plus-filesystem-flush time, output bytes and the joined Slurm peak alongside process time and GNU time RSS. Native positional output costs stay in the comparison. Include sample size, SD and median/quartiles and retain all measured points. No timings or real-input concordance values have been measured here.
 
-| Comparison | Scope | Identical bases | MAE / RMSE | Nonzero-union MAE | Pearson r, 10 kb |
-| --- | --- | --- | --- | --- | --- |
-| Fragment/proper vs mosdepth fragment | [ ] | [ ] | [ ] / [ ] | [ ] | [ ] |
-| Native fragment vs mosdepth fragment | [ ] | [ ] | [ ] / [ ] | [ ] | [ ] |
-| Paired read depth vs mosdepth | [ ] | [ ] | [ ] / [ ] | [ ] | [ ] |
-| Paired read depth vs samtools / PanDepth | [ ] | [ ] | [ ] / [ ] | [ ] | [ ] |
+| Comparison | Scope | MAE, 1 bp (primary) | RMSE, 1 bp | Identical bases | Nonzero-union MAE | Pearson r, 1 bp |
+| --- | --- | --- | --- | --- | --- | --- |
+| Fragment/proper vs mosdepth fragment | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] |
+| Native fragment vs mosdepth fragment | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] |
+| Paired read depth vs mosdepth | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] |
+| Paired read depth vs samtools / PanDepth | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] |
 
 Report regional counts in a separate table and label native/proper diagnostics separately. Only configurations actually timed can support a corresponding speed comparison.

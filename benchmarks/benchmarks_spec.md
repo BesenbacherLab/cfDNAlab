@@ -104,13 +104,12 @@ Submit from the repository root so `SLURM_SUBMIT_DIR` locates helpers. Nodes nee
 | `BENCH_LOCAL_ROOT` | Required existing node-local scratch root |
 | `BENCH_RESULTS` | Required new results directory |
 | `BENCH_METHODS` | Feature-specific space-separated method labels |
-| `BENCH_CORES` | `1 4 8 12 32` |
+| `BENCH_CORES` | Required single positive core count per job. Planned settings: 1, 4, 12, 32 in separate jobs |
 | `BENCH_WARMUPS` | **2** per scheduled method/core |
 | `BENCH_REPETITIONS` | **5 measured** per scheduled method/core |
 | `BENCH_PILOT` | `0`, or `1` to use zero warmups and one measurement |
 | `BENCH_SETUP_PYTHON` | `python3`, untimed setup/relocation only |
 | `BENCH_EXPECTED_NODE` | Optional exact hostname check before staging |
-| `BENCH_SERIAL_ENDPOINTS` | `1` restricts cfDNAPro/FinaleToolkit lengths to selected 1/32-core endpoints. `0` uses all selected budgets |
 | `BENCH_MIN_MAPQ` | 30 |
 | `BENCH_MIN_LENGTH`, `BENCH_MAX_LENGTH` | Inclusive 30-1000 bp, midpoint defaults 100-200 bp |
 | `BENCH_K` | Ends only, 4 with 3 also accepted |
@@ -119,7 +118,7 @@ Submit from the repository root so `SLURM_SUBMIT_DIR` locates helpers. Nodes nee
 | `BENCH_CAPTURE_CHROMOSOMES` | Override for saved coverage subset |
 | `BENCH_INSTALL_MANIFEST`, `BENCH_CFDNA_BUILD` | Optional records copied beside results |
 
-Methods/cores must be nonempty. Core budgets must fit the allocation. Integer filters and repetitions are validated, measured repetitions must be positive, MAPQ is within 0-255, and fragment bounds satisfy `10 <= min <= max <= 50000`.
+Methods must be nonempty. Exactly one positive core count is required and must fit the allocation. Integer filters and repetitions are validated, measured repetitions must be positive, MAPQ is within 0-255, and fragment bounds satisfy `10 <= min <= max <= 50000`.
 
 All runners use the samtools archive for header preparation and setup Python for relocation. Competitor environments and references are required only by selected methods using them. Apptainer is required only for cfDNAPro. Staged native executables are checked with `ldd`, allowing static binaries and rejecting missing shared libraries. Font availability still requires a real small-input run.
 
@@ -127,15 +126,15 @@ All runners use the samtools archive for header preparation and setup Python for
 
 Jobs request one exclusive node, one task, 32 CPUs per task, one hardware thread per core, all node memory and no requeue. Partition, node selector and wall time are submission choices. There is no universal production wall-time allocation.
 
-Each method runs as a contiguous block. Its warmup repetitions precede measurements. Core budgets shuffle within each repetition, with actual order retained in the timing TSV. Production repetitions 1-2 are warmups and 3-7 are measured.
+Each job uses exactly one core setting. Every selected method runs as a contiguous block at that setting. Its warmup repetitions precede measurements, with actual order retained in the timing TSV. Production repetitions 1-2 are warmups and 3-7 are measured.
 
-cfDNAPro and FinaleToolkit lengths use requested 1/32-core endpoints unless `BENCH_SERIAL_ENDPOINTS=0`. Selecting neither endpoint fails. Picard keeps the full requested matrix because its timed pipeline includes samtools and the JVM.
+No method is automatically excluded. cfDNAPro and FinaleToolkit lengths are initially compared at 1 and 4 cores in separate jobs. Higher-core runs are deferred until those results are inspected. If no consistent benefit is observed, stop higher-core measurements for this workload. If a benefit is observed, add 12/32-core jobs. Choose the method list explicitly for each job. Picard's timed pipeline includes samtools and the JVM, whose resource use must be measured.
 
 Sequential single-task `srun` calls attach to the existing allocation with exact resources and thread binding. Inside each step, hostname and logical/physical CPU counts must match the expected node and core budget. Affinity and socket:core IDs are recorded. Hard confinement and descendant accounting depend on cluster configuration.
 
 Inputs/environments are staged once before warmups. Packed environments are relocated with `conda-unpack` through setup Python. Host caches are not explicitly evicted. Coverage, ends and midpoints limit numerical libraries to a thread, while lengths allows them the allocated budget. Native worker/thread settings remain distinct from allocated cores.
 
-Oversized series are split explicitly by method/core and submitted with `--nodelist` and `BENCH_EXPECTED_NODE` to retain the same physical node. Each block includes its own warmups. Scripts do not coordinate multiple jobs.
+Series use separate jobs per core setting, with feature/method blocks to fit a 24-hour allocation limit. Every method/core keeps its own warmups and measured repetitions. Prefer the same physical node using `--nodelist` and `BENCH_EXPECTED_NODE` when available. Otherwise use matched hardware and retain node identity, acknowledging variation between nodes in cross-core comparisons. Scripts do not coordinate multiple jobs. The [run budgets](README.md#runs-and-budgets) give explicit scaling assumptions and separate per-core estimates.
 
 ## Measurement and failures
 
@@ -161,7 +160,7 @@ Native, placement, expected-output or flush failure stops the job after saving a
 
 `timings.tsv` is written incrementally and keeps warmups, pilots and failures. `run.tsv` records feature, node, requested methods/cores, repetitions, benchmark commit/dirty flag and input paths. Optional installation/build TSVs are copied beside it. Available Slurm configuration is captured once per job, with diagnostics and a warning if unavailable.
 
-One native output per method is preserved from the first measured repetition at the first requested capture core budget. Endpoint-restricted lengths uses the first selected endpoint. Copying happens after `srun`, outside tool-step memory accounting. Other temporary outputs are removed. FrEIA profiles are never preserved for concordance.
+One native output per method is preserved from the first measured repetition at the job's core setting. Copying happens after `srun`, outside tool-step memory accounting. Other temporary outputs are removed. FrEIA profiles are never preserved for concordance.
 
 Coverage keeps full compressed cfDNAlab/mosdepth tracks. Saved samtools/PanDepth positions cover chr21/chr22 or 21/22, falling back to the first BAM contig when absent. `BENCH_CAPTURE_CHROMOSOMES` overrides the comma-separated subset and unknown requested names fail. Full native output is still generated inside timing. Subset extraction/recompression occurs afterward. Each coverage profile has its processed `chrom.sizes`, and regional outputs share saved `regions.bed`.
 
@@ -183,7 +182,7 @@ Per configuration, process-plus-flush time, process/flush separately, Slurm/GNU 
 
 `--estimate` summarizes successful measured pilot rows and defaults to two planned warmups, five planned measurements and a 25% margin. It sums observed configuration mean process-plus-flush times and multiplies by seven. Staging/cleanup are added separately. An attempted method/core without a successful measured pilot row causes an incomplete-budget error. Absent configurations cannot be estimated.
 
-At working estimates of 12 minutes for cfDNAlab and 120 minutes for a comparator, those two methods at one core alone require **15 h 24 min** for seven invocations each, or **19 h 15 min** with margin. Other methods/core budgets add work. A serial 120-minute comparator at both 1 and 32 cores requires 28 hours before margin.
+At working estimates of 12 minutes for cfDNAlab and 120 minutes for a comparator, those two methods at one core alone require **15 h 24 min** for seven invocations each, or **19 h 15 min** with margin. Other methods/core budgets add work. A serial 120-minute comparator needs 14 hours raw or 17 h 30 min with margin for each initial 1/4-core job. Those are separate allocations.
 
 ## Verification boundary
 

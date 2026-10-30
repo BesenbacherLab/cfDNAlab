@@ -84,9 +84,9 @@ The cfDNAlab run labels select these configurations. They are not additional com
 For timing, choose the tool calls and cfDNAlab configuration supported by the concordance pilot. For example:
 
 ```bash
-export BENCH_RESULTS=/path/to/end-motif-timing
+export BENCH_RESULTS=/path/to/end-motif-timing-4cores
 export BENCH_K=4
-export BENCH_CORES="1 4 8 12 32"
+export BENCH_CORES=4
 export BENCH_PILOT=0
 export BENCH_WARMUPS=2
 export BENCH_REPETITIONS=5
@@ -94,9 +94,9 @@ export BENCH_METHODS="cfdnalab-reference cfdnalab-reference-proper finaletoolkit
 sbatch --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET benchmarks/ends/benchmark_end_motifs.sh
 ```
 
-Set wall time from the full-matrix pilot. Split long blocks and pin sequential jobs to the same physical node as described in [the shared run controls](../README.md#runs-and-budgets). The runner stages input copies and environments locally, reserves an exclusive node and all its memory, and uses sequential `srun --jobid` steps with the requested binding. It records the actual hostname and logical/physical CPU IDs and rejects unexpected placement. Hard CPU confinement also depends on the cluster's Slurm cgroup configuration. Source files are not modified and no sample is downloaded.
+Set wall time from the full-matrix pilot. Split by core budget and then by method as needed to fit the allocation limit, using matched hardware as described in [the shared run controls](../README.md#runs-and-budgets). The runner stages input copies and environments locally, reserves an exclusive node and all its memory, and uses sequential `srun --jobid` steps with the requested binding. It records the actual hostname and logical/physical CPU IDs and rejects unexpected placement. Hard CPU confinement also depends on the cluster's Slurm cgroup configuration. Source files are not modified and no sample is downloaded.
 
-Methods run in contiguous blocks with warmups before measurements. Core budgets shuffle within each repetition. All runs, including warmups, remain in `timings.tsv`. Native command startup, internal reference staging, counting and native output writing are timed. Scheduler startup, input staging, profile preservation and cleanup are outside the timer. No cache eviction is performed. One native profile per run label is retained from the first measured repetition at the capture core budget. Other temporary outputs and logs are removed. Failed tool messages go to the Slurm log, and a failed timing row is retained before stopping.
+Submit separate jobs for the other core settings, each with a new results directory. Methods run in contiguous blocks with warmups before measurements at the job's single core count. All runs, including warmups, remain in `timings.tsv`. Native command startup, internal reference staging, counting and native output writing are timed. Scheduler startup, input staging, profile preservation and cleanup are outside the timer. No cache eviction is performed. One native profile per run label is retained from the first measured repetition. Other temporary outputs and logs are removed. Failed tool messages go to the Slurm log, and a failed timing row is retained before stopping.
 
 The comparator reports Pearson/Spearman r, maximum absolute log2 ratio for motifs reaching frequency >=1e-4 in either profile (infinite when the other is zero), frequency MAE/RMSE, maximum absolute difference, total variation distance and normalized Shannon MDS differences. Native counted-end totals are included when available. FinaleToolkit's global files only contain frequencies, so their raw totals are unavailable. Metrics use all `4^k` motifs, including zeros. All pairwise rows are written. Interpret deliberately different scopes and configurations using the tables above. Frequencies use fractions, not percentages.
 
@@ -111,10 +111,10 @@ All rows request all contigs, MAPQ >=30 and inclusive lengths 30-1000 bp, with t
 
 | Tool / configuration | Cores | Warmups / measured | Mean process+flush, s | SD seconds | Slurm peak, KiB | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| cfDNAlab reference/native | 1 / 4 / 8 / 12 / 32 | 2 / 5 each | [ ] | [ ] | [ ] | 4-mers, normal pairing. |
-| cfDNAlab reference/proper | 1 / 4 / 8 / 12 / 32 | 2 / 5 each | [ ] | [ ] | [ ] | 4-mers, flag 0x2 required. |
-| FinaleToolkit 1.1.0 | 1 / 4 / 8 / 12 / 32 | 2 / 5 each | [ ] | [ ] | [ ] | 4-mers, length bounds ignored. |
-| FrEIA | 1 / 4 / 8 / 12 / 32 | 2 / 5 each | [ ] | [ ] | [ ] | Timing only, incorrect native aggregate. 3-mers, full BAM-to-profile workflow. Extraction forced serial above 8000 MiB. |
+| cfDNAlab reference/native | 1 / 4 / 12 / 32, separate jobs | 2 / 5 each | [ ] | [ ] | [ ] | 4-mers, normal pairing. |
+| cfDNAlab reference/proper | 1 / 4 / 12 / 32, separate jobs | 2 / 5 each | [ ] | [ ] | [ ] | 4-mers, flag 0x2 required. |
+| FinaleToolkit 1.1.0 | 1 / 4 / 12 / 32, separate jobs | 2 / 5 each | [ ] | [ ] | [ ] | 4-mers, length bounds ignored. |
+| FrEIA | 1 / 4 / 12 / 32, separate jobs | 2 / 5 each | [ ] | [ ] | [ ] | Timing only, incorrect native aggregate. 3-mers, full BAM-to-profile workflow. Extraction forced serial above 8000 MiB. |
 
 Expand timing rows to a core budget per row for the final A4 supplementary table. Keep long notes below the table if needed. GNU time's maximum RSS is not the simultaneous total memory of a multiprocessing tree. Retain the native CLI versions and dependency environment archives with the benchmark record.
 

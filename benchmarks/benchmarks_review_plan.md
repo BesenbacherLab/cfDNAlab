@@ -1,16 +1,14 @@
 # Remaining benchmark work
 
-Implemented behavior is specified in [benchmarks_spec.md](benchmarks_spec.md) and [benchmarks_concordance_spec.md](benchmarks_concordance_spec.md). This plan retains only unfinished implementation, verification and experimental work. Review history remains in [claude_review.md](claude_review.md).
+Implemented behavior is specified in [benchmarks_spec.md](benchmarks_spec.md) and [benchmarks_concordance_spec.md](benchmarks_concordance_spec.md). This plan retains only unfinished implementation, verification and experimental work.
 
 Production defaults are **two warmups and five measured repetitions**. FrEIA is excluded from concordance. Midpoint sites are supplied by the user. Do not restore site generation or regenerate the existing remapped BAM to obtain extra preparation statistics.
 
-## Unimplemented comparison output
-
-- [ ] Add the full base-weighted signed coverage-difference distribution requested by the original plan. The current comparator gives the signed mean and below/equal/above fractions, which do not describe the full distribution of difference magnitudes. Keep memory bounded and label the evaluated scope.
+Coverage comparisons use the already implemented base-resolution MAE as the primary similarity measure. Signed mean, RMSE, identical fraction, base-resolution Pearson and the residual distribution are implemented secondary diagnostics. Per-base comparisons do not use genomic binning.
 
 ## Planned regression fixtures still to prepare
 
-The existing [fixture file](tests/test_benchmarks.py) covers native coverage formats, base weighting, contig order, concatenated zstd frames, incomplete/invalid tracks, regional coordinate identity, scope intersection, timing summaries, Slurm joins, serial endpoints, Picard version status, failed installer retries, reconstructed TLEN/flags and FrEIA exclusion. It has not been executed during implementation.
+The existing [fixture file](tests/test_benchmarks.py) covers native coverage formats, base weighting, residual distributions including disk batches, base-resolution Pearson, contig order, concatenated zstd frames, incomplete/invalid tracks, regional coordinate identity, scope intersection, timing summaries, Slurm joins, single-core-setting jobs without automatic tool exclusions, Picard version status, failed installer retries, reconstructed TLEN/flags and FrEIA exclusion. It has not been executed during implementation.
 
 These cases from the original plan are not fully represented in those fixtures:
 
@@ -41,7 +39,7 @@ Fragment fixtures must be at least 10 bp. Fixtures using normal filters must res
 - [ ] Record the user's midpoint BED identity/checksum and provenance without changing its coordinates, groups, strands, site count or selection.
 - [ ] Run native/proper-pair and wide-bound concordance on the actual remap. Measure filtered count effects from outputs rather than reusing the original BAM's sampled non-proper percentage. Keep biological differences/scopes explicit.
 - [ ] Pilot cfDNAPro progressively from about 0.1x to choose a physical node with demonstrated headroom for all methods. Run full-input method/core pilots, splitting when necessary, and establish scratch capacity/filesystem behavior.
-- [ ] Budget the full matrix with two warmups plus five measurements, margin and staging/cleanup. Pin production blocks to the same node and retain resource failures as outcomes.
+- [ ] Replace the illustrative [scaling scenarios](README.md#runs-and-budgets) with full-input pilot budgets, including two warmups plus five measurements, margin and staging/preservation/cleanup. Use separate jobs for 1, 4, 12 and 32 cores, splitting methods further as needed to fit 24 hours. Compare cfDNAPro and FinaleToolkit lengths at 1 versus 4 cores before deciding on higher-core measurements. Use matched hardware, preferring the same physical node when available, and retain resource failures as outcomes.
 - [ ] Collect production timings, completed accounting, retained profiles and measured points. Fill supplementary tables with sample sizes, mean/SD, median/quartiles, memory policy and workload notes. No final timing, capacity or concordance conclusion has been measured here.
 
 ## Optional later scope, still deferred

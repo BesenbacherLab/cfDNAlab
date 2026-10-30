@@ -57,20 +57,33 @@ Scopes must match unless `--common-scope` explicitly selects their contig inters
 
 ### Per-base metrics
 
+The primary coverage similarity measure is **base-resolution MAE**: the sum of absolute depth differences at individual bases divided by the number of evaluated bases. Include bases where both profiles are zero. It is the average absolute depth difference per base, without binning or normalization. Zero means identical coverage throughout the evaluated scope. Weighting constant-run differences by their genomic lengths gives the same result as evaluating every base separately.
+
+RMSE, signed mean, identical fraction, nonzero-union metrics, base-resolution Pearson and the residual distribution are secondary diagnostics. All per-base metrics use individual bases without genomic binning.
+
 Segment weights are genomic lengths and signed differences are left minus right:
 
 | Fields | Meaning |
 | --- | --- |
+| `mae` | **Primary:** base-resolution mean absolute depth difference |
 | `bases`, `fraction_identical` | Evaluated bases and exact equal-depth fraction |
-| `mae`, `rmse` | Base-weighted absolute error and root mean squared error |
+| `rmse` | Base-resolution root mean squared depth difference |
 | `mean_signed_difference` | Base-weighted mean left minus right |
 | `fraction_left_below`, `fraction_left_above` | Base fractions with negative/positive differences |
 | `left_integrated_depth`, `right_integrated_depth` | Sum of depth times segment length |
 | `nonzero_union_bases` | Bases with either depth nonzero |
 | `union_fraction_identical`, `union_mae`, `union_rmse` | Nonzero-union metrics, `NA` for empty union |
-| `bins_10kb`, `pearson_r_10kb` | Number and correlation of 10 kb mean-depth bins |
+| `pearson_r_1bp` | Pearson correlation of individual-base depths |
 
-Bins start at contig zero. Short final bins divide by their actual width. Correlation weights bins equally, uses online covariance/variance and is `NA` for constant profiles. Tile-split equal runs do not create errors. Signed-difference output currently contains mean/sign fractions, not a complete difference histogram.
+Pearson uses online covariance/variance weighted by genomic run lengths. This equals correlation over individual bases without expanding genomic arrays. Constant profiles have `NA` correlation, including equal zero profiles. Tile-split equal runs do not create errors.
+
+### Residual distribution
+
+Every comparison writes `residuals.tsv` beside the supplied `profiles/` directory, replacing that generated file on reruns. It contains one row per observed residual `left - right` for every supported per-base pair, sorted numerically within each pair. It includes zero residuals and preserves fractional values. Columns are `left_profile`, `right_profile`, `quantity`, `same_native_scope`, `chromosomes`, `residual`, `bases`, `fraction_of_bases`.
+
+`bases` counts genomic bases with that residual, not runs. `fraction_of_bases` divides by all evaluated bases for that pair, including shared zeros. Counts sum to the summary's `bases`, and the distribution's base-weighted mean absolute residual equals the primary MAE. Scope and quantity match the corresponding summary row. Regional fragment counts are not included in this distribution.
+
+Aggregation buffers at most 4096 distinct residual values before merging them into a temporary SQLite table. The database has a 2 MiB cache budget, resides under comparison scratch selected by `TMPDIR`, and is removed on exit. This bounds memory without binning or discarding residuals. The TSV can be used to plot a base-weighted residual histogram. Plot generation is separate from comparison.
 
 ### Regional metrics
 
