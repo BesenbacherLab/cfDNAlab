@@ -1,5 +1,7 @@
 # Benchmarks
 
+Specifications cover [installation and execution](benchmarks_spec.md) and [methods and concordance](benchmarks_concordance_spec.md). The [remaining plan](benchmarks_review_plan.md) lists unfinished implementation and verification. All benchmark plans and specs live in this directory.
+
 ## Installation
 
 Run `bash benchmarks/install_tools.sh /path/to/benchmark-tools` on Linux x86_64 with Bash 4 or later, using a dedicated directory. Conda environments go under `envs/`. Standalone binaries, source checkouts, packed archives and the container image stay at the installation root. The script prints the paths needed by the benchmark runners. Conda, Apptainer, Git, wget and tar must already be available. Building cfDNAlab also needs GNU make and C/C++ compilers.
