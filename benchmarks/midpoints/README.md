@@ -47,6 +47,7 @@ export BENCH_LOCAL_ROOT=/path/to/node-local-scratch
 export BENCH_RESULTS=/path/to/midpoint-pilot
 export BENCH_CORES="1"
 export BENCH_PILOT=1
+export BENCH_METHODS="cfdnalab griffin"
 sbatch --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET benchmarks/midpoints/benchmark_midpoints.sh
 
 # After the job finishes, write a row per group with agreement metrics
@@ -67,7 +68,7 @@ Set the generation selector and wall time from the cluster settings and full-mat
 
 The runner reserves an exclusive node and all its memory. Sequential `srun --jobid` steps use that allocation and check their actual node and allowed logical/physical CPU IDs. Hard confinement also depends on Slurm's cgroup setup. All inputs and Griffin's environment are staged on local scratch before warmups. Methods run in contiguous blocks with warmups before measurements at the job's single core count. Submit separate jobs and results directories for the other core settings. No caches are evicted. Both tools use exactly the chromosomes present in the supplied site set, while the BAM retains its other chromosomes and records.
 
-The only timing result is `timings.tsv`, with a row for every run, including warmups and failures. Native profiles are also retained under `profiles/cfdnalab/` and `profiles/griffin/` from the first measured repetition at the capture core budget. Other temporary files and logs are deleted. Errors are printed to the Slurm log. Source files are not modified or downloaded.
+The only timing result is `timings.tsv`, with a row for every attempted run, including warmups and failures. Native profiles are also retained under `profiles/cfdnalab/` and `profiles/griffin/` from the first measured repetition at the job's single core count. Other temporary files and logs are deleted. Failed diagnostics are retained, the remaining repetitions of that method are skipped and other selected methods continue. The job exits nonzero after those methods finish. See the [shared failure and timeout behavior](../README.md#timing-and-slurm-memory). Source files are not modified or downloaded.
 
 Timing includes native startup, counting, output writing and Griffin's bigWig-to-profile aggregation. cfDNAlab's native default QC plot also remains timed. Input staging, scheduler startup, profile preservation, cleanup and concordance calculations are outside the timer. GNU time's maximum RSS is not the simultaneous total memory of a multiprocessing tree.
 
@@ -87,8 +88,8 @@ Expected differences: even-length midpoint choices, actual paired spans versus T
 
 | Tool | Cores | Warmups / measured | Mean process+flush, s | SD seconds | Slurm peak, KiB |
 | --- | --- | --- | --- | --- | --- |
-| cfDNAlab | 1 / 4 / 8 / 12 / 32 | 2 / 5 each | [ ] | [ ] | [ ] |
-| Griffin v0.2.0 | 1 / 4 / 8 / 12 / 32 | 2 / 5 each | [ ] | [ ] | [ ] |
+| cfDNAlab | 1 / 4 / 12 / 32, separate jobs | 2 / 5 each | [ ] | [ ] | [ ] |
+| Griffin v0.2.0 | 1 / 4 / 12 / 32, separate jobs | 2 / 5 each | [ ] | [ ] | [ ] |
 
 Expand the timing rows to a core budget per row for the final A4 supplement. Report the shared site set, groups, window width, 1 bp resolution and 100-200 bp length range alongside the table, and place the workload notes below it.
 

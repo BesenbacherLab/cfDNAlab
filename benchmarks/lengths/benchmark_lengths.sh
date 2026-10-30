@@ -26,24 +26,23 @@ BENCH_INDEX=${BENCH_INDEX:-${BENCH_BAM}.bai}
 : "${BENCH_CORES:?Set a single core budget for this job: 1, 4, 12 or 32}"
 BENCH_WARMUPS=${BENCH_WARMUPS:-2}
 BENCH_REPETITIONS=${BENCH_REPETITIONS:-5}
-BENCH_METHODS=${BENCH_METHODS:-cfdnalab cfdnalab-autosomes cfdnapro finaletoolkit samtools picard}
+: "${BENCH_METHODS:?Set the methods for this job explicitly in BENCH_METHODS}"
 export BENCH_MIN_MAPQ=${BENCH_MIN_MAPQ:-30}
 export BENCH_MIN_LENGTH=${BENCH_MIN_LENGTH:-30}
 export BENCH_MAX_LENGTH=${BENCH_MAX_LENGTH:-1000}
 export BENCH_GENOME=${BENCH_GENOME:-hg38}
 
 benchmark_controls
-read -r -a cores_to_run <<< "$BENCH_CORES"
 read -r -a methods_to_run <<< "$BENCH_METHODS"
 if [[ ${SLURM_JOB_NUM_NODES:-${SLURM_NNODES:-0}} != 1 || -e "$BENCH_RESULTS" ]]; then
     echo "Use a single-node allocation and a new results directory." >&2
     exit 1
 fi
-if [[ "$BENCH_INDEX" != *.bai || ${#cores_to_run[@]} == 0 || ${#methods_to_run[@]} == 0 ]]; then
+if [[ "$BENCH_INDEX" != *.bai || ${#methods_to_run[@]} == 0 ]]; then
     echo "Supply a BAI index, at least a method and at least a core budget." >&2
     exit 1
 fi
-for value in "$BENCH_WARMUPS" "$BENCH_REPETITIONS" "$BENCH_MIN_MAPQ" "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH" "${cores_to_run[@]}"; do
+for value in "$BENCH_WARMUPS" "$BENCH_REPETITIONS" "$BENCH_MIN_MAPQ" "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH"; do
     if [[ ! "$value" =~ ^(0|[1-9][0-9]*)$ ]]; then
         echo "Core counts, repetitions and filters must be integers: $value" >&2
         exit 1
@@ -53,12 +52,10 @@ if ((BENCH_REPETITIONS < 1 || BENCH_MIN_MAPQ > 255 || BENCH_MIN_LENGTH < 10 || B
     echo "Use MAPQ 0-255, lengths within 10-50000 bp, and at least a measured repetition." >&2
     exit 1
 fi
-for cores in "${cores_to_run[@]}"; do
-    if ((cores < 1 || cores > ${SLURM_CPUS_PER_TASK:-0})); then
-        echo "Core budget $cores is outside this job's CPUs per task." >&2
-        exit 1
-    fi
-done
+if ((BENCH_CORES > ${SLURM_CPUS_PER_TASK:-0})); then
+    echo "Core budget $BENCH_CORES exceeds allocated CPUs: ${SLURM_CPUS_PER_TASK:-0}" >&2
+    exit 1
+fi
 for method in "${methods_to_run[@]}"; do
     case "$method" in
         cfdnalab|cfdnalab-autosomes|cfdnalab-proper|cfdnapro|cfdnapro-outer-span|finaletoolkit|samtools|picard) ;;
@@ -86,12 +83,11 @@ if [[ "$run_picard" == true ]]; then : "${BENCH_PICARD_ARCHIVE:?Set the packed P
 
 # sbatch runs a spool copy of this script. Submit from the repository root so
 # the R helper can be staged from SLURM_SUBMIT_DIR
-export BENCH_WORK BENCH_NODE BENCH_RESULTS BENCH_AUTOSOMES BENCH_CAPTURE_CORES BENCH_APPTAINER
+export BENCH_WORK BENCH_NODE BENCH_RESULTS BENCH_AUTOSOMES BENCH_APPTAINER
 export BENCH_CFDNA_VERSION BENCH_CFDNAPRO_VERSION BENCH_FINALE_VERSION BENCH_SAMTOOLS_VERSION BENCH_PICARD_VERSION
 BENCH_WORK=$(mktemp -d "$BENCH_LOCAL_ROOT/lengths-${SLURM_JOB_ID}.XXXXXX")
 trap 'rm -rf "$BENCH_WORK"' EXIT
 BENCH_NODE=$(hostname)
-BENCH_CAPTURE_CORES=${cores_to_run[0]}
 if [[ "$run_cfdnapro" == true ]]; then
     BENCH_APPTAINER=$(command -v apptainer) || { echo "cfDNAPro requires Apptainer." >&2; exit 1; }
 fi
@@ -141,10 +137,13 @@ benchmark_record_setup
 benchmark_schedule > "$BENCH_WORK/order.tsv"
 if [[ ! -s "$BENCH_WORK/order.tsv" ]]; then echo "The requested run matrix is empty." >&2; exit 1; fi
 run_order=0
+job_exit_code=0
+failed_method=
 while IFS=$'\t' read -r method cores repetition is_warmup; do
+    if [[ "$method" == "$failed_method" ]]; then continue; fi
     run_order=$((run_order + 1))
     step_exit_code=0
-    rm -f "$BENCH_WORK/time.tsv" "$BENCH_WORK/io.tsv" "$BENCH_WORK/profile.path" "$BENCH_WORK/step.id"
+    rm -f "$BENCH_WORK/time.tsv" "$BENCH_WORK/io.tsv" "$BENCH_WORK/profile.path" "$BENCH_WORK/step.id" "$BENCH_WORK/stdout.path"
 
     # Each step attaches to this existing single-node allocation
     # Check its actual node and CPU mask below. Hard confinement also depends
@@ -315,4 +314,12 @@ STEP
         (IFS=$'\t'; printf '%s\n' "${fallback[*]}") > "$BENCH_WORK/time.tsv"
     fi
     benchmark_finish_run "$method" "$cores" "$repetition" "$is_warmup" "$step_exit_code"
+    if ((step_exit_code != 0)); then
+        failed_method=$method
+        job_exit_code=1
+        echo "Skipping remaining repetitions of $method after failure; continuing other selected methods." >&2
+    fi
 done < "$BENCH_WORK/order.tsv"
+
+# Keep successful methods usable while marking an incomplete job as failed
+exit "$job_exit_code"

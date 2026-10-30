@@ -107,8 +107,8 @@ def summarize(runs, estimate=False):
         wall = float(row["wall_seconds"])
         row["effective_cores"] = (float(row["user_seconds"]) + float(row["system_seconds"])) / wall if wall > 0 else "NA"
         groups.setdefault(key, []).append(row)
-    if not groups:
-        raise ValueError("No successful pilot rows" if estimate else "No successful measured production rows")
+    if not groups and not estimate:
+        raise ValueError("No successful measured production rows")
     columns = setting_columns + [f"{metric}_{statistic}" for metric in measurements
                                  for statistic in ("n", "mean", "sd", "median", "q1", "q3")]
     output_rows = []
@@ -120,7 +120,32 @@ def summarize(runs, estimate=False):
                 raise ValueError(f"Invalid {metric} measurement")
             result.update(zip((f"{metric}_{statistic}" for statistic in ("n", "mean", "sd", "median", "q1", "q3")), distribution(values)))
         output_rows.append(result)
-    return columns, output_rows
+    return setting_columns, columns, output_rows
+
+
+def pilot_budgets(runs, setting_columns, summaries, planned_runs, margin):
+    """Report every observed pilot configuration, keeping missing budgets unknown."""
+    summary_by_settings = {tuple(row[column] for column in setting_columns): row for row in summaries}
+    pilots = {}
+    for row in runs:
+        if row["pilot"] == "1":
+            key = tuple(row.get(column, "NA") for column in setting_columns)
+            pilots.setdefault(key, []).append(row)
+    if not pilots:
+        raise ValueError("No pilot configurations found")
+    budgets = []
+    for key, attempts in sorted(pilots.items()):
+        summary = summary_by_settings.get(key)
+        failures = sum(not successful(row) for row in attempts)
+        row = {**dict(zip(setting_columns, key)), **(summary or {})}
+        row.update({"planned_runs": planned_runs, "pilot_failures": failures,
+                    "budget_minutes": "NA", "budget_status": "incomplete"})
+        if summary is not None:
+            row["budget_minutes"] = summary["process_plus_flush_seconds_mean"] * planned_runs * (1 + margin) / 60
+            if not failures:
+                row["budget_status"] = "complete"
+        budgets.append(row)
+    return budgets
 
 
 def main():
@@ -129,7 +154,7 @@ def main():
     parser.add_argument("timings", nargs="+", type=Path)
     parser.add_argument("--accounting", type=Path, help="sacct pipe-delimited export in K units")
     parser.add_argument("--runs-output", type=Path, help="Write every original row with joined memory/status")
-    parser.add_argument("--estimate", action="store_true", help="Summarize pilots and print the total production budget")
+    parser.add_argument("--estimate", action="store_true", help="Report per-configuration pilot budgets and flag incomplete totals")
     parser.add_argument("--warmups", type=int, default=2)
     parser.add_argument("--repetitions", type=int, default=5)
     parser.add_argument("--margin", type=float, default=0.25, help="Fraction added to pilot-based budget")
@@ -137,8 +162,13 @@ def main():
     if arguments.warmups < 0 or arguments.repetitions < 1 or not math.isfinite(arguments.margin) or arguments.margin < 0:
         parser.error("Use nonnegative warmups/margin and at least one measured repetition")
     runs = read_runs(arguments.timings, read_accounting(arguments.accounting))
-    columns, rows = summarize(runs, arguments.estimate)
-    writer = csv.DictWriter(sys.stdout, fieldnames=columns, delimiter="\t", lineterminator="\n")
+    setting_columns, columns, summaries = summarize(runs, arguments.estimate)
+    rows = summaries
+    if arguments.estimate:
+        rows = pilot_budgets(runs, setting_columns, summaries,
+                             arguments.warmups + arguments.repetitions, arguments.margin)
+        columns += ["planned_runs", "pilot_failures", "budget_minutes", "budget_status"]
+    writer = csv.DictWriter(sys.stdout, fieldnames=columns, delimiter="\t", lineterminator="\n", restval="NA")
     writer.writeheader()
     writer.writerows(rows)
     if arguments.runs_output:
@@ -147,19 +177,23 @@ def main():
             writer = csv.DictWriter(destination, fieldnames=columns, delimiter="\t", lineterminator="\n", restval="NA")
             writer.writeheader()
             writer.writerows(runs)
+    incomplete_budget = False
     if arguments.estimate:
-        attempted = {(row["method"], row["cores"]) for row in runs if row["pilot"] == "1"}
-        completed = {(row["method"], row["cores"]) for row in runs
-                     if row["pilot"] == "1" and row["warmup"] == "false" and successful(row)}
-        if attempted != completed:
-            raise ValueError("The pilot has failed configurations. Its total budget is incomplete")
-        seconds = sum(row["process_plus_flush_seconds_mean"] for row in rows) * (arguments.warmups + arguments.repetitions)
+        seconds = sum(row["process_plus_flush_seconds_mean"] for row in summaries) * (arguments.warmups + arguments.repetitions)
+        for row in rows:
+            if row["budget_status"] != "complete":
+                incomplete_budget = True
+                print(f"Incomplete pilot budget: method={row['method']}, cores={row['cores']}, "
+                      f"node={row.get('node', 'NA')}, failed attempts={row['pilot_failures']}.", file=sys.stderr)
         print(f"Observed matrix: {len(rows)} configurations, {seconds / 3600:.2f} h raw, "
               f"{seconds * (1 + arguments.margin) / 3600:.2f} h with margin. Add staging/cleanup. "
               "This excludes configurations absent from the supplied pilots.", file=sys.stderr)
+        if incomplete_budget:
+            print("The total is an incomplete successful-pilot subtotal, not a full job budget.", file=sys.stderr)
     if any(row["slurm_max_rss_kib"] == "NA" for row in runs):
         print("Some Slurm memory is NA. Collect completed sacct records and rerun the join.", file=sys.stderr)
+    return 1 if incomplete_budget else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -37,6 +37,8 @@
 #   export BENCH_FINALE_ARCHIVE=/path/to/benchmark-tools/finaletoolkit.tar.gz
 #   export BENCH_LOCAL_ROOT=/path/to/node-local-scratch
 #   export BENCH_RESULTS=/faststorage/project/coverage-results
+#   export BENCH_CORES=4
+#   export BENCH_METHODS="cfdnalab mosdepth"
 #   sbatch --constraint=gen6 --exclusive --mem=0 --time=<pilot-based-budget> \
 #     benchmarks/coverage/benchmark_coverage.sh
 # Adjust the generation selector, partition, time and paths for the cluster
@@ -63,31 +65,31 @@ BENCH_INDEX=${BENCH_INDEX:-${BENCH_BAM}.bai}
 : "${BENCH_CORES:?Set a single core budget for this job: 1, 4, 12 or 32}"
 BENCH_WARMUPS=${BENCH_WARMUPS:-2}
 BENCH_REPETITIONS=${BENCH_REPETITIONS:-5}
-BENCH_METHODS=${BENCH_METHODS:-cfdnalab-fragment mosdepth-fragment cfdnalab mosdepth samtools-depth pandepth cfdnalab-region-counts finaletoolkit-coverage}
+: "${BENCH_METHODS:?Set the methods for this job explicitly in BENCH_METHODS}"
 export BENCH_MIN_MAPQ=${BENCH_MIN_MAPQ:-30}
 export BENCH_MIN_LENGTH=${BENCH_MIN_LENGTH:-30}
 export BENCH_MAX_LENGTH=${BENCH_MAX_LENGTH:-1000}
 benchmark_controls
-read -r -a cores_to_run <<< "$BENCH_CORES"
 read -r -a methods_to_run <<< "$BENCH_METHODS"
 if [[ ${SLURM_JOB_NUM_NODES:-${SLURM_NNODES:-0}} != 1 || -e "$BENCH_RESULTS" ]]; then
     echo "Use a single-node allocation and a new results directory." >&2
     exit 1
 fi
-if [[ "$BENCH_INDEX" != *.bai || ${#cores_to_run[@]} == 0 || ${#methods_to_run[@]} == 0 ]]; then
+if [[ "$BENCH_INDEX" != *.bai || ${#methods_to_run[@]} == 0 ]]; then
     echo "Supply a BAI index, at least a method and at least a core budget." >&2
     exit 1
 fi
-for value in "$BENCH_WARMUPS" "$BENCH_REPETITIONS" "$BENCH_MIN_MAPQ" "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH" "${cores_to_run[@]}"; do
+for value in "$BENCH_WARMUPS" "$BENCH_REPETITIONS" "$BENCH_MIN_MAPQ" "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH"; do
     if [[ ! "$value" =~ ^(0|[1-9][0-9]*)$ ]]; then echo "Invalid integer setting: $value" >&2; exit 1; fi
 done
 if ((BENCH_REPETITIONS < 1 || BENCH_MIN_MAPQ > 255 || BENCH_MIN_LENGTH < 10 || BENCH_MAX_LENGTH < BENCH_MIN_LENGTH || BENCH_MAX_LENGTH > 50000)); then
     echo "Use MAPQ 0-255, lengths within 10-50000 bp and at least a measured repetition." >&2
     exit 1
 fi
-for cores in "${cores_to_run[@]}"; do
-    if ((cores < 1 || cores > ${SLURM_CPUS_PER_TASK:-0})); then echo "Invalid core budget: $cores" >&2; exit 1; fi
-done
+if ((BENCH_CORES > ${SLURM_CPUS_PER_TASK:-0})); then
+    echo "Core budget $BENCH_CORES exceeds allocated CPUs: ${SLURM_CPUS_PER_TASK:-0}" >&2
+    exit 1
+fi
 for method in "${methods_to_run[@]}"; do
     case "$method" in
         cfdnalab|cfdnalab-autosomes|cfdnalab-fragment|cfdnalab-fragment-proper|mosdepth|mosdepth-fragment|samtools-depth|pandepth|cfdnalab-region-counts|cfdnalab-region-counts-proper|finaletoolkit-coverage) ;;
@@ -185,8 +187,7 @@ fi
 if [[ ! -s "$BENCH_WORK/capture.chrom.sizes" ]]; then echo "No capture chromosomes found." >&2; exit 1; fi
 mkdir -p "$BENCH_RESULTS/profiles"
 cp "$BENCH_WORK/regions.bed" "$BENCH_RESULTS/regions.bed"
-BENCH_CAPTURE_CORES=${cores_to_run[0]}
-export BENCH_CAPTURE_CORES BENCH_RESULTS BENCH_MIN_MAPQ BENCH_MIN_LENGTH BENCH_MAX_LENGTH
+export BENCH_RESULTS BENCH_MIN_MAPQ BENCH_MIN_LENGTH BENCH_MAX_LENGTH
 
 # run_order is global execution order. repetition includes warmups per method/core
 # cpu_ids are Linux logical CPU IDs. physical_core_ids are socket:core pairs
@@ -207,10 +208,13 @@ benchmark_record_setup
 benchmark_schedule > "$BENCH_WORK/order.tsv"
 if [[ ! -s "$BENCH_WORK/order.tsv" ]]; then echo "The requested run matrix is empty." >&2; exit 1; fi
 run_order=0
+job_exit_code=0
+failed_method=
 while IFS=$'\t' read -r method cores repetition is_warmup; do
+    if [[ "$method" == "$failed_method" ]]; then continue; fi
     run_order=$((run_order + 1))
     step_exit_code=0
-    rm -f "$BENCH_WORK/time.tsv" "$BENCH_WORK/io.tsv" "$BENCH_WORK/profile.path" "$BENCH_WORK/step.id"
+    rm -f "$BENCH_WORK/time.tsv" "$BENCH_WORK/io.tsv" "$BENCH_WORK/profile.path" "$BENCH_WORK/step.id" "$BENCH_WORK/stdout.path"
     workload=per-base-read-depth
     if [[ "$method" == *fragment* ]]; then workload=per-base-fragment-coverage; fi
     if [[ "$method" == cfdnalab-region-counts* || "$method" == finaletoolkit-coverage ]]; then
@@ -406,4 +410,12 @@ STEP
         (IFS=$'\t'; printf '%s\n' "${fallback[*]}") > "$BENCH_WORK/time.tsv"
     fi
     benchmark_finish_run "$method" "$cores" "$repetition" "$is_warmup" "$step_exit_code"
+    if ((step_exit_code != 0)); then
+        failed_method=$method
+        job_exit_code=1
+        echo "Skipping remaining repetitions of $method after failure; continuing other selected methods." >&2
+    fi
 done < "$BENCH_WORK/order.tsv"
+
+# Keep successful methods usable while marking an incomplete job as failed
+exit "$job_exit_code"

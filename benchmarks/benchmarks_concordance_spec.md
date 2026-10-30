@@ -32,7 +32,7 @@ Sources: [runner](coverage/benchmark_coverage.sh), [comparator](coverage/compare
 | `cfdnalab-region-counts-proper` | Same regional counts plus proper-pair requirement |
 | `finaletoolkit-coverage` | `coverage --intersect-policy any --scale-factor 1`, requested MAPQ/lengths, no normalization. Compressed BED |
 
-Defaults select `cfdnalab-fragment`, `mosdepth-fragment`, `cfdnalab`, `mosdepth`, `samtools-depth`, `pandepth`, `cfdnalab-region-counts`, `finaletoolkit-coverage`. Proper-pair/autosome diagnostics are optional. cfDNAlab/PanDepth receive the allocated cores, mosdepth/samtools get `cores - 1` additional decompression threads, and FinaleToolkit gets the allocated worker count.
+Choose methods explicitly through `BENCH_METHODS`. A complete baseline contains `cfdnalab-fragment`, `mosdepth-fragment`, `cfdnalab`, `mosdepth`, `samtools-depth`, `pandepth`, `cfdnalab-region-counts`, `finaletoolkit-coverage`, split into feasible jobs at each core setting. Proper-pair/autosome diagnostics are optional. cfDNAlab/PanDepth receive the allocated cores, mosdepth/samtools get `cores - 1` additional decompression threads, and FinaleToolkit gets the allocated worker count.
 
 Regional methods share disjoint 500 kb BED4 windows generated from the BAM index, including shorter final windows. Each fragment counts in every overlapping window, so summed regional counts are not unique-fragment totals.
 
@@ -53,7 +53,7 @@ Each per-base profile requires nonempty `chrom.sizes` with unique positive lengt
 
 Only cfDNAlab's sparse format may omit zero runs, within its declared scope. Dense native formats must cover every base of every declared contig, including zeros. Missing/truncated dense tracks fail. Temporary per-contig run files merge adjacent equal values and reconcile contig order, avoiding per-base genomic arrays. `TMPDIR` selects comparison scratch.
 
-Scopes must match unless `--common-scope` explicitly selects their contig intersection. Shared lengths must match and overlap must be nonempty. Results record evaluated `chromosomes` and `same_native_scope`. Fragment coverage and read depth are paired separately. Regional counts form a separate comparison set.
+Scopes must match unless `--common-scope` explicitly selects their contig intersection. Shared lengths must match and overlap must be nonempty. All per-base pair scopes are checked before large tracks are loaded. Results record evaluated `chromosomes` and `same_native_scope`. Fragment coverage and read depth are paired separately. Regional counts form a separate comparison set.
 
 ### Per-base metrics
 
@@ -79,7 +79,7 @@ Pearson uses online covariance/variance weighted by genomic run lengths. This eq
 
 ### Residual distribution
 
-Every comparison writes `residuals.tsv` beside the supplied `profiles/` directory, replacing that generated file on reruns. It contains one row per observed residual `left - right` for every supported per-base pair, sorted numerically within each pair. It includes zero residuals and preserves fractional values. Columns are `left_profile`, `right_profile`, `quantity`, `same_native_scope`, `chromosomes`, `residual`, `bases`, `fraction_of_bases`.
+Every comparison writes `residuals.tsv` beside the supplied `profiles/` directory, replacing that generated file only after all comparisons succeed. An error preserves the previous successful histogram. It contains one row per observed residual `left - right` for every supported per-base pair, sorted numerically within each pair. It includes zero residuals and preserves fractional values. Columns are `left_profile`, `right_profile`, `quantity`, `same_native_scope`, `chromosomes`, `residual`, `bases`, `fraction_of_bases`.
 
 `bases` counts genomic bases with that residual, not runs. `fraction_of_bases` divides by all evaluated bases for that pair, including shared zeros. Counts sum to the summary's `bases`, and the distribution's base-weighted mean absolute residual equals the primary MAE. Scope and quantity match the corresponding summary row. Regional fragment counts are not included in this distribution.
 
@@ -106,7 +106,7 @@ Sources: [runner](lengths/benchmark_lengths.sh), [R call](lengths/cfdnapro_lengt
 | `samtools` | Full `stats`, `filter=mapq >= MAPQ`, `-f 1 -F 3852 -m 1 -i MAX+1` |
 | `picard` | Timed `samtools view -u -q MAPQ -f 1 -F 3852` pipeline into `CollectInsertSizeMetrics HISTOGRAM_WIDTH=MAX MINIMUM_PCT=0 INCLUDE_DUPLICATES=false`, no PDF |
 
-Defaults select `cfdnalab`, `cfdnalab-autosomes`, `cfdnapro`, `finaletoolkit`, `samtools`, `picard`. Proper-pair/outer-span diagnostics are optional. Full R/container startup and Picard's filter/JVM pipeline remain timed. Picard uses a 4 GiB heap and allocated `ActiveProcessorCount`. samtools gets `cores - 1` additional threads.
+Choose methods explicitly through `BENCH_METHODS`. The baseline contains `cfdnalab`, `cfdnalab-autosomes`, `cfdnapro`, `finaletoolkit`, `samtools`, `picard`, split into feasible jobs at each core setting. Proper-pair/outer-span diagnostics are optional. Full R/container startup and Picard's filter/JVM pipeline remain timed. Picard uses a 4 GiB heap and allocated `ActiveProcessorCount`. samtools gets `cores - 1` additional threads.
 
 Curated cfDNAPro uses the directional aligned span and uncurated mode uses the outer alignment span. Native pairing, orientation and reference-bound checks can differ. FinaleToolkit selects proper read1/TLEN. samtools supplies inward IS counts and halves passing alignment counts with integer truncation. Picard supplies its all-reads FR histogram.
 
@@ -136,7 +136,7 @@ cfDNAlab uses `ends --k-inside K --k-outside 0 --all-motifs` with requested filt
 | `finaletoolkit` | Reference `end-motifs --strand both`, requested K/bounds/MAPQ and allocated workers |
 | `freia` | Optional native three-base extraction/aggregation timing only |
 
-Defaults are reference/native, reference/proper and FinaleToolkit with K=4. K=3 is supported. FrEIA requires K=3 and explicitly warns that its pinned aggregate is incorrect.
+The baseline selection is reference/native, reference/proper and FinaleToolkit with K=4. `BENCH_METHODS` must be supplied explicitly. K=3 is supported. FrEIA requires K=3 and explicitly warns that its pinned aggregate is incorrect.
 
 FinaleToolkit 1.1.0 ignores requested end-motif bounds. Rows retain requested bounds, set effective bounds `NA` and label `length_filter=ignored-by-release`. The wide diagnostic practically removes cfDNAlab's usual 30-1000 bp restriction for this dataset. No >50,000 bp census is added.
 
@@ -156,7 +156,7 @@ All supported profiles are compared pairwise. Metrics are Pearson r, Spearman r 
 
 Sources: [runner](midpoints/benchmark_midpoints.sh), [comparator](midpoints/compare_midpoints.py), [workload notes](midpoints/README.md).
 
-The default/complete set is `cfdnalab griffin`. Both use the user's supplied windows/chromosomes, inclusive 100-200 bp fragments, MAPQ >=30 and unsmoothed 1 bp profiles. Width comes from the BED. Proper-pair filtering is not added.
+The complete set is selected explicitly with `BENCH_METHODS="cfdnalab griffin"`. Both use the user's supplied windows/chromosomes, inclusive 100-200 bp fragments, MAPQ >=30 and unsmoothed 1 bp profiles. Width comes from the BED. Proper-pair filtering is not added.
 
 cfDNAlab uses `midpoints --length-bins MIN MAX+1 --smoothing none --bin-size 1`, actual-pair checks and deterministic choice between the two central bases of even fragments. Griffin retains forward-record/TLEN selection and the right central base. Fragment/filter populations can differ.
 

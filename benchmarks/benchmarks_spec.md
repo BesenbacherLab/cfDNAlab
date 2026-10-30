@@ -17,6 +17,7 @@ The benchmark runs selected native commands repeatedly, records timing and Slurm
 | Summaries, accounting join and estimates | [summarize_timings.py](summarize_timings.py) |
 | BAM preparation utility | [prepare_snyder.py](data/prepare_snyder.py) |
 | Prepared regression fixtures | [test_benchmarks.py](tests/test_benchmarks.py) |
+| Prepared review regressions | [test_review_regressions.py](tests/test_review_regressions.py) |
 
 Submission examples and operating instructions are in the [benchmark README](README.md).
 
@@ -103,11 +104,12 @@ Submit from the repository root so `SLURM_SUBMIT_DIR` locates helpers. Nodes nee
 | `BENCH_INDEX` | `<BENCH_BAM>.bai` |
 | `BENCH_LOCAL_ROOT` | Required existing node-local scratch root |
 | `BENCH_RESULTS` | Required new results directory |
-| `BENCH_METHODS` | Feature-specific space-separated method labels |
+| `BENCH_METHODS` | Required feature-specific space-separated method labels, without duplicates or a default |
 | `BENCH_CORES` | Required single positive core count per job. Planned settings: 1, 4, 12, 32 in separate jobs |
 | `BENCH_WARMUPS` | **2** per scheduled method/core |
 | `BENCH_REPETITIONS` | **5 measured** per scheduled method/core |
 | `BENCH_PILOT` | `0`, or `1` to use zero warmups and one measurement |
+| `BENCH_RUN_TIMEOUT_SECONDS` | `0` disables timeouts. A positive integer enables GNU timeout with an additional 60-second kill grace |
 | `BENCH_SETUP_PYTHON` | `python3`, untimed setup/relocation only |
 | `BENCH_EXPECTED_NODE` | Optional exact hostname check before staging |
 | `BENCH_MIN_MAPQ` | 30 |
@@ -146,7 +148,7 @@ After native success, a second timer measures `sync -f` on the output filesystem
 | --- | --- |
 | `wall_seconds`, `user_seconds`, `system_seconds` | Native process/pipeline GNU time |
 | `max_rss_kib` | GNU time maximum RSS, separate from Slurm memory |
-| `tool_exit_code` | GNU time native exit status |
+| `tool_exit_code` | Shell-observed native/timeout exit status, including signal exits |
 | `flush_seconds` | Post-command filesystem flush duration |
 | `process_plus_flush_seconds` | Process wall plus flush, the selected end-to-end result |
 | `output_bytes` | Apparent output-directory bytes from `du -sb` |
@@ -154,11 +156,13 @@ After native success, a second timer measures `sync -f` on the output filesystem
 
 Rows additionally record run order, repetition, warmup/pilot labels, method/version, core/native workers, feature filters/scope, node/CPU placement, job/step IDs and UTC start. Schemas have 31 coverage, 30 lengths, 35 ends and 32 midpoint columns.
 
-Native, placement, expected-output or flush failure stops the job after saving available timing information. Missing measurements are `NA`. Pre-timer failures retain known run/method/core/job identifiers and any recorded step ID. Failed tool logs are copied to `failed-run-<run_order>/` before scratch removal when parent bookkeeping can complete. Whole-allocation termination can prevent that final bookkeeping.
+Native, placement, expected-output or flush failure saves available timing information, skips the remaining repetitions of that method and continues other selected methods. The overall job returns nonzero after those methods finish. Setup and results-bookkeeping failures remain fatal. Missing measurements are `NA`. Pre-timer failures retain known run/method/core/job identifiers and any recorded step ID. Failed tool logs and redirected native stdout are copied to `failed-run-<run_order>/` before scratch removal when parent bookkeeping can complete. Whole-allocation termination can prevent final bookkeeping and continuation.
+
+When enabled, GNU `timeout --verbose --kill-after=60` wraps each native command inside GNU time. Its limit is recorded in `run.tsv`, and actual values are chosen from pilots. Timeout 124 is recorded as failure. A 137 status is ambiguous without timeout diagnostics/accounting. The limit excludes the subsequent filesystem flush and parent bookkeeping. Leave room for those operations and termination grace before the allocation ends. This does not guarantee cleanup of processes that escape their process group or survival of an allocation-wide OOM kill.
 
 ## Result artifacts
 
-`timings.tsv` is written incrementally and keeps warmups, pilots and failures. `run.tsv` records feature, node, requested methods/cores, repetitions, benchmark commit/dirty flag and input paths. Optional installation/build TSVs are copied beside it. Available Slurm configuration is captured once per job, with diagnostics and a warning if unavailable.
+`timings.tsv` is written incrementally and keeps warmups, pilots and failures. Skipped repetitions have no invented timing rows. `run.tsv` records feature, node, requested methods/cores, repetitions, run timeout, benchmark commit/dirty flag and input paths. Optional installation/build TSVs are copied beside it. Available Slurm configuration is captured once per job, with diagnostics and a warning if unavailable.
 
 One native output per method is preserved from the first measured repetition at the job's core setting. Copying happens after `srun`, outside tool-step memory accounting. Other temporary outputs are removed. FrEIA profiles are never preserved for concordance.
 
@@ -180,7 +184,7 @@ Per configuration, process-plus-flush time, process/flush separately, Slurm/GNU 
 
 ### Pilot estimates
 
-`--estimate` summarizes successful measured pilot rows and defaults to two planned warmups, five planned measurements and a 25% margin. It sums observed configuration mean process-plus-flush times and multiplies by seven. Staging/cleanup are added separately. An attempted method/core without a successful measured pilot row causes an incomplete-budget error. Absent configurations cannot be estimated.
+`--estimate` summarizes successful measured pilot rows and defaults to two planned warmups, five planned measurements and a 25% margin. Each observed configuration reports `planned_runs`, `pilot_failures`, `budget_minutes` and `budget_status`. Budgets multiply that configuration's mean process-plus-flush time by seven and apply the margin. Failed configurations without a successful measured pilot have an `NA` budget. Any unsuccessful pilot leaves the configuration incomplete even if another attempt succeeded. The utility writes useful rows and an explicitly incomplete successful subtotal before returning nonzero. Absent configurations cannot be estimated. Staging/cleanup are added separately, and each core setting still requires separate jobs.
 
 At working estimates of 12 minutes for cfDNAlab and 120 minutes for a comparator, those two methods at one core alone require **15 h 24 min** for seven invocations each, or **19 h 15 min** with margin. Other methods/core budgets add work. A serial 120-minute comparator needs 14 hours raw or 17 h 30 min with margin for each initial 1/4-core job. Those are separate allocations.
 

@@ -29,23 +29,22 @@ BENCH_FASTA_INDEX=${BENCH_FASTA_INDEX:-${BENCH_REF_FASTA:-}.fai}
 : "${BENCH_CORES:?Set a single core budget for this job: 1, 4, 12 or 32}"
 BENCH_WARMUPS=${BENCH_WARMUPS:-2}
 BENCH_REPETITIONS=${BENCH_REPETITIONS:-5}
-BENCH_METHODS=${BENCH_METHODS:-cfdnalab griffin}
+: "${BENCH_METHODS:?Set the methods for this job explicitly in BENCH_METHODS}"
 export BENCH_MIN_MAPQ=${BENCH_MIN_MAPQ:-30}
 export BENCH_MIN_LENGTH=${BENCH_MIN_LENGTH:-100}
 export BENCH_MAX_LENGTH=${BENCH_MAX_LENGTH:-200}
 
 benchmark_controls
-read -r -a cores_to_run <<< "$BENCH_CORES"
 read -r -a methods_to_run <<< "$BENCH_METHODS"
 if [[ ${SLURM_JOB_NUM_NODES:-${SLURM_NNODES:-0}} != 1 || -e "$BENCH_RESULTS" ]]; then
     echo "Use a single-node allocation and a new BENCH_RESULTS directory." >&2
     exit 1
 fi
-if ((${#cores_to_run[@]} == 0 || ${#methods_to_run[@]} == 0)); then
+if ((${#methods_to_run[@]} == 0)); then
     echo "Supply at least a tool in BENCH_METHODS and a core budget in BENCH_CORES." >&2
     exit 1
 fi
-for value in "$BENCH_WARMUPS" "$BENCH_REPETITIONS" "$BENCH_MIN_MAPQ" "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH" "${cores_to_run[@]}"; do
+for value in "$BENCH_WARMUPS" "$BENCH_REPETITIONS" "$BENCH_MIN_MAPQ" "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH"; do
     if [[ ! "$value" =~ ^(0|[1-9][0-9]*)$ ]]; then
         echo "Core counts, repetitions and filter settings must be integers: $value" >&2
         exit 1
@@ -55,12 +54,10 @@ if ((BENCH_REPETITIONS < 1 || BENCH_MIN_MAPQ > 255 || BENCH_MIN_LENGTH < 10 || B
     echo "Use MAPQ 0-255, lengths within 10-50000 bp, and at least one measured repetition." >&2
     exit 1
 fi
-for cores in "${cores_to_run[@]}"; do
-    if ((cores < 1 || cores > ${SLURM_CPUS_PER_TASK:-0})); then
-        echo "Core budget $cores is outside this job's CPUs per task." >&2
-        exit 1
-    fi
-done
+if ((BENCH_CORES > ${SLURM_CPUS_PER_TASK:-0})); then
+    echo "Core budget $BENCH_CORES exceeds allocated CPUs: ${SLURM_CPUS_PER_TASK:-0}" >&2
+    exit 1
+fi
 for method in "${methods_to_run[@]}"; do
     case "$method" in
         cfdnalab|griffin) ;;
@@ -86,11 +83,10 @@ if [[ "$run_griffin" == true ]]; then : "${BENCH_GRIFFIN_ARCHIVE:?Set the packed
 
 # Stage once before warmups. Never rewrite or index the original inputs
 export BENCH_WORK BENCH_NODE BENCH_HALF_WIDTH BENCH_SITES BENCH_GROUPS BENCH_CHROMOSOMES
-export BENCH_CAPTURE_CORES BENCH_RESULTS BENCH_CFDNA_VERSION BENCH_GRIFFIN_VERSION
+export BENCH_RESULTS BENCH_CFDNA_VERSION BENCH_GRIFFIN_VERSION
 BENCH_WORK=$(mktemp -d "$BENCH_LOCAL_ROOT/midpoints-${SLURM_JOB_ID}.XXXXXX")
 trap 'rm -rf "$BENCH_WORK"' EXIT
 BENCH_NODE=$(hostname)
-BENCH_CAPTURE_CORES=${cores_to_run[0]}
 mkdir -p "$BENCH_WORK/bin" "$BENCH_WORK/tmp" "$BENCH_WORK/cache" "$BENCH_WORK/matplotlib" "$BENCH_WORK/griffin-env"
 cp -L "$BENCH_BAM" "$BENCH_WORK/sample.bam"
 cp -L "$BENCH_INDEX" "$BENCH_WORK/sample.bam.${BENCH_INDEX##*.}"
@@ -221,10 +217,13 @@ benchmark_record_setup
 benchmark_schedule > "$BENCH_WORK/order.tsv"
 if [[ ! -s "$BENCH_WORK/order.tsv" ]]; then echo "The requested run matrix is empty." >&2; exit 1; fi
 run_order=0
+job_exit_code=0
+failed_method=
 while IFS=$'\t' read -r method cores repetition is_warmup; do
+    if [[ "$method" == "$failed_method" ]]; then continue; fi
     run_order=$((run_order + 1))
     step_exit_code=0
-    rm -f "$BENCH_WORK/time.tsv" "$BENCH_WORK/io.tsv" "$BENCH_WORK/profile.path" "$BENCH_WORK/step.id"
+    rm -f "$BENCH_WORK/time.tsv" "$BENCH_WORK/io.tsv" "$BENCH_WORK/profile.path" "$BENCH_WORK/step.id" "$BENCH_WORK/stdout.path"
     # Attach to this job's existing node, then check the binding in the step
     srun --jobid="$SLURM_JOB_ID" --exact --nodes=1 --ntasks=1 \
         --cpus-per-task="$cores" --threads-per-core=1 --cpu-bind=threads \
@@ -341,4 +340,12 @@ STEP
         (IFS=$'\t'; printf '%s\n' "${fallback[*]}") > "$BENCH_WORK/time.tsv"
     fi
     benchmark_finish_run "$method" "$cores" "$repetition" "$is_warmup" "$step_exit_code"
+    if ((step_exit_code != 0)); then
+        failed_method=$method
+        job_exit_code=1
+        echo "Skipping remaining repetitions of $method after failure; continuing other selected methods." >&2
+    fi
 done < "$BENCH_WORK/order.tsv"
+
+# Keep successful methods usable while marking an incomplete job as failed
+exit "$job_exit_code"

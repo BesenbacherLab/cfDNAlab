@@ -125,7 +125,7 @@ Set wall time from pilots at each core setting. Each job uses a single core coun
 
 The runner reserves an exclusive node and all its memory. Every sequential `srun --jobid` attaches to that allocation and checks the actual hostname and logical/physical CPU IDs. Hard confinement also depends on the cluster's Slurm cgroup configuration. Prefer the same physical node for split jobs when available, as described in the shared run controls. Each method runs as a contiguous block at the job's core count, retaining actual order in `timings.tsv`. There are two warmups followed by five measured repetitions by default. No caches are evicted.
 
-The timing result is a single `timings.tsv`, with a row for every run, including warmups and failures. A native histogram per method is retained under `profiles/` from the first measured repetition at the capture core budget. These small files support concordance analysis. Other temporary outputs and logs are deleted. Failed commands are printed in the Slurm log, and a failed timing row is saved before stopping. Input staging, scheduler startup, profile copying, cleanup and concordance calculation are outside the timer. Native startup and output generation remain timed, including cfDNAlab's default QC plot and cfDNAPro's Apptainer launch. GNU time's maximum RSS is not the simultaneous total memory of a process tree.
+The timing result is a single `timings.tsv`, with a row for every attempted run, including warmups and failures. A native histogram per method is retained under `profiles/` from the first measured repetition at the job's single core count. These small files support concordance analysis. Other temporary outputs and logs are deleted. Failed diagnostics are retained, the remaining repetitions of that method are skipped and other selected methods continue. The job exits nonzero after those methods finish. See the [shared failure and timeout behavior](../README.md#timing-and-slurm-memory). Input staging, scheduler startup, profile copying, cleanup and concordance calculation are outside the timer. Native startup and output generation remain timed, including cfDNAlab's default QC plot and cfDNAPro's Apptainer launch. GNU time's maximum RSS is not the simultaneous total memory of a process tree.
 
 ## Supplementary result placeholders
 
@@ -147,12 +147,12 @@ Report the definition diagnostic's Pearson r, frequency MAE/RMSE and Wasserstein
 
 | Tool / configuration | Cores | Warmups / measured | Mean process+flush, s | SD seconds | Effective cores |
 | --- | --- | --- | --- | --- | --- |
-| cfDNAlab, all contigs | 1 / 4 / 8 / 12 / 32 | 2 / 5 each | [ ] | [ ] | [ ] |
-| cfDNAlab, autosomes | 1 / 4 / 8 / 12 / 32 | 2 / 5 each | [ ] | [ ] | [ ] |
-| cfDNAPro 1.7.4 | 1 / 32 | 2 / 5 each | [ ] | [ ] | [ ] |
-| FinaleToolkit 1.1.0 | 1 / 32 | 2 / 5 each | [ ] | [ ] | [ ] |
-| samtools 1.25 | 1 / 4 / 8 / 12 / 32 | 2 / 5 each | [ ] | [ ] | [ ] |
-| Picard 3.5.0 | 1 / 4 / 8 / 12 / 32 | 2 / 5 each | [ ] | [ ] | [ ] |
+| cfDNAlab, all contigs | 1 / 4 / 12 / 32, separate jobs | 2 / 5 each | [ ] | [ ] | [ ] |
+| cfDNAlab, autosomes | 1 / 4 / 12 / 32, separate jobs | 2 / 5 each | [ ] | [ ] | [ ] |
+| cfDNAPro 1.7.4 | 1 / 4, separate jobs, then decide | 2 / 5 each | [ ] | [ ] | [ ] |
+| FinaleToolkit 1.1.0 | 1 / 4, separate jobs, then decide | 2 / 5 each | [ ] | [ ] | [ ] |
+| samtools 1.25 | 1 / 4 / 12 / 32, separate jobs | 2 / 5 each | [ ] | [ ] | [ ] |
+| Picard 3.5.0 | 1 / 4 / 12 / 32, separate jobs | 2 / 5 each | [ ] | [ ] | [ ] |
 
 Expand timing rows to a core budget per row in the final A4 supplement. Put workload notes below the table and report maximum RSS separately if needed.
 

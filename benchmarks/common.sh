@@ -25,6 +25,27 @@ benchmark_controls() {
         echo 'Set BENCH_CORES to a single positive core count for this job.' >&2
         return 1
     fi
+    # A method is a single repetition block, not an accidentally repeated block
+    local selected_method seen_methods=' ' selected_methods=()
+    read -r -a selected_methods <<< "${BENCH_METHODS:-}"
+    for selected_method in "${selected_methods[@]}"; do
+        if [[ "$seen_methods" == *" $selected_method "* ]]; then
+            echo "Duplicate method in BENCH_METHODS: $selected_method" >&2
+            return 1
+        fi
+        seen_methods+="$selected_method "
+    done
+    export BENCH_RUN_TIMEOUT_SECONDS=${BENCH_RUN_TIMEOUT_SECONDS:-0}
+    if [[ ! "$BENCH_RUN_TIMEOUT_SECONDS" =~ ^(0|[1-9][0-9]*)$ ]]; then
+        echo 'BENCH_RUN_TIMEOUT_SECONDS must be zero (disabled) or a positive integer.' >&2
+        return 1
+    fi
+    if [[ "$BENCH_RUN_TIMEOUT_SECONDS" != 0 ]]; then
+        command -v timeout >/dev/null || {
+            echo 'A run time limit requires GNU timeout on the compute node.' >&2
+            return 1
+        }
+    fi
     if [[ -n ${BENCH_EXPECTED_NODE:-} && $(hostname) != "$BENCH_EXPECTED_NODE" ]]; then
         echo "Expected node $BENCH_EXPECTED_NODE, received $(hostname)." >&2
         return 1
@@ -75,6 +96,7 @@ benchmark_record_setup() {
         printf 'node\t%s\npilot\t%s\n' "$BENCH_NODE" "$BENCH_PILOT"
         printf 'methods\t%s\ncores\t%s\n' "$BENCH_METHODS" "$BENCH_CORES"
         printf 'warmups\t%s\nmeasured_repetitions\t%s\n' "$BENCH_WARMUPS" "$BENCH_REPETITIONS"
+        printf 'run_timeout_seconds\t%s\n' "$BENCH_RUN_TIMEOUT_SECONDS"
         printf 'benchmark_commit\t%s\n' "$(git -C "$SLURM_SUBMIT_DIR" rev-parse HEAD)"
         if [[ -n $(git -C "$SLURM_SUBMIT_DIR" status --porcelain) ]]; then
             printf 'benchmark_dirty\ttrue\n'
@@ -115,11 +137,18 @@ benchmark_time_command() {
     local prefix=$1 output_directory=$2 stdout_path=$3 stderr_path=$4
     shift 4
     local command_status=0 measurements flush_seconds output_bytes wall_seconds combined_seconds
+    local timed_command=("$@")
+    if [[ ${BENCH_RUN_TIMEOUT_SECONDS:-0} != 0 ]]; then
+        timed_command=(timeout --verbose --kill-after=60 "$BENCH_RUN_TIMEOUT_SECONDS" "${timed_command[@]}")
+    fi
     rm -f "$BENCH_WORK/measurements.tsv" "$BENCH_WORK/flush.tsv" || return 1
+    printf '%s\n' "$stdout_path" > "$BENCH_WORK/stdout.path" || return 1
     /usr/bin/time --quiet --format $'%e\t%U\t%S\t%M\t%x' \
-        --output "$BENCH_WORK/measurements.tsv" "$@" \
+        --output "$BENCH_WORK/measurements.tsv" "${timed_command[@]}" \
         > "$stdout_path" 2> "$stderr_path" || command_status=$?
     measurements=$(cat "$BENCH_WORK/measurements.tsv") || return 1
+    # Keep the shell-observed status, including signal exits and timeout statuses
+    measurements=${measurements%$'\t'*}$'\t'"$command_status"
     printf '%s\t%s\n' "$prefix" "$measurements" > "$BENCH_WORK/time.tsv" || return 1
     if ((command_status != 0)); then return "$command_status"; fi
     /usr/bin/time --quiet --format '%e' --output "$BENCH_WORK/flush.tsv" \
@@ -132,20 +161,26 @@ benchmark_time_command() {
 }
 
 benchmark_finish_run() {
-    # Append outside srun, preserving failures before any scratch cleanup
+    # Append outside srun and preserve failed diagnostics before cleanup
+    # A recorded tool failure returns normally so the parent can try other methods
+    # Results-bookkeeping failures still abort the parent under set -e
     local method=$1 cores=$2 repetition=$3 is_warmup=$4 step_exit_code=$5
-    local io_values=$'NA\tNA\tNA' profile capture_cores=$BENCH_CAPTURE_CORES
+    local io_values=$'NA\tNA\tNA' profile stdout_path timing_values
     if [[ -s "$BENCH_WORK/io.tsv" ]]; then io_values=$(cat "$BENCH_WORK/io.tsv"); fi
-    printf '%s\t%s\t%s\t%s\n' "$(cat "$BENCH_WORK/time.tsv")" "$io_values" "$BENCH_PILOT" "$step_exit_code" >> "$BENCH_RESULTS/timings.tsv"
+    timing_values=$(cat "$BENCH_WORK/time.tsv")
+    printf '%s\t%s\t%s\t%s\n' "$timing_values" "$io_values" "$BENCH_PILOT" "$step_exit_code" >> "$BENCH_RESULTS/timings.tsv"
     if ((step_exit_code != 0)); then
         mkdir -p "$BENCH_RESULTS/failed-run-$run_order"
         for profile in "$BENCH_WORK/tool.log" "$BENCH_WORK/tool-error.log"; do
             if [[ -f "$profile" ]]; then cp "$profile" "$BENCH_RESULTS/failed-run-$run_order/"; fi
         done
+        if [[ -s "$BENCH_WORK/stdout.path" ]]; then
+            stdout_path=$(cat "$BENCH_WORK/stdout.path")
+            if [[ -f "$stdout_path" ]]; then cp "$stdout_path" "$BENCH_RESULTS/failed-run-$run_order/tool-stdout.log"; fi
+        fi
         echo "Run $run_order failed. Completed rows and diagnostics are in $BENCH_RESULTS" >&2
-        return "$step_exit_code"
     fi
-    if [[ "$method" != freia && "$is_warmup" == false ]] && ((repetition == BENCH_WARMUPS+1 && cores == capture_cores)); then
+    if [[ "$method" != freia && "$is_warmup" == false ]] && ((step_exit_code == 0 && repetition == BENCH_WARMUPS+1)); then
         profile=$(cat "$BENCH_WORK/profile.path")
         mkdir -p "$BENCH_RESULTS/profiles/$method"
         case "$method" in
@@ -174,5 +209,5 @@ benchmark_finish_run() {
         esac
     fi
     sync -f "$BENCH_WORK"
-    rm -rf "$BENCH_WORK/output" "$BENCH_WORK/coverage" "$BENCH_WORK/tool.log" "$BENCH_WORK/tool-error.log"
+    rm -rf "$BENCH_WORK/output" "$BENCH_WORK/coverage" "$BENCH_WORK/tool.log" "$BENCH_WORK/tool-error.log" "$BENCH_WORK/stdout.path"
 }

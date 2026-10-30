@@ -16,6 +16,7 @@ import csv
 import gzip
 from itertools import combinations
 import math
+import os
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -279,10 +280,30 @@ def main():
     parser.add_argument("--common-scope", action="store_true", help="Explicitly allow intersection of declared scopes")
     arguments = parser.parse_args()
     directories = sorted(path for path in arguments.profiles.iterdir() if path.is_dir())
+    regional_directories = [path for path in directories if "region-counts" in path.name or path.name == "finaletoolkit-coverage"]
+    track_scopes = {path.name: read_scope(path) for path in directories if path not in regional_directories}
+    comparisons = []
+    # Check all pair scopes before loading large tracks or replacing any results
+    for left_name, right_name in combinations(track_scopes, 2):
+        if ("fragment" in left_name) != ("fragment" in right_name):
+            continue
+        left_scope, right_scope = track_scopes[left_name], track_scopes[right_name]
+        same_scope = left_scope == right_scope
+        if not same_scope and not arguments.common_scope:
+            parser.error(f"Scopes differ: {left_name}, {right_name}. Use --common-scope to compare their intersection")
+        scope = {chromosome: length for chromosome, length in left_scope.items() if chromosome in right_scope}
+        if not scope or any(right_scope[chromosome] != length for chromosome, length in scope.items()):
+            raise ValueError("Empty shared scope or mismatched chromosome lengths")
+        comparisons.append((left_name, right_name, scope, same_scope))
     rows = []
     with tempfile.TemporaryDirectory(prefix="coverage-concordance-") as temporary, ExitStack() as resources:
         tracks, regions = {}, {}
-        output = resources.enter_context((arguments.profiles.parent / "residuals.tsv").open("w"))
+        # Publish only a completed histogram, keeping previous successful results on error
+        pending_output = tempfile.NamedTemporaryFile(mode="w", dir=arguments.profiles.parent,
+                                                     prefix=".residuals-", suffix=".tsv", delete=False)
+        pending_path = Path(pending_output.name)
+        resources.callback(pending_path.unlink, missing_ok=True)
+        output = resources.enter_context(pending_output)
         residual_writer = csv.DictWriter(output, delimiter="\t", lineterminator="\n", fieldnames=[
             "left_profile", "right_profile", "quantity", "same_native_scope", "chromosomes",
             "residual", "bases", "fraction_of_bases",
@@ -292,7 +313,6 @@ def main():
         # Bound the database cache as well as the Python residual-count batch
         residual_database.execute("PRAGMA cache_size = -2048")
         residual_database.execute("CREATE TABLE residual_counts (residual REAL PRIMARY KEY, bases INTEGER NOT NULL)")
-        regional_directories = [path for path in directories if "region-counts" in path.name or path.name == "finaletoolkit-coverage"]
         if regional_directories:
             with (arguments.profiles.parent / "regions.bed").open() as source:
                 expected = [(fields[0], int(fields[1]), int(fields[2])) for fields in csv.reader(source, delimiter="\t")]
@@ -302,26 +322,15 @@ def main():
         for directory in directories:
             if directory in regional_directories:
                 continue
-            scope = read_scope(directory)
+            scope = track_scopes[directory.name]
             destination = Path(temporary) / directory.name
             destination.mkdir()
-            tracks[directory.name] = scope, spool_track(directory, scope, destination)
-        for left_name, right_name in combinations(tracks, 2):
-            # Read depth and fragment coverage answer different questions
-            if ("fragment" in left_name) != ("fragment" in right_name):
-                continue
-            left_scope, left_paths = tracks[left_name]
-            right_scope, right_paths = tracks[right_name]
-            same_scope = left_scope == right_scope
-            if not same_scope and not arguments.common_scope:
-                parser.error(f"Scopes differ: {left_name}, {right_name}. Use --common-scope to compare their intersection")
-            scope = {chromosome: length for chromosome, length in left_scope.items() if chromosome in right_scope}
-            if not scope or any(right_scope[chromosome] != length for chromosome, length in scope.items()):
-                raise ValueError("Empty shared scope or mismatched chromosome lengths")
+            tracks[directory.name] = spool_track(directory, scope, destination)
+        for left_name, right_name, scope, same_scope in comparisons:
             comparison = {"left_profile": left_name, "right_profile": right_name,
                           "quantity": "fragment-coverage" if "fragment" in left_name else "read-depth",
                           "same_native_scope": same_scope, "chromosomes": ",".join(scope)}
-            metrics = compare_tracks(left_paths, right_paths, scope, residual_database)
+            metrics = compare_tracks(tracks[left_name], tracks[right_name], scope, residual_database)
             rows.append({**comparison, **metrics})
             for residual, bases in residual_database.execute("SELECT residual, bases FROM residual_counts ORDER BY residual"):
                 residual_writer.writerow({**comparison, "residual": residual, "bases": bases,
@@ -332,8 +341,10 @@ def main():
             rows.append({"left_profile": left_name, "right_profile": right_name, "quantity": "regional-fragment-counts",
                          "same_native_scope": True, "chromosomes": ",".join(sorted({key[0] for key in regions[left_name]})),
                          **compare_regions(regions[left_name], regions[right_name])})
-    if not rows:
-        parser.error("No pair of saved profiles measures the same quantity")
+        if not rows:
+            parser.error("No pair of saved profiles measures the same quantity")
+        output.close()
+        os.replace(pending_path, arguments.profiles.parent / "residuals.tsv")
     columns = list(dict.fromkeys(column for row in rows for column in row))
     writer = csv.DictWriter(sys.stdout, fieldnames=columns, delimiter="\t", restval="NA", lineterminator="\n")
     writer.writeheader()
