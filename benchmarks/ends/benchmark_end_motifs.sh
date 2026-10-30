@@ -17,18 +17,17 @@
 
 set -euo pipefail
 export LC_ALL=C
+source "${SLURM_SUBMIT_DIR:?Submit from the repository root}/benchmarks/common.sh"
+BENCH_FEATURE=ends
 
 : "${SLURM_JOB_ID:?Submit this script with sbatch}"
 : "${BENCH_BAM:?Set the prepared input BAM path}"
-: "${BENCH_REF_2BIT:?Set the matching alignment reference in 2bit format}"
-: "${BENCH_CFDNA:?Set the cfDNAlab executable path}"
-: "${BENCH_FINALE_ARCHIVE:?Set the packed FinaleToolkit environment}"
 : "${BENCH_LOCAL_ROOT:?Set an existing node-local scratch directory}"
 : "${BENCH_RESULTS:?Set a new results directory}"
 BENCH_INDEX=${BENCH_INDEX:-${BENCH_BAM}.bai}
 BENCH_CORES=${BENCH_CORES:-1 4 8 12 32}
-BENCH_WARMUPS=${BENCH_WARMUPS:-3}
-BENCH_REPETITIONS=${BENCH_REPETITIONS:-10}
+BENCH_WARMUPS=${BENCH_WARMUPS:-2}
+BENCH_REPETITIONS=${BENCH_REPETITIONS:-5}
 BENCH_METHODS=${BENCH_METHODS:-cfdnalab-reference cfdnalab-reference-proper finaletoolkit}
 BENCH_FREIA_ARCHIVE=${BENCH_FREIA_ARCHIVE:-}
 export BENCH_K=${BENCH_K:-4}
@@ -36,6 +35,7 @@ export BENCH_MIN_MAPQ=${BENCH_MIN_MAPQ:-30}
 export BENCH_MIN_LENGTH=${BENCH_MIN_LENGTH:-30}
 export BENCH_MAX_LENGTH=${BENCH_MAX_LENGTH:-1000}
 
+benchmark_controls
 read -r -a cores_to_run <<< "$BENCH_CORES"
 read -r -a methods_to_run <<< "$BENCH_METHODS"
 if ((${#cores_to_run[@]} == 0 || ${#methods_to_run[@]} == 0)); then
@@ -55,7 +55,7 @@ if [[ "$BENCH_INDEX" != *.bai ]]; then
     exit 1
 fi
 for value in "$BENCH_WARMUPS" "$BENCH_REPETITIONS" "$BENCH_K" "$BENCH_MIN_MAPQ" "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH" "${cores_to_run[@]}"; do
-    if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+    if [[ ! "$value" =~ ^(0|[1-9][0-9]*)$ ]]; then
         echo "Core counts, repetitions and motif/filter settings must be integers: $value" >&2
         exit 1
     fi
@@ -73,7 +73,7 @@ done
 run_freia=false
 for method in "${methods_to_run[@]}"; do
     case "$method" in
-        cfdnalab-read|cfdnalab-read-aligned|cfdnalab-read-include|cfdnalab-reference|cfdnalab-reference-proper|cfdnalab-reference-autosomes|finaletoolkit) ;;
+        cfdnalab-read|cfdnalab-read-aligned|cfdnalab-read-include|cfdnalab-reference|cfdnalab-reference-proper|cfdnalab-reference-proper-wide|cfdnalab-reference-autosomes|finaletoolkit) ;;
         freia)
             : "${BENCH_FREIA_ARCHIVE:?Set the packed FrEIA environment for the freia comparison}"
             if ((BENCH_K != 3)); then
@@ -81,10 +81,26 @@ for method in "${methods_to_run[@]}"; do
                 exit 1
             fi
             run_freia=true
+            echo "FrEIA timing only: pinned both-end aggregation is incorrect. Concordance is disabled." >&2
             ;;
         *) echo "Unknown end-motif method: $method" >&2; exit 1 ;;
     esac
 done
+
+run_cfdna=false
+run_finale=false
+need_reference=false
+for method in "${methods_to_run[@]}"; do
+    case "$method" in
+        cfdnalab*) run_cfdna=true ;;
+        finaletoolkit) run_finale=true ;;
+    esac
+    if [[ "$method" == cfdnalab-reference* || "$method" == finaletoolkit ]]; then need_reference=true; fi
+done
+: "${BENCH_SAMTOOLS_ARCHIVE:?Set the packed samtools environment for BAM header preparation}"
+if [[ "$run_cfdna" == true ]]; then : "${BENCH_CFDNA:?Set the cfDNAlab executable}"; fi
+if [[ "$run_finale" == true ]]; then : "${BENCH_FINALE_ARCHIVE:?Set the packed FinaleToolkit environment}"; fi
+if [[ "$need_reference" == true ]]; then : "${BENCH_REF_2BIT:?Set the matching 2bit reference}"; fi
 
 # Stage once before every tool's warmups, following the coverage benchmark policy
 export BENCH_WORK BENCH_NODE BENCH_AUTOSOMES BENCH_CONTIGS BENCH_CAPTURE_CORES BENCH_RESULTS
@@ -96,10 +112,9 @@ BENCH_CAPTURE_CORES=${cores_to_run[0]}
 mkdir -p "$BENCH_WORK/bin" "$BENCH_WORK/tmp" "$BENCH_WORK/cache" "$BENCH_WORK/matplotlib"
 cp -L "$BENCH_BAM" "$BENCH_WORK/sample.bam"
 cp -L "$BENCH_INDEX" "$BENCH_WORK/sample.bam.bai"
-cp -L "$BENCH_REF_2BIT" "$BENCH_WORK/reference.2bit"
-cp -L "$BENCH_CFDNA" "$BENCH_WORK/bin/cfdna"
+if [[ "$need_reference" == true ]]; then cp -L "$BENCH_REF_2BIT" "$BENCH_WORK/reference.2bit"; fi
+if [[ "$run_cfdna" == true ]]; then benchmark_stage_binary "$BENCH_CFDNA" cfdna; fi
 # sbatch uses a spool copy of this script. Submit from the repository root
-cp "$SLURM_SUBMIT_DIR/benchmarks/measure_memory.py" "$BENCH_WORK/measure_memory.py"
 export TMPDIR="$BENCH_WORK/tmp"
 # Ignore ~/.local Python packages and inherited import paths so imports stay
 # inside the staged environments. See the installation notes in ../README.md
@@ -109,44 +124,41 @@ export XDG_CACHE_HOME="$BENCH_WORK/cache"
 export MPLCONFIGDIR="$BENCH_WORK/matplotlib"
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1
 
-# conda-unpack fixes installation prefixes before any native command is timed
-mkdir -p "$BENCH_WORK/finale-env"
-tar -xzf "$BENCH_FINALE_ARCHIVE" -C "$BENCH_WORK/finale-env"
-"$BENCH_WORK/finale-env/bin/python" "$BENCH_WORK/finale-env/bin/conda-unpack"
+# Relocate only selected competitors. Samtools supplies the shared BAM header
+benchmark_unpack "$BENCH_SAMTOOLS_ARCHIVE" "$BENCH_WORK/samtools-env"
+"$BENCH_WORK/samtools-env/bin/samtools" idxstats "$BENCH_WORK/sample.bam" |
+    awk '$1 != "*" {print $1 "\t" $2}' > "$BENCH_WORK/chrom.sizes"
+BENCH_AUTOSOMES=$(awk '$1 ~ /^(chr)?([1-9]|1[0-9]|2[0-2])$/ {print $1}' "$BENCH_WORK/chrom.sizes" | paste -sd, -)
+BENCH_CONTIGS=$(cut -f 1 "$BENCH_WORK/chrom.sizes" | paste -sd, -)
+if [[ "$run_finale" == true ]]; then benchmark_unpack "$BENCH_FINALE_ARCHIVE" "$BENCH_WORK/finale-env"; fi
 if [[ "$run_freia" == true ]]; then
-    mkdir -p "$BENCH_WORK/freia"
-    tar -xzf "$BENCH_FREIA_ARCHIVE" -C "$BENCH_WORK/freia"
-    "$BENCH_WORK/freia/bin/python" "$BENCH_WORK/freia/bin/conda-unpack"
+    benchmark_unpack "$BENCH_FREIA_ARCHIVE" "$BENCH_WORK/freia"
     BENCH_FREIA_VERSION=$(cat "$BENCH_WORK/freia/share/freia/version.txt")
 fi
 
 # FinaleToolkit visits the reference's contigs. cfDNAlab --chromosomes all uses
 # the BAM's contigs. Check their names and lengths to give both the same scope
 # The check reads headers only, with no filtering or changes to the BAM
-chromosome_names=$("$BENCH_WORK/finale-env/bin/python" - <<'PY'
+if [[ "$run_finale" == true ]]; then
+    "$BENCH_WORK/finale-env/bin/python" - <<'PYHEADER'
 import os
-import re
 import py2bit
 import pysam
-
 work = os.environ['BENCH_WORK']
-with pysam.AlignmentFile(f'{work}/sample.bam', 'rb') as bam:
+with pysam.AlignmentFile(work + '/sample.bam', 'rb') as bam:
     bam_contigs = dict(zip(bam.references, bam.lengths))
-reference = py2bit.open(f'{work}/reference.2bit')
-reference_contigs = reference.chroms()
-reference.close()
-if bam_contigs != reference_contigs:
-    raise SystemExit('BAM and 2bit contig names/lengths differ. Use the matching full alignment reference.')
-autosomes = [name for name in bam_contigs if re.fullmatch(r'(?:chr)?(?:[1-9]|1[0-9]|2[0-2])', name)]
-if not autosomes:
-    raise SystemExit('No autosomes named chr1..chr22 or 1..22 were found.')
-print(','.join(autosomes), ','.join(bam_contigs), sep='\t')
-PY
-)
-IFS=$'\t' read -r BENCH_AUTOSOMES BENCH_CONTIGS <<< "$chromosome_names"
+with py2bit.open(work + '/reference.2bit') as reference:
+    if bam_contigs != reference.chroms():
+        raise SystemExit('BAM and 2bit contig names/lengths differ.')
+for chromosome, length in bam_contigs.items():
+    if length % 1000000 == 0:
+        raise SystemExit('FinaleToolkit 1.1.0 omits its last window for this contig length: ' + chromosome)
+PYHEADER
+fi
+if [[ " $BENCH_METHODS " == *" cfdnalab-reference-autosomes "* && -z "$BENCH_AUTOSOMES" ]]; then echo "No autosomes in BAM." >&2; exit 1; fi
+if [[ "$run_cfdna" == true ]]; then BENCH_CFDNA_VERSION=$("$BENCH_WORK/bin/cfdna" --version | tr '\t\n' '  '); fi
+if [[ "$run_finale" == true ]]; then BENCH_FINALE_VERSION=$("$BENCH_WORK/finale-env/bin/finaletoolkit" --version | tr '\t\n' '  '); fi
 
-BENCH_CFDNA_VERSION=$("$BENCH_WORK/bin/cfdna" --version 2>&1 | tr '\t\n' '  ')
-BENCH_FINALE_VERSION=$("$BENCH_WORK/finale-env/bin/finaletoolkit" --version 2>&1 | tr '\t\n' '  ')
 mkdir -p "$BENCH_RESULTS/profiles"
 
 # The requested length bounds and whether a method applies them are separate
@@ -154,34 +166,31 @@ mkdir -p "$BENCH_RESULTS/profiles"
 header=$'run_order\trepetition\twarmup\tmethod\ttool_version\tcores\ttool_workers\tk\tmin_mapq'
 header+=$'\trequested_min_length\trequested_max_length\tlength_filter\tscope\tsource\tclip\tproper_pair'
 header+=$'\tnode\tcpu_model\tcpu_ids\tphysical_core_ids\tjob_id\tstep_id\tstarted_utc'
+header+=$'\teffective_min_length\teffective_max_length'
 header+=$'\twall_seconds\tuser_seconds\tsystem_seconds\tmax_rss_kib\ttool_exit_code'
-header+=$'\tsampled_peak_rss_kib\tsampled_mean_rss_kib\tmemory_samples\tmemory_interval_seconds\tstep_exit_code'
+header+=$'\tflush_seconds\tprocess_plus_flush_seconds\toutput_bytes\tpilot\tstep_exit_code'
 printf '%s\n' "$header" > "$BENCH_RESULTS/timings.tsv"
-for method in "${methods_to_run[@]}"; do
-    for cores in "${cores_to_run[@]}"; do
-        printf '%s\t%s\n' "$method" "$cores"
-    done
-done > "$BENCH_WORK/combinations.tsv"
 
+# Run each method's warmups and measurements together on the recorded node
+benchmark_record_setup
+benchmark_schedule > "$BENCH_WORK/order.tsv"
+if [[ ! -s "$BENCH_WORK/order.tsv" ]]; then echo "The requested run matrix is empty." >&2; exit 1; fi
 run_order=0
-total_repetitions=$((BENCH_WARMUPS + BENCH_REPETITIONS))
-for ((repetition=1; repetition<=total_repetitions; repetition++)); do
-    is_warmup=false
-    if ((repetition <= BENCH_WARMUPS)); then is_warmup=true; fi
-    shuf "$BENCH_WORK/combinations.tsv" > "$BENCH_WORK/order.tsv"
-    while IFS=$'\t' read -r method cores; do
-        run_order=$((run_order + 1))
-        step_exit_code=0
-        rm -f "$BENCH_WORK/time.tsv" "$BENCH_WORK/memory.tsv"
+while IFS=$'\t' read -r method cores repetition is_warmup; do
+    run_order=$((run_order + 1))
+    step_exit_code=0
+    rm -f "$BENCH_WORK/time.tsv" "$BENCH_WORK/io.tsv" "$BENCH_WORK/profile.path" "$BENCH_WORK/step.id"
 
-        # Attach each sequential step to this existing job's node
-        # Request binding and check the actual CPU mask below. Hard confinement
-        # additionally depends on the cluster's Slurm cgroup configuration
-        srun --jobid="$SLURM_JOB_ID" --exact --nodes=1 --ntasks=1 \
-            --cpus-per-task="$cores" --threads-per-core=1 --cpu-bind=threads \
-            --export=ALL bash -s -- "$run_order" "$repetition" "$is_warmup" "$method" "$cores" \
-            <<'STEP' || step_exit_code=$?
+    # Attach each sequential step to this existing job's node
+    # Request binding and check the actual CPU mask below. Hard confinement
+    # additionally depends on the cluster's Slurm cgroup configuration
+    srun --jobid="$SLURM_JOB_ID" --exact --nodes=1 --ntasks=1 \
+        --cpus-per-task="$cores" --threads-per-core=1 --cpu-bind=threads \
+        --export=ALL bash -s -- "$run_order" "$repetition" "$is_warmup" "$method" "$cores" \
+        <<'STEP' || step_exit_code=$?
 set -euo pipefail
+source "$BENCH_WORK/common.sh"
+printf '%s\n' "$SLURM_STEP_ID" > "$BENCH_WORK/step.id"
 run_order=$1
 repetition=$2
 is_warmup=$3
@@ -212,14 +221,17 @@ source=reference
 clip=aligned
 proper_pair=not-required
 length_filter=applied
+effective_min_length=$BENCH_MIN_LENGTH
+effective_max_length=$BENCH_MAX_LENGTH
+if [[ "$method" == cfdnalab-reference-proper-wide ]]; then effective_min_length=10; effective_max_length=50000; fi
 tool_workers=$cores
 if [[ "$method" == cfdnalab-* ]]; then
     tool_version=$BENCH_CFDNA_VERSION
     command=("$BENCH_WORK/bin/cfdna" ends
         --bam "$BENCH_WORK/sample.bam" --output-dir "$BENCH_WORK/output"
         --k-inside "$BENCH_K" --k-outside 0 --all-motifs
-        --min-mapq "$BENCH_MIN_MAPQ" --min-fragment-length "$BENCH_MIN_LENGTH"
-        --max-fragment-length "$BENCH_MAX_LENGTH" --n-threads "$cores")
+        --min-mapq "$BENCH_MIN_MAPQ" --min-fragment-length "$effective_min_length"
+        --max-fragment-length "$effective_max_length" --n-threads "$cores")
     if [[ "$method" == cfdnalab-read* ]]; then
         source=read
         clip=skip
@@ -236,7 +248,7 @@ if [[ "$method" == cfdnalab-* ]]; then
     else
         command+=(--chromosomes all)
     fi
-    if [[ "$method" == cfdnalab-reference-proper ]]; then
+    if [[ "$method" == cfdnalab-reference-proper* ]]; then
         proper_pair=required
         command+=(--require-proper-pair)
     fi
@@ -250,7 +262,7 @@ elif [[ "$method" == freia ]]; then
     # Count both ends and avoid bootstrap sampling or intentional downsampling
     # The upper length bound is exclusive in FrEIA, hence max_length + 1
     # FrEIA adds coordinate deduplication, and removes a whole pair if either
-    # extracted 10-base sequence contains N. These native choices are retained
+    # extracted 3-base sequence contains N. These native choices are retained
     # The samtools exclusion flags are unmapped, secondary, duplicate and
     # supplementary, respectively, as in the authors' preprocessing rule
     printf 'sample_name group\nsample benchmark\n' > "$BENCH_WORK/output/samples.tsv"
@@ -265,7 +277,7 @@ elif [[ "$method" == freia ]]; then
         "$environment/bin/samtools" index -@ "$cores" "$BENCH_WORK/output/filtered.bam"
         "$environment/bin/python" "$scripts/1_extract_fragment_ends.py" \
             -b "$BENCH_WORK/output/filtered.bam" -o "$BENCH_WORK/output/sample.pq" \
-            -c "$BENCH_CONTIGS" -t "$cores" -n 10
+            -c "$BENCH_CONTIGS" -t "$cores" -n 3
         "$environment/bin/python" "$scripts/2_data_transformation.py" \
             -i "$BENCH_WORK/output/sample.pq" -o "$BENCH_WORK/output/" \
             -st "$BENCH_WORK/output/samples.tsv" --both \
@@ -279,6 +291,8 @@ else
     # Its current end-motif reader ignores the requested length bounds
     tool_version=$BENCH_FINALE_VERSION
     length_filter=ignored-by-release
+    effective_min_length=NA
+    effective_max_length=NA
     proper_pair=required
     clip=unrestricted
     profile="$BENCH_WORK/output/motifs.tsv"
@@ -288,12 +302,13 @@ else
         --min-mapq "$BENCH_MIN_MAPQ" --threads "$cores" --strand both --output "$profile")
 fi
 
-# There are 23 identifying fields before GNU time's five measurement fields
+# There are 25 identifying fields before GNU time's five measurement fields
 printf -v prefix '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
     "$run_order" "$repetition" "$is_warmup" "$method" "$tool_version" "$cores" "$tool_workers" \
     "$BENCH_K" "$BENCH_MIN_MAPQ" "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH" "$length_filter" \
     "$scope" "$source" "$clip" "$proper_pair" "$node" "$cpu_model" "$cpu_ids" \
     "$physical_core_ids" "$SLURM_JOB_ID" "$SLURM_STEP_ID" "$started_utc"
+printf -v prefix '%s\t%s\t%s' "$prefix" "$effective_min_length" "$effective_max_length"
 logical_cpu_count=$(env -u OMP_NUM_THREADS -u OMP_THREAD_LIMIT nproc)
 if [[ "$node" != "$BENCH_NODE" ]] || ((logical_cpu_count != cores || physical_core_count != cores)); then
     printf '%s\tNA\tNA\tNA\tNA\t1\n' "$prefix" > "$BENCH_WORK/time.tsv"
@@ -303,12 +318,10 @@ fi
 
 # Time only the native CLI. Profile copying and comparisons are outside timing
 tool_exit_code=0
-"$BENCH_WORK/finale-env/bin/python" "$BENCH_WORK/measure_memory.py" "$BENCH_WORK/memory.tsv" \
-    /usr/bin/time --quiet --format "$prefix\t%e\t%U\t%S\t%M\t%x" \
-    --output "$BENCH_WORK/time.tsv" "${command[@]}" \
-    > "$BENCH_WORK/tool.log" 2>&1 || tool_exit_code=$?
+benchmark_time_command "$prefix" "$BENCH_WORK/output" \
+    "$BENCH_WORK/tool.log" "$BENCH_WORK/tool-error.log" "${command[@]}" || tool_exit_code=$?
 if ((tool_exit_code != 0)); then
-    cat "$BENCH_WORK/tool.log" >&2
+    cat "$BENCH_WORK/tool-error.log" "$BENCH_WORK/tool.log" >&2
     exit "$tool_exit_code"
 fi
 if [[ "$method" == freia ]]; then
@@ -325,30 +338,21 @@ if [[ ! -e "$profile" ]]; then
 fi
 
 # Keep one native profile per method. All core settings still recompute outputs
-if ((repetition == 1 && cores == BENCH_CAPTURE_CORES)); then
-    mkdir -p "$BENCH_RESULTS/profiles/$method"
-    cp -R "$profile" "$BENCH_RESULTS/profiles/$method/"
-fi
+printf '%s\n' "$profile" > "$BENCH_WORK/profile.path"
 STEP
 
-        # Append immediately so completed runs survive a later failure
-        # A failed scheduler step may have no measurements, but still gets a row
-        if [[ ! -s "$BENCH_WORK/time.tsv" ]]; then
-            printf '%s\t%s\t%s\t%s\tNA\t%s' \
-                "$run_order" "$repetition" "$is_warmup" "$method" "$cores" > "$BENCH_WORK/time.tsv"
-            for ((column=7; column<=28; column++)); do
-                printf '\tNA' >> "$BENCH_WORK/time.tsv"
-            done
-            printf '\n' >> "$BENCH_WORK/time.tsv"
-        fi
-        memory_values=$'NA\tNA\tNA\tNA'
-        if [[ -s "$BENCH_WORK/memory.tsv" ]]; then memory_values=$(cat "$BENCH_WORK/memory.tsv"); fi
-        printf '%s\t%s\t%s\n' "$(cat "$BENCH_WORK/time.tsv")" "$memory_values" "$step_exit_code" >> "$BENCH_RESULTS/timings.tsv"
-        if ((step_exit_code != 0)); then
-            echo "Run $run_order failed. Completed rows are in $BENCH_RESULTS/timings.tsv" >&2
-            exit "$step_exit_code"
-        fi
-        sync
-        rm -rf "$BENCH_WORK/output" "$BENCH_WORK/tool.log"
-    done < "$BENCH_WORK/order.tsv"
-done
+    # Retain known identifiers even when Slurm fails before GNU time can run
+    if [[ ! -s "$BENCH_WORK/time.tsv" ]]; then
+        fallback=()
+        for ((column=1; column<=30; column++)); do fallback+=(NA); done
+        fallback[0]=$run_order
+        fallback[1]=$repetition
+        fallback[2]=$is_warmup
+        fallback[3]=$method
+        fallback[5]=$cores
+        fallback[20]=$SLURM_JOB_ID
+        if [[ -s "$BENCH_WORK/step.id" ]]; then fallback[21]=$(cat "$BENCH_WORK/step.id"); fi
+        (IFS=$'\t'; printf '%s\n' "${fallback[*]}") > "$BENCH_WORK/time.tsv"
+    fi
+    benchmark_finish_run "$method" "$cores" "$repetition" "$is_warmup" "$step_exit_code"
+done < "$BENCH_WORK/order.tsv"

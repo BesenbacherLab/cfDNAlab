@@ -15,9 +15,9 @@ The comparator divides each cfDNAlab group profile by its mean over the complete
 
 The source also shows filtering differences. Griffin checks the forward record's MAPQ, duplicate and QC-fail flags and paired status. It does not explicitly reject secondary/supplementary records or validate the actual mate's MAPQ, chromosome and orientation. cfDNAlab performs these checks. Neither baseline requires flag 0x2. The source-specific behavior stays in the comparison.
 
-For coincident reconstructed mates, the TLEN signs matter: if the reverse record has positive TLEN and the forward record has negative TLEN, Griffin omits that fragment. cfDNAlab uses the actual paired span independently of TLEN. This can affect reconstructed short fragments, depending on their final alignment records. The benchmark does not change their flags, TLEN or sequences.
+The input preparation now assigns positive TLEN to the reconstructed forward mate. The shared bwa mem remap recomputes TLEN and flags, so final alignments determine inclusion. A reverse record with positive TLEN would be omitted by Griffin, but that is not an expected reconstruction difference after this remap. See [input provenance](../data/README.md).
 
-Griffin pads queried regions by the **minimum** fragment length. The 100-200 bp baseline provides at least half the maximum length as padding. If changing the range so that `max_length > 2 * min_length`, its forward-read fetch can miss fragments near query boundaries. Group aggregation parallelizes across site lists, so a single group cannot use all aggregation workers even when counting scales.
+Griffin pads queried regions by the **minimum** fragment length. The 100-200 bp baseline provides at least half the maximum length as padding. The sufficient padding condition is `floor(max_length / 2) <= min_length`. Fetch losses become possible from `max_length >= 2 * min_length + 2`, depending on read alignment extent. Group aggregation parallelizes across site lists, so a single group cannot use all aggregation workers even when counting scales.
 
 Pilot the actual site set before scheduling all repetitions. Griffin holds per-base dictionaries across merged fetch regions and dense site-by-position matrices during aggregation. Large or heavily overlapping site sets can therefore require substantial memory.
 
@@ -31,7 +31,7 @@ The runner supplies a small GC table with every bias set to 1. This gives unit w
 
 ## Inputs and run
 
-Supply the prepared coordinate-sorted BAM and its index, the matching **uncompressed FASTA plus existing `.fai`**, and a BED-like file with `chromosome, start, end, group` and optional strand columns. BED6 uses column 6 for strand, as in cfDNAlab. Use tab-separated rows without a header. All intervals must have the same even width and lie entirely inside their chromosomes. Each interval becomes the identical symmetric window in Griffin, centered at `start + width/2`. Reverse-stranded windows are reversed by both tools. The runner retains repeated and overlapping site rows and fails on invalid input instead of silently dropping sites. Select and clean the biological site set before benchmarking.
+Supply the prepared coordinate-sorted BAM and its index, the matching **uncompressed FASTA plus existing `.fai`**, and your BED-like file with `chromosome, start, end, group` and optional strand columns through `BENCH_INTERVALS`. BED6 uses column 6 for strand, as in cfDNAlab. Use tab-separated rows without a header. All intervals must have the same even width and lie entirely inside their chromosomes. Each interval becomes the identical symmetric window in Griffin, centered at `start + width/2`. Reverse-stranded windows are reversed by both tools. The runner retains all supplied site rows, including repeats and overlaps, and fails on invalid input instead of silently dropping sites. All-numeric chromosome names and invalid strand tokens fail before Griffin timing.
 
 ```bash
 # The shared installer prints these tool paths
@@ -40,14 +40,14 @@ export BENCH_GRIFFIN_ARCHIVE=/path/to/benchmark-tools/griffin.tar.gz
 export BENCH_BAM=/path/to/BH01.hg38.paired.15x.bam
 export BENCH_REF_FASTA=/path/to/the-alignment-reference.fa
 export BENCH_INTERVALS=/path/to/grouped-midpoint-windows.bed
+export BENCH_SAMTOOLS_ARCHIVE=/path/to/benchmark-tools/samtools.tar.gz
 export BENCH_LOCAL_ROOT=/path/to/node-local-scratch
 
 # Concordance pilot: run each tool once
 export BENCH_RESULTS=/path/to/midpoint-pilot
 export BENCH_CORES="1"
-export BENCH_WARMUPS=0
-export BENCH_REPETITIONS=1
-sbatch --constraint=gen6 --time=12:00:00 benchmarks/midpoints/benchmark_midpoints.sh
+export BENCH_PILOT=1
+sbatch --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET benchmarks/midpoints/benchmark_midpoints.sh
 
 # After the job finishes, write a row per group with agreement metrics
 /path/to/benchmark-tools/envs/comparison/bin/python \
@@ -57,16 +57,17 @@ sbatch --constraint=gen6 --time=12:00:00 benchmarks/midpoints/benchmark_midpoint
 # Then benchmark the same calls with more cores and repetitions
 export BENCH_RESULTS=/path/to/midpoint-timing
 export BENCH_CORES="1 4 8 12 32"
-export BENCH_WARMUPS=3
-export BENCH_REPETITIONS=10
-sbatch --constraint=gen6 --time=24:00:00 benchmarks/midpoints/benchmark_midpoints.sh
+export BENCH_PILOT=0
+export BENCH_WARMUPS=2
+export BENCH_REPETITIONS=5
+sbatch --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET benchmarks/midpoints/benchmark_midpoints.sh
 ```
 
-Change the generation selector and wall time for the cluster. `BENCH_INDEX` and `BENCH_FASTA_INDEX` can override the usual index paths. `BENCH_MIN_LENGTH`, `BENCH_MAX_LENGTH` and `BENCH_MIN_MAPQ` override the common filters. `BENCH_METHODS="cfdnalab griffin"` selects the two tools.
+Set the generation selector and wall time from the cluster settings and full-matrix pilot. Split long blocks and pin sequential jobs to the same physical node as described in [the shared run controls](../README.md#runs-and-budgets). `BENCH_INDEX` and `BENCH_FASTA_INDEX` can override the usual index paths. `BENCH_MIN_LENGTH`, `BENCH_MAX_LENGTH` and `BENCH_MIN_MAPQ` override the common filters. `BENCH_METHODS="cfdnalab griffin"` selects the two tools.
 
-The runner reserves an exclusive node and all its memory. Sequential `srun --jobid` steps use that allocation and check their actual node and allowed logical/physical CPU IDs. Hard confinement also depends on Slurm's cgroup setup. All inputs and Griffin's environment are staged on local scratch before warmups. Each repetition block shuffles tool/core combinations and records the actual order. No caches are evicted. Both tools use exactly the chromosomes present in the supplied site set, while the BAM retains its other chromosomes and records.
+The runner reserves an exclusive node and all its memory. Sequential `srun --jobid` steps use that allocation and check their actual node and allowed logical/physical CPU IDs. Hard confinement also depends on Slurm's cgroup setup. All inputs and Griffin's environment are staged on local scratch before warmups. Methods run in contiguous blocks with warmups before measurements. Core budgets shuffle within each repetition. No caches are evicted. Both tools use exactly the chromosomes present in the supplied site set, while the BAM retains its other chromosomes and records.
 
-The only timing result is `timings.tsv`, with a row for every run, including warmups and failures. Native profiles are also retained under `profiles/cfdnalab/` and `profiles/griffin/` from repetition 1 at the first requested core budget. Other temporary files and logs are deleted. Errors are printed to the Slurm log. Source files are not modified or downloaded.
+The only timing result is `timings.tsv`, with a row for every run, including warmups and failures. Native profiles are also retained under `profiles/cfdnalab/` and `profiles/griffin/` from the first measured repetition at the capture core budget. Other temporary files and logs are deleted. Errors are printed to the Slurm log. Source files are not modified or downloaded.
 
 Timing includes native startup, counting, output writing and Griffin's bigWig-to-profile aggregation. cfDNAlab's native default QC plot also remains timed. Input staging, scheduler startup, profile preservation, cleanup and concordance calculations are outside the timer. GNU time's maximum RSS is not the simultaneous total memory of a multiprocessing tree.
 
@@ -84,11 +85,11 @@ Timing includes native startup, counting, output writing and Griffin's bigWig-to
 
 Expected differences: even-length midpoint choices, actual paired spans versus TLEN, filtering, and Griffin's five-decimal output. Site counts and coordinate axes must agree before interpreting these metrics.
 
-| Tool | Cores | Warmups / measured | Mean seconds | SD seconds | Maximum RSS, KiB |
+| Tool | Cores | Warmups / measured | Mean process+flush, s | SD seconds | Slurm peak, KiB |
 | --- | --- | --- | --- | --- | --- |
-| cfDNAlab | 1 / 4 / 8 / 12 / 32 | 3 / 10 each | [ ] | [ ] | [ ] |
-| Griffin v0.2.0 | 1 / 4 / 8 / 12 / 32 | 3 / 10 each | [ ] | [ ] | [ ] |
+| cfDNAlab | 1 / 4 / 8 / 12 / 32 | 2 / 5 each | [ ] | [ ] | [ ] |
+| Griffin v0.2.0 | 1 / 4 / 8 / 12 / 32 | 2 / 5 each | [ ] | [ ] | [ ] |
 
 Expand the timing rows to a core budget per row for the final A4 supplement. Report the shared site set, groups, window width, 1 bp resolution and 100-200 bp length range alongside the table, and place the workload notes below it.
 
-Timing rows also include sampled peak and time-weighted mean process-tree RSS, with sample counts and interval. See the [shared timing TSV documentation](../README.md) for units and measurement limits. Submit from the repository root so helper scripts can be staged before warmups.
+Join completed Slurm step memory after the job. Timing rows also record filesystem flush time, process-plus-flush time and output bytes. See the [shared timing TSV documentation](../README.md) for units and measurement limits. Submit from the repository root so helper scripts can be staged before warmups.

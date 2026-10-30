@@ -10,31 +10,31 @@
 
 # Compare native, unsmoothed 1 bp midpoint profiles on one exclusive node
 # Every attempted run, including warmups, gets a row in timings.tsv
-# Keep a native profile from the first repetition for each tool
+# Keep a native profile from the first measured repetition for each tool
 # All BAM/reference copies, environments and temporary files use local scratch
 # See README.md for required paths, concordance and expected differences
 
 set -euo pipefail
 export LC_ALL=C
+source "${SLURM_SUBMIT_DIR:?Submit from the repository root}/benchmarks/common.sh"
+BENCH_FEATURE=midpoints
 
 : "${SLURM_JOB_ID:?Submit this script with sbatch}"
 : "${BENCH_BAM:?Set the prepared coordinate-sorted BAM path}"
 : "${BENCH_INTERVALS:?Set the grouped fixed-size BED path}"
-: "${BENCH_REF_FASTA:?Set the matching uncompressed reference FASTA path}"
-: "${BENCH_CFDNA:?Set the cfDNAlab executable path}"
-: "${BENCH_GRIFFIN_ARCHIVE:?Set the packed Griffin environment}"
 : "${BENCH_LOCAL_ROOT:?Set an existing node-local scratch directory}"
 : "${BENCH_RESULTS:?Set a new results directory}"
 BENCH_INDEX=${BENCH_INDEX:-${BENCH_BAM}.bai}
-BENCH_FASTA_INDEX=${BENCH_FASTA_INDEX:-${BENCH_REF_FASTA}.fai}
+BENCH_FASTA_INDEX=${BENCH_FASTA_INDEX:-${BENCH_REF_FASTA:-}.fai}
 BENCH_CORES=${BENCH_CORES:-1 4 8 12 32}
-BENCH_WARMUPS=${BENCH_WARMUPS:-3}
-BENCH_REPETITIONS=${BENCH_REPETITIONS:-10}
+BENCH_WARMUPS=${BENCH_WARMUPS:-2}
+BENCH_REPETITIONS=${BENCH_REPETITIONS:-5}
 BENCH_METHODS=${BENCH_METHODS:-cfdnalab griffin}
 export BENCH_MIN_MAPQ=${BENCH_MIN_MAPQ:-30}
 export BENCH_MIN_LENGTH=${BENCH_MIN_LENGTH:-100}
 export BENCH_MAX_LENGTH=${BENCH_MAX_LENGTH:-200}
 
+benchmark_controls
 read -r -a cores_to_run <<< "$BENCH_CORES"
 read -r -a methods_to_run <<< "$BENCH_METHODS"
 if [[ ${SLURM_JOB_NUM_NODES:-${SLURM_NNODES:-0}} != 1 || -e "$BENCH_RESULTS" ]]; then
@@ -46,7 +46,7 @@ if ((${#cores_to_run[@]} == 0 || ${#methods_to_run[@]} == 0)); then
     exit 1
 fi
 for value in "$BENCH_WARMUPS" "$BENCH_REPETITIONS" "$BENCH_MIN_MAPQ" "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH" "${cores_to_run[@]}"; do
-    if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+    if [[ ! "$value" =~ ^(0|[1-9][0-9]*)$ ]]; then
         echo "Core counts, repetitions and filter settings must be integers: $value" >&2
         exit 1
     fi
@@ -67,10 +67,22 @@ for method in "${methods_to_run[@]}"; do
         *) echo "Unknown midpoint tool: $method" >&2; exit 1 ;;
     esac
 done
-if [[ "$BENCH_REF_FASTA" == *.gz ]]; then
+if [[ " $BENCH_METHODS " == *" griffin "* && ${BENCH_REF_FASTA:-} == *.gz ]]; then
     echo "Use an uncompressed FASTA and its existing .fai index." >&2
     exit 1
 fi
+
+run_cfdna=false
+run_griffin=false
+for method in "${methods_to_run[@]}"; do
+    case "$method" in
+        cfdnalab*) run_cfdna=true ;;
+        griffin) run_griffin=true ;;
+    esac
+done
+: "${BENCH_SAMTOOLS_ARCHIVE:?Set the packed samtools environment for BAM header preparation}"
+if [[ "$run_cfdna" == true ]]; then : "${BENCH_CFDNA:?Set the cfDNAlab executable}"; fi
+if [[ "$run_griffin" == true ]]; then : "${BENCH_GRIFFIN_ARCHIVE:?Set the packed Griffin environment}"; : "${BENCH_REF_FASTA:?Set the matching reference FASTA}"; fi
 
 # Stage once before warmups. Never rewrite or index the original inputs
 export BENCH_WORK BENCH_NODE BENCH_HALF_WIDTH BENCH_SITES BENCH_GROUPS BENCH_CHROMOSOMES
@@ -83,38 +95,44 @@ mkdir -p "$BENCH_WORK/bin" "$BENCH_WORK/tmp" "$BENCH_WORK/cache" "$BENCH_WORK/ma
 cp -L "$BENCH_BAM" "$BENCH_WORK/sample.bam"
 cp -L "$BENCH_INDEX" "$BENCH_WORK/sample.bam.${BENCH_INDEX##*.}"
 cp -L "$BENCH_INTERVALS" "$BENCH_WORK/input.bed"
-cp -L "$BENCH_REF_FASTA" "$BENCH_WORK/reference.fa"
-cp -L "$BENCH_FASTA_INDEX" "$BENCH_WORK/reference.fa.fai"
-cp -L "$BENCH_CFDNA" "$BENCH_WORK/bin/cfdna"
+if [[ "$run_griffin" == true ]]; then
+    cp -L "$BENCH_REF_FASTA" "$BENCH_WORK/reference.fa"
+    cp -L "$BENCH_FASTA_INDEX" "$BENCH_WORK/reference.fa.fai"
+fi
+if [[ "$run_cfdna" == true ]]; then benchmark_stage_binary "$BENCH_CFDNA" cfdna; fi
 # sbatch uses a spool copy of this script. Submit from the repository root
-cp "$SLURM_SUBMIT_DIR/benchmarks/measure_memory.py" "$BENCH_WORK/measure_memory.py"
 export TMPDIR="$BENCH_WORK/tmp" XDG_CACHE_HOME="$BENCH_WORK/cache"
 # Ignore ~/.local Python packages and inherited import paths so imports stay
 # inside Griffin's staged environment. See the installation notes in ../README.md
 export MPLCONFIGDIR="$BENCH_WORK/matplotlib" PYTHONNOUSERSITE=1
 unset PYTHONPATH PYTHONHOME
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1
-tar -xzf "$BENCH_GRIFFIN_ARCHIVE" -C "$BENCH_WORK/griffin-env"
-"$BENCH_WORK/griffin-env/bin/python" "$BENCH_WORK/griffin-env/bin/conda-unpack"
-# pybedtools must find the packed bedtools, rather than a shared installation
-export PATH="$BENCH_WORK/griffin-env/bin:$PATH"
+benchmark_unpack "$BENCH_SAMTOOLS_ARCHIVE" "$BENCH_WORK/samtools-env"
+"$BENCH_WORK/samtools-env/bin/samtools" idxstats "$BENCH_WORK/sample.bam" |
+    awk '$1 != "*" {print $1 "\t" $2}' > "$BENCH_WORK/chrom.sizes"
+if [[ "$run_griffin" == true ]]; then
+    benchmark_unpack "$BENCH_GRIFFIN_ARCHIVE" "$BENCH_WORK/griffin-env"
+    # pybedtools must find the packed bedtools, rather than a shared installation
+    export PATH="$BENCH_WORK/griffin-env/bin:$PATH"
+fi
+export BENCH_RUN_GRIFFIN=$run_griffin
 
 # Prepare two representations of exactly the same oriented windows
 # Keep all sites, including repeated and overlapping rows. Fail on invalid input
 # This setup reads headers and BED rows, without scanning or filtering BAM reads
-site_summary=$("$BENCH_WORK/griffin-env/bin/python" - <<'PY'
+site_summary=$("$BENCH_SETUP_PYTHON" - <<'PY'
 import csv
+import json
 import os
 from pathlib import Path
 
-import pysam
-import yaml
-
 work = Path(os.environ['BENCH_WORK'])
-with pysam.AlignmentFile(str(work / 'sample.bam'), 'rb') as bam:
-    bam_contigs = dict(zip(bam.references, bam.lengths))
-with pysam.FastaFile(str(work / 'reference.fa')) as reference:
-    reference_contigs = dict(zip(reference.references, reference.lengths))
+with (work / 'chrom.sizes').open() as source:
+    bam_contigs = {fields[0]: int(fields[1]) for fields in csv.reader(source, delimiter='\t')}
+reference_contigs = bam_contigs
+if os.environ['BENCH_RUN_GRIFFIN'] == 'true':
+    with (work / 'reference.fa.fai').open() as source:
+        reference_contigs = {fields[0]: int(fields[1]) for fields in csv.reader(source, delimiter='\t')}
 rows = []
 window_width = None
 with (work / 'input.bed').open() as source:
@@ -139,7 +157,8 @@ with (work / 'input.bed').open() as source:
         strand = fields[5] if len(fields) >= 6 else fields[4] if len(fields) == 5 else '.'
         if len(fields) >= 6 and fields[4] in ('+', '-', '.') and strand not in ('+', '-', '.'):
             raise ValueError('Ambiguous strand columns on BED row {}'.format(line_number))
-        strand = strand if strand in ('+', '-', '.') else '.'
+        if strand not in ('+', '-', '.'):
+            raise ValueError('Invalid strand on BED row {}'.format(line_number))
         rows.append((chromosome, start, end, group, 0, strand))
 if not rows:
     raise ValueError('No midpoint sites in the BED')
@@ -154,6 +173,8 @@ for chromosome, start, end, group, score, strand in rows:
 (work / 'sites').mkdir()
 site_paths = {}
 for group_index, (group, sites) in enumerate(groups.items()):
+    if os.environ['BENCH_RUN_GRIFFIN'] == 'true' and all(site[0].isdigit() for site in sites):
+        raise ValueError('Griffin infers numeric chromosome types for group ' + group + '. Use the selected hg38/UCSC input.')
     path = work / 'sites' / '{}.tsv'.format(group_index)
     with path.open('w') as destination:
         writer = csv.writer(destination, delimiter='\t', lineterminator='\n')
@@ -161,7 +182,8 @@ for group_index, (group, sites) in enumerate(groups.items()):
         writer.writerows(sites)
     site_paths[group] = str(path)
 with (work / 'sites.yaml').open('w') as destination:
-    yaml.safe_dump({'site_lists': site_paths}, destination)
+    # JSON is valid YAML and avoids requiring PyYAML in the setup interpreter
+    json.dump({'site_lists': site_paths}, destination)
 chromosomes = sorted(set(row[0] for row in rows))
 # Its counting script sorts intervals lexicographically. Use that same contig
 # order in the bigWig header so its exported entries remain correctly ordered
@@ -180,40 +202,37 @@ print(window_width // 2, len(rows), len(groups), ','.join(chromosomes), sep='\t'
 PY
 )
 IFS=$'\t' read -r BENCH_HALF_WIDTH BENCH_SITES BENCH_GROUPS BENCH_CHROMOSOMES <<< "$site_summary"
-BENCH_CFDNA_VERSION=$("$BENCH_WORK/bin/cfdna" --version 2>&1 | tr '\t\n' '  ')
-BENCH_GRIFFIN_VERSION=$(cat "$BENCH_WORK/griffin-env/share/griffin/version.txt")
+if [[ "$run_cfdna" == true ]]; then BENCH_CFDNA_VERSION=$("$BENCH_WORK/bin/cfdna" --version 2>&1 | tr '\t\n' '  '); fi
+if [[ "$run_griffin" == true ]]; then BENCH_GRIFFIN_VERSION=$(cat "$BENCH_WORK/griffin-env/share/griffin/version.txt"); fi
 mkdir -p "$BENCH_RESULTS/profiles"
+cp "$BENCH_WORK/sites.bed" "$BENCH_RESULTS/sites.bed"
+sha256sum "$BENCH_INTERVALS" > "$BENCH_RESULTS/sites.sha256"
 
 # One row per tool run, with the actual node and allowed CPU IDs
 header=$'run_order\trepetition\twarmup\tmethod\ttool_version\tcores\ttool_workers'
 header+=$'\tmin_mapq\tmin_length\tmax_length\tsites\tgroups\twindow_bp\tresolution_bp\tmidpoint_policy'
 header+=$'\tnode\tcpu_model\tcpu_ids\tphysical_core_ids\tjob_id\tstep_id\tstarted_utc'
 header+=$'\twall_seconds\tuser_seconds\tsystem_seconds\tmax_rss_kib\ttool_exit_code'
-header+=$'\tsampled_peak_rss_kib\tsampled_mean_rss_kib\tmemory_samples\tmemory_interval_seconds\tstep_exit_code'
+header+=$'\tflush_seconds\tprocess_plus_flush_seconds\toutput_bytes\tpilot\tstep_exit_code'
 printf '%s\n' "$header" > "$BENCH_RESULTS/timings.tsv"
-for method in "${methods_to_run[@]}"; do
-    for cores in "${cores_to_run[@]}"; do
-        printf '%s\t%s\n' "$method" "$cores"
-    done
-done > "$BENCH_WORK/combinations.tsv"
 
-# Shuffle within each repetition block. All warmup rows remain in the TSV
+# Run each method's warmups and measurements together on the recorded node
+benchmark_record_setup
+benchmark_schedule > "$BENCH_WORK/order.tsv"
+if [[ ! -s "$BENCH_WORK/order.tsv" ]]; then echo "The requested run matrix is empty." >&2; exit 1; fi
 run_order=0
-total_repetitions=$((BENCH_WARMUPS + BENCH_REPETITIONS))
-for ((repetition=1; repetition<=total_repetitions; repetition++)); do
-    is_warmup=false
-    if ((repetition <= BENCH_WARMUPS)); then is_warmup=true; fi
-    shuf "$BENCH_WORK/combinations.tsv" > "$BENCH_WORK/order.tsv"
-    while IFS=$'\t' read -r method cores; do
-        run_order=$((run_order + 1))
-        step_exit_code=0
-        rm -f "$BENCH_WORK/time.tsv" "$BENCH_WORK/memory.tsv"
-        # Attach to this job's existing node, then check the binding in the step
-        srun --jobid="$SLURM_JOB_ID" --exact --nodes=1 --ntasks=1 \
-            --cpus-per-task="$cores" --threads-per-core=1 --cpu-bind=threads \
-            --export=ALL bash -s -- "$run_order" "$repetition" "$is_warmup" "$method" "$cores" \
-            <<'STEP' || step_exit_code=$?
+while IFS=$'\t' read -r method cores repetition is_warmup; do
+    run_order=$((run_order + 1))
+    step_exit_code=0
+    rm -f "$BENCH_WORK/time.tsv" "$BENCH_WORK/io.tsv" "$BENCH_WORK/profile.path" "$BENCH_WORK/step.id"
+    # Attach to this job's existing node, then check the binding in the step
+    srun --jobid="$SLURM_JOB_ID" --exact --nodes=1 --ntasks=1 \
+        --cpus-per-task="$cores" --threads-per-core=1 --cpu-bind=threads \
+        --export=ALL bash -s -- "$run_order" "$repetition" "$is_warmup" "$method" "$cores" \
+        <<'STEP' || step_exit_code=$?
 set -euo pipefail
+source "$BENCH_WORK/common.sh"
+printf '%s\n' "$SLURM_STEP_ID" > "$BENCH_WORK/step.id"
 run_order=$1
 repetition=$2
 is_warmup=$3
@@ -294,12 +313,10 @@ if [[ "$node" != "$BENCH_NODE" ]] || ((logical_cpu_count != cores || physical_co
     exit 1
 fi
 tool_exit_code=0
-"$BENCH_WORK/griffin-env/bin/python" "$BENCH_WORK/measure_memory.py" "$BENCH_WORK/memory.tsv" \
-    /usr/bin/time --quiet --format "$prefix\t%e\t%U\t%S\t%M\t%x" \
-    --output "$BENCH_WORK/time.tsv" "${command[@]}" \
-    > "$BENCH_WORK/tool.log" 2>&1 || tool_exit_code=$?
+benchmark_time_command "$prefix" "$BENCH_WORK/output" \
+    "$BENCH_WORK/tool.log" "$BENCH_WORK/tool-error.log" "${command[@]}" || tool_exit_code=$?
 if ((tool_exit_code != 0)); then
-    cat "$BENCH_WORK/tool.log" >&2
+    cat "$BENCH_WORK/tool-error.log" "$BENCH_WORK/tool.log" >&2
     exit "$tool_exit_code"
 fi
 if [[ ! -e "$profile" ]]; then
@@ -307,26 +324,21 @@ if [[ ! -e "$profile" ]]; then
     exit 1
 fi
 # Keep a native output outside the timer. Every run still recomputes its output
-if ((repetition == 1 && cores == BENCH_CAPTURE_CORES)); then
-    mkdir -p "$BENCH_RESULTS/profiles/$method"
-    cp -R "$profile" "$BENCH_RESULTS/profiles/$method/"
-fi
+printf '%s\n' "$profile" > "$BENCH_WORK/profile.path"
 STEP
-        # Preserve completed runs immediately, and retain a row for failed steps
-        if [[ ! -s "$BENCH_WORK/time.tsv" ]]; then
-            printf '%s\t%s\t%s\t%s\tNA\t%s' \
-                "$run_order" "$repetition" "$is_warmup" "$method" "$cores" > "$BENCH_WORK/time.tsv"
-            for ((column=7; column<=27; column++)); do printf '\tNA' >> "$BENCH_WORK/time.tsv"; done
-            printf '\n' >> "$BENCH_WORK/time.tsv"
-        fi
-        memory_values=$'NA\tNA\tNA\tNA'
-        if [[ -s "$BENCH_WORK/memory.tsv" ]]; then memory_values=$(cat "$BENCH_WORK/memory.tsv"); fi
-        printf '%s\t%s\t%s\n' "$(cat "$BENCH_WORK/time.tsv")" "$memory_values" "$step_exit_code" >> "$BENCH_RESULTS/timings.tsv"
-        if ((step_exit_code != 0)); then
-            echo "Run $run_order failed. Completed rows are in $BENCH_RESULTS/timings.tsv" >&2
-            exit "$step_exit_code"
-        fi
-        sync
-        rm -rf "$BENCH_WORK/output" "$BENCH_WORK/tool.log"
-    done < "$BENCH_WORK/order.tsv"
-done
+
+    # Retain known identifiers even when Slurm fails before GNU time can run
+    if [[ ! -s "$BENCH_WORK/time.tsv" ]]; then
+        fallback=()
+        for ((column=1; column<=27; column++)); do fallback+=(NA); done
+        fallback[0]=$run_order
+        fallback[1]=$repetition
+        fallback[2]=$is_warmup
+        fallback[3]=$method
+        fallback[5]=$cores
+        fallback[19]=$SLURM_JOB_ID
+        if [[ -s "$BENCH_WORK/step.id" ]]; then fallback[20]=$(cat "$BENCH_WORK/step.id"); fi
+        (IFS=$'\t'; printf '%s\n' "${fallback[*]}") > "$BENCH_WORK/time.tsv"
+    fi
+    benchmark_finish_run "$method" "$cores" "$repetition" "$is_warmup" "$step_exit_code"
+done < "$BENCH_WORK/order.tsv"

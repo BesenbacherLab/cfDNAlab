@@ -3,7 +3,7 @@
 
 Write one TSV row per pair of saved profiles to stdout. Compare the full labeled
 motif set using frequencies, because FinaleToolkit's output has no raw counts.
-FrEIA's right-end labels are complemented before pooling its two ends.
+FrEIA is excluded because its pinned both-end aggregation produces incorrect output.
 """
 
 import argparse
@@ -14,7 +14,6 @@ import sys
 
 import numpy as np
 import pandas as pd
-from cfdnalab import read_end_motifs
 
 
 def load_profile(directory, motifs):
@@ -29,6 +28,8 @@ def load_profile(directory, motifs):
     tsv_path = directory / "motifs.tsv"
     freia_path = directory / "T__sample.pq"
     if zarr_path.is_dir():
+        from cfdnalab import read_end_motifs
+
         result = read_end_motifs(zarr_path)
         if result.row_mode != "global":
             raise ValueError(f"Expected a global cfDNAlab profile: {directory.name}")
@@ -40,24 +41,7 @@ def load_profile(directory, motifs):
             entries = list(csv.reader(source, delimiter="\t"))
         contains_counts = False
     elif freia_path.is_file():
-        table = pd.read_parquet(freia_path)
-        # CountLen is the count in each length bin. CountSamp is repeated across
-        # length bins and must not be summed. The native --both call keeps each
-        # end separate. Its right-end strings are reversed but not complemented
-        complement = str.maketrans("ACGT", "TGCA")
-        counts = dict.fromkeys(motifs, 0)
-        for row in table.itertuples(index=False):
-            if row.WhichEnd == "leftmost":
-                motif = row.Base
-            elif row.WhichEnd == "rightmost":
-                motif = row.Base.translate(complement)
-            else:
-                raise ValueError(f"Unexpected FrEIA end label: {row.WhichEnd}")
-            if motif not in counts:
-                raise ValueError(f"Unexpected FrEIA motif: {motif}")
-            counts[motif] += row.CountLen
-        entries = counts.items()
-        contains_counts = True
+        raise ValueError("FrEIA concordance is disabled until its native both-end aggregation is fixed")
     else:
         raise ValueError(f"No supported native motif profile in {directory}")
 
@@ -94,13 +78,17 @@ def main():
     arguments = parser.parse_args()
     motifs = ["".join(bases) for bases in product("ACGT", repeat=arguments.k)]
     directories = sorted(path for path in arguments.profiles.iterdir() if path.is_dir())
+    freia_directories = [path for path in directories if path.name == "freia" or (path / "T__sample.pq").is_file()]
+    if freia_directories:
+        print("Skipping FrEIA concordance: the pinned native both-end aggregation is incorrect.", file=sys.stderr)
+        directories = [path for path in directories if path not in freia_directories]
     if len(directories) < 2:
         parser.error("At least two saved tool profiles are required")
     profiles = {path.name: load_profile(path, motifs) for path in directories}
 
     columns = [
         "left_profile", "right_profile", "k", "motifs", "left_counted_ends", "right_counted_ends",
-        "pearson_r", "mae_frequency", "rmse_frequency", "max_abs_frequency_difference",
+        "pearson_r", "spearman_r", "max_abs_log2_ratio_abundant", "mae_frequency", "rmse_frequency", "max_abs_frequency_difference",
         "total_variation", "left_mds", "right_mds", "abs_mds_difference",
     ]
     writer = csv.DictWriter(sys.stdout, fieldnames=columns, delimiter="\t", lineterminator="\n")
@@ -113,6 +101,20 @@ def main():
         correlation = "NA"
         if np.std(left_frequency) > 0 and np.std(right_frequency) > 0:
             correlation = float(np.corrcoef(left_frequency, right_frequency)[0, 1])
+        rank_correlation = "NA"
+        left_ranks = pd.Series(left_frequency).rank().to_numpy()
+        right_ranks = pd.Series(right_frequency).rank().to_numpy()
+        if np.std(left_ranks) > 0 and np.std(right_ranks) > 0:
+            rank_correlation = float(np.corrcoef(left_ranks, right_ranks)[0, 1])
+        # Include a motif when either profile reaches 1e-4. Zero on the other
+        # side gives an infinite ratio, without introducing a pseudocount
+        abundant = np.maximum(left_frequency, right_frequency) >= 1e-4
+        log_ratio = "NA"
+        if abundant.any():
+            if ((left_frequency[abundant] == 0) | (right_frequency[abundant] == 0)).any():
+                log_ratio = "Inf"
+            else:
+                log_ratio = float(np.abs(np.log2(left_frequency[abundant] / right_frequency[abundant])).max())
         left_mds = motif_diversity(left_frequency)
         right_mds = motif_diversity(right_frequency)
         row = {
@@ -123,6 +125,8 @@ def main():
             "left_counted_ends": left_total,
             "right_counted_ends": right_total,
             "pearson_r": correlation,
+            "spearman_r": rank_correlation,
+            "max_abs_log2_ratio_abundant": log_ratio,
             "mae_frequency": float(np.mean(np.abs(difference))),
             "rmse_frequency": float(np.sqrt(np.mean(difference**2))),
             "max_abs_frequency_difference": float(np.max(np.abs(difference))),

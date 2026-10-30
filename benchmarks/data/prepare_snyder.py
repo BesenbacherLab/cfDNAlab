@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Pair all unpaired records and downsample fragments from a Snyder BAM.
+"""Reconstruct recognized merged reads and downsample a Snyder BAM.
 
-Represent every retained unpaired record as two mates, regardless of its name,
-MAPQ, or secondary, supplementary, duplicate, QC-fail or unmapped status. Preserve
-those filtering flags on both mates. Mapped reconstructed pairs cover the same
+Represent retained unpaired M_ merged reads as two mates. Reject unexpected
+unpaired names instead of treating an arbitrary singleton as a complete fragment.
+Preserve the original filtering flags on both mates. Mapped reconstructed pairs cover the same
 aligned reference span. Unmapped reconstructed pairs remain unmapped.
 
 Sample by read name so both mates and any additional alignments are kept or
@@ -15,10 +15,9 @@ For BH01's reported 96-fold coverage, --keep-probability 0.15625 targets roughly
 the same fragment, so it does not double the fragment depth.
 
 This reconstructs pairs for fragment analysis. It does not recover the original
-read sequences or their separate quality scores. For a singleton that is not a
-complete merged fragment, the reconstructed span describes only the observed
-alignment, not the missing original fragment boundaries. Preparation is outside
-timing.
+read sequences or their separate quality scores. Only recognized merged reads
+have complete observed fragment boundaries.
+Preparation is outside timing, before conversion to FASTQ and remapping.
 See https://shendurelab.github.io/cfDNA/#primary-data-processing-of-sequencing-data
 and https://github.com/shendurelab/cfDNA/blob/master/FilterUniqueBAM.py
 """
@@ -42,6 +41,8 @@ def reconstruct_pair(unpaired_record):
     Unmapped records have no aligned reference span. Their reconstructed mates
     remain unmapped, with TLEN zero and proper-pair status unset.
     """
+    if not unpaired_record.query_name or not unpaired_record.query_name.startswith("M_"):
+        raise ValueError(f"Unexpected unpaired name. Expected an M_ merged read: {unpaired_record.query_name}")
     fragment_length = 0
     if not unpaired_record.is_unmapped:
         reference_end = unpaired_record.reference_end
@@ -64,9 +65,10 @@ def reconstruct_pair(unpaired_record):
     read1.next_reference_start = read1.reference_start
 
     # For mates covering identical coordinates, SAM permits either TLEN sign
-    # convention as long as the signs differ. Use positive for read1
+    # convention as long as the signs differ. Match bwa mem by giving the
+    # forward mate positive TLEN
     # Unmapped pairs keep TLEN zero. A missing CIGAR removes any stale MC tag
-    read1.template_length = fragment_length
+    read1.template_length = -fragment_length if read1.is_reverse else fragment_length
     read1.set_tag("MC", read1.cigarstring)
     read1.set_tag("MQ", read1.mapping_quality)
 
@@ -81,12 +83,12 @@ def reconstruct_pair(unpaired_record):
     read2.is_read2 = True
     read2.is_reverse = not read1.is_reverse
     read2.mate_is_reverse = read1.is_reverse
-    read2.template_length = -fragment_length
+    read2.template_length = -read1.template_length
     return read1, read2
 
 
 def main():
-    """Sample fragments, pair every retained unpaired record, and index the BAM.
+    """Sample fragments, reconstruct recognized merged reads, and index the BAM.
 
     Hashing the seed and read name gives the same sampling decision wherever a
     fragment's records occur in the coordinate-sorted input. This avoids storing
@@ -113,6 +115,8 @@ def main():
     input_records = 0
     retained_input_records = 0
     reconstructed_pairs = 0
+    merged_input_records = 0
+    paired_input_records = 0
     # A 64-bit hash spans [0, 2**64). Keep the requested fraction of that range
     sampling_threshold = int(arguments.keep_probability * 2**64)
     print(f"Preparing {arguments.input_bam} with pysam {pysam.__version__}", file=sys.stderr)
@@ -137,9 +141,16 @@ def main():
                 if record.query_name is None:
                     parser.error(f"Input record {input_records:,} has no read name for sampling")
 
+                if record.is_paired:
+                    paired_input_records += 1
+                elif record.query_name.startswith("M_"):
+                    merged_input_records += 1
+                else:
+                    parser.error(f"Unexpected unpaired name at input record {input_records}: {record.query_name}")
+
                 # Use only the seed and read name, never position, flags or quality
                 # Both existing mates get the same decision even when far apart
-                # Every retained unpaired record produces two mates below
+                # Every retained recognized merged record produces two mates below
                 fragment_hash = hashlib.blake2b(
                     f"{arguments.seed}:{record.query_name}".encode("utf-8"), digest_size=8
                 ).digest()
@@ -147,8 +158,8 @@ def main():
                     continue
                 retained_input_records += 1
 
-                # Pair every unpaired record, with no name or status restrictions
-                # Downstream tools decide which alignment flags and MAPQ to accept
+                # Reconstruct only known merged reads. Downstream tools decide which
+                # alignment flags and MAPQ to accept after the shared remap
                 if not record.is_paired:
                     read1, read2 = reconstruct_pair(record)
                     destination.write(read1)
@@ -165,6 +176,8 @@ def main():
     print("Creating the BAI index", file=sys.stderr)
     pysam.index("-@", str(arguments.threads), str(arguments.output_bam))
     print(f"Input records: {input_records:,}", file=sys.stderr)
+    print(f"Existing paired records: {paired_input_records:,}", file=sys.stderr)
+    print(f"Recognized merged records: {merged_input_records:,}", file=sys.stderr)
     print(f"Retained input records: {retained_input_records:,}", file=sys.stderr)
     print(f"Reconstructed pairs: {reconstructed_pairs:,}", file=sys.stderr)
     print(f"Output records: {retained_input_records + reconstructed_pairs:,}", file=sys.stderr)

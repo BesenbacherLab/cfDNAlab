@@ -2,9 +2,9 @@
 
 ## Installation
 
-Run `bash benchmarks/install_tools.sh /path/to/benchmark-tools` on Linux x86_64, using a new directory. Conda environments go under `envs/`. Standalone binaries, source checkouts, packed archives and the container image stay at the installation root. The script prints the paths needed by the benchmark runners. Conda, Apptainer, Git, wget and tar must already be available. Building cfDNAlab also needs GNU make and C/C++ compilers.
+Run `bash benchmarks/install_tools.sh /path/to/benchmark-tools` on Linux x86_64 with Bash 4 or later, using a dedicated directory. Conda environments go under `envs/`. Standalone binaries, source checkouts, packed archives and the container image stay at the installation root. The script prints the paths needed by the benchmark runners. Conda, Apptainer, Git, wget and tar must already be available. Building cfDNAlab also needs GNU make and C/C++ compilers.
 
-The benchmark nodes also need Slurm, GNU time at `/usr/bin/time`, Linux `ps`, and GNU coreutils. These are system requirements for running the jobs and measuring resources.
+The benchmark nodes also need Slurm, GNU time at `/usr/bin/time`, GNU coreutils, `ldd`, and Python 3 for untimed setup. These are system requirements for running the jobs and measuring resources.
 
 The installation routes below were checked against the linked guides and package recipes on **2026-10-29**. Software versions are pinned. This is an audit of the instructions and published packages, not a completed installation on the Linux cluster.
 
@@ -17,11 +17,11 @@ The installation routes below were checked against the linked guides and package
 | FinaleToolkit 1.1.0 | Bioconda, Python 3.11, `envs/finaletoolkit` | The [authors' guide](https://epifluidlab.github.io/FinaleToolkit/documentation/user_guide/installation.html) uses pip in a clean Python 3.11 environment. We use the same release through its [Bioconda recipe](https://bioconda.github.io/recipes/finaletoolkit/README.html) to obtain compiled dependencies as packages. Extra CLI dependencies for `filter-file` are unnecessary for the benchmarked commands. |
 | cfDNAPro 1.7.4 | Authors' Apptainer image, pinned by digest | Follows the [recommended container installation](https://github.com/hw538/cfDNAPro#installation). The image contains R and the required reference packages. Its labels identify source commit `ab9eeb1` and version 1.7.4, built on October 26. Bioconductor and [Bioconda](https://anaconda.org/bioconda/bioconductor-cfdnapro) use a separate version sequence. We retain the image named in the authors' current guide. |
 | Picard 3.5.0 | Bioconda `picard-slim`, Java 17, `envs/picard` | The [recipe](https://github.com/bioconda/bioconda-recipes/blob/master/recipes/picard-slim/meta.yaml) installs the official release JAR. It omits R. [CollectInsertSizeMetrics](https://github.com/broadinstitute/picard/blob/3.5.0/src/main/java/picard/analysis/CollectInsertSizeMetrics.java) only checks for R when a PDF histogram is requested, which our call does not do. |
-| FrEIA | Commit `2c32fb9`, authors' unchanged environment YAML, `envs/freia` | The [guide](https://github.com/mouliere-lab/FrEIA#installation-guide) delegates tool dependencies to its environment files. We create `FrEIA_env.yaml` directly and preserve its pins. It includes downstream plotting and analysis packages that the benchmark does not use. Keeping the supplied file avoids maintaining our own dependency selection. Snakemake, mamba and remapping environments are omitted because we call native scripts on an existing BAM. |
-| Griffin v0.2.0 | Release scripts and Conda dependencies, `envs/griffin` | Keeps the Python and relevant library versions in the [wiki](https://github.com/adoebley/Griffin/wiki), including its `nomkl` workaround. Bioconda supplies the specified pybedtools 0.8.0 and pysam 0.19.0 without local compilation. PyYAML is added because the scripts import it. Snakemake, matplotlib and samtools are omitted because these direct profiling calls do not use them. |
-| Output comparison | Local `py-cfdnalab` plus Conda fastparquet, `envs/comparison` | Uses the [Python package](../py-cfdnalab/README.md) from this checkout. fastparquet reads FrEIA's saved tables. This environment is only used after timing. |
+| FrEIA | Commit `2c32fb9`, authors' dependency pins with `nodefaults`, `envs/freia` | The [guide](https://github.com/mouliere-lab/FrEIA#installation-guide) delegates tool dependencies to its environment files. We preserve its dependency pins and add `nodefaults` to a local YAML copy to exclude inherited channels. It includes downstream plotting and analysis packages that the benchmark does not use. Keeping the supplied file avoids maintaining our own dependency selection. Snakemake, mamba and remapping environments are omitted because we call native scripts on an existing BAM. |
+| Griffin v0.2.0 | Release scripts and Conda dependencies, `envs/griffin` | Keeps the relevant library versions in the [wiki](https://github.com/adoebley/Griffin/wiki), including `nomkl`. Python 3.7.12 replaces its unavailable 3.7.4 pin. Bioconda supplies the specified pybedtools 0.8.0 and pysam 0.19.0 without local compilation. PyYAML 5.3.1 is added because the scripts import it. The full revised Linux solve remains to be checked. Snakemake, matplotlib and samtools are omitted because these direct profiling calls do not use them. |
+| Output comparison | Local `py-cfdnalab` plus zstd, `envs/comparison` | Uses the [Python package](../py-cfdnalab/README.md) from this checkout. zstd reads concatenated coverage frames. FrEIA concordance is disabled. This environment is only used after timing. |
 | Snyder preparation | Bioconda pysam 0.24.1, Python 3.11, `envs/snyder-preparation` | Follows [pysam's recommended Conda/Bioconda installation](https://pysam.readthedocs.io/en/latest/installation.html), avoiding a possible pip source build. Not part of benchmark timing. |
-| Environment packaging | conda-pack 0.8.1, `envs/packaging` | A single helper environment packs the other environments by their paths, following the [conda-pack guide](https://conda.github.io/conda-pack/). It is not a benchmarked tool and is not copied into every tool environment. |
+| Environment packaging | conda-pack 0.9.2, `envs/packaging` | A single helper environment packs the other environments by their paths, following the [conda-pack guide](https://conda.github.io/conda-pack/). It is not a benchmarked tool and is not copied into every tool environment. |
 
 FrEIA has no published release, so its source commit is pinned. Griffin's newest published tag is marked as a prerelease upstream. Its old dependency versions belong to that release's guide, rather than an older Griffin comparison. The scripts copied into the FrEIA and Griffin archives remain unmodified.
 
@@ -31,37 +31,88 @@ The environment settings have these specific purposes:
 | --- | --- |
 | `PYTHONNOUSERSITE=1` | Python normally searches a per-user package directory such as `~/.local/lib/python3.11/site-packages`, even inside a Conda environment. This disables that additional directory while retaining the environment's packages. It prevents a package installed with `pip --user` from overriding the benchmark version. See [Python's definition](https://docs.python.org/3/using/cmdline.html#envvar-PYTHONNOUSERSITE) and [FinaleToolkit's troubleshooting advice](https://epifluidlab.github.io/FinaleToolkit/documentation/user_guide/installation.html#troubleshooting). |
 | `unset PYTHONPATH PYTHONHOME` | Removes inherited extra module directories and an inherited Python installation prefix. Both could make the selected Python use files outside its environment. See the [Python environment-variable documentation](https://docs.python.org/3/using/cmdline.html#environment-variables). |
-| `CONDA_CHANNEL_PRIORITY=strict` | Applies the channel priority recommended by [Bioconda](https://bioconda.github.io/#with-conda) and FrEIA, including when creating FrEIA's YAML environment. The commands list conda-forge before bioconda. This only changes this script's environment, without editing the user's `.condarc`. |
+| `CONDA_CHANNEL_PRIORITY=strict` | Applies the channel priority recommended by [Bioconda](https://bioconda.github.io/#with-conda) and FrEIA, including when creating FrEIA's YAML environment. The commands list conda-forge before bioconda and use `--override-channels`. FrEIA uses `nodefaults` in its derived YAML. This only changes this script's environment, without editing the user's `.condarc`. |
 | `LIBCLANG_PATH="$CONDA_PREFIX/lib"` | Lets cfDNAlab's build find the Conda libclang used to generate Rust bindings. This comes from cfDNAlab's installation guide and is confined to its build section. |
 | `JAVA_HOME` | Picard's packaged launcher honors this variable. It selects the installed Java during the version check and the staged Java during benchmarks. The runner also clears inherited JVM option variables so outside settings do not override the recorded call. |
 
 The Python settings appear once in the installer and again in each benchmark job because those are separate shell processes. Running the installer with `bash` does not change the submitting shell's environment.
 
-Packing is needed for the agreed node-local benchmark setup. Copying a Conda executable alone can leave it reading its interpreter or libraries from the original installation. The runners extract the complete archive and run `conda-unpack` before timing. That relocation script needs only Python's standard library, so FinaleToolkit's staged Python also relocates the samtools and Picard environments. Griffin's Python can run the generated relocation script without installing conda-pack into its old environment. Build and pack on the same Linux platform used for benchmarking, as required by conda-pack.
+Packing is needed for the agreed node-local benchmark setup. Copying a Conda executable alone can leave it reading its interpreter or libraries from the original installation. The runners extract the complete archive and run `conda-unpack` before timing. That relocation script needs only Python's standard library. `BENCH_SETUP_PYTHON` (default `python3`) executes it outside timing, including its sibling progress module. Only selected competitors are unpacked. Every runner also uses the samtools archive to read the BAM header. Build and pack on the same Linux platform used for benchmarking, as required by conda-pack.
 
-The runners copy the standalone cfDNAlab and PanDepth executables, so their runtime shared libraries must be available from the compute node's system installation. Check their Linux linkage before benchmarking. It cannot be verified from this macOS workspace. The static mosdepth binary has no such package dependencies.
+The runners copy the standalone cfDNAlab and PanDepth executables, so their runtime shared libraries must be available from the compute node's system installation. The runners check their Linux linkage with `ldd` before benchmarking. A small pilot must also exercise default QC plotting and fonts. It cannot be verified from this macOS workspace. The static mosdepth binary has no such package dependencies.
 
-## Runs and timing TSVs
+## Resuming installations
 
-Install tools with [install_tools.sh](install_tools.sh), then follow the command-specific README or the coverage script's submission example. Submit jobs **from the repository root**, so the runners can copy their helper scripts using `SLURM_SUBMIT_DIR`. Each job reserves an exclusive node and all its memory. Every tool receives the same core budgets, **1, 4, 8, 12 and 32**, through sequential steps within that allocation. Node generation, wall time and partition must match the cluster's settings.
+The installer records `tool`, `version`, `status` and expected artifacts in `manifest.tsv`. A matching completed version with existing artifacts skips. A changed version, missing artifact or outdated status reinstalls that tool, with a separate log in `logs/`. Cleanup is limited to that tool's known files. cfDNAlab keeps an incremental Cargo target directory under `build/cfdnalab/`.
 
-Each timing TSV contains a row per attempted run, including warmups and failures. It is suitable for supplementary data: columns have a header, units are explicit, versions are retained, and there are no input/output paths in the timing rows. Filter `warmup=false`, `tool_exit_code=0` and `step_exit_code=0` for measured successful runs. `run_order` is the actual execution order. `repetition` numbers the warmup and measured blocks together, with three warmups and ten measured blocks by default.
+```bash
+bash benchmarks/install_tools.sh /path/to/benchmark-tools --only cfdnalab,samtools
+bash benchmarks/install_tools.sh /path/to/benchmark-tools --force finaletoolkit
+bash benchmarks/install_tools.sh /path/to/benchmark-tools --mark-outdated cfdnalab
+```
+
+Use `--force all` for a full reinstall. After source or dependency changes without a version change, explicitly force or mark the relevant tool outdated. `--force` applies to the tools selected by `--only`, which otherwise defaults to all. There is no automatic source-change detection. Environment exports, pip records and the image identity stay under `records/`. `cfdnalab-build.tsv` records the installed checkout and dirty flag, rather than a later checkout state. The installer prints `BENCH_INSTALL_MANIFEST` and `BENCH_CFDNA_BUILD` so runners can copy these small records beside results. Retain the full installation records with the experiment.
+
+Picard's version probe accepts its documented status 1 only with a recognizable 3.5.0 version. FinaleToolkit's added runtime pins and conda-pack 0.9.2 need Linux solve/relocation verification. Availability and source inspection are not evidence of a completed installation.
+
+## Runs and budgets
+
+Follow the [input preparation](data/README.md), then the [coverage](coverage/README.md), [lengths](lengths/README.md), [end-motif](ends/README.md) or [midpoint](midpoints/README.md) instructions. Submit **from the repository root** so `SLURM_SUBMIT_DIR` locates helpers. Jobs reserve an exclusive node and all its memory. Node generation, partition and wall time must match the cluster.
+
+All runners accept `BENCH_METHODS`, `BENCH_CORES` (default `1 4 8 12 32`), `BENCH_WARMUPS` (2) and `BENCH_REPETITIONS` (5 measured). `BENCH_PILOT=1` selects zero warmups and one measurement for each requested method/core combination. Use a new `BENCH_RESULTS` directory for every job. Only selected tools are required, plus the samtools archive and setup Python. References are required only by selected methods that use them.
+
+Each method runs as a contiguous block, with its warmups before measurements. Core budgets shuffle within each repetition. cfDNAPro and FinaleToolkit lengths are measured only at the requested 1/32-core endpoints because their counting paths are serial. Set `BENCH_SERIAL_ENDPOINTS=0` to measure them across another requested matrix. Other methods use the full requested matrix.
+
+First check wiring/relocation/fonts with a small input. Then run the complete production method/core matrix once on the actual input to budget all invocations. Pilot cfDNAPro's memory progressively, starting near 0.1x, before choosing the common node. A full-matrix pilot itself can exceed a short allocation. Split it too when needed.
+
+```bash
+python3 benchmarks/summarize_timings.py /path/to/pilot/timings.tsv \
+    --estimate --warmups 2 --repetitions 5 > pilot-summary.tsv
+```
+
+The estimate sums every observed method/core combination and adds 25% by default. Add staging/cleanup separately. It cannot budget configurations absent from its inputs. At 12 minutes per cfDNAlab run and 120 minutes per slow-tool run, those two tools at **one core alone** need 15 h 24 min for two warmups plus five measurements. Other methods/core budgets add to that total.
+
+Split oversized series by method, then by core budget if needed. Pin the sequential jobs to the **same physical node** and set `BENCH_EXPECTED_NODE` so the runner verifies it. Each new job includes its own warmups. For example, after setting input/tool paths:
+
+```bash
+export BENCH_METHODS=cfdnapro
+export BENCH_CORES="1 32"
+export BENCH_EXPECTED_NODE=chosen-node
+export BENCH_RESULTS=/path/to/lengths-cfdnapro
+sbatch --nodelist="$BENCH_EXPECTED_NODE" --time=YOUR_PILOT_BASED_BUDGET \
+    benchmarks/lengths/benchmark_lengths.sh
+```
+
+## Timing and Slurm memory
+
+Each TSV keeps warmups, pilots and failures. Summaries exclude them from production results. Actual run order, version, filters, scope, hostname, logical/physical CPU IDs, job/step IDs and UTC start remain inspectable. Native worker counts are distinct from the allocated physical core budget. Placement is checked inside every single-task step. Hard confinement also depends on the site's Slurm cgroup configuration.
 
 | Columns | Meaning |
 | --- | --- |
-| `method`, `tool_version` | Native tool/configuration and its recorded version. The length benchmark also identifies cfDNAPro's actual container image by SHA-256. |
-| `cores` | Allocated physical core budget, checked against the step's actual affinity. Native worker/thread settings are recorded separately. |
-| `node`, `cpu_model`, `cpu_ids`, `physical_core_ids` | Actual hostname, CPU model, allowed Linux logical CPU IDs and unique socket:core IDs. These make placement inspectable. |
-| `job_id`, `step_id`, `started_utc` | Scheduler identifiers and UTC start time. |
-| `wall_seconds`, `user_seconds`, `system_seconds` | GNU time measurements for the native command or documented complete pipeline. |
-| `max_rss_kib` | GNU time's kernel-reported maximum RSS. This does not measure the simultaneous sum of a worker process tree. |
-| `sampled_peak_rss_kib` | Largest observed sum of resident memory across the native command and all descendant processes, including pipeline stages and workers. |
-| `sampled_mean_rss_kib` | Time-weighted average of those process-tree RSS samples over the command's observed lifetime. |
-| `memory_samples`, `memory_interval_seconds` | Number of snapshots and nominal interval, currently one second. |
-| `tool_exit_code`, `step_exit_code` | Native timed command status and enclosing scheduler-step status. Missing measurements are `NA`. |
+| `wall_seconds`, `user_seconds`, `system_seconds` | GNU time for the native command or documented pipeline, including native output generation and compression. |
+| `flush_seconds` | A separately timed `sync -f` on the output filesystem immediately after command completion. This can include other filesystem writes. |
+| `process_plus_flush_seconds` | Process wall time plus filesystem flush time, the main proposed end-to-end result. It is not exact per-tool durable-write latency. |
+| `output_bytes` | `du -sb` of the native output directory, including required intermediates. |
+| `max_rss_kib` | GNU time's maximum RSS, kept separately from Slurm step memory. |
+| `tool_exit_code`, `step_exit_code`, `pilot` | Native/step status and whether the row belongs to a pilot. Unavailable measurements are `NA`. |
 
-Calculate effective cores as `(user_seconds + system_seconds) / wall_seconds`. Divide by `cores` for allocated CPU utilization. Plotting time against allocated cores shows scaling even for tools without a native thread option. No utilization outcome is assumed in advance.
+Collect completed Slurm accounting **once after the job** and keep the raw export:
 
-[measure_memory.py](measure_memory.py) uses Linux `ps` and the Python standard library. It sums process RSS, so shared resident pages can be counted in multiple processes. It excludes the sampler and GNU time itself, and does not include filesystem cache outside those resident mappings. The mean uses elapsed-time weights, including the final partial interval. Peaks between snapshots can be missed, so the sampled peak is explicitly labeled. The separate GNU time maximum remains available. The sampler shares the same core allocation and adds a small monitoring workload whose overhead has not been measured.
+```bash
+sacct -j JOB_ID --parsable2 --units=K \
+    --format=JobIDRaw,NTasks,MaxRSS,State,ExitCode > accounting.tsv
+python3 benchmarks/summarize_timings.py /path/to/results/timings.tsv \
+    --accounting accounting.tsv --runs-output runs-with-memory.tsv > summary.tsv
+```
 
-Inputs, tool environments and helper scripts are copied to node-local scratch before warmups. Scheduler startup, input staging, output preservation, cleanup and concordance analysis are outside GNU time's timer. Native startup and output writing remain timed. No cache eviction is attempted. Native result files are retained only where needed for output concordance. They are separate from the timing TSV.
+Supply multiple timing TSVs only for blocks of the same feature/experiment with the same biological input. For multiple jobs, collect their IDs together using `sacct -j ID1,ID2`. The summary joins exact job/step IDs and reports sample size, mean/SD, median and quartiles per configuration. `runs-with-memory.tsv` retains every measured point and failure for plotting. Missing/delayed accounting stays `NA`, so recollect and repeat the join later.
+
+Use `slurm_max_rss_kib` as the primary memory result after checking the cluster's accounting plugin, frequency, descendant accounting and file-cache policy once. `slurm-config.txt` records the available configuration. Slurm cgroup v2 MaxRSS can include file cache, so label that policy in results. The removed process-tree sampler is no longer part of the workload. See [Slurm sacct](https://slurm.schedmd.com/sacct.html) and [cgroup v2 limitations](https://slurm.schedmd.com/cgroup_v2.html#limitations).
+
+Effective cores are `(user_seconds + system_seconds) / wall_seconds`. Divide by `cores` for allocated utilization. Use process wall time for this denominator, rather than the flush-inclusive duration.
+
+Inputs and environments are copied to local scratch before warmups. Scheduler startup, profile preservation, cleanup and concordance stay outside measurement. Profiles are copied **after srun** from the first measured repetition at the first requested capture core budget, so copying does not inflate the tool step's accounting peak. FrEIA profiles are excluded. No cache eviction is attempted. Failed rows and tool logs remain in results before the job stops. Resource failures are outcomes to report, rather than configurations to silently discard.
+
+## Prepared regression checks
+
+The hand-derived fixtures in [tests/test_benchmarks.py](tests/test_benchmarks.py) cover coverage formats/weights/scope, regional row identity, scheduling, installer resumption, Picard status, Slurm joins, reconstructed TLEN signs and FrEIA exclusion. They were not run during implementation. On Linux, use the comparison Python with zstd on PATH to run `python -m unittest discover -s benchmarks/tests`. The reconstruction cases require pysam and explicitly skip when it is unavailable. Linux environment solves, relocation, fonts and real Slurm accounting still need the small wiring pilot.
