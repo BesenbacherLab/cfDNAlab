@@ -1,4 +1,6 @@
-"""Hand-derived benchmark regressions, left unexecuted for the repository owner.
+"""Regression tests for benchmark outputs, scheduling and input preparation.
+
+Expected numerical values are manually derived from the synthetic inputs.
 
 Run on Linux with Bash 4+, zstd and the comparison Python packages. The Snyder
 pair reconstruction cases additionally need pysam. No benchmark tools or Slurm
@@ -293,7 +295,7 @@ class TimingTests(unittest.TestCase):
         self.assertEqual(timings.distribution([1, 3, 5]), [3, 3, 2, 3, 2, 4])
         self.assertEqual(timings.distribution([4]), [1, 4, "NA", 4, 4, 4])
 
-    def test_two_method_budget_includes_all_seven_invocations(self):
+    def test_two_method_budget_includes_a_warmup_and_three_measurements(self):
         columns = "run_order repetition warmup pilot method tool_version cores node wall_seconds user_seconds system_seconds flush_seconds process_plus_flush_seconds output_bytes max_rss_kib tool_exit_code step_exit_code job_id step_id".split()
         values = ["1 1 false 1 cfdnalab checkout 1 node 720 700 20 0 720 100 200 0 0 123 0".split(),
                   "2 1 false 1 slow release 1 node 7200 7000 200 0 7200 100 200 0 0 123 1".split()]
@@ -305,9 +307,21 @@ class TimingTests(unittest.TestCase):
                 writer.writerows(values)
             result = subprocess.run([sys.executable, str(BENCHMARKS / "summarize_timings.py"), str(path), "--estimate"], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            # 7*(720+7200) = 55440 seconds = 15.4 hours
-            self.assertIn("15.40 h raw", result.stderr)
-            self.assertIn("19.25 h with margin", result.stderr)
+            # 4*(720+7200) = 31680 seconds = 8.8 hours, or 11 with 25% margin
+            self.assertIn("8.80 h raw", result.stderr)
+            self.assertIn("11.00 h with margin", result.stderr)
+
+    def test_griffin_budget_never_adds_a_full_input_warmup(self):
+        # At 30 h per run, three Griffin measurements take 90 h raw or 112.5 h
+        # with 25% margin. A deliberately large normal warmup count adds nothing
+        runs = [{'method': 'griffin', 'cores': '4', 'pilot': '1',
+                 'tool_exit_code': '0', 'step_exit_code': '0',
+                 'slurm_state': 'NA', 'slurm_exit_code': 'NA'}]
+        summary = [{'method': 'griffin', 'cores': '4', 'process_plus_flush_seconds_mean': 108000}]
+        report = timings.pilot_budgets(runs, ['method', 'cores'], summary, 10, 3, .25)
+        self.assertEqual(report[0]['planned_runs'], 3)
+        self.assertEqual(report[0]['budget_minutes'], 6750)
+        self.assertEqual(report[0]['budget_status'], 'complete')
 
     def test_accounting_oom_excludes_an_apparently_successful_native_run(self):
         self.assertFalse(timings.successful({"tool_exit_code": "0", "step_exit_code": "0",
@@ -321,8 +335,8 @@ class RunControlTests(unittest.TestCase):
         script = '''source "$BENCH_COMMON"
 benchmark_controls
 BENCH_FEATURE=lengths
-BENCH_WARMUPS=2
-BENCH_REPETITIONS=5
+BENCH_WARMUPS=1
+BENCH_REPETITIONS=3
 methods_to_run=(cfdnalab cfdnapro finaletoolkit)
 benchmark_schedule
 '''
@@ -335,10 +349,10 @@ benchmark_schedule
                 }, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 rows = list(csv.reader(result.stdout.splitlines(), delimiter="\t"))
-                # Three selected methods each get two warmups and five measurements
-                self.assertEqual(len(rows), 21)
-                self.assertEqual([row[0] for row in rows], ["cfdnalab"] * 7 + ["cfdnapro"] * 7 + ["finaletoolkit"] * 7)
-                self.assertEqual(sum(row[3] == "true" for row in rows), 6)
+                # Three methods each get a warmup and three measurements
+                self.assertEqual(len(rows), 12)
+                self.assertEqual([row[0] for row in rows], ["cfdnalab"] * 4 + ["cfdnapro"] * 4 + ["finaletoolkit"] * 4)
+                self.assertEqual(sum(row[3] == "true" for row in rows), 3)
                 self.assertEqual({row[1] for row in rows}, {str(cores)})
 
     def test_multiple_core_settings_are_rejected_for_a_single_job(self):
@@ -419,7 +433,61 @@ class BiologicalInputTests(unittest.TestCase):
 
 
 class MotifTests(unittest.TestCase):
-    """The damaged FrEIA aggregate must never enter concordance."""
+    """Compare native left-end frequencies and reject damaged both-end output."""
+
+    @unittest.skipUnless(importlib.util.find_spec('pyarrow') is not None, 'Requires native Parquet support')
+    def test_left_profiles_retain_native_counts_and_label_side_mirroring(self):
+        import pandas as pd
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name in ('finaletoolkit', 'cfdnapro', 'freia'):
+                (root / name).mkdir()
+            motifs = [''.join(bases) for bases in product('ACGT', repeat=3)]
+            with (root / 'finaletoolkit/motifs.tsv').open('w') as destination:
+                for motif in motifs:
+                    destination.write(f"{motif}\t{0.5 if motif in ('AAA', 'CCC') else 0}\n")
+            with (root / 'cfdnapro/cfdnapro-motifs.tsv').open('w') as destination:
+                destination.write('motif\tn\tfraction\n')
+                for motif in motifs:
+                    count = {'AAA': 6, 'CCC': 2}.get(motif, 0)
+                    destination.write(f'{motif}\t{count}\t{count / 8}\n')
+            # CountSamp repeats the motif total per length. Only CountLen is additive
+            pd.DataFrame({
+                'Base': ['AAA', 'AAA', 'CCC'], 'Length': [30, 40, 30],
+                'CountLen': [2, 3, 5], 'CountSamp': [5, 5, 5],
+                'WhichEnd': ['leftmost'] * 3, 'Unit': ['GRCh38'] * 3,
+            }).to_parquet(root / 'freia/left-motifs.pq', index=False)
+            result = subprocess.run([sys.executable, str(BENCHMARKS / 'ends/compare_end_motifs.py'),
+                                     str(root), '--k', '3'], text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            rows = {(row['left_profile'], row['right_profile']): row
+                    for row in csv.DictReader(result.stdout.splitlines(), delimiter='\t')}
+            self.assertEqual(len(rows), 3)
+            mirrored = rows[('finaletoolkit', 'freia')]
+            self.assertEqual(mirrored['right_end_selection'], 'left')
+            self.assertEqual(mirrored['side_comparison'], 'approximate-side-mirroring')
+            self.assertEqual(float(mirrored['right_counted_ends']), 10)
+            self.assertEqual(float(mirrored['total_variation']), 0)
+            native_left = rows[('cfdnapro', 'freia')]
+            self.assertEqual(native_left['side_comparison'], 'same-sides')
+            self.assertEqual(float(native_left['left_counted_ends']), 8)
+            self.assertEqual(float(native_left['right_counted_ends']), 10)
+            # .75/.25 versus .5/.5 gives TV .25 and mean error .5/64
+            self.assertAlmostEqual(float(native_left['total_variation']), .25)
+            self.assertAlmostEqual(float(native_left['mae_frequency']), .0078125)
+
+    @unittest.skipUnless(importlib.util.find_spec('pyarrow') is not None, 'Requires native Parquet support')
+    def test_a_right_end_table_cannot_be_labeled_as_intact_left_output(self):
+        import pandas as pd
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pd.DataFrame({'Base': ['AAA'], 'Length': [30], 'CountLen': [4],
+                          'WhichEnd': ['rightmost'], 'Unit': ['GRCh38']}).to_parquet(root / 'left-motifs.pq')
+            comparator = load_script('motif_comparator', 'ends/compare_end_motifs.py')
+            with self.assertRaisesRegex(ValueError, 'leftmost'):
+                comparator.load_profile(root, [''.join(bases) for bases in product('ACGT', repeat=3)])
 
     def test_existing_freia_profile_is_skipped_without_recovery(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -1,8 +1,8 @@
 # Benchmark installation and execution specification
 
-This describes implemented benchmark installation and execution behavior. Scientific comparisons are specified in [benchmarks_concordance_spec.md](benchmarks_concordance_spec.md). Unimplemented work and outstanding verification are listed in [benchmarks_review_plan.md](benchmarks_review_plan.md).
+This reference describes benchmark installation, inputs, run controls, timing and Slurm accounting. Scientific comparisons are specified in [benchmarks_concordance_spec.md](benchmarks_concordance_spec.md).
 
-The benchmark runs selected native commands repeatedly, records timing and Slurm step identifiers, and preserves measured outputs for concordance. It does not change cfDNAlab's counting definitions or patch competitors. There is no automatic job planner, source fingerprinting system or custom memory sampler.
+The benchmark runs selected native commands repeatedly, records timing and Slurm step identifiers, and preserves measured outputs for concordance. Native counting definitions and competitor source code are unchanged. Method selection, job submission and reinstall controls are explicit, and memory measurements come from Slurm accounting.
 
 ## Implementation
 
@@ -16,8 +16,8 @@ The benchmark runs selected native commands repeatedly, records timing and Slurm
 | Midpoints | [benchmark_midpoints.sh](midpoints/benchmark_midpoints.sh) |
 | Summaries, accounting join and estimates | [summarize_timings.py](summarize_timings.py) |
 | BAM preparation utility | [prepare_snyder.py](data/prepare_snyder.py) |
-| Prepared regression fixtures | [test_benchmarks.py](tests/test_benchmarks.py) |
-| Prepared review regressions | [test_review_regressions.py](tests/test_review_regressions.py) |
+| Coverage, scheduling, installation and input regression tests | [test_benchmarks.py](tests/test_benchmarks.py) |
+| Failure handling, pilot budgets and native-format regression tests | [test_review_regressions.py](tests/test_review_regressions.py) |
 
 Submission examples and operating instructions are in the [benchmark README](README.md).
 
@@ -39,7 +39,7 @@ Installation targets Linux x86_64 with Bash 4 or later. Conda, Apptainer, Git, w
 | `picard` | 3.5.0, Java 17 | Conda launcher and `picard.tar.gz` |
 | `freia` | `2c32fb9d9fab774f4ae57931df7fd7d75654d343` | Unmodified scripts and `freia.tar.gz` |
 | `griffin` | v0.2.0 | Unmodified scripts and `griffin.tar.gz` |
-| `comparison` | Local py-cfdnalab checkout, Python 3.11 and zstd | `envs/comparison/bin/python` |
+| `comparison` | Local py-cfdnalab checkout, Python 3.11, zstd and pyarrow | `envs/comparison/bin/python` |
 | `snyder-preparation` | pysam 0.24.1, Python 3.11 | `envs/snyder-preparation/bin/python` |
 
 The cfDNAPro image digest is `sha256:26a28821a272856e77fdf3d13d902ce8ca5c1e60475b1d4f2f076ef2ac3e2b45`.
@@ -49,6 +49,8 @@ cfDNAlab builds with Rust 1.94.0, LLVM/Clang 21, Fontconfig, zstandard and Perl.
 FinaleToolkit additionally pins pysam 0.24.0, pybigwig 0.3.25, py2bit 0.3.3, numba 0.63.1, scipy 1.17.0, statsmodels 0.14.6, tqdm 4.67.3, loess 2.1.2 and matplotlib 3.10.8. These recipe pins do not independently fix every transitive dependency. The solved environment export records the complete result.
 
 Griffin uses Python 3.7.12, `nomkl`, numpy 1.21.2, pandas 1.3.2, scipy 1.7.1, pybigwig 0.3.17, PyYAML 5.3.1, bedtools 2.29.2, pybedtools 0.8.0 and pysam 0.19.0. Python 3.7.12 replaces the unavailable 3.7.4 guide pin.
+
+Its packed archive includes the unmodified release demo `CTCF.hg38.1000.txt`. A missing demo artifact causes reinstall on resume. The comparison environment includes pyarrow for native FrEIA Parquet profiles. Refresh existing installations of these two components before using the new workload.
 
 Conda creates use explicit channels, `--override-channels` and strict channel priority. FrEIA preserves its supplied dependency pins in a derived YAML with `nodefaults`. Its source checkout and derived YAML remain at the installation root. Python user packages and inherited Python import paths are disabled during installation and job setup.
 
@@ -72,7 +74,7 @@ Each Conda step saves an explicit environment export. FrEIA and comparison envir
 
 Runners consume an existing coordinate-sorted BAM and index. They copy inputs into scratch and do not modify source files. Coverage, lengths and ends require BAI. Midpoints copies the supplied index with its extension.
 
-The selected BH01 route is the published hs37d5 input, deterministic preparation, then the [pinned lionheart hg38 remap](https://github.com/BesenbacherLab/lionheart/blob/085324a/remap/workflow.py), including duplicate marking. The user's already remapped BAM is the experimental input. Extra preparation statistics do not require rebuilding it.
+The BH01 preparation route starts with the published hs37d5 input, applies deterministic preparation, then uses the [pinned lionheart hg38 remap](https://github.com/BesenbacherLab/lionheart/blob/085324a/remap/workflow.py), including duplicate marking. All timed runs consume the same prepared BAM. Preparation provenance and remapping records are collected separately from benchmark execution.
 
 Reference-derived end motifs require `BENCH_REF_2BIT`. Griffin requires uncompressed `BENCH_REF_FASTA` and its existing FAI. These must represent the alignment reference. Equal contig names/lengths do not prove equal reference bases. Actual checksums, remapping versions/commands and final-input QC are experimental records supplied outside timing, described in [data/README.md](data/README.md).
 
@@ -88,7 +90,9 @@ The input header is preserved. Existing output BAM/BAI paths are rejected, outpu
 
 ### Supplied midpoint sites
 
-`BENCH_INTERVALS` is the user's BED. No site-generation helper, selection, deduplication, artificial strands, 2 kb width, site-count limit, TF source or TSS group is imposed.
+`BENCH_INTERVALS` supplies the midpoint site BED. Coordinates, groups and strands come from this file. The runner preserves repeated and overlapping sites, derives window width from the intervals and applies no biological site selection.
+
+The production site source is Griffin's [public paper set](https://github.com/adoebley/Griffin_analyses/tree/75467e438a88029206d8d778ddce05eb0ab6efa8/sites/TFBS/10000_unfiltered_sites_CIS_BP_v2), pinned to revision `75467e438a88029206d8d778ddce05eb0ab6efa8`. Retain the supplied BED's derivation and verify actual file/site counts before reporting them. This public, large site set is distinct from the 1000-site release demo used only for Griffin warmup. Window width and normalization are recorded explicitly for each experiment.
 
 Rows require chromosome, start, end and group. BED5 uses field 5 as strand, BED6 uses field 6, BED4 is unstranded. Strands are `+`, `-` or `.`. Groups must be nonempty without whitespace. Intervals must be nonempty, in bounds, of equal even width and on BAM contigs. When Griffin is selected, those contigs must have matching FASTA lengths, and each group must not have entirely numeric chromosome names.
 
@@ -106,9 +110,9 @@ Submit from the repository root so `SLURM_SUBMIT_DIR` locates helpers. Nodes nee
 | `BENCH_RESULTS` | Required new results directory |
 | `BENCH_METHODS` | Required feature-specific space-separated method labels, without duplicates or a default |
 | `BENCH_CORES` | Required single positive core count per job. Planned settings: 1, 4, 12, 32 in separate jobs |
-| `BENCH_WARMUPS` | **2** per scheduled method/core |
-| `BENCH_REPETITIONS` | **5 measured** per scheduled method/core |
-| `BENCH_PILOT` | `0`, or `1` to use zero warmups and one measurement |
+| `BENCH_WARMUPS` | **1** per scheduled method/core. Griffin uses no full-input warmups |
+| `BENCH_REPETITIONS` | **3 measured** per scheduled method/core |
+| `BENCH_PILOT` | `0`, or `1` to use zero full-input warmups and one measurement. Griffin retains its short demo warmup |
 | `BENCH_RUN_TIMEOUT_SECONDS` | `0` disables timeouts. A positive integer enables GNU timeout with an additional 60-second kill grace |
 | `BENCH_SETUP_PYTHON` | `python3`, untimed setup/relocation only |
 | `BENCH_EXPECTED_NODE` | Optional exact hostname check before staging |
@@ -128,15 +132,17 @@ All runners use the samtools archive for header preparation and setup Python for
 
 Jobs request one exclusive node, one task, 32 CPUs per task, one hardware thread per core, all node memory and no requeue. Partition, node selector and wall time are submission choices. There is no universal production wall-time allocation.
 
-Each job uses exactly one core setting. Every selected method runs as a contiguous block at that setting. Its warmup repetitions precede measurements, with actual order retained in the timing TSV. Production repetitions 1-2 are warmups and 3-7 are measured.
+Each job uses exactly one core setting. Every selected method runs as a contiguous block at that setting. Its warmup repetitions precede measurements, with actual order retained in the timing TSV. Normally production repetition 1 is a warmup and 2-4 are measured.
+
+Griffin must be selected alone with `BENCH_METHODS=griffin`. Full-input warmups are set to zero. Every Griffin job, including a pilot, first runs its release's 1000-site CTCF demo untimed on the same staged production BAM/reference and node. It uses the production length/MAPQ/window settings with the demo's own site coordinates and chromosomes. The demo gets a separate Slurm step so its resource use does not enter measured step memory. Its outputs are removed and flushed before the first production run. The supplied production BED is unchanged. A failed demo preserves logs and stops before measurements. The normal Griffin schedule is three measured full-input runs, numbered 1-3.
 
 No method is automatically excluded. cfDNAPro and FinaleToolkit lengths are initially compared at 1 and 4 cores in separate jobs. Higher-core runs are deferred until those results are inspected. If no consistent benefit is observed, stop higher-core measurements for this workload. If a benefit is observed, add 12/32-core jobs. Choose the method list explicitly for each job. Picard's timed pipeline includes samtools and the JVM, whose resource use must be measured.
 
 Sequential single-task `srun` calls attach to the existing allocation with exact resources and thread binding. Inside each step, hostname and logical/physical CPU counts must match the expected node and core budget. Affinity and socket:core IDs are recorded. Hard confinement and descendant accounting depend on cluster configuration.
 
-Inputs/environments are staged once before warmups. Packed environments are relocated with `conda-unpack` through setup Python. Host caches are not explicitly evicted. Coverage, ends and midpoints limit numerical libraries to a thread, while lengths allows them the allocated budget. Native worker/thread settings remain distinct from allocated cores.
+Inputs/environments are staged once before warmups. Packed environments are relocated with `conda-unpack` through setup Python. Host caches are not explicitly evicted. Allocate N cores and set available native thread/core/worker options to that budget. Options counting additional threads receive N-1. Tools without a native option still run at their selected settings. There are no feature-specific numerical-library thread overrides. Native worker/thread settings remain distinct from allocated cores.
 
-Series use separate jobs per core setting, with feature/method blocks to fit a 24-hour allocation limit. Every method/core keeps its own warmups and measured repetitions. Prefer the same physical node using `--nodelist` and `BENCH_EXPECTED_NODE` when available. Otherwise use matched hardware and retain node identity, acknowledging variation between nodes in cross-core comparisons. Scripts do not coordinate multiple jobs. The [run budgets](README.md#runs-and-budgets) give explicit scaling assumptions and separate per-core estimates.
+Series use separate jobs per core setting, with feature/method blocks to fit available allocations. Griffin has its own jobs and must be allowed to finish beyond 24 hours. Exact repetition splitting is an experimental choice, using existing repetition controls. Every new Griffin job receives its demo warmup. Prefer the same physical node using `--nodelist` and `BENCH_EXPECTED_NODE` when available. Otherwise use matched hardware and retain node identity, acknowledging variation between nodes in cross-core comparisons. Scripts do not coordinate multiple jobs. The [run budgets](README.md#runs-and-budgets) give explicit scaling assumptions and separate per-core estimates.
 
 ## Measurement and failures
 
@@ -164,11 +170,11 @@ When enabled, GNU `timeout --verbose --kill-after=60` wraps each native command 
 
 `timings.tsv` is written incrementally and keeps warmups, pilots and failures. Skipped repetitions have no invented timing rows. `run.tsv` records feature, node, requested methods/cores, repetitions, run timeout, benchmark commit/dirty flag and input paths. Optional installation/build TSVs are copied beside it. Available Slurm configuration is captured once per job, with diagnostics and a warning if unavailable.
 
-One native output per method is preserved from the first measured repetition at the job's core setting. Copying happens after `srun`, outside tool-step memory accounting. Other temporary outputs are removed. FrEIA profiles are never preserved for concordance.
+One native output per method is preserved from the first measured repetition at the job's core setting. Copying happens after `srun`, outside tool-step memory accounting. Other temporary outputs are removed. FrEIA's native left-only table is retained as `profiles/freia/left-motifs.pq`, distinct from damaged old both-end aggregates. cfDNAPro motifs retain native counts and a reference manifest together in `profiles/cfdnapro/`.
 
 Coverage keeps full compressed cfDNAlab/mosdepth tracks. Saved samtools/PanDepth positions cover chr21/chr22 or 21/22, falling back to the first BAM contig when absent. `BENCH_CAPTURE_CHROMOSOMES` overrides the comma-separated subset and unknown requested names fail. Full native output is still generated inside timing. Subset extraction/recompression occurs afterward. Each coverage profile has its processed `chrom.sizes`, and regional outputs share saved `regions.bed`.
 
-Midpoints also retains normalized `sites.bed` and source `sites.sha256`. The original input BED remains unchanged.
+Midpoints also retains normalized `sites.bed` and source `sites.sha256`. The original input BED remains unchanged. Griffin jobs additionally retain `griffin-warmup.log`, `griffin-warmup-error.log`, the demo source SHA-256 and its warmup policy in `run.tsv`. The untimed demo has no timing row and does not enter summaries or production comparisons.
 
 ## Slurm accounting and summaries
 
@@ -184,10 +190,10 @@ Per configuration, process-plus-flush time, process/flush separately, Slurm/GNU 
 
 ### Pilot estimates
 
-`--estimate` summarizes successful measured pilot rows and defaults to two planned warmups, five planned measurements and a 25% margin. Each observed configuration reports `planned_runs`, `pilot_failures`, `budget_minutes` and `budget_status`. Budgets multiply that configuration's mean process-plus-flush time by seven and apply the margin. Failed configurations without a successful measured pilot have an `NA` budget. Any unsuccessful pilot leaves the configuration incomplete even if another attempt succeeded. The utility writes useful rows and an explicitly incomplete successful subtotal before returning nonzero. Absent configurations cannot be estimated. Staging/cleanup are added separately, and each core setting still requires separate jobs.
+`--estimate` summarizes successful measured pilot rows and defaults to a planned warmup, three planned measurements and a 25% margin. Each observed configuration reports `planned_runs`, `pilot_failures`, `budget_minutes` and `budget_status`. Budgets multiply the mean process-plus-flush time by four normally, or three for Griffin, and apply the margin. Griffin never budgets full-input warmups. Failed configurations without a successful measured pilot have an `NA` budget. Any unsuccessful pilot leaves the configuration incomplete even if another attempt succeeded. The utility writes useful rows and an explicitly incomplete successful subtotal before returning nonzero. Absent configurations cannot be estimated. Staging/cleanup and Griffin's short demo are added separately, and each core setting still requires separate jobs.
 
-At working estimates of 12 minutes for cfDNAlab and 120 minutes for a comparator, those two methods at one core alone require **15 h 24 min** for seven invocations each, or **19 h 15 min** with margin. Other methods/core budgets add work. A serial 120-minute comparator needs 14 hours raw or 17 h 30 min with margin for each initial 1/4-core job. Those are separate allocations.
+At working estimates of 12 minutes for cfDNAlab and 120 minutes for a comparator, those two methods at one core alone require **8 h 48 min** for four invocations each, or **11 hours** with margin. A serial 120-minute comparator needs 8 hours raw or 10 hours with margin for each initial 1/4-core job. Those are separate allocations. A Griffin run taking 30 hours at a setting needs 90 hours for three measurements, or 112 h 30 min with margin, plus demo/setup overhead. These are scenarios, not measurements or limits.
 
-## Verification boundary
+## Validation before production runs
 
-Source inspection and static/Cargo checks do not establish successful Linux installation or correct cluster measurements. Prepared fixtures have not been run during implementation. Linux solves/relocation, controlled native cases, accounting, real-input resource use and publication results remain in the [plan](benchmarks_review_plan.md).
+Validate complete Linux environment solves, relocation, native command outputs, plotting/fonts and Slurm placement/accounting on the compute node. Run each selected native tool and its comparator on a small input, then use full-input pilots to establish runtime, memory and scratch requirements. Source inspection and syntax checks alone do not establish runtime correctness. See [regression tests and validation](README.md#regression-tests-and-validation) for the local test command and its scope.

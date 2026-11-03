@@ -63,8 +63,8 @@ BENCH_FEATURE=coverage
 : "${BENCH_SAMTOOLS_ARCHIVE:?Set the path of the packed samtools environment}"
 BENCH_INDEX=${BENCH_INDEX:-${BENCH_BAM}.bai}
 : "${BENCH_CORES:?Set a single core budget for this job: 1, 4, 12 or 32}"
-BENCH_WARMUPS=${BENCH_WARMUPS:-2}
-BENCH_REPETITIONS=${BENCH_REPETITIONS:-5}
+BENCH_WARMUPS=${BENCH_WARMUPS:-1}
+BENCH_REPETITIONS=${BENCH_REPETITIONS:-3}
 : "${BENCH_METHODS:?Set the methods for this job explicitly in BENCH_METHODS}"
 export BENCH_MIN_MAPQ=${BENCH_MIN_MAPQ:-30}
 export BENCH_MIN_LENGTH=${BENCH_MIN_LENGTH:-30}
@@ -115,7 +115,6 @@ cp -L "$BENCH_INDEX" "$BENCH_WORK/sample.bam.${BENCH_INDEX##*.}"
 export PYTHONNOUSERSITE=1
 unset PYTHONPATH PYTHONHOME
 export XDG_CACHE_HOME="$BENCH_WORK/cache" MPLCONFIGDIR="$BENCH_WORK/matplotlib"
-export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1
 mkdir -p "$XDG_CACHE_HOME" "$MPLCONFIGDIR"
 benchmark_unpack "$BENCH_SAMTOOLS_ARCHIVE" "$BENCH_WORK/samtools-env"
 for method in "${methods_to_run[@]}"; do

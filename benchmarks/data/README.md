@@ -1,6 +1,6 @@
 # Benchmark inputs
 
-The selected route is the published Snyder BH01 BAM, deterministic downsampling and merged-read reconstruction, then the lionheart hg38 remap with duplicates marked. The final BAM and biological site lists are external inputs. No checksums, observed depth, reconstruction counts or QC results are claimed here.
+The BH01 preparation workflow starts with the published Snyder BAM, applies deterministic downsampling and merged-read reconstruction, then remaps to hg38 with the lionheart workflow and marks duplicates. Benchmark runners consume the final BAM and midpoint site BED as external inputs. Record file checksums, observed depth, reconstruction counts and QC results for each prepared input.
 
 ## BAM preparation
 
@@ -32,17 +32,19 @@ samtools idxstats "$BENCH_BAM" > final-bam.idxstats.tsv
 samtools --version > samtools-version.txt
 ```
 
-Keep the MarkDuplicates metrics beside these records. Measure proper-pair effects from the benchmark's native/proper-pair output totals after the actual filters. `flagstat` alone does not give that conditional fragment fraction. Do not reuse the original BAM's sampled non-proper percentage for the remap.
+Keep the MarkDuplicates metrics beside these records. Measure proper-pair effects from the benchmark's native/proper-pair output totals after the actual filters. `flagstat` alone does not give that conditional fragment fraction. Proper-pair rates from the original BH01 BAM do not describe the fragment population retained after remapping and benchmark filtering.
 
 ## Midpoint sites
 
-Supply your midpoint site BED through `BENCH_INTERVALS`. The benchmark uses the supplied coordinates, groups and strands, retaining repeated and overlapping rows. It does not generate sites, select a subset or impose a site count or 2 kb window size. See the [midpoint input format](../midpoints/README.md#inputs-and-run) for the equal, even-width intervals required by the comparison. The runner saves the normalized rows and source checksum with the results.
+Supply the midpoint site BED through `BENCH_INTERVALS`. The benchmark uses its coordinates, groups and strands, retaining repeated and overlapping rows. Window width comes from the supplied intervals, with no additional site selection. See the [midpoint input format](../midpoints/README.md#inputs-and-run) for the equal, even-width intervals required by the comparison. The runner saves the normalized rows and source checksum with the results.
 
-## Small wiring input
+Use Griffin's [public paper TFBS set](https://github.com/adoebley/Griffin_analyses/tree/75467e438a88029206d8d778ddce05eb0ab6efa8/sites/TFBS/10000_unfiltered_sites_CIS_BP_v2), pinned at `75467e438a88029206d8d778ddce05eb0ab6efa8`, as the production source. Record the supplied BED's derivation, window width and actual site/group counts. The runner does not choose or resize those production sites. Griffin's separate 1000-site release demo is used only for its short warmup.
+
+## Check the setup with a small input
 
 ```bash
-samtools view -b -s 42.01 -o wiring.bam "$BENCH_BAM"
-samtools index wiring.bam
+samtools view -b -s 42.01 -o check.bam "$BENCH_BAM"
+samtools index check.bam
 ```
 
-This keeps approximately 1% by read-name hash, so both mates share a decision. Reduce the fraction if needed. Use `BENCH_PILOT=1`, one core and a small site set to check relocation, native CLI outputs and cfDNAlab's default QC plotting/fonts. Then pilot cfDNAPro on approximately 0.1x and increase input size to establish memory headroom. Use the chosen physical node for every tool. A wiring input cannot predict full-input runtime.
+This keeps approximately 1% by read-name hash, so both mates share a decision. Reduce the fraction if needed. Use `BENCH_PILOT=1`, one core and a small site set to check relocation, native CLI outputs and cfDNAlab's default QC plotting/fonts. Then pilot cfDNAPro on approximately 0.1x and increase input size to establish memory headroom. Use the chosen physical node for every tool. A small input checks the setup but cannot predict full-input runtime.

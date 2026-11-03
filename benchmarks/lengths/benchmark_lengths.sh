@@ -24,8 +24,8 @@ BENCH_FEATURE=lengths
 : "${BENCH_RESULTS:?Set a new results directory}"
 BENCH_INDEX=${BENCH_INDEX:-${BENCH_BAM}.bai}
 : "${BENCH_CORES:?Set a single core budget for this job: 1, 4, 12 or 32}"
-BENCH_WARMUPS=${BENCH_WARMUPS:-2}
-BENCH_REPETITIONS=${BENCH_REPETITIONS:-5}
+BENCH_WARMUPS=${BENCH_WARMUPS:-1}
+BENCH_REPETITIONS=${BENCH_REPETITIONS:-3}
 : "${BENCH_METHODS:?Set the methods for this job explicitly in BENCH_METHODS}"
 export BENCH_MIN_MAPQ=${BENCH_MIN_MAPQ:-30}
 export BENCH_MIN_LENGTH=${BENCH_MIN_LENGTH:-30}
@@ -161,10 +161,8 @@ is_warmup=$3
 method=$4
 cores=$5
 
-# Allow numerical libraries the full allocation even when a tool has no thread
-# flag. CPU binding still limits the complete process tree to this step's cores
-export OMP_NUM_THREADS="$cores" OPENBLAS_NUM_THREADS="$cores"
-export MKL_NUM_THREADS="$cores" NUMEXPR_NUM_THREADS="$cores"
+# Native thread options below use this step's allocated core budget
+# Tools without a thread option still run with the same CPU binding
 
 node=$(hostname)
 cpu_model=$(awk -F ': ' '/^model name/ {print $2; exit}' /proc/cpuinfo)
@@ -222,10 +220,9 @@ case "$method" in
         fi
         # The image contains R, cfDNAPro and the authors' reference packages
         # Containment and --vanilla avoid reading home-directory R settings
-        # Pass the full library thread budget because --cleanenv drops host settings
+        # cfDNAPro has no native thread option for this calculation
         command=("$BENCH_APPTAINER" exec --cleanenv --containall
             --bind "$BENCH_WORK:/work" --pwd /work
-            --env "OMP_NUM_THREADS=$cores,OPENBLAS_NUM_THREADS=$cores,MKL_NUM_THREADS=$cores"
             "$BENCH_WORK/cfdnapro.sif" Rscript --vanilla /work/cfdnapro_lengths.R
             /work/sample.bam /work/output/lengths.tsv "$BENCH_MIN_LENGTH"
             "$BENCH_MAX_LENGTH" "$BENCH_MIN_MAPQ" "$BENCH_GENOME" "$curate")

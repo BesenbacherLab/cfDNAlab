@@ -9,7 +9,7 @@
 #SBATCH --no-requeue
 
 # Compare native, unsmoothed 1 bp midpoint profiles on one exclusive node
-# Every attempted run, including warmups, gets a row in timings.tsv
+# Full-input runs get timing rows. Griffin's short demo warmup is untimed
 # Keep a native profile from the first measured repetition for each tool
 # All BAM/reference copies, environments and temporary files use local scratch
 # See README.md for required paths, concordance and expected differences
@@ -27,8 +27,8 @@ BENCH_FEATURE=midpoints
 BENCH_INDEX=${BENCH_INDEX:-${BENCH_BAM}.bai}
 BENCH_FASTA_INDEX=${BENCH_FASTA_INDEX:-${BENCH_REF_FASTA:-}.fai}
 : "${BENCH_CORES:?Set a single core budget for this job: 1, 4, 12 or 32}"
-BENCH_WARMUPS=${BENCH_WARMUPS:-2}
-BENCH_REPETITIONS=${BENCH_REPETITIONS:-5}
+BENCH_WARMUPS=${BENCH_WARMUPS:-1}
+BENCH_REPETITIONS=${BENCH_REPETITIONS:-3}
 : "${BENCH_METHODS:?Set the methods for this job explicitly in BENCH_METHODS}"
 export BENCH_MIN_MAPQ=${BENCH_MIN_MAPQ:-30}
 export BENCH_MIN_LENGTH=${BENCH_MIN_LENGTH:-100}
@@ -77,6 +77,14 @@ for method in "${methods_to_run[@]}"; do
         griffin) run_griffin=true ;;
     esac
 done
+if [[ "$run_griffin" == true ]]; then
+    if ((${#methods_to_run[@]} != 1)); then
+        echo "Run Griffin in its own job: set BENCH_METHODS=griffin." >&2
+        exit 1
+    fi
+    # The release demo replaces full-input warmups, including in pilot jobs
+    BENCH_WARMUPS=0
+fi
 : "${BENCH_SAMTOOLS_ARCHIVE:?Set the packed samtools environment for BAM header preparation}"
 if [[ "$run_cfdna" == true ]]; then : "${BENCH_CFDNA:?Set the cfDNAlab executable}"; fi
 if [[ "$run_griffin" == true ]]; then : "${BENCH_GRIFFIN_ARCHIVE:?Set the packed Griffin environment}"; : "${BENCH_REF_FASTA:?Set the matching reference FASTA}"; fi
@@ -94,6 +102,7 @@ cp -L "$BENCH_INTERVALS" "$BENCH_WORK/input.bed"
 if [[ "$run_griffin" == true ]]; then
     cp -L "$BENCH_REF_FASTA" "$BENCH_WORK/reference.fa"
     cp -L "$BENCH_FASTA_INDEX" "$BENCH_WORK/reference.fa.fai"
+    cp "$SLURM_SUBMIT_DIR/benchmarks/midpoints/griffin_profile.sh" "$BENCH_WORK/griffin_profile.sh"
 fi
 if [[ "$run_cfdna" == true ]]; then benchmark_stage_binary "$BENCH_CFDNA" cfdna; fi
 # sbatch uses a spool copy of this script. Submit from the repository root
@@ -102,7 +111,6 @@ export TMPDIR="$BENCH_WORK/tmp" XDG_CACHE_HOME="$BENCH_WORK/cache"
 # inside Griffin's staged environment. See the installation notes in ../README.md
 export MPLCONFIGDIR="$BENCH_WORK/matplotlib" PYTHONNOUSERSITE=1
 unset PYTHONPATH PYTHONHOME
-export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1
 benchmark_unpack "$BENCH_SAMTOOLS_ARCHIVE" "$BENCH_WORK/samtools-env"
 "$BENCH_WORK/samtools-env/bin/samtools" idxstats "$BENCH_WORK/sample.bam" |
     awk '$1 != "*" {print $1 "\t" $2}' > "$BENCH_WORK/chrom.sizes"
@@ -180,6 +188,30 @@ for group_index, (group, sites) in enumerate(groups.items()):
 with (work / 'sites.yaml').open('w') as destination:
     # JSON is valid YAML and avoids requiring PyYAML in the setup interpreter
     json.dump({'site_lists': site_paths}, destination)
+# The fixed release demo gives Griffin a short warmup without changing the
+# supplied production windows. Run it on the same staged BAM and reference
+if os.environ['BENCH_RUN_GRIFFIN'] == 'true':
+    demo_path = work / 'griffin-env/share/griffin/CTCF.hg38.1000.txt'
+    demo_rows = []
+    with demo_path.open() as source:
+        for row in csv.DictReader(source, delimiter='\t'):
+            chromosome, position = row['Chrom'], int(row['position'])
+            if chromosome not in bam_contigs or reference_contigs.get(chromosome) != bam_contigs[chromosome]:
+                raise ValueError('Griffin demo contig is absent or has mismatched lengths: ' + chromosome)
+            if position - window_width // 2 < 0 or position + window_width // 2 > bam_contigs[chromosome]:
+                raise ValueError('Griffin demo window extends beyond its chromosome: ' + chromosome)
+            demo_rows.append((chromosome, position, '.'))
+    if len(demo_rows) != 1000:
+        raise ValueError('Expected exactly 1000 sites in the pinned Griffin demo')
+    with (work / 'warmup-sites.tsv').open('w') as destination:
+        writer = csv.writer(destination, delimiter='\t', lineterminator='\n')
+        writer.writerow(('Chrom', 'position', 'Strand'))
+        writer.writerows(demo_rows)
+    with (work / 'warmup-sites.yaml').open('w') as destination:
+        json.dump({'site_lists': {'CTCF-demo': str(work / 'warmup-sites.tsv')}}, destination)
+    with (work / 'warmup.chrom.sizes').open('w') as destination:
+        for chromosome in sorted(set(row[0] for row in demo_rows)):
+            destination.write('{}\t{}\n'.format(chromosome, bam_contigs[chromosome]))
 chromosomes = sorted(set(row[0] for row in rows))
 # Its counting script sorts intervals lexicographically. Use that same contig
 # order in the bigWig header so its exported entries remain correctly ordered
@@ -214,6 +246,25 @@ printf '%s\n' "$header" > "$BENCH_RESULTS/timings.tsv"
 
 # Run each method's warmups and measurements together on the recorded node
 benchmark_record_setup
+if [[ "$run_griffin" == true ]]; then
+    printf 'griffin_warmup\trelease-demo-1000-sites\n' >> "$BENCH_RESULTS/run.tsv"
+    sha256sum "$BENCH_WORK/griffin-env/share/griffin/CTCF.hg38.1000.txt" > "$BENCH_RESULTS/griffin-warmup.sha256"
+    warmup_chromosomes=$(cut -f 1 "$BENCH_WORK/warmup.chrom.sizes" | paste -sd, -)
+    # A separate untimed step keeps demo work out of measured Slurm peak memory
+    # Give Griffin a practical warmup without another full production run
+    srun --jobid="$SLURM_JOB_ID" --exact --nodes=1 --ntasks=1 \
+        --cpus-per-task="$BENCH_CORES" --threads-per-core=1 --cpu-bind=threads \
+        --export=ALL bash "$BENCH_WORK/griffin_profile.sh" "$BENCH_CORES" \
+        "$BENCH_WORK/warmup-sites.yaml" "$BENCH_WORK/warmup.chrom.sizes" \
+        "$warmup_chromosomes" "$BENCH_WORK/warmup-output" \
+        > "$BENCH_RESULTS/griffin-warmup.log" 2> "$BENCH_RESULTS/griffin-warmup-error.log" || {
+            cat "$BENCH_RESULTS/griffin-warmup-error.log" "$BENCH_RESULTS/griffin-warmup.log" >&2
+            echo "Griffin's demo warmup failed. Measurements have not started." >&2
+            exit 1
+        }
+    rm -rf "$BENCH_WORK/warmup-output"
+    sync -f "$BENCH_WORK"
+fi
 benchmark_schedule > "$BENCH_WORK/order.tsv"
 if [[ ! -s "$BENCH_WORK/order.tsv" ]]; then echo "The requested run matrix is empty." >&2; exit 1; fi
 run_order=0
@@ -268,34 +319,8 @@ else
     tool_version=$BENCH_GRIFFIN_VERSION
     midpoint_policy=right-central-even
     # Time both native scripts, including bigWig writing and group aggregation
-    # No masking, outlier removal, site-wise CNA normalization or smoothing
-    # Griffin's final group-wise mean-one normalization cannot be disabled
-    command=(bash -c '
-        set -euo pipefail
-        cores=$1
-        environment="$BENCH_WORK/griffin-env"
-        scripts="$environment/share/griffin"
-        IFS=, read -r -a chromosomes <<< "$BENCH_CHROMOSOMES"
-        common=(--sample_name sample --tmp_dir "$BENCH_WORK/output/tmp"
-            --sites_yaml "$BENCH_WORK/sites.yaml" --griffin_scripts_dir "$scripts"
-            --chrom_sizes_path "$BENCH_WORK/chrom.sizes" --chroms "${chromosomes[@]}"
-            --chrom_column Chrom --position_column position --strand_column Strand
-            --norm_window "-$BENCH_HALF_WIDTH" "$BENCH_HALF_WIDTH"
-            --mappability_correction False --mappability_bw none --CPU "$cores")
-        "$environment/bin/python" "$scripts/griffin_coverage.py" "${common[@]}" \
-            --bam "$BENCH_WORK/sample.bam" --GC_bias "$BENCH_WORK/unit_gc_bias.tsv" \
-            --reference_genome "$BENCH_WORK/reference.fa" --mappability_bias none \
-            --size_range "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH" --map_quality "$BENCH_MIN_MAPQ"
-        "$environment/bin/python" "$scripts/griffin_merge_sites.py" "${common[@]}" \
-            --uncorrected_bw_path "$BENCH_WORK/output/tmp/sample/tmp_bigWig/sample.uncorrected.bw" \
-            --GC_corrected_bw_path "$BENCH_WORK/output/tmp/sample/tmp_bigWig/sample.GC_corrected.bw" \
-            --GC_map_corrected_bw_path none --results_dir "$BENCH_WORK/output/results" \
-            --save_window "-$BENCH_HALF_WIDTH" "$BENCH_HALF_WIDTH" \
-            --center_window "-$BENCH_HALF_WIDTH" "$BENCH_HALF_WIDTH" \
-            --fft_window "-$BENCH_HALF_WIDTH" "$BENCH_HALF_WIDTH" --fft_index 1 \
-            --step 1 --exclude_paths none --exclude_zero_mappability False \
-            --exclude_outliers False --CNA_normalization False --individual False --smoothing False
-    ' -- "$cores")
+    command=(bash "$BENCH_WORK/griffin_profile.sh" "$cores" "$BENCH_WORK/sites.yaml"
+        "$BENCH_WORK/chrom.sizes" "$BENCH_CHROMOSOMES" "$BENCH_WORK/output")
     profile="$BENCH_WORK/output/results/sample/sample.uncorrected.coverage.tsv"
 fi
 

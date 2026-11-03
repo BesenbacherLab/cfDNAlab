@@ -26,14 +26,15 @@ BENCH_FEATURE=ends
 : "${BENCH_RESULTS:?Set a new results directory}"
 BENCH_INDEX=${BENCH_INDEX:-${BENCH_BAM}.bai}
 : "${BENCH_CORES:?Set a single core budget for this job: 1, 4, 12 or 32}"
-BENCH_WARMUPS=${BENCH_WARMUPS:-2}
-BENCH_REPETITIONS=${BENCH_REPETITIONS:-5}
+BENCH_WARMUPS=${BENCH_WARMUPS:-1}
+BENCH_REPETITIONS=${BENCH_REPETITIONS:-3}
 : "${BENCH_METHODS:?Set the methods for this job explicitly in BENCH_METHODS}"
 BENCH_FREIA_ARCHIVE=${BENCH_FREIA_ARCHIVE:-}
 export BENCH_K=${BENCH_K:-4}
 export BENCH_MIN_MAPQ=${BENCH_MIN_MAPQ:-30}
 export BENCH_MIN_LENGTH=${BENCH_MIN_LENGTH:-30}
 export BENCH_MAX_LENGTH=${BENCH_MAX_LENGTH:-1000}
+export BENCH_GENOME=${BENCH_GENOME:-hg38}
 
 benchmark_controls
 read -r -a methods_to_run <<< "$BENCH_METHODS"
@@ -70,7 +71,7 @@ fi
 run_freia=false
 for method in "${methods_to_run[@]}"; do
     case "$method" in
-        cfdnalab-read|cfdnalab-read-aligned|cfdnalab-read-include|cfdnalab-reference|cfdnalab-reference-proper|cfdnalab-reference-proper-wide|cfdnalab-reference-autosomes|finaletoolkit) ;;
+        cfdnalab-read|cfdnalab-read-aligned|cfdnalab-read-include|cfdnalab-reference|cfdnalab-reference-proper|cfdnalab-reference-proper-wide|cfdnalab-reference-autosomes|finaletoolkit|cfdnapro) ;;
         freia)
             : "${BENCH_FREIA_ARCHIVE:?Set the packed FrEIA environment for the freia comparison}"
             if ((BENCH_K != 3)); then
@@ -78,7 +79,7 @@ for method in "${methods_to_run[@]}"; do
                 exit 1
             fi
             run_freia=true
-            echo "FrEIA timing only: pinned both-end aggregation is incorrect. Concordance is disabled." >&2
+            echo "FrEIA uses native left ends. Comparison against both ends assumes mirrored sides." >&2
             ;;
         *) echo "Unknown end-motif method: $method" >&2; exit 1 ;;
     esac
@@ -86,22 +87,25 @@ done
 
 run_cfdna=false
 run_finale=false
+run_cfdnapro=false
 need_reference=false
 for method in "${methods_to_run[@]}"; do
     case "$method" in
         cfdnalab*) run_cfdna=true ;;
         finaletoolkit) run_finale=true ;;
+        cfdnapro) run_cfdnapro=true ;;
     esac
     if [[ "$method" == cfdnalab-reference* || "$method" == finaletoolkit ]]; then need_reference=true; fi
 done
 : "${BENCH_SAMTOOLS_ARCHIVE:?Set the packed samtools environment for BAM header preparation}"
 if [[ "$run_cfdna" == true ]]; then : "${BENCH_CFDNA:?Set the cfDNAlab executable}"; fi
 if [[ "$run_finale" == true ]]; then : "${BENCH_FINALE_ARCHIVE:?Set the packed FinaleToolkit environment}"; fi
+if [[ "$run_cfdnapro" == true ]]; then : "${BENCH_CFDNAPRO_IMAGE:?Set the cfDNAPro image}"; fi
 if [[ "$need_reference" == true ]]; then : "${BENCH_REF_2BIT:?Set the matching 2bit reference}"; fi
 
 # Stage once before every tool's warmups, following the coverage benchmark policy
 export BENCH_WORK BENCH_NODE BENCH_AUTOSOMES BENCH_CONTIGS BENCH_RESULTS
-export BENCH_CFDNA_VERSION BENCH_FINALE_VERSION BENCH_FREIA_VERSION
+export BENCH_CFDNA_VERSION BENCH_FINALE_VERSION BENCH_FREIA_VERSION BENCH_CFDNAPRO_VERSION BENCH_APPTAINER
 BENCH_WORK=$(mktemp -d "$BENCH_LOCAL_ROOT/end-motifs-${SLURM_JOB_ID}.XXXXXX")
 trap 'rm -rf "$BENCH_WORK"' EXIT
 BENCH_NODE=$(hostname)
@@ -110,15 +114,19 @@ cp -L "$BENCH_BAM" "$BENCH_WORK/sample.bam"
 cp -L "$BENCH_INDEX" "$BENCH_WORK/sample.bam.bai"
 if [[ "$need_reference" == true ]]; then cp -L "$BENCH_REF_2BIT" "$BENCH_WORK/reference.2bit"; fi
 if [[ "$run_cfdna" == true ]]; then benchmark_stage_binary "$BENCH_CFDNA" cfdna; fi
+if [[ "$run_cfdnapro" == true ]]; then
+    BENCH_APPTAINER=$(command -v apptainer) || { echo "cfDNAPro requires Apptainer." >&2; exit 1; }
+    cp -L "$BENCH_CFDNAPRO_IMAGE" "$BENCH_WORK/cfdnapro.sif"
+    cp "$SLURM_SUBMIT_DIR/benchmarks/ends/cfdnapro_end_motifs.R" "$BENCH_WORK/cfdnapro_end_motifs.R"
+fi
 # sbatch uses a spool copy of this script. Submit from the repository root
-export TMPDIR="$BENCH_WORK/tmp"
+export TMPDIR="$BENCH_WORK/tmp" APPTAINER_TMPDIR="$BENCH_WORK/tmp"
 # Ignore ~/.local Python packages and inherited import paths so imports stay
 # inside the staged environments. See the installation notes in ../README.md
 export PYTHONNOUSERSITE=1
 unset PYTHONPATH PYTHONHOME
 export XDG_CACHE_HOME="$BENCH_WORK/cache"
 export MPLCONFIGDIR="$BENCH_WORK/matplotlib"
-export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1
 
 # Relocate only selected competitors. Samtools supplies the shared BAM header
 benchmark_unpack "$BENCH_SAMTOOLS_ARCHIVE" "$BENCH_WORK/samtools-env"
@@ -154,6 +162,11 @@ fi
 if [[ " $BENCH_METHODS " == *" cfdnalab-reference-autosomes "* && -z "$BENCH_AUTOSOMES" ]]; then echo "No autosomes in BAM." >&2; exit 1; fi
 if [[ "$run_cfdna" == true ]]; then BENCH_CFDNA_VERSION=$("$BENCH_WORK/bin/cfdna" --version | tr '\t\n' '  '); fi
 if [[ "$run_finale" == true ]]; then BENCH_FINALE_VERSION=$("$BENCH_WORK/finale-env/bin/finaletoolkit" --version | tr '\t\n' '  '); fi
+if [[ "$run_cfdnapro" == true ]]; then
+    BENCH_CFDNAPRO_VERSION=$("$BENCH_APPTAINER" exec --cleanenv --containall "$BENCH_WORK/cfdnapro.sif" Rscript --vanilla -e 'cat(as.character(packageVersion("cfDNAPro")))')
+    image_hash=$(sha256sum "$BENCH_WORK/cfdnapro.sif" | cut -d ' ' -f 1)
+    BENCH_CFDNAPRO_VERSION+=" image-sha256:$image_hash genome:$BENCH_GENOME"
+fi
 
 mkdir -p "$BENCH_RESULTS/profiles"
 
@@ -258,7 +271,7 @@ elif [[ "$method" == freia ]]; then
     clip=aligned
     profile="$BENCH_WORK/output/4_FrEIA/3_Abundances/benchmark/Genome_Lvl/T__sample.pq"
     # Follow the authors' BAM filtering, extraction and abundance commands
-    # Count both ends and avoid bootstrap sampling or intentional downsampling
+    # Keep the intact default left ends, without bootstrap sampling or downsampling
     # The upper length bound is exclusive in FrEIA, hence max_length + 1
     # FrEIA adds coordinate deduplication, and removes a whole pair if either
     # extracted 3-base sequence contains N. These native choices are retained
@@ -270,21 +283,33 @@ elif [[ "$method" == freia ]]; then
         cores=$1
         environment="$BENCH_WORK/freia"
         scripts="$environment/share/freia"
-        "$environment/bin/samtools" view -@ "$cores" -q "$BENCH_MIN_MAPQ" \
+        "$environment/bin/samtools" view -@ "$((cores - 1))" -q "$BENCH_MIN_MAPQ" \
             -F 4 -F 256 -F 1024 -F 2048 \
             -b -o "$BENCH_WORK/output/filtered.bam" "$BENCH_WORK/sample.bam"
-        "$environment/bin/samtools" index -@ "$cores" "$BENCH_WORK/output/filtered.bam"
+        "$environment/bin/samtools" index -@ "$((cores - 1))" "$BENCH_WORK/output/filtered.bam"
         "$environment/bin/python" "$scripts/1_extract_fragment_ends.py" \
             -b "$BENCH_WORK/output/filtered.bam" -o "$BENCH_WORK/output/sample.pq" \
             -c "$BENCH_CONTIGS" -t "$cores" -n 3
         "$environment/bin/python" "$scripts/2_data_transformation.py" \
             -i "$BENCH_WORK/output/sample.pq" -o "$BENCH_WORK/output/" \
-            -st "$BENCH_WORK/output/samples.tsv" --both \
+            -st "$BENCH_WORK/output/samples.tsv" \
             -fsmin "$BENCH_MIN_LENGTH" -fsmax "$((BENCH_MAX_LENGTH + 1))" \
             -subs 1 --bootstrap_sample 0 --subchroff
     ' -- "$cores")
     # Extraction forces one worker above 8000 MiB of filtered BAM input
     # Its actual choice is only known after filtering. Record it below
+elif [[ "$method" == cfdnapro ]]; then
+    tool_version=$BENCH_CFDNAPRO_VERSION
+    tool_workers=NA
+    clip=unrestricted
+    # callMotif(type="s") counts reference-derived left ends, with native curation
+    # This command has no native thread option. The Slurm core budget still applies
+    profile="$BENCH_WORK/output/cfdnapro-motifs.tsv"
+    command=("$BENCH_APPTAINER" exec --cleanenv --containall
+        --bind "$BENCH_WORK:/work" --pwd /work
+        "$BENCH_WORK/cfdnapro.sif" Rscript --vanilla /work/cfdnapro_end_motifs.R
+        /work/sample.bam /work/output "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH"
+        "$BENCH_MIN_MAPQ" "$BENCH_GENOME" "$BENCH_K")
 else
     # FinaleToolkit reconstructs coordinates from read1/TLEN and requires 0x2
     # Its current end-motif reader ignores the requested length bounds

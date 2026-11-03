@@ -1,8 +1,8 @@
 # Benchmarks
 
-Specifications cover [installation and execution](benchmarks_spec.md) and [methods and concordance](benchmarks_concordance_spec.md). The [remaining plan](benchmarks_review_plan.md) lists unfinished implementation and verification. All benchmark plans and specs live in this directory.
+These benchmarks compare cfDNAlab with native tools for coverage, fragment lengths, end motifs and midpoint profiles. The runners measure repeated commands on exclusive Slurm nodes and preserve outputs for numerical comparison.
 
-The [new review plan](new_review_plan.md) separates implemented repairs from experimental decisions. The [independent review and Claude annotations](codex_review.md) record their evidence and verification limits.
+Start with installation below and the feature-specific run instructions. Detailed references describe [installation and execution](benchmarks_spec.md) and [methods and concordance](benchmarks_concordance_spec.md).
 
 ## Installation
 
@@ -23,11 +23,13 @@ The installation routes below were checked against the linked guides and package
 | Picard 3.5.0 | Bioconda `picard-slim`, Java 17, `envs/picard` | The [recipe](https://github.com/bioconda/bioconda-recipes/blob/master/recipes/picard-slim/meta.yaml) installs the official release JAR. It omits R. [CollectInsertSizeMetrics](https://github.com/broadinstitute/picard/blob/3.5.0/src/main/java/picard/analysis/CollectInsertSizeMetrics.java) only checks for R when a PDF histogram is requested, which our call does not do. |
 | FrEIA | Commit `2c32fb9`, authors' dependency pins with `nodefaults`, `envs/freia` | The [guide](https://github.com/mouliere-lab/FrEIA#installation-guide) delegates tool dependencies to its environment files. We preserve its dependency pins and add `nodefaults` to a local YAML copy to exclude inherited channels. It includes downstream plotting and analysis packages that the benchmark does not use. Keeping the supplied file avoids maintaining our own dependency selection. Snakemake, mamba and remapping environments are omitted because we call native scripts on an existing BAM. |
 | Griffin v0.2.0 | Release scripts and Conda dependencies, `envs/griffin` | Keeps the relevant library versions in the [wiki](https://github.com/adoebley/Griffin/wiki), including `nomkl`. Python 3.7.12 replaces its unavailable 3.7.4 pin. Bioconda supplies the specified pybedtools 0.8.0 and pysam 0.19.0 without local compilation. PyYAML 5.3.1 is added because the scripts import it. The full revised Linux solve remains to be checked. Snakemake, matplotlib and samtools are omitted because these direct profiling calls do not use them. |
-| Output comparison | Local `py-cfdnalab` plus zstd, `envs/comparison` | Uses the [Python package](../py-cfdnalab/README.md) from this checkout. zstd reads concatenated coverage frames. FrEIA concordance is disabled. This environment is only used after timing. |
+| Output comparison | Local `py-cfdnalab`, zstd and pyarrow, `envs/comparison` | Uses the [Python package](../py-cfdnalab/README.md) from this checkout. zstd reads concatenated coverage frames and pyarrow reads FrEIA's native left-end Parquet table. This environment is only used after timing. |
 | Snyder preparation | Bioconda pysam 0.24.1, Python 3.11, `envs/snyder-preparation` | Follows [pysam's recommended Conda/Bioconda installation](https://pysam.readthedocs.io/en/latest/installation.html), avoiding a possible pip source build. Not part of benchmark timing. |
 | Environment packaging | conda-pack 0.9.2, `envs/packaging` | A single helper environment packs the other environments by their paths, following the [conda-pack guide](https://conda.github.io/conda-pack/). It is not a benchmarked tool and is not copied into every tool environment. |
 
 FrEIA has no published release, so its source commit is pinned. Griffin's newest published tag is marked as a prerelease upstream. Its old dependency versions belong to that release's guide, rather than an older Griffin comparison. The scripts copied into the FrEIA and Griffin archives remain unmodified.
+
+Griffin's archive also includes the release's 1000-site CTCF demo for its short warmup. Existing installations need a refreshed Griffin archive and pyarrow in the comparison environment. Use `--only griffin,comparison --force griffin,comparison` to reinstall these components.
 
 The environment settings have these specific purposes:
 
@@ -41,9 +43,9 @@ The environment settings have these specific purposes:
 
 The Python settings appear once in the installer and again in each benchmark job because those are separate shell processes. Running the installer with `bash` does not change the submitting shell's environment.
 
-Packing is needed for the agreed node-local benchmark setup. Copying a Conda executable alone can leave it reading its interpreter or libraries from the original installation. The runners extract the complete archive and run `conda-unpack` before timing. That relocation script needs only Python's standard library. `BENCH_SETUP_PYTHON` (default `python3`) executes it outside timing, including its sibling progress module. Only selected competitors are unpacked. Every runner also uses the samtools archive to read the BAM header. Build and pack on the same Linux platform used for benchmarking, as required by conda-pack.
+Packing lets complete Conda environments run from node-local scratch. Copying a Conda executable alone can leave it reading its interpreter or libraries from the original installation. The runners extract the complete archive and run `conda-unpack` before timing. That relocation script needs only Python's standard library. `BENCH_SETUP_PYTHON` (default `python3`) executes it outside timing, including its sibling progress module. Only selected competitors are unpacked. Every runner also uses the samtools archive to read the BAM header. Build and pack on the same Linux platform used for benchmarking, as required by conda-pack.
 
-The runners copy the standalone cfDNAlab and PanDepth executables, so their runtime shared libraries must be available from the compute node's system installation. The runners check their Linux linkage with `ldd` before benchmarking. A small pilot must also exercise default QC plotting and fonts. It cannot be verified from this macOS workspace. The static mosdepth binary has no such package dependencies.
+The runners copy the standalone cfDNAlab and PanDepth executables, so their runtime shared libraries must be available from the compute node's system installation. The runners check their Linux linkage with `ldd` before benchmarking. Run a small input on the compute node to verify default QC plotting and fonts as well. The static mosdepth binary has no such package dependencies.
 
 ## Resuming installations
 
@@ -63,37 +65,43 @@ Picard's version probe accepts its documented status 1 only with a recognizable 
 
 Follow the [input preparation](data/README.md), then the [coverage](coverage/README.md), [lengths](lengths/README.md), [end-motif](ends/README.md) or [midpoint](midpoints/README.md) instructions. Submit **from the repository root** so `SLURM_SUBMIT_DIR` locates helpers. Jobs reserve an exclusive node and all its memory. Node generation, partition and wall time must match the cluster.
 
-All runners require `BENCH_CORES` to specify a single core count for that job. The experiment uses **1, 4, 12 and 32 in separate jobs**. `BENCH_METHODS` is required and has no default. Supply each method label once. Set `BENCH_WARMUPS` (2) and `BENCH_REPETITIONS` (5 measured). `BENCH_PILOT=1` selects zero warmups and one measurement at the job's core count. Use a new `BENCH_RESULTS` directory for every job. Only selected tools are required, plus the samtools archive and setup Python. References are required only by selected methods that use them.
+All runners require `BENCH_CORES` to specify a single core count for that job. The experiment uses **1, 4, 12 and 32 in separate jobs**. `BENCH_METHODS` is required and has no default. Supply each method label once. Defaults are `BENCH_WARMUPS=1` and `BENCH_REPETITIONS=3` measured. `BENCH_PILOT=1` selects zero full-input warmups and one measurement at the job's core count. Use a new `BENCH_RESULTS` directory for every job. Only selected tools are required, plus the samtools archive and setup Python. References are required only by selected methods that use them.
+
+Griffin runs in its own job with no full-input warmups. Before measurements, including a pilot, it runs the release's 1000-site CTCF demo untimed on the same staged BAM/reference and node. This gives Griffin a practical warmup without adding another full production run. The demo has its own Slurm step so its memory is excluded from measured step peaks. Griffin jobs can exceed 24 hours. Choose their wall time from pilots, including all measured repetitions and demo/setup overhead.
 
 The four budgets retain the serial baseline, 4 cores for mosdepth's documented limited scaling, the suggested 12-core configuration, and 32 cores for the upper scaling point. Mosdepth's [guide](https://github.com/brentp/mosdepth/blob/v0.3.14/README.md#speed-and-memory-comparison) describes a plateau near four decompression threads. The runner passes `cores - 1` additional decompression threads, so its 4-core allocation uses three.
 
 Each selected method runs as a contiguous block at the job's core count, with its warmups before measurements. No method is automatically excluded. For cfDNAPro and FinaleToolkit lengths, first compare **1 versus 4 cores in separate jobs**. If wall time and effective CPU use show no benefit beyond run-to-run variation, stop higher-core measurements for that workload and report the tested 1/4-core result. If they improve, add 12- and 32-core jobs. This is an experimental decision, not an automatic scheduler rule.
 
-First check wiring/relocation/fonts with a small input. Then pilot the selected methods at each planned core count in separate jobs on the actual input to budget all invocations. Pilot cfDNAPro's memory progressively, starting near 0.1x, before choosing the common node. Even a single-core-setting pilot can exceed a short allocation when many slow methods are selected. Split methods too when needed.
+Allocate N cores and set the native thread/core/worker argument to that budget when available. Options counting additional threads receive N-1. Tools without a native option still run at their selected core settings. The runners do not override numerical-library thread settings by feature.
+
+First check environment relocation, native outputs and fonts with a small input. Then pilot the selected methods at each planned core count in separate jobs on the actual input to budget all invocations. Pilot cfDNAPro's memory progressively, starting near 0.1x, before choosing the common node. Even a single-core-setting pilot can exceed a short allocation when many slow methods are selected. Split methods too when needed.
 
 ```bash
 python3 benchmarks/summarize_timings.py /path/to/pilot/timings.tsv \
-    --estimate --warmups 2 --repetitions 5 > pilot-summary.tsv
+    --estimate --warmups 1 --repetitions 3 > pilot-summary.tsv
 ```
 
-The estimate writes `budget_minutes`, planned invocation count, failed pilot count and completeness for each observed configuration, adding 25% by default. Failed configurations without a successful pilot have an `NA` budget. It still writes the report, labels any successful subtotal as incomplete and returns nonzero. Add staging/cleanup separately. It cannot budget configurations absent from its inputs. Combining TSVs reports a matrix subtotal, not permission to combine core settings in a job. At 12 minutes per cfDNAlab run and 120 minutes per slow-tool run, those two tools at **one core alone** need 15 h 24 min for two warmups plus five measurements.
+The estimate writes `budget_minutes`, planned invocation count, failed pilot count and completeness for each observed configuration, adding 25% by default. It budgets four full-input invocations normally and three for Griffin. Failed configurations without a successful pilot have an `NA` budget. It still writes the report, labels any successful subtotal as incomplete and returns nonzero. Add staging/cleanup and the Griffin demo separately. It cannot budget configurations absent from its inputs. When combining TSVs from several core settings, budget each job separately from the reported matrix subtotal. At 12 minutes per cfDNAlab run and 120 minutes per slow-tool run, those two tools at **one core alone** need 8 h 48 min for a warmup plus three measurements, or 11 hours with margin.
 
-For a 24-hour allocation limit, start with a separate job per feature/core budget, then split by method when needed. In minutes, budget `H + 1.25 * 7 * sum(method_runtime_at_this_core_count)`, where `H` covers staging, profile preservation and cleanup. Seven invocations include two warmups and five measurements. With no allowance for `H`, selected methods must total at most about 164.6 minutes per pass to fit 24 hours.
+Where allocations are limited to 24 hours, start with a separate job per feature/core budget, then split by method when needed. In minutes, budget `H + 1.25 * 4 * sum(method_runtime_at_this_core_count)`, where `H` covers staging, profile preservation and cleanup. Four invocations include a warmup and three measurements. With no allowance for `H`, selected methods must total at most 288 minutes per pass to fit 24 hours. Griffin is scheduled separately with a sufficiently long allocation.
 
 The following working scaling scenario starts at **12 minutes per cfDNAlab configuration and 120 minutes per competitor at 1 core**. It assumes linear speedup for parallel paths, with mosdepth's speedup capped at 4x, and adds 25%. The two apparently serial length tools retain 120 minutes per run for their initial 1/4-core budgets. Linear scaling is optimistic for partially parallel or I/O-limited commands, including samtools and Picard. Replace these assumptions with pilot measurements. Times are rounded up to the next minute and exclude `H`.
 
 | Feature/core job | 1 core | 4 cores | 12 cores | 32 cores |
 | --- | --- | --- | --- | --- |
-| Coverage, 3 cfDNAlab + 5 competitors | 92 h 45 min | 23 h 12 min | 13 h 34 min | 10 h 34 min |
-| Lengths: cfDNAlab/native, autosomes, samtools, Picard | 38 h 30 min | 9 h 38 min | 3 h 13 min | 1 h 13 min |
-| cfDNAPro lengths, its own job | 17 h 30 min | 17 h 30 min | Decide after 1/4 | Decide after 1/4 |
-| FinaleToolkit lengths, its own job | 17 h 30 min | 17 h 30 min | Decide after 1/4 | Decide after 1/4 |
-| End motifs, 2 cfDNAlab + 1 competitor | 21 h | 5 h 15 min | 1 h 45 min | 40 min |
-| Midpoints, 1 cfDNAlab + 1 competitor | 19 h 15 min | 4 h 49 min | 1 h 37 min | 37 min |
+| Coverage, 3 cfDNAlab + 5 competitors | 53 h | 13 h 15 min | 7 h 45 min | 6 h 2 min |
+| Lengths: cfDNAlab/native, autosomes, samtools, Picard | 22 h | 5 h 30 min | 1 h 50 min | 42 min |
+| cfDNAPro lengths, its own job | 10 h | 10 h | Decide after 1/4 | Decide after 1/4 |
+| FinaleToolkit lengths, its own job | 10 h | 10 h | Decide after 1/4 | Decide after 1/4 |
+| End motifs, 2 cfDNAlab + FinaleToolkit | 12 h | 3 h | 1 h | 23 min |
+| Midpoints, cfDNAlab only | 1 h | 15 min | 5 min | 2 min |
 
 Every table cell describes a separate feature/method-block job at exactly that column's core count. The two serial length tools are included as separate 1- and 4-core jobs. Their 12/32-core measurements are deferred pending the comparison. The other lengths block uses `BENCH_METHODS="cfdnalab cfdnalab-autosomes samtools picard"`. The script runs any methods explicitly selected, at any requested single core count.
 
-The 1-core coverage and other-lengths jobs still need method splits. The 4-core coverage estimate leaves less than 49 minutes for `H`, so split it further if staging and preservation need longer. At 1 core, a 120-minute method alone needs 14 hours raw or 17 h 30 min with margin. Pairing it with a 12-minute cfDNAlab configuration needs 15 h 24 min raw or 19 h 15 min with margin. Two 120-minute methods already need 28 hours raw. Use the actual pilot sum to choose blocks within each core count.
+The 1-core coverage job still needs method splits. The illustrated 1-core lengths block leaves two hours for `H` within a 24-hour allocation. At 1 core, a 120-minute method alone needs 8 hours raw or 10 hours with margin. Two such methods need 16 hours raw or 20 hours with margin. Use the actual pilot sum to choose blocks within each core count. FrEIA and cfDNAPro motifs need their own full-input pilot budgets.
+
+Griffin has its own job at each core setting. If a full run actually takes 30 hours at a setting, three measurements take 90 hours raw or 112 h 30 min with margin, plus the short demo and `H`. This is a runtime scenario, not a measured estimate or a limit. How to split those repetitions across jobs remains an experimental choice.
 
 Prefer the same physical node across jobs when available. Otherwise use matched hardware and retain the node identity with every timing. Cross-core speedups then also reflect variation between nodes. Each new job includes its own warmups. To pin a specific node, after setting input/tool paths:
 
@@ -130,16 +138,18 @@ python3 benchmarks/summarize_timings.py /path/to/results/timings.tsv \
 
 Supply multiple timing TSVs only for blocks of the same feature/experiment with the same biological input. For multiple jobs, collect their IDs together using `sacct -j ID1,ID2`. The summary joins exact job/step IDs and reports sample size, mean/SD, median and quartiles per configuration. `runs-with-memory.tsv` retains every measured point and failure for plotting. Missing/delayed accounting stays `NA`, so recollect and repeat the join later.
 
-Use `slurm_max_rss_kib` as the primary memory result after checking the cluster's accounting plugin, frequency, descendant accounting and file-cache policy once. `slurm-config.txt` records the available configuration. Slurm cgroup v2 MaxRSS can include file cache, so label that policy in results. The removed process-tree sampler is no longer part of the workload. See [Slurm sacct](https://slurm.schedmd.com/sacct.html) and [cgroup v2 limitations](https://slurm.schedmd.com/cgroup_v2.html#limitations).
+Use `slurm_max_rss_kib` as the primary memory result after checking the cluster's accounting plugin, frequency, descendant accounting and file-cache policy once. `slurm-config.txt` records the available configuration. Slurm cgroup v2 MaxRSS can include file cache, so label that policy in results. Memory is collected from Slurm accounting after the job, without an additional sampler in the timed workload. See [Slurm sacct](https://slurm.schedmd.com/sacct.html) and [cgroup v2 limitations](https://slurm.schedmd.com/cgroup_v2.html#limitations).
 
 Effective cores are `(user_seconds + system_seconds) / wall_seconds`. Divide by `cores` for allocated utilization. Use process wall time for this denominator, rather than the flush-inclusive duration.
 
-Inputs and environments are copied to local scratch before warmups. Scheduler startup, profile preservation, cleanup and concordance stay outside measurement. Profiles are copied **after srun** from the first measured repetition at the job's single core count, so copying does not inflate the tool step's accounting peak. FrEIA profiles are excluded. No cache eviction is attempted. Staging does not guarantee that the full input remains in page cache.
+Inputs and environments are copied to local scratch before warmups. Scheduler startup, profile preservation, cleanup and concordance stay outside measurement. Profiles are copied **after srun** from the first measured repetition at the job's single core count, so copying does not inflate the tool step's accounting peak. FrEIA's intact left-only profile is retained with that end selection identified. No cache eviction is attempted. Staging does not guarantee that the full input remains in page cache.
 
 A recorded native, placement, missing-output or flush failure skips the remaining repetitions of that method and continues other selected methods. Its timing row and available tool logs remain in results, and the job exits nonzero after finishing those other methods. Setup and results-bookkeeping errors remain fatal. Slurm or kernel termination of the batch shell can prevent final bookkeeping and continuation.
 
 `BENCH_RUN_TIMEOUT_SECONDS=0` disables per-invocation timeouts by default. Set a positive integer to run the native command under GNU `timeout --verbose --kill-after=60`, inside GNU time. The limit is recorded in `run.tsv`. Leave room for the extra 60-second termination grace, staging, flush and bookkeeping below the allocation limit. Status 124 normally identifies an expired limit. Status 137 alone cannot distinguish a forced timeout kill from another SIGKILL, so retain timeout diagnostics and Slurm accounting. Choose actual limits from pilots. Timeouts are unsuccessful observations and never enter successful production averages.
 
-## Prepared regression checks
+## Regression tests and validation
 
-The hand-derived fixtures in [tests/test_benchmarks.py](tests/test_benchmarks.py) cover coverage formats/weights/scope, residual distributions, base-resolution Pearson, regional row identity, scheduling, installer resumption, Picard status, Slurm joins, reconstructed TLEN signs and FrEIA exclusion. [Review regressions](tests/test_review_regressions.py) add failure continuation, signal/timeout statuses, partial pilot reports, scope preflight, native length boundaries and midpoint empty-profile behavior. They were not run during implementation. On Linux, use the comparison Python with zstd on PATH to run `python -m unittest discover -s benchmarks/tests`. The reconstruction cases require pysam and explicitly skip when it is unavailable. Linux environment solves, relocation, fonts and real Slurm accounting still need the small wiring pilot.
+The tests in [test_benchmarks.py](tests/test_benchmarks.py) cover coverage formats/weights/scope, residual distributions, base-resolution Pearson, regional row identity, scheduling, installer resumption, Picard status, Slurm joins, reconstructed TLEN signs and native left-motif counts with exclusion of damaged FrEIA aggregates. [Additional regression tests](tests/test_review_regressions.py) cover failure continuation, signal/timeout statuses, partial pilot reports, scope validation before loading tracks, native length boundaries and midpoint empty-profile behavior. Expected numerical values are manually derived from small synthetic inputs.
+
+On Linux, use the comparison Python with zstd on PATH to run `python -m unittest discover -s benchmarks/tests`. The reconstruction cases require pysam and explicitly skip when it is unavailable. These tests do not replace validation of complete Linux environment solves, relocation, native command outputs, fonts and Slurm accounting on the compute node. Run each selected native tool and its comparator on a small input before collecting full-input measurements. No measured benchmark results are included in these documents. The result tables are templates.

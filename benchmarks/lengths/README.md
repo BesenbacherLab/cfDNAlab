@@ -1,6 +1,6 @@
 # Fragment length benchmark comparators
 
-Compare cfDNAlab against **cfDNAPro, FinaleToolkit, samtools and Picard**. cfDNAPro checks the fragment definition, FinaleToolkit provides a direct cfDNA histogram command, and samtools and Picard provide established insert-size comparators. No sample analyses or timings have been run while preparing these scripts.
+Compare cfDNAlab against **cfDNAPro, FinaleToolkit, samtools and Picard**. cfDNAPro checks the fragment definition, FinaleToolkit provides a direct cfDNA histogram command, and samtools and Picard provide established insert-size comparators.
 
 Compare global histograms with one bin per fragment length from **30 through 1000 bp inclusive**, MAPQ >=30, and no GC correction, genomic scaling or blacklists. These are bins on the fragment length axis, not genomic intervals. Keep the prepared BAM unchanged and let each tool apply its filters.
 
@@ -77,7 +77,7 @@ Picard has no MAPQ setting for this command, so the runner streams an uncompress
 
 deepTools `bamPEFragmentSize` is lower priority. It samples genomic regions by default. `--distanceBetweenBins 0 --outRawFragmentLengths lengths.tsv` removes the sampling gaps, but its indexed queries can count alignments crossing chunk boundaries more than once. Its native selection also lacks the MAPQ/duplicate/QC-fail filtering needed here and falls back to other mapped reads in chunks without proper read1 records. These differences make it a less direct full-histogram comparison.
 
-Use the established exclusive-node, local-scratch timing procedure. Use **1, 4, 12 and 32 cores in separate jobs** for parallel methods. First measure cfDNAPro and FinaleToolkit lengths at 1 versus 4 cores, also in separate jobs. If wall time and CPU use show no consistent benefit, stop higher-core measurements for this workload. If they improve, add 12/32-core jobs. The runner executes every explicitly selected method and does not automatically skip tools. cfDNAlab's `--n-threads` uses that budget. samtools `-@` receives `cores - 1`, since it counts additional decoding threads. Numerical libraries and the JVM may use the allocated budget, rather than being forced to a single thread. The timing TSV records `NA` for a command without an explicit native thread setting.
+Use the established exclusive-node, local-scratch timing procedure. Use **1, 4, 12 and 32 cores in separate jobs** for parallel methods. First measure cfDNAPro and FinaleToolkit lengths at 1 versus 4 cores, also in separate jobs. If wall time and CPU use show no consistent benefit, stop higher-core measurements for this workload. If they improve, add 12/32-core jobs. The runner executes every explicitly selected method and does not automatically skip tools. cfDNAlab's `--n-threads` uses that budget. samtools `-@` receives `cores - 1`, since it counts additional decoding threads. The JVM receives the allocated processor count. No numerical-library thread overrides are added. The timing TSV records `NA` for a command without an explicit native thread setting.
 
 Plot wall time against allocated cores for every method. Calculate effective cores as `(user_seconds + system_seconds) / wall_seconds` and allocated CPU utilization as that value divided by `cores`. This shows actual utilization without assuming that a tool will or will not scale. Picard's utilization includes its samtools input filter, and cfDNAPro's includes container startup. Include native output generation in timing and perform concordance calculations afterward.
 
@@ -115,19 +115,21 @@ sbatch --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET benchmarks/lengths/bench
 export BENCH_RESULTS=/path/to/lengths-timing-4cores-parallel
 export BENCH_CORES=4
 export BENCH_PILOT=0
-export BENCH_WARMUPS=2
-export BENCH_REPETITIONS=5
+export BENCH_WARMUPS=1
+export BENCH_REPETITIONS=3
 export BENCH_METHODS="cfdnalab cfdnalab-autosomes samtools picard"
 sbatch --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET benchmarks/lengths/benchmark_lengths.sh
 ```
 
 Set wall time from pilots at each core setting. Each job uses a single core count. Split methods further as needed to fit the allocation limit, using matched hardware as described in [the shared run controls](../README.md#runs-and-budgets). The example times the other length methods at 4 cores. Submit cfDNAPro and FinaleToolkit separately at 1 and 4 cores, and decide on higher-core runs after inspecting their measurements. `BENCH_INDEX` can override the usual `.bam.bai` path. `BENCH_MIN_LENGTH`, `BENCH_MAX_LENGTH` and `BENCH_MIN_MAPQ` override the common filters. Supply the same nondefault length bounds to the comparator. `BENCH_GENOME` selects cfDNAPro's reference label and must match the alignment reference and chromosome naming. The default `hg38` means UCSC-style names. The input remains a coordinate-sorted BAM with its original non-autosomes and alignment flags.
 
-The runner reserves an exclusive node and all its memory. Every sequential `srun --jobid` attaches to that allocation and checks the actual hostname and logical/physical CPU IDs. Hard confinement also depends on the cluster's Slurm cgroup configuration. Prefer the same physical node for split jobs when available, as described in the shared run controls. Each method runs as a contiguous block at the job's core count, retaining actual order in `timings.tsv`. There are two warmups followed by five measured repetitions by default. No caches are evicted.
+The runner reserves an exclusive node and all its memory. Every sequential `srun --jobid` attaches to that allocation and checks the actual hostname and logical/physical CPU IDs. Hard confinement also depends on the cluster's Slurm cgroup configuration. Prefer the same physical node for split jobs when available, as described in the shared run controls. Each method runs as a contiguous block at the job's core count, retaining actual order in `timings.tsv`. There are a warmup followed by three measured repetitions by default. No caches are evicted.
 
 The timing result is a single `timings.tsv`, with a row for every attempted run, including warmups and failures. A native histogram per method is retained under `profiles/` from the first measured repetition at the job's single core count. These small files support concordance analysis. Other temporary outputs and logs are deleted. Failed diagnostics are retained, the remaining repetitions of that method are skipped and other selected methods continue. The job exits nonzero after those methods finish. See the [shared failure and timeout behavior](../README.md#timing-and-slurm-memory). Input staging, scheduler startup, profile copying, cleanup and concordance calculation are outside the timer. Native startup and output generation remain timed, including cfDNAlab's default QC plot and cfDNAPro's Apptainer launch. GNU time's maximum RSS is not the simultaneous total memory of a process tree.
 
-## Supplementary result placeholders
+## Supplementary result templates
+
+The tables below contain no measured results. Fill them from the saved concordance metrics and completed timing/accounting records.
 
 | cfDNAlab vs tool | Pearson r | MAE / RMSE | Count difference | Wasserstein, bp | Main expected differences |
 | --- | --- | --- | --- | --- | --- |
@@ -147,12 +149,12 @@ Report the definition diagnostic's Pearson r, frequency MAE/RMSE and Wasserstein
 
 | Tool / configuration | Cores | Warmups / measured | Mean process+flush, s | SD seconds | Effective cores |
 | --- | --- | --- | --- | --- | --- |
-| cfDNAlab, all contigs | 1 / 4 / 12 / 32, separate jobs | 2 / 5 each | [ ] | [ ] | [ ] |
-| cfDNAlab, autosomes | 1 / 4 / 12 / 32, separate jobs | 2 / 5 each | [ ] | [ ] | [ ] |
-| cfDNAPro 1.7.4 | 1 / 4, separate jobs, then decide | 2 / 5 each | [ ] | [ ] | [ ] |
-| FinaleToolkit 1.1.0 | 1 / 4, separate jobs, then decide | 2 / 5 each | [ ] | [ ] | [ ] |
-| samtools 1.25 | 1 / 4 / 12 / 32, separate jobs | 2 / 5 each | [ ] | [ ] | [ ] |
-| Picard 3.5.0 | 1 / 4 / 12 / 32, separate jobs | 2 / 5 each | [ ] | [ ] | [ ] |
+| cfDNAlab, all contigs | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] |
+| cfDNAlab, autosomes | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] |
+| cfDNAPro 1.7.4 | 1 / 4, separate jobs, then decide | 1 / 3 each | [ ] | [ ] | [ ] |
+| FinaleToolkit 1.1.0 | 1 / 4, separate jobs, then decide | 1 / 3 each | [ ] | [ ] | [ ] |
+| samtools 1.25 | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] |
+| Picard 3.5.0 | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] |
 
 Expand timing rows to a core budget per row in the final A4 supplement. Put workload notes below the table and report maximum RSS separately if needed.
 

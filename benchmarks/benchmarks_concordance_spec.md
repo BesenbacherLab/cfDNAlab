@@ -1,6 +1,6 @@
 # Benchmark methods and concordance specification
 
-This specifies implemented native configurations and comparisons. Installation, execution, accounting and inputs are specified in [benchmarks_spec.md](benchmarks_spec.md). Remaining implementation and verification are in [benchmarks_review_plan.md](benchmarks_review_plan.md).
+This reference describes native tool configurations, counting differences, output formats and concordance metrics. Installation, execution, accounting and inputs are specified in [benchmarks_spec.md](benchmarks_spec.md).
 
 Fragment coverage, read depth, regional fragment counts, global length histograms, end-motif frequencies and midpoint profiles are separate quantities. Normalized agreement does not establish equal total counts or individual fragment selection. Speed claims apply to the configurations actually timed, including their native compulsory work and filter differences.
 
@@ -43,7 +43,7 @@ Regional methods share disjoint 500 kb BED4 windows generated from the BAM index
 - samtools depth lacks a matching length filter or complete-pair/MAPQ check. PanDepth additionally lacks paired-read inclusion and overlap removal. Unsupported length filtering is recorded.
 - FinaleToolkit regional coverage uses proper read1/TLEN selection. Its indexed read1 fetch can miss fragments whose spans alone overlap window boundaries. The end-motif length-bound bug does not establish the same bug in regional coverage.
 
-See [cfDNAlab coverage](../src/commands/fcoverage/fcoverage.rs), [segmented fragment construction](../src/shared/fragment/segment_fragment.rs) and [pinned mosdepth source](https://github.com/brentp/mosdepth/blob/v0.3.14/mosdepth.nim). General real-BAM equality is not promised.
+See [cfDNAlab coverage](../src/commands/fcoverage/fcoverage.rs), [segmented fragment construction](../src/shared/fragment/segment_fragment.rs) and [pinned mosdepth source](https://github.com/brentp/mosdepth/blob/v0.3.14/mosdepth.nim). These native differences can produce unequal coverage on the same BAM.
 
 ### Loading, scope and memory
 
@@ -134,19 +134,24 @@ cfDNAlab uses `ends --k-inside K --k-outside 0 --all-motifs` with requested filt
 | `cfdnalab-read-aligned` | Read source at aligned boundaries |
 | `cfdnalab-read-include` | Read source, `include-at-aligned-boundary` |
 | `finaletoolkit` | Reference `end-motifs --strand both`, requested K/bounds/MAPQ and allocated workers |
-| `freia` | Optional native three-base extraction/aggregation timing only |
+| `freia` | Native three-base extraction and default left-only aggregation |
+| `cfdnapro` | Curated `readBam()` followed by reference-derived left-end `callMotif(motif_type="s")` |
 
-The baseline selection is reference/native, reference/proper and FinaleToolkit with K=4. `BENCH_METHODS` must be supplied explicitly. K=3 is supported. FrEIA requires K=3 and explicitly warns that its pinned aggregate is incorrect.
+The 4-mer comparison includes reference/native, reference/proper, FinaleToolkit and cfDNAPro. `BENCH_METHODS` must be supplied explicitly. K=3 is also supported and required for FrEIA. Both-end cfDNAlab/FinaleToolkit profiles and native left-end FrEIA/cfDNAPro profiles retain their end selection labels.
 
-FinaleToolkit 1.1.0 ignores requested end-motif bounds. Rows retain requested bounds, set effective bounds `NA` and label `length_filter=ignored-by-release`. The wide diagnostic practically removes cfDNAlab's usual 30-1000 bp restriction for this dataset. No >50,000 bp census is added.
+FinaleToolkit 1.1.0 ignores requested end-motif bounds. Rows retain requested bounds, set effective bounds `NA` and label `length_filter=ignored-by-release`. The wide diagnostic extends cfDNAlab's inclusion range to 10-50,000 bp to assess the effect of its usual 30-1000 bp restriction on this dataset.
 
 FinaleToolkit selection requires identical BAM/2bit contig dictionaries. Lengths divisible by 1,000,000 fail with the pinned last-window omission named. Read-only cfDNAlab and FrEIA-only selections need no 2bit. FinaleToolkit's read1 window queries can still double-count boundaries, and proper read1/TLEN selection differs from cfDNAlab pair/CIGAR checks. See the pinned [end-motif implementation](https://github.com/epifluidlab/FinaleToolkit/blob/v1.1.0/src/finaletoolkit/frag/_end_motifs.py).
 
-FrEIA timing includes BAM filtering/indexing, extraction `-n 3`, unchanged `--both` aggregation, exclusive maximum `MAX+1`, and no intentional downsampling/bootstrap. Native coordinate deduplication, N filtering, intermediates and mononucleotide work remain. Extraction workers are recorded as 1 above 8000 MiB filtered BAM size.
+FrEIA timing includes BAM filtering/indexing, extraction `-n 3`, unchanged default left-only aggregation, exclusive maximum `MAX+1`, and no intentional downsampling/bootstrap. Native coordinate deduplication, filtering N at either end, intermediates and mononucleotide work remain. Samtools receives N-1 additional threads. Extraction receives N workers, with the native size safeguard still forcing one worker above 8000 MiB filtered BAM size. The actual extraction-worker count is recorded.
 
-**FrEIA concordance is disabled until native aggregation is fixed.** Its pinned assignment can drop/pad right-end rows. No CountSamp/CountLen recovery or replacement aggregation is used. Its profile is not retained, old profile directories are skipped, and optional timings cannot support equivalent-output claims.
+FrEIA's broken `--both` aggregate remains excluded. The runner uses intact left-only output and retains it as `left-motifs.pq`. The comparator verifies genome-level `WhichEnd=leftmost`, then sums additive `CountLen` over fragment lengths for each motif. `CountSamp` repeats a motif total across lengths and is not summed. Missing ACGT motifs receive zero. Old `T__sample.pq` files remain skipped without recovering or reconstructing their damaged counts.
 
-Profiles must contain exactly all `4^K` inward ACGT labels including zeros, without duplicates/non-finite/negative values. cfDNAlab's leading underscore is removed, raw global counts are loaded natively and FinaleToolkit TSV frequencies read directly. Total mass must be positive. FinaleToolkit sums must be close to 1 with `rtol=1e-6`, `atol=1e-9`. Profiles normalize by counted-end totals, which are `NA` for FinaleToolkit.
+cfDNAPro uses the same explicit `readBam` MAPQ/flags as its curated length comparison, all contigs and inclusive width filtering. Native `callMotif(motif_type="s", motif_length=K, integrate_mut=FALSE, downsample_ref=FALSE)` counts the leftmost K reference bases on the forward strand. It writes `motif`, `n` and `fraction`. BAM reading, curation, reference loading, motif extraction and writing stay timed. There is no native thread option for this call. The image's selected BSgenome label/package/version/sequence metadata are retained in `reference.tsv`. Reference identity with the alignment FASTA/2bit must be verified before attributing differences solely to tools. Native pair/orientation/reference-bound checks and cfDNAlab end/CIGAR checks remain different.
+
+Profiles must contain exactly all `4^K` inward ACGT labels after filling FrEIA's sparse zeros, without duplicate/non-finite/negative values. cfDNAlab's leading underscore is removed, raw global counts are loaded natively, cfDNAPro native counts are read directly and FinaleToolkit TSV frequencies read directly. Total mass must be positive. FinaleToolkit sums must be close to 1 with `rtol=1e-6`, `atol=1e-9`. Profiles normalize by their native counted-end totals, which are `NA` for FinaleToolkit.
+
+Pairwise rows report `left_end_selection`, `right_end_selection` and `side_comparison`. A left-end versus both-end comparison is labeled `approximate-side-mirroring`. This assumes the two sides have sufficiently similar inward-oriented motif frequencies for the intended approximate comparison, and does not establish that their observed frequencies are identical. Comparisons selecting the same sides are labeled `same-sides`. Native left counts remain native left counts. No doubled count estimate is produced, and these approximations do not support an equivalent-output timing claim.
 
 All supported profiles are compared pairwise. Metrics are Pearson r, Spearman r using average ranks, frequency MAE/RMSE/max error, total variation, normalized Shannon diversity and its absolute difference. Diversity is `-sum(p * log(p)) / log(4^K)`, omitting zero terms. Constant correlations are `NA`.
 
@@ -156,7 +161,9 @@ All supported profiles are compared pairwise. Metrics are Pearson r, Spearman r 
 
 Sources: [runner](midpoints/benchmark_midpoints.sh), [comparator](midpoints/compare_midpoints.py), [workload notes](midpoints/README.md).
 
-The complete set is selected explicitly with `BENCH_METHODS="cfdnalab griffin"`. Both use the user's supplied windows/chromosomes, inclusive 100-200 bp fragments, MAPQ >=30 and unsmoothed 1 bp profiles. Width comes from the BED. Proper-pair filtering is not added.
+Select `BENCH_METHODS=cfdnalab` and `BENCH_METHODS=griffin` in separate jobs at each core setting. Both measured workloads use the supplied BED windows and their chromosomes, inclusive 100-200 bp fragments, MAPQ >=30 and unsmoothed 1 bp profiles. The production source is the pinned [public Griffin paper site set](https://github.com/adoebley/Griffin_analyses/tree/75467e438a88029206d8d778ddce05eb0ab6efa8/sites/TFBS/10000_unfiltered_sites_CIS_BP_v2). Width comes from the supplied BED, without additional site selection. Proper-pair filtering is not added.
+
+Griffin gets one short untimed warmup using its release's 1000-site CTCF demo, the same production BAM/reference, length/MAPQ/window settings and core allocation. Its separate Slurm step and output are excluded from measured timings, memory and concordance. There are no full-input Griffin warmups. Production site coordinates are unchanged. This is a practical warmup intended to give Griffin a fair start without another full production run.
 
 cfDNAlab uses `midpoints --length-bins MIN MAX+1 --smoothing none --bin-size 1`, actual-pair checks and deterministic choice between the two central bases of even fragments. Griffin retains forward-record/TLEN selection and the right central base. Fragment/filter populations can differ.
 

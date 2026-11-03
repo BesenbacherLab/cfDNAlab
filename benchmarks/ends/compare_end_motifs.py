@@ -3,7 +3,8 @@
 
 Write one TSV row per pair of saved profiles to stdout. Compare the full labeled
 motif set using frequencies, because FinaleToolkit's output has no raw counts.
-FrEIA is excluded because its pinned both-end aggregation produces incorrect output.
+FrEIA and cfDNAPro supply native left-end profiles. Comparisons against both ends
+use an explicitly labeled side-mirroring approximation, without doubling counts.
 """
 
 import argparse
@@ -20,13 +21,16 @@ def load_profile(directory, motifs):
     """Read a native tool output onto the same inward-oriented motif axis.
 
     cfDNAlab's one-sided labels have a leading underscore, which is removed for
-    matching to FinaleToolkit labels. Require every expected ACGT motif, including
-    zero-count motifs, and reject duplicate labels or non-finite/negative values.
-    Return normalized frequencies and the raw counted-end total when available.
+    matching to FinaleToolkit labels. FrEIA's sparse left table is summed over
+    fragment lengths and missing motifs receive zero. Other formats must contain
+    every ACGT motif. Reject invalid labels/values and return normalized frequencies,
+    native counted-end totals when available, and the native end selection.
     """
     zarr_path = directory / "end_motifs.zarr"
     tsv_path = directory / "motifs.tsv"
-    freia_path = directory / "T__sample.pq"
+    freia_path = directory / "left-motifs.pq"
+    cfdnapro_path = directory / "cfdnapro-motifs.tsv"
+    end_selection = "both"
     if zarr_path.is_dir():
         from cfdnalab import read_end_motifs
 
@@ -41,7 +45,29 @@ def load_profile(directory, motifs):
             entries = list(csv.reader(source, delimiter="\t"))
         contains_counts = False
     elif freia_path.is_file():
-        raise ValueError("FrEIA concordance is disabled until its native both-end aggregation is fixed")
+        table = pd.read_parquet(freia_path)
+        required = {"Base", "Length", "CountLen", "WhichEnd", "Unit"}
+        if not required.issubset(table.columns) or table.empty:
+            raise ValueError(f"Missing native FrEIA left-abundance columns or rows in {directory.name}")
+        if set(table["WhichEnd"]) != {"leftmost"} or set(table["Unit"]) != {"GRCh38"}:
+            raise ValueError("FrEIA concordance requires intact genome-level leftmost output")
+        if table["Base"].isna().any() or not set(table["Base"]).issubset(motifs):
+            raise ValueError(f"Unexpected FrEIA motif labels in {directory.name}")
+        counts = pd.to_numeric(table["CountLen"], errors="raise")
+        if not np.isfinite(counts).all() or (counts < 0).any() or (counts % 1 != 0).any():
+            raise ValueError(f"Invalid native FrEIA counts in {directory.name}")
+        # CountSamp repeats a motif total for each length. Sum CountLen instead
+        table = table.assign(CountLen=counts)
+        totals = table.groupby("Base", observed=True)["CountLen"].sum()
+        entries = [(motif, totals.get(motif, 0)) for motif in motifs]
+        contains_counts = True
+        end_selection = "left"
+    elif cfdnapro_path.is_file():
+        with cfdnapro_path.open() as source:
+            table = list(csv.DictReader(source, delimiter="\t"))
+        entries = [(row["motif"], row["n"]) for row in table]
+        contains_counts = True
+        end_selection = "left"
     else:
         raise ValueError(f"No supported native motif profile in {directory}")
 
@@ -61,7 +87,7 @@ def load_profile(directory, motifs):
         raise ValueError(f"No counted motif mass in {directory.name}")
     if not contains_counts and not np.isclose(total, 1.0, rtol=1e-6, atol=1e-9):
         raise ValueError(f"FinaleToolkit frequencies do not sum to 1 in {directory.name}: {total}")
-    return ordered_values / total, total if contains_counts else "NA"
+    return ordered_values / total, total if contains_counts else "NA", end_selection
 
 
 def motif_diversity(frequencies):
@@ -78,7 +104,8 @@ def main():
     arguments = parser.parse_args()
     motifs = ["".join(bases) for bases in product("ACGT", repeat=arguments.k)]
     directories = sorted(path for path in arguments.profiles.iterdir() if path.is_dir())
-    freia_directories = [path for path in directories if path.name == "freia" or (path / "T__sample.pq").is_file()]
+    freia_directories = [path for path in directories
+                         if (path / "T__sample.pq").is_file() and not (path / "left-motifs.pq").is_file()]
     if freia_directories:
         print("Skipping FrEIA concordance: the pinned native both-end aggregation is incorrect.", file=sys.stderr)
         directories = [path for path in directories if path not in freia_directories]
@@ -88,14 +115,15 @@ def main():
 
     columns = [
         "left_profile", "right_profile", "k", "motifs", "left_counted_ends", "right_counted_ends",
+        "left_end_selection", "right_end_selection", "side_comparison",
         "pearson_r", "spearman_r", "max_abs_log2_ratio_abundant", "mae_frequency", "rmse_frequency", "max_abs_frequency_difference",
         "total_variation", "left_mds", "right_mds", "abs_mds_difference",
     ]
     writer = csv.DictWriter(sys.stdout, fieldnames=columns, delimiter="\t", lineterminator="\n")
     writer.writeheader()
     for left_name, right_name in combinations(profiles, 2):
-        left_frequency, left_total = profiles[left_name]
-        right_frequency, right_total = profiles[right_name]
+        left_frequency, left_total, left_ends = profiles[left_name]
+        right_frequency, right_total, right_ends = profiles[right_name]
         difference = left_frequency - right_frequency
         # Correlation is undefined for constant profiles, even if they are equal
         correlation = "NA"
@@ -124,6 +152,9 @@ def main():
             "motifs": len(motifs),
             "left_counted_ends": left_total,
             "right_counted_ends": right_total,
+            "left_end_selection": left_ends,
+            "right_end_selection": right_ends,
+            "side_comparison": "same-sides" if left_ends == right_ends else "approximate-side-mirroring",
             "pearson_r": correlation,
             "spearman_r": rank_correlation,
             "max_abs_log2_ratio_abundant": log_ratio,

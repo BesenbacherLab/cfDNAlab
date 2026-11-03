@@ -180,10 +180,14 @@ benchmark_finish_run() {
         fi
         echo "Run $run_order failed. Completed rows and diagnostics are in $BENCH_RESULTS" >&2
     fi
-    if [[ "$method" != freia && "$is_warmup" == false ]] && ((step_exit_code == 0 && repetition == BENCH_WARMUPS+1)); then
+    if [[ "$is_warmup" == false ]] && ((step_exit_code == 0 && repetition == BENCH_WARMUPS+1)); then
         profile=$(cat "$BENCH_WORK/profile.path")
         mkdir -p "$BENCH_RESULTS/profiles/$method"
         case "$method" in
+            freia)
+                # Name intact left-only output distinctly from old both-end tables
+                cp "$profile" "$BENCH_RESULTS/profiles/$method/left-motifs.pq"
+                ;;
             samtools-depth|pandepth)
                 # Preserve only the declared small concordance scope for huge tables
                 if [[ "$profile" == *.gz ]]; then
@@ -198,6 +202,10 @@ benchmark_finish_run() {
                 ;;
             *)
                 cp -R "$profile" "$BENCH_RESULTS/profiles/$method/"
+                if [[ "$method" == cfdnapro && "$BENCH_FEATURE" == ends ]]; then
+                    # Keep motif counts beside the native reference used to obtain them
+                    cp "$BENCH_WORK/output/reference.tsv" "$BENCH_RESULTS/profiles/$method/"
+                fi
                 if [[ -f "$BENCH_WORK/chrom.sizes" ]]; then
                     if [[ "$method" == *autosomes* ]]; then
                         awk '$1 ~ /^(chr)?([1-9]|1[0-9]|2[0-2])$/' "$BENCH_WORK/chrom.sizes" > "$BENCH_RESULTS/profiles/$method/chrom.sizes"

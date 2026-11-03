@@ -17,7 +17,7 @@ Use the shared [installer](../README.md#installation) and [prepared hg38 input](
 
 The common exclusion mask removes unmapped, mate-unmapped, secondary, supplementary, QC-fail and duplicate records. A flag mask alone does not give tools identical pair selection. The end-motif release's ignored length bounds are a separate bug and do not imply that FinaleToolkit's regional coverage ignores them.
 
-For example, forward `pos=100`, `30M`, reverse `pos=170`, `30M` spans 100 bp. Fragment coverage fills the 40 bp inter-mate gap, whereas read depth covers 60 bp. With forward `15M2D15M`, cfDNAlab fragment coverage leaves `[115,117)` uncovered unless supported by the other mate. mosdepth fragment mode fills all 100 bp. General real-BAM equality is therefore not an acceptance condition.
+For example, forward `pos=100`, `30M`, reverse `pos=170`, `30M` spans 100 bp. Fragment coverage fills the 40 bp inter-mate gap, whereas read depth covers 60 bp. With forward `15M2D15M`, cfDNAlab fragment coverage leaves `[115,117)` uncovered unless supported by the other mate. mosdepth fragment mode fills all 100 bp. Native CIGAR and pairing differences can therefore produce unequal coverage on the same BAM.
 
 ## Run and compare
 
@@ -51,9 +51,9 @@ Regional comparison requires the exact unique chromosome/start/end rows in the s
 
 ## Production measurements
 
-Use `BENCH_PILOT=1` on the actual production method/core matrix to estimate all work, splitting pilots when necessary. Then set `BENCH_PILOT=0`, two warmups and five measurements, and submit core/method blocks that fit the allocation limit on matched hardware. Prefer the same physical node when available. See [shared run controls and Slurm memory](../README.md#runs-and-budgets). `BENCH_MIN_MAPQ`, `BENCH_MIN_LENGTH` and `BENCH_MAX_LENGTH` override the filters. The timing TSV records applied/unsupported length filtering, proper-pair selection and scope.
+Use `BENCH_PILOT=1` on the actual production method/core matrix to estimate all work, splitting pilots when necessary. Then set `BENCH_PILOT=0`, a warmup and three measurements, and submit core/method blocks that fit the allocation limit on matched hardware. Prefer the same physical node when available. See [shared run controls and Slurm memory](../README.md#runs-and-budgets). `BENCH_MIN_MAPQ`, `BENCH_MIN_LENGTH` and `BENCH_MAX_LENGTH` override the filters. The timing TSV records applied/unsupported length filtering, proper-pair selection and scope.
 
-Keep process-plus-filesystem-flush time, output bytes and the joined Slurm peak alongside process time and GNU time RSS. Native positional output costs stay in the comparison. Include sample size, SD and median/quartiles and retain all measured points. No timings or real-input concordance values have been measured here.
+Keep process-plus-filesystem-flush time, output bytes and the joined Slurm peak alongside process time and GNU time RSS. Native positional output costs stay in the comparison. Include sample size, SD and median/quartiles and retain all measured points. The table below is a result template, not measured concordance data.
 
 | Comparison | Scope | MAE, 1 bp (primary) | RMSE, 1 bp | Identical bases | Nonzero-union MAE | Pearson r, 1 bp |
 | --- | --- | --- | --- | --- | --- | --- |

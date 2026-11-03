@@ -71,7 +71,7 @@ artifacts[finaletoolkit]='envs/finaletoolkit/bin/finaletoolkit finaletoolkit.tar
 artifacts[cfdnapro]='cfdnapro-1.7.4.sif'
 artifacts[picard]='envs/picard/bin/picard picard.tar.gz'
 artifacts[freia]='envs/freia/share/freia/version.txt freia.tar.gz'
-artifacts[griffin]='envs/griffin/share/griffin/version.txt griffin.tar.gz'
+artifacts[griffin]='envs/griffin/share/griffin/version.txt envs/griffin/share/griffin/CTCF.hg38.1000.txt griffin.tar.gz'
 artifacts[comparison]='envs/comparison/bin/python'
 artifacts[snyder-preparation]='envs/snyder-preparation/bin/python'
 tool_exports[cfdnalab]='BENCH_CFDNA=envs/cfdnalab/bin/cfdna'
@@ -293,6 +293,9 @@ install_griffin() {
             "$install_root/Griffin-source/scripts/griffin_merge_sites.py" \
             "$install_root/Griffin-source/scripts/griffin_functions.py" \
             "$CONDA_PREFIX/share/griffin/"
+        # Use the release's 1000-site demo for the short, untimed warmup
+        cp "$install_root/Griffin-source/demo/griffin_nucleosome_profiling_demo_files/sites/CTCF.hg38.1000.txt" \
+            "$CONDA_PREFIX/share/griffin/"
         printf 'v0.2.0 %s\n' "$(git -C "$install_root/Griffin-source" rev-parse HEAD)" \
             > "$CONDA_PREFIX/share/griffin/version.txt"
         "$install_root/envs/packaging/bin/conda-pack" -p "$CONDA_PREFIX" -o "$install_root/griffin.tar.gz"
@@ -306,9 +309,10 @@ install_comparison() {
     # Keep these dependencies separate from the timed tools
     (
         conda create --yes --override-channels --prefix "$install_root/envs/comparison" --channel conda-forge \
-            python=3.11 pip zstd
+            python=3.11 pip zstd pyarrow
         conda activate "$install_root/envs/comparison"
-        # Install our native-output loader from this checkout. FrEIA is excluded
+        # pyarrow reads FrEIA's intact left-only native Parquet abundance table
+        # Install our native-output loader from this checkout
         python -m pip install "$repository_root/py-cfdnalab"
     )
     conda list --prefix "$install_root/envs/comparison" --explicit > "$install_root/records/comparison.explicit.txt"

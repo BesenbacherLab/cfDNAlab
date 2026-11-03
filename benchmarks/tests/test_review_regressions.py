@@ -1,4 +1,6 @@
-"""Hand-derived review regressions, prepared for the owner and not executed.
+"""Regression tests for failures, pilot budgets and native output formats.
+
+Expected numerical values are manually derived from the synthetic inputs.
 
 Timing integration cases require Linux GNU time. Native histogram readers also
 require the comparison environment. No Slurm allocation or real BAM is used.
@@ -42,6 +44,21 @@ class SetupAndScopeTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('BENCH_METHODS', result.stderr)
                 self.assertFalse((Path(temporary) / 'results').exists())
+
+    def test_griffin_requires_a_job_of_its_own_before_inputs_are_staged(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result = subprocess.run(['bash', str(BENCHMARKS / 'midpoints/benchmark_midpoints.sh')], env={
+                **os.environ, 'SLURM_SUBMIT_DIR': str(BENCHMARKS.parent), 'SLURM_JOB_ID': '123',
+                'SLURM_JOB_NUM_NODES': '1', 'SLURM_CPUS_PER_TASK': '4',
+                'BENCH_METHODS': 'cfdnalab griffin', 'BENCH_CORES': '4', 'BENCH_PILOT': '0',
+                'BENCH_BAM': '/unused/input.bam', 'BENCH_INTERVALS': '/unused/sites.bed',
+                'BENCH_LOCAL_ROOT': temporary, 'BENCH_RESULTS': temporary + '/results',
+                'BENCH_EXPECTED_NODE': '', 'BENCH_SETUP_PYTHON': sys.executable,
+                'BENCH_RUN_TIMEOUT_SECONDS': '0',
+            }, text=True, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('Run Griffin in its own job', result.stderr)
+            self.assertEqual(list(Path(temporary).iterdir()), [])
 
     def test_scope_mismatch_fails_before_track_loading_and_keeps_previous_histogram(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -92,6 +109,35 @@ class SetupAndScopeTests(unittest.TestCase):
 @unittest.skipUnless(sys.platform.startswith('linux'), 'Requires Linux GNU time and sync -f')
 class RunLifecycleTests(unittest.TestCase):
     """Exercise native statuses and retained failure diagnostics through the helpers."""
+
+    def test_first_measured_left_motif_profiles_keep_counts_and_reference_together(self):
+        for method, native_name, retained_name in (
+            ('freia', 'T__sample.pq', 'left-motifs.pq'),
+            ('cfdnapro', 'cfdnapro-motifs.tsv', 'cfdnapro-motifs.tsv'),
+        ):
+            with self.subTest(method=method), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                work, results = root / 'work', root / 'results'
+                (work / 'output').mkdir(parents=True)
+                results.mkdir()
+                (work / 'output' / native_name).write_text('native left counts\n')
+                (work / 'output/reference.tsv').write_text('native reference manifest\n')
+                (work / 'profile.path').write_text(str(work / 'output' / native_name) + '\n')
+                (work / 'time.tsv').write_text('fixture\t1\t1\t0\t10\t0\n')
+                result = subprocess.run(['bash', '-euo', 'pipefail', '-c', '''source "$BENCH_COMMON"
+run_order=1
+benchmark_finish_run "$SELECTED_METHOD" 4 2 false 0
+'''], env={
+                    **os.environ, 'BENCH_COMMON': str(BENCHMARKS / 'common.sh'), 'BENCH_WORK': str(work),
+                    'BENCH_RESULTS': str(results), 'BENCH_PILOT': '0', 'BENCH_WARMUPS': '1',
+                    'BENCH_FEATURE': 'ends', 'SELECTED_METHOD': method,
+                }, text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                retained = results / 'profiles' / method
+                self.assertEqual((retained / retained_name).read_text(), 'native left counts\n')
+                if method == 'cfdnapro':
+                    self.assertEqual((retained / 'reference.tsv').read_text(), 'native reference manifest\n')
+                self.assertFalse((work / 'output').exists())
 
     def test_exit_and_signal_statuses_are_recorded_without_fabricating_success(self):
         for command, expected_status in (('exit 3', 3), ('kill -9 $$', 137)):
@@ -256,6 +302,117 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
             self.assertTrue((results / 'profiles/samtools/stats.txt').exists())
             self.assertEqual((results / 'failed-run-1/tool-error.log').read_text(), 'native boundary failed\n')
 
+    def test_griffin_demo_has_a_separate_step_before_three_full_input_measurements(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fake_bin, scratch = root / 'bin', root / 'scratch'
+            fake_bin.mkdir()
+            scratch.mkdir()
+            archives = {}
+            for name in ('samtools', 'griffin'):
+                environment = root / (name + '-env')
+                (environment / 'bin').mkdir(parents=True)
+                (environment / 'bin/conda-unpack').write_text('# Untimed relocation fixture\n')
+                if name == 'samtools':
+                    executable = environment / 'bin/samtools'
+                    executable.write_text('#!/usr/bin/env bash\nprintf "chr1\\t1000\\t0\\t0\\n"\n')
+                else:
+                    scripts = environment / 'share/griffin'
+                    scripts.mkdir(parents=True)
+                    (scripts / 'version.txt').write_text('v0.2.0 fixture\n')
+                    # Duplicates are intentional. The demo must keep exactly 1000 rows
+                    (scripts / 'CTCF.hg38.1000.txt').write_text('Chrom\tposition\n' + 'chr1\t500\n' * 1000)
+                    executable = environment / 'bin/python'
+                    executable.write_text(f'#!{sys.executable}\n' + textwrap.dedent(r'''
+                        import os
+                        from pathlib import Path
+                        import sys
+
+                        # Fake only the outbound native tools. Retain their argument lists
+                        with Path(os.environ['NATIVE_CALL_LOG']).open('a') as destination:
+                            destination.write('\t'.join(sys.argv[1:]) + '\n')
+                    '''))
+                executable.chmod(0o755)
+                archive = root / (name + '.tar.gz')
+                with tarfile.open(archive, 'w:gz') as destination:
+                    destination.add(environment, arcname='.')
+                archives[name] = archive
+            scontrol = fake_bin / 'scontrol'
+            scontrol.write_text('#!/usr/bin/env bash\necho fixture\n')
+            scontrol.chmod(0o755)
+            srun = fake_bin / 'srun'
+            srun.write_text(f'#!{sys.executable}\n' + textwrap.dedent(r'''
+                import os
+                from pathlib import Path
+                import subprocess
+                import sys
+
+                work = Path(os.environ['BENCH_WORK'])
+                with Path(os.environ['STEP_CALL_LOG']).open('a') as destination:
+                    destination.write('\t'.join(sys.argv[1:]) + '\n')
+                if '--' not in sys.argv:
+                    # Execute the real demo helper with the fake native Python boundary
+                    raise SystemExit(subprocess.run(sys.argv[sys.argv.index('bash'):]).returncode)
+                sys.stdin.read()
+                order, repetition, warmup, method, cores = sys.argv[sys.argv.index('--') + 1:]
+                output = work / 'output'
+                output.mkdir()
+                profile = output / 'sample.uncorrected.coverage.tsv'
+                profile.write_text('first saved repetition ' + repetition + '\n')
+                (work / 'profile.path').write_text(str(profile) + '\n')
+                results = Path(os.environ['BENCH_RESULTS'])
+                columns = (results / 'timings.tsv').read_text().splitlines()[0].split('\t')
+                columns = columns[:columns.index('flush_seconds')]
+                values = {'run_order': order, 'repetition': repetition, 'warmup': warmup,
+                          'method': method, 'cores': cores, 'job_id': '123', 'step_id': order,
+                          'wall_seconds': '1', 'user_seconds': '1', 'system_seconds': '0',
+                          'max_rss_kib': '10', 'tool_exit_code': '0'}
+                (work / 'time.tsv').write_text('\t'.join(values.get(column, 'NA') for column in columns) + '\n')
+                (work / 'io.tsv').write_text('0\t1\t20\n')
+            '''))
+            srun.chmod(0o755)
+            bam = root / 'input.bam'
+            bam.touch()
+            Path(str(bam) + '.bai').touch()
+            fasta = root / 'reference.fa'
+            fasta.touch()
+            Path(str(fasta) + '.fai').write_text('chr1\t1000\t0\t1000\t1001\n')
+            intervals = root / 'production.bed'
+            production_sites = 'chr1\t100\t120\tproduction\t+\nchr1\t100\t120\tproduction\t+\n'
+            intervals.write_text(production_sites)
+            results = root / 'results'
+            result = subprocess.run(['bash', str(BENCHMARKS / 'midpoints/benchmark_midpoints.sh')], env={
+                **os.environ, 'PATH': str(fake_bin) + ':' + os.environ['PATH'],
+                'SLURM_SUBMIT_DIR': str(BENCHMARKS.parent), 'SLURM_JOB_ID': '123',
+                'SLURM_JOB_NUM_NODES': '1', 'SLURM_CPUS_PER_TASK': '4',
+                'BENCH_BAM': str(bam), 'BENCH_INDEX': str(bam) + '.bai',
+                'BENCH_REF_FASTA': str(fasta), 'BENCH_FASTA_INDEX': str(fasta) + '.fai',
+                'BENCH_INTERVALS': str(intervals), 'BENCH_LOCAL_ROOT': str(scratch),
+                'BENCH_RESULTS': str(results), 'BENCH_SAMTOOLS_ARCHIVE': str(archives['samtools']),
+                'BENCH_GRIFFIN_ARCHIVE': str(archives['griffin']), 'BENCH_METHODS': 'griffin',
+                'BENCH_CORES': '4', 'BENCH_WARMUPS': '10', 'BENCH_REPETITIONS': '3',
+                'BENCH_PILOT': '0', 'BENCH_EXPECTED_NODE': '', 'BENCH_SETUP_PYTHON': sys.executable,
+                'BENCH_RUN_TIMEOUT_SECONDS': '0', 'STEP_CALL_LOG': str(root / 'steps'),
+                'NATIVE_CALL_LOG': str(root / 'native-calls'),
+            }, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            steps = [line.split('\t') for line in (root / 'steps').read_text().splitlines()]
+            self.assertEqual(len(steps), 4)
+            self.assertNotIn('--', steps[0])
+            self.assertIn('--cpus-per-task=4', steps[0])
+            native_calls = (root / 'native-calls').read_text().splitlines()
+            self.assertEqual(len(native_calls), 2)
+            self.assertTrue(all('warmup-sites.yaml' in call and '--CPU\t4' in call for call in native_calls))
+            with (results / 'timings.tsv').open() as source:
+                rows = list(csv.DictReader(source, delimiter='\t'))
+            self.assertEqual([row['repetition'] for row in rows], ['1', '2', '3'])
+            self.assertTrue(all(row['warmup'] == 'false' for row in rows))
+            self.assertEqual((results / 'profiles/griffin/sample.uncorrected.coverage.tsv').read_text(),
+                             'first saved repetition 1\n')
+            self.assertEqual(intervals.read_text(), production_sites)
+            self.assertEqual(len((results / 'sites.bed').read_text().splitlines()), 2)
+            self.assertIn('warmups\t0\n', (results / 'run.tsv').read_text())
+
 
 class PilotBudgetTests(unittest.TestCase):
     """Keep unavailable runtimes unknown while reporting useful successful budgets."""
@@ -288,8 +445,8 @@ class PilotBudgetTests(unittest.TestCase):
                 self.assertIn('incomplete', result.stderr.lower())
                 self.assertNotIn('Traceback', result.stderr)
                 if include_success:
-                    # Seven 60-second invocations with 25% margin need 8.75 minutes
-                    self.assertAlmostEqual(float(report['cfdnalab']['budget_minutes']), 8.75)
+                    # Four 60-second invocations with 25% margin need five minutes
+                    self.assertAlmostEqual(float(report['cfdnalab']['budget_minutes']), 5)
 
 
 @unittest.skipUnless(all(importlib.util.find_spec(name) is not None for name in ('cfdnalab', 'numpy', 'pandas')),

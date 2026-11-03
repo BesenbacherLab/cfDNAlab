@@ -123,7 +123,7 @@ def summarize(runs, estimate=False):
     return setting_columns, columns, output_rows
 
 
-def pilot_budgets(runs, setting_columns, summaries, planned_runs, margin):
+def pilot_budgets(runs, setting_columns, summaries, warmups, repetitions, margin):
     """Report every observed pilot configuration, keeping missing budgets unknown."""
     summary_by_settings = {tuple(row[column] for column in setting_columns): row for row in summaries}
     pilots = {}
@@ -138,6 +138,8 @@ def pilot_budgets(runs, setting_columns, summaries, planned_runs, margin):
         summary = summary_by_settings.get(key)
         failures = sum(not successful(row) for row in attempts)
         row = {**dict(zip(setting_columns, key)), **(summary or {})}
+        # Griffin gets a short untimed demo warmup instead of a full-input run
+        planned_runs = repetitions + (0 if row['method'] == 'griffin' else warmups)
         row.update({"planned_runs": planned_runs, "pilot_failures": failures,
                     "budget_minutes": "NA", "budget_status": "incomplete"})
         if summary is not None:
@@ -155,8 +157,8 @@ def main():
     parser.add_argument("--accounting", type=Path, help="sacct pipe-delimited export in K units")
     parser.add_argument("--runs-output", type=Path, help="Write every original row with joined memory/status")
     parser.add_argument("--estimate", action="store_true", help="Report per-configuration pilot budgets and flag incomplete totals")
-    parser.add_argument("--warmups", type=int, default=2)
-    parser.add_argument("--repetitions", type=int, default=5)
+    parser.add_argument("--warmups", type=int, default=1)
+    parser.add_argument("--repetitions", type=int, default=3)
     parser.add_argument("--margin", type=float, default=0.25, help="Fraction added to pilot-based budget")
     arguments = parser.parse_args()
     if arguments.warmups < 0 or arguments.repetitions < 1 or not math.isfinite(arguments.margin) or arguments.margin < 0:
@@ -166,7 +168,7 @@ def main():
     rows = summaries
     if arguments.estimate:
         rows = pilot_budgets(runs, setting_columns, summaries,
-                             arguments.warmups + arguments.repetitions, arguments.margin)
+                             arguments.warmups, arguments.repetitions, arguments.margin)
         columns += ["planned_runs", "pilot_failures", "budget_minutes", "budget_status"]
     writer = csv.DictWriter(sys.stdout, fieldnames=columns, delimiter="\t", lineterminator="\n", restval="NA")
     writer.writeheader()
@@ -179,14 +181,15 @@ def main():
             writer.writerows(runs)
     incomplete_budget = False
     if arguments.estimate:
-        seconds = sum(row["process_plus_flush_seconds_mean"] for row in summaries) * (arguments.warmups + arguments.repetitions)
+        seconds = sum(row["process_plus_flush_seconds_mean"] * row["planned_runs"]
+                      for row in rows if row["budget_minutes"] != "NA")
         for row in rows:
             if row["budget_status"] != "complete":
                 incomplete_budget = True
                 print(f"Incomplete pilot budget: method={row['method']}, cores={row['cores']}, "
                       f"node={row.get('node', 'NA')}, failed attempts={row['pilot_failures']}.", file=sys.stderr)
         print(f"Observed matrix: {len(rows)} configurations, {seconds / 3600:.2f} h raw, "
-              f"{seconds * (1 + arguments.margin) / 3600:.2f} h with margin. Add staging/cleanup. "
+              f"{seconds * (1 + arguments.margin) / 3600:.2f} h with margin. Add staging/cleanup and any Griffin demo warmup. "
               "This excludes configurations absent from the supplied pilots.", file=sys.stderr)
         if incomplete_budget:
             print("The total is an incomplete successful-pilot subtotal, not a full job budget.", file=sys.stderr)

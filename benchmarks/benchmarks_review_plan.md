@@ -2,28 +2,19 @@
 
 Implemented behavior is specified in [benchmarks_spec.md](benchmarks_spec.md) and [benchmarks_concordance_spec.md](benchmarks_concordance_spec.md). This plan retains only unfinished implementation, verification and experimental work.
 
-The implemented production defaults are still **two warmups and five measured repetitions**. The user has now agreed **one warmup plus three measurements**, with no full Griffin warmup. FrEIA's existing broken both-end workflow remains excluded from concordance until the accepted left-only replacement is implemented. Midpoint sites will come from Griffin's public paper set through the supplied BED. Do not restore automatic site selection or regenerate the existing remapped BAM to obtain extra preparation statistics.
+Preserve the supplied production sites and the existing remapped BAM. Do not restore automatic production-site selection or regenerate that BAM to obtain extra preparation statistics.
 
-Coverage comparisons use the already implemented base-resolution MAE as the primary similarity measure. Signed mean, RMSE, identical fraction, base-resolution Pearson and the residual distribution are implemented secondary diagnostics. Per-base comparisons do not use genomic binning.
+## Remaining experimental choices
 
-## Follow-up direction, implementation pending
-
-Keep [D1-D10](new_review_plan.md#decisions-and-current-user-direction) for Monday's discussion. D1-D6 now record the user's current direction rather than the review's earlier objections.
-
-- [ ] D1: Update normal defaults, estimates, examples, budgets and relevant fixtures to 1+3. Treat Griffin's full warmups separately.
-- [ ] D2: Put Griffin in its own jobs, permit runs longer than 24 hours and omit a full Griffin warmup. Decide repetition splitting and whether cache preparation is needed. Running Griffin on its 1000-interval demo is a potential short warmup, as suggested by the user. It reads data around those intervals, so its benefit for caching the full production input is uncertain. No decision to use it has been made. Other packing and serial-tool settings remain open.
-- [ ] D3: Apply the settled simple resource policy: allocate N cores and configure native thread/core/worker options for that budget, respecting additional-thread semantics. Keep no-thread-option tools in their selected core comparisons. Remove inconsistent feature-specific library overrides without adding controls for hypothetical nesting.
-- [ ] D4: Retain the pinned public Griffin site-set provenance and verify its actual size. Discuss window width, normalization and any subsets before changing them.
-- [ ] D5: Implement FrEIA's intact left-only workflow and comparison. Use native frequencies and/or explicitly labeled doubled-count estimates under the documented mirrored-side assumption. Retain native left counts.
-- [ ] D6: Add cfDNAPro end motifs. Its inclusion and the use of clearly disclosed side mirroring for approximate similarity are accepted. Matching settings, reference identity and reporting details remain open.
+Unresolved parts of D2/D4/D6 and D7-D10 remain in [new_review_plan.md](new_review_plan.md#decisions-and-current-user-direction). Do not treat those choices as settled by the implementation.
 
 ## Planned regression fixtures still to prepare
 
-The existing [fixture file](tests/test_benchmarks.py) covers native coverage formats, base weighting, residual distributions including disk batches, base-resolution Pearson, contig order, concatenated zstd frames, incomplete/invalid tracks, regional coordinate identity, scope intersection, timing summaries, Slurm joins, single-core-setting jobs without automatic tool exclusions, Picard version status, failed installer retries, reconstructed TLEN/flags and FrEIA exclusion. [Review regressions](tests/test_review_regressions.py) now prepare explicit-method/duplicate rejection, early scope errors, native signal/timeout statuses, failure diagnostics and continuation, partial/all-failed budgets, samtools tail bins, missing Picard FR and midpoint normalization/empty-profile checks. Neither file has been executed during implementation.
+The existing [fixture file](tests/test_benchmarks.py) covers native coverage formats, base weighting, residual distributions including disk batches, base-resolution Pearson, contig order, concatenated zstd frames, incomplete/invalid tracks, regional coordinate identity, scope intersection, timing summaries, Slurm joins, single-core-setting jobs without automatic tool exclusions, Picard version status, failed installer retries, reconstructed TLEN/flags and native left-motif comparison with damaged FrEIA exclusion. [Review regressions](tests/test_review_regressions.py) prepare explicit-method/duplicate rejection, early scope errors, native signal/timeout statuses, failure diagnostics and continuation, partial/all-failed budgets, Griffin demo isolation from measured runs, samtools tail bins, missing Picard FR and midpoint normalization/empty-profile checks. Neither file has been executed during implementation.
 
 These cases from the original plan are not fully represented in those fixtures:
 
-| Area | Remaining fixture and hand-derived expectation |
+| Area | Remaining fixture and manually derived expectation |
 | --- | --- |
 | Selected-tool setup | A cfDNAlab-only selection must not probe/install Picard, cfDNAPro, FinaleToolkit or Griffin. Shared samtools/setup-Python dependencies remain explicit. |
 | Installer controls | Exercise the actual `--mark-outdated` option, a missing packed archive and successful resumption after interruption, preserving completed unrelated tools. |
@@ -40,7 +31,7 @@ Fragment fixtures must be at least 10 bp. Fixtures using normal filters must res
 
 - [ ] Verify complete revised Linux Conda solves, including FinaleToolkit pins and Griffin Python 3.7.12/PyYAML. Save resolved environments rather than treating package availability as a successful solve.
 - [ ] Verify interrupted installation/resumption, force/outdated reinstall and conda-pack 0.9.2 relocation including its sibling progress module. Exercise the actual Picard version probe.
-- [ ] Use a tiny wiring input on the compute node to verify native CLI output, linkage, Python/container isolation and default cfDNAlab QC plots/fonts. An `ldd` pass alone does not establish Fontconfig/font availability.
+- [ ] Use a small input on the compute node to verify native CLI output, linkage, Python/container isolation, Griffin's demo warmup and default cfDNAlab QC plots/fonts. An `ldd` pass alone does not establish Fontconfig/font availability.
 - [ ] Run the prepared fixtures in the appropriate environment and inspect numerical results. Static Python/Bash and Cargo checks passed during implementation, but do not establish runtime correctness.
 - [ ] Establish Slurm plugin/frequency, descendant coverage and file-cache treatment once on the cluster. Verify actual `sacct` job/step joins, missing/delayed records, failures and the primary memory label.
 
@@ -50,7 +41,7 @@ Fragment fixtures must be at least 10 bp. Fixtures using normal filters must res
 - [ ] Record the supplied midpoint BED identity/checksum and its derivation from the pinned public Griffin set. Keep its agreed coordinates, groups, strands, site count and selection unchanged during benchmarking.
 - [ ] Run native/proper-pair and wide-bound concordance on the actual remap. Measure filtered count effects from outputs rather than reusing the original BAM's sampled non-proper percentage. Keep biological differences/scopes explicit.
 - [ ] Pilot cfDNAPro progressively from about 0.1x to choose a physical node with demonstrated headroom for all methods. Run full-input method/core pilots, splitting when necessary, and establish scratch capacity/filesystem behavior.
-- [ ] Replace the illustrative [scaling scenarios](README.md#runs-and-budgets) with full-input pilot budgets using the agreed 1+3 and no full Griffin warmup, plus margin and staging/preservation/cleanup. Use separate jobs for 1, 4, 12 and 32 cores. Griffin gets its own jobs and is not subject to a 24-hour cap. Other packing and serial-tool settings remain open in D2. Use matched hardware, preferring the same physical node when available, and retain resource failures as outcomes.
+- [ ] Replace the illustrative [scaling scenarios](README.md#runs-and-budgets) with full-input pilot budgets using 1+3 normally, three measurements plus the short demo for Griffin, and margin plus staging/preservation/cleanup. Use separate jobs for 1, 4, 12 and 32 cores. Griffin gets its own jobs and is not subject to a 24-hour cap. Other packing and serial-tool settings remain open in D2. Use matched hardware, preferring the same physical node when available, and retain resource failures as outcomes.
 - [ ] Collect production timings, completed accounting, retained profiles and measured points. Fill supplementary tables with sample sizes, mean/SD, median/quartiles, memory policy and workload notes. No final timing, capacity or concordance conclusion has been measured here.
 
 ## Optional later scope, still deferred
@@ -59,4 +50,4 @@ Fragment fixtures must be at least 10 bp. Fixtures using normal filters must res
 - A 1x/5x/15x depth series after the primary fixed-input experiment succeeds.
 - Bootstrap intervals, extra plots or drift-monitoring anchors if observed results justify them.
 
-FrEIA's broken both-end aggregate remains excluded. The accepted replacement is the intact left-only workflow in D5, with native frequencies and/or clearly labeled doubled-count estimates. Recovery from the damaged aggregate remains excluded.
+FrEIA's broken both-end aggregate remains excluded. The intact left-only workflow is implemented with native frequency comparisons. Recovery from the damaged aggregate remains excluded.
