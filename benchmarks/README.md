@@ -150,6 +150,19 @@ A recorded native, placement, missing-output or flush failure skips the remainin
 
 ## Regression tests and validation
 
+Run the automated tests directly in a normal Linux shell. They do not submit Slurm jobs or require an interactive allocation. Slurm commands and benchmark executables are replaced with local fakes. Inputs are small synthetic files created in temporary directories. No production BAM, reference files or benchmark tool installations are needed.
+
 The tests in [test_benchmarks.py](tests/test_benchmarks.py) cover coverage formats/weights/scope, residual distributions, base-resolution Pearson, regional row identity, scheduling, installer resumption, Picard status, Slurm joins, reconstructed TLEN signs and native left-motif counts with exclusion of damaged FrEIA aggregates. [Additional regression tests](tests/test_review_regressions.py) cover failure continuation, signal/timeout statuses, partial pilot reports, scope validation before loading tracks, native length boundaries and midpoint empty-profile behavior. Expected numerical values are manually derived from small synthetic inputs.
 
-On Linux, use the comparison Python with zstd on PATH to run `python -m unittest discover -s benchmarks/tests`. The reconstruction cases require pysam and explicitly skip when it is unavailable. These tests do not replace validation of complete Linux environment solves, relocation, native command outputs, fonts and Slurm accounting on the compute node. Run each selected native tool and its comparator on a small input before collecting full-input measurements. No measured benchmark results are included in these documents. The result tables are templates.
+The full suite needs Python >=3.11, Bash >=4, GNU time at `/usr/bin/time`, GNU coreutils and the `zstd` executable on PATH. The local Python package supplies the comparator dependencies. pyarrow enables the Parquet cases and pysam enables the reconstruction cases. From the repository root, with Conda available:
+
+```bash
+conda create -n benchmark-tests -c conda-forge python=3.11 pip zstd pyarrow pysam
+conda activate benchmark-tests
+python -m pip install ./py-cfdnalab
+python -m unittest discover -s benchmarks/tests
+```
+
+An existing comparison environment can also run the tests. Missing pyarrow or pysam skips their respective cases. Linux-specific lifecycle tests skip on macOS, so use Linux for the complete suite. The setup above assumes the required Bash and GNU system utilities are already installed.
+
+Real-tool validation is separate and does require a compute-node allocation. After installing the benchmark tools, run each selected native tool and its comparator on a small input to check environment relocation, native output, plotting/fonts and actual Slurm placement/accounting. Then use full-input pilots to establish resource requirements before production measurements. The automated tests do not perform these cluster checks. No measured benchmark results are included in these documents. The result tables are templates.
