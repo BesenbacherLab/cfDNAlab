@@ -8,15 +8,15 @@
 #SBATCH --mem=0
 #SBATCH --no-requeue
 
-# Reserve the whole node for this job's method blocks: --exclusive requests all
+# This job reserves the whole node: --exclusive requests all
 # CPUs, and --mem=0 requests all node memory. The 32 CPUs per task ensure the node
 # supports the largest run. Each srun binds this job's single selected core count
-# Use a partition that honors exclusive allocations, as partition policy takes
-# precedence over the job's sharing request
+# User setup: the chosen partition must honor exclusive allocations, because its
+# policy takes precedence over this job's sharing request
 # https://slurm.schedmd.com/sbatch.html#OPT_exclusive
 #
-# Results contain timings.tsv, retained profiles and setup provenance
-# Keep the first measured profile for concordance. Other outputs are temporary
+# Results contain timings.tsv, saved profiles and a record of inputs/settings
+# The first measured profile is kept for numerical comparison. Other outputs are temporary
 # Diagnostics from a failed command go to the normal Slurm job log
 # cfdnalab, mosdepth and samtools-depth process all BAM contigs for per-base depth
 # cfdnalab-autosomes selects autosomes named chr1..chr22 or 1..22
@@ -41,9 +41,9 @@
 #   export BENCH_METHODS="cfdnalab mosdepth"
 #   sbatch --constraint=gen6 --exclusive --mem=0 --time=<pilot-based-budget> \
 #     benchmarks/coverage/benchmark_coverage.sh
-# Adjust the generation selector, partition, time and paths for the cluster
+# User setup: adjust the generation selector, partition, time and paths for the cluster
 
-# Stop on errors and unset variables. Use a dot for decimal numbers in the TSV
+# Shell errors stop the job, and LC_ALL=C gives decimal numbers a dot in the TSV
 set -euo pipefail
 export LC_ALL=C
 source "${SLURM_SUBMIT_DIR:?Submit from the repository root}/benchmarks/common.sh"
@@ -52,7 +52,7 @@ BENCH_FEATURE=coverage
 # These paths are supplied in the environment when submitting the job
 # BENCH_INDEX can override the usual sample.bam.bai path. FinaleToolkit requires
 # a BAI index, so CSI indices are not supported by this combined benchmark
-# The native executables must work with node-local or system shared libraries
+# Copied programs must have the libraries they need available on the compute node
 # BENCH_FINALE_ARCHIVE contains a Linux Conda environment with FinaleToolkit
 # installed, packed with conda-pack so Python and its packages can run locally
 # BENCH_SAMTOOLS_ARCHIVE similarly includes samtools and its shared libraries
@@ -97,7 +97,7 @@ for method in "${methods_to_run[@]}"; do
     esac
 done
 
-# Stage the BAM, index and executables once before warmup
+# The BAM, index and programs are copied to the compute node before warmup
 # Every srun below uses this job's node and these same local files
 export BENCH_WORK BENCH_NODE BENCH_CFDNA_VERSION BENCH_MOSDEPTH_VERSION BENCH_AUTOSOMES
 export BENCH_SAMTOOLS_VERSION BENCH_FINALE_VERSION
@@ -109,9 +109,10 @@ mkdir -p "$BENCH_WORK/bin" "$BENCH_WORK/tmp"
 export TMPDIR="$BENCH_WORK/tmp"
 cp -L "$BENCH_BAM" "$BENCH_WORK/sample.bam"
 cp -L "$BENCH_INDEX" "$BENCH_WORK/sample.bam.${BENCH_INDEX##*.}"
-# sbatch uses a spool copy of this script. Submit from the repository root
+# User setup: submit from the repository root so SLURM_SUBMIT_DIR locates helpers
+# Slurm keeps its own copy of this job script elsewhere, away from those helpers
 
-# Stage selected competitors and the samtools header-reading helper
+# Only selected tools are copied. Samtools also reads BAM chromosome names/lengths
 export PYTHONNOUSERSITE=1
 unset PYTHONPATH PYTHONHOME
 export XDG_CACHE_HOME="$BENCH_WORK/cache" MPLCONFIGDIR="$BENCH_WORK/matplotlib"
@@ -136,8 +137,8 @@ done
 "$BENCH_WORK/samtools-env/bin/samtools" idxstats "$BENCH_WORK/sample.bam" |
     awk '$1 != "*" {print $1 "\t" $2}' > "$BENCH_WORK/chrom.sizes"
 
-# Generate a shared BED4 of 500 kb windows, including each shorter final window
-# idxstats obtains contig lengths from the BAM index. Skip its unmapped '*' row
+# The script generates a shared BED4 of 500 kb windows, including shorter final windows
+# idxstats supplies contig lengths from the BAM index. Its unmapped '*' row is excluded
 # This setup is outside every timer. Both regional methods read the same BED
 "$BENCH_WORK/samtools-env/bin/samtools" idxstats "$BENCH_WORK/sample.bam" |
     awk 'BEGIN {OFS="\t"} $1 != "*" {
@@ -152,8 +153,8 @@ if [[ ! -s "$BENCH_WORK/regions.bed" ]]; then
     exit 1
 fi
 
-# Use the BAM's actual autosome names. Snyder's reference can use 1..22, while
-# cfDNAlab's default names are chr1..chr22. Keep the file's original names intact
+# Autosome selection uses the BAM's actual names. Snyder's reference can use 1..22,
+# while cfDNAlab defaults to chr1..chr22. The file's chromosome names remain unchanged
 BENCH_AUTOSOMES=$(cut -f 1 "$BENCH_WORK/regions.bed" | uniq |
     awk '/^(chr)?([1-9]|1[0-9]|2[0-2])$/' | paste -sd, -)
 if [[ " $BENCH_METHODS " == *" cfdnalab-autosomes "* && -z "$BENCH_AUTOSOMES" ]]; then
@@ -161,7 +162,7 @@ if [[ " $BENCH_METHODS " == *" cfdnalab-autosomes "* && -z "$BENCH_AUTOSOMES" ]]
     exit 1
 fi
 
-# Record only versions of the selected native tools
+# Version records are collected only for the selected tools
 if [[ -f "$BENCH_WORK/bin/cfdna" ]]; then BENCH_CFDNA_VERSION=$("$BENCH_WORK/bin/cfdna" --version | tr '\t\n' '  '); fi
 if [[ -f "$BENCH_WORK/bin/mosdepth" ]]; then BENCH_MOSDEPTH_VERSION=$("$BENCH_WORK/bin/mosdepth" --version | tr '\t\n' '  '); fi
 BENCH_SAMTOOLS_VERSION=$("$BENCH_WORK/samtools-env/bin/samtools" --version-only | tr '\t\n' '  ')
@@ -170,7 +171,7 @@ if [[ -f "$BENCH_WORK/bin/pandepth" ]]; then
     BENCH_PANDEPTH_VERSION=$("$BENCH_WORK/bin/pandepth" -h 2>&1 | sed -n 's/.*show this help \[\(v[^]]*\)\].*/\1/p')
     if [[ -z "$BENCH_PANDEPTH_VERSION" ]]; then echo "Could not read PanDepth version." >&2; exit 1; fi
 fi
-# Native text outputs are large. Preserve an explicitly recorded small scope
+# Per-base text outputs are large, so the following block selects chromosomes to keep
 if [[ -n ${BENCH_CAPTURE_CHROMOSOMES:-} ]]; then
     awk -v names="$BENCH_CAPTURE_CHROMOSOMES" '
         BEGIN {split(names, entries, ","); for (entry_index in entries) selected[entries[entry_index]]=1}
@@ -188,13 +189,14 @@ mkdir -p "$BENCH_RESULTS/profiles"
 cp "$BENCH_WORK/regions.bed" "$BENCH_RESULTS/regions.bed"
 export BENCH_RESULTS BENCH_MIN_MAPQ BENCH_MIN_LENGTH BENCH_MAX_LENGTH
 
-# run_order is global execution order. repetition includes warmups per method/core
-# cpu_ids are Linux logical CPU IDs. physical_core_ids are socket:core pairs
+# run_order counts every attempted run in this job, while repetition counts runs
+# of the current method, including warmups. CPU records identify jobs run on
+# different hardware when their timings are interpreted
 # tool_threads means cfDNAlab threads, FinaleToolkit worker processes, or EXTRA
 # decompression threads for mosdepth/samtools. It is not the allocated core count
-# For PanDepth it records the requested -t setting, within the same CPU binding
-# GNU time reports elapsed/user/system seconds, maximum RSS in KiB and exit code
-# step_exit_code also catches placement failures or a missing output track
+# For PanDepth it records the requested -t setting on the allocated CPUs
+# Rows contain elapsed time, CPU time, RAM reported by GNU time and the tool's exit code
+# step_exit_code also records failure to get the expected CPUs or output file
 header=$'run_order\trepetition\twarmup\tmethod\tworkload\ttool_version\tcores\ttool_threads'
 header+=$'\tnode\tcpu_model\tcpu_ids\tphysical_core_ids\tjob_id\tstep_id\tstarted_utc'
 header+=$'\tmin_mapq\tmin_length\tmax_length\tscope\tproper_pair\tlength_filter'
@@ -202,7 +204,10 @@ header+=$'\twall_seconds\tuser_seconds\tsystem_seconds\tmax_rss_kib\ttool_exit_c
 header+=$'\tflush_seconds\tprocess_plus_flush_seconds\toutput_bytes\tpilot\tstep_exit_code'
 printf '%s\n' "$header" > "$BENCH_RESULTS/timings.tsv"
 
-# Run each method's warmups and measurements together on the recorded node
+# The BAM and programs are ready on the compute node. Preparation time above
+# is excluded from tool timings. The script now lists each method's warmup and measurements
+# srun starts a separate program for each run. After it finishes, this main script
+# saves that run's results. common.sh explains the files used to pass them back
 benchmark_record_setup
 benchmark_schedule > "$BENCH_WORK/order.tsv"
 if [[ ! -s "$BENCH_WORK/order.tsv" ]]; then echo "The requested run matrix is empty." >&2; exit 1; fi
@@ -213,6 +218,8 @@ while IFS=$'\t' read -r method cores repetition is_warmup; do
     if [[ "$method" == "$failed_method" ]]; then continue; fi
     run_order=$((run_order + 1))
     step_exit_code=0
+    # Old timings and output paths are removed before each run. If this run fails
+    # before writing its own files, it cannot accidentally reuse the preceding results
     rm -f "$BENCH_WORK/time.tsv" "$BENCH_WORK/io.tsv" "$BENCH_WORK/profile.path" "$BENCH_WORK/step.id" "$BENCH_WORK/stdout.path"
     workload=per-base-read-depth
     if [[ "$method" == *fragment* ]]; then workload=per-base-fragment-coverage; fi
@@ -222,12 +229,14 @@ while IFS=$'\t' read -r method cores repetition is_warmup; do
         workload=per-base-read-depth
     fi
 
-    # --jobid attaches to this allocation instead of requesting another node
-    # --exact and --cpus-per-task restrict the resources requested by this step
-    # Binding uses one hardware thread per core. Hard confinement additionally
-    # depends on the cluster's Slurm cgroup configuration
-    # The quoted STEP delimiter sends the following Bash block unchanged to
-    # the compute node. Its six positional arguments are supplied here
+    # srun starts the tool on the reserved node with exactly the requested cores
+    # --cpu-bind keeps the program on those CPUs. Enforcement also depends on the
+    # cluster's settings, so the program below checks the CPUs it actually received
+    # The program between <<'STEP' and the closing STEP line performs this run
+    # Quoting STEP delays expansion of its variables until that program starts
+    # --export=ALL passes the input/tool paths, and the six arguments identify the run
+    # It writes results under BENCH_WORK for this main script to read afterward
+    # Its exit code is saved so failure can be recorded before another method is tried
     srun --jobid="$SLURM_JOB_ID" --exact --nodes=1 --ntasks=1 \
         --cpus-per-task="$cores" --threads-per-core=1 --cpu-bind=threads \
         --export=ALL bash -s -- "$run_order" "$repetition" "$is_warmup" "$method" "$cores" "$workload" \
@@ -242,14 +251,17 @@ method=$4
 cores=$5
 workload=$6
 
-# Inspect placement inside the step, where the tool will actually execute
+# Node and CPU assignment are read from the program that will run the tool
 node=$(hostname)
 cpu_model=$(awk -F ': ' '/^model name/ {print $2; exit}' /proc/cpuinfo)
 cpu_ids=$(awk '/Cpus_allowed_list/ {print $2}' /proc/self/status)
 started_utc=$(date -u +%FT%TZ)
 
-# Expand a logical CPU list such as 0-3,8 and look up its physical socket/core IDs
-# A single-number range works too, because both parameter expansions return it
+# Hyperthreading can give a physical core two CPU IDs. The script looks up
+# the actual core behind each allowed ID to verify the requested core count
+# Core numbers can repeat across CPU chips, so chip (socket) and core number
+# together identify a core. Lists such as 0-3,8 are expanded to inspect each ID
+# A single ID such as 8 is handled as the range 8-8
 physical_cores=()
 for cpu_range in ${cpu_ids//,/ }; do
     first_cpu=${cpu_range%-*}
@@ -289,7 +301,7 @@ if [[ "$method" == cfdnalab || "$method" == cfdnalab-autosomes || "$method" == c
     track="$BENCH_WORK/coverage/fcoverage.per_position.bedgraph.zst"
 elif [[ "$method" == mosdepth || "$method" == mosdepth-fragment ]]; then
     # mosdepth has a main calculation thread plus extra decompression threads
-    # Give decompression the same available budget as the other tools
+    # The decompression setting uses the remaining cores after the main thread
     tool_threads=$((cores - 1))
     tool_version=$BENCH_MOSDEPTH_VERSION
     # Ordinary mode excludes inter-mate gaps and retains normal CIGAR processing
@@ -305,10 +317,10 @@ elif [[ "$method" == mosdepth || "$method" == mosdepth-fragment ]]; then
     command+=("$BENCH_WORK/coverage/coverage" "$BENCH_WORK/sample.bam")
     track="$BENCH_WORK/coverage/coverage.per-base.bed.gz"
 elif [[ "$method" == samtools-depth ]]; then
-    # Leave a core for the main calculation, requesting cores - 1 decoding threads
+    # Requesting cores - 1 decoding threads leaves a core for the main calculation
     # -s removes mate overlap, -aa includes zero-depth bases on all contigs
     # -q is base quality and -Q is MAPQ. No -J means deletions are excluded
-    # Match basic flags without imposing proper pairs. samtools depth has no
+    # Basic flags match without requiring proper pairs. samtools depth has no
     # fragment length filter and does not require both mates to pass filtering
     # Its native output is uncompressed text with a 1-based position per row
     # https://www.htslib.org/doc/samtools-depth.html
@@ -321,7 +333,7 @@ elif [[ "$method" == samtools-depth ]]; then
         -o "$track" "$BENCH_WORK/sample.bam")
 elif [[ "$method" == pandepth ]]; then
     # -a writes every base, including zeros, to a compressed SiteDepth table
-    # Match MAPQ and exclusion flags. PanDepth has no fragment length filter,
+    # MAPQ and exclusion flags match. PanDepth has no fragment length filter,
     # paired-read inclusion flag, complete-pair check or mate-overlap correction
     # Overlapping mates therefore count twice, unlike the paired coverage runs
     # Its native position column is 0-based. It also writes chromosome statistics
@@ -337,7 +349,7 @@ elif [[ "$method" == cfdnalab-region-counts* ]]; then
     # A single length bin gives a fragment count per region, with any overlap
     # Each included fragment contributes 1 to each window it overlaps
     # This matches FinaleToolkit coverage's quantity. fcoverage window means
-    # measure base depth instead. Keep cfDNAlab's normal pairing policy
+    # measure base depth instead. cfDNAlab's normal pairing policy is retained
     tool_threads=$cores
     tool_version=$BENCH_CFDNA_VERSION
     command=("$BENCH_WORK/bin/cfdna" lengths
@@ -348,11 +360,11 @@ elif [[ "$method" == cfdnalab-region-counts* ]]; then
     if [[ "$method" == cfdnalab-region-counts-proper ]]; then command+=(--require-proper-pair); proper_pair=required; fi
     track="$BENCH_WORK/coverage/length_counts.tsv.zst"
 else
-    # Use raw fragment counts, with no normalization and scale factor 1
+    # This command calculates raw fragment counts with no normalization and scale factor 1
     # --threads controls worker processes in the current FinaleToolkit CLI
     # Its BAM reader requires proper pairs and uses read1/TLEN. Its indexed query
     # also needs read1 to overlap the window, which can miss boundary fragments
-    # These differences remain, so assess regional agreement with r/MAE/RMSE
+    # The comparator reports r/MAE/RMSE to assess agreement despite these differences
     # https://epifluidlab.github.io/FinaleToolkit/documentation/cli_reference/index.html#coverage
     tool_threads=$cores
     tool_version=$BENCH_FINALE_VERSION
@@ -364,14 +376,15 @@ else
         --min-length "$BENCH_MIN_LENGTH" --max-length "$BENCH_MAX_LENGTH" --min-mapq "$BENCH_MIN_MAPQ" --threads "$tool_threads")
 fi
 
-# This prefix supplies the identifying columns. GNU time supplies the measurements
+# The timing row starts with method, settings and run IDs, followed by measurements
 printf -v prefix '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
     "$run_order" "$repetition" "$is_warmup" "$method" "$workload" "$tool_version" "$cores" "$tool_threads" \
     "$node" "$cpu_model" "$cpu_ids" "$physical_core_ids" "$SLURM_JOB_ID" "$SLURM_STEP_ID" "$started_utc" \
     "$BENCH_MIN_MAPQ" "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH" "$scope" "$proper_pair" "$length_filter"
 
-# Check both logical and physical counts. Ignore OpenMP settings when using nproc
-# A failed placement check still produces a row, with unavailable timings as NA
+# This check requires the intended node and CPU counts. OpenMP settings are ignored
+# when calling nproc so it counts CPUs actually available to the program
+# A wrong assignment produces a failed row with NA measurements
 logical_cpu_count=$(env -u OMP_NUM_THREADS -u OMP_THREAD_LIMIT nproc)
 if [[ "$node" != "$BENCH_NODE" ]] || ((logical_cpu_count != cores || physical_core_count != cores)); then
     printf '%s\tNA\tNA\tNA\tNA\t1\n' "$prefix" > "$BENCH_WORK/time.tsv"
@@ -379,8 +392,8 @@ if [[ "$node" != "$BENCH_NODE" ]] || ((logical_cpu_count != cores || physical_co
     exit 1
 fi
 
-# Time only the native command, including creation and compression of its track
-# Scheduler startup, placement checks and cleanup are outside this timer
+# Timing covers the tool command, including writing and compressing its output
+# Waiting for Slurm, checking CPUs and later saving/cleaning output are excluded
 tool_exit_code=0
 benchmark_time_command "$prefix" "$BENCH_WORK/coverage" \
     "$BENCH_WORK/tool.log" "$BENCH_WORK/tool-error.log" "${command[@]}" || tool_exit_code=$?
@@ -395,7 +408,10 @@ fi
 printf '%s\n' "$track" > "$BENCH_WORK/profile.path"
 STEP
 
-    # Retain known identifiers even when Slurm fails before GNU time can run
+    # A run that failed before timing still gets a row naming the attempted
+    # method and repetition. Unknown measurements are recorded as NA
+    # Column numbers below start at 0 and must match the timing-table header above
+    # benchmark_finish_run adds disk-write measurements and the srun exit code
     if [[ ! -s "$BENCH_WORK/time.tsv" ]]; then
         fallback=()
         for ((column=1; column<=26; column++)); do fallback+=(NA); done
@@ -408,13 +424,18 @@ STEP
         if [[ -s "$BENCH_WORK/step.id" ]]; then fallback[13]=$(cat "$BENCH_WORK/step.id"); fi
         (IFS=$'\t'; printf '%s\n' "${fallback[*]}") > "$BENCH_WORK/time.tsv"
     fi
-    benchmark_finish_run "$method" "$cores" "$repetition" "$is_warmup" "$step_exit_code"
+    # benchmark_finish_run saves the timing row and useful output before cleanup
+    # It is called on its own line so Bash stops the job if saving fails
+    # A tool failure is recorded first and then handled by the following if block
+    benchmark_finish_run "$method" "$repetition" "$is_warmup" "$step_exit_code"
     if ((step_exit_code != 0)); then
+        # All repetitions of this method are listed together. After failure, its
+        # remaining runs are skipped until the next method name is reached
         failed_method=$method
         job_exit_code=1
         echo "Skipping remaining repetitions of $method after failure; continuing other selected methods." >&2
     fi
 done < "$BENCH_WORK/order.tsv"
 
-# Keep successful methods usable while marking an incomplete job as failed
+# The job reports failure if any method failed, while keeping completed results
 exit "$job_exit_code"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-# Install all benchmark tools on Linux x86_64, with a section per tool
-# Also install isolated environments for BAM preparation and output comparisons
+# This script installs benchmark tools on Linux x86_64, with a section per tool
+# It also installs separate environments for BAM preparation and output comparisons
 # Usage from the repository root:
 #   bash benchmarks/install_tools.sh /faststorage/project/benchmark-tools
 #
@@ -10,10 +10,14 @@
 # Standalone tools, source checkouts and packed archives stay at the root
 # The cfDNAlab build uses this repository's current checkout
 # Tool versions and installation routes were checked on 2026-10-29
-# Pin those versions here so the benchmark can be reproduced later
+# Those versions are pinned here so the benchmark can be reproduced later
 # Conda, Apptainer, Git, wget, tar, GNU make and C/C++ compilers must be available
 # Only cfDNAlab itself needs a local native build
 # See benchmarks/README.md for the installation audit and deliberate adaptations
+#
+# The installer reads the requested tool list and checks manifest.tsv for completed versions
+# It installs or replaces selected tools as needed, then prints paths for the job scripts
+# The functions below define the installation commands and dependencies for each tool
 
 set -euo pipefail
 if ((BASH_VERSINFO[0] < 4)); then echo 'This installer needs Bash 4 or later.' >&2; exit 1; fi
@@ -47,8 +51,11 @@ mkdir -p "$install_root/envs" "$install_root/logs" "$install_root/records"
 manifest="$install_root/manifest.tsv"
 if [[ ! -f "$manifest" ]]; then printf 'tool\tversion\tstatus\tartifacts\n' > "$manifest"; fi
 
-# A version and completion row are enough for explicit benchmark installations
-# Same-version source/dependency changes are handled by --force or outdated status
+# The tables below specify each tool's version, expected files and BENCH_* paths
+# All file paths are relative to ROOT. A matching version with complete files is reused
+# User control: source/dependency changes that keep the same version require an explicit
+# reinstallation request with --force or --mark-outdated
+# all_tools lists installation order, starting with the Conda packaging helper
 declare -A versions artifacts tool_exports
 versions[packaging]=0.9.2
 versions[cfdnalab]=$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$repository_root/Cargo.toml" | head -n 1)
@@ -93,7 +100,10 @@ for selection in "$only_tools" "$force_tools" "$outdated_tools"; do
 done
 
 record_status() {
-    # Replace only this tool's row, committing the short table with an atomic move
+    # This function updates one tool's record, preserving the records for other tools
+    # It writes a complete replacement file, then renames it over manifest.tsv
+    # If writing is interrupted, the previous installation records remain readable
+    # Tools are installed sequentially, so only this script writes this file
     local tool=$1 status=$2
     awk -F '\t' -v tool="$tool" '$1 != tool' "$manifest" > "$manifest.tmp"
     printf '%s\t%s\t%s\t%s\n' "$tool" "${versions[$tool]}" "$status" "${artifacts[$tool]}" >> "$manifest.tmp"
@@ -101,7 +111,10 @@ record_status() {
 }
 
 completed_tool() {
-    # Partial installations have no complete row. Missing artifacts also cause a retry
+    # This check permits reuse only if the version matches, installation finished
+    # and all required files still exist. Otherwise the main loop installs it again
+    # This does not inspect changed source or dependencies. Those require an explicit
+    # reinstallation request when the recorded tool version stays the same
     local tool=$1 artifact
     [[ $(awk -F '\t' -v tool="$tool" -v version="${versions[$tool]}" '$1 == tool && $2 == version {print $3}' "$manifest") == complete ]] || return 1
     for artifact in ${artifacts[$tool]}; do [[ -e "$install_root/$artifact" ]] || return 1; done
@@ -111,6 +124,8 @@ for tool in "${all_tools[@]}"; do
     if [[ ",$outdated_tools," == *,all,* || ",$outdated_tools," == *,$tool,* ]]; then record_status "$tool" outdated; fi
 done
 if [[ -n "$outdated_tools" ]]; then
+    # --mark-outdated only updates the installation record, then exits
+    # A later installer run replaces the tool. No Conda commands or downloads occur here
     echo "Marked outdated: $outdated_tools"
     exit 0
 fi
@@ -123,7 +138,7 @@ source "$(conda info --base)/etc/profile.d/conda.sh"
 install_packaging() {
     # Archive preparation, used outside all benchmark timers
     # Guide: https://conda.github.io/conda-pack/
-    # Install conda-pack once, separately from the tools whose environments it packs
+    # This function installs conda-pack once, apart from the tools it packages
     # Complete archives let the runners relocate tools and libraries to local scratch
     # The runners use BENCH_SETUP_PYTHON for each untimed conda-unpack script
     conda create --yes --override-channels --prefix "$install_root/envs/packaging" --channel conda-forge \
@@ -134,7 +149,7 @@ install_packaging() {
 install_cfdnalab() {
     # cfDNAlab
     # Guide: https://github.com/BesenbacherLab/cfDNAlab#installation
-    # Use the documented dependencies, then install the checkout with Cargo
+    # The documented dependencies are installed before Cargo builds this checkout
     # --root keeps cfdna inside this environment instead of the shared ~/.cargo/bin
     # Parentheses keep activation and LIBCLANG_PATH local to this section
     (
@@ -171,8 +186,8 @@ install_mosdepth() {
 install_samtools() {
     # samtools
     # Guide: https://bioconda.github.io/recipes/samtools/README.html
-    # Install the pinned Bioconda package in its own environment
-    # Pack the complete environment so its HTSlib and other libraries run locally
+    # The pinned Bioconda package is installed in its own environment
+    # The archive includes HTSlib and other libraries needed on the compute node
     (
         conda create --yes --override-channels --prefix "$install_root/envs/samtools" \
             --channel conda-forge --channel bioconda samtools=1.25
@@ -186,7 +201,7 @@ install_samtools() {
 install_pandepth() {
     # PanDepth
     # Guide: https://github.com/HuiyangYu/PanDepth#1-install
-    # Use the Linux x86_64 release archive shown in the guide
+    # This function downloads the Linux x86_64 release archive shown in the guide
     wget -O "$install_root/PanDepth-2.26-Linux-x86_64.tar.gz" \
         https://github.com/HuiyangYu/PanDepth/releases/download/v2.26/PanDepth-2.26-Linux-x86_64.tar.gz
     tar -xzf "$install_root/PanDepth-2.26-Linux-x86_64.tar.gz" -C "$install_root"
@@ -197,7 +212,7 @@ install_finaletoolkit() {
     # FinaleToolkit
     # Guide: https://epifluidlab.github.io/FinaleToolkit/documentation/user_guide/installation.html
     # Conda alternative: https://bioconda.github.io/recipes/finaletoolkit/README.html
-    # Use the same release through Bioconda so compiled dependencies arrive prebuilt
+    # Bioconda supplies the selected release and its prebuilt compiled dependencies
     # Coverage, end-motif and length benchmarks use this same environment archive
     (
         conda create --yes --override-channels --prefix "$install_root/envs/finaletoolkit" \
@@ -214,8 +229,8 @@ install_finaletoolkit() {
 install_cfdnapro() {
     # cfDNAPro
     # Guide: https://github.com/hw538/cfDNAPro#installation
-    # Use the authors' recommended Apptainer image, including its R dependencies
-    # and built-in reference packages. The benchmark copies this image locally
+    # This function downloads the authors' recommended Apptainer image, including
+    # R dependencies and built-in references. The benchmark copies this image locally
     # The guide recommends an immutable digest. This identifies their 1.7.4 image
     # published from commit ab9eeb166b8614b9ec2ce4ceda190dc295c65a7c
     apptainer pull "$install_root/cfdnapro-1.7.4.sif" \
@@ -236,7 +251,7 @@ install_picard() {
         conda create --yes --override-channels --prefix "$install_root/envs/picard" \
             --channel conda-forge --channel bioconda picard-slim=3.5.0 openjdk=17
         conda activate "$install_root/envs/picard"
-        # The packaged launcher honors JAVA_HOME. Keep it on this environment's Java
+        # JAVA_HOME selects the Java in this environment for Picard's version check
         export JAVA_HOME="$CONDA_PREFIX"
         benchmark_picard_version "$CONDA_PREFIX/bin/picard"
         printf "\n"
@@ -248,8 +263,8 @@ install_picard() {
 install_freia() {
     # FrEIA
     # Guide: https://github.com/mouliere-lab/FrEIA#installation-guide
-    # There are no published releases. Pin the latest source commit instead
-    # Preserve the authors' dependency pins and exclude inherited Conda channels
+    # This installation uses a pinned source commit rather than a release archive
+    # The authors' dependency pins are retained, with outside Conda channels excluded
     # Only the end-extraction and abundance scripts are needed for an existing BAM
     git clone https://github.com/mouliere-lab/FrEIA.git "$install_root/FrEIA-source"
     git -C "$install_root/FrEIA-source" checkout 2c32fb9d9fab774f4ae57931df7fd7d75654d343
@@ -259,7 +274,7 @@ install_freia() {
         conda env create --yes --prefix "$install_root/envs/freia" \
             --file "$install_root/freia-environment.yaml"
         conda activate "$install_root/envs/freia"
-        # Keep the unmodified scripts inside the archive so they also run locally
+        # The archive includes unmodified scripts for execution on the compute node
         mkdir -p "$CONDA_PREFIX/share/freia"
         cp "$install_root/FrEIA-source/workflow/scripts/1_FrEIA/1_extract_fragment_ends.py" \
             "$install_root/FrEIA-source/workflow/scripts/1_FrEIA/2_data_transformation.py" \
@@ -276,10 +291,10 @@ install_griffin() {
     # Griffin
     # Guide: https://github.com/adoebley/Griffin/wiki
     # v0.2.0 is the newest published version, marked as a prerelease upstream
-    # Keep the wiki's libraries, using conda-forge's Python 3.7.12 instead of 3.7.4
-    # Install pybedtools and pysam through Bioconda at the wiki's versions to avoid
-    # compiling them locally. PyYAML is also imported by the native scripts
-    # Omit Snakemake, plotting and samtools because these direct script calls use none
+    # This environment uses the wiki's libraries with Python 3.7.12 instead of 3.7.4
+    # Bioconda supplies the wiki's pybedtools and pysam versions without a local build
+    # PyYAML is included because the scripts import it. Snakemake, plotting and
+    # samtools are omitted because these direct profiling calls do not use them
     git clone --branch v0.2.0 --depth 1 https://github.com/adoebley/Griffin.git "$install_root/Griffin-source"
     (
         conda create --yes --override-channels --prefix "$install_root/envs/griffin" \
@@ -287,13 +302,13 @@ install_griffin() {
             python=3.7.12 nomkl numpy=1.21.2 pandas=1.3.2 scipy=1.7.1 \
             pybigwig=0.3.17 pyyaml=5.3.1 bedtools=2.29.2 pybedtools=0.8.0 pysam=0.19.0
         conda activate "$install_root/envs/griffin"
-        # Put unmodified source scripts in the archive for node-local execution
+        # The archive includes unmodified scripts for execution on the compute node
         mkdir -p "$CONDA_PREFIX/share/griffin"
         cp "$install_root/Griffin-source/scripts/griffin_coverage.py" \
             "$install_root/Griffin-source/scripts/griffin_merge_sites.py" \
             "$install_root/Griffin-source/scripts/griffin_functions.py" \
             "$CONDA_PREFIX/share/griffin/"
-        # Use the release's 1000-site demo for the short, untimed warmup
+        # The release's 1000-site demo is included for the short, untimed warmup
         cp "$install_root/Griffin-source/demo/griffin_nucleosome_profiling_demo_files/sites/CTCF.hg38.1000.txt" \
             "$CONDA_PREFIX/share/griffin/"
         printf 'v0.2.0 %s\n' "$(git -C "$install_root/Griffin-source" rev-parse HEAD)" \
@@ -306,13 +321,13 @@ install_griffin() {
 install_comparison() {
     # cfDNAlab Python reader and zstd, used only after timing to compare outputs
     # Guide: ../py-cfdnalab/README.md for installing the Python loader package
-    # Keep these dependencies separate from the timed tools
+    # These dependencies have their own environment, separate from the timed tools
     (
         conda create --yes --override-channels --prefix "$install_root/envs/comparison" --channel conda-forge \
             python=3.11 pip zstd pyarrow
         conda activate "$install_root/envs/comparison"
         # pyarrow reads FrEIA's intact left-only native Parquet abundance table
-        # Install our native-output loader from this checkout
+        # The Python output reader is installed from this checkout
         python -m pip install "$repository_root/py-cfdnalab"
     )
     conda list --prefix "$install_root/envs/comparison" --explicit > "$install_root/records/comparison.explicit.txt"
@@ -332,14 +347,18 @@ install_snyder_preparation() {
     conda list --prefix "$install_root/envs/snyder-preparation" --explicit > "$install_root/records/snyder-preparation.explicit.txt"
 }
 
-# Packaged-tool subsets still need the packaging helper, installed first
+# Conda tools need an archive containing their programs and libraries so the job
+# can copy them to a compute node. conda-pack is installed first when a selected
+# tool needs such an archive. It is the only tool added automatically to --only
 need_packaging=false
 for tool in samtools finaletoolkit picard freia griffin; do
     if [[ "$only_tools" == all || ",$only_tools," == *,$tool,* ]]; then need_packaging=true; fi
 done
-current_tool=
+# The error message uses this name to locate the tool's installation log
+current_tool=""
 trap 'status=$?; if ((status != 0)); then echo "Installation failed for $current_tool. See $install_root/logs/$current_tool.log" >&2; tail -n 30 "$install_root/logs/$current_tool.log" >&2; fi' EXIT
 for tool in "${all_tools[@]}"; do
+    # --only chooses the tools to consider. --force reinstalls among those tools
     if [[ "$only_tools" != all && ",$only_tools," != *,$tool,* && !( "$tool" == packaging && "$need_packaging" == true ) ]]; then continue; fi
     if [[ ",$force_tools," != *,all,* && ",$force_tools," != *,$tool,* ]] && completed_tool "$tool"; then
         echo "Keeping $tool ${versions[$tool]}"
@@ -347,10 +366,16 @@ for tool in "${all_tools[@]}"; do
     fi
     current_tool=$tool
     echo "Installing $tool ${versions[$tool]} (log: $install_root/logs/$tool.log)"
+    # This tool is marked unfinished before its files are replaced. If installation
+    # stops, the next run retries it while reusing tools that completed successfully
     record_status "$tool" outdated
-    # Run as a bare command under set -e. A conditional call would suppress
-    # errexit inside installation functions and could record a failed step as done
+    # Maintenance requirement: this block must stay outside an if/|| error check
+    # That lets any installation failure stop the script. Such a check would make
+    # Bash ignore automatic stopping and could mark a failed installation complete
     (
+        # Conda activation here affects this installation, not the next tool's setup
+        # Only this tool's known files are removed. cfDNAlab's compiled dependency
+        # files stay in its separate Cargo build folder to avoid unnecessary rebuilds
         cleanup_paths=("envs/$tool")
         case "$tool" in
             samtools|finaletoolkit|picard|freia|griffin) cleanup_paths+=("$tool.tar.gz") ;;
@@ -369,14 +394,18 @@ for tool in "${all_tools[@]}"; do
         done
         "install_${tool//-/_}"
     ) > "$install_root/logs/$tool.log" 2>&1
+    # Success is recorded only after the expected programs/archives are found
+    # A command that exits successfully without creating its output is not enough
     for artifact in ${artifacts[$tool]}; do
         if [[ ! -e "$install_root/$artifact" ]]; then echo "Missing artifact: $artifact" >&2; exit 1; fi
     done
     record_status "$tool" complete
 done
-current_tool=
+# Installation is finished, so the tool name is cleared before paths are printed
+current_tool=""
 
-# Print only completed tools. These records can also accompany benchmark results
+# This loop prints the paths needed by the job scripts, only for completed installations
+# %q adds shell quoting so these export commands also work for folders with spaces
 for tool in "${all_tools[@]}"; do
     if completed_tool "$tool" && [[ -n ${tool_exports[$tool]:-} ]]; then
         assignment=${tool_exports[$tool]}

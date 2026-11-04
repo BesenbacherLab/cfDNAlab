@@ -8,9 +8,9 @@
 #SBATCH --mem=0
 #SBATCH --no-requeue
 
-# Compare native, unsmoothed 1 bp midpoint profiles on one exclusive node
+# This job produces native, unsmoothed 1 bp midpoint profiles on an exclusive node
 # Full-input runs get timing rows. Griffin's short demo warmup is untimed
-# Keep a native profile from the first measured repetition for each tool
+# A profile is kept from the first measured repetition of each tool
 # All BAM/reference copies, environments and temporary files use local scratch
 # See README.md for required paths, concordance and expected differences
 
@@ -89,7 +89,7 @@ fi
 if [[ "$run_cfdna" == true ]]; then : "${BENCH_CFDNA:?Set the cfDNAlab executable}"; fi
 if [[ "$run_griffin" == true ]]; then : "${BENCH_GRIFFIN_ARCHIVE:?Set the packed Griffin environment}"; : "${BENCH_REF_FASTA:?Set the matching reference FASTA}"; fi
 
-# Stage once before warmups. Never rewrite or index the original inputs
+# Inputs are copied once before warmups, including the supplied BAM/reference indexes
 export BENCH_WORK BENCH_NODE BENCH_HALF_WIDTH BENCH_SITES BENCH_GROUPS BENCH_CHROMOSOMES
 export BENCH_RESULTS BENCH_CFDNA_VERSION BENCH_GRIFFIN_VERSION
 BENCH_WORK=$(mktemp -d "$BENCH_LOCAL_ROOT/midpoints-${SLURM_JOB_ID}.XXXXXX")
@@ -105,10 +105,11 @@ if [[ "$run_griffin" == true ]]; then
     cp "$SLURM_SUBMIT_DIR/benchmarks/midpoints/griffin_profile.sh" "$BENCH_WORK/griffin_profile.sh"
 fi
 if [[ "$run_cfdna" == true ]]; then benchmark_stage_binary "$BENCH_CFDNA" cfdna; fi
-# sbatch uses a spool copy of this script. Submit from the repository root
+# User setup: submit from the repository root so SLURM_SUBMIT_DIR locates helpers
+# Slurm keeps its own copy of this job script elsewhere, away from those helpers
 export TMPDIR="$BENCH_WORK/tmp" XDG_CACHE_HOME="$BENCH_WORK/cache"
-# Ignore ~/.local Python packages and inherited import paths so imports stay
-# inside Griffin's staged environment. See the installation notes in ../README.md
+# Python user packages and outside import paths are disabled so imports use
+# Griffin's copied environment. The installation notes in ../README.md explain why
 export MPLCONFIGDIR="$BENCH_WORK/matplotlib" PYTHONNOUSERSITE=1
 unset PYTHONPATH PYTHONHOME
 benchmark_unpack "$BENCH_SAMTOOLS_ARCHIVE" "$BENCH_WORK/samtools-env"
@@ -121,8 +122,8 @@ if [[ "$run_griffin" == true ]]; then
 fi
 export BENCH_RUN_GRIFFIN=$run_griffin
 
-# Prepare two representations of exactly the same oriented windows
-# Keep all sites, including repeated and overlapping rows. Fail on invalid input
+# Setup converts the same oriented windows to cfDNAlab and Griffin input formats
+# All sites are retained, including repeated and overlapping rows. Invalid input fails
 # This setup reads headers and BED rows, without scanning or filtering BAM reads
 site_summary=$("$BENCH_SETUP_PYTHON" - <<'PY'
 import csv
@@ -157,7 +158,7 @@ with (work / 'input.bed').open() as source:
             window_width = end - start
         if end - start != window_width or window_width % 2:
             raise ValueError('Use equal, even-width BED intervals for symmetric Griffin windows')
-        # Follow cfDNAlab's BED5/BED6 strand convention, including ambiguity checks
+        # Strand parsing follows cfDNAlab's BED5/BED6 convention and ambiguity checks
         strand = fields[5] if len(fields) >= 6 else fields[4] if len(fields) == 5 else '.'
         if len(fields) >= 6 and fields[4] in ('+', '-', '.') and strand not in ('+', '-', '.'):
             raise ValueError('Ambiguous strand columns on BED row {}'.format(line_number))
@@ -189,7 +190,7 @@ with (work / 'sites.yaml').open('w') as destination:
     # JSON is valid YAML and avoids requiring PyYAML in the setup interpreter
     json.dump({'site_lists': site_paths}, destination)
 # The fixed release demo gives Griffin a short warmup without changing the
-# supplied production windows. Run it on the same staged BAM and reference
+# supplied production windows. It uses the same copied BAM and reference
 if os.environ['BENCH_RUN_GRIFFIN'] == 'true':
     demo_path = work / 'griffin-env/share/griffin/CTCF.hg38.1000.txt'
     demo_rows = []
@@ -213,8 +214,8 @@ if os.environ['BENCH_RUN_GRIFFIN'] == 'true':
         for chromosome in sorted(set(row[0] for row in demo_rows)):
             destination.write('{}\t{}\n'.format(chromosome, bam_contigs[chromosome]))
 chromosomes = sorted(set(row[0] for row in rows))
-# Its counting script sorts intervals lexicographically. Use that same contig
-# order in the bigWig header so its exported entries remain correctly ordered
+# Griffin sorts intervals lexicographically. The bigWig header uses that same
+# contig order so exported entries remain correctly ordered
 with (work / 'chrom.sizes').open('w') as destination:
     for chromosome in chromosomes:
         destination.write('{}\t{}\n'.format(chromosome, bam_contigs[chromosome]))
@@ -244,14 +245,17 @@ header+=$'\twall_seconds\tuser_seconds\tsystem_seconds\tmax_rss_kib\ttool_exit_c
 header+=$'\tflush_seconds\tprocess_plus_flush_seconds\toutput_bytes\tpilot\tstep_exit_code'
 printf '%s\n' "$header" > "$BENCH_RESULTS/timings.tsv"
 
-# Run each method's warmups and measurements together on the recorded node
+# The BAM, sites and programs are ready on the compute node. Preparation time
+# above and Griffin's short demo below are excluded from tool timings
+# Each full-input run starts through srun. Once it finishes, this main script saves
+# its results. common.sh explains the temporary files used to pass them back
 benchmark_record_setup
 if [[ "$run_griffin" == true ]]; then
     printf 'griffin_warmup\trelease-demo-1000-sites\n' >> "$BENCH_RESULTS/run.tsv"
     sha256sum "$BENCH_WORK/griffin-env/share/griffin/CTCF.hg38.1000.txt" > "$BENCH_RESULTS/griffin-warmup.sha256"
     warmup_chromosomes=$(cut -f 1 "$BENCH_WORK/warmup.chrom.sizes" | paste -sd, -)
     # A separate untimed step keeps demo work out of measured Slurm peak memory
-    # Give Griffin a practical warmup without another full production run
+    # This gives Griffin a practical warmup without another full production run
     srun --jobid="$SLURM_JOB_ID" --exact --nodes=1 --ntasks=1 \
         --cpus-per-task="$BENCH_CORES" --threads-per-core=1 --cpu-bind=threads \
         --export=ALL bash "$BENCH_WORK/griffin_profile.sh" "$BENCH_CORES" \
@@ -274,8 +278,16 @@ while IFS=$'\t' read -r method cores repetition is_warmup; do
     if [[ "$method" == "$failed_method" ]]; then continue; fi
     run_order=$((run_order + 1))
     step_exit_code=0
+    # Old timings and output paths are removed before each run. If this run fails
+    # before writing its own files, it cannot accidentally reuse the preceding results
     rm -f "$BENCH_WORK/time.tsv" "$BENCH_WORK/io.tsv" "$BENCH_WORK/profile.path" "$BENCH_WORK/step.id" "$BENCH_WORK/stdout.path"
-    # Attach to this job's existing node, then check the binding in the step
+    # srun starts the next run on the reserved node with the requested cores. The code between
+    # <<'STEP' and the closing STEP line does this run's work, then this main script
+    # resumes and saves its results. Quoting STEP delays variable expansion until
+    # that program starts. --export=ALL passes paths/settings and the arguments
+    # identify the run. Results come back in files under BENCH_WORK
+    # The code below checks the assigned CPUs because enforcement depends on cluster settings
+    # srun's exit code is saved so a failed run still appears in the final timing table
     srun --jobid="$SLURM_JOB_ID" --exact --nodes=1 --ntasks=1 \
         --cpus-per-task="$cores" --threads-per-core=1 --cpu-bind=threads \
         --export=ALL bash -s -- "$run_order" "$repetition" "$is_warmup" "$method" "$cores" \
@@ -293,6 +305,10 @@ cpu_model=$(awk -F ': ' '/^model name/ {print $2; exit}' /proc/cpuinfo)
 cpu_ids=$(awk '/Cpus_allowed_list/ {print $2}' /proc/self/status)
 started_utc=$(date -u +%FT%TZ)
 physical_cores=()
+# Hyperthreading can give a physical core two CPU IDs. The script looks up
+# the actual core behind each allowed ID to verify the requested core count
+# Core numbers can repeat across CPU chips, so chip (socket) and core number
+# together identify a core
 for cpu_range in ${cpu_ids//,/ }; do
     first_cpu=${cpu_range%-*}
     last_cpu=${cpu_range#*-}
@@ -318,13 +334,13 @@ if [[ "$method" == cfdnalab ]]; then
 else
     tool_version=$BENCH_GRIFFIN_VERSION
     midpoint_policy=right-central-even
-    # Time both native scripts, including bigWig writing and group aggregation
+    # Timing includes both Griffin scripts, bigWig writing and group aggregation
     command=(bash "$BENCH_WORK/griffin_profile.sh" "$cores" "$BENCH_WORK/sites.yaml"
         "$BENCH_WORK/chrom.sizes" "$BENCH_CHROMOSOMES" "$BENCH_WORK/output")
     profile="$BENCH_WORK/output/results/sample/sample.uncorrected.coverage.tsv"
 fi
 
-# The first 22 fields identify the run. GNU time supplies five measurements
+# The first 22 fields identify the run, followed by four GNU time values and status
 printf -v prefix '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
     "$run_order" "$repetition" "$is_warmup" "$method" "$tool_version" "$cores" "$cores" \
     "$BENCH_MIN_MAPQ" "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH" "$BENCH_SITES" "$BENCH_GROUPS" \
@@ -347,11 +363,14 @@ if [[ ! -e "$profile" ]]; then
     echo "Expected midpoint profile is missing: $profile" >&2
     exit 1
 fi
-# Keep a native output outside the timer. Every run still recomputes its output
+# The output path is passed back for preservation after timing. Every run recomputes it
 printf '%s\n' "$profile" > "$BENCH_WORK/profile.path"
 STEP
 
-    # Retain known identifiers even when Slurm fails before GNU time can run
+    # A run that failed before timing still gets a row naming the attempted
+    # method and repetition. Unknown measurements are recorded as NA
+    # Column numbers below start at 0 and must match the timing-table header above
+    # benchmark_finish_run adds disk-write measurements and the srun exit code
     if [[ ! -s "$BENCH_WORK/time.tsv" ]]; then
         fallback=()
         for ((column=1; column<=27; column++)); do fallback+=(NA); done
@@ -364,13 +383,18 @@ STEP
         if [[ -s "$BENCH_WORK/step.id" ]]; then fallback[20]=$(cat "$BENCH_WORK/step.id"); fi
         (IFS=$'\t'; printf '%s\n' "${fallback[*]}") > "$BENCH_WORK/time.tsv"
     fi
-    benchmark_finish_run "$method" "$cores" "$repetition" "$is_warmup" "$step_exit_code"
+    # benchmark_finish_run saves the timing row and useful output before cleanup
+    # It is called on its own line so Bash stops the job if saving fails
+    # A tool failure is recorded first and then handled by the following if block
+    benchmark_finish_run "$method" "$repetition" "$is_warmup" "$step_exit_code"
     if ((step_exit_code != 0)); then
+        # All repetitions of this method are listed together. After failure, its
+        # remaining runs are skipped until the next method name is reached
         failed_method=$method
         job_exit_code=1
         echo "Skipping remaining repetitions of $method after failure; continuing other selected methods." >&2
     fi
 done < "$BENCH_WORK/order.tsv"
 
-# Keep successful methods usable while marking an incomplete job as failed
+# The job reports failure if any method failed, while keeping completed results
 exit "$job_exit_code"

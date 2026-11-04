@@ -8,10 +8,10 @@
 #SBATCH --mem=0
 #SBATCH --no-requeue
 
-# Benchmark global fragment length histograms on an exclusively allocated node
+# This job benchmarks global fragment length histograms on an exclusive node
 # See README.md for installation, a concordance pilot and the full timing run
-# Save every run in timings.tsv, including warmups, plus a native profile per method
-# Stage inputs and dependencies locally before warmups. Do not evict host caches
+# Every run is saved in timings.tsv, including warmups, with a profile per method
+# Inputs and programs are copied locally before warmups. Host caches are not evicted
 
 set -euo pipefail
 export LC_ALL=C
@@ -81,8 +81,8 @@ if [[ "$run_finale" == true ]]; then : "${BENCH_FINALE_ARCHIVE:?Set the packed F
 if [[ "$run_cfdnapro" == true ]]; then : "${BENCH_CFDNAPRO_IMAGE:?Set the cfDNAPro image}"; fi
 if [[ "$run_picard" == true ]]; then : "${BENCH_PICARD_ARCHIVE:?Set the packed Picard environment}"; fi
 
-# sbatch runs a spool copy of this script. Submit from the repository root so
-# the R helper can be staged from SLURM_SUBMIT_DIR
+# User setup: submit from the repository root so SLURM_SUBMIT_DIR locates the R helper
+# Slurm keeps its own copy of the job script away from that helper
 export BENCH_WORK BENCH_NODE BENCH_RESULTS BENCH_AUTOSOMES BENCH_APPTAINER
 export BENCH_CFDNA_VERSION BENCH_CFDNAPRO_VERSION BENCH_FINALE_VERSION BENCH_SAMTOOLS_VERSION BENCH_PICARD_VERSION
 BENCH_WORK=$(mktemp -d "$BENCH_LOCAL_ROOT/lengths-${SLURM_JOB_ID}.XXXXXX")
@@ -99,14 +99,14 @@ if [[ "$run_cfdnapro" == true ]]; then cp -L "$BENCH_CFDNAPRO_IMAGE" "$BENCH_WOR
 cp "$SLURM_SUBMIT_DIR/benchmarks/lengths/cfdnapro_lengths.R" "$BENCH_WORK/cfdnapro_lengths.R"
 export TMPDIR="$BENCH_WORK/tmp" APPTAINER_TMPDIR="$BENCH_WORK/tmp"
 export XDG_CACHE_HOME="$BENCH_WORK/cache" MPLCONFIGDIR="$BENCH_WORK/matplotlib"
-# Ignore ~/.local Python packages and inherited import paths so imports stay
-# inside the staged environment. Clear injected Java options for the same reason
+# Python user packages and outside import paths are disabled so imports use
+# the copied environment. Outside Java options are cleared for the same reason
 export PYTHONNOUSERSITE=1
 unset PYTHONPATH PYTHONHOME JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS
-# Picard's packaged launcher honors JAVA_HOME. Select its node-local Java
+# JAVA_HOME selects the Java copied with Picard, rather than another Java on the node
 export JAVA_HOME="$BENCH_WORK/picard-env"
 
-# Stage selected tools and reuse samtools for untimed BAM header preparation
+# Selected tools are copied, and samtools reads BAM chromosome names/lengths before timing
 benchmark_unpack "$BENCH_SAMTOOLS_ARCHIVE" "$BENCH_WORK/samtools-env"
 if [[ "$run_finale" == true ]]; then benchmark_unpack "$BENCH_FINALE_ARCHIVE" "$BENCH_WORK/finale-env"; fi
 if [[ "$run_picard" == true ]]; then benchmark_unpack "$BENCH_PICARD_ARCHIVE" "$BENCH_WORK/picard-env"; fi
@@ -132,7 +132,10 @@ header+=$'\twall_seconds\tuser_seconds\tsystem_seconds\tmax_rss_kib\ttool_exit_c
 header+=$'\tflush_seconds\tprocess_plus_flush_seconds\toutput_bytes\tpilot\tstep_exit_code'
 printf '%s\n' "$header" > "$BENCH_RESULTS/timings.tsv"
 
-# Run each method's warmups and measurements together on the recorded node
+# The BAM and programs are ready on the compute node. Preparation time above
+# is excluded from tool timings. The script now lists each method's warmup and measurements
+# srun starts a separate program for each run. After it finishes, this main script
+# saves that run's results. common.sh explains the files used to pass them back
 benchmark_record_setup
 benchmark_schedule > "$BENCH_WORK/order.tsv"
 if [[ ! -s "$BENCH_WORK/order.tsv" ]]; then echo "The requested run matrix is empty." >&2; exit 1; fi
@@ -143,11 +146,17 @@ while IFS=$'\t' read -r method cores repetition is_warmup; do
     if [[ "$method" == "$failed_method" ]]; then continue; fi
     run_order=$((run_order + 1))
     step_exit_code=0
+    # Old timings and output paths are removed before each run. If this run fails
+    # before writing its own files, it cannot accidentally reuse the preceding results
     rm -f "$BENCH_WORK/time.tsv" "$BENCH_WORK/io.tsv" "$BENCH_WORK/profile.path" "$BENCH_WORK/step.id" "$BENCH_WORK/stdout.path"
 
-    # Each step attaches to this existing single-node allocation
-    # Check its actual node and CPU mask below. Hard confinement also depends
-    # on the cluster's Slurm cgroup configuration
+    # srun starts the next run on the reserved node with the requested cores. The code between
+    # <<'STEP' and the closing STEP line does this run's work, then this main script
+    # resumes and saves its results. Quoting STEP delays variable expansion until
+    # that program starts. --export=ALL passes paths/settings and the arguments
+    # identify the run. Results come back in files under BENCH_WORK
+    # The code below checks the assigned CPUs because enforcement depends on cluster settings
+    # srun's exit code is saved so a failure can be recorded before another method is tried
     srun --jobid="$SLURM_JOB_ID" --exact --nodes=1 --ntasks=1 \
         --cpus-per-task="$cores" --threads-per-core=1 --cpu-bind=threads \
         --export=ALL bash -s -- "$run_order" "$repetition" "$is_warmup" "$method" "$cores" \
@@ -161,14 +170,18 @@ is_warmup=$3
 method=$4
 cores=$5
 
-# Native thread options below use this step's allocated core budget
-# Tools without a thread option still run with the same CPU binding
+# Each tool's thread option receives the allocated core count when it has that option
+# A tool without such an option still runs on the same requested number of cores
 
 node=$(hostname)
 cpu_model=$(awk -F ': ' '/^model name/ {print $2; exit}' /proc/cpuinfo)
 cpu_ids=$(awk '/Cpus_allowed_list/ {print $2}' /proc/self/status)
 started_utc=$(date -u +%FT%TZ)
 physical_cores=()
+# Hyperthreading can give a physical core two CPU IDs. The script looks up
+# the actual core behind each allowed ID to verify the requested core count
+# Core numbers can repeat across CPU chips, so chip (socket) and core number
+# together identify a core
 for cpu_range in ${cpu_ids//,/ }; do
     first_cpu=${cpu_range%-*}
     last_cpu=${cpu_range#*-}
@@ -238,8 +251,8 @@ case "$method" in
         tool_version=$BENCH_SAMTOOLS_VERSION
         # -@ counts additional decoding threads, leaving a core for calculation
         # The HTSlib input filter applies MAPQ without an extra BAM/filtering pass
-        # -m 1 prevents tail truncation. The final bin collects overflow, so place
-        # it above our range. The comparator selects inward pairs after timing
+        # -m 1 prevents tail truncation. The final bin collects overflow and is placed
+        # above our range. The comparator selects inward pairs after timing
         tool_threads=$((cores - 1))
         profile="$BENCH_WORK/output/stats.txt"
         command=("$BENCH_WORK/samtools-env/bin/samtools" stats -@ "$tool_threads"
@@ -249,9 +262,9 @@ case "$method" in
     picard)
         tool_version=$BENCH_PICARD_VERSION
         profile="$BENCH_WORK/output/metrics.txt"
-        # Picard has no MAPQ option for this command. Include its input filter
-        # in timing, streaming uncompressed BAM directly into the native command
-        # Both processes share the step's binding. Omit PDF plotting
+        # Picard has no MAPQ option for this command. Timing includes a samtools
+        # filter that streams uncompressed BAM into Picard. Both programs share
+        # the allocated CPU cores. PDF plotting is omitted
         # Explicit width prevents Picard from trimming the histogram tail
         command=(bash -c '
             set -euo pipefail
@@ -266,7 +279,7 @@ case "$method" in
         ;;
 esac
 
-# Twenty identifying fields precede GNU time's five measurement fields
+# Twenty identifying fields precede four GNU time values and the native status
 printf -v prefix '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
     "$run_order" "$repetition" "$is_warmup" "$method" "$tool_version" "$cores" "$tool_threads" \
     "$BENCH_MIN_MAPQ" "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH" "$scope" "$length_definition" \
@@ -279,7 +292,7 @@ if [[ "$node" != "$BENCH_NODE" ]] || ((logical_cpu_count != cores || physical_co
 fi
 
 # samtools prints its full native report to stdout. The other commands write
-# their profiles directly. Keep success logs temporary and print failures
+# their profiles directly. Success logs are temporary, and failure messages are printed
 tool_stdout="$BENCH_WORK/tool.log"
 if [[ "$method" == samtools ]]; then tool_stdout=$profile; fi
 tool_exit_code=0
@@ -297,7 +310,10 @@ fi
 printf '%s\n' "$profile" > "$BENCH_WORK/profile.path"
 STEP
 
-    # Retain known identifiers even when Slurm fails before GNU time can run
+    # A run that failed before timing still gets a row naming the attempted
+    # method and repetition. Unknown measurements are recorded as NA
+    # Column numbers below start at 0 and must match the timing-table header above
+    # benchmark_finish_run adds disk-write measurements and the srun exit code
     if [[ ! -s "$BENCH_WORK/time.tsv" ]]; then
         fallback=()
         for ((column=1; column<=25; column++)); do fallback+=(NA); done
@@ -310,13 +326,18 @@ STEP
         if [[ -s "$BENCH_WORK/step.id" ]]; then fallback[18]=$(cat "$BENCH_WORK/step.id"); fi
         (IFS=$'\t'; printf '%s\n' "${fallback[*]}") > "$BENCH_WORK/time.tsv"
     fi
-    benchmark_finish_run "$method" "$cores" "$repetition" "$is_warmup" "$step_exit_code"
+    # benchmark_finish_run saves the timing row and useful output before cleanup
+    # It is called on its own line so Bash stops the job if saving fails
+    # A tool failure is recorded first and then handled by the following if block
+    benchmark_finish_run "$method" "$repetition" "$is_warmup" "$step_exit_code"
     if ((step_exit_code != 0)); then
+        # All repetitions of this method are listed together. After failure, its
+        # remaining runs are skipped until the next method name is reached
         failed_method=$method
         job_exit_code=1
         echo "Skipping remaining repetitions of $method after failure; continuing other selected methods." >&2
     fi
 done < "$BENCH_WORK/order.tsv"
 
-# Keep successful methods usable while marking an incomplete job as failed
+# The job reports failure if any method failed, while keeping completed results
 exit "$job_exit_code"

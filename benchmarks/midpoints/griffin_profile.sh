@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Run Griffin's two native profiling scripts for either demo or production sites
+# This script runs Griffin's two profiling scripts for demo or production sites
 # Both calls share settings. Only sites, chromosomes and output paths vary
 # Usage: bash griffin_profile.sh CORES SITES_YAML CHROM_SIZES CHROMOSOMES OUTPUT
 

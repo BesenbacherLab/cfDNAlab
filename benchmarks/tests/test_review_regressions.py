@@ -126,7 +126,7 @@ class RunLifecycleTests(unittest.TestCase):
                 (work / 'time.tsv').write_text('fixture\t1\t1\t0\t10\t0\n')
                 result = subprocess.run(['bash', '-euo', 'pipefail', '-c', '''source "$BENCH_COMMON"
 run_order=1
-benchmark_finish_run "$SELECTED_METHOD" 4 2 false 0
+benchmark_finish_run "$SELECTED_METHOD" 2 false 0
 '''], env={
                     **os.environ, 'BENCH_COMMON': str(BENCHMARKS / 'common.sh'), 'BENCH_WORK': str(work),
                     'BENCH_RESULTS': str(results), 'BENCH_PILOT': '0', 'BENCH_WARMUPS': '1',
@@ -192,7 +192,7 @@ benchmark_time_command fixture "$BENCH_WORK/output" "$BENCH_WORK/tool.log" "$BEN
             (work / 'stdout.path').write_text(str(work / 'output/stats.txt') + '\n')
             script = '''source "$BENCH_COMMON"
 run_order=1
-benchmark_finish_run samtools 4 1 true 3
+benchmark_finish_run samtools 1 true 3
 printf 'next method\n' > "$BENCH_RESULTS/continued"
 '''
             result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], env={
@@ -214,7 +214,7 @@ printf 'next method\n' > "$BENCH_RESULTS/continued"
             results.mkdir()
             script = '''source "$BENCH_COMMON"
 run_order=1
-benchmark_finish_run samtools 4 1 true 3
+benchmark_finish_run samtools 1 true 3
 printf 'must not continue\n' > "$BENCH_RESULTS/continued"
 '''
             result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], env={
