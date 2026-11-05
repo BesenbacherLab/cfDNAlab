@@ -7,14 +7,16 @@ Scope: `r-cfdnalab/R/*`, `r-cfdnalab/tests/testthat/*`, `README.md`,
 correction tests in `downstream_tests/R/test_cfdnalab_r_package.R`, and the R
 snippets in `website/docs/guides/`.
 
-Method: all R sources were read. Claims about runtime behavior, performance,
-and locale handling were checked with probes using R 4.4.1, CRAN `zarr` 0.4.0,
-data.table 1.18.4, and `pkgload::load_all()`. Probe stores were written with
-the same fill values and chunk layout as the Rust writer. The test suite was
-not run. Static documentation checks (`tools::checkDocFiles`, `tools::codoc`,
-`tools::undoc`) were run, and `roxygen2::roxygenise()` was run in a scratch
-copy to compare the generated docs. Anything marked *inference* was not
-measured.
+Method: all R sources were read, including the relevant internals of the CRAN
+`zarr` reader. Claims about runtime behavior, performance, and locale handling
+were checked with probes using R 4.4.1, CRAN `zarr` 0.4.0, data.table 1.18.4,
+and `pkgload::load_all()`. Probe stores used the Rust writer's fill values and
+chunk layout. Memory figures are process peak resident memory from
+`/usr/bin/time -l`, reported next to the peak after loading only. The test
+suite was not run. Static documentation checks (`tools::checkDocFiles`,
+`tools::codoc`, `tools::undoc`) were run, and `roxygen2::roxygenise()` was run
+in a scratch copy to compare the generated docs. Anything marked *inference*
+was not measured.
 
 Findings shared with the Python package are not repeated here. R-11 points to
 the matching entries in `python_loader_review.md`.
@@ -23,35 +25,53 @@ the matching entries in `python_loader_review.md`.
 
 - R and Python give the same corrected values (to 10 decimals) for `joint`,
   `split`, `outside`, and `inside` on the same 3k-window store.
-- Every hand-derived expectation in `tests/testthat/test-reference-correction-core.R`
-  and in the two two-sided correction tests in
-  `downstream_tests/R/test_cfdnalab_r_package.R:116-334` is correct.
+- Every hand-derived expectation in
+  `tests/testthat/test-reference-correction-core.R` and in the two two-sided
+  correction tests in `downstream_tests/R/test_cfdnalab_r_package.R:116-334` is
+  correct.
 - The one-based indexing rules in `DEVELOPMENT.md` are followed. Public data
   frames use one-based `*_idx` columns and never expose `*_idx0`.
-- Static documentation checks report no undocumented arguments and no
-  usage mismatches.
-- Sparse stored-row data frames are built with vectorized lookups
-  (`R/end_motifs.R:1377-1390`, `R/ref_kmers.R:1376-1389`). 0.02 s for one
-  window on a 1M-entry store. Python P-07 does not apply.
+- Static documentation checks report no undocumented arguments and no usage
+  mismatches.
 - Midpoint reads are fast enough. The `zarr` reader keeps decoded blocks, so
   each extra profile costs about 1 ms. `midpoint_data_frame()` for 150 groups x
   20 length bins (6M rows) took 4.5 s. Python P-06 does not apply.
+- Sparse stored-row data frames use vectorized lookups
+  (`R/end_motifs.R:1377-1390`, `R/ref_kmers.R:1376-1389`): 0.02 s for one
+  window on a 1M-entry store. Each call still scans every stored entry, so the
+  repeated-access part of Python P-07 applies.
 - The sparse ref-kmer order check is vectorized (`R/ref_kmers.R:557-573`).
 - Other `order()` calls sort integers. `sort()` on labels in
   `R/reference_correction.R:1237` and `1263` only builds error messages.
 - Data frame index columns already use `*_idx` names consistently
   (`motif_idx`, `length_bin_idx`, `position_idx`).
 
+## Backend Behavior That Constrains Fixes
+
+Two properties of `zarr_array$read()` in CRAN `zarr` 0.4.0 shape several
+findings below.
+
+- Selection: `read(selection = list(...))` takes the minimum and maximum of each
+  axis selection and reads that whole range in file order. Gaps and the
+  requested order are ignored. Probe: selecting groups `c(3, 1)` returns groups
+  1, 2, and 3. Selective reads must read a bounded range and then pick the
+  requested indices in order, or make several bounded reads.
+- Fill values: integer arrays mark exact matches to the fill value as `NA`.
+  Floating arrays mark every value within a tolerance of the fill value as
+  `NA`. The tolerance is `max(1.49e-08 * max(abs(slice), abs(fill)), 1e-12)`,
+  where `max(abs(slice))` is the largest absolute value in the whole returned
+  slice. A `NaN` fill marks only `NaN` values. There is no option to turn this
+  off.
+
 ## Release Triage
 
 Fix before validation:
 
-- R-08: Valid midpoint values can silently become `NA`. The annotation below
-  also identifies an unsafe proposed replacement fill value.
+- R-08: Valid floating values can become `NA`, and some stores fail to load.
 - R-01: Canonical ref-kmer outputs fail to load under Danish collation.
 - R-02: `end_motif_data_frame(densify = TRUE)` builds the dense matrix for the
   whole store.
-- R-03: `read_lengths()` fails when every group name is numeric.
+- R-03: Numeric-looking chromosome and group labels are changed or rejected.
 - R-04: Reading `.tsv.zst` needs a separately installed `zstd` program.
 - R-05: README and website examples that fail or name the wrong flag.
 
@@ -67,19 +87,65 @@ Docs and API:
 
 ## Wrong Results Or Broken Use
 
-### R-01 - High - Canonical ref-kmer outputs fail to load under Danish collation
+### R-08 - High - Valid floating values can become NA, and some stores fail to load
 
-> **Review note - scope and portable coverage:** Failure requires an affected
-> stored label. A complete canonical even-k axis contains one, but a sparse
-> axis containing only unaffected labels can load. Replace "every canonical
-> even-k output" with that condition. Byte-order selection is appropriate for
-> the validated ASCII alphabet, as specified by the [R radix-sort
-> documentation](https://stat.ethz.ch/R-manual/R-devel/library/base/html/sort.html).
-> Keep fixed expected cases such as `AA` versus `TT` and `AACG` versus `CGTT`
-> in ordinary tests too. A Danish-locale integration case complements those
-> expectations but may be skipped on CI. Restore `LC_COLLATE` even when the
-> locale is unavailable or an assertion fails. Host locale does not establish
-> which locale a particular user's R session uses.
+Evidence:
+
+- The fill-value rule above applies to every floating array the R loader
+  reads. The Rust writer uses `-1` as the fill value for floating arrays
+  (`src/shared/zarr.rs:49-55`) and chooses fill values outside each array's
+  data domain so that readers like this one do not mask real data
+  (`.AI/docs/specs/zarr_schema.md:21-29`).
+- Midpoint counts are smoothed by default and can be negative (P-04), so `-1`
+  is inside their data domain. `src/shared/zarr.rs:49-51` describes them as
+  non-negative.
+- Because the tolerance grows with the largest value in the slice, non-negative
+  arrays are also affected once that value is large enough. At about `6.7e7`
+  the tolerance reaches 1, and zero then falls inside it.
+
+Probes:
+
+- `[2^27, 0, 1, 0.5, 3.5]` with fill `-1` reads back as
+  `[2^27, NA, NA, NA, 3.5]`.
+- A midpoint-like array where one group has a peak of `1e7` and another group
+  has a smoothed value of `-1.1`: reading the second group alone returns
+  `-1.1`, and reading the whole array returns `NA` for that value. The same
+  value depends on which slice is read.
+- A sparse end-motif store with one stored count of `2^27` and other counts of
+  1 to 49 fails `read_end_motifs()` with
+  `sparse/count must contain finite non-negative values`, because the small
+  counts were turned into `NA`.
+- Exact `-1` values are reachable from integer counts. With
+  `--smoothing savgol=5`, the neighborhood `[23, 0, 2, 0, 0]` gives
+  `(-3*23 + 17*2) / 35 = -1` (`src/commands/midpoints/smoothing.rs:107-116`).
+
+Impact:
+
+- Midpoint values near `-1` become `NA` without a warning. How near depends on
+  the largest value in the slice that is read.
+- Count, frequency, and scaling-factor arrays lose small values when the same
+  array also holds a value around `6.7e7` or more. For sparse arrays read at
+  load time, this makes the load fail. For dense arrays read later, it gives
+  `NA`. *Inference*: mostly global outputs from deep or pooled data with
+  weighted fractional counts. Rare otherwise.
+- Python is not affected.
+
+Fix (Rust side):
+
+Use `NaN` as the fill value for floating arrays and update the schema spec and
+the writer comments. Do not use `-Inf`. With an infinite fill, the tolerance
+becomes infinite and every finite value is masked. Probe: `[0, 1, -0.5, 2]`
+with fill `-Inf` reads back as all `NA`. A `NaN` fill masks only `NaN`, and
+`[0, -1, -0.5, 2]` with fill `NaN` reads back unchanged.
+
+Outputs already written with a finite fill cannot be repaired by the R loader,
+because the values are lost inside `read()`.
+
+Tests: writer-backed downstream fixtures whose metadata has a `NaN` fill,
+asserting that finite negative midpoint values (including `-1`) survive full
+and sliced reads, including a shortened last chunk.
+
+### R-01 - High - Canonical ref-kmer outputs fail to load under Danish collation
 
 Evidence:
 
@@ -87,20 +153,17 @@ Evidence:
   `min(motif, reverse_complement)`. R compares strings with the current
   collation locale, not by bytes.
 - Danish collation treats the pair `"AA"` as a single letter (A-ring), which
-  sorts after `"Z"` and therefore after `C`, `G`, and `T`. Labels never
-  contain `Z`, but that does not matter. Any comparison whose first
-  difference lands on an `"AA"` goes the wrong way. Probe:
-  `min("AACG", "CGTT")` is `"AACG"` under `C` and `"CGTT"` under
-  `da_DK.UTF-8`, because `"AACG"` compares as A-ring followed by `"CG"`.
+  sorts after `"Z"` and therefore after `C`, `G`, and `T`. Labels never contain
+  `Z`, but that does not matter. Any comparison whose first difference lands on
+  an `"AA"` goes the wrong way. Probe: `min("AACG", "CGTT")` is `"AACG"` under
+  `C` and `"CGTT"` under `da_DK.UTF-8`, because `"AACG"` compares as A-ring
+  followed by `"CG"`.
 - End to end: a canonical store with `AACG`, `ACGT`, and `CCGG` loads under
   `C` and fails under `da_DK.UTF-8` with
   `canonical reference k-mer motif label 'AACG' at motif_idx 1 should be 'CGTT'`.
-- Your macOS locale is `da_DK`. R sessions that use the system locale get
-  Danish collation (*inference* for RStudio). The probes in this review ran
-  with `LANG=C.UTF-8`.
 - testthat edition 3 forces `C` collation during tests
-  (`testthat::local_reproducible_output()` calls
-  `withr::local_collate("C")`), so the test suite cannot catch this.
+  (`testthat::local_reproducible_output()` calls `withr::local_collate("C")`),
+  so the test suite cannot catch this.
 
 Impact:
 
@@ -114,20 +177,23 @@ counted over full k-mer sets:
 | 6 | 2,080 | 298 | |
 | 8 | 32,896 | 4,806 | |
 
-About 15% of labels are wrong, and one wrong label is enough to fail the load.
-In practice every canonical even-k output fails to load for users with Danish
-collation. Norwegian collation has the same `"AA"` rule (*inference*, not
-probed). Odd k uses the middle-base rule and is not affected.
+About 15% of labels are affected. A load fails when the stored axis contains at
+least one affected label. A complete even-k axis always does. A sparse axis
+with only unaffected labels loads. Any R session with Danish collation is
+affected. The macOS system locale on the development machine is `da_DK`, so
+sessions that take their collation from the system locale are affected
+(*inference*: R GUIs and RStudio on macOS do). Norwegian collation has the same
+`"AA"` rule (*inference*, not probed). Odd k uses the middle-base rule and is
+not affected.
 
 This is the only place in the R package where locale ordering changes a
-result. The other `sort()` calls only build error messages (see Checked And
-Not Findings). Python compares strings by code point and is not affected.
+result. Python compares strings by code point and is not affected.
 
 Fix:
 
 Compare in byte order with radix ordering, which sorts strings in byte order
-whatever the locale is. In `cf_canonical_ref_kmer()`
-(`R/ref_kmers.R:517-519`):
+whatever the locale is. This is correct for the validated `ACGT` alphabet. In
+`cf_canonical_ref_kmer()` (`R/ref_kmers.R:517-519`):
 
 ```r
 if (nchar(motif, type = "bytes") %% 2L == 0L) {
@@ -142,41 +208,32 @@ Verified under `da_DK.UTF-8`: for all 4,096 6-mers this picks exactly the
 labels Rust picks. `sort(c("CGTT", "AACG", "TAAA"), method = "radix")` gives
 `AACG CGTT TAAA`, while the default `sort()` gives `CGTT TAAA AACG`.
 
-Why not set the locale before sorting instead:
+Setting the collation instead is also correct. `withr::local_collate("C")` at
+the top of a function sets `C` collation and restores the session's setting
+when the function exits, including on errors (checked with withr 3.0.2).
+`withr` is already installed with testthat and would become an `Imports`
+dependency. Radix ordering is the smaller change for this single comparison.
+`withr::local_collate("C")` is the better convention if more functions start
+ordering or comparing labels.
 
-- `Sys.setlocale()` changes the collation for the user's whole R session, not
-  just the package.
-- It must be restored with `on.exit()` so the user's setting survives errors.
-- `withr::local_collate()` would handle that but adds a dependency.
-- Radix ordering is one argument and only affects the call it is used in.
+Tests:
 
-Test:
+Add `withr` to `Suggests` and set Danish collation inside the test with
+`withr::local_collate("da_DK.UTF-8")`. It is restored automatically when the
+test ends, also when an assertion fails. Then assert fixed expected labels
+(`AA` versus `TT`, `AACG` versus `CGTT`) and load a canonical fixture containing
+`AACG`. Both fail with the current code.
 
-testthat resets collation to `C`, so the test must set `LC_COLLATE` to
-`da_DK.UTF-8` inside the test itself and restore it afterwards. Skip the test
-when that locale is not installed. A canonical fixture containing `AACG` is
-enough to fail the current code.
+`withr::local_collate()` only warns when a locale is not installed and keeps
+the previous collation. Probe: requesting `xx_XX.UTF-8` left `en_US.UTF-8`
+active and `min("AACG", "CGTT")` returned `"AACG"`. The test must therefore
+check that Danish collation is really active, for example by skipping unless
+`min("AACG", "CGTT") == "CGTT"` after setting it. Otherwise it passes without
+testing anything on machines without the locale. Locale names differ by
+platform, so try `da_DK.UTF-8` and the Windows name `Danish_Denmark.1252`
+before skipping.
 
 ### R-02 - High - `end_motif_data_frame(densify = TRUE)` densifies the whole store
-
-> **Review note - two distinct fixes:** Calling the selected-index helper
-> below fixes whole-store densification of sparse input. Its dense branch
-> still calls `cf_read_array()` before subsetting (`R/end_motifs.R:632-638`),
-> so it does not fix whole-store reads for dense input. Ref-kmers also read
-> their entire dense array in
-> `cf_ref_kmer_dense_frequency_matrix_for_indices()` (`R/ref_kmers.R:991-997`).
-> Passing selectors into that helper does not make the underlying read selective.
-> Cover dense counts and frequencies as a separate read-path fix.
->
-> Do not pass arbitrary index vectors directly to the current CRAN reader and
-> assume orthogonal selection. In installed `zarr` 0.4.0,
-> `zarr_array$read(selection=...)` takes `min` and `max` on each axis and reads
-> that bounding range. It ignores vector order and gaps. Read bounded ranges
-> and select relative indices, or use suitable repeated bounded reads, while
-> preserving caller order and length-one dimensions. This also constrains R-10.
-> Correction still deliberately needs all sample motifs for corrected
-> frequencies, as explained in P-08. A motif selector alone does not bound
-> its intermediate motif axis.
 
 Evidence:
 
@@ -185,8 +242,8 @@ Evidence:
 - Reference correction goes through the same function. That covers corrected
   data frames with `densify = TRUE` and every `dense_corrected_counts_matrix()`
   call (`R/reference_correction.R:277-283`, `436`).
-- The ref-kmer version passes the selection
-  (`R/ref_kmers.R:1333-1338`), so this is a bug and not a design choice.
+- The ref-kmer version passes the selection (`R/ref_kmers.R:1333-1338`), so
+  this is a bug and not a design choice.
 
 Measured on a sparse store with 50k windows x 1024 motifs (1M stored entries):
 
@@ -199,19 +256,28 @@ Impact:
 
 The README example at `README.md:112-118` does exactly this. With genome-wide
 windows and larger motif sets, a request for a handful of rows runs out of
-memory. *Inference*: 290k windows x 1024 motifs is 2.4 GB. A 4+4 motif axis
-is far beyond any laptop.
-
-For dense stores, the same line reads the whole counts array on every call
-(`R/end_motifs.R:633-637`, and `533` for `sparse_counts_matrix()` on dense
-stores). That is smaller but has the same cause.
+memory. *Inference*: 290k windows x 1024 motifs is 2.4 GB. A 4+4 motif axis is
+far beyond any laptop.
 
 Fix:
 
-Call `cf_dense_end_motif_matrix_for_indices(x, row_indices, motif_indices,
-densify)` instead.
+Two separate changes:
 
-### R-03 - High - `read_lengths()` fails when every group name is numeric
+1. Sparse stores: call `cf_dense_end_motif_matrix_for_indices(x, row_indices,
+   motif_indices, densify)` so only the selection is densified.
+2. Dense stores: the dense branch of that helper still reads the whole counts
+   array before subsetting (`R/end_motifs.R:632-638`, and `533` for
+   `sparse_counts_matrix()` on dense stores). Ref-kmers do the same in
+   `cf_ref_kmer_dense_frequency_matrix_for_indices()`
+   (`R/ref_kmers.R:986-994`). Making these reads selective must follow the
+   backend selection rule above: read a bounded range, then pick the requested
+   indices in order, keeping length-one dimensions.
+
+Reference correction still loads every motif of the selected rows on purpose,
+because corrected frequencies need the whole row (P-08). Fix 1 bounds the rows,
+not the motif axis.
+
+### R-03 - High - Numeric-looking chromosome and group labels are changed or rejected
 
 Same bug as Python P-01.
 
@@ -219,29 +285,24 @@ Evidence:
 
 - `R/lengths.R:454` and `457` call `data.table::fread()` without column
   types, so it guesses.
-- `R/lengths.R:459-461` converts only `chrom` back to text.
+- `R/lengths.R:459-461` converts `chrom` back to text after parsing. By then
+  the original text is gone.
 - `R/lengths.R:595` rejects a `group_name` column that is not character.
 
-Probe: group names `1`, `2` and `001`, `002` both fail with
-`group_name must contain non-empty character strings`.
+Probes:
+
+- Windowed chromosomes `001` and `1` both load as `"1"`. No error.
+- Group names `1`, `2` and `001`, `002` and `1.10`, `1.1` all fail with
+  `group_name must contain non-empty character strings`.
 
 Fix:
 
-Read `chrom` and `group_name` as character with `colClasses`. Pass only the
-columns that exist in the file, because `fread()` warns about absent names.
-Add a test with all-numeric group names.
+Read `chrom` and `group_name` as character at parse time with `colClasses`.
+Pass only the columns present in the file, because `fread()` warns about absent
+names. Remove the cast after parsing. Use the same test cases as P-01, for
+plain and `.tsv.zst` input.
 
 ### R-04 - Medium - Reading `.tsv.zst` needs a separately installed `zstd` program
-
-> **Review note - acceptance criteria:** The `qs2` replacement must support
-> streaming frames without a declared decompressed size, including actual
-> Rust-writer output, and report corrupted or truncated input clearly. Ensure
-> temporary files are removed on success and error. Declare a minimum `qs2`
-> version if the file API is not present in every supported release.
-> Replace the executable-dependent fixture construction too, so compressed
-> loading is exercised when no `zstd` program is installed. The current test
-> conditionally tests a valid compressed file and also checks the missing-tool
-> error. Its entire test case does not require the executable.
 
 Evidence:
 
@@ -249,12 +310,11 @@ Evidence:
   is missing. `.tsv.zst` is the default `cfdna lengths` output.
 - The requirement is not mentioned in `README.md`, `DESCRIPTION` (no
   `SystemRequirements`), or `website/docs/guides/fragment_lengths_guide.md`.
-- `qs2` is already a required dependency and exports
-  `zstd_decompress_file()`. Probe: it decodes a zstd file written in streaming
-  mode (no content size in the header, like the Rust writer's
-  `zstd::Encoder` at `src/shared/writers.rs:21`). `qs2::zstd_decompress_raw()`
-  fails on the same file with `negative length vectors are not allowed`, so
-  use the file version.
+- `qs2` is already a required dependency and exports `zstd_decompress_file()`.
+  Probe: it decodes a zstd file written in streaming mode (no decompressed size
+  in the header, like the Rust writer's `zstd::Encoder` at
+  `src/shared/writers.rs:21`). `qs2::zstd_decompress_raw()` fails on the same
+  file with `negative length vectors are not allowed`, so use the file version.
 
 Impact:
 
@@ -264,30 +324,35 @@ lengths output without installing an extra program first.
 Fix:
 
 Decompress with `qs2::zstd_decompress_file()` to a temporary file, then
-`fread()` it. Drop the command-line path.
+`fread()` it. Drop the command-line path. Requirements:
+
+- Works on streaming frames without a declared size, tested against real Rust
+  writer output.
+- Reports corrupted and truncated input clearly.
+- Removes the temporary file on success and on error.
+- Declares a minimum `qs2` version. The installed 0.1.7 has
+  `zstd_decompress_file()`. When it was added is not verified (the installed
+  package has no NEWS file).
+
+The compressed-read part of the current test only runs when `zstd` is installed
+(`tests/testthat/test-lengths.R:511-527`). The fixture construction must stop
+needing the program, so compressed loading is tested everywhere.
 
 ### R-05 - Medium - README and website examples that fail or name the wrong flag
-
-> **Review note - cross-language and example scope:** P-02's claim that the
-> website ran `ends --all-motifs` is incorrect. It runs `ref-kmers
-> --all-motifs`, so both website matrix examples need correction for default
-> sparse sample output. Prefer sparse corrected matrices in the general
-> recipes. The mode-dependent lengths example issue also affects the Python
-> block at `fragment_lengths_guide.md:119-145`, which mixes group and window
-> selectors on the same object. Label these as alternatives for their
-> respective file modes, rather than suggesting every call can run on the
-> same file.
 
 - `README.md:235-239` and `website/docs/guides/fragment_ends_guide.md:301-305`
   call `dense_corrected_counts_matrix(...)` without `allow_densify = TRUE`.
   This errors on default sparse `cfdna ends` output
-  (`R/reference_correction.R:420-426`). Same as Python P-02.
+  (`R/reference_correction.R:420-426`). The guide's `--all-motifs` is passed to
+  `cfdna ref-kmers` and does not make the sample output dense. Same as Python
+  P-02. Prefer `sparse_corrected_counts_matrix()` in general examples.
 - `README.md:80` says `"size"` rows come from `--window-size`. The flag is
   `--by-size` (`src/commands/cli_common.rs:408`).
 - `website/docs/guides/fragment_lengths_guide.md:158-163` calls
   `window_metadata(lengths)` and `group_metadata(lengths)` one after the
-  other. Only one of them exists for a given file, so running the block as
-  written stops with an error.
+  other. Only one exists for a given file, so the block stops with an error.
+  The Python block at `:119-145` has the same problem (P-18). Label these as
+  alternatives per file mode.
 - Notes only: `README.md:207` "why we recommend" should be "which is why we
   recommend". `README.md:209` "was used" should be "were used".
 
@@ -306,57 +371,41 @@ Evidence:
   `1111-1114` calls `cf_split_end_motif_label()`, which runs `gregexpr()`, on
   every row).
 
-Measured with 256 motifs and full support:
+Measured, `sparse_corrected_counts_matrix()`, 256 motifs, full support:
 
-| Windows | Mode | R | Python |
-| --- | --- | --- | --- |
-| 3k | joint | 6.7 s | 2.2 s |
-| 3k | split | 12.4 s | not measured |
-| 3k | outside | 10.4 s | not measured |
-| 20k | joint | 60 s, 3.5 GB peak process memory | 20 s, about 1.5 GB extra |
+| Windows | Mode | R time | Python time | R peak (load only / with correction) | Python peak (load only / with correction) |
+| --- | --- | --- | --- | --- | --- |
+| 3k | joint | 6.7 s | 2.2 s | not measured | not measured |
+| 3k | split | 12.4 s | not measured | not measured | not measured |
+| 3k | outside | 10.4 s | not measured | not measured | not measured |
+| 20k | joint | 70.9 s | 17.8 s | 1.12 GB / 3.39 GB | 0.36 GB / 2.32 GB |
+
+R takes about 4 times as long. The extra memory for the correction itself is
+similar (about 2.3 GB in R and 2.0 GB in Python). R's higher total comes from
+its larger baseline after loading.
 
 *Inference*: genome-wide 10 kb windows (about 290k rows) would take about
-15 minutes for `joint` and need far more memory than a laptop has.
+15 to 20 minutes for `joint` and need far more memory than a laptop has.
 
 Fix:
 
-Same approach as Python P-08, using `Matrix`:
+Same approach and the same rules as Python P-08, using `Matrix` and R's
+one-based public indices:
 
-- Line the reference frequencies up with the sample's motif columns once.
-- Count supported motifs per row (`frequency > 0`).
-- Divide the counts (or the stored sparse values) by
-  `frequency * supported_motif_count`.
-- Get side frequencies by multiplying the reference matrix with a 0/1 matrix
-  that maps each k-mer to its side label.
+- Count positive support on the complete reference row before matching it to
+  sample columns.
+- Keep sparse references sparse and process bounded batches of rows. Avoid a
+  dense rows x all-k-mers intermediate.
+- Split motif labels into sides once per unique label, not once per row.
+- Keep the unsupported-count, row matching, side-axis order, and frequency
+  rules listed in P-08.
 
-Build the data frames from the result.
-
-> **Review note - share the acceptance contract with P-08:** Its annotation
-> lists the normalization, sparse support, unsupported-count, row matching,
-> and frequency invariants that this rewrite must preserve. Use those for
-> both packages, with R's one-based public indices. Parse motif sides once
-> per unique label. Avoid a dense row-by-full-k-mer intermediate for sparse
-> references. Separate the bounded R-02 fix from this larger correction
-> refactor so their memory effects can be assessed independently. The table
-> compares total R process peak with additional Python memory, so it does not
-> establish the ratio of their memory use.
+Do R-02 separately and first, so the memory effect of each change can be
+measured on its own.
 
 ## API And Documentation
 
 ### R-07 - Medium - Count matrices have no row or column names
-
-> **Review note - names do not align matrices automatically:** Ordinary matrix
-> `rbind()` and `cbind()` bind by position. Adding dimnames helps inspection
-> and explicit reindexing but does not prevent silent sample misalignment.
-> See the distinction between matrices and data frames in the [R binding
-> documentation](https://stat.ethz.ch/R-manual/R-devel/library/base/html/cbind.html).
-> Document explicit matching to a shared motif order before binding.
-> Coordinates alone also need not uniquely identify BED rows. Preserve the
-> public window/group index in selected-row metadata, especially after
-> blacklist filtering, instead of relying solely on `chrom:start-end` names.
-> Name raw and corrected columns in every mode, including empty results.
-> Existing `unname()` value assertions can remain with separate assertions
-> for exact dimnames and order. Removing them alone would not add coverage.
 
 Evidence:
 
@@ -365,7 +414,9 @@ Evidence:
   `626-646`, `R/ref_kmers.R:780-797`, `858-881`). Probe on the downstream
   sparse windowed fixture confirms `NULL` dimnames.
 - Corrected matrices get column names only in `outside` and `inside` modes
-  (`R/reference_correction.R:446-448`, `547-551`).
+  (`R/reference_correction.R:446-448`, `547-551`). Unlike Python, R has no
+  `corrected_motifs_metadata()`, so in `joint` and `split` mode the columns
+  are only identified by matching the selector order.
 - Length count matrices have `count_*` column names (`R/lengths.R:639`).
 - `dense_counts_vector()` and `dense_frequencies_vector()` are named by motif
   (`R/end_motifs.R:975`, `R/ref_kmers.R:1094`, `1106`).
@@ -373,71 +424,28 @@ Evidence:
 Impact:
 
 After `motifs = c("AC_GT", ...)` the user gets a matrix that does not say which
-column is which motif. In R, dimnames are where users expect labels, and
-`cbind()`, `rbind()`, and heatmap functions use them. With motif axes that
-differ between samples (P-03), unlabeled columns make silent misalignment
-easier.
+column is which motif. Names would not align samples automatically: `rbind()`
+and `cbind()` on matrices bind by position. They do make the columns
+inspectable and allow explicit reindexing (`m[, shared_motifs]`) before
+binding, which is how misalignment from P-03 is avoided.
 
 Fix:
 
-Always set column names to the motif labels. Set row names to window labels
-(for example `chrom:start-end`) or group names. `midpoint_array()` and
-`profile_array()` could carry dimnames too (group names, length bins, position
-starts). The tests currently strip names with `unname()` before comparing
-corrected matrices (for example
-`downstream_tests/R/test_cfdnalab_r_package.R:198`, `217`, `298`, `327`), so
-they would need updating.
+- Name the columns of raw and corrected matrices in every mode, including empty
+  results.
+- Keep the public `window_idx` or `group_idx` in row identity, for example as
+  row names or in returned metadata. Coordinates alone may not identify a BED
+  row uniquely. No duplicate-interval check was found in
+  `src/shared/bed.rs`, and the R correction code already includes
+  `window_idx` in its row key. This matters most after blacklist filtering
+  (P-12).
+- Optionally add dimnames to `midpoint_array()` and `profile_array()` (group
+  names, length bins, position starts).
+- Document reindexing to a shared motif order before binding samples.
 
-### R-08 - Low - Smoothed midpoint values of exactly -1 become NA in R
-
-> **Review note - raise priority and revise the proposed fix:** The installed
-> CRAN `zarr` 0.4.0 code masks floating values using `.near(data, fill)`, not
-> equality. Its tolerance is `max(eps * max(abs(data), abs(fill)), 1e-12)`,
-> with `eps = 1.490116e-08`. Thus loss is not restricted to exact `-1.0` and
-> depends on the largest value in the returned slice. This follows from
-> `get("zarr_array", asNamespace("zarr"))$public_methods$read` and
-> `get(".near", asNamespace("zarr"))`.
-> Exact `-1` is reachable with ordinary integer midpoint counts. For
-> `savgol=5`, a neighborhood `[23, 0, 2, 0, 0]` gives
-> `(-3*23 + 17*2) / 35 = -1` using the coefficients in
-> `src/commands/midpoints/smoothing.rs:107-116`.
->
-> **Do not use `-Inf`.** For finite data and an infinite fill, both sides of
-> the comparison become `Inf`, so every finite value satisfies it and becomes
-> `NA`. Use a NaN fill for newly written midpoint arrays. The reader has an
-> explicit `is.nan(fill)` branch that masks only NaNs. Update the schema spec,
-> writer comment, and writer-backed downstream coverage together. Read actual
-> metadata and retain finite negative values, including `-1`, under the new
-> fill. Test full and sliced reads with a shortened boundary chunk.
->
-> Also audit the other floating arrays. By the same formula, a slice containing
-> `2^27` has tolerance 2, so valid zero counts can match a `-1` fill even for
-> nonnegative end counts. This is a source-derived consequence, not a new
-> measurement. Existing R reads with a finite sentinel cannot reconstruct
-> values already masked to `NA`. Treat this as correctness work before
-> validation, not a low-priority documentation fix.
-
-Evidence:
-
-- The CRAN `zarr` reader returns `NA` for any stored value equal to the
-  array's fill value. Probe: float32 values `[0.5, -1.0, -0.25, 2.0]` with fill
-  value `-1` read back as `[0.5, NA, -0.25, 2.0]`. `read()` has no option to
-  turn this off.
-- The Rust writer chooses fill values outside each array's data domain for
-  this reason (`.AI/docs/specs/zarr_schema.md:21-29`).
-- `src/shared/zarr.rs:49-51` describes the midpoint fill value as being for
-  "non-negative float32 count arrays". Midpoint counts are smoothed by default
-  and can be negative (P-04), so `-1.0` is inside their data domain.
-
-Impact:
-
-Rare, because it needs an exact f32 `-1.0`. But it is silent and R-only.
-Python returns the real value.
-
-Fix (Rust side):
-
-Use `NaN` or `-Inf` as the fill value for midpoint counts and update the
-comment.
+Tests: the existing `unname()` value assertions
+(`downstream_tests/R/test_cfdnalab_r_package.R:198`, `217`, `298`, `327`) can
+stay. Add separate assertions for the exact dimnames and their order.
 
 ### R-09 - Low - Committed man pages are out of date
 
@@ -450,10 +458,10 @@ scratch copy changes three files:
 - `man/end_motif_data_frame.Rd`
 - `man/sparse_corrected_counts_matrix.Rd`
 
-Each gains the paragraph saying that correction requires
-`--orientation both`, is approximate, and needs windows of at least a few
-kilobases. `website/docs/generated/loaders/r-api.mdx` is generated from the Rd
-files and does not mention `--orientation both`. `NAMESPACE` is in sync.
+Each gains the paragraph saying that correction requires `--orientation both`,
+is approximate, and needs windows of at least a few kilobases.
+`website/docs/generated/loaders/r-api.mdx` is generated from the Rd files and
+does not mention `--orientation both`. `NAMESPACE` is in sync.
 
 Fix:
 
@@ -462,19 +470,11 @@ when `roxygenise()` changes tracked files.
 
 ### R-10 - Medium - No way to get a selected 3D midpoint array
 
-> **Review note - preserve selectors rather than bounding ranges:** Follow
-> R-02's backend-selection constraint. A single read for groups `c(5L, 2L)`
-> would read groups 2 through 5 in file order, rather than those two groups
-> in requested order. Cover noncontiguous/reversed group and length-bin
-> selections, scalar axes, and empty selections without making an invalid
-> backend read. Use the existing asymmetric count fixtures to assert values
-> as well as shape. `profile_array()` is explicitly a scalar-profile API, so
-> its singular selector names are not a broken workflow by themselves.
-
 Evidence:
 
 - `midpoint_array()` reads the whole store (`R/midpoints.R:395-398`).
-- `profile_array()` returns one profile (`R/midpoints.R:190-210`).
+- `profile_array()` returns one profile (`R/midpoints.R:190-210`). Its
+  singular selector names fit a single-profile function.
 - Python's `counts_array()` takes the same group and length-bin selectors as
   its data frame method.
 
@@ -486,13 +486,15 @@ option (*inference* on sizes).
 
 Fix:
 
-Give `midpoint_array()` the selectors from `midpoint_data_frame()`. One read
-for a selection is fast: 10 groups x 20 length bins x 2001 positions took
-0.01 s.
+Give `midpoint_array()` the selectors from `midpoint_data_frame()`. Because of
+the backend selection rule, a single read for groups `c(5, 2)` returns groups 2
+to 5 in file order. Read the bounded range, then pick the requested groups and
+length bins in order. A contiguous selection of 10 groups x 20 length bins x
+2001 positions read in one call took 0.01 s.
 
-Related, Low: `profile_array()` takes singular `group` and `length`, while
-`midpoint_data_frame()` takes `groups` and `with_lengths`.
-`profile_array(m, groups = "LYL1")` fails with `Unused argument(s): groups`.
+Tests: noncontiguous and reversed group and length-bin selections, scalar
+axes, and empty selections that make no backend read. Assert values with the
+existing fixtures that have distinguishable values per axis, not just shapes.
 
 ### R-11 - Shared with the Python review
 
@@ -501,7 +503,7 @@ These apply to R as well. Details are in `python_loader_review.md`.
 - P-03: Motif axes differ between samples. `motifs()` and `motif_idx` are
   local to each file.
 - P-04: `read_midpoints()` (`R/midpoints.R:19-35`) does not explain values,
-  smoothing, or positions either.
+  smoothing, normalization, or positions either.
 - P-05: R docs explain motif direction only in the correction context
   (`R/end_motifs.R:985-986`).
 - P-11: The `length_bins()` column difference exists in R too
@@ -515,13 +517,14 @@ These apply to R as well. Details are in `python_loader_review.md`.
   `tests/testthat/test-reference-correction.R:124-141` only checks that
   two-sided modes are rejected.
 - P-25: R has to reject empty sparse stores, because the `zarr` reader cannot
-  open zero-length arrays (`R/end_motifs.R:226-235`).
+  open zero-length arrays (`R/end_motifs.R:226-235`). Supporting them would
+  mean bypassing the reader's eager hierarchy construction.
 - P-26: Blacklist rounding in lengths TSVs.
-- P-27: Complement collapse is not reliably recorded, and correction can use
-  the wrong reference denominator. Its annotation applies to R too.
-- P-29: End-motif sparse validation lacks the sorted/unique coordinate check
-  present in the ref-kmer reader. This can be fixed without a shared-module
-  refactor.
+- P-27: Complement collapse is not recorded, and R correction would use the
+  wrong reference mass as well.
+- P-29: End-motif sparse coordinates are not checked for sorted, unique order
+  (`R/end_motifs.R:136-147`), while ref-kmers check it
+  (`cf_validate_ref_kmer_sparse_coordinates()`). This needs no refactor.
 
 ### R-12 - Low - Loading large k-mer axes is slow
 
@@ -542,27 +545,24 @@ Fine for k up to 8.
 - `DESCRIPTION` sets `LazyData: true` without a `data/` directory. *Inference*:
   `R CMD check` reports this as a NOTE (not run).
 - No `SystemRequirements: zstd`. This goes away if R-04 is fixed.
+- No minimum `qs2` version (R-04).
 
 ## Tests
 
-- No test runs under a non-`C` collation, so R-01 cannot be caught. testthat
-  forces `C` collation, so the test must set the locale itself.
-- No test uses all-numeric group names (R-03).
-- No test would catch R-02, because the result is correct. A sparse fixture
-  with a large declared shape (for example 100000 x 1000) and a few stored
-  entries would make a full densification allocate about 800 MB, so a
-  regression would show up as a failure.
-- The `.tsv.zst` test depends on the `zstd` program being installed
-  (`tests/testthat/test-lengths.R:511-527`).
-- Corrected matrix comparisons strip names with `unname()`, so the dimnames
-  gaps in R-07 are built into the expectations.
-- Motif-group correction values are untested (see R-11).
-
-> **Review note - avoid an allocation-failure regression test:** A declared
-> `100000 x 1000` shape does not guarantee failure. Allocating 800 MB may
-> succeed, or may kill the entire R process. Keep ordinary fixtures tiny and
-> assert selected values, order, and retained empty rows. Add a small fake
-> read/conversion boundary that rejects whole-store materialization for a
-> bounded selection, rather than depending on allocator behavior or elapsed
-> time. This should distinguish the sparse densification fix from the dense
-> selective-read fix in R-02.
+- No test runs under a non-`C` collation (R-01). testthat forces `C`
+  collation, so the test must set Danish collation itself with
+  `withr::local_collate()` and skip when it does not take effect.
+- No test covers numeric-looking labels (R-03).
+- No test would catch R-02, because the result is correct. Do not rely on a
+  large declared shape and allocation failure, which may succeed or may kill
+  the R process. Keep fixtures tiny, and replace the whole-store step with a
+  version that fails when called, for example with
+  `testthat::local_mocked_bindings()` on `dense_counts_matrix`. Then a bounded
+  selection with `densify = TRUE` must still return the expected values, order,
+  and retained empty rows. Test the dense selective-read fix separately.
+- The compressed-read part of the lengths test only runs when `zstd` is
+  installed (R-04).
+- Corrected matrix comparisons strip names with `unname()`. Exact dimnames are
+  not asserted anywhere (R-07).
+- No test covers R-08. It needs writer-backed fixtures.
+- Motif-group correction values are untested (R-11).
