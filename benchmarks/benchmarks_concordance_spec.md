@@ -12,6 +12,8 @@ Normal settings request MAPQ >=30 and inclusive fragment lengths 30-1000 bp. Mid
 
 GC correction, blacklists and genomic scaling are not added. Griffin's mandatory GC work remains with unit weights and its uncorrected output selected. Default enabled cfDNAlab plots remain timed. Competitor source is unmodified.
 
+Calculated metrics must be finite and respect their mathematical bounds. Correlations use [-1, 1]. Fractions, total variation, maximum CDF difference and normalized motif diversity use [0, 1]. Absolute boundary overshoots up to 1e-5 are clipped, and larger errors fail the comparison. Correlations are checked before clipping, including when calculated from NumPy covariance. Constant profiles retain `NA` correlation. Existing undefined metrics retain `NA`, and motif log ratios retain `Inf` when an abundant motif has zero frequency in either profile. Normalization totals must be finite before frequencies are calculated.
+
 ## Coverage
 
 Sources: [runner](coverage/benchmark_coverage.sh), [comparator](coverage/compare_coverage.py), [operating notes](coverage/README.md).

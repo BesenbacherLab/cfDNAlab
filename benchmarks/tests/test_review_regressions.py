@@ -743,6 +743,46 @@ class NativeComparatorTests(unittest.TestCase):
         specification.loader.exec_module(module)
         return module
 
+    def test_length_normalization_rejects_an_overflowed_total(self):
+        import numpy as np
+
+        comparator = self.comparator("lengths/compare_lengths.py")
+        # Finite bins must not sum to infinity and then normalize into two zeros
+        with self.assertRaisesRegex(RuntimeError, "Invalid fragment total"):
+            comparator.summarize_profile(
+                np.array([1e308, 1e308]), np.array([30, 31])
+            )
+
+    def test_motif_normalization_rejects_an_overflowed_total(self):
+        comparator = self.comparator("ends/compare_end_motifs.py")
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / "cfdnapro-motifs.tsv").write_text(
+                "motif\tn\nAAA\t1e308\nCCC\t1e308\n"
+            )
+            with self.assertRaisesRegex(RuntimeError, "Invalid motif total"):
+                comparator.load_profile(directory, ["AAA", "CCC"])
+
+    def test_midpoint_normalization_rejects_an_overflowed_mean(self):
+        import numpy as np
+
+        comparator = self.comparator("midpoints/compare_midpoints.py")
+        # Every count is finite, but the sum used by the mean exceeds float range
+        with (
+            mock.patch.object(
+                comparator, "read_cfdnalab",
+                return_value=({"group": (np.full(20, 1e308), 2)}, 20),
+            ),
+            mock.patch.object(
+                comparator, "read_griffin",
+                return_value={"group": (np.ones(20), 2, 1.0)},
+            ),
+            mock.patch.object(sys, "argv", ["compare_midpoints.py", "profiles"]),
+            redirect_stdout(StringIO()),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Invalid midpoint mean"):
+                comparator.main()
+
     def test_samtools_tails_do_not_enter_the_requested_histogram(self):
         import numpy as np
 

@@ -17,6 +17,10 @@ import numpy as np
 import pandas as pd
 from cfdnalab import read_lengths
 
+# The shared checks live in benchmarks/, above this feature's script directory
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from benchmark_metrics import checked_metric, pearson_correlation
+
 
 def read_picard(path):
     """Select the native all-reads FR histogram, excluding RF and tandem counts.
@@ -120,14 +124,19 @@ def summarize_profile(counts, lengths):
     <=150 bp. A tied mode uses the shortest tied length. Empty profiles have
     undefined frequencies and summaries, rather than fabricated zero values.
     """
-    total = float(counts.sum())
+    total = checked_metric(float(counts.sum()), "fragment total")
     if total == 0:
         return total, None, {"mean_bp": "NA", "mode_bp": "NA", "short_fraction": "NA"}
     frequencies = counts / total
     summaries = {
-        "mean_bp": float(np.dot(lengths, frequencies)),
+        "mean_bp": checked_metric(
+            float(np.dot(lengths, frequencies)), "mean fragment length",
+            minimum=float(lengths[0]), maximum=float(lengths[-1]),
+        ),
         "mode_bp": int(lengths[np.argmax(counts)]),
-        "short_fraction": float(frequencies[lengths <= 150].sum()),
+        "short_fraction": checked_metric(
+            float(frequencies[lengths <= 150].sum()), "short fraction", maximum=1.0
+        ),
     }
     return total, frequencies, summaries
 
@@ -206,11 +215,21 @@ def main():
                 "max_length": arguments.max_length,
                 "left_counted_fragments": left_total,
                 "right_counted_fragments": right_total,
-                "net_count_difference": left_total - right_total,
-                "sum_abs_count_difference": float(np.abs(count_difference).sum()),
-                "mae_counts": float(np.abs(count_difference).mean()),
-                "rmse_counts": float(np.sqrt(np.mean(count_difference**2))),
-                "fraction_identical_bins": float(np.mean(count_difference == 0)),
+                "net_count_difference": checked_metric(
+                    left_total - right_total, "net count difference", minimum=None
+                ),
+                "sum_abs_count_difference": checked_metric(
+                    float(np.abs(count_difference).sum()), "sum of absolute count differences"
+                ),
+                "mae_counts": checked_metric(
+                    float(np.abs(count_difference).mean()), "count MAE"
+                ),
+                "rmse_counts": checked_metric(
+                    float(np.sqrt(np.mean(count_difference**2))), "count RMSE"
+                ),
+                "fraction_identical_bins": checked_metric(
+                    float(np.mean(count_difference == 0)), "identical bin fraction", maximum=1.0
+                ),
                 "status": "zero-count-profile",
             }
         )
@@ -220,10 +239,7 @@ def main():
         if left_frequency is not None and right_frequency is not None:
             difference = left_frequency - right_frequency
             cumulative_difference = np.cumsum(difference)
-            if np.std(left_frequency) > 0 and np.std(right_frequency) > 0:
-                row["pearson_r"] = float(
-                    np.corrcoef(left_frequency, right_frequency)[0, 1]
-                )
+            row["pearson_r"] = pearson_correlation(left_frequency, right_frequency)
             row.update(
                 {
                     "mae_frequency": float(np.abs(difference).mean()),
@@ -236,6 +252,18 @@ def main():
                     "wasserstein_bp": float(np.abs(cumulative_difference[:-1]).sum()),
                     "status": "ok",
                 }
+            )
+            for metric in (
+                "mae_frequency",
+                "rmse_frequency",
+                "max_abs_frequency_difference",
+                "total_variation",
+                "max_cdf_difference",
+            ):
+                row[metric] = checked_metric(row[metric], metric, maximum=1.0)
+            row["wasserstein_bp"] = checked_metric(
+                row["wasserstein_bp"], "Wasserstein distance",
+                maximum=float(lengths[-1] - lengths[0]),
             )
         writer.writerow(row)
 

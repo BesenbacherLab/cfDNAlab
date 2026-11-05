@@ -16,6 +16,10 @@ import sys
 import numpy as np
 import pandas as pd
 
+# The shared checks live in benchmarks/, above this feature's script directory
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from benchmark_metrics import checked_metric, pearson_correlation
+
 
 def load_profile(directory, motifs):
     """Read a native tool output onto the same inward-oriented motif axis.
@@ -92,7 +96,9 @@ def load_profile(directory, motifs):
     ordered_values = np.array([values[motif] for motif in motifs], dtype=float)
     if not np.isfinite(ordered_values).all() or (ordered_values < 0).any():
         raise ValueError(f"Non-finite or negative values in {directory.name}")
-    total = float(ordered_values.sum())
+    total = checked_metric(
+        float(ordered_values.sum()), f"motif total for {directory.name}"
+    )
     if total <= 0:
         raise ValueError(f"No counted motif mass in {directory.name}")
     if not contains_counts and not np.isclose(total, 1.0, rtol=1e-6, atol=1e-9):
@@ -105,7 +111,8 @@ def load_profile(directory, motifs):
 def motif_diversity(frequencies):
     """Calculate normalized Shannon entropy, with zero-frequency terms omitted."""
     positive = frequencies[frequencies > 0]
-    return float(-np.sum(positive * np.log(positive)) / np.log(len(frequencies)))
+    value = float(-np.sum(positive * np.log(positive)) / np.log(len(frequencies)))
+    return checked_metric(value, "normalized motif diversity", maximum=1.0)
 
 
 def main():
@@ -169,14 +176,10 @@ def main():
         right_frequency, right_total, right_ends = profiles[right_name]
         difference = left_frequency - right_frequency
         # Correlation is undefined for constant profiles, even if they are equal
-        correlation = "NA"
-        if np.std(left_frequency) > 0 and np.std(right_frequency) > 0:
-            correlation = float(np.corrcoef(left_frequency, right_frequency)[0, 1])
-        rank_correlation = "NA"
+        correlation = pearson_correlation(left_frequency, right_frequency)
         left_ranks = pd.Series(left_frequency).rank().to_numpy()
         right_ranks = pd.Series(right_frequency).rank().to_numpy()
-        if np.std(left_ranks) > 0 and np.std(right_ranks) > 0:
-            rank_correlation = float(np.corrcoef(left_ranks, right_ranks)[0, 1])
+        rank_correlation = pearson_correlation(left_ranks, right_ranks)
         # Include a motif when either profile reaches 1e-4. Zero on the other
         # side gives an infinite ratio, without introducing a pseudocount
         abundant = np.maximum(left_frequency, right_frequency) >= 1e-4
@@ -187,10 +190,12 @@ def main():
             ).any():
                 log_ratio = "Inf"
             else:
-                log_ratio = float(
-                    np.abs(
-                        np.log2(left_frequency[abundant] / right_frequency[abundant])
-                    ).max()
+                # Separate logarithms avoid overflow in a ratio of positive frequencies
+                log_ratio = checked_metric(
+                    float(np.abs(
+                        np.log2(left_frequency[abundant]) - np.log2(right_frequency[abundant])
+                    ).max()),
+                    "absolute motif log2 ratio",
                 )
         left_mds = motif_diversity(left_frequency)
         right_mds = motif_diversity(right_frequency)
@@ -217,6 +222,15 @@ def main():
             "right_mds": right_mds,
             "abs_mds_difference": abs(left_mds - right_mds),
         }
+        # These quantities are bounded because both profiles sum to one
+        for metric in (
+            "mae_frequency",
+            "rmse_frequency",
+            "max_abs_frequency_difference",
+            "total_variation",
+            "abs_mds_difference",
+        ):
+            row[metric] = checked_metric(row[metric], metric, maximum=1.0)
         writer.writerow(row)
 
 

@@ -23,6 +23,10 @@ import subprocess
 import sys
 import tempfile
 
+# The shared checks live in benchmarks/, above this feature's script directory
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from benchmark_metrics import checked_metric, correlation_value
+
 
 @contextmanager
 def open_track(path):
@@ -195,14 +199,10 @@ class Correlation:
 
     def value(self):
         """Constant profiles have undefined correlation, including equal zeros."""
-        if self.left_variance <= 0 or self.right_variance <= 0:
-            return "NA"
-        value = self.covariance / math.sqrt(self.left_variance * self.right_variance)
-        # A small overshoot is allowed after accumulating many weighted runs
-        # Nonfinite values must fail before clipping, which can turn NaN into +1
-        if not math.isfinite(value) or abs(value) > 1.0 + 1e-5:
-            raise RuntimeError(f"Invalid correlation value: {value}")
-        return max(-1.0, min(1.0, value))
+        # The shared check rejects nonfinite arithmetic and excessive overshoots
+        return correlation_value(
+            self.covariance, self.left_variance, self.right_variance
+        )
 
 
 def flush_residual_counts(database, counts):
@@ -257,20 +257,36 @@ def compare_tracks(left_paths, right_paths, scope, residual_database):
     flush_residual_counts(residual_database, residual_counts)
     return {
         "bases": bases,
-        "fraction_identical": identical / bases,
-        "mae": absolute_error / bases,
-        "rmse": math.sqrt(squared_error / bases),
-        "mean_signed_difference": signed_error / bases,
-        "fraction_left_below": below / bases,
-        "fraction_left_above": above / bases,
+        "fraction_identical": checked_metric(
+            identical / bases, "identical fraction", maximum=1.0
+        ),
+        "mae": checked_metric(absolute_error / bases, "mae"),
+        "rmse": checked_metric(math.sqrt(squared_error / bases), "rmse"),
+        "mean_signed_difference": checked_metric(
+            signed_error / bases, "mean signed difference", minimum=None
+        ),
+        "fraction_left_below": checked_metric(
+            below / bases, "left-below fraction", maximum=1.0
+        ),
+        "fraction_left_above": checked_metric(
+            above / bases, "left-above fraction", maximum=1.0
+        ),
         "nonzero_union_bases": union_bases,
-        "union_fraction_identical": union_identical / union_bases
+        "union_fraction_identical": checked_metric(
+            union_identical / union_bases, "union identical fraction", maximum=1.0
+        )
         if union_bases
         else "NA",
-        "union_mae": absolute_error / union_bases if union_bases else "NA",
-        "union_rmse": math.sqrt(squared_error / union_bases) if union_bases else "NA",
-        "left_integrated_depth": left_total,
-        "right_integrated_depth": right_total,
+        "union_mae": checked_metric(absolute_error / union_bases, "union MAE")
+        if union_bases
+        else "NA",
+        "union_rmse": checked_metric(
+            math.sqrt(squared_error / union_bases), "union RMSE"
+        )
+        if union_bases
+        else "NA",
+        "left_integrated_depth": checked_metric(left_total, "left integrated depth"),
+        "right_integrated_depth": checked_metric(right_total, "right integrated depth"),
         "pearson_r_1bp": correlation.value(),
     }
 
@@ -322,16 +338,30 @@ def compare_regions(left, right):
     correlation = Correlation()
     for key in left:
         correlation.add(left[key], right[key])
-    left_total, right_total = sum(left.values()), sum(right.values())
+    left_total = checked_metric(sum(left.values()), "left summed region counts")
+    right_total = checked_metric(sum(right.values()), "right summed region counts")
     return {
         "regions": len(left),
         "left_summed_region_counts": left_total,
         "right_summed_region_counts": right_total,
-        "regional_total_ratio": left_total / right_total if right_total else "NA",
-        "net_count_difference": sum(differences),
-        "mae": sum(abs(value) for value in differences) / len(left),
-        "rmse": math.sqrt(sum(value**2 for value in differences) / len(left)),
-        "fraction_identical": sum(value == 0 for value in differences) / len(left),
+        "regional_total_ratio": checked_metric(
+            left_total / right_total, "regional total ratio"
+        )
+        if right_total
+        else "NA",
+        "net_count_difference": checked_metric(
+            sum(differences), "net count difference", minimum=None
+        ),
+        "mae": checked_metric(
+            sum(abs(value) for value in differences) / len(left), "regional MAE"
+        ),
+        "rmse": checked_metric(
+            math.sqrt(sum(value**2 for value in differences) / len(left)), "regional RMSE"
+        ),
+        "fraction_identical": checked_metric(
+            sum(value == 0 for value in differences) / len(left),
+            "identical region fraction", maximum=1.0,
+        ),
         "pearson_r_regions": correlation.value(),
     }
 
@@ -460,7 +490,9 @@ def main():
                         **comparison,
                         "residual": residual,
                         "bases": bases,
-                        "fraction_of_bases": bases / metrics["bases"],
+                        "fraction_of_bases": checked_metric(
+                            bases / metrics["bases"], "residual fraction", maximum=1.0
+                        ),
                     }
                 )
             residual_database.execute("DELETE FROM residual_counts")

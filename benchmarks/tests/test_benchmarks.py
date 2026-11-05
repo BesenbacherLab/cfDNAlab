@@ -138,6 +138,19 @@ class CoverageTests(unittest.TestCase):
         self.assertAlmostEqual(float(row["union_mae"]), 1)
         self.assertEqual(row["pearson_r_1bp"], "NA")
 
+    def test_rejects_overflow_in_a_derived_coverage_metric(self):
+        # Each depth and squared difference is finite, but the weighted sum overflows
+        self.profile("cfdnalab", "chr1\t0\t100\t1e154\n")
+        self.profile("mosdepth", "chr1\t0\t100\t0\n")
+        histogram = self.profiles.parent / "residuals.tsv"
+        histogram.write_text("Previous successful histogram\n")
+
+        result = self.compare()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Invalid rmse", result.stderr)
+        self.assertEqual(histogram.read_text(), "Previous successful histogram\n")
+
     def test_residual_distribution_preserves_sign_and_counts_genomic_bases(self):
         # Residuals -2, 0, +1 cover 20, 70, 30 bases across both contigs
         # MAE=(40+30)/120=7/12, RMSE=sqrt(110/120), signed mean=-10/120
@@ -647,6 +660,54 @@ class BiologicalInputTests(unittest.TestCase):
 
 class MotifTests(unittest.TestCase):
     """Compare native left-end frequencies and reject damaged both-end output."""
+
+    def test_absent_abundant_motif_retains_an_infinite_log_ratio(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name, present in (("left", "AAA"), ("right", "CCC")):
+                directory = root / name
+                directory.mkdir()
+                with (directory / "motifs.tsv").open("w") as destination:
+                    for bases in product("ACGT", repeat=3):
+                        motif = "".join(bases)
+                        destination.write(f"{motif}\t{int(motif == present)}\n")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(BENCHMARKS / "ends/compare_end_motifs.py"),
+                    str(root), "--k", "3",
+                ],
+                text=True, capture_output=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            row = next(csv.DictReader(result.stdout.splitlines(), delimiter="\t"))
+            # Two bins differ by 1 among 64 motifs, giving TV=1 and MAE=2/64
+            self.assertEqual(row["max_abs_log2_ratio_abundant"], "Inf")
+            self.assertEqual(float(row["total_variation"]), 1.0)
+            self.assertEqual(float(row["mae_frequency"]), 1 / 32)
+            self.assertAlmostEqual(float(row["pearson_r"]), -1 / 63)
+            self.assertAlmostEqual(float(row["spearman_r"]), -1 / 63)
+
+            # Positive frequencies near the float minimum still have finite log ratios
+            # log2(1 / 10^-320) is about 320 * log2(10). Binary rounding adds <1e-4
+            for name, large, tiny in (("left", "AAA", "CCC"), ("right", "CCC", "AAA")):
+                with (root / name / "motifs.tsv").open("w") as destination:
+                    for bases in product("ACGT", repeat=3):
+                        motif = "".join(bases)
+                        frequency = 1.0 if motif == large else 1e-320 if motif == tiny else 0.0
+                        destination.write(f"{motif}\t{frequency}\n")
+            finite_result = subprocess.run(
+                [sys.executable, str(BENCHMARKS / "ends/compare_end_motifs.py"),
+                 str(root), "--k", "3"], text=True, capture_output=True,
+            )
+            self.assertEqual(finite_result.returncode, 0, finite_result.stderr)
+            finite_row = next(csv.DictReader(finite_result.stdout.splitlines(), delimiter="\t"))
+            self.assertAlmostEqual(
+                float(finite_row["max_abs_log2_ratio_abundant"]),
+                320 * math.log2(10), delta=1e-4,
+            )
 
     @unittest.skipUnless(
         importlib.util.find_spec("pyarrow") is not None,

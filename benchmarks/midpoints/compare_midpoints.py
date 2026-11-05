@@ -15,6 +15,10 @@ import numpy as np
 import pandas as pd
 from cfdnalab import read_midpoints
 
+# The shared checks live in benchmarks/, above this feature's script directory
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from benchmark_metrics import checked_metric, pearson_correlation
+
 
 def read_cfdnalab(path):
     """Read unsmoothed 1 bp counts, site counts and the window width.
@@ -135,7 +139,7 @@ def main():
             raise ValueError(
                 f"Different site counts for {group}: {site_count} vs {griffin_sites}"
             )
-        count_mean = float(counts.mean())
+        count_mean = checked_metric(float(counts.mean()), f"midpoint mean for {group}")
         row = {
             "group": group,
             "sites": site_count,
@@ -156,11 +160,16 @@ def main():
             normalized = counts / count_mean
             difference = normalized - griffin_profile
             row["status"] = "ok"
-            if np.std(normalized) > 0 and np.std(griffin_profile) > 0:
-                row["pearson_r"] = float(np.corrcoef(normalized, griffin_profile)[0, 1])
-            row["mae_mean_one"] = float(np.mean(np.abs(difference)))
-            row["rmse_mean_one"] = float(np.sqrt(np.mean(difference**2)))
-            row["max_abs_mean_one"] = float(np.max(np.abs(difference)))
+            row["pearson_r"] = pearson_correlation(normalized, griffin_profile)
+            row["mae_mean_one"] = checked_metric(
+                float(np.mean(np.abs(difference))), "midpoint MAE"
+            )
+            row["rmse_mean_one"] = checked_metric(
+                float(np.sqrt(np.mean(difference**2))), "midpoint RMSE"
+            )
+            row["max_abs_mean_one"] = checked_metric(
+                float(np.max(np.abs(difference))), "maximum midpoint difference"
+            )
         writer.writerow(row)
 
 
