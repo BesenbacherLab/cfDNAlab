@@ -41,13 +41,19 @@ def reconstruct_pair(unpaired_record):
     Unmapped records have no aligned reference span. Their reconstructed mates
     remain unmapped, with TLEN zero and proper-pair status unset.
     """
-    if not unpaired_record.query_name or not unpaired_record.query_name.startswith("M_"):
-        raise ValueError(f"Unexpected unpaired name. Expected an M_ merged read: {unpaired_record.query_name}")
+    if not unpaired_record.query_name or not unpaired_record.query_name.startswith(
+        "M_"
+    ):
+        raise ValueError(
+            f"Unexpected unpaired name. Expected an M_ merged read: {unpaired_record.query_name}"
+        )
     fragment_length = 0
     if not unpaired_record.is_unmapped:
         reference_end = unpaired_record.reference_end
         if reference_end is None or reference_end <= unpaired_record.reference_start:
-            raise ValueError(f"Mapped read has no reference span: {unpaired_record.query_name}")
+            raise ValueError(
+                f"Mapped read has no reference span: {unpaired_record.query_name}"
+            )
         fragment_length = reference_end - unpaired_record.reference_start
 
     # Copy the record so secondary, supplementary, duplicate, QC-fail and unmapped
@@ -97,13 +103,21 @@ def main():
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input_bam", type=Path, help="Coordinate-sorted Snyder BAM")
-    parser.add_argument("output_bam", type=Path, help="New downsampled BAM with reconstructed pairs")
     parser.add_argument(
-        "--keep-probability", type=float, required=True,
+        "output_bam", type=Path, help="New downsampled BAM with reconstructed pairs"
+    )
+    parser.add_argument(
+        "--keep-probability",
+        type=float,
+        required=True,
         help="Probability of retaining each fragment, greater than 0 and at most 1",
     )
-    parser.add_argument("--seed", type=int, default=42, help="Seed for reproducible fragment sampling")
-    parser.add_argument("--threads", type=int, default=4, help="BAM I/O threads per reader/writer")
+    parser.add_argument(
+        "--seed", type=int, default=42, help="Seed for reproducible fragment sampling"
+    )
+    parser.add_argument(
+        "--threads", type=int, default=4, help="BAM I/O threads per reader/writer"
+    )
     arguments = parser.parse_args()
     if not 0 < arguments.keep_probability <= 1:
         parser.error("--keep-probability must be greater than 0 and at most 1")
@@ -119,12 +133,17 @@ def main():
     paired_input_records = 0
     # A 64-bit hash spans [0, 2**64). Keep the requested fraction of that range
     sampling_threshold = int(arguments.keep_probability * 2**64)
-    print(f"Preparing {arguments.input_bam} with pysam {pysam.__version__}", file=sys.stderr)
+    print(
+        f"Preparing {arguments.input_bam} with pysam {pysam.__version__}",
+        file=sys.stderr,
+    )
     print(
         f"Fragment retention probability: {arguments.keep_probability}, seed: {arguments.seed}",
         file=sys.stderr,
     )
-    with pysam.AlignmentFile(arguments.input_bam, "rb", threads=arguments.threads) as source:
+    with pysam.AlignmentFile(
+        arguments.input_bam, "rb", threads=arguments.threads
+    ) as source:
         # Preserve contig names, reference order, read groups and existing metadata
         # Do not add a processing-history entry or embed command-line file paths
         # Metadata already present in the input header is retained unchanged
@@ -139,20 +158,25 @@ def main():
                 if input_records % 100_000_000 == 0:
                     print(f"Processed {input_records:,} input records", file=sys.stderr)
                 if record.query_name is None:
-                    parser.error(f"Input record {input_records:,} has no read name for sampling")
+                    parser.error(
+                        f"Input record {input_records:,} has no read name for sampling"
+                    )
 
                 if record.is_paired:
                     paired_input_records += 1
                 elif record.query_name.startswith("M_"):
                     merged_input_records += 1
                 else:
-                    parser.error(f"Unexpected unpaired name at input record {input_records}: {record.query_name}")
+                    parser.error(
+                        f"Unexpected unpaired name at input record {input_records}: {record.query_name}"
+                    )
 
                 # Use only the seed and read name, never position, flags or quality
                 # Both existing mates get the same decision even when far apart
                 # Every retained recognized merged record produces two mates below
                 fragment_hash = hashlib.blake2b(
-                    f"{arguments.seed}:{record.query_name}".encode("utf-8"), digest_size=8
+                    f"{arguments.seed}:{record.query_name}".encode("utf-8"),
+                    digest_size=8,
                 ).digest()
                 if int.from_bytes(fragment_hash, "big") >= sampling_threshold:
                     continue
@@ -180,8 +204,13 @@ def main():
     print(f"Recognized merged records: {merged_input_records:,}", file=sys.stderr)
     print(f"Retained input records: {retained_input_records:,}", file=sys.stderr)
     print(f"Reconstructed pairs: {reconstructed_pairs:,}", file=sys.stderr)
-    print(f"Output records: {retained_input_records + reconstructed_pairs:,}", file=sys.stderr)
-    print(f"Ready: {arguments.output_bam} and {arguments.output_bam}.bai", file=sys.stderr)
+    print(
+        f"Output records: {retained_input_records + reconstructed_pairs:,}",
+        file=sys.stderr,
+    )
+    print(
+        f"Ready: {arguments.output_bam} and {arguments.output_bam}.bai", file=sys.stderr
+    )
 
 
 if __name__ == "__main__":

@@ -48,13 +48,21 @@ def load_profile(directory, motifs):
         table = pd.read_parquet(freia_path)
         required = {"Base", "Length", "CountLen", "WhichEnd", "Unit"}
         if not required.issubset(table.columns) or table.empty:
-            raise ValueError(f"Missing native FrEIA left-abundance columns or rows in {directory.name}")
+            raise ValueError(
+                f"Missing native FrEIA left-abundance columns or rows in {directory.name}"
+            )
         if set(table["WhichEnd"]) != {"leftmost"} or set(table["Unit"]) != {"GRCh38"}:
-            raise ValueError("FrEIA concordance requires intact genome-level leftmost output")
+            raise ValueError(
+                "FrEIA concordance requires intact genome-level leftmost output"
+            )
         if table["Base"].isna().any() or not set(table["Base"]).issubset(motifs):
             raise ValueError(f"Unexpected FrEIA motif labels in {directory.name}")
         counts = pd.to_numeric(table["CountLen"], errors="raise")
-        if not np.isfinite(counts).all() or (counts < 0).any() or (counts % 1 != 0).any():
+        if (
+            not np.isfinite(counts).all()
+            or (counts < 0).any()
+            or (counts % 1 != 0).any()
+        ):
             raise ValueError(f"Invalid native FrEIA counts in {directory.name}")
         # CountSamp repeats a motif total for each length. Sum CountLen instead
         table = table.assign(CountLen=counts)
@@ -78,7 +86,9 @@ def load_profile(directory, motifs):
             raise ValueError(f"Duplicate motif {motif} in {directory.name}")
         values[motif] = float(value)
     if set(values) != set(motifs):
-        raise ValueError(f"{directory.name} does not contain exactly the expected ACGT motif set")
+        raise ValueError(
+            f"{directory.name} does not contain exactly the expected ACGT motif set"
+        )
     ordered_values = np.array([values[motif] for motif in motifs], dtype=float)
     if not np.isfinite(ordered_values).all() or (ordered_values < 0).any():
         raise ValueError(f"Non-finite or negative values in {directory.name}")
@@ -86,7 +96,9 @@ def load_profile(directory, motifs):
     if total <= 0:
         raise ValueError(f"No counted motif mass in {directory.name}")
     if not contains_counts and not np.isclose(total, 1.0, rtol=1e-6, atol=1e-9):
-        raise ValueError(f"FinaleToolkit frequencies do not sum to 1 in {directory.name}: {total}")
+        raise ValueError(
+            f"FinaleToolkit frequencies do not sum to 1 in {directory.name}: {total}"
+        )
     return ordered_values / total, total if contains_counts else "NA", end_selection
 
 
@@ -99,27 +111,58 @@ def motif_diversity(frequencies):
 def main():
     """Load the small native profiles and print all pairwise comparisons."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("profiles", type=Path, help="The benchmark results/profiles directory")
-    parser.add_argument("--k", type=int, choices=(3, 4), default=4, help="Motif length used by the commands")
+    parser.add_argument(
+        "profiles", type=Path, help="The benchmark results/profiles directory"
+    )
+    parser.add_argument(
+        "--k",
+        type=int,
+        choices=(3, 4),
+        default=4,
+        help="Motif length used by the commands",
+    )
     arguments = parser.parse_args()
     motifs = ["".join(bases) for bases in product("ACGT", repeat=arguments.k)]
     directories = sorted(path for path in arguments.profiles.iterdir() if path.is_dir())
-    freia_directories = [path for path in directories
-                         if (path / "T__sample.pq").is_file() and not (path / "left-motifs.pq").is_file()]
+    freia_directories = [
+        path
+        for path in directories
+        if (path / "T__sample.pq").is_file() and not (path / "left-motifs.pq").is_file()
+    ]
     if freia_directories:
-        print("Skipping FrEIA concordance: the pinned native both-end aggregation is incorrect.", file=sys.stderr)
+        print(
+            "Skipping FrEIA concordance: the pinned native both-end aggregation is incorrect.",
+            file=sys.stderr,
+        )
         directories = [path for path in directories if path not in freia_directories]
     if len(directories) < 2:
         parser.error("At least two saved tool profiles are required")
     profiles = {path.name: load_profile(path, motifs) for path in directories}
 
     columns = [
-        "left_profile", "right_profile", "k", "motifs", "left_counted_ends", "right_counted_ends",
-        "left_end_selection", "right_end_selection", "side_comparison",
-        "pearson_r", "spearman_r", "max_abs_log2_ratio_abundant", "mae_frequency", "rmse_frequency", "max_abs_frequency_difference",
-        "total_variation", "left_mds", "right_mds", "abs_mds_difference",
+        "left_profile",
+        "right_profile",
+        "k",
+        "motifs",
+        "left_counted_ends",
+        "right_counted_ends",
+        "left_end_selection",
+        "right_end_selection",
+        "side_comparison",
+        "pearson_r",
+        "spearman_r",
+        "max_abs_log2_ratio_abundant",
+        "mae_frequency",
+        "rmse_frequency",
+        "max_abs_frequency_difference",
+        "total_variation",
+        "left_mds",
+        "right_mds",
+        "abs_mds_difference",
     ]
-    writer = csv.DictWriter(sys.stdout, fieldnames=columns, delimiter="\t", lineterminator="\n")
+    writer = csv.DictWriter(
+        sys.stdout, fieldnames=columns, delimiter="\t", lineterminator="\n"
+    )
     writer.writeheader()
     for left_name, right_name in combinations(profiles, 2):
         left_frequency, left_total, left_ends = profiles[left_name]
@@ -139,10 +182,16 @@ def main():
         abundant = np.maximum(left_frequency, right_frequency) >= 1e-4
         log_ratio = "NA"
         if abundant.any():
-            if ((left_frequency[abundant] == 0) | (right_frequency[abundant] == 0)).any():
+            if (
+                (left_frequency[abundant] == 0) | (right_frequency[abundant] == 0)
+            ).any():
                 log_ratio = "Inf"
             else:
-                log_ratio = float(np.abs(np.log2(left_frequency[abundant] / right_frequency[abundant])).max())
+                log_ratio = float(
+                    np.abs(
+                        np.log2(left_frequency[abundant] / right_frequency[abundant])
+                    ).max()
+                )
         left_mds = motif_diversity(left_frequency)
         right_mds = motif_diversity(right_frequency)
         row = {
@@ -154,7 +203,9 @@ def main():
             "right_counted_ends": right_total,
             "left_end_selection": left_ends,
             "right_end_selection": right_ends,
-            "side_comparison": "same-sides" if left_ends == right_ends else "approximate-side-mirroring",
+            "side_comparison": "same-sides"
+            if left_ends == right_ends
+            else "approximate-side-mirroring",
             "pearson_r": correlation,
             "spearman_r": rank_correlation,
             "max_abs_log2_ratio_abundant": log_ratio,

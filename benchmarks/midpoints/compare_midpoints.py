@@ -30,9 +30,9 @@ def read_cfdnalab(path):
     expected = np.arange(width)
     if width == 0 or width % 2:
         raise ValueError("Expected an even, nonzero profile width")
-    if not np.array_equal(positions["position_bin_start_bp"], expected) or not np.array_equal(
-        positions["position_bin_end_bp"], expected + 1
-    ):
+    if not np.array_equal(
+        positions["position_bin_start_bp"], expected
+    ) or not np.array_equal(positions["position_bin_end_bp"], expected + 1):
         raise ValueError("cfDNAlab positions must be contiguous 1 bp bins")
     counts = result.counts_array()[:, 0, :].astype(float)
     if not np.isfinite(counts).all() or (counts < 0).any():
@@ -54,20 +54,34 @@ def read_griffin(path, width):
     """
     table = pd.read_csv(path, sep="\t", dtype={"site_name": str}, keep_default_na=False)
     position_columns = [str(position) for position in range(-width // 2, width // 2)]
-    native_positions = {column for column in table.columns if column.lstrip("-").isdigit()}
+    native_positions = {
+        column for column in table.columns if column.lstrip("-").isdigit()
+    }
     if native_positions != set(position_columns):
         raise ValueError("Griffin position labels do not match the cfDNAlab window")
     profiles = {}
     for row_index, row in table.iterrows():
         group = row["site_name"]
         site_count = float(row["number_of_sites"])
-        if group in profiles or not np.isfinite(site_count) or site_count <= 0 or not site_count.is_integer():
+        if (
+            group in profiles
+            or not np.isfinite(site_count)
+            or site_count <= 0
+            or not site_count.is_integer()
+        ):
             raise ValueError(f"Duplicate group or invalid site count: {group}")
-        if str(row["smoothing"]).lower() != "false" or str(row["CNA_normalization"]).lower() != "false":
-            raise ValueError("Expected unsmoothed Griffin output without site-wise CNA normalization")
+        if (
+            str(row["smoothing"]).lower() != "false"
+            or str(row["CNA_normalization"]).lower() != "false"
+        ):
+            raise ValueError(
+                "Expected unsmoothed Griffin output without site-wise CNA normalization"
+            )
         # Griffin writes an empty field for a NaN, including an empty group's
         # undefined mean-one profile. Preserve that distinction from a real zero
-        profile = pd.to_numeric(row[position_columns].replace("", np.nan)).to_numpy(dtype=float)
+        profile = pd.to_numeric(row[position_columns].replace("", np.nan)).to_numpy(
+            dtype=float
+        )
         mean_per_site = float(row["mean_reads_per_bp_in_normalization_window"])
         if not np.isfinite(mean_per_site) or mean_per_site < 0:
             raise ValueError(f"Invalid Griffin mean-count metadata for {group}")
@@ -86,31 +100,53 @@ def read_griffin(path, width):
 def main():
     """Check site/window agreement and write concordance metrics per group."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("profiles", type=Path, help="The benchmark results/profiles directory")
+    parser.add_argument(
+        "profiles", type=Path, help="The benchmark results/profiles directory"
+    )
     arguments = parser.parse_args()
-    cfdnalab, width = read_cfdnalab(arguments.profiles / "cfdnalab" / "midpoint_profiles.zarr")
-    griffin = read_griffin(arguments.profiles / "griffin" / "sample.uncorrected.coverage.tsv", width)
+    cfdnalab, width = read_cfdnalab(
+        arguments.profiles / "cfdnalab" / "midpoint_profiles.zarr"
+    )
+    griffin = read_griffin(
+        arguments.profiles / "griffin" / "sample.uncorrected.coverage.tsv", width
+    )
     if set(cfdnalab) != set(griffin):
         raise ValueError("The tools did not report the same group set")
     columns = [
-        "group", "sites", "positions", "cfdnalab_mean_midpoints_per_site_bp",
-        "griffin_mean_midpoints_per_site_bp", "pearson_r", "mae_mean_one",
-        "rmse_mean_one", "max_abs_mean_one", "status",
+        "group",
+        "sites",
+        "positions",
+        "cfdnalab_mean_midpoints_per_site_bp",
+        "griffin_mean_midpoints_per_site_bp",
+        "pearson_r",
+        "mae_mean_one",
+        "rmse_mean_one",
+        "max_abs_mean_one",
+        "status",
     ]
-    writer = csv.DictWriter(sys.stdout, fieldnames=columns, delimiter="\t", lineterminator="\n")
+    writer = csv.DictWriter(
+        sys.stdout, fieldnames=columns, delimiter="\t", lineterminator="\n"
+    )
     writer.writeheader()
     for group in sorted(cfdnalab):
         counts, site_count = cfdnalab[group]
         griffin_profile, griffin_sites, griffin_mean = griffin[group]
         if site_count != griffin_sites:
-            raise ValueError(f"Different site counts for {group}: {site_count} vs {griffin_sites}")
+            raise ValueError(
+                f"Different site counts for {group}: {site_count} vs {griffin_sites}"
+            )
         count_mean = float(counts.mean())
         row = {
-            "group": group, "sites": site_count, "positions": width,
+            "group": group,
+            "sites": site_count,
+            "positions": width,
             "cfdnalab_mean_midpoints_per_site_bp": count_mean / site_count,
             "griffin_mean_midpoints_per_site_bp": griffin_mean,
-            "pearson_r": "NA", "mae_mean_one": "NA", "rmse_mean_one": "NA",
-            "max_abs_mean_one": "NA", "status": "both-zero-coverage",
+            "pearson_r": "NA",
+            "mae_mean_one": "NA",
+            "rmse_mean_one": "NA",
+            "max_abs_mean_one": "NA",
+            "status": "both-zero-coverage",
         }
         if count_mean == 0 and np.isfinite(griffin_profile).all():
             row["status"] = "cfdnalab-zero-coverage"

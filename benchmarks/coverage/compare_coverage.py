@@ -29,8 +29,12 @@ def open_track(path):
     """Read all compressed frames and propagate decompression errors."""
     if path.suffix == ".zst":
         with tempfile.TemporaryFile(mode="w+") as errors:
-            process = subprocess.Popen(["zstd", "-dc", str(path)], stdout=subprocess.PIPE,
-                                       stderr=errors, text=True)
+            process = subprocess.Popen(
+                ["zstd", "-dc", str(path)],
+                stdout=subprocess.PIPE,
+                stderr=errors,
+                text=True,
+            )
             try:
                 yield process.stdout
                 status = process.wait()
@@ -43,7 +47,7 @@ def open_track(path):
                     process.terminate()
                 process.wait()
     else:
-        with (gzip.open(path, "rt") if path.suffix == ".gz" else path.open()) as source:
+        with gzip.open(path, "rt") if path.suffix == ".gz" else path.open() as source:
             yield source
 
 
@@ -53,7 +57,9 @@ def read_scope(directory):
     with (directory / "chrom.sizes").open() as source:
         for chromosome, length in csv.reader(source, delimiter="\t"):
             if chromosome in scope or int(length) <= 0:
-                raise ValueError(f"Invalid or duplicate chromosome in {directory}/chrom.sizes")
+                raise ValueError(
+                    f"Invalid or duplicate chromosome in {directory}/chrom.sizes"
+                )
             scope[chromosome] = int(length)
     if not scope:
         raise ValueError(f"Empty processed scope: {directory}")
@@ -69,9 +75,19 @@ def spool_track(directory, scope, destination):
     method = directory.name
     positional = method in ("samtools-depth", "pandepth")
     sparse = method.startswith("cfdnalab")
-    filename = "positions.tsv.gz" if positional else (
-        "fcoverage.per_position.bedgraph.zst" if sparse else "coverage.per-base.bed.gz")
-    paths = {chromosome: destination / f"{index}.tsv" for index, chromosome in enumerate(scope)}
+    filename = (
+        "positions.tsv.gz"
+        if positional
+        else (
+            "fcoverage.per_position.bedgraph.zst"
+            if sparse
+            else "coverage.per-base.bed.gz"
+        )
+    )
+    paths = {
+        chromosome: destination / f"{index}.tsv"
+        for index, chromosome in enumerate(scope)
+    }
     previous_chromosome = None
     previous_end = 0
     visited = set()
@@ -84,7 +100,9 @@ def spool_track(directory, scope, destination):
                     continue
                 fields = line.split()
                 if len(fields) != (3 if positional else 4):
-                    raise ValueError(f"Unexpected track columns: {method}, line {line_number}")
+                    raise ValueError(
+                        f"Unexpected track columns: {method}, line {line_number}"
+                    )
                 chromosome = fields[0]
                 if positional:
                     start = int(fields[1]) - (1 if method == "samtools-depth" else 0)
@@ -92,14 +110,26 @@ def spool_track(directory, scope, destination):
                 else:
                     start, end, depth = int(fields[1]), int(fields[2]), float(fields[3])
                 if chromosome not in scope or not 0 <= start < end <= scope[chromosome]:
-                    raise ValueError(f"Out-of-scope interval: {method}, line {line_number}")
+                    raise ValueError(
+                        f"Out-of-scope interval: {method}, line {line_number}"
+                    )
                 if not math.isfinite(depth) or depth < 0:
-                    raise ValueError(f"Invalid coverage value: {method}, line {line_number}")
+                    raise ValueError(
+                        f"Invalid coverage value: {method}, line {line_number}"
+                    )
                 if chromosome != previous_chromosome:
                     if chromosome in visited:
-                        raise ValueError(f"Repeated chromosome block: {method}, {chromosome}")
-                    if previous_chromosome is not None and not sparse and previous_end != scope[previous_chromosome]:
-                        raise ValueError(f"Incomplete native track: {method}, {previous_chromosome}")
+                        raise ValueError(
+                            f"Repeated chromosome block: {method}, {chromosome}"
+                        )
+                    if (
+                        previous_chromosome is not None
+                        and not sparse
+                        and previous_end != scope[previous_chromosome]
+                    ):
+                        raise ValueError(
+                            f"Incomplete native track: {method}, {previous_chromosome}"
+                        )
                     if output:
                         output.write("\t".join(map(str, pending)) + "\n")
                         output.close()
@@ -107,7 +137,9 @@ def spool_track(directory, scope, destination):
                     visited.add(chromosome)
                     previous_chromosome, previous_end, pending = chromosome, 0, None
                 if start < previous_end or (not sparse and start != previous_end):
-                    raise ValueError(f"Overlapping, unsorted or incomplete runs: {method}, line {line_number}")
+                    raise ValueError(
+                        f"Overlapping, unsorted or incomplete runs: {method}, line {line_number}"
+                    )
                 if pending and pending[1] == start and pending[2] == depth:
                     pending = (pending[0], end, depth)
                 else:
@@ -115,7 +147,9 @@ def spool_track(directory, scope, destination):
                         output.write("\t".join(map(str, pending)) + "\n")
                     pending = (start, end, depth)
                 previous_end = end
-        if not sparse and (visited != set(scope) or previous_end != scope[previous_chromosome]):
+        if not sparse and (
+            visited != set(scope) or previous_end != scope[previous_chromosome]
+        ):
             raise ValueError(f"Incomplete native track: {method}")
         if output:
             output.write("\t".join(map(str, pending)) + "\n")
@@ -163,7 +197,12 @@ class Correlation:
         """Constant profiles have undefined correlation, including equal zeros."""
         if self.left_variance <= 0 or self.right_variance <= 0:
             return "NA"
-        return max(-1.0, min(1.0, self.covariance / math.sqrt(self.left_variance * self.right_variance)))
+        value = self.covariance / math.sqrt(self.left_variance * self.right_variance)
+        # A small overshoot is allowed after accumulating many weighted runs
+        # Nonfinite values must fail before clipping, which can turn NaN into +1
+        if not math.isfinite(value) or abs(value) > 1.0 + 1e-5:
+            raise RuntimeError(f"Invalid correlation value: {value}")
+        return max(-1.0, min(1.0, value))
 
 
 def flush_residual_counts(database, counts):
@@ -217,15 +256,21 @@ def compare_tracks(left_paths, right_paths, scope, residual_database):
                 right_run = next(right_runs)
     flush_residual_counts(residual_database, residual_counts)
     return {
-        "bases": bases, "fraction_identical": identical / bases,
-        "mae": absolute_error / bases, "rmse": math.sqrt(squared_error / bases),
+        "bases": bases,
+        "fraction_identical": identical / bases,
+        "mae": absolute_error / bases,
+        "rmse": math.sqrt(squared_error / bases),
         "mean_signed_difference": signed_error / bases,
-        "fraction_left_below": below / bases, "fraction_left_above": above / bases,
+        "fraction_left_below": below / bases,
+        "fraction_left_above": above / bases,
         "nonzero_union_bases": union_bases,
-        "union_fraction_identical": union_identical / union_bases if union_bases else "NA",
+        "union_fraction_identical": union_identical / union_bases
+        if union_bases
+        else "NA",
         "union_mae": absolute_error / union_bases if union_bases else "NA",
         "union_rmse": math.sqrt(squared_error / union_bases) if union_bases else "NA",
-        "left_integrated_depth": left_total, "right_integrated_depth": right_total,
+        "left_integrated_depth": left_total,
+        "right_integrated_depth": right_total,
         "pearson_r_1bp": correlation.value(),
     }
 
@@ -236,23 +281,38 @@ def regional_counts(directory, expected_regions):
         from cfdnalab import read_lengths, WindowedLengthCounts
 
         result = read_lengths(directory / "length_counts.tsv.zst")
-        if not isinstance(result, WindowedLengthCounts) or len(result.length_bins()) != 1:
+        if (
+            not isinstance(result, WindowedLengthCounts)
+            or len(result.length_bins()) != 1
+        ):
             raise ValueError("Expected a BED count table with a single length bin")
         table = result.data_frame()
-        entries = table[["chrom", "start", "end", "count"]].itertuples(index=False, name=None)
+        entries = table[["chrom", "start", "end", "count"]].itertuples(
+            index=False, name=None
+        )
     else:
         with open_track(directory / "finaletoolkit.coverage.bed.gz") as source:
-            entries = [fields[:3] + fields[-1:] for fields in csv.reader(source, delimiter="\t")
-                       if fields and not fields[0].startswith("#")]
+            entries = [
+                fields[:3] + fields[-1:]
+                for fields in csv.reader(source, delimiter="\t")
+                if fields and not fields[0].startswith("#")
+            ]
     counts = {}
     for chromosome, start, end, count in entries:
         key = str(chromosome), int(start), int(end)
         count = float(count)
-        if key in counts or not math.isfinite(count) or count < 0 or not count.is_integer():
+        if (
+            key in counts
+            or not math.isfinite(count)
+            or count < 0
+            or not count.is_integer()
+        ):
             raise ValueError(f"Duplicate region or invalid raw count in {directory}")
         counts[key] = count
     if set(counts) != expected_regions:
-        raise ValueError(f"Regional row identity differs from the shared BED: {directory}")
+        raise ValueError(
+            f"Regional row identity differs from the shared BED: {directory}"
+        )
     return counts
 
 
@@ -263,25 +323,40 @@ def compare_regions(left, right):
     for key in left:
         correlation.add(left[key], right[key])
     left_total, right_total = sum(left.values()), sum(right.values())
-    return {"regions": len(left), "left_summed_region_counts": left_total,
-            "right_summed_region_counts": right_total,
-            "regional_total_ratio": left_total / right_total if right_total else "NA",
-            "net_count_difference": sum(differences),
-            "mae": sum(abs(value) for value in differences) / len(left),
-            "rmse": math.sqrt(sum(value**2 for value in differences) / len(left)),
-            "fraction_identical": sum(value == 0 for value in differences) / len(left),
-            "pearson_r_regions": correlation.value()}
+    return {
+        "regions": len(left),
+        "left_summed_region_counts": left_total,
+        "right_summed_region_counts": right_total,
+        "regional_total_ratio": left_total / right_total if right_total else "NA",
+        "net_count_difference": sum(differences),
+        "mae": sum(abs(value) for value in differences) / len(left),
+        "rmse": math.sqrt(sum(value**2 for value in differences) / len(left)),
+        "fraction_identical": sum(value == 0 for value in differences) / len(left),
+        "pearson_r_regions": correlation.value(),
+    }
 
 
 def main():
     """Compare like quantities, recording the evaluated chromosome scope per row."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("profiles", type=Path)
-    parser.add_argument("--common-scope", action="store_true", help="Explicitly allow intersection of declared scopes")
+    parser.add_argument(
+        "--common-scope",
+        action="store_true",
+        help="Explicitly allow intersection of declared scopes",
+    )
     arguments = parser.parse_args()
     directories = sorted(path for path in arguments.profiles.iterdir() if path.is_dir())
-    regional_directories = [path for path in directories if "region-counts" in path.name or path.name == "finaletoolkit-coverage"]
-    track_scopes = {path.name: read_scope(path) for path in directories if path not in regional_directories}
+    regional_directories = [
+        path
+        for path in directories
+        if "region-counts" in path.name or path.name == "finaletoolkit-coverage"
+    ]
+    track_scopes = {
+        path.name: read_scope(path)
+        for path in directories
+        if path not in regional_directories
+    }
     comparisons = []
     # Check all pair scopes before loading large tracks or replacing any results
     for left_name, right_name in combinations(track_scopes, 2):
@@ -290,35 +365,72 @@ def main():
         left_scope, right_scope = track_scopes[left_name], track_scopes[right_name]
         same_scope = left_scope == right_scope
         if not same_scope and not arguments.common_scope:
-            parser.error(f"Scopes differ: {left_name}, {right_name}. Use --common-scope to compare their intersection")
-        scope = {chromosome: length for chromosome, length in left_scope.items() if chromosome in right_scope}
-        if not scope or any(right_scope[chromosome] != length for chromosome, length in scope.items()):
+            parser.error(
+                f"Scopes differ: {left_name}, {right_name}. Use --common-scope to compare their intersection"
+            )
+        scope = {
+            chromosome: length
+            for chromosome, length in left_scope.items()
+            if chromosome in right_scope
+        }
+        if not scope or any(
+            right_scope[chromosome] != length for chromosome, length in scope.items()
+        ):
             raise ValueError("Empty shared scope or mismatched chromosome lengths")
         comparisons.append((left_name, right_name, scope, same_scope))
     rows = []
-    with tempfile.TemporaryDirectory(prefix="coverage-concordance-") as temporary, ExitStack() as resources:
+    with (
+        tempfile.TemporaryDirectory(prefix="coverage-concordance-") as temporary,
+        ExitStack() as resources,
+    ):
         tracks, regions = {}, {}
         # Publish only a completed histogram, keeping previous successful results on error
-        pending_output = tempfile.NamedTemporaryFile(mode="w", dir=arguments.profiles.parent,
-                                                     prefix=".residuals-", suffix=".tsv", delete=False)
+        pending_output = tempfile.NamedTemporaryFile(
+            mode="w",
+            dir=arguments.profiles.parent,
+            prefix=".residuals-",
+            suffix=".tsv",
+            delete=False,
+        )
         pending_path = Path(pending_output.name)
         resources.callback(pending_path.unlink, missing_ok=True)
         output = resources.enter_context(pending_output)
-        residual_writer = csv.DictWriter(output, delimiter="\t", lineterminator="\n", fieldnames=[
-            "left_profile", "right_profile", "quantity", "same_native_scope", "chromosomes",
-            "residual", "bases", "fraction_of_bases",
-        ])
+        residual_writer = csv.DictWriter(
+            output,
+            delimiter="\t",
+            lineterminator="\n",
+            fieldnames=[
+                "left_profile",
+                "right_profile",
+                "quantity",
+                "same_native_scope",
+                "chromosomes",
+                "residual",
+                "bases",
+                "fraction_of_bases",
+            ],
+        )
         residual_writer.writeheader()
-        residual_database = resources.enter_context(closing(sqlite3.connect(Path(temporary) / "residuals.sqlite")))
+        residual_database = resources.enter_context(
+            closing(sqlite3.connect(Path(temporary) / "residuals.sqlite"))
+        )
         # Bound the database cache as well as the Python residual-count batch
         residual_database.execute("PRAGMA cache_size = -2048")
-        residual_database.execute("CREATE TABLE residual_counts (residual REAL PRIMARY KEY, bases INTEGER NOT NULL)")
+        residual_database.execute(
+            "CREATE TABLE residual_counts (residual REAL PRIMARY KEY, bases INTEGER NOT NULL)"
+        )
         if regional_directories:
             with (arguments.profiles.parent / "regions.bed").open() as source:
-                expected = [(fields[0], int(fields[1]), int(fields[2])) for fields in csv.reader(source, delimiter="\t")]
+                expected = [
+                    (fields[0], int(fields[1]), int(fields[2]))
+                    for fields in csv.reader(source, delimiter="\t")
+                ]
             if not expected or len(set(expected)) != len(expected):
                 raise ValueError("Shared BED must contain unique regions")
-            regions = {path.name: regional_counts(path, set(expected)) for path in regional_directories}
+            regions = {
+                path.name: regional_counts(path, set(expected))
+                for path in regional_directories
+            }
         for directory in directories:
             if directory in regional_directories:
                 continue
@@ -327,26 +439,57 @@ def main():
             destination.mkdir()
             tracks[directory.name] = spool_track(directory, scope, destination)
         for left_name, right_name, scope, same_scope in comparisons:
-            comparison = {"left_profile": left_name, "right_profile": right_name,
-                          "quantity": "fragment-coverage" if "fragment" in left_name else "read-depth",
-                          "same_native_scope": same_scope, "chromosomes": ",".join(scope)}
-            metrics = compare_tracks(tracks[left_name], tracks[right_name], scope, residual_database)
+            comparison = {
+                "left_profile": left_name,
+                "right_profile": right_name,
+                "quantity": "fragment-coverage"
+                if "fragment" in left_name
+                else "read-depth",
+                "same_native_scope": same_scope,
+                "chromosomes": ",".join(scope),
+            }
+            metrics = compare_tracks(
+                tracks[left_name], tracks[right_name], scope, residual_database
+            )
             rows.append({**comparison, **metrics})
-            for residual, bases in residual_database.execute("SELECT residual, bases FROM residual_counts ORDER BY residual"):
-                residual_writer.writerow({**comparison, "residual": residual, "bases": bases,
-                                          "fraction_of_bases": bases / metrics["bases"]})
+            for residual, bases in residual_database.execute(
+                "SELECT residual, bases FROM residual_counts ORDER BY residual"
+            ):
+                residual_writer.writerow(
+                    {
+                        **comparison,
+                        "residual": residual,
+                        "bases": bases,
+                        "fraction_of_bases": bases / metrics["bases"],
+                    }
+                )
             residual_database.execute("DELETE FROM residual_counts")
             residual_database.commit()
         for left_name, right_name in combinations(regions, 2):
-            rows.append({"left_profile": left_name, "right_profile": right_name, "quantity": "regional-fragment-counts",
-                         "same_native_scope": True, "chromosomes": ",".join(sorted({key[0] for key in regions[left_name]})),
-                         **compare_regions(regions[left_name], regions[right_name])})
+            rows.append(
+                {
+                    "left_profile": left_name,
+                    "right_profile": right_name,
+                    "quantity": "regional-fragment-counts",
+                    "same_native_scope": True,
+                    "chromosomes": ",".join(
+                        sorted({key[0] for key in regions[left_name]})
+                    ),
+                    **compare_regions(regions[left_name], regions[right_name]),
+                }
+            )
         if not rows:
             parser.error("No pair of saved profiles measures the same quantity")
         output.close()
         os.replace(pending_path, arguments.profiles.parent / "residuals.tsv")
     columns = list(dict.fromkeys(column for row in rows for column in row))
-    writer = csv.DictWriter(sys.stdout, fieldnames=columns, delimiter="\t", restval="NA", lineterminator="\n")
+    writer = csv.DictWriter(
+        sys.stdout,
+        fieldnames=columns,
+        delimiter="\t",
+        restval="NA",
+        lineterminator="\n",
+    )
     writer.writeheader()
     writer.writerows(rows)
 

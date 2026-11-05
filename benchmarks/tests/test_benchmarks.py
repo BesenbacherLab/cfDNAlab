@@ -25,13 +25,57 @@ BENCHMARKS = Path(__file__).resolve().parents[1]
 
 def load_script(name, relative_path):
     """Import a standalone script without running its CLI."""
-    specification = importlib.util.spec_from_file_location(name, BENCHMARKS / relative_path)
+    specification = importlib.util.spec_from_file_location(
+        name, BENCHMARKS / relative_path
+    )
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
 
 
 timings = load_script("timing_summary", "summarize_timings.py")
+coverage = load_script("coverage_comparison", "coverage/compare_coverage.py")
+
+
+class CorrelationTests(unittest.TestCase):
+    """Check correlation bounds directly, including nonfinite arithmetic results."""
+
+    def test_accepts_valid_values_and_clips_overshoots_up_to_tolerance(self):
+        # Unit variances give a denominator of 1, so covariance is the raw r
+        # Overshoots through 1e-5 are accepted on either side of the valid range
+        cases = (
+            (-1.00001, -1.0),
+            (-1.000005, -1.0),
+            (-1.0, -1.0),
+            (-0.25, -0.25),
+            (0.0, 0.0),
+            (0.25, 0.25),
+            (1.0, 1.0),
+            (1.000005, 1.0),
+            (1.00001, 1.0),
+        )
+        for covariance, expected in cases:
+            with self.subTest(covariance=covariance):
+                correlation = coverage.Correlation()
+                correlation.left_variance = correlation.right_variance = 1.0
+                correlation.covariance = covariance
+
+                self.assertEqual(correlation.value(), expected)
+
+    def test_rejects_larger_overshoots_and_nonfinite_values(self):
+        # The next float beyond each tolerated boundary must fail
+        # NaN must fail too, rather than reaching the clamp and becoming +1
+        outside_limit = math.nextafter(1.00001, math.inf)
+        for covariance in (
+            -outside_limit, outside_limit, -1.1, 1.1, math.nan, -math.inf, math.inf
+        ):
+            with self.subTest(covariance=covariance):
+                correlation = coverage.Correlation()
+                correlation.left_variance = correlation.right_variance = 1.0
+                correlation.covariance = covariance
+
+                with self.assertRaisesRegex(RuntimeError, "Invalid correlation value"):
+                    correlation.value()
 
 
 class CoverageTests(unittest.TestCase):
@@ -49,19 +93,35 @@ class CoverageTests(unittest.TestCase):
         directory.mkdir()
         (directory / "chrom.sizes").write_text(scope)
         if name.startswith("cfdnalab"):
-            data = subprocess.check_output(["zstd", "-q", "-c"], input=contents.encode())
+            data = subprocess.check_output(
+                ["zstd", "-q", "-c"], input=contents.encode()
+            )
             if second_frame is not None:
-                data += subprocess.check_output(["zstd", "-q", "-c"], input=second_frame.encode())
+                data += subprocess.check_output(
+                    ["zstd", "-q", "-c"], input=second_frame.encode()
+                )
             (directory / "fcoverage.per_position.bedgraph.zst").write_bytes(data)
         else:
-            filename = "positions.tsv.gz" if name in ("samtools-depth", "pandepth") else "coverage.per-base.bed.gz"
+            filename = (
+                "positions.tsv.gz"
+                if name in ("samtools-depth", "pandepth")
+                else "coverage.per-base.bed.gz"
+            )
             with gzip.open(directory / filename, "wt") as destination:
                 destination.write(contents)
 
     def compare(self, *options):
         """Call the supported CLI, preserving error output for assertions."""
-        return subprocess.run([sys.executable, str(BENCHMARKS / "coverage/compare_coverage.py"),
-                               str(self.profiles), *options], text=True, capture_output=True)
+        return subprocess.run(
+            [
+                sys.executable,
+                str(BENCHMARKS / "coverage/compare_coverage.py"),
+                str(self.profiles),
+                *options,
+            ],
+            text=True,
+            capture_output=True,
+        )
 
     def test_weights_errors_by_bases_and_reports_nonzero_union(self):
         # A difference of 1 on 10/100 bases gives MAE .1 and RMSE sqrt(.1)
@@ -71,9 +131,9 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         row = next(csv.DictReader(result.stdout.splitlines(), delimiter="\t"))
         self.assertEqual(int(row["bases"]), 100)
-        self.assertAlmostEqual(float(row["fraction_identical"]), .9)
-        self.assertAlmostEqual(float(row["mae"]), .1)
-        self.assertAlmostEqual(float(row["rmse"]), math.sqrt(.1))
+        self.assertAlmostEqual(float(row["fraction_identical"]), 0.9)
+        self.assertAlmostEqual(float(row["mae"]), 0.1)
+        self.assertAlmostEqual(float(row["rmse"]), math.sqrt(0.1))
         self.assertEqual(int(row["nonzero_union_bases"]), 10)
         self.assertAlmostEqual(float(row["union_mae"]), 1)
         self.assertEqual(row["pearson_r_1bp"], "NA")
@@ -83,7 +143,9 @@ class CoverageTests(unittest.TestCase):
         # MAE=(40+30)/120=7/12, RMSE=sqrt(110/120), signed mean=-10/120
         scope = "chr1\t100\nchr2\t20\n"
         self.profile("cfdnalab", "chr1\t0\t10\t3\nchr2\t0\t20\t1\n", scope)
-        self.profile("mosdepth", "chr2\t0\t20\t0\nchr1\t0\t30\t2\nchr1\t30\t100\t0\n", scope)
+        self.profile(
+            "mosdepth", "chr2\t0\t20\t0\nchr1\t0\t30\t2\nchr1\t30\t100\t0\n", scope
+        )
         output = self.profiles.parent / "residuals.tsv"
 
         result = self.compare()
@@ -143,10 +205,10 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         with output.open() as source:
             residuals = list(csv.DictReader(source, delimiter="\t"))
-        self.assertEqual([float(row["residual"]) for row in residuals], [-.25, .5])
+        self.assertEqual([float(row["residual"]) for row in residuals], [-0.25, 0.5])
         self.assertEqual([int(row["bases"]) for row in residuals], [75, 25])
         summary = next(csv.DictReader(result.stdout.splitlines(), delimiter="\t"))
-        self.assertAlmostEqual(float(summary["mae"]), .3125)
+        self.assertAlmostEqual(float(summary["mae"]), 0.3125)
         self.assertEqual(summary["pearson_r_1bp"], "NA")
 
     def test_residual_counts_survive_large_value_sets_and_multiple_pairs(self):
@@ -154,9 +216,16 @@ class CoverageTests(unittest.TestCase):
         # The repeated residual must accumulate after a batch spills to disk
         scope = "chr1\t4107\n"
         self.profile("cfdnalab", "", scope)
-        depths = "".join(f"chr1\t{position}\t{position + 1}\t{position}\n" for position in range(4097))
+        depths = "".join(
+            f"chr1\t{position}\t{position + 1}\t{position}\n"
+            for position in range(4097)
+        )
         self.profile("mosdepth", depths + "chr1\t4097\t4107\t1\n", scope)
-        self.profile("pandepth", "".join(f"chr1\t{position}\t0\n" for position in range(4107)), scope)
+        self.profile(
+            "pandepth",
+            "".join(f"chr1\t{position}\t0\n" for position in range(4107)),
+            scope,
+        )
         output = self.profiles.parent / "residuals.tsv"
 
         result = self.compare()
@@ -165,26 +234,38 @@ class CoverageTests(unittest.TestCase):
         comparisons = {}
         with output.open() as source:
             for row in csv.DictReader(source, delimiter="\t"):
-                comparisons.setdefault((row["left_profile"], row["right_profile"]), []).append(row)
+                comparisons.setdefault(
+                    (row["left_profile"], row["right_profile"]), []
+                ).append(row)
         self.assertEqual(len(comparisons), 3)
         negative = comparisons[("cfdnalab", "mosdepth")]
         zero = comparisons[("cfdnalab", "pandepth")]
         positive = comparisons[("mosdepth", "pandepth")]
-        self.assertEqual([float(row["residual"]) for row in negative], list(range(-4096, 1)))
+        self.assertEqual(
+            [float(row["residual"]) for row in negative], list(range(-4096, 1))
+        )
         self.assertEqual([int(row["bases"]) for row in negative], [1] * 4095 + [11, 1])
-        self.assertEqual([float(row["residual"]) for row in positive], list(range(4097)))
+        self.assertEqual(
+            [float(row["residual"]) for row in positive], list(range(4097))
+        )
         self.assertEqual([int(row["bases"]) for row in positive], [1, 11] + [1] * 4095)
         self.assertEqual(len(zero), 1)
         self.assertEqual(float(zero[0]["residual"]), 0)
         self.assertEqual(int(zero[0]["bases"]), 4107)
         for residuals in comparisons.values():
             self.assertEqual(sum(int(row["bases"]) for row in residuals), 4107)
-            self.assertAlmostEqual(sum(float(row["fraction_of_bases"]) for row in residuals), 1)
+            self.assertAlmostEqual(
+                sum(float(row["fraction_of_bases"]) for row in residuals), 1
+            )
 
     def test_tile_boundaries_contig_order_and_concatenated_frames_are_equivalent(self):
         scope = "chr1\t100\nchr2\t80\n"
-        self.profile("cfdnalab", "chr1\t0\t30\t2\n", scope,
-                     second_frame="chr1\t30\t100\t2\nchr2\t0\t80\t3\n")
+        self.profile(
+            "cfdnalab",
+            "chr1\t0\t30\t2\n",
+            scope,
+            second_frame="chr1\t30\t100\t2\nchr2\t0\t80\t3\n",
+        )
         self.profile("mosdepth", "chr2\t0\t80\t3\nchr1\t0\t100\t2\n", scope)
         result = self.compare()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -194,8 +275,13 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(float(row["left_integrated_depth"]), 440)
 
     def test_position_origins_agree(self):
-        self.profile("samtools-depth", "".join(f"chr1\t{position}\t2\n" for position in range(1, 101)))
-        self.profile("pandepth", "".join(f"chr1\t{position}\t2\n" for position in range(100)))
+        self.profile(
+            "samtools-depth",
+            "".join(f"chr1\t{position}\t2\n" for position in range(1, 101)),
+        )
+        self.profile(
+            "pandepth", "".join(f"chr1\t{position}\t2\n" for position in range(100))
+        )
         result = self.compare()
         self.assertEqual(result.returncode, 0, result.stderr)
         row = next(csv.DictReader(result.stdout.splitlines(), delimiter="\t"))
@@ -226,8 +312,14 @@ class CoverageTests(unittest.TestCase):
         # Pearson=(15*74-25*38)/sqrt((15*55-625)*(15*148-1444))=4/sqrt(97)
         # The 10 kb means would instead give r=1, hiding within-bin disagreement
         # Errors are 1 on 10,000 bases and 3 on 5,000 bases
-        self.profile("cfdnalab", "chr1\t0\t10000\t1\nchr1\t10000\t15000\t3\n", "chr1\t15000\n")
-        self.profile("mosdepth", "chr1\t0\t10000\t2\nchr1\t10000\t13000\t6\nchr1\t13000\t15000\t0\n", "chr1\t15000\n")
+        self.profile(
+            "cfdnalab", "chr1\t0\t10000\t1\nchr1\t10000\t15000\t3\n", "chr1\t15000\n"
+        )
+        self.profile(
+            "mosdepth",
+            "chr1\t0\t10000\t2\nchr1\t10000\t13000\t6\nchr1\t13000\t15000\t0\n",
+            "chr1\t15000\n",
+        )
         result = self.compare()
         self.assertEqual(result.returncode, 0, result.stderr)
         row = next(csv.DictReader(result.stdout.splitlines(), delimiter="\t"))
@@ -255,11 +347,15 @@ class CoverageTests(unittest.TestCase):
 
     def test_regional_comparison_checks_coordinates_and_raw_counts(self):
         # Counts (2, 1) versus (1, 3) give differences (1, -2), MAE 1.5
-        (self.profiles.parent / "regions.bed").write_text("chr1\t0\t50\t.\nchr1\t50\t100\t.\n")
+        (self.profiles.parent / "regions.bed").write_text(
+            "chr1\t0\t50\t.\nchr1\t50\t100\t.\n"
+        )
         left = self.profiles / "cfdnalab-region-counts"
         left.mkdir()
         table = "chrom\tstart\tend\tcount_30_1001\nchr1\t0\t50\t2\nchr1\t50\t100\t1\n"
-        (left / "length_counts.tsv.zst").write_bytes(subprocess.check_output(["zstd", "-q", "-c"], input=table.encode()))
+        (left / "length_counts.tsv.zst").write_bytes(
+            subprocess.check_output(["zstd", "-q", "-c"], input=table.encode())
+        )
         right = self.profiles / "finaletoolkit-coverage"
         right.mkdir()
         with gzip.open(right / "finaletoolkit.coverage.bed.gz", "wt") as destination:
@@ -269,7 +365,7 @@ class CoverageTests(unittest.TestCase):
         row = next(csv.DictReader(result.stdout.splitlines(), delimiter="\t"))
         self.assertEqual(float(row["mae"]), 1.5)
         self.assertAlmostEqual(float(row["rmse"]), math.sqrt(2.5))
-        self.assertEqual(float(row["regional_total_ratio"]), .75)
+        self.assertEqual(float(row["regional_total_ratio"]), 0.75)
         self.assertEqual(float(row["pearson_r_regions"]), -1)
         # Regional-only comparisons keep the automatic residual file header-only
         with (self.profiles.parent / "residuals.tsv").open() as source:
@@ -287,7 +383,17 @@ class TimingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "timings.tsv"
             path.write_text("run_order\tjob_id\tstep_id\n1\t123\t0\n2\t123\t1\n")
-            rows = timings.read_runs([path], {"123.0": {"NTasks": "1", "MaxRSS": "2048K", "State": "COMPLETED", "ExitCode": "0:0"}})
+            rows = timings.read_runs(
+                [path],
+                {
+                    "123.0": {
+                        "NTasks": "1",
+                        "MaxRSS": "2048K",
+                        "State": "COMPLETED",
+                        "ExitCode": "0:0",
+                    }
+                },
+            )
             self.assertEqual(rows[0]["slurm_max_rss_kib"], 2048)
             self.assertEqual(rows[1]["slurm_max_rss_kib"], "NA")
 
@@ -297,15 +403,26 @@ class TimingTests(unittest.TestCase):
 
     def test_two_method_budget_includes_a_warmup_and_three_measurements(self):
         columns = "run_order repetition warmup pilot method tool_version cores node wall_seconds user_seconds system_seconds flush_seconds process_plus_flush_seconds output_bytes max_rss_kib tool_exit_code step_exit_code job_id step_id".split()
-        values = ["1 1 false 1 cfdnalab checkout 1 node 720 700 20 0 720 100 200 0 0 123 0".split(),
-                  "2 1 false 1 slow release 1 node 7200 7000 200 0 7200 100 200 0 0 123 1".split()]
+        values = [
+            "1 1 false 1 cfdnalab checkout 1 node 720 700 20 0 720 100 200 0 0 123 0".split(),
+            "2 1 false 1 slow release 1 node 7200 7000 200 0 7200 100 200 0 0 123 1".split(),
+        ]
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "pilot.tsv"
             with path.open("w") as destination:
                 writer = csv.writer(destination, delimiter="\t")
                 writer.writerow(columns)
                 writer.writerows(values)
-            result = subprocess.run([sys.executable, str(BENCHMARKS / "summarize_timings.py"), str(path), "--estimate"], capture_output=True, text=True)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(BENCHMARKS / "summarize_timings.py"),
+                    str(path),
+                    "--estimate",
+                ],
+                capture_output=True,
+                text=True,
+            )
             self.assertEqual(result.returncode, 0, result.stderr)
             # 4*(720+7200) = 31680 seconds = 8.8 hours, or 11 with 25% margin
             self.assertIn("8.80 h raw", result.stderr)
@@ -314,77 +431,147 @@ class TimingTests(unittest.TestCase):
     def test_griffin_budget_never_adds_a_full_input_warmup(self):
         # At 30 h per run, three Griffin measurements take 90 h raw or 112.5 h
         # with 25% margin. A deliberately large normal warmup count adds nothing
-        runs = [{'method': 'griffin', 'cores': '4', 'pilot': '1',
-                 'tool_exit_code': '0', 'step_exit_code': '0',
-                 'slurm_state': 'NA', 'slurm_exit_code': 'NA'}]
-        summary = [{'method': 'griffin', 'cores': '4', 'process_plus_flush_seconds_mean': 108000}]
-        report = timings.pilot_budgets(runs, ['method', 'cores'], summary, 10, 3, .25)
-        self.assertEqual(report[0]['planned_runs'], 3)
-        self.assertEqual(report[0]['budget_minutes'], 6750)
-        self.assertEqual(report[0]['budget_status'], 'complete')
+        runs = [
+            {
+                "method": "griffin",
+                "cores": "4",
+                "pilot": "1",
+                "tool_exit_code": "0",
+                "step_exit_code": "0",
+                "slurm_state": "NA",
+                "slurm_exit_code": "NA",
+            }
+        ]
+        summary = [
+            {
+                "method": "griffin",
+                "cores": "4",
+                "process_plus_flush_seconds_mean": 108000,
+            }
+        ]
+        report = timings.pilot_budgets(runs, ["method", "cores"], summary, 10, 3, 0.25)
+        self.assertEqual(report[0]["planned_runs"], 3)
+        self.assertEqual(report[0]["budget_minutes"], 6750)
+        self.assertEqual(report[0]["budget_status"], "complete")
 
     def test_accounting_oom_excludes_an_apparently_successful_native_run(self):
-        self.assertFalse(timings.successful({"tool_exit_code": "0", "step_exit_code": "0",
-                                           "slurm_state": "OUT_OF_MEMORY", "slurm_exit_code": "0:125"}))
+        self.assertFalse(
+            timings.successful(
+                {
+                    "tool_exit_code": "0",
+                    "step_exit_code": "0",
+                    "slurm_state": "OUT_OF_MEMORY",
+                    "slurm_exit_code": "0:125",
+                }
+            )
+        )
 
 
 class RunControlTests(unittest.TestCase):
     """Check scheduling and Picard's unusual version status without tool installs."""
 
     def test_each_job_runs_all_selected_methods_at_a_single_core_setting(self):
-        script = '''source "$BENCH_COMMON"
+        script = """source "$BENCH_COMMON"
 benchmark_controls
 BENCH_FEATURE=lengths
 BENCH_WARMUPS=1
 BENCH_REPETITIONS=3
 methods_to_run=(cfdnalab cfdnapro finaletoolkit)
 benchmark_schedule
-'''
+"""
         for cores in (1, 4, 12, 32):
             with self.subTest(cores=cores):
-                result = subprocess.run(["bash", "-euc", script], env={
-                    **os.environ, "BENCH_COMMON": str(BENCHMARKS / "common.sh"),
-                    "BENCH_CORES": str(cores), "BENCH_PILOT": "0", "BENCH_EXPECTED_NODE": "",
-                    "BENCH_SETUP_PYTHON": sys.executable,
-                }, capture_output=True, text=True)
+                result = subprocess.run(
+                    ["bash", "-euc", script],
+                    env={
+                        **os.environ,
+                        "BENCH_COMMON": str(BENCHMARKS / "common.sh"),
+                        "BENCH_CORES": str(cores),
+                        "BENCH_PILOT": "0",
+                        "BENCH_EXPECTED_NODE": "",
+                        "BENCH_SETUP_PYTHON": sys.executable,
+                    },
+                    capture_output=True,
+                    text=True,
+                )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 rows = list(csv.reader(result.stdout.splitlines(), delimiter="\t"))
                 # Three methods each get a warmup and three measurements
                 self.assertEqual(len(rows), 12)
-                self.assertEqual([row[0] for row in rows], ["cfdnalab"] * 4 + ["cfdnapro"] * 4 + ["finaletoolkit"] * 4)
+                self.assertEqual(
+                    [row[0] for row in rows],
+                    ["cfdnalab"] * 4 + ["cfdnapro"] * 4 + ["finaletoolkit"] * 4,
+                )
                 self.assertEqual(sum(row[3] == "true" for row in rows), 3)
                 self.assertEqual({row[1] for row in rows}, {str(cores)})
 
     def test_multiple_core_settings_are_rejected_for_a_single_job(self):
-        result = subprocess.run(["bash", "-euc", 'source "$BENCH_COMMON"; benchmark_controls'], env={
-            **os.environ, "BENCH_COMMON": str(BENCHMARKS / "common.sh"), "BENCH_CORES": "1 4",
-            "BENCH_PILOT": "0", "BENCH_EXPECTED_NODE": "", "BENCH_SETUP_PYTHON": sys.executable,
-        }, capture_output=True, text=True)
+        result = subprocess.run(
+            ["bash", "-euc", 'source "$BENCH_COMMON"; benchmark_controls'],
+            env={
+                **os.environ,
+                "BENCH_COMMON": str(BENCHMARKS / "common.sh"),
+                "BENCH_CORES": "1 4",
+                "BENCH_PILOT": "0",
+                "BENCH_EXPECTED_NODE": "",
+                "BENCH_SETUP_PYTHON": sys.executable,
+            },
+            capture_output=True,
+            text=True,
+        )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("single positive core count", result.stderr)
 
     def test_picard_accepts_only_expected_status_and_version(self):
         with tempfile.TemporaryDirectory() as temporary:
             executable = Path(temporary) / "picard"
-            for version, status, succeeds in (("Version:3.5.0", 1, True), ("Version:3.5.0", 2, False), ("Version:3.4.0", 1, False), ("error opening picard-3.5.0.jar", 1, False), ("", 1, False)):
-                executable.write_text(f"#!/usr/bin/env bash\nprintf '%s\\n' '{version}'\nexit {status}\n")
+            for version, status, succeeds in (
+                ("Version:3.5.0", 1, True),
+                ("Version:3.5.0", 2, False),
+                ("Version:3.4.0", 1, False),
+                ("error opening picard-3.5.0.jar", 1, False),
+                ("", 1, False),
+            ):
+                executable.write_text(
+                    f"#!/usr/bin/env bash\nprintf '%s\\n' '{version}'\nexit {status}\n"
+                )
                 executable.chmod(0o755)
-                result = subprocess.run(["bash", "-euc", 'source "$BENCH_COMMON"; benchmark_picard_version "$PICARD_FIXTURE"'],
-                                        env={**os.environ, "BENCH_COMMON": str(BENCHMARKS / "common.sh"), "PICARD_FIXTURE": str(executable)}, capture_output=True)
+                result = subprocess.run(
+                    [
+                        "bash",
+                        "-euc",
+                        'source "$BENCH_COMMON"; benchmark_picard_version "$PICARD_FIXTURE"',
+                    ],
+                    env={
+                        **os.environ,
+                        "BENCH_COMMON": str(BENCHMARKS / "common.sh"),
+                        "PICARD_FIXTURE": str(executable),
+                    },
+                    capture_output=True,
+                )
                 self.assertEqual(result.returncode == 0, succeeds)
 
     def test_installer_resumes_and_never_completes_a_failed_reinstall(self):
         # A fake Conda boundary permits info but fails installation commands
         # Each reinstall reason must reach that failure and remain outdated
         for reason in ("complete", "outdated", "version", "missing", "force"):
-            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as temporary:
+            with (
+                self.subTest(reason=reason),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
                 root = Path(temporary)
-                installation, fake_bin, conda_base = root / "installation", root / "bin", root / "conda"
+                installation, fake_bin, conda_base = (
+                    root / "installation",
+                    root / "bin",
+                    root / "conda",
+                )
                 fake_bin.mkdir()
                 (conda_base / "etc/profile.d").mkdir(parents=True)
                 (conda_base / "etc/profile.d/conda.sh").write_text("# Conda fixture\n")
                 executable = fake_bin / "conda"
-                executable.write_text('#!/usr/bin/env bash\nif [[ "$1" == info ]]; then printf "%s\\n" "$BENCH_FAKE_CONDA_BASE"; else exit 9; fi\n')
+                executable.write_text(
+                    '#!/usr/bin/env bash\nif [[ "$1" == info ]]; then printf "%s\\n" "$BENCH_FAKE_CONDA_BASE"; else exit 9; fi\n'
+                )
                 executable.chmod(0o755)
                 (installation / "envs/comparison/bin").mkdir(parents=True)
                 if reason != "missing":
@@ -392,25 +579,47 @@ benchmark_schedule
                 version = "old" if reason == "version" else "checkout"
                 status = "outdated" if reason == "outdated" else "complete"
                 manifest = installation / "manifest.tsv"
-                manifest.write_text(f"tool\tversion\tstatus\tartifacts\ncomparison\t{version}\t{status}\tenvs/comparison/bin/python\n")
-                command = ["bash", str(BENCHMARKS / "install_tools.sh"), str(installation), "--only", "comparison"]
+                manifest.write_text(
+                    f"tool\tversion\tstatus\tartifacts\ncomparison\t{version}\t{status}\tenvs/comparison/bin/python\n"
+                )
+                command = [
+                    "bash",
+                    str(BENCHMARKS / "install_tools.sh"),
+                    str(installation),
+                    "--only",
+                    "comparison",
+                ]
                 if reason == "force":
                     command += ["--force", "comparison"]
-                result = subprocess.run(command, env={**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}",
-                                                       "BENCH_FAKE_CONDA_BASE": str(conda_base)}, capture_output=True, text=True)
+                result = subprocess.run(
+                    command,
+                    env={
+                        **os.environ,
+                        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                        "BENCH_FAKE_CONDA_BASE": str(conda_base),
+                    },
+                    capture_output=True,
+                    text=True,
+                )
                 if reason == "complete":
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertIn("Keeping comparison checkout", result.stdout)
                 else:
                     self.assertNotEqual(result.returncode, 0)
-                    self.assertIn("comparison\tcheckout\toutdated\t", manifest.read_text())
+                    self.assertIn(
+                        "comparison\tcheckout\toutdated\t", manifest.read_text()
+                    )
 
 
 class BiologicalInputTests(unittest.TestCase):
     """Keep reconstructed TLEN signs and filtering flags explicit."""
 
-    @unittest.skipUnless(importlib.util.find_spec("pysam"), "Requires preparation dependency pysam")
-    def test_reconstructed_forward_mate_has_positive_tlen_and_preserves_filtering_flags(self):
+    @unittest.skipUnless(
+        importlib.util.find_spec("pysam"), "Requires preparation dependency pysam"
+    )
+    def test_reconstructed_forward_mate_has_positive_tlen_and_preserves_filtering_flags(
+        self,
+    ):
         import pysam
 
         preparation = load_script("snyder_preparation", "data/prepare_snyder.py")
@@ -424,9 +633,13 @@ class BiologicalInputTests(unittest.TestCase):
             read1, read2 = preparation.reconstruct_pair(record)
             forward = read2 if reverse else read1
             backward = read1 if reverse else read2
-            self.assertEqual((forward.template_length, backward.template_length), (30, -30))
+            self.assertEqual(
+                (forward.template_length, backward.template_length), (30, -30)
+            )
             for mate in (read1, read2):
-                self.assertEqual(mate.flag & (1024 | 512 | 256 | 2048), 1024 | 512 | 256 | 2048)
+                self.assertEqual(
+                    mate.flag & (1024 | 512 | 256 | 2048), 1024 | 512 | 256 | 2048
+                )
             record.query_name = "arbitrary_singleton"
             with self.assertRaisesRegex(ValueError, "Unexpected unpaired name"):
                 preparation.reconstruct_pair(record)
@@ -435,59 +648,92 @@ class BiologicalInputTests(unittest.TestCase):
 class MotifTests(unittest.TestCase):
     """Compare native left-end frequencies and reject damaged both-end output."""
 
-    @unittest.skipUnless(importlib.util.find_spec('pyarrow') is not None, 'Requires native Parquet support')
+    @unittest.skipUnless(
+        importlib.util.find_spec("pyarrow") is not None,
+        "Requires native Parquet support",
+    )
     def test_left_profiles_retain_native_counts_and_label_side_mirroring(self):
         import pandas as pd
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            for name in ('finaletoolkit', 'cfdnapro', 'freia'):
+            for name in ("finaletoolkit", "cfdnapro", "freia"):
                 (root / name).mkdir()
-            motifs = [''.join(bases) for bases in product('ACGT', repeat=3)]
-            with (root / 'finaletoolkit/motifs.tsv').open('w') as destination:
+            motifs = ["".join(bases) for bases in product("ACGT", repeat=3)]
+            with (root / "finaletoolkit/motifs.tsv").open("w") as destination:
                 for motif in motifs:
-                    destination.write(f"{motif}\t{0.5 if motif in ('AAA', 'CCC') else 0}\n")
-            with (root / 'cfdnapro/cfdnapro-motifs.tsv').open('w') as destination:
-                destination.write('motif\tn\tfraction\n')
+                    destination.write(
+                        f"{motif}\t{0.5 if motif in ('AAA', 'CCC') else 0}\n"
+                    )
+            with (root / "cfdnapro/cfdnapro-motifs.tsv").open("w") as destination:
+                destination.write("motif\tn\tfraction\n")
                 for motif in motifs:
-                    count = {'AAA': 6, 'CCC': 2}.get(motif, 0)
-                    destination.write(f'{motif}\t{count}\t{count / 8}\n')
+                    count = {"AAA": 6, "CCC": 2}.get(motif, 0)
+                    destination.write(f"{motif}\t{count}\t{count / 8}\n")
             # CountSamp repeats the motif total per length. Only CountLen is additive
-            pd.DataFrame({
-                'Base': ['AAA', 'AAA', 'CCC'], 'Length': [30, 40, 30],
-                'CountLen': [2, 3, 5], 'CountSamp': [5, 5, 5],
-                'WhichEnd': ['leftmost'] * 3, 'Unit': ['GRCh38'] * 3,
-            }).to_parquet(root / 'freia/left-motifs.pq', index=False)
-            result = subprocess.run([sys.executable, str(BENCHMARKS / 'ends/compare_end_motifs.py'),
-                                     str(root), '--k', '3'], text=True, capture_output=True)
+            pd.DataFrame(
+                {
+                    "Base": ["AAA", "AAA", "CCC"],
+                    "Length": [30, 40, 30],
+                    "CountLen": [2, 3, 5],
+                    "CountSamp": [5, 5, 5],
+                    "WhichEnd": ["leftmost"] * 3,
+                    "Unit": ["GRCh38"] * 3,
+                }
+            ).to_parquet(root / "freia/left-motifs.pq", index=False)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(BENCHMARKS / "ends/compare_end_motifs.py"),
+                    str(root),
+                    "--k",
+                    "3",
+                ],
+                text=True,
+                capture_output=True,
+            )
             self.assertEqual(result.returncode, 0, result.stderr)
-            rows = {(row['left_profile'], row['right_profile']): row
-                    for row in csv.DictReader(result.stdout.splitlines(), delimiter='\t')}
+            rows = {
+                (row["left_profile"], row["right_profile"]): row
+                for row in csv.DictReader(result.stdout.splitlines(), delimiter="\t")
+            }
             self.assertEqual(len(rows), 3)
-            mirrored = rows[('finaletoolkit', 'freia')]
-            self.assertEqual(mirrored['right_end_selection'], 'left')
-            self.assertEqual(mirrored['side_comparison'], 'approximate-side-mirroring')
-            self.assertEqual(float(mirrored['right_counted_ends']), 10)
-            self.assertEqual(float(mirrored['total_variation']), 0)
-            native_left = rows[('cfdnapro', 'freia')]
-            self.assertEqual(native_left['side_comparison'], 'same-sides')
-            self.assertEqual(float(native_left['left_counted_ends']), 8)
-            self.assertEqual(float(native_left['right_counted_ends']), 10)
+            mirrored = rows[("finaletoolkit", "freia")]
+            self.assertEqual(mirrored["right_end_selection"], "left")
+            self.assertEqual(mirrored["side_comparison"], "approximate-side-mirroring")
+            self.assertEqual(float(mirrored["right_counted_ends"]), 10)
+            self.assertEqual(float(mirrored["total_variation"]), 0)
+            native_left = rows[("cfdnapro", "freia")]
+            self.assertEqual(native_left["side_comparison"], "same-sides")
+            self.assertEqual(float(native_left["left_counted_ends"]), 8)
+            self.assertEqual(float(native_left["right_counted_ends"]), 10)
             # .75/.25 versus .5/.5 gives TV .25 and mean error .5/64
-            self.assertAlmostEqual(float(native_left['total_variation']), .25)
-            self.assertAlmostEqual(float(native_left['mae_frequency']), .0078125)
+            self.assertAlmostEqual(float(native_left["total_variation"]), 0.25)
+            self.assertAlmostEqual(float(native_left["mae_frequency"]), 0.0078125)
 
-    @unittest.skipUnless(importlib.util.find_spec('pyarrow') is not None, 'Requires native Parquet support')
+    @unittest.skipUnless(
+        importlib.util.find_spec("pyarrow") is not None,
+        "Requires native Parquet support",
+    )
     def test_a_right_end_table_cannot_be_labeled_as_intact_left_output(self):
         import pandas as pd
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            pd.DataFrame({'Base': ['AAA'], 'Length': [30], 'CountLen': [4],
-                          'WhichEnd': ['rightmost'], 'Unit': ['GRCh38']}).to_parquet(root / 'left-motifs.pq')
-            comparator = load_script('motif_comparator', 'ends/compare_end_motifs.py')
-            with self.assertRaisesRegex(ValueError, 'leftmost'):
-                comparator.load_profile(root, [''.join(bases) for bases in product('ACGT', repeat=3)])
+            pd.DataFrame(
+                {
+                    "Base": ["AAA"],
+                    "Length": [30],
+                    "CountLen": [4],
+                    "WhichEnd": ["rightmost"],
+                    "Unit": ["GRCh38"],
+                }
+            ).to_parquet(root / "left-motifs.pq")
+            comparator = load_script("motif_comparator", "ends/compare_end_motifs.py")
+            with self.assertRaisesRegex(ValueError, "leftmost"):
+                comparator.load_profile(
+                    root, ["".join(bases) for bases in product("ACGT", repeat=3)]
+                )
 
     def test_existing_freia_profile_is_skipped_without_recovery(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -500,8 +746,20 @@ class MotifTests(unittest.TestCase):
                         motif = "".join(bases)
                         destination.write(f"{motif}\t{1 if motif == 'AAA' else 0}\n")
             (root / "freia").mkdir()
-            (root / "freia/T__sample.pq").write_text("Deliberately unreadable damaged aggregate")
-            result = subprocess.run([sys.executable, str(BENCHMARKS / "ends/compare_end_motifs.py"), str(root), "--k", "3"], capture_output=True, text=True)
+            (root / "freia/T__sample.pq").write_text(
+                "Deliberately unreadable damaged aggregate"
+            )
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(BENCHMARKS / "ends/compare_end_motifs.py"),
+                    str(root),
+                    "--k",
+                    "3",
+                ],
+                capture_output=True,
+                text=True,
+            )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("Skipping FrEIA", result.stderr)
             rows = list(csv.DictReader(result.stdout.splitlines(), delimiter="\t"))
