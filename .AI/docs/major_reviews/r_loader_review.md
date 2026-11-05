@@ -46,6 +46,8 @@ the matching entries in `python_loader_review.md`.
 
 Fix before validation:
 
+- R-08: Valid midpoint values can silently become `NA`. The annotation below
+  also identifies an unsafe proposed replacement fill value.
 - R-01: Canonical ref-kmer outputs fail to load under Danish collation.
 - R-02: `end_motif_data_frame(densify = TRUE)` builds the dense matrix for the
   whole store.
@@ -66,6 +68,18 @@ Docs and API:
 ## Wrong Results Or Broken Use
 
 ### R-01 - High - Canonical ref-kmer outputs fail to load under Danish collation
+
+> **Review note - scope and portable coverage:** Failure requires an affected
+> stored label. A complete canonical even-k axis contains one, but a sparse
+> axis containing only unaffected labels can load. Replace "every canonical
+> even-k output" with that condition. Byte-order selection is appropriate for
+> the validated ASCII alphabet, as specified by the [R radix-sort
+> documentation](https://stat.ethz.ch/R-manual/R-devel/library/base/html/sort.html).
+> Keep fixed expected cases such as `AA` versus `TT` and `AACG` versus `CGTT`
+> in ordinary tests too. A Danish-locale integration case complements those
+> expectations but may be skipped on CI. Restore `LC_COLLATE` even when the
+> locale is unavailable or an assertion fails. Host locale does not establish
+> which locale a particular user's R session uses.
 
 Evidence:
 
@@ -145,6 +159,25 @@ enough to fail the current code.
 
 ### R-02 - High - `end_motif_data_frame(densify = TRUE)` densifies the whole store
 
+> **Review note - two distinct fixes:** Calling the selected-index helper
+> below fixes whole-store densification of sparse input. Its dense branch
+> still calls `cf_read_array()` before subsetting (`R/end_motifs.R:632-638`),
+> so it does not fix whole-store reads for dense input. Ref-kmers also read
+> their entire dense array in
+> `cf_ref_kmer_dense_frequency_matrix_for_indices()` (`R/ref_kmers.R:991-997`).
+> Passing selectors into that helper does not make the underlying read selective.
+> Cover dense counts and frequencies as a separate read-path fix.
+>
+> Do not pass arbitrary index vectors directly to the current CRAN reader and
+> assume orthogonal selection. In installed `zarr` 0.4.0,
+> `zarr_array$read(selection=...)` takes `min` and `max` on each axis and reads
+> that bounding range. It ignores vector order and gaps. Read bounded ranges
+> and select relative indices, or use suitable repeated bounded reads, while
+> preserving caller order and length-one dimensions. This also constrains R-10.
+> Correction still deliberately needs all sample motifs for corrected
+> frequencies, as explained in P-08. A motif selector alone does not bound
+> its intermediate motif axis.
+
 Evidence:
 
 - `R/end_motifs.R:1341-1345` calls `dense_counts_matrix(x, allow_densify =
@@ -200,6 +233,16 @@ Add a test with all-numeric group names.
 
 ### R-04 - Medium - Reading `.tsv.zst` needs a separately installed `zstd` program
 
+> **Review note - acceptance criteria:** The `qs2` replacement must support
+> streaming frames without a declared decompressed size, including actual
+> Rust-writer output, and report corrupted or truncated input clearly. Ensure
+> temporary files are removed on success and error. Declare a minimum `qs2`
+> version if the file API is not present in every supported release.
+> Replace the executable-dependent fixture construction too, so compressed
+> loading is exercised when no `zstd` program is installed. The current test
+> conditionally tests a valid compressed file and also checks the missing-tool
+> error. Its entire test case does not require the executable.
+
 Evidence:
 
 - `R/lengths.R:446-454` calls the `zstd` command-line program and stops if it
@@ -224,6 +267,16 @@ Decompress with `qs2::zstd_decompress_file()` to a temporary file, then
 `fread()` it. Drop the command-line path.
 
 ### R-05 - Medium - README and website examples that fail or name the wrong flag
+
+> **Review note - cross-language and example scope:** P-02's claim that the
+> website ran `ends --all-motifs` is incorrect. It runs `ref-kmers
+> --all-motifs`, so both website matrix examples need correction for default
+> sparse sample output. Prefer sparse corrected matrices in the general
+> recipes. The mode-dependent lengths example issue also affects the Python
+> block at `fragment_lengths_guide.md:119-145`, which mixes group and window
+> selectors on the same object. Label these as alternatives for their
+> respective file modes, rather than suggesting every call can run on the
+> same file.
 
 - `README.md:235-239` and `website/docs/guides/fragment_ends_guide.md:301-305`
   call `dense_corrected_counts_matrix(...)` without `allow_densify = TRUE`.
@@ -278,9 +331,32 @@ Same approach as Python P-08, using `Matrix`:
 
 Build the data frames from the result.
 
+> **Review note - share the acceptance contract with P-08:** Its annotation
+> lists the normalization, sparse support, unsupported-count, row matching,
+> and frequency invariants that this rewrite must preserve. Use those for
+> both packages, with R's one-based public indices. Parse motif sides once
+> per unique label. Avoid a dense row-by-full-k-mer intermediate for sparse
+> references. Separate the bounded R-02 fix from this larger correction
+> refactor so their memory effects can be assessed independently. The table
+> compares total R process peak with additional Python memory, so it does not
+> establish the ratio of their memory use.
+
 ## API And Documentation
 
 ### R-07 - Medium - Count matrices have no row or column names
+
+> **Review note - names do not align matrices automatically:** Ordinary matrix
+> `rbind()` and `cbind()` bind by position. Adding dimnames helps inspection
+> and explicit reindexing but does not prevent silent sample misalignment.
+> See the distinction between matrices and data frames in the [R binding
+> documentation](https://stat.ethz.ch/R-manual/R-devel/library/base/html/cbind.html).
+> Document explicit matching to a shared motif order before binding.
+> Coordinates alone also need not uniquely identify BED rows. Preserve the
+> public window/group index in selected-row metadata, especially after
+> blacklist filtering, instead of relying solely on `chrom:start-end` names.
+> Name raw and corrected columns in every mode, including empty results.
+> Existing `unname()` value assertions can remain with separate assertions
+> for exact dimnames and order. Removing them alone would not add coverage.
 
 Evidence:
 
@@ -313,6 +389,33 @@ corrected matrices (for example
 they would need updating.
 
 ### R-08 - Low - Smoothed midpoint values of exactly -1 become NA in R
+
+> **Review note - raise priority and revise the proposed fix:** The installed
+> CRAN `zarr` 0.4.0 code masks floating values using `.near(data, fill)`, not
+> equality. Its tolerance is `max(eps * max(abs(data), abs(fill)), 1e-12)`,
+> with `eps = 1.490116e-08`. Thus loss is not restricted to exact `-1.0` and
+> depends on the largest value in the returned slice. This follows from
+> `get("zarr_array", asNamespace("zarr"))$public_methods$read` and
+> `get(".near", asNamespace("zarr"))`.
+> Exact `-1` is reachable with ordinary integer midpoint counts. For
+> `savgol=5`, a neighborhood `[23, 0, 2, 0, 0]` gives
+> `(-3*23 + 17*2) / 35 = -1` using the coefficients in
+> `src/commands/midpoints/smoothing.rs:107-116`.
+>
+> **Do not use `-Inf`.** For finite data and an infinite fill, both sides of
+> the comparison become `Inf`, so every finite value satisfies it and becomes
+> `NA`. Use a NaN fill for newly written midpoint arrays. The reader has an
+> explicit `is.nan(fill)` branch that masks only NaNs. Update the schema spec,
+> writer comment, and writer-backed downstream coverage together. Read actual
+> metadata and retain finite negative values, including `-1`, under the new
+> fill. Test full and sliced reads with a shortened boundary chunk.
+>
+> Also audit the other floating arrays. By the same formula, a slice containing
+> `2^27` has tolerance 2, so valid zero counts can match a `-1` fill even for
+> nonnegative end counts. This is a source-derived consequence, not a new
+> measurement. Existing R reads with a finite sentinel cannot reconstruct
+> values already masked to `NA`. Treat this as correctness work before
+> validation, not a low-priority documentation fix.
 
 Evidence:
 
@@ -358,6 +461,15 @@ Regenerate the man pages and the website pages. Consider a check that fails
 when `roxygenise()` changes tracked files.
 
 ### R-10 - Medium - No way to get a selected 3D midpoint array
+
+> **Review note - preserve selectors rather than bounding ranges:** Follow
+> R-02's backend-selection constraint. A single read for groups `c(5L, 2L)`
+> would read groups 2 through 5 in file order, rather than those two groups
+> in requested order. Cover noncontiguous/reversed group and length-bin
+> selections, scalar axes, and empty selections without making an invalid
+> backend read. Use the existing asymmetric count fixtures to assert values
+> as well as shape. `profile_array()` is explicitly a scalar-profile API, so
+> its singular selector names are not a broken workflow by themselves.
 
 Evidence:
 
@@ -405,6 +517,11 @@ These apply to R as well. Details are in `python_loader_review.md`.
 - P-25: R has to reject empty sparse stores, because the `zarr` reader cannot
   open zero-length arrays (`R/end_motifs.R:226-235`).
 - P-26: Blacklist rounding in lengths TSVs.
+- P-27: Complement collapse is not reliably recorded, and correction can use
+  the wrong reference denominator. Its annotation applies to R too.
+- P-29: End-motif sparse validation lacks the sorted/unique coordinate check
+  present in the ref-kmer reader. This can be fixed without a shared-module
+  refactor.
 
 ### R-12 - Low - Loading large k-mer axes is slow
 
@@ -440,3 +557,12 @@ Fine for k up to 8.
 - Corrected matrix comparisons strip names with `unname()`, so the dimnames
   gaps in R-07 are built into the expectations.
 - Motif-group correction values are untested (see R-11).
+
+> **Review note - avoid an allocation-failure regression test:** A declared
+> `100000 x 1000` shape does not guarantee failure. Allocating 800 MB may
+> succeed, or may kill the entire R process. Keep ordinary fixtures tiny and
+> assert selected values, order, and retained empty rows. Add a small fake
+> read/conversion boundary that rejects whole-store materialization for a
+> bounded selection, rather than depending on allocator behavior or elapsed
+> time. This should distinguish the sparse densification fix from the dense
+> selective-read fix in R-02.
