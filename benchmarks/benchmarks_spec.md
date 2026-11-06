@@ -54,7 +54,7 @@ Griffin uses Python 3.7.12, `nomkl`, numpy 1.21.2, pandas 1.3.2, scipy 1.7.1, py
 
 Its packed archive includes the unmodified release demo `CTCF.hg38.1000.txt`. A missing demo artifact causes reinstall on resume. The comparison environment includes pyarrow for native FrEIA Parquet profiles. Refresh existing installations of these two components before using the new workload.
 
-Conda creates use explicit channels, `--override-channels` and strict channel priority. FrEIA preserves its supplied dependency pins in a derived YAML with `nodefaults`. Its source checkout and derived YAML remain at the installation root. Python user packages and inherited Python import paths are disabled during installation and job setup.
+Conda creates use explicit channels, `--override-channels` and strict channel priority. FrEIA preserves all supplied Conda dependencies and pins in a derived YAML with `nodefaults`. The generated YAML omits the upstream `name` and `prefix`, leaving the explicit command-line prefix `<root>/envs/freia` as its destination. It also omits the pip section containing `statannot` and `combat`, which the benchmark's native extraction/abundance scripts and shared helper do not import. No FrEIA pip installation step runs. Both copied native scripts must successfully print `--help` before the environment is packed, checking their imports without processing input data. Its source checkout and derived YAML remain at the installation root. Python user packages and inherited Python import paths are disabled during installation and job setup.
 
 Picard's version probe accepts status 0 or 1 only with a `Version:3.5.0` field. Missing/wrong versions or other statuses fail. The installer and lengths setup share this behavior.
 

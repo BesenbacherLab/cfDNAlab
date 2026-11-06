@@ -679,6 +679,64 @@ fi
                 self.assertEqual(storage["HOME"], os.environ["HOME"])
                 self.assertFalse((root / "outside-installation").exists())
 
+    def test_freia_environment_is_conda_only_and_uses_the_supplied_root(self):
+        # The upstream pip packages are not needed by the benchmark's native scripts
+        # Every Conda dependency, including its existing version pin, must survive
+        dependencies = (
+            "biopython=1.78", "fastparquet=0.5", "logomaker=0.8", "mpmath=1.1.0",
+            "numpy=1.18.5", "pandas=1.1.5", "patsy=0.5.1", "pip=21.0.1",
+            "pysam=0.16.0.1", "python=3.8", "samtools=1.12",
+            "scikit-learn=0.24.1", "scikit-bio=0.5.6", "seaborn", "umap-learn",
+        )
+        upstream = (
+            "name: FrEIA\nprefix: ~/miniconda3/envs/FrEIA\n"
+            "channels:\n  - conda-forge\n  - bioconda\ndependencies:\n"
+            + "".join(f"  - {dependency}\n" for dependency in dependencies)
+        ).replace("  - pip=21.0.1\n", "  - pip=21.0.1\n  - pip:\n    - statannot\n    - combat\n")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "installation with spaces"
+            source = root / "FrEIA-source/workflow/envs/FrEIA_env.yaml"
+            source.parent.mkdir(parents=True)
+            source.write_text(upstream)
+            arguments = root / "conda-arguments.txt"
+
+            # Fake the source checkout and stop at Conda. No downloads or installation occur
+            result = subprocess.run(
+                ["bash", "-euc", r'''
+source <(sed -n '/^install_freia() {$/,/^}$/p' "$BENCH_INSTALLER")
+install_root=$BENCH_INSTALL_ROOT
+git() { return 0; }
+conda() {
+    printf '%s\n' "$@" > "$BENCH_CONDA_ARGUMENTS"
+    return 9
+}
+install_freia
+'''],
+                env={
+                    **os.environ,
+                    "BENCH_INSTALLER": str(BENCHMARKS / "install_tools.sh"),
+                    "BENCH_INSTALL_ROOT": str(root),
+                    "BENCH_CONDA_ARGUMENTS": str(arguments),
+                },
+                capture_output=True, text=True,
+            )
+
+            self.assertEqual(result.returncode, 9, result.stderr)
+            generated = (root / "freia-environment.yaml").read_text()
+            self.assertEqual(
+                generated.split("dependencies:\n")[0],
+                "channels:\n  - conda-forge\n  - bioconda\n  - nodefaults\n",
+            )
+            self.assertEqual(
+                generated.split("dependencies:\n")[1].splitlines(),
+                [f"  - {dependency}" for dependency in dependencies],
+            )
+            self.assertEqual(arguments.read_text().splitlines(), [
+                "env", "create", "--yes", "--prefix", str(root / "envs/freia"),
+                "--file", str(root / "freia-environment.yaml"),
+            ])
+            self.assertEqual(source.read_text(), upstream)
+
     def test_finaletoolkit_installs_loess_with_pip_before_packing(self):
         # Local shell functions replace Conda, Python and FinaleToolkit
         # No package manager or installed tool is invoked by this fixture

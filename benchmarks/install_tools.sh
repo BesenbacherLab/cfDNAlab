@@ -299,12 +299,24 @@ install_freia() {
     # FrEIA
     # Guide: https://github.com/mouliere-lab/FrEIA#installation-guide
     # This installation uses a pinned source commit rather than a release archive
-    # The authors' dependency pins are retained, with outside Conda channels excluded
+    # The authors' Conda dependency pins are retained, with outside channels excluded
     # Only the end-extraction and abundance scripts are needed for an existing BAM
     git clone https://github.com/mouliere-lab/FrEIA.git "$install_root/FrEIA-source"
     git -C "$install_root/FrEIA-source" checkout 2c32fb9d9fab774f4ae57931df7fd7d75654d343
     (
-        awk '/^dependencies:/ {print "  - nodefaults"} {print}' "$install_root/FrEIA-source/workflow/envs/FrEIA_env.yaml" \
+        # The generated file has no upstream environment name or home-directory prefix
+        # The --prefix argument below is the only installation destination
+        # statannot and combat serve downstream plotting and batch correction
+        # The benchmark's extraction/abundance scripts and helper do not import them
+        # Removing these two unpinned pip requirements avoids an unnecessary PyPI step
+        awk '
+            /^(name|prefix):/ {next}
+            /^  - pip:$/ {next}
+            /^    - (statannot|combat)$/ {next}
+            /^dependencies:/ {print "  - nodefaults"}
+            {print}
+        ' \
+            "$install_root/FrEIA-source/workflow/envs/FrEIA_env.yaml" \
             > "$install_root/freia-environment.yaml"
         conda env create --yes --prefix "$install_root/envs/freia" \
             --file "$install_root/freia-environment.yaml"
@@ -315,6 +327,10 @@ install_freia() {
             "$install_root/FrEIA-source/workflow/scripts/1_FrEIA/2_data_transformation.py" \
             "$install_root/FrEIA-source/workflow/scripts/1_FrEIA/FrEIA_tools.py" \
             "$CONDA_PREFIX/share/freia/"
+        # Argument help imports each native script and the shared helper without reading a BAM
+        # An import failure stops installation before an unusable environment can be packed
+        python "$CONDA_PREFIX/share/freia/1_extract_fragment_ends.py" --help >/dev/null
+        python "$CONDA_PREFIX/share/freia/2_data_transformation.py" --help >/dev/null
         git -C "$install_root/FrEIA-source" rev-parse HEAD > "$CONDA_PREFIX/share/freia/version.txt"
         "$install_root/envs/packaging/bin/conda-pack" -p "$CONDA_PREFIX" -o "$install_root/freia.tar.gz"
     )
