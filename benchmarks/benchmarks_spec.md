@@ -27,6 +27,8 @@ Submission examples and operating instructions are in the [benchmark README](REA
 
 Installation targets Linux x86_64 with Bash 4 or later. Conda, Apptainer, Git, wget, tar, GNU make and C/C++ build tools are external prerequisites. A dedicated installation root contains `envs/`, current attempt logs under `logs/`, dependency records under `records/`, and standalone binaries, source checkouts, images and archives at the root.
 
+Before invoking Conda, the installer sets `CONDA_PKGS_DIRS=<root>/cache/conda/pkgs` and `CONDA_ENVS_PATH=<root>/envs`. Pip, Cargo, Apptainer and Matplotlib caches also use `<root>/cache`. Apptainer and XDG configuration use `<root>/config`, and XDG application data uses `<root>/share`. `TMPDIR`, `TMP`, `TEMP` and `APPTAINER_TMPDIR` use `<root>/tmp`, which is also bound as `/tmp` for the installer's container version checks. wget keeps its HTTPS host records under `<root>/cache`. Conda environment registration in the home directory is disabled, and Python bytecode caching in the existing Conda installation is disabled. Pip user installs are disabled and inherited pip prefix/target overrides are removed. These settings apply only to the installer and its children. Existing files in other caches are not moved or deleted.
+
 | Installation ID | Requested version/source | Main retained artifact |
 | --- | --- | --- |
 | `packaging` | conda-pack 0.9.2, Python 3.11 | `envs/packaging/bin/conda-pack` |

@@ -574,7 +574,7 @@ benchmark_schedule
             ):
                 root = Path(temporary)
                 installation, fake_bin, conda_base = (
-                    root / "installation",
+                    root / "installation with spaces",
                     root / "bin",
                     root / "conda",
                 )
@@ -583,7 +583,20 @@ benchmark_schedule
                 (conda_base / "etc/profile.d/conda.sh").write_text("# Conda fixture\n")
                 executable = fake_bin / "conda"
                 executable.write_text(
-                    '#!/usr/bin/env bash\nif [[ "$1" == info ]]; then printf "%s\\n" "$BENCH_FAKE_CONDA_BASE"; else exit 9; fi\n'
+                    r'''#!/usr/bin/env bash
+if [[ "$1" == info ]]; then
+    for setting in CONDA_PKGS_DIRS CONDA_ENVS_PATH CONDA_REGISTER_ENVS \
+        PIP_CACHE_DIR PIP_USER PIP_PREFIX PIP_TARGET CARGO_HOME \
+        APPTAINER_CACHEDIR APPTAINER_TMPDIR APPTAINER_CONFIGDIR \
+        XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME MPLCONFIGDIR \
+        TMPDIR TMP TEMP PYTHONDONTWRITEBYTECODE HOME; do
+        printf '%s\t%s\n' "$setting" "${!setting}"
+    done > "$BENCH_STORAGE_RECORD"
+    printf '%s\n' "$BENCH_FAKE_CONDA_BASE"
+else
+    exit 9
+fi
+'''
                 )
                 executable.chmod(0o755)
                 (installation / "envs/comparison/bin").mkdir(parents=True)
@@ -604,12 +617,26 @@ benchmark_schedule
                 ]
                 if reason == "force":
                     command += ["--force", "comparison"]
+                storage_record = root / "storage.tsv"
+                # Inherited cache locations must not override the supplied installation root
+                inherited_paths = {
+                    name: str(root / "outside-installation" / name)
+                    for name in (
+                        "CONDA_PKGS_DIRS", "CONDA_ENVS_PATH", "PIP_CACHE_DIR",
+                        "PIP_PREFIX", "PIP_TARGET", "CARGO_HOME", "APPTAINER_CACHEDIR",
+                        "APPTAINER_TMPDIR", "APPTAINER_CONFIGDIR", "XDG_CACHE_HOME",
+                        "XDG_CONFIG_HOME", "XDG_DATA_HOME", "MPLCONFIGDIR", "TMPDIR",
+                        "TMP", "TEMP",
+                    )
+                }
                 result = subprocess.run(
                     command,
                     env={
                         **os.environ,
+                        **inherited_paths,
                         "PATH": f"{fake_bin}:{os.environ['PATH']}",
                         "BENCH_FAKE_CONDA_BASE": str(conda_base),
+                        "BENCH_STORAGE_RECORD": str(storage_record),
                     },
                     capture_output=True,
                     text=True,
@@ -622,6 +649,35 @@ benchmark_schedule
                     self.assertIn(
                         "comparison\tcheckout\toutdated\t", manifest.read_text()
                     )
+                # Capture settings at the first Conda call, before any package work
+                storage = dict(csv.reader(
+                    storage_record.read_text().splitlines(), delimiter="\t"
+                ))
+                expected_paths = {
+                    "CONDA_PKGS_DIRS": "cache/conda/pkgs",
+                    "CONDA_ENVS_PATH": "envs",
+                    "PIP_CACHE_DIR": "cache/pip",
+                    "CARGO_HOME": "cache/cargo",
+                    "APPTAINER_CACHEDIR": "cache/apptainer",
+                    "APPTAINER_TMPDIR": "tmp",
+                    "APPTAINER_CONFIGDIR": "config/apptainer",
+                    "XDG_CACHE_HOME": "cache",
+                    "XDG_CONFIG_HOME": "config",
+                    "XDG_DATA_HOME": "share",
+                    "MPLCONFIGDIR": "cache/matplotlib",
+                    "TMPDIR": "tmp", "TMP": "tmp", "TEMP": "tmp",
+                }
+                for setting, relative_path in expected_paths.items():
+                    expected_path = installation.resolve() / relative_path
+                    self.assertEqual(storage[setting], str(expected_path), setting)
+                    self.assertTrue(expected_path.is_dir(), setting)
+                self.assertEqual(storage["CONDA_REGISTER_ENVS"], "false")
+                self.assertEqual(storage["PIP_USER"], "false")
+                self.assertEqual(storage["PYTHONDONTWRITEBYTECODE"], "1")
+                self.assertEqual(storage["PIP_PREFIX"], "")
+                self.assertEqual(storage["PIP_TARGET"], "")
+                self.assertEqual(storage["HOME"], os.environ["HOME"])
+                self.assertFalse((root / "outside-installation").exists())
 
     def test_finaletoolkit_installs_loess_with_pip_before_packing(self):
         # Local shell functions replace Conda, Python and FinaleToolkit

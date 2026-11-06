@@ -8,6 +8,7 @@
 # Rerunning resumes completed versions. Use --force TOOL to reinstall
 # Conda environments go in envs/<tool>
 # Standalone tools, source checkouts and packed archives stay at the root
+# Downloads, package/build caches and temporary files also stay under this root
 # The cfDNAlab build uses this repository's current checkout
 # Tool versions and installation routes were checked on 2026-10-29
 # Those versions are pinned here so the benchmark can be reproduced later
@@ -130,9 +131,34 @@ if [[ -n "$outdated_tools" ]]; then
     exit 0
 fi
 
+# --prefix selects the installed environment, but does not move Conda's download
+# cache. These settings put downloads and extracted packages under ROOT as well,
+# instead of filling the existing Conda installation or the user's home directory
+export CONDA_PKGS_DIRS="$install_root/cache/conda/pkgs"
+export CONDA_ENVS_PATH="$install_root/envs"
+# Environments are used by their full paths, without writing ~/.conda/environments.txt
+export CONDA_REGISTER_ENVS=false
+export PIP_CACHE_DIR="$install_root/cache/pip"
+export CARGO_HOME="$install_root/cache/cargo"
+export APPTAINER_CACHEDIR="$install_root/cache/apptainer"
+export APPTAINER_CONFIGDIR="$install_root/config/apptainer"
+# Other libraries use these locations for settings, fonts and container metadata
+export XDG_CACHE_HOME="$install_root/cache"
+export XDG_CONFIG_HOME="$install_root/config"
+export XDG_DATA_HOME="$install_root/share"
+export MPLCONFIGDIR="$install_root/cache/matplotlib"
+# Temporary downloads, unpacking and package builds need the large filesystem too
+export TMPDIR="$install_root/tmp"
+export TMP="$TMPDIR" TEMP="$TMPDIR" APPTAINER_TMPDIR="$TMPDIR"
+mkdir -p "$CONDA_PKGS_DIRS" "$PIP_CACHE_DIR" "$CARGO_HOME" \
+    "$APPTAINER_CACHEDIR" "$APPTAINER_CONFIGDIR" "$XDG_DATA_HOME" \
+    "$MPLCONFIGDIR" "$TMPDIR"
+
 # Python imports and Conda channels stay inside the requested environments
-export PYTHONNOUSERSITE=1 CONDA_CHANNEL_PRIORITY=strict
-unset PYTHONPATH PYTHONHOME
+# Python does not add bytecode caches to the existing Conda installation
+# Pip installs into the active tool environment, without inherited destination overrides
+export PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 PIP_USER=false CONDA_CHANNEL_PRIORITY=strict
+unset PYTHONPATH PYTHONHOME PIP_PREFIX PIP_TARGET
 source "$(conda info --base)/etc/profile.d/conda.sh"
 
 install_packaging() {
@@ -176,8 +202,9 @@ install_mosdepth() {
     # mosdepth
     # Guide: https://github.com/brentp/mosdepth#installation
     # The guide recommends the static release binary, which needs no Conda environment
+    # wget's HTTPS host history also stays under ROOT, instead of ~/.wget-hsts
     mkdir -p "$install_root/mosdepth-0.3.14"
-    wget -O "$install_root/mosdepth-0.3.14/mosdepth" \
+    wget --hsts-file="$install_root/cache/wget-hsts" -O "$install_root/mosdepth-0.3.14/mosdepth" \
         https://github.com/brentp/mosdepth/releases/download/v0.3.14/mosdepth
     chmod +x "$install_root/mosdepth-0.3.14/mosdepth"
     "$install_root/mosdepth-0.3.14/mosdepth" --version
@@ -202,7 +229,7 @@ install_pandepth() {
     # PanDepth
     # Guide: https://github.com/HuiyangYu/PanDepth#1-install
     # This function downloads the Linux x86_64 release archive shown in the guide
-    wget -O "$install_root/PanDepth-2.26-Linux-x86_64.tar.gz" \
+    wget --hsts-file="$install_root/cache/wget-hsts" -O "$install_root/PanDepth-2.26-Linux-x86_64.tar.gz" \
         https://github.com/HuiyangYu/PanDepth/releases/download/v2.26/PanDepth-2.26-Linux-x86_64.tar.gz
     tar -xzf "$install_root/PanDepth-2.26-Linux-x86_64.tar.gz" -C "$install_root"
     "$install_root/PanDepth-2.26-Linux-x86_64/pandepth" -h
@@ -242,10 +269,11 @@ install_cfdnapro() {
     # published from commit ab9eeb166b8614b9ec2ce4ceda190dc295c65a7c
     apptainer pull "$install_root/cfdnapro-1.7.4.sif" \
         docker://ghcr.io/hw538/cfdnapro@sha256:26a28821a272856e77fdf3d13d902ce8ca5c1e60475b1d4f2f076ef2ac3e2b45
-    apptainer exec --cleanenv "$install_root/cfdnapro-1.7.4.sif" \
+    # The version checks also use ROOT's temporary space inside the container
+    apptainer exec --cleanenv --bind "$TMPDIR:/tmp" "$install_root/cfdnapro-1.7.4.sif" \
         Rscript --vanilla -e 'cat(as.character(packageVersion("cfDNAPro")), "\n")'
     apptainer inspect --json "$install_root/cfdnapro-1.7.4.sif" > "$install_root/records/cfdnapro-image.json"
-    apptainer exec --cleanenv "$install_root/cfdnapro-1.7.4.sif" Rscript --vanilla -e 'for (package in c("cfDNAPro", "GenomicAlignments", "Rsamtools")) cat(package, as.character(packageVersion(package)), "\n")' > "$install_root/records/cfdnapro-packages.txt"
+    apptainer exec --cleanenv --bind "$TMPDIR:/tmp" "$install_root/cfdnapro-1.7.4.sif" Rscript --vanilla -e 'for (package in c("cfDNAPro", "GenomicAlignments", "Rsamtools")) cat(package, as.character(packageVersion(package)), "\n")' > "$install_root/records/cfdnapro-packages.txt"
 }
 
 install_picard() {
