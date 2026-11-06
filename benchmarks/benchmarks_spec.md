@@ -46,7 +46,7 @@ The cfDNAPro image digest is `sha256:26a28821a272856e77fdf3d13d902ce8ca5c1e60475
 
 cfDNAlab builds with Rust 1.94.0, LLVM/Clang 21, Fontconfig, zstandard and Perl. Its Cargo target directory is `<root>/build/cfdnalab`, surviving explicit reinstalls for incremental builds. The build record contains the installed checkout commit, dirty flag and compiler version.
 
-FinaleToolkit additionally pins pysam 0.24.0, pybigwig 0.3.25, py2bit 0.3.3, numba 0.63.1, scipy 1.17.0, statsmodels 0.14.6, tqdm 4.67.3, loess 2.1.2 and matplotlib 3.10.8. These recipe pins do not independently fix every transitive dependency. The solved environment export records the complete result.
+FinaleToolkit additionally pins pysam 0.24.0, pybigwig 0.3.25, py2bit 0.3.3, numba 0.63.1, scipy 1.17.0, statsmodels 0.14.6, tqdm 4.67.3 and matplotlib 3.10.8 through Conda, with NumPy >=2 and pandas >=2.3.0. Its required loess 2.1.2 is installed with pip after Conda finishes, rather than requested as a Conda package. Pip also supplies any missing loess dependencies. `pip check` runs before packaging. The Conda export and `records/finaletoolkit.pip.txt` record the resulting environment, including dependencies not individually pinned here.
 
 Griffin uses Python 3.7.12, `nomkl`, numpy 1.21.2, pandas 1.3.2, scipy 1.7.1, pybigwig 0.3.17, PyYAML 5.3.1, bedtools 2.29.2, pybedtools 0.8.0 and pysam 0.19.0. Python 3.7.12 replaces the unavailable 3.7.4 guide pin.
 

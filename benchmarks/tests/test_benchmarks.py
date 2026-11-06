@@ -623,6 +623,59 @@ benchmark_schedule
                         "comparison\tcheckout\toutdated\t", manifest.read_text()
                     )
 
+    def test_finaletoolkit_installs_loess_with_pip_before_packing(self):
+        # Local shell functions replace Conda, Python and FinaleToolkit
+        # No package manager or installed tool is invoked by this fixture
+        for pip_status in (0, 9):
+            with self.subTest(pip_status=pip_status), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                (root / "records").mkdir()
+                packaging = root / "envs/packaging/bin"
+                packaging.mkdir(parents=True)
+                pack = packaging / "conda-pack"
+                pack.write_text('#!/usr/bin/env bash\nprintf "pack\\n" >> "$BENCH_CALLS"\n')
+                pack.chmod(0o755)
+                calls = root / "calls.txt"
+                result = subprocess.run(
+                    ["bash", "-euc", r'''
+source <(sed -n '/^install_finaletoolkit() {$/,/^}$/p' "$BENCH_INSTALLER")
+install_root=$BENCH_INSTALL_ROOT
+conda() {
+    printf 'conda %s\n' "$*" >> "$BENCH_CALLS"
+    if [[ "$*" == *loess=* ]]; then return 7; fi
+    if [[ "$1" == activate ]]; then export CONDA_PREFIX=$2; fi
+}
+python() {
+    printf 'python %s\n' "$*" >> "$BENCH_CALLS"
+    if [[ "$*" == '-m pip install loess==2.1.2' ]]; then return "$BENCH_PIP_STATUS"; fi
+    if [[ "$*" == '-m pip freeze' ]]; then printf 'loess==2.1.2\n'; fi
+}
+finaletoolkit() { printf 'version\n' >> "$BENCH_CALLS"; }
+install_finaletoolkit
+'''],
+                    env={
+                        **os.environ,
+                        "BENCH_INSTALLER": str(BENCHMARKS / "install_tools.sh"),
+                        "BENCH_INSTALL_ROOT": str(root),
+                        "BENCH_CALLS": str(calls),
+                        "BENCH_PIP_STATUS": str(pip_status),
+                    },
+                    capture_output=True, text=True,
+                )
+                commands = calls.read_text().splitlines()
+                self.assertIn("python -m pip install loess==2.1.2", commands)
+                if pip_status:
+                    self.assertEqual(result.returncode, pip_status, result.stderr)
+                    self.assertNotIn("pack", commands)
+                    self.assertNotIn("version", commands)
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertLess(commands.index("python -m pip check"), commands.index("pack"))
+                    self.assertEqual(
+                        (root / "records/finaletoolkit.pip.txt").read_text(),
+                        "loess==2.1.2\n",
+                    )
+
 
 class BiologicalInputTests(unittest.TestCase):
     """Keep reconstructed TLEN signs and filtering flags explicit."""

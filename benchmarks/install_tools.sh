@@ -213,13 +213,20 @@ install_finaletoolkit() {
     # Guide: https://epifluidlab.github.io/FinaleToolkit/documentation/user_guide/installation.html
     # Conda alternative: https://bioconda.github.io/recipes/finaletoolkit/README.html
     # Bioconda supplies the selected release and its prebuilt compiled dependencies
+    # The required loess version comes from PyPI, after Conda has finished installing
     # Coverage, end-motif and length benchmarks use this same environment archive
     (
         conda create --yes --override-channels --prefix "$install_root/envs/finaletoolkit" \
-            --channel conda-forge --channel bioconda python=3.11 finaletoolkit=1.1.0 \
+            --channel conda-forge --channel bioconda python=3.11 pip finaletoolkit=1.1.0 \
+            'numpy>=2' 'pandas>=2.3.0' \
             pysam=0.24.0 pybigwig=0.3.25 py2bit=0.3.3 numba=0.63.1 \
-            scipy=1.17.0 statsmodels=0.14.6 tqdm=4.67.3 loess=2.1.2 matplotlib=3.10.8
+            scipy=1.17.0 statsmodels=0.14.6 tqdm=4.67.3 matplotlib=3.10.8
         conda activate "$install_root/envs/finaletoolkit"
+        # Pip supplies loess and any missing dependencies inside this environment
+        # The check rejects inconsistent requirements before the environment is packed
+        python -m pip install loess==2.1.2
+        python -m pip check
+        python -m pip freeze > "$install_root/records/finaletoolkit.pip.txt"
         finaletoolkit --version
         "$install_root/envs/packaging/bin/conda-pack" -p "$CONDA_PREFIX" -o "$install_root/finaletoolkit.tar.gz"
     )
