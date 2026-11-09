@@ -35,7 +35,7 @@
 #   export BENCH_SAMTOOLS_ARCHIVE=/path/to/benchmark-tools/samtools.tar.gz
 #   export BENCH_PANDEPTH=/path/to/pandepth
 #   export BENCH_FINALE_ARCHIVE=/path/to/benchmark-tools/finaletoolkit.tar.gz
-#   export BENCH_LOCAL_ROOT=/path/to/node-local-scratch
+#   The batch job uses TMPDIR supplied on the compute node
 #   export BENCH_RESULTS=/faststorage/project/coverage-results
 #   export BENCH_CORES=4
 #   export BENCH_METHODS="cfdnalab mosdepth"
@@ -49,7 +49,7 @@ export LC_ALL=C
 source "${SLURM_SUBMIT_DIR:?Submit from the repository root}/benchmarks/common.sh"
 BENCH_FEATURE=coverage
 
-# These paths are supplied in the environment when submitting the job
+# Input and tool paths are supplied in the environment when submitting the job
 # BENCH_INDEX can override the usual sample.bam.bai path. FinaleToolkit requires
 # a BAI index, so CSI indices are not supported by this combined benchmark
 # Copied programs must have the libraries they need available on the compute node
@@ -58,7 +58,8 @@ BENCH_FEATURE=coverage
 # BENCH_SAMTOOLS_ARCHIVE similarly includes samtools and its shared libraries
 : "${SLURM_JOB_ID:?Submit this script with sbatch}"
 : "${BENCH_BAM:?Set the input BAM path}"
-: "${BENCH_LOCAL_ROOT:?Set an existing node-local scratch directory}"
+# TMPDIR is supplied on the compute node when the batch job starts
+: "${TMPDIR:?The compute node must provide TMPDIR for node-local scratch}"
 : "${BENCH_RESULTS:?Set a new results directory}"
 : "${BENCH_SAMTOOLS_ARCHIVE:?Set the path of the packed samtools environment}"
 BENCH_INDEX=${BENCH_INDEX:-${BENCH_BAM}.bai}
@@ -102,7 +103,7 @@ done
 export BENCH_WORK BENCH_NODE BENCH_CFDNA_VERSION BENCH_MOSDEPTH_VERSION BENCH_AUTOSOMES
 export BENCH_SAMTOOLS_VERSION BENCH_FINALE_VERSION
 export BENCH_PANDEPTH_VERSION
-BENCH_WORK=$(mktemp -d "$BENCH_LOCAL_ROOT/coverage-${SLURM_JOB_ID}.XXXXXX")
+BENCH_WORK=$(mktemp -d "$TMPDIR/coverage-${SLURM_JOB_ID}.XXXXXX")
 BENCH_NODE=$(hostname)
 trap 'rm -rf "$BENCH_WORK"' EXIT
 mkdir -p "$BENCH_WORK/bin" "$BENCH_WORK/tmp"

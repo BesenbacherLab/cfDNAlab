@@ -43,7 +43,7 @@ export BENCH_BAM=/path/to/BH01.hg38.paired.15x.bam
 export BENCH_REF_FASTA=/path/to/the-alignment-reference.fa
 export BENCH_INTERVALS=/path/to/grouped-midpoint-windows.bed
 export BENCH_SAMTOOLS_ARCHIVE=/path/to/benchmark-tools/samtools.tar.gz
-export BENCH_LOCAL_ROOT=/path/to/node-local-scratch
+# The batch job uses TMPDIR supplied on the compute node
 
 # Concordance pilots: separate jobs, each with a new results directory
 export BENCH_RESULTS=/path/to/midpoint-cfdnalab-pilot

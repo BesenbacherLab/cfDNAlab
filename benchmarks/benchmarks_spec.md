@@ -108,7 +108,7 @@ Submit from the repository root so `SLURM_SUBMIT_DIR` locates helpers. Nodes nee
 | --- | --- |
 | `BENCH_BAM` | Required existing BAM |
 | `BENCH_INDEX` | `<BENCH_BAM>.bai` |
-| `BENCH_LOCAL_ROOT` | Required existing node-local scratch root |
+| `TMPDIR` | Node-local scratch supplied on the compute node at job startup. Each runner creates its working directory below it, then sets `TMPDIR` to that working directory's `tmp/` for tool temporary files |
 | `BENCH_RESULTS` | Required new results directory |
 | `BENCH_METHODS` | Required feature-specific space-separated method labels, without duplicates or a default |
 | `BENCH_CORES` | Required single positive core count per job. Planned settings: 1, 4, 12, 32 in separate jobs |

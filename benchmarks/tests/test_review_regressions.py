@@ -29,6 +29,76 @@ BENCHMARKS = Path(__file__).resolve().parents[1]
 class SetupAndScopeTests(unittest.TestCase):
     """Reject incomplete setup before staging or decompressing native data."""
 
+    def test_each_runner_uses_the_compute_nodes_tmpdir_before_staging(self):
+        for feature, filename, directory_prefix in (
+            ("coverage", "benchmark_coverage.sh", "coverage"),
+            ("lengths", "benchmark_lengths.sh", "lengths"),
+            ("ends", "benchmark_end_motifs.sh", "end-motifs"),
+            ("midpoints", "benchmark_midpoints.sh", "midpoints"),
+        ):
+            for scratch_available in (True, False):
+                with (
+                    self.subTest(feature=feature, scratch_available=scratch_available),
+                    tempfile.TemporaryDirectory() as temporary,
+                ):
+                    root = Path(temporary)
+                    scratch = root / "node scratch"
+                    scratch.mkdir()
+                    fake_bin = root / "bin"
+                    fake_bin.mkdir()
+                    call_log = root / "mktemp-arguments"
+                    # Stop at directory creation so no BAM, tool or Slurm command runs
+                    mktemp = fake_bin / "mktemp"
+                    mktemp.write_text(
+                        '#!/usr/bin/env bash\n'
+                        'printf "%s\\n" "$@" > "$SCRATCH_CALL_LOG"\n'
+                        'exit 9\n'
+                    )
+                    mktemp.chmod(0o755)
+                    environment = {
+                        **os.environ,
+                        "PATH": str(fake_bin) + ":" + os.environ["PATH"],
+                        "SLURM_SUBMIT_DIR": str(BENCHMARKS.parent),
+                        "SLURM_JOB_ID": "123",
+                        "SLURM_JOB_NUM_NODES": "1",
+                        "SLURM_CPUS_PER_TASK": "4",
+                        "BENCH_BAM": "/unused/input.bam",
+                        "BENCH_INDEX": "/unused/input.bam.bai",
+                        "BENCH_INTERVALS": "/unused/sites.bed",
+                        "BENCH_SAMTOOLS_ARCHIVE": "/unused/samtools.tar.gz",
+                        "BENCH_CFDNA": "/unused/cfdna",
+                        "BENCH_RESULTS": str(root / "results"),
+                        "BENCH_CORES": "4",
+                        "BENCH_METHODS": "cfdnalab-read" if feature == "ends" else "cfdnalab",
+                        "BENCH_PILOT": "1",
+                        "BENCH_EXPECTED_NODE": "",
+                        "BENCH_SETUP_PYTHON": sys.executable,
+                        "BENCH_RUN_TIMEOUT_SECONDS": "0",
+                        "SCRATCH_CALL_LOG": str(call_log),
+                    }
+                    environment.pop("BENCH_LOCAL_ROOT", None)
+                    environment.pop("TMPDIR", None)
+                    if scratch_available:
+                        environment["TMPDIR"] = str(scratch)
+                    result = subprocess.run(
+                        ["bash", str(BENCHMARKS / feature / filename)],
+                        env=environment,
+                        text=True,
+                        capture_output=True,
+                    )
+                    if scratch_available:
+                        self.assertEqual(result.returncode, 9, result.stderr)
+                        self.assertEqual(
+                            call_log.read_text().splitlines(),
+                            ["-d", str(scratch / f"{directory_prefix}-123.XXXXXX")],
+                        )
+                    else:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn("TMPDIR", result.stderr)
+                        self.assertFalse(call_log.exists())
+                    self.assertFalse((root / "results").exists())
+                    self.assertEqual(list(scratch.iterdir()), [])
+
     def test_each_runner_requires_an_explicit_method_block_before_staging(self):
         for feature, filename in (
             ("coverage", "benchmark_coverage.sh"),
@@ -49,7 +119,7 @@ class SetupAndScopeTests(unittest.TestCase):
                     "BENCH_INDEX": "/unused/input.bam.bai",
                     "BENCH_INTERVALS": "/unused/sites.bed",
                     "BENCH_SAMTOOLS_ARCHIVE": "/unused/samtools.tar.gz",
-                    "BENCH_LOCAL_ROOT": temporary,
+                    "TMPDIR": temporary,
                     "BENCH_RESULTS": temporary + "/results",
                 }
                 environment.pop("BENCH_METHODS", None)
@@ -78,7 +148,7 @@ class SetupAndScopeTests(unittest.TestCase):
                     "BENCH_PILOT": "0",
                     "BENCH_BAM": "/unused/input.bam",
                     "BENCH_INTERVALS": "/unused/sites.bed",
-                    "BENCH_LOCAL_ROOT": temporary,
+                    "TMPDIR": temporary,
                     "BENCH_RESULTS": temporary + "/results",
                     "BENCH_EXPECTED_NODE": "",
                     "BENCH_SETUP_PYTHON": sys.executable,
@@ -450,7 +520,7 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
                     "SLURM_CPUS_PER_TASK": "32",
                     "BENCH_BAM": str(bam),
                     "BENCH_INDEX": str(bam) + ".bai",
-                    "BENCH_LOCAL_ROOT": str(scratch),
+                    "TMPDIR": str(scratch),
                     "BENCH_RESULTS": str(results),
                     "BENCH_CFDNA": str(fake_bin / "cfdna"),
                     "BENCH_SAMTOOLS_ARCHIVE": str(archive),
@@ -593,7 +663,7 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
                     "BENCH_REF_FASTA": str(fasta),
                     "BENCH_FASTA_INDEX": str(fasta) + ".fai",
                     "BENCH_INTERVALS": str(intervals),
-                    "BENCH_LOCAL_ROOT": str(scratch),
+                    "TMPDIR": str(scratch),
                     "BENCH_RESULTS": str(results),
                     "BENCH_SAMTOOLS_ARCHIVE": str(archives["samtools"]),
                     "BENCH_GRIFFIN_ARCHIVE": str(archives["griffin"]),

@@ -96,7 +96,7 @@ export BENCH_SAMTOOLS_ARCHIVE=/path/to/benchmark-tools/samtools.tar.gz
 export BENCH_FINALE_ARCHIVE=/path/to/benchmark-tools/finaletoolkit.tar.gz
 export BENCH_CFDNAPRO_IMAGE=/path/to/benchmark-tools/cfdnapro-1.7.4.sif
 export BENCH_PICARD_ARCHIVE=/path/to/benchmark-tools/picard.tar.gz
-export BENCH_LOCAL_ROOT=/path/to/node-local-scratch
+# The batch job uses TMPDIR supplied on the compute node
 export BENCH_GENOME=hg38
 
 # Run the four comparisons and the outer-span/proper-pair diagnostics once

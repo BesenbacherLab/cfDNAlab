@@ -22,7 +22,8 @@ BENCH_FEATURE=ends
 
 : "${SLURM_JOB_ID:?Submit this script with sbatch}"
 : "${BENCH_BAM:?Set the prepared input BAM path}"
-: "${BENCH_LOCAL_ROOT:?Set an existing node-local scratch directory}"
+# TMPDIR is supplied on the compute node when the batch job starts
+: "${TMPDIR:?The compute node must provide TMPDIR for node-local scratch}"
 : "${BENCH_RESULTS:?Set a new results directory}"
 BENCH_INDEX=${BENCH_INDEX:-${BENCH_BAM}.bai}
 : "${BENCH_CORES:?Set a single core budget for this job: 1, 4, 12 or 32}"
@@ -106,7 +107,7 @@ if [[ "$need_reference" == true ]]; then : "${BENCH_REF_2BIT:?Set the matching 2
 # Inputs and programs are copied once before warmups. Every tool reuses these copies
 export BENCH_WORK BENCH_NODE BENCH_AUTOSOMES BENCH_CONTIGS BENCH_RESULTS
 export BENCH_CFDNA_VERSION BENCH_FINALE_VERSION BENCH_FREIA_VERSION BENCH_CFDNAPRO_VERSION BENCH_APPTAINER
-BENCH_WORK=$(mktemp -d "$BENCH_LOCAL_ROOT/end-motifs-${SLURM_JOB_ID}.XXXXXX")
+BENCH_WORK=$(mktemp -d "$TMPDIR/end-motifs-${SLURM_JOB_ID}.XXXXXX")
 trap 'rm -rf "$BENCH_WORK"' EXIT
 BENCH_NODE=$(hostname)
 mkdir -p "$BENCH_WORK/bin" "$BENCH_WORK/tmp" "$BENCH_WORK/cache" "$BENCH_WORK/matplotlib"

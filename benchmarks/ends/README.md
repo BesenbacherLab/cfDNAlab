@@ -64,7 +64,7 @@ export BENCH_FREIA_ARCHIVE=/path/to/benchmark-tools/freia.tar.gz
 export BENCH_CFDNAPRO_IMAGE=/path/to/benchmark-tools/cfdnapro-1.7.4.sif
 export BENCH_GENOME=hg38
 export BENCH_SAMTOOLS_ARCHIVE=/path/to/benchmark-tools/samtools.tar.gz
-export BENCH_LOCAL_ROOT=/path/to/node-local-scratch
+# The batch job uses TMPDIR supplied on the compute node
 
 # 4-mer pilot: native tool outputs and cfDNAlab configurations for concordance
 export BENCH_RESULTS=/path/to/end-motif-pilot

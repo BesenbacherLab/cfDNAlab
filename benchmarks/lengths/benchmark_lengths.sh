@@ -20,7 +20,8 @@ BENCH_FEATURE=lengths
 
 : "${SLURM_JOB_ID:?Submit this script with sbatch}"
 : "${BENCH_BAM:?Set the prepared input BAM path}"
-: "${BENCH_LOCAL_ROOT:?Set an existing node-local scratch directory}"
+# TMPDIR is supplied on the compute node when the batch job starts
+: "${TMPDIR:?The compute node must provide TMPDIR for node-local scratch}"
 : "${BENCH_RESULTS:?Set a new results directory}"
 BENCH_INDEX=${BENCH_INDEX:-${BENCH_BAM}.bai}
 : "${BENCH_CORES:?Set a single core budget for this job: 1, 4, 12 or 32}"
@@ -85,7 +86,7 @@ if [[ "$run_picard" == true ]]; then : "${BENCH_PICARD_ARCHIVE:?Set the packed P
 # Slurm keeps its own copy of the job script away from that helper
 export BENCH_WORK BENCH_NODE BENCH_RESULTS BENCH_AUTOSOMES BENCH_APPTAINER
 export BENCH_CFDNA_VERSION BENCH_CFDNAPRO_VERSION BENCH_FINALE_VERSION BENCH_SAMTOOLS_VERSION BENCH_PICARD_VERSION
-BENCH_WORK=$(mktemp -d "$BENCH_LOCAL_ROOT/lengths-${SLURM_JOB_ID}.XXXXXX")
+BENCH_WORK=$(mktemp -d "$TMPDIR/lengths-${SLURM_JOB_ID}.XXXXXX")
 trap 'rm -rf "$BENCH_WORK"' EXIT
 BENCH_NODE=$(hostname)
 if [[ "$run_cfdnapro" == true ]]; then

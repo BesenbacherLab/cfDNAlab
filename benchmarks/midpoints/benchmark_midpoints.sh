@@ -22,7 +22,8 @@ BENCH_FEATURE=midpoints
 : "${SLURM_JOB_ID:?Submit this script with sbatch}"
 : "${BENCH_BAM:?Set the prepared coordinate-sorted BAM path}"
 : "${BENCH_INTERVALS:?Set the grouped fixed-size BED path}"
-: "${BENCH_LOCAL_ROOT:?Set an existing node-local scratch directory}"
+# TMPDIR is supplied on the compute node when the batch job starts
+: "${TMPDIR:?The compute node must provide TMPDIR for node-local scratch}"
 : "${BENCH_RESULTS:?Set a new results directory}"
 BENCH_INDEX=${BENCH_INDEX:-${BENCH_BAM}.bai}
 BENCH_FASTA_INDEX=${BENCH_FASTA_INDEX:-${BENCH_REF_FASTA:-}.fai}
@@ -92,7 +93,7 @@ if [[ "$run_griffin" == true ]]; then : "${BENCH_GRIFFIN_ARCHIVE:?Set the packed
 # Inputs are copied once before warmups, including the supplied BAM/reference indexes
 export BENCH_WORK BENCH_NODE BENCH_HALF_WIDTH BENCH_SITES BENCH_GROUPS BENCH_CHROMOSOMES
 export BENCH_RESULTS BENCH_CFDNA_VERSION BENCH_GRIFFIN_VERSION
-BENCH_WORK=$(mktemp -d "$BENCH_LOCAL_ROOT/midpoints-${SLURM_JOB_ID}.XXXXXX")
+BENCH_WORK=$(mktemp -d "$TMPDIR/midpoints-${SLURM_JOB_ID}.XXXXXX")
 trap 'rm -rf "$BENCH_WORK"' EXIT
 BENCH_NODE=$(hostname)
 mkdir -p "$BENCH_WORK/bin" "$BENCH_WORK/tmp" "$BENCH_WORK/cache" "$BENCH_WORK/matplotlib" "$BENCH_WORK/griffin-env"

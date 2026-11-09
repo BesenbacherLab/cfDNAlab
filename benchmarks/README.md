@@ -68,7 +68,7 @@ Picard's version probe accepts its documented status 1 only with a recognizable 
 
 ## Runs and budgets
 
-Follow the [input preparation](data/README.md), then the [coverage](coverage/README.md), [lengths](lengths/README.md), [end-motif](ends/README.md) or [midpoint](midpoints/README.md) instructions. Submit **from the repository root** so `SLURM_SUBMIT_DIR` locates helpers. Jobs reserve an exclusive node and all its memory. Node generation, partition and wall time must match the cluster.
+Follow the [input preparation](data/README.md), then the [coverage](coverage/README.md), [lengths](lengths/README.md), [end-motif](ends/README.md) or [midpoint](midpoints/README.md) instructions. Submit **from the repository root** so `SLURM_SUBMIT_DIR` locates helpers. Jobs reserve an exclusive node and all its memory. Node generation, partition and wall time must match the cluster. Jobs use `$TMPDIR` supplied on the compute node, so no scratch path is needed in the submission settings. Each job creates its own working directory below it, directs tool temporary files there and removes only that working directory on exit.
 
 All runners require `BENCH_CORES` to specify a single core count for that job. The experiment uses **1, 4, 12 and 32 in separate jobs**. `BENCH_METHODS` is required and has no default. Supply each method label once. Defaults are `BENCH_WARMUPS=1` and `BENCH_REPETITIONS=3` measured. `BENCH_PILOT=1` selects zero full-input warmups and one measurement at the job's core count. Use a new `BENCH_RESULTS` directory for every job. Only selected tools are required, plus the samtools archive and setup Python. References are required only by selected methods that use them.
 

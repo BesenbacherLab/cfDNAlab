@@ -25,7 +25,7 @@ Set the input/tool paths printed by the installer and use a new results director
 
 ```bash
 export BENCH_BAM=/path/to/BH01.hg38.paired.15x.bam
-export BENCH_LOCAL_ROOT=/path/to/node-local-scratch
+# The batch job uses TMPDIR supplied on the compute node
 export BENCH_RESULTS=/path/to/coverage-concordance
 export BENCH_CORES=1
 export BENCH_PILOT=1
