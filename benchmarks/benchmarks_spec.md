@@ -102,7 +102,7 @@ Setup retains all rows, including repeats and overlaps, sorts chromosome/start/e
 
 ## Run controls
 
-Submit from the repository root so `SLURM_SUBMIT_DIR` locates helpers. Nodes need Slurm, GNU time at `/usr/bin/time`, GNU coreutils, `ldd` and setup Python 3. Selected tool paths/archives come from installer exports.
+Submit from the repository root on the login node with `bash benchmarks/submit_benchmark.sh FEATURE [sbatch options]`, choosing `coverage`, `lengths`, `ends` or `midpoints`. This preserves `SLURM_SUBMIT_DIR` so it locates helpers. Nodes need Slurm, GNU time at `/usr/bin/time`, GNU coreutils, `ldd` and setup Python 3. Selected tool paths/archives come from installer exports.
 
 | Variable | Default and behavior |
 | --- | --- |
@@ -114,7 +114,7 @@ Submit from the repository root so `SLURM_SUBMIT_DIR` locates helpers. Nodes nee
 | `BENCH_CORES` | Required single positive core count per job. Planned settings: 1, 4, 12, 32 in separate jobs |
 | `BENCH_WARMUPS` | **1** per scheduled method/core. Griffin uses no full-input warmups |
 | `BENCH_REPETITIONS` | **3 measured** per scheduled method/core |
-| `BENCH_PILOT` | `0`, or `1` to use zero full-input warmups and one measurement. Griffin retains its short demo warmup |
+| `BENCH_PILOT` | `0`, or `1` for a shared-node submission with zero full-input warmups and one measurement. Griffin retains its short demo warmup |
 | `BENCH_RUN_TIMEOUT_SECONDS` | `0` disables timeouts. A positive integer enables GNU timeout with an additional 60-second kill grace |
 | `BENCH_SETUP_PYTHON` | `python3`, untimed setup/relocation only |
 | `BENCH_EXPECTED_NODE` | Optional exact hostname check before staging |
@@ -132,7 +132,7 @@ All runners use the samtools archive for header preparation and setup Python for
 
 ## Scheduling and placement
 
-Jobs request one exclusive node, one task, 32 CPUs per task, one hardware thread per core, all node memory and no requeue. Partition, node selector and wall time are submission choices. There is no universal production wall-time allocation.
+Jobs request one node, one task, `BENCH_CORES` CPUs per task, one hardware thread per core and no requeue. The submission launcher adds `--exclusive --mem=0` only when `BENCH_PILOT=0`. Pilots omit both flags, allowing shared nodes, and use the partition's default memory unless an explicit `--mem` is passed. CPU count, exclusivity and memory requests are chosen before submission rather than set unconditionally in the job headers. Additional arguments go to `sbatch` for cluster-specific partition, node, wall-time and memory choices. There is no universal production wall-time allocation. Shared-node pilots provide execution checks and rough resource estimates, and remain excluded from production summaries.
 
 Each job uses exactly one core setting. Every selected method runs as a contiguous block at that setting. Its warmup repetitions precede measurements, with actual order retained in the timing TSV. Normally production repetition 1 is a warmup and 2-4 are measured.
 

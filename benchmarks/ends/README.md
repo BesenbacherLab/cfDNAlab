@@ -72,7 +72,7 @@ export BENCH_K=4
 export BENCH_CORES="1"
 export BENCH_PILOT=1
 export BENCH_METHODS="cfdnalab-read cfdnalab-read-aligned cfdnalab-read-include cfdnalab-reference cfdnalab-reference-proper cfdnalab-reference-proper-wide cfdnalab-reference-autosomes finaletoolkit cfdnapro"
-sbatch --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET benchmarks/ends/benchmark_end_motifs.sh
+bash benchmarks/submit_benchmark.sh ends --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET
 
 # After the pilot finishes, compare its saved native motif profiles
 /path/to/benchmark-tools/envs/comparison/bin/python \
@@ -104,10 +104,10 @@ export BENCH_PILOT=0
 export BENCH_WARMUPS=1
 export BENCH_REPETITIONS=3
 export BENCH_METHODS="cfdnalab-reference cfdnalab-reference-proper finaletoolkit cfdnapro"
-sbatch --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET benchmarks/ends/benchmark_end_motifs.sh
+bash benchmarks/submit_benchmark.sh ends --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET
 ```
 
-Set wall time from the full-matrix pilot. Split by core budget and then by method as needed to fit the allocation limit, using matched hardware as described in [the shared run controls](../README.md#runs-and-budgets). The runner stages input copies and environments locally, reserves an exclusive node and all its memory, and uses sequential `srun --jobid` steps with the requested binding. It records the actual hostname and logical/physical CPU IDs and rejects unexpected placement. Hard CPU confinement also depends on the cluster's Slurm cgroup configuration. Source files are not modified and no sample is downloaded.
+Set wall time from the full-matrix pilot. Split by core budget and then by method as needed to fit the allocation limit, using matched hardware as described in [the shared run controls](../README.md#runs-and-budgets). For full runs, the submission launcher reserves an exclusive node and all its memory. Pilots allow shared nodes and use the partition's default memory unless `--mem` is passed. The runner stages input copies and environments locally and uses sequential `srun --jobid` steps with the requested binding. It records the actual hostname and logical/physical CPU IDs and rejects unexpected placement. Hard CPU confinement also depends on the cluster's Slurm cgroup configuration. Source files are not modified and no sample is downloaded.
 
 Submit separate jobs for the other core settings, each with a new results directory. Methods run in contiguous blocks with warmups before measurements at the job's single core count. All attempted runs, including warmups, remain in `timings.tsv`. Native command startup, internal reference staging, counting and native output writing are timed. Scheduler startup, input staging, profile preservation and cleanup are outside the timer. No cache eviction is performed. One native profile per run label is retained from the first measured repetition. Other temporary outputs and logs are removed. Failed diagnostics are retained, the remaining repetitions of that method are skipped and other selected methods continue. The job exits nonzero after those methods finish. See the [shared failure and timeout behavior](../README.md#timing-and-slurm-memory).
 

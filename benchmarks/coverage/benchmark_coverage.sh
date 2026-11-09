@@ -2,17 +2,15 @@
 #SBATCH --job-name=cfdna-coverage
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
 #SBATCH --threads-per-core=1
-#SBATCH --exclusive
-#SBATCH --mem=0
 #SBATCH --no-requeue
 
-# This job reserves the whole node: --exclusive requests all
-# CPUs, and --mem=0 requests all node memory. The 32 CPUs per task ensure the node
-# supports the largest run. Each srun binds this job's single selected core count
-# User setup: the chosen partition must honor exclusive allocations, because its
-# policy takes precedence over this job's sharing request
+# The submission launcher requests BENCH_CORES CPUs for this job's single core setting
+# Full runs also request --exclusive and --mem=0 to reserve the node and its memory
+# Pilots allow shared nodes and use the partition's default memory unless overridden
+# Each srun binds this job's single selected core count
+# User setup: the chosen partition must honor exclusive allocations for full runs
+# Its policy takes precedence over the job's sharing request
 # https://slurm.schedmd.com/sbatch.html#OPT_exclusive
 #
 # Results contain timings.tsv, saved profiles and a record of inputs/settings
@@ -39,8 +37,7 @@
 #   export BENCH_RESULTS=/faststorage/project/coverage-results
 #   export BENCH_CORES=4
 #   export BENCH_METHODS="cfdnalab mosdepth"
-#   sbatch --constraint=gen6 --exclusive --mem=0 --time=<pilot-based-budget> \
-#     benchmarks/coverage/benchmark_coverage.sh
+#   bash benchmarks/submit_benchmark.sh coverage --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET
 # User setup: adjust the generation selector, partition, time and paths for the cluster
 
 # Shell errors stop the job, and LC_ALL=C gives decimal numbers a dot in the TSV
@@ -56,7 +53,7 @@ BENCH_FEATURE=coverage
 # BENCH_FINALE_ARCHIVE contains a Linux Conda environment with FinaleToolkit
 # installed, packed with conda-pack so Python and its packages can run locally
 # BENCH_SAMTOOLS_ARCHIVE similarly includes samtools and its shared libraries
-: "${SLURM_JOB_ID:?Submit this script with sbatch}"
+: "${SLURM_JOB_ID:?Submit with bash benchmarks/submit_benchmark.sh coverage}"
 : "${BENCH_BAM:?Set the input BAM path}"
 # TMPDIR is supplied on the compute node when the batch job starts
 : "${TMPDIR:?The compute node must provide TMPDIR for node-local scratch}"

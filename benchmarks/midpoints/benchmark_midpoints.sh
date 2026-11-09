@@ -2,13 +2,11 @@
 #SBATCH --job-name=cfdna-midpoints
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
 #SBATCH --threads-per-core=1
-#SBATCH --exclusive
-#SBATCH --mem=0
 #SBATCH --no-requeue
 
-# This job produces native, unsmoothed 1 bp midpoint profiles on an exclusive node
+# This job produces native, unsmoothed 1 bp midpoint profiles
+# The submission launcher requests an exclusive node for full runs and allows shared pilots
 # Full-input runs get timing rows. Griffin's short demo warmup is untimed
 # A profile is kept from the first measured repetition of each tool
 # All BAM/reference copies, environments and temporary files use local scratch
@@ -19,7 +17,7 @@ export LC_ALL=C
 source "${SLURM_SUBMIT_DIR:?Submit from the repository root}/benchmarks/common.sh"
 BENCH_FEATURE=midpoints
 
-: "${SLURM_JOB_ID:?Submit this script with sbatch}"
+: "${SLURM_JOB_ID:?Submit with bash benchmarks/submit_benchmark.sh midpoints}"
 : "${BENCH_BAM:?Set the prepared coordinate-sorted BAM path}"
 : "${BENCH_INTERVALS:?Set the grouped fixed-size BED path}"
 # TMPDIR is supplied on the compute node when the batch job starts

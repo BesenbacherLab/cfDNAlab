@@ -2,13 +2,11 @@
 #SBATCH --job-name=cfdna-end-motifs
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
 #SBATCH --threads-per-core=1
-#SBATCH --exclusive
-#SBATCH --mem=0
 #SBATCH --no-requeue
 
-# This job runs the tools' end-motif commands on the same exclusive node
+# This job runs the tools' end-motif commands on the same node
+# The submission launcher requests an exclusive node for full runs and allows shared pilots
 # See README.md for the settings, known differences and pilot invocation
 # Results: timings.tsv, plus one native motif profile per method in profiles/
 # All warmups remain in the timing TSV. No host caches are explicitly evicted
@@ -20,7 +18,7 @@ export LC_ALL=C
 source "${SLURM_SUBMIT_DIR:?Submit from the repository root}/benchmarks/common.sh"
 BENCH_FEATURE=ends
 
-: "${SLURM_JOB_ID:?Submit this script with sbatch}"
+: "${SLURM_JOB_ID:?Submit with bash benchmarks/submit_benchmark.sh ends}"
 : "${BENCH_BAM:?Set the prepared input BAM path}"
 # TMPDIR is supplied on the compute node when the batch job starts
 : "${TMPDIR:?The compute node must provide TMPDIR for node-local scratch}"

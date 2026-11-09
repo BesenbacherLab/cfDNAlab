@@ -50,11 +50,11 @@ export BENCH_RESULTS=/path/to/midpoint-cfdnalab-pilot
 export BENCH_CORES="1"
 export BENCH_PILOT=1
 export BENCH_METHODS=cfdnalab
-sbatch --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET benchmarks/midpoints/benchmark_midpoints.sh
+bash benchmarks/submit_benchmark.sh midpoints --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET
 
 export BENCH_RESULTS=/path/to/midpoint-griffin-pilot
 export BENCH_METHODS=griffin
-sbatch --constraint=gen6 --time=YOUR_GRIFFIN_PILOT_BASED_BUDGET benchmarks/midpoints/benchmark_midpoints.sh
+bash benchmarks/submit_benchmark.sh midpoints --constraint=gen6 --time=YOUR_GRIFFIN_PILOT_BASED_BUDGET
 
 # After both jobs finish, gather the small saved profiles and compare
 mkdir -p /path/to/midpoint-comparison/profiles
@@ -71,11 +71,11 @@ export BENCH_PILOT=0
 export BENCH_WARMUPS=1
 export BENCH_REPETITIONS=3
 export BENCH_METHODS=cfdnalab
-sbatch --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET benchmarks/midpoints/benchmark_midpoints.sh
+bash benchmarks/submit_benchmark.sh midpoints --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET
 
 export BENCH_RESULTS=/path/to/midpoint-griffin-timing-4cores
 export BENCH_METHODS=griffin
-sbatch --constraint=gen6 --time=YOUR_GRIFFIN_PILOT_BASED_BUDGET benchmarks/midpoints/benchmark_midpoints.sh
+bash benchmarks/submit_benchmark.sh midpoints --constraint=gen6 --time=YOUR_GRIFFIN_PILOT_BASED_BUDGET
 ```
 
 Set the generation selector and wall time from the cluster settings and full-input pilots. Each job uses one core setting. Griffin must run alone with `BENCH_METHODS=griffin` and needs an allocation long enough to finish, including beyond 24 hours. Use matched hardware as described in [the shared run controls](../README.md#runs-and-budgets). `BENCH_INDEX` and `BENCH_FASTA_INDEX` can override the usual index paths. `BENCH_MIN_LENGTH`, `BENCH_MAX_LENGTH` and `BENCH_MIN_MAPQ` override the common filters. Keep the same production BED and settings across the two jobs.
@@ -84,7 +84,7 @@ Griffin receives a short, untimed warmup on the release's [1000-site CTCF demo](
 
 The normal cfDNAlab schedule is a full-input warmup plus three measurements. Griffin has no full-input warmup and performs three measured runs after its demo. `BENCH_PILOT=1` reduces either tool to one measured full-input run, retaining Griffin's demo warmup. If Griffin takes 30 hours per run at a setting, three measurements need about 90 hours raw, or 112 h 30 min with the illustrative 25% margin, plus demo/setup overhead. Choose whether to split repetitions using pilot results and existing repetition controls. Every new Griffin job receives the demo.
 
-The runner reserves an exclusive node and all its memory. Sequential `srun --jobid` steps use that allocation and check their actual node and allowed logical/physical CPU IDs. Hard confinement also depends on Slurm's cgroup setup. All inputs and Griffin's environment are staged on local scratch before warmups. Methods run in contiguous blocks with warmups before measurements at the job's single core count. Submit separate jobs and results directories for the other core settings. No caches are evicted. Both tools use exactly the chromosomes present in the supplied site set, while the BAM retains its other chromosomes and records.
+For full runs, the submission launcher reserves an exclusive node and all its memory. Pilots allow shared nodes and use the partition's default memory unless `--mem` is passed. Sequential `srun --jobid` steps use that allocation and check their actual node and allowed logical/physical CPU IDs. Hard confinement also depends on Slurm's cgroup setup. All inputs and Griffin's environment are staged on local scratch before warmups. Methods run in contiguous blocks with warmups before measurements at the job's single core count. Submit separate jobs and results directories for the other core settings. No caches are evicted. Both tools use exactly the chromosomes present in the supplied site set, while the BAM retains its other chromosomes and records.
 
 `timings.tsv` contains a row for every attempted full-input run, including full-input warmups and failures. Griffin's demo is untimed, with logs and its checksum retained separately. A native profile is saved under `profiles/cfdnalab/` or `profiles/griffin/` from the first measured repetition at the job's single core count. Other temporary files and logs are deleted. Failed diagnostics are retained and the remaining repetitions of that method are skipped. See the [shared failure and timeout behavior](../README.md#timing-and-slurm-memory). Source files are not modified or downloaded.
 

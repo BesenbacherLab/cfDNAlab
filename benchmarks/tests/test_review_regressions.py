@@ -26,6 +26,75 @@ from unittest import mock
 BENCHMARKS = Path(__file__).resolve().parents[1]
 
 
+class SubmissionTests(unittest.TestCase):
+    """Check allocation requests without contacting Slurm or running a benchmark."""
+
+    def test_only_production_submissions_request_the_whole_node(self):
+        for feature, filename in (
+            ("coverage", "benchmark_coverage.sh"),
+            ("lengths", "benchmark_lengths.sh"),
+            ("ends", "benchmark_end_motifs.sh"),
+            ("midpoints", "benchmark_midpoints.sh"),
+        ):
+            # Unconditional header options would also apply to pilots
+            header = (BENCHMARKS / feature / filename).read_text().splitlines()
+            self.assertNotIn("#SBATCH --exclusive", header)
+            self.assertNotIn("#SBATCH --mem=0", header)
+            self.assertNotIn("#SBATCH --cpus-per-task=32", header)
+            for pilot in (None, "0", "1", "invalid"):
+                with (
+                    self.subTest(feature=feature, pilot=pilot),
+                    tempfile.TemporaryDirectory() as temporary,
+                ):
+                    root = Path(temporary)
+                    call_log = root / "sbatch-arguments"
+                    pilot_log = root / "pilot"
+                    sbatch = root / "sbatch"
+                    sbatch.write_text(
+                        '#!/usr/bin/env bash\n'
+                        'printf "%s\\n" "$@" > "$SUBMISSION_LOG"\n'
+                        'printf "%s\\n" "$BENCH_PILOT" > "$PILOT_LOG"\n'
+                        'exit 7\n'
+                    )
+                    sbatch.chmod(0o755)
+                    environment = {
+                        **os.environ,
+                        "PATH": str(root) + ":" + os.environ["PATH"],
+                        "BENCH_CORES": "4",
+                        "SUBMISSION_LOG": str(call_log),
+                        "PILOT_LOG": str(pilot_log),
+                    }
+                    environment.pop("BENCH_PILOT", None)
+                    if pilot is not None:
+                        environment["BENCH_PILOT"] = pilot
+                    result = subprocess.run(
+                        [
+                            "bash", str(BENCHMARKS / "submit_benchmark.sh"), feature,
+                            "--time=00:10:00", "--comment=benchmark debug",
+                        ],
+                        cwd=BENCHMARKS.parent,
+                        env=environment,
+                        text=True,
+                        capture_output=True,
+                    )
+                    if pilot == "invalid":
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn("BENCH_PILOT", result.stderr)
+                        self.assertFalse(call_log.exists())
+                        continue
+                    # The launcher returns sbatch's status and preserves quoted arguments
+                    self.assertEqual(result.returncode, 7, result.stderr)
+                    expected = ["--export=ALL", "--cpus-per-task=4"]
+                    if pilot != "1":
+                        expected += ["--exclusive", "--mem=0"]
+                    expected += [
+                        "--time=00:10:00", "--comment=benchmark debug",
+                        f"benchmarks/{feature}/{filename}",
+                    ]
+                    self.assertEqual(call_log.read_text().splitlines(), expected)
+                    self.assertEqual(pilot_log.read_text(), (pilot or "0") + "\n")
+
+
 class SetupAndScopeTests(unittest.TestCase):
     """Reject incomplete setup before staging or decompressing native data."""
 

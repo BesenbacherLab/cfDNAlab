@@ -1,6 +1,6 @@
 # Benchmarks
 
-These benchmarks compare cfDNAlab with native tools for coverage, fragment lengths, end motifs and midpoint profiles. The runners measure repeated commands on exclusive Slurm nodes and preserve outputs for numerical comparison.
+These benchmarks compare cfDNAlab with native tools for coverage, fragment lengths, end motifs and midpoint profiles. Production runs measure repeated commands on exclusive Slurm nodes and preserve outputs for numerical comparison. Pilots can share nodes for faster debugging.
 
 Start with installation below and the feature-specific run instructions. Detailed references describe [installation and execution](benchmarks_spec.md) and [methods and concordance](benchmarks_concordance_spec.md).
 
@@ -68,7 +68,7 @@ Picard's version probe accepts its documented status 1 only with a recognizable 
 
 ## Runs and budgets
 
-Follow the [input preparation](data/README.md), then the [coverage](coverage/README.md), [lengths](lengths/README.md), [end-motif](ends/README.md) or [midpoint](midpoints/README.md) instructions. Submit **from the repository root** so `SLURM_SUBMIT_DIR` locates helpers. Jobs reserve an exclusive node and all its memory. Node generation, partition and wall time must match the cluster. Jobs use `$TMPDIR` supplied on the compute node, so no scratch path is needed in the submission settings. Each job creates its own working directory below it, directs tool temporary files there and removes only that working directory on exit.
+Follow the [input preparation](data/README.md), then the [coverage](coverage/README.md), [lengths](lengths/README.md), [end-motif](ends/README.md) or [midpoint](midpoints/README.md) instructions. Submit **from the repository root on the login node** using `bash benchmarks/submit_benchmark.sh FEATURE [sbatch options]`, where `FEATURE` is `coverage`, `lengths`, `ends` or `midpoints`. The launcher requests `BENCH_CORES` CPUs. Full runs reserve an exclusive node and all its memory. With `BENCH_PILOT=1`, the launcher omits both requests and uses the partition's default memory unless you pass `--mem`. Node generation, partition and wall time must match the cluster. Jobs use `$TMPDIR` supplied on the compute node, so no scratch path is needed in the submission settings. Each job creates its own working directory below it, directs tool temporary files there and removes only that working directory on exit.
 
 All runners require `BENCH_CORES` to specify a single core count for that job. The experiment uses **1, 4, 12 and 32 in separate jobs**. `BENCH_METHODS` is required and has no default. Supply each method label once. Defaults are `BENCH_WARMUPS=1` and `BENCH_REPETITIONS=3` measured. `BENCH_PILOT=1` selects zero full-input warmups and one measurement at the job's core count. Use a new `BENCH_RESULTS` directory for every job. Only selected tools are required, plus the samtools archive and setup Python. References are required only by selected methods that use them.
 
@@ -80,7 +80,7 @@ Each selected method runs as a contiguous block at the job's core count, with it
 
 Allocate N cores and set the native thread/core/worker argument to that budget when available. Options counting additional threads receive N-1. Tools without a native option still run at their selected core settings. The runners do not override numerical-library thread settings by feature.
 
-First check environment relocation, native outputs and fonts with a small input. Then pilot the selected methods at each planned core count in separate jobs on the actual input to budget all invocations. Pilot cfDNAPro's memory progressively, starting near 0.1x, before choosing the common node. Even a single-core-setting pilot can exceed a short allocation when many slow methods are selected. Split methods too when needed.
+First check environment relocation, native outputs and fonts with a small input. Then pilot the selected methods at each planned core count in separate jobs on the actual input to budget all invocations. Shared-node pilot timings are rough estimates and are excluded from production summaries. Pilot cfDNAPro's memory progressively, starting near 0.1x, before choosing the common node. Even a single-core-setting pilot can exceed a short allocation when many slow methods are selected. Split methods too when needed.
 
 ```bash
 python3 benchmarks/summarize_timings.py /path/to/pilot/timings.tsv \
@@ -113,10 +113,11 @@ Prefer the same physical node across jobs when available. Otherwise use matched 
 ```bash
 export BENCH_METHODS=cfdnapro
 export BENCH_CORES=1
+export BENCH_PILOT=0
 export BENCH_EXPECTED_NODE=chosen-node
 export BENCH_RESULTS=/path/to/lengths-cfdnapro-1core
-sbatch --nodelist="$BENCH_EXPECTED_NODE" --time=YOUR_PILOT_BASED_BUDGET \
-    benchmarks/lengths/benchmark_lengths.sh
+bash benchmarks/submit_benchmark.sh lengths \
+    --nodelist="$BENCH_EXPECTED_NODE" --time=YOUR_PILOT_BASED_BUDGET
 ```
 
 ## Timing and Slurm memory

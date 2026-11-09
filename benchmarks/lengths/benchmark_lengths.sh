@@ -2,13 +2,11 @@
 #SBATCH --job-name=cfdna-lengths
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
 #SBATCH --threads-per-core=1
-#SBATCH --exclusive
-#SBATCH --mem=0
 #SBATCH --no-requeue
 
-# This job benchmarks global fragment length histograms on an exclusive node
+# This job benchmarks global fragment length histograms
+# The submission launcher requests an exclusive node for full runs and allows shared pilots
 # See README.md for installation, a concordance pilot and the full timing run
 # Every run is saved in timings.tsv, including warmups, with a profile per method
 # Inputs and programs are copied locally before warmups. Host caches are not evicted
@@ -18,7 +16,7 @@ export LC_ALL=C
 source "${SLURM_SUBMIT_DIR:?Submit from the repository root}/benchmarks/common.sh"
 BENCH_FEATURE=lengths
 
-: "${SLURM_JOB_ID:?Submit this script with sbatch}"
+: "${SLURM_JOB_ID:?Submit with bash benchmarks/submit_benchmark.sh lengths}"
 : "${BENCH_BAM:?Set the prepared input BAM path}"
 # TMPDIR is supplied on the compute node when the batch job starts
 : "${TMPDIR:?The compute node must provide TMPDIR for node-local scratch}"

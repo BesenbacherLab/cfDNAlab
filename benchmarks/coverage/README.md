@@ -30,7 +30,7 @@ export BENCH_RESULTS=/path/to/coverage-concordance
 export BENCH_CORES=1
 export BENCH_PILOT=1
 export BENCH_METHODS="cfdnalab-fragment cfdnalab-fragment-proper mosdepth-fragment cfdnalab mosdepth samtools-depth pandepth cfdnalab-region-counts cfdnalab-region-counts-proper finaletoolkit-coverage"
-sbatch --time=YOUR_PILOT_BASED_BUDGET benchmarks/coverage/benchmark_coverage.sh
+bash benchmarks/submit_benchmark.sh coverage --time=YOUR_PILOT_BASED_BUDGET
 
 # After completion, compare like quantities in their declared common scope
 "$BENCH_COMPARE_PYTHON" benchmarks/coverage/compare_coverage.py \
@@ -51,7 +51,7 @@ Regional comparison requires the exact unique chromosome/start/end rows in the s
 
 ## Production measurements
 
-Use `BENCH_PILOT=1` on the actual production method/core matrix to estimate all work, splitting pilots when necessary. Then set `BENCH_PILOT=0`, a warmup and three measurements, and submit core/method blocks that fit the allocation limit on matched hardware. Prefer the same physical node when available. See [shared run controls and Slurm memory](../README.md#runs-and-budgets). `BENCH_MIN_MAPQ`, `BENCH_MIN_LENGTH` and `BENCH_MAX_LENGTH` override the filters. The timing TSV records applied/unsupported length filtering, proper-pair selection and scope.
+Use `BENCH_PILOT=1` on the actual production method/core matrix to estimate all work, splitting pilots when necessary. The submission launcher allows shared nodes for pilots, using the partition's default memory unless `--mem` is passed. Then set `BENCH_PILOT=0`, a warmup and three measurements, and submit core/method blocks that fit the allocation limit on matched hardware. Full runs reserve an exclusive node and all its memory. Prefer the same physical node when available. See [shared run controls and Slurm memory](../README.md#runs-and-budgets). `BENCH_MIN_MAPQ`, `BENCH_MIN_LENGTH` and `BENCH_MAX_LENGTH` override the filters. The timing TSV records applied/unsupported length filtering, proper-pair selection and scope.
 
 Keep process-plus-filesystem-flush time, output bytes and the joined Slurm peak alongside process time and GNU time RSS. Native positional output costs stay in the comparison. Include sample size, SD and median/quartiles and retain all measured points. The table below is a result template, not measured concordance data.
 
