@@ -96,6 +96,7 @@ export BENCH_SAMTOOLS_ARCHIVE=/path/to/benchmark-tools/samtools.tar.gz
 export BENCH_FINALE_ARCHIVE=/path/to/benchmark-tools/finaletoolkit.tar.gz
 export BENCH_CFDNAPRO_IMAGE=/path/to/benchmark-tools/cfdnapro-1.7.4.sif
 export BENCH_PICARD_ARCHIVE=/path/to/benchmark-tools/picard.tar.gz
+export BENCH_COMPARE_PYTHON=/path/to/benchmark-tools/envs/comparison/bin/python
 # The batch job uses TMPDIR supplied on the compute node
 export BENCH_GENOME=hg38
 
@@ -106,10 +107,7 @@ export BENCH_PILOT=1
 export BENCH_METHODS="cfdnalab cfdnalab-autosomes cfdnalab-proper cfdnapro cfdnapro-outer-span finaletoolkit samtools picard"
 bash benchmarks/submit_benchmark.sh lengths --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET
 
-# After the pilot finishes, compare all saved native histograms
-/path/to/benchmark-tools/envs/comparison/bin/python \
-    benchmarks/lengths/compare_lengths.py "$BENCH_RESULTS/profiles" \
-    > "$BENCH_RESULTS/concordance.tsv"
+# The job writes concordance.tsv automatically after timing
 
 # Submit a separate job and results directory for each core setting and method block
 export BENCH_RESULTS=/path/to/lengths-timing-4cores-parallel
@@ -121,11 +119,13 @@ export BENCH_METHODS="cfdnalab cfdnalab-autosomes samtools picard"
 bash benchmarks/submit_benchmark.sh lengths --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET
 ```
 
-Set wall time from pilots at each core setting. Each job uses a single core count. Split methods further as needed to fit the allocation limit, using matched hardware as described in [the shared run controls](../README.md#runs-and-budgets). The example times the other length methods at 4 cores. Submit cfDNAPro and FinaleToolkit separately at 1 and 4 cores, and decide on higher-core runs after inspecting their measurements. `BENCH_INDEX` can override the usual `.bam.bai` path. `BENCH_MIN_LENGTH`, `BENCH_MAX_LENGTH` and `BENCH_MIN_MAPQ` override the common filters. Supply the same nondefault length bounds to the comparator. `BENCH_GENOME` selects cfDNAPro's reference label and must match the alignment reference and chromosome naming. The default `hg38` means UCSC-style names. The input remains a coordinate-sorted BAM with its original non-autosomes and alignment flags.
+Set wall time from pilots at each core setting. Each job uses a single core count. Split methods further as needed to fit the allocation limit, using matched hardware as described in [the shared run controls](../README.md#runs-and-budgets). The example times the other length methods at 4 cores. Submit cfDNAPro and FinaleToolkit separately at 1 and 4 cores, and decide on higher-core runs after inspecting their measurements. `BENCH_INDEX` can override the usual `.bam.bai` path. `BENCH_MIN_LENGTH`, `BENCH_MAX_LENGTH` and `BENCH_MIN_MAPQ` override the common filters. The automatic comparison uses the same nondefault length bounds. `BENCH_GENOME` selects cfDNAPro's reference label and must match the alignment reference and chromosome naming. The default `hg38` means UCSC-style names. The input remains a coordinate-sorted BAM with its original non-autosomes and alignment flags.
 
-For full runs, the submission launcher reserves an exclusive node and all its memory. Pilots allow shared nodes and use the partition's default memory unless `--mem` is passed. Every sequential `srun --jobid` attaches to that allocation and checks the actual hostname and logical/physical CPU IDs. Hard confinement also depends on the cluster's Slurm cgroup configuration. Prefer the same physical node for split jobs when available, as described in the shared run controls. Each method runs as a contiguous block at the job's core count, retaining actual order in `timings.tsv`. There are a warmup followed by three measured repetitions by default. No caches are evicted.
+For full runs, the submission launcher reserves an exclusive node and all its memory. Pilots allow shared nodes and request 50 GB unless `--mem` is passed. Every sequential `srun --jobid` attaches to that allocation and checks the actual hostname and logical/physical CPU IDs. Hard confinement also depends on the cluster's Slurm cgroup configuration. Prefer the same physical node for split jobs when available, as described in the shared run controls. Each method runs as a contiguous block at the job's core count, retaining actual order in `timings.tsv`. There are a warmup followed by three measured repetitions by default. No caches are evicted.
 
 The timing result is a single `timings.tsv`, with a row for every attempted run, including warmups and failures. A native histogram per method is retained under `profiles/` from the first measured repetition at the job's single core count. These small files support concordance analysis. Other temporary outputs and logs are deleted. Failed diagnostics are retained, the remaining repetitions of that method are skipped and other selected methods continue. The job exits nonzero after those methods finish. See the [shared failure and timeout behavior](../README.md#timing-and-slurm-memory). Input staging, scheduler startup, profile copying, cleanup and concordance calculation are outside the timer. Native startup and output generation remain timed, including cfDNAlab's default QC plot and cfDNAPro's Apptainer launch. GNU time's maximum RSS is not the simultaneous total memory of a process tree.
+
+Pilots and full runs automatically write `concordance.tsv` after all tool runs succeed, using this job's inclusive length bounds. This comparison is outside every tool's timing and step memory measurements. Single-method jobs retain their profile and explain that there is no pair to compare. A comparison failure fails the job, with details in `concordance-error.log`, while preserving completed timings and profiles.
 
 ## Supplementary result templates
 

@@ -395,5 +395,10 @@ STEP
     fi
 done < "$BENCH_WORK/order.tsv"
 
+# Single-tool jobs keep their profiles for comparison after the separate jobs finish
+if ((job_exit_code == 0)); then
+    benchmark_compare_results "$SLURM_SUBMIT_DIR/benchmarks/midpoints/compare_midpoints.py"
+fi
+
 # The job reports failure if any method failed, while keeping completed results
 exit "$job_exit_code"

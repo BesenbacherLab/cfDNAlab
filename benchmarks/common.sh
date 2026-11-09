@@ -17,6 +17,8 @@
 # 4. benchmark_finish_run adds the timing row to timings.tsv and keeps the first
 #    measured output for numerical comparison. Other output is deleted before
 #    the next repetition
+# 5. After all tool runs succeed, benchmark_compare_results writes concordance.tsv
+#    from comparable saved profiles. This work is outside every tool's measurements
 #
 # srun starts a separate Bash program. Setting a variable there cannot update a
 # variable in the main job script. Both can read BENCH_WORK, the job's temporary
@@ -98,6 +100,61 @@ benchmark_controls() {
         echo 'Set BENCH_SETUP_PYTHON to an existing Python 3 executable for untimed setup.' >&2
         return 1
     }
+    # Multiple methods may produce a comparable pair. Check the comparison Python
+    # before staging inputs so a missing setting does not waste a full benchmark job
+    if ((${#selected_methods[@]} >= 2)); then
+        : "${BENCH_COMPARE_PYTHON:?Set the comparison Python printed by install_tools.sh}"
+        command -v "$BENCH_COMPARE_PYTHON" >/dev/null || {
+            echo 'BENCH_COMPARE_PYTHON must name an existing Python executable.' >&2
+            return 1
+        }
+    fi
+}
+
+benchmark_compare_results() {
+    # This function compares saved outputs after every native tool run has finished
+    # Arguments: the feature's comparison script, followed by its biological settings
+    # It runs in the batch shell, outside the timed srun steps and their memory records
+    # Call it on its own line so an error saving the comparison stops the job
+    local comparator=$1
+    shift
+    local directory method quantity seen_quantities=' ' comparable=false
+    for directory in "$BENCH_RESULTS"/profiles/*; do
+        [[ -d "$directory" ]] || continue
+        method=${directory##*/}
+        quantity=$BENCH_FEATURE
+        if [[ "$BENCH_FEATURE" == coverage ]]; then
+            # Read depth, fragment coverage and regional counts need separate pairs
+            case "$method" in
+                *region-counts*|finaletoolkit-coverage) quantity=regional-counts ;;
+                *fragment*) quantity=fragment-coverage ;;
+                *) quantity=read-depth ;;
+            esac
+        fi
+        if [[ "$seen_quantities" == *" $quantity "* ]]; then
+            comparable=true
+            break
+        fi
+        seen_quantities+="$quantity "
+    done
+    if [[ "$comparable" == false ]]; then
+        echo 'Concordance skipped: no pair of saved profiles measures the same quantity.'
+        return 0
+    fi
+    : "${BENCH_COMPARE_PYTHON:?Set the comparison Python printed by install_tools.sh}"
+    echo "Calculating concordance from $BENCH_RESULTS/profiles"
+    # The comparison environment also supplies zstd for reading compressed tracks
+    # Write to a temporary name so a failed comparison cannot replace valid metrics
+    if ! PATH="$(dirname -- "$BENCH_COMPARE_PYTHON"):$PATH" \
+        "$BENCH_COMPARE_PYTHON" "$comparator" "$BENCH_RESULTS/profiles" "$@" \
+        > "$BENCH_RESULTS/.concordance.tsv" 2> "$BENCH_RESULTS/concordance-error.log"; then
+        cat "$BENCH_RESULTS/concordance-error.log" >&2
+        echo "Concordance failed. See $BENCH_RESULTS/concordance-error.log" >&2
+        rm -f "$BENCH_RESULTS/.concordance.tsv"
+        return 1
+    fi
+    mv "$BENCH_RESULTS/.concordance.tsv" "$BENCH_RESULTS/concordance.tsv"
+    echo "Concordance saved to $BENCH_RESULTS/concordance.tsv"
 }
 
 benchmark_unpack() {

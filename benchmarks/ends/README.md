@@ -64,6 +64,7 @@ export BENCH_FREIA_ARCHIVE=/path/to/benchmark-tools/freia.tar.gz
 export BENCH_CFDNAPRO_IMAGE=/path/to/benchmark-tools/cfdnapro-1.7.4.sif
 export BENCH_GENOME=hg38
 export BENCH_SAMTOOLS_ARCHIVE=/path/to/benchmark-tools/samtools.tar.gz
+export BENCH_COMPARE_PYTHON=/path/to/benchmark-tools/envs/comparison/bin/python
 # The batch job uses TMPDIR supplied on the compute node
 
 # 4-mer pilot: native tool outputs and cfDNAlab configurations for concordance
@@ -74,13 +75,12 @@ export BENCH_PILOT=1
 export BENCH_METHODS="cfdnalab-read cfdnalab-read-aligned cfdnalab-read-include cfdnalab-reference cfdnalab-reference-proper cfdnalab-reference-proper-wide cfdnalab-reference-autosomes finaletoolkit cfdnapro"
 bash benchmarks/submit_benchmark.sh ends --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET
 
-# After the pilot finishes, compare its saved native motif profiles
-/path/to/benchmark-tools/envs/comparison/bin/python \
-    benchmarks/ends/compare_end_motifs.py "$BENCH_RESULTS/profiles" \
-    > "$BENCH_RESULTS/concordance.tsv"
+# The job writes concordance.tsv automatically after timing
 ```
 
-For the FrEIA comparison, use `BENCH_K=3`, a new results directory and `BENCH_METHODS="cfdnalab-read-aligned freia"`. Pass `--k 3` to the comparator. cfDNAPro can also join this 3-mer series. Left-only versus both-end agreement is approximate and does not support an equivalent-output speed claim.
+Pilots and full runs automatically write `concordance.tsv` after all tool runs succeed, using the job's `BENCH_K`. This comparison is outside every tool's timing and step memory measurements. Single-method jobs retain their profile and explain that there is no pair to compare. A comparison failure fails the job, with details in `concordance-error.log`, while preserving completed timings and profiles.
+
+For the FrEIA comparison, use `BENCH_K=3`, a new results directory and `BENCH_METHODS="cfdnalab-read-aligned freia"`. The automatic comparison uses 3-mers as well. cfDNAPro can also join this 3-mer series. Left-only versus both-end agreement is approximate and does not support an equivalent-output speed claim.
 
 The cfDNAlab run labels select these configurations. They are not additional competing tools:
 
@@ -107,7 +107,7 @@ export BENCH_METHODS="cfdnalab-reference cfdnalab-reference-proper finaletoolkit
 bash benchmarks/submit_benchmark.sh ends --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET
 ```
 
-Set wall time from the full-matrix pilot. Split by core budget and then by method as needed to fit the allocation limit, using matched hardware as described in [the shared run controls](../README.md#runs-and-budgets). For full runs, the submission launcher reserves an exclusive node and all its memory. Pilots allow shared nodes and use the partition's default memory unless `--mem` is passed. The runner stages input copies and environments locally and uses sequential `srun --jobid` steps with the requested binding. It records the actual hostname and logical/physical CPU IDs and rejects unexpected placement. Hard CPU confinement also depends on the cluster's Slurm cgroup configuration. Source files are not modified and no sample is downloaded.
+Set wall time from the full-matrix pilot. Split by core budget and then by method as needed to fit the allocation limit, using matched hardware as described in [the shared run controls](../README.md#runs-and-budgets). For full runs, the submission launcher reserves an exclusive node and all its memory. Pilots allow shared nodes and request 50 GB unless `--mem` is passed. The runner stages input copies and environments locally and uses sequential `srun --jobid` steps with the requested binding. It records the actual hostname and logical/physical CPU IDs and rejects unexpected placement. Hard CPU confinement also depends on the cluster's Slurm cgroup configuration. Source files are not modified and no sample is downloaded.
 
 Submit separate jobs for the other core settings, each with a new results directory. Methods run in contiguous blocks with warmups before measurements at the job's single core count. All attempted runs, including warmups, remain in `timings.tsv`. Native command startup, internal reference staging, counting and native output writing are timed. Scheduler startup, input staging, profile preservation and cleanup are outside the timer. No cache eviction is performed. One native profile per run label is retained from the first measured repetition. Other temporary outputs and logs are removed. Failed diagnostics are retained, the remaining repetitions of that method are skipped and other selected methods continue. The job exits nonzero after those methods finish. See the [shared failure and timeout behavior](../README.md#timing-and-slurm-memory).
 

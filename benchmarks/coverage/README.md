@@ -21,7 +21,7 @@ For example, forward `pos=100`, `30M`, reverse `pos=170`, `30M` spans 100 bp. Fr
 
 ## Run and compare
 
-Set the input/tool paths printed by the installer and use a new results directory. Every run also needs `BENCH_SAMTOOLS_ARCHIVE` for untimed header preparation and Python 3 for environment relocation.
+Set the input/tool paths printed by the installer and use a new results directory. Every run also needs `BENCH_SAMTOOLS_ARCHIVE` for untimed header preparation and Python 3 for environment relocation. Jobs selecting multiple methods require `BENCH_COMPARE_PYTHON`, also printed by the installer.
 
 ```bash
 export BENCH_BAM=/path/to/BH01.hg38.paired.15x.bam
@@ -32,14 +32,14 @@ export BENCH_PILOT=1
 export BENCH_METHODS="cfdnalab-fragment cfdnalab-fragment-proper mosdepth-fragment cfdnalab mosdepth samtools-depth pandepth cfdnalab-region-counts cfdnalab-region-counts-proper finaletoolkit-coverage"
 bash benchmarks/submit_benchmark.sh coverage --time=YOUR_PILOT_BASED_BUDGET
 
-# After completion, compare like quantities in their declared common scope
-"$BENCH_COMPARE_PYTHON" benchmarks/coverage/compare_coverage.py \
-    "$BENCH_RESULTS/profiles" --common-scope > "$BENCH_RESULTS/concordance.tsv"
+# The job writes concordance.tsv and residuals.tsv automatically after timing
 ```
+
+Pilots and full runs calculate concordance after all tool runs succeed. Results are saved as `concordance.tsv`, including the primary base-resolution `mae`, and `residuals.tsv`, the residual histogram. Only profiles measuring the same quantity are paired. Different retained chromosome scopes are compared on their intersection, with the evaluated scope recorded in each row. A job without a comparable pair prints why concordance was skipped. A comparison failure fails the job and keeps its error in `concordance-error.log`, while preserving the completed timings and profiles.
 
 Full compressed cfDNAlab/mosdepth tracks are preserved after the first measured step at the job's single core count. samtools and PanDepth still generate their complete native outputs **inside timing**. Their retained profiles contain only chr21/chr22 (or 21/22), falling back to the first contig when absent. Override with `BENCH_CAPTURE_CHROMOSOMES=chr21,chr22`. Each profile has an explicit `chrom.sizes`. Preservation/compression of the selected subset happens outside the Slurm tool step.
 
-The comparator requires equal declared scope unless `--common-scope` explicitly allows intersection. It checks every per-base pair's scope before loading tracks. Every result records evaluated chromosomes and whether the original scopes match. A missing chromosome in a sparse cfDNAlab track means zero only when declared in its processed scope. Other formats must contain complete runs/positions for every declared contig, so truncated files fail. Runs must be sorted within each contiguous chromosome block, non-overlapping, in bounds and finite/nonnegative. Temporary coalesced run files reconcile arbitrary contig order without allocating per-base arrays. Set `TMPDIR` to suitable scratch for this untimed comparison. zstd reads all concatenated frames.
+The comparator requires equal declared scope unless `--common-scope` explicitly allows intersection. It checks every per-base pair's scope before loading tracks. Every result records evaluated chromosomes and whether the original scopes match. A missing chromosome in a sparse cfDNAlab track means zero only when declared in its processed scope. Other formats must contain complete runs/positions for every declared contig, so truncated files fail. Runs must be sorted within each contiguous chromosome block, non-overlapping, in bounds and finite/nonnegative. Temporary coalesced run files reconcile arbitrary contig order without allocating per-base arrays. Comparison scratch uses `TMPDIR`, which the job sets below its own working directory. zstd reads all concatenated frames.
 
 The primary similarity measure is **base-resolution MAE**: `sum(abs(left_depth - right_depth)) / evaluated_bases`, summing over individual bases in the evaluated scope, including shared zeros. This is the average absolute depth difference per base, without binning or normalization. Constant runs are weighted by their genomic lengths, so bedGraph segmentation does not change the result.
 
@@ -51,7 +51,7 @@ Regional comparison requires the exact unique chromosome/start/end rows in the s
 
 ## Production measurements
 
-Use `BENCH_PILOT=1` on the actual production method/core matrix to estimate all work, splitting pilots when necessary. The submission launcher allows shared nodes for pilots, using the partition's default memory unless `--mem` is passed. Then set `BENCH_PILOT=0`, a warmup and three measurements, and submit core/method blocks that fit the allocation limit on matched hardware. Full runs reserve an exclusive node and all its memory. Prefer the same physical node when available. See [shared run controls and Slurm memory](../README.md#runs-and-budgets). `BENCH_MIN_MAPQ`, `BENCH_MIN_LENGTH` and `BENCH_MAX_LENGTH` override the filters. The timing TSV records applied/unsupported length filtering, proper-pair selection and scope.
+Use `BENCH_PILOT=1` on the actual production method/core matrix to estimate all work, splitting pilots when necessary. The submission launcher allows shared nodes for pilots and requests 50 GB unless `--mem` is passed. Then set `BENCH_PILOT=0`, a warmup and three measurements, and submit core/method blocks that fit the allocation limit on matched hardware. Full runs reserve an exclusive node and all its memory. Prefer the same physical node when available. See [shared run controls and Slurm memory](../README.md#runs-and-budgets). `BENCH_MIN_MAPQ`, `BENCH_MIN_LENGTH` and `BENCH_MAX_LENGTH` override the filters. The timing TSV records applied/unsupported length filtering, proper-pair selection and scope.
 
 Keep process-plus-filesystem-flush time, output bytes and the joined Slurm peak alongside process time and GNU time RSS. Native positional output costs stay in the comparison. Include sample size, SD and median/quartiles and retain all measured points. The table below is a result template, not measured concordance data.
 

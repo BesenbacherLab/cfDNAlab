@@ -7,7 +7,7 @@
 
 # The submission launcher requests BENCH_CORES CPUs for this job's single core setting
 # Full runs also request --exclusive and --mem=0 to reserve the node and its memory
-# Pilots allow shared nodes and use the partition's default memory unless overridden
+# Pilots allow shared nodes and request 50 GB unless --mem is supplied
 # Each srun binds this job's single selected core count
 # User setup: the chosen partition must honor exclusive allocations for full runs
 # Its policy takes precedence over the job's sharing request
@@ -434,6 +434,12 @@ STEP
         echo "Skipping remaining repetitions of $method after failure; continuing other selected methods." >&2
     fi
 done < "$BENCH_WORK/order.tsv"
+
+# Concordance runs after all measurements, in both pilots and full benchmark jobs
+# The saved positional subsets are compared on their explicitly shared chromosomes
+if ((job_exit_code == 0)); then
+    benchmark_compare_results "$SLURM_SUBMIT_DIR/benchmarks/coverage/compare_coverage.py" --common-scope
+fi
 
 # The job reports failure if any method failed, while keeping completed results
 exit "$job_exit_code"

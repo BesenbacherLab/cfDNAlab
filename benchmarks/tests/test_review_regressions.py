@@ -41,9 +41,11 @@ class SubmissionTests(unittest.TestCase):
             self.assertNotIn("#SBATCH --exclusive", header)
             self.assertNotIn("#SBATCH --mem=0", header)
             self.assertNotIn("#SBATCH --cpus-per-task=32", header)
-            for pilot in (None, "0", "1", "invalid"):
+            for pilot, memory_override in (
+                (None, None), ("0", None), ("1", None), ("1", "80G"), ("invalid", None)
+            ):
                 with (
-                    self.subTest(feature=feature, pilot=pilot),
+                    self.subTest(feature=feature, pilot=pilot, memory_override=memory_override),
                     tempfile.TemporaryDirectory() as temporary,
                 ):
                     root = Path(temporary)
@@ -67,10 +69,13 @@ class SubmissionTests(unittest.TestCase):
                     environment.pop("BENCH_PILOT", None)
                     if pilot is not None:
                         environment["BENCH_PILOT"] = pilot
+                    extra_options = ["--time=00:10:00", "--comment=benchmark debug"]
+                    if memory_override is not None:
+                        extra_options.append("--mem=" + memory_override)
                     result = subprocess.run(
                         [
                             "bash", str(BENCHMARKS / "submit_benchmark.sh"), feature,
-                            "--time=00:10:00", "--comment=benchmark debug",
+                            *extra_options,
                         ],
                         cwd=BENCHMARKS.parent,
                         env=environment,
@@ -87,12 +92,127 @@ class SubmissionTests(unittest.TestCase):
                     expected = ["--export=ALL", "--cpus-per-task=4"]
                     if pilot != "1":
                         expected += ["--exclusive", "--mem=0"]
+                    else:
+                        expected += ["--mem=50G"]
                     expected += [
-                        "--time=00:10:00", "--comment=benchmark debug",
+                        *extra_options,
                         f"benchmarks/{feature}/{filename}",
                     ]
                     self.assertEqual(call_log.read_text().splitlines(), expected)
                     self.assertEqual(pilot_log.read_text(), (pilot or "0") + "\n")
+
+
+class AutomaticConcordanceTests(unittest.TestCase):
+    """Compare saved profiles after timing without native tools or Slurm."""
+
+    def test_coverage_concordance_and_histogram_are_saved_for_pilots_and_full_runs(self):
+        for pilot in ("0", "1"):
+            with self.subTest(pilot=pilot), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                results = root / "results"
+                for method in ("cfdnalab", "mosdepth"):
+                    directory = results / "profiles" / method
+                    directory.mkdir(parents=True)
+                    (directory / "chrom.sizes").write_text("chr1\t10\n")
+                (results / "profiles/cfdnalab/fcoverage.per_position.bedgraph.zst").write_text(
+                    "chr1\t0\t5\t2\n"
+                )
+                with gzip.open(results / "profiles/mosdepth/coverage.per-base.bed.gz", "wt") as output:
+                    output.write("chr1\t0\t5\t3\nchr1\t5\t10\t0\n")
+                # The comparison environment must supply its own zstd on PATH
+                # Only decompression is faked. The real comparator calculates the metrics
+                comparison_bin = root / "comparison environment" / "bin"
+                comparison_bin.mkdir(parents=True)
+                comparison_python = comparison_bin / "python"
+                comparison_python.write_text('#!/usr/bin/env bash\nexec "$TEST_PYTHON" "$@"\n')
+                comparison_python.chmod(0o755)
+                zstd = comparison_bin / "zstd"
+                zstd.write_text(
+                    '#!/usr/bin/env bash\n'
+                    'printf "comparison zstd used\\n" > "$ZSTD_LOG"\n'
+                    'cat "$2"\n'
+                )
+                zstd.chmod(0o755)
+                timings = results / "timings.tsv"
+                timings.write_text("native timing records remain unchanged\n")
+                result = subprocess.run(
+                    ["bash", "-euc", 'source "$BENCH_COMMON"\nbenchmark_compare_results "$COMPARATOR" --common-scope'],
+                    env={
+                        **os.environ,
+                        "BENCH_COMMON": str(BENCHMARKS / "common.sh"),
+                        "BENCH_COMPARE_PYTHON": str(comparison_python),
+                        "BENCH_FEATURE": "coverage",
+                        "BENCH_RESULTS": str(results),
+                        "BENCH_PILOT": pilot,
+                        "COMPARATOR": str(BENCHMARKS / "coverage/compare_coverage.py"),
+                        "TEST_PYTHON": sys.executable,
+                        "ZSTD_LOG": str(root / "zstd-log"),
+                        "TMPDIR": temporary,
+                    },
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                with (results / "concordance.tsv").open() as source:
+                    rows = list(csv.DictReader(source, delimiter="\t"))
+                # Five bases differ by 1 and five match. MAE = 5 / 10 = 0.5
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(float(rows[0]["mae"]), 0.5)
+                with (results / "residuals.tsv").open() as source:
+                    residuals = list(csv.DictReader(source, delimiter="\t"))
+                self.assertEqual(
+                    [(float(row["residual"]), int(row["bases"])) for row in residuals],
+                    [(-1.0, 5), (0.0, 5)],
+                )
+                self.assertEqual(timings.read_text(), "native timing records remain unchanged\n")
+                self.assertEqual((root / "zstd-log").read_text(), "comparison zstd used\n")
+
+    def test_unrelated_coverage_quantities_skip_concordance_with_an_explanation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            results = Path(temporary)
+            for method in ("cfdnalab", "mosdepth-fragment", "finaletoolkit-coverage"):
+                (results / "profiles" / method).mkdir(parents=True)
+            result = subprocess.run(
+                ["bash", "-euc", 'source "$BENCH_COMMON"\nbenchmark_compare_results /unused/comparator.py'],
+                env={
+                    **os.environ,
+                    "BENCH_COMMON": str(BENCHMARKS / "common.sh"),
+                    "BENCH_FEATURE": "coverage",
+                    "BENCH_RESULTS": str(results),
+                },
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("no pair", result.stdout)
+            self.assertFalse((results / "concordance.tsv").exists())
+
+    def test_comparison_failure_preserves_previous_metrics_and_prints_the_error(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            results = Path(temporary)
+            for method in ("cfdnalab", "samtools"):
+                (results / "profiles" / method).mkdir(parents=True)
+            (results / "concordance.tsv").write_text("previous successful metrics\n")
+            comparator = results / "broken-comparator.py"
+            comparator.write_text('print("partial output")\nraise ValueError("invalid profile")\n')
+            result = subprocess.run(
+                ["bash", "-euc", 'source "$BENCH_COMMON"\nbenchmark_compare_results "$COMPARATOR"'],
+                env={
+                    **os.environ,
+                    "BENCH_COMMON": str(BENCHMARKS / "common.sh"),
+                    "BENCH_COMPARE_PYTHON": sys.executable,
+                    "BENCH_FEATURE": "lengths",
+                    "BENCH_RESULTS": str(results),
+                    "COMPARATOR": str(comparator),
+                },
+                text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("invalid profile", result.stderr)
+            self.assertIn("invalid profile", (results / "concordance-error.log").read_text())
+            self.assertEqual((results / "concordance.tsv").read_text(), "previous successful metrics\n")
+            self.assertFalse((results / ".concordance.tsv").exists())
 
 
 class SetupAndScopeTests(unittest.TestCase):
@@ -213,6 +333,7 @@ class SetupAndScopeTests(unittest.TestCase):
                     "SLURM_JOB_NUM_NODES": "1",
                     "SLURM_CPUS_PER_TASK": "4",
                     "BENCH_METHODS": "cfdnalab griffin",
+                    "BENCH_COMPARE_PYTHON": sys.executable,
                     "BENCH_CORES": "4",
                     "BENCH_PILOT": "0",
                     "BENCH_BAM": "/unused/input.bam",
@@ -555,7 +676,7 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
                 results = Path(os.environ['BENCH_RESULTS'])
                 with Path(os.environ['CALL_LOG']).open('a') as destination:
                     destination.write(method + '\n')
-                if method == 'cfdnalab':
+                if method == 'cfdnalab' and os.environ['FAIL_CFDNALAB'] == '1':
                     (work / 'tool-error.log').write_text('native boundary failed\n')
                     raise SystemExit(3)
                 output = work / 'output'
@@ -574,35 +695,54 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
             """)
             )
             srun.chmod(0o755)
+            comparison_python = fake_bin / "comparison-python"
+            comparison_python.write_text(
+                f"#!{sys.executable}\n"
+                + textwrap.dedent(r"""
+                import os
+                from pathlib import Path
+                import sys
+
+                with Path(os.environ['CALL_LOG']).open('a') as destination:
+                    destination.write('concordance\n')
+                Path(os.environ['COMPARISON_ARGUMENTS']).write_text('\n'.join(sys.argv[1:]) + '\n')
+                print('mae_frequency\n0')
+            """)
+            )
+            comparison_python.chmod(0o755)
             bam = root / "input.bam"
             bam.write_text("BAM data is handled by the fake samtools boundary\n")
             Path(str(bam) + ".bai").touch()
             results = root / "results"
+            benchmark_environment = {
+                **os.environ,
+                "PATH": str(fake_bin) + ":" + os.environ["PATH"],
+                "SLURM_SUBMIT_DIR": str(BENCHMARKS.parent),
+                "SLURM_JOB_ID": "123",
+                "SLURM_JOB_NUM_NODES": "1",
+                "SLURM_CPUS_PER_TASK": "32",
+                "BENCH_BAM": str(bam),
+                "BENCH_INDEX": str(bam) + ".bai",
+                "TMPDIR": str(scratch),
+                "BENCH_RESULTS": str(results),
+                "BENCH_CFDNA": str(fake_bin / "cfdna"),
+                "BENCH_SAMTOOLS_ARCHIVE": str(archive),
+                "BENCH_CORES": "4",
+                "BENCH_METHODS": "cfdnalab samtools",
+                "BENCH_COMPARE_PYTHON": str(comparison_python),
+                "BENCH_WARMUPS": "0",
+                "BENCH_REPETITIONS": "2",
+                "BENCH_PILOT": "0",
+                "BENCH_SETUP_PYTHON": sys.executable,
+                "BENCH_EXPECTED_NODE": "",
+                "BENCH_RUN_TIMEOUT_SECONDS": "0",
+                "CALL_LOG": str(root / "calls"),
+                "COMPARISON_ARGUMENTS": str(root / "comparison-arguments"),
+                "FAIL_CFDNALAB": "1",
+            }
             result = subprocess.run(
                 ["bash", str(BENCHMARKS / "lengths/benchmark_lengths.sh")],
-                env={
-                    **os.environ,
-                    "PATH": str(fake_bin) + ":" + os.environ["PATH"],
-                    "SLURM_SUBMIT_DIR": str(BENCHMARKS.parent),
-                    "SLURM_JOB_ID": "123",
-                    "SLURM_JOB_NUM_NODES": "1",
-                    "SLURM_CPUS_PER_TASK": "32",
-                    "BENCH_BAM": str(bam),
-                    "BENCH_INDEX": str(bam) + ".bai",
-                    "TMPDIR": str(scratch),
-                    "BENCH_RESULTS": str(results),
-                    "BENCH_CFDNA": str(fake_bin / "cfdna"),
-                    "BENCH_SAMTOOLS_ARCHIVE": str(archive),
-                    "BENCH_CORES": "4",
-                    "BENCH_METHODS": "cfdnalab samtools",
-                    "BENCH_WARMUPS": "0",
-                    "BENCH_REPETITIONS": "2",
-                    "BENCH_PILOT": "0",
-                    "BENCH_SETUP_PYTHON": sys.executable,
-                    "BENCH_EXPECTED_NODE": "",
-                    "BENCH_RUN_TIMEOUT_SECONDS": "0",
-                    "CALL_LOG": str(root / "calls"),
-                },
+                env=benchmark_environment,
                 text=True,
                 capture_output=True,
             )
@@ -622,6 +762,38 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
                 (results / "failed-run-1/tool-error.log").read_text(),
                 "native boundary failed\n",
             )
+            self.assertFalse((results / "concordance.tsv").exists())
+
+            # A second job with successful tools must compare once after all four runs
+            (root / "calls").unlink()
+            successful_results = root / "successful-results"
+            benchmark_environment.update(
+                BENCH_RESULTS=str(successful_results), FAIL_CFDNALAB="0", BENCH_MAX_LENGTH="200"
+            )
+            result = subprocess.run(
+                ["bash", str(BENCHMARKS / "lengths/benchmark_lengths.sh")],
+                env=benchmark_environment,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                (root / "calls").read_text().splitlines(),
+                ["cfdnalab", "cfdnalab", "samtools", "samtools", "concordance"],
+            )
+            self.assertEqual(
+                (root / "comparison-arguments").read_text().splitlines(),
+                [
+                    str(BENCHMARKS / "lengths/compare_lengths.py"),
+                    str(successful_results / "profiles"),
+                    "--min-length", "30", "--max-length", "200",
+                ],
+            )
+            self.assertEqual(
+                (successful_results / "concordance.tsv").read_text(), "mae_frequency\n0\n"
+            )
+            with (successful_results / "timings.tsv").open() as source:
+                self.assertEqual(len(list(csv.DictReader(source, delimiter="\t"))), 4)
 
     def test_griffin_demo_has_a_separate_step_before_three_full_input_measurements(
         self,

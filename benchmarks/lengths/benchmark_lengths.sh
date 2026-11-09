@@ -338,5 +338,11 @@ STEP
     fi
 done < "$BENCH_WORK/order.tsv"
 
+# Concordance uses this job's length bounds after all measurements have finished
+if ((job_exit_code == 0)); then
+    benchmark_compare_results "$SLURM_SUBMIT_DIR/benchmarks/lengths/compare_lengths.py" \
+        --min-length "$BENCH_MIN_LENGTH" --max-length "$BENCH_MAX_LENGTH"
+fi
+
 # The job reports failure if any method failed, while keeping completed results
 exit "$job_exit_code"

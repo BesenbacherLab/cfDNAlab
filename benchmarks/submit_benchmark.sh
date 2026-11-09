@@ -2,7 +2,8 @@
 
 # Submit a benchmark from the repository root after sourcing the input/tool settings
 # Usage: bash benchmarks/submit_benchmark.sh lengths [sbatch options]
-# BENCH_PILOT=1 allows a shared node. Full runs reserve the whole node and its memory
+# BENCH_PILOT=1 allows a shared node and requests 50 GB
+# Full runs reserve the whole node and its memory
 # Extra arguments go to sbatch, for example --partition, --time or a pilot's --mem
 
 set -euo pipefail
@@ -31,9 +32,12 @@ fi
 
 # Slurm reads resource requests before the batch script starts, so the pilot choice
 # must be made here. Conditional #SBATCH lines inside the job would not work
-# Pilots use the partition's default memory request unless --mem is supplied
+# Pilots request 50 GB unless --mem is supplied. User options follow the defaults
+# so an explicit memory request takes precedence
 sbatch_options=(--export=ALL --cpus-per-task="$BENCH_CORES")
 if [[ "$BENCH_PILOT" == 0 ]]; then
     sbatch_options+=(--exclusive --mem=0)
+else
+    sbatch_options+=(--mem=50G)
 fi
 exec sbatch "${sbatch_options[@]}" "$@" "$job_script"

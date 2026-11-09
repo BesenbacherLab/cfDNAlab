@@ -117,6 +117,7 @@ Submit from the repository root on the login node with `bash benchmarks/submit_b
 | `BENCH_PILOT` | `0`, or `1` for a shared-node submission with zero full-input warmups and one measurement. Griffin retains its short demo warmup |
 | `BENCH_RUN_TIMEOUT_SECONDS` | `0` disables timeouts. A positive integer enables GNU timeout with an additional 60-second kill grace |
 | `BENCH_SETUP_PYTHON` | `python3`, untimed setup/relocation only |
+| `BENCH_COMPARE_PYTHON` | Comparison Python printed by the installer. Required and checked before staging when multiple methods are selected |
 | `BENCH_EXPECTED_NODE` | Optional exact hostname check before staging |
 | `BENCH_MIN_MAPQ` | 30 |
 | `BENCH_MIN_LENGTH`, `BENCH_MAX_LENGTH` | Inclusive 30-1000 bp, midpoint defaults 100-200 bp |
@@ -132,7 +133,7 @@ All runners use the samtools archive for header preparation and setup Python for
 
 ## Scheduling and placement
 
-Jobs request one node, one task, `BENCH_CORES` CPUs per task, one hardware thread per core and no requeue. The submission launcher adds `--exclusive --mem=0` only when `BENCH_PILOT=0`. Pilots omit both flags, allowing shared nodes, and use the partition's default memory unless an explicit `--mem` is passed. CPU count, exclusivity and memory requests are chosen before submission rather than set unconditionally in the job headers. Additional arguments go to `sbatch` for cluster-specific partition, node, wall-time and memory choices. There is no universal production wall-time allocation. Shared-node pilots provide execution checks and rough resource estimates, and remain excluded from production summaries.
+Jobs request one node, one task, `BENCH_CORES` CPUs per task, one hardware thread per core and no requeue. The submission launcher adds `--exclusive --mem=0` only when `BENCH_PILOT=0`. Pilots allow shared nodes and request 50 GB with `--mem=50G`, overridable with an explicit `--mem`. CPU count, exclusivity and memory requests are chosen before submission rather than set unconditionally in the job headers. Additional arguments go to `sbatch` for cluster-specific partition, node, wall-time and memory choices. There is no universal production wall-time allocation. Shared-node pilots provide execution checks and rough resource estimates, and remain excluded from production summaries.
 
 Each job uses exactly one core setting. Every selected method runs as a contiguous block at that setting. Its warmup repetitions precede measurements, with actual order retained in the timing TSV. Normally production repetition 1 is a warmup and 2-4 are measured.
 
@@ -173,6 +174,10 @@ When enabled, GNU `timeout --verbose --kill-after=60` wraps each native command 
 `timings.tsv` is written incrementally and keeps warmups, pilots and failures. Skipped repetitions have no invented timing rows. `run.tsv` records feature, node, requested methods/cores, repetitions, run timeout, benchmark commit/dirty flag and input paths. Optional installation/build TSVs are copied beside it. Available Slurm configuration is captured once per job, with diagnostics and a warning if unavailable.
 
 One native output per method is preserved from the first measured repetition at the job's core setting. Copying happens after `srun`, outside tool-step memory accounting. Other temporary outputs are removed. FrEIA's native left-only table is retained as `profiles/freia/left-motifs.pq`, distinct from damaged old both-end aggregates. cfDNAPro motifs retain native counts and a reference manifest together in `profiles/cfdnapro/`.
+
+After all tool runs succeed, pilots and full runs automatically compare saved profiles and write `concordance.tsv`. The comparison runs in the batch shell after all timed steps, so its time and memory do not enter tool measurements. Lengths use the job's inclusive bounds and motifs use its K. Coverage pairs read depth, fragment coverage and regional counts separately, explicitly allowing the shared chromosome scope recorded in each comparison row. The comparison environment's `bin/` is added to PATH only for this command so its zstd is available. Single-tool jobs and coverage jobs without a comparable pair print a skip explanation. Separate midpoint jobs still need their saved profiles combined for cross-job comparison.
+
+Comparison errors fail the job, keep `concordance-error.log` and print its contents to the Slurm log. Timings and profiles are preserved. The completed concordance table replaces its generated output only on success. Coverage also writes the residual histogram described in the concordance specification. A native-tool failure skips automatic concordance while retaining the job's existing failure handling.
 
 Coverage keeps full compressed cfDNAlab/mosdepth tracks. Saved samtools/PanDepth positions cover chr21/chr22 or 21/22, falling back to the first BAM contig when absent. `BENCH_CAPTURE_CHROMOSOMES` overrides the comma-separated subset and unknown requested names fail. Full native output is still generated inside timing. Subset extraction/recompression occurs afterward. Each coverage profile has its processed `chrom.sizes`, and regional outputs share saved `regions.bed`.
 
