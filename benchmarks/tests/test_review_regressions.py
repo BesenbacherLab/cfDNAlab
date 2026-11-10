@@ -655,6 +655,30 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
             archive = root / "samtools.tar.gz"
             with tarfile.open(archive, "w:gz") as destination:
                 destination.add(environment_root, arcname=".")
+            finale_environment = root / "finale-env"
+            (finale_environment / "bin").mkdir(parents=True)
+            (finale_environment / "bin/conda-unpack").write_text("# Relocation fixture\n")
+            finale_python = finale_environment / "bin/python"
+            finale_python.write_text(
+                '#!/usr/bin/env bash\n'
+                'export PACKED_FINALE_PYTHON_USED=1\n'
+                'exec "$BENCH_TEST_PYTHON" "$@"\n'
+            )
+            finale_python.chmod(0o755)
+            finale_launcher = finale_environment / "bin/finaletoolkit"
+            # A packed launcher can depend on a Python name absent from the node's PATH
+            finale_launcher.write_text(
+                '#!/usr/bin/env python3.11\n'
+                'import os\n'
+                'assert os.environ["PACKED_FINALE_PYTHON_USED"] == "1", "wrong interpreter"\n'
+                'if os.environ.get("FAIL_FINALE_SETUP") == "1":\n'
+                '    raise RuntimeError("FinaleToolkit startup fixture failed")\n'
+                'print("1.1.0")\n'
+            )
+            finale_launcher.chmod(0o755)
+            finale_archive = root / "finaletoolkit.tar.gz"
+            with tarfile.open(finale_archive, "w:gz") as destination:
+                destination.add(finale_environment, arcname=".")
             for name, body in (
                 ("cfdna", 'echo "cfdna fixture"'),
                 ("ldd", 'echo "statically linked"'),
@@ -676,7 +700,8 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
                 results = Path(os.environ['BENCH_RESULTS'])
                 with Path(os.environ['CALL_LOG']).open('a') as destination:
                     destination.write(method + '\n')
-                if method == 'cfdnalab' and os.environ['FAIL_CFDNALAB'] == '1':
+                if ((method == 'cfdnalab' and os.environ['FAIL_CFDNALAB'] == '1')
+                    or (method == 'finaletoolkit' and os.environ.get('FAIL_FINALE_RUN') == '1')):
                     (work / 'tool-error.log').write_text('native boundary failed\n')
                     raise SystemExit(3)
                 output = work / 'output'
@@ -728,7 +753,11 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
                 "BENCH_CFDNA": str(fake_bin / "cfdna"),
                 "BENCH_SAMTOOLS_ARCHIVE": str(archive),
                 "BENCH_CORES": "4",
-                "BENCH_METHODS": "cfdnalab samtools",
+                "BENCH_METHODS": "cfdnalab samtools finaletoolkit",
+                "BENCH_FINALE_ARCHIVE": str(finale_archive),
+                "BENCH_TEST_PYTHON": sys.executable,
+                "PACKED_FINALE_PYTHON_USED": "0",
+                "FAIL_FINALE_SETUP": "0",
                 "BENCH_COMPARE_PYTHON": str(comparison_python),
                 "BENCH_WARMUPS": "0",
                 "BENCH_REPETITIONS": "2",
@@ -749,22 +778,23 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
             self.assertEqual(result.returncode, 1, result.stderr)
             self.assertEqual(
                 (root / "calls").read_text().splitlines(),
-                ["cfdnalab", "samtools", "samtools"],
+                ["cfdnalab", "samtools", "samtools", "finaletoolkit", "finaletoolkit", "concordance"],
             )
             with (results / "timings.tsv").open() as source:
                 rows = list(csv.DictReader(source, delimiter="\t"))
-            self.assertEqual([row["step_exit_code"] for row in rows], ["3", "0", "0"])
+            self.assertEqual([row["step_exit_code"] for row in rows], ["3", "0", "0", "0", "0"])
             for row in rows:
                 self.assertNotIn(None, row)
                 self.assertNotIn(None, row.values())
             self.assertTrue((results / "profiles/samtools/stats.txt").exists())
+            self.assertTrue((results / "profiles/finaletoolkit/stats.txt").exists())
             self.assertEqual(
                 (results / "failed-run-1/tool-error.log").read_text(),
                 "native boundary failed\n",
             )
-            self.assertFalse((results / "concordance.tsv").exists())
+            self.assertTrue((results / "concordance.tsv").exists())
 
-            # A second job with successful tools must compare once after all four runs
+            # A second job with successful tools must compare once after all six runs
             (root / "calls").unlink()
             successful_results = root / "successful-results"
             benchmark_environment.update(
@@ -779,7 +809,7 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(
                 (root / "calls").read_text().splitlines(),
-                ["cfdnalab", "cfdnalab", "samtools", "samtools", "concordance"],
+                ["cfdnalab", "cfdnalab", "samtools", "samtools", "finaletoolkit", "finaletoolkit", "concordance"],
             )
             self.assertEqual(
                 (root / "comparison-arguments").read_text().splitlines(),
@@ -793,7 +823,57 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
                 (successful_results / "concordance.tsv").read_text(), "mae_frequency\n0\n"
             )
             with (successful_results / "timings.tsv").open() as source:
-                self.assertEqual(len(list(csv.DictReader(source, delimiter="\t"))), 4)
+                self.assertEqual(len(list(csv.DictReader(source, delimiter="\t"))), 6)
+
+            # A startup failure must leave provenance and the empty timing table
+            # Removing the BAM proves version checks happen before the expensive copy
+            bam.unlink()
+            (root / "calls").unlink()
+            for feature, finale_method in (
+                ("lengths", "finaletoolkit"), ("coverage", "finaletoolkit-coverage")
+            ):
+                with self.subTest(setup_failure=feature):
+                    failed_setup = root / (feature + "-failed-setup")
+                    benchmark_environment.update(
+                        BENCH_RESULTS=str(failed_setup), FAIL_FINALE_SETUP="1",
+                        BENCH_METHODS="cfdnalab " + finale_method,
+                    )
+                    result = subprocess.run(
+                        ["bash", str(BENCHMARKS / feature / f"benchmark_{feature}.sh")],
+                        env=benchmark_environment,
+                        text=True,
+                        capture_output=True,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("FinaleToolkit startup fixture failed", result.stderr)
+                    self.assertTrue((failed_setup / "run.tsv").exists())
+                    with (failed_setup / "timings.tsv").open() as source:
+                        self.assertEqual(list(csv.DictReader(source, delimiter="\t")), [])
+                    self.assertIn("Checking tool versions", (failed_setup / "progress.log").read_text())
+                    self.assertNotIn("Copying BAM", (failed_setup / "progress.log").read_text())
+                    self.assertFalse((root / "calls").exists())
+
+            # Failure of the final method must keep earlier timings, profiles and concordance
+            bam.write_text("BAM data is handled by the fake samtools boundary\n")
+            late_failure = root / "late-failure"
+            benchmark_environment.update(
+                BENCH_RESULTS=str(late_failure), BENCH_METHODS="cfdnalab samtools finaletoolkit",
+                FAIL_FINALE_SETUP="0", FAIL_FINALE_RUN="1",
+            )
+            result = subprocess.run(
+                ["bash", str(BENCHMARKS / "lengths/benchmark_lengths.sh")],
+                env=benchmark_environment,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 1, result.stderr)
+            with (late_failure / "timings.tsv").open() as source:
+                rows = list(csv.DictReader(source, delimiter="\t"))
+            self.assertEqual([row["step_exit_code"] for row in rows], ["0", "0", "0", "0", "3"])
+            self.assertTrue((late_failure / "profiles/cfdnalab/stats.txt").exists())
+            self.assertTrue((late_failure / "profiles/samtools/stats.txt").exists())
+            self.assertTrue((late_failure / "concordance.tsv").exists())
+            self.assertIn("Saved run 5", (late_failure / "progress.log").read_text())
 
     def test_griffin_demo_has_a_separate_step_before_three_full_input_measurements(
         self,

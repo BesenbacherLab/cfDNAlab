@@ -108,7 +108,22 @@ export BENCH_CFDNA_VERSION BENCH_FINALE_VERSION BENCH_FREIA_VERSION BENCH_CFDNAP
 BENCH_WORK=$(mktemp -d "$TMPDIR/end-motifs-${SLURM_JOB_ID}.XXXXXX")
 trap 'rm -rf "$BENCH_WORK"' EXIT
 BENCH_NODE=$(hostname)
+
+# Create result files before staging so setup failures leave an inspectable record
+mkdir -p "$BENCH_RESULTS/profiles"
+# The requested length bounds and whether a method applies them are separate
+# columns. This makes FinaleToolkit 1.1.0's limitation visible in every run
+header=$'run_order\trepetition\twarmup\tmethod\ttool_version\tcores\ttool_workers\tk\tmin_mapq'
+header+=$'\trequested_min_length\trequested_max_length\tlength_filter\tscope\tsource\tclip\tproper_pair'
+header+=$'\tnode\tcpu_model\tcpu_ids\tphysical_core_ids\tjob_id\tstep_id\tstarted_utc'
+header+=$'\teffective_min_length\teffective_max_length'
+header+=$'\twall_seconds\tuser_seconds\tsystem_seconds\tmax_rss_kib\ttool_exit_code'
+header+=$'\tflush_seconds\tprocess_plus_flush_seconds\toutput_bytes\tpilot\tstep_exit_code'
+printf '%s\n' "$header" > "$BENCH_RESULTS/timings.tsv"
+benchmark_progress "Initializing $BENCH_FEATURE benchmark on $BENCH_NODE"
+benchmark_record_setup
 mkdir -p "$BENCH_WORK/bin" "$BENCH_WORK/tmp" "$BENCH_WORK/cache" "$BENCH_WORK/matplotlib"
+benchmark_progress "Copying BAM and index to node-local scratch"
 cp -L "$BENCH_BAM" "$BENCH_WORK/sample.bam"
 cp -L "$BENCH_INDEX" "$BENCH_WORK/sample.bam.bai"
 if [[ "$need_reference" == true ]]; then cp -L "$BENCH_REF_2BIT" "$BENCH_WORK/reference.2bit"; fi
@@ -161,30 +176,21 @@ PYHEADER
 fi
 if [[ " $BENCH_METHODS " == *" cfdnalab-reference-autosomes "* && -z "$BENCH_AUTOSOMES" ]]; then echo "No autosomes in BAM." >&2; exit 1; fi
 if [[ "$run_cfdna" == true ]]; then BENCH_CFDNA_VERSION=$("$BENCH_WORK/bin/cfdna" --version | tr '\t\n' '  '); fi
-if [[ "$run_finale" == true ]]; then BENCH_FINALE_VERSION=$("$BENCH_WORK/finale-env/bin/finaletoolkit" --version | tr '\t\n' '  '); fi
+# FinaleToolkit uses its packed Python so its launcher does not search the node's PATH
+if [[ "$run_finale" == true ]]; then BENCH_FINALE_VERSION=$("$BENCH_WORK/finale-env/bin/python" "$BENCH_WORK/finale-env/bin/finaletoolkit" --version | tr '\t\n' '  '); fi
 if [[ "$run_cfdnapro" == true ]]; then
     BENCH_CFDNAPRO_VERSION=$("$BENCH_APPTAINER" exec --cleanenv --containall "$BENCH_WORK/cfdnapro.sif" Rscript --vanilla -e 'cat(as.character(packageVersion("cfDNAPro")))')
     image_hash=$(sha256sum "$BENCH_WORK/cfdnapro.sif" | cut -d ' ' -f 1)
     BENCH_CFDNAPRO_VERSION+=" image-sha256:$image_hash genome:$BENCH_GENOME"
 fi
 
-mkdir -p "$BENCH_RESULTS/profiles"
-
-# The requested length bounds and whether a method applies them are separate
-# columns. This makes FinaleToolkit 1.1.0's limitation visible in every run
-header=$'run_order\trepetition\twarmup\tmethod\ttool_version\tcores\ttool_workers\tk\tmin_mapq'
-header+=$'\trequested_min_length\trequested_max_length\tlength_filter\tscope\tsource\tclip\tproper_pair'
-header+=$'\tnode\tcpu_model\tcpu_ids\tphysical_core_ids\tjob_id\tstep_id\tstarted_utc'
-header+=$'\teffective_min_length\teffective_max_length'
-header+=$'\twall_seconds\tuser_seconds\tsystem_seconds\tmax_rss_kib\ttool_exit_code'
-header+=$'\tflush_seconds\tprocess_plus_flush_seconds\toutput_bytes\tpilot\tstep_exit_code'
-printf '%s\n' "$header" > "$BENCH_RESULTS/timings.tsv"
-
 # The BAM and programs are ready on the compute node. Preparation time above
 # is excluded from tool timings. The script now lists each method's warmup and measurements
 # srun starts a separate program for each run. After it finishes, this main script
 # saves that run's results. common.sh explains the files used to pass them back
-benchmark_record_setup
+# Staged files finish writing before warmups. This does not evict the page cache
+sync -f "$BENCH_WORK"
+benchmark_progress "Setup complete. Starting warmups and measurements"
 benchmark_schedule > "$BENCH_WORK/order.tsv"
 if [[ ! -s "$BENCH_WORK/order.tsv" ]]; then echo "The requested run matrix is empty." >&2; exit 1; fi
 run_order=0
@@ -193,6 +199,7 @@ failed_method=
 while IFS=$'\t' read -r method cores repetition is_warmup; do
     if [[ "$method" == "$failed_method" ]]; then continue; fi
     run_order=$((run_order + 1))
+    benchmark_progress "Starting run $run_order: $method, repetition $repetition (warmup=$is_warmup)"
     step_exit_code=0
     # Old timings and output paths are removed before each run. If this run fails
     # before writing its own files, it cannot accidentally reuse the preceding results
@@ -333,7 +340,7 @@ else
     proper_pair=required
     clip=unrestricted
     profile="$BENCH_WORK/output/motifs.tsv"
-    command=("$BENCH_WORK/finale-env/bin/finaletoolkit" end-motifs
+    command=("$BENCH_WORK/finale-env/bin/python" "$BENCH_WORK/finale-env/bin/finaletoolkit" end-motifs
         "$BENCH_WORK/sample.bam" "$BENCH_WORK/reference.2bit" -k "$BENCH_K"
         --min-length "$BENCH_MIN_LENGTH" --max-length "$BENCH_MAX_LENGTH"
         --min-mapq "$BENCH_MIN_MAPQ" --threads "$cores" --strand both --output "$profile")
@@ -409,9 +416,7 @@ STEP
 done < "$BENCH_WORK/order.tsv"
 
 # Concordance uses this job's motif length after all measurements have finished
-if ((job_exit_code == 0)); then
-    benchmark_compare_results "$SLURM_SUBMIT_DIR/benchmarks/ends/compare_end_motifs.py" --k "$BENCH_K"
-fi
+benchmark_compare_results "$SLURM_SUBMIT_DIR/benchmarks/ends/compare_end_motifs.py" --k "$BENCH_K"
 
 # The job reports failure if any method failed, while keeping completed results
 exit "$job_exit_code"

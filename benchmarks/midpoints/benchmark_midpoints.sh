@@ -94,7 +94,20 @@ export BENCH_RESULTS BENCH_CFDNA_VERSION BENCH_GRIFFIN_VERSION
 BENCH_WORK=$(mktemp -d "$TMPDIR/midpoints-${SLURM_JOB_ID}.XXXXXX")
 trap 'rm -rf "$BENCH_WORK"' EXIT
 BENCH_NODE=$(hostname)
+
+# Create result files before staging so setup failures leave an inspectable record
+mkdir -p "$BENCH_RESULTS/profiles"
+# One row per tool run, with the actual node and allowed CPU IDs
+header=$'run_order\trepetition\twarmup\tmethod\ttool_version\tcores\ttool_workers'
+header+=$'\tmin_mapq\tmin_length\tmax_length\tsites\tgroups\twindow_bp\tresolution_bp\tmidpoint_policy'
+header+=$'\tnode\tcpu_model\tcpu_ids\tphysical_core_ids\tjob_id\tstep_id\tstarted_utc'
+header+=$'\twall_seconds\tuser_seconds\tsystem_seconds\tmax_rss_kib\ttool_exit_code'
+header+=$'\tflush_seconds\tprocess_plus_flush_seconds\toutput_bytes\tpilot\tstep_exit_code'
+printf '%s\n' "$header" > "$BENCH_RESULTS/timings.tsv"
+benchmark_progress "Initializing $BENCH_FEATURE benchmark on $BENCH_NODE"
+benchmark_record_setup
 mkdir -p "$BENCH_WORK/bin" "$BENCH_WORK/tmp" "$BENCH_WORK/cache" "$BENCH_WORK/matplotlib" "$BENCH_WORK/griffin-env"
+benchmark_progress "Copying BAM and index to node-local scratch"
 cp -L "$BENCH_BAM" "$BENCH_WORK/sample.bam"
 cp -L "$BENCH_INDEX" "$BENCH_WORK/sample.bam.${BENCH_INDEX##*.}"
 cp -L "$BENCH_INTERVALS" "$BENCH_WORK/input.bed"
@@ -232,23 +245,16 @@ PY
 IFS=$'\t' read -r BENCH_HALF_WIDTH BENCH_SITES BENCH_GROUPS BENCH_CHROMOSOMES <<< "$site_summary"
 if [[ "$run_cfdna" == true ]]; then BENCH_CFDNA_VERSION=$("$BENCH_WORK/bin/cfdna" --version 2>&1 | tr '\t\n' '  '); fi
 if [[ "$run_griffin" == true ]]; then BENCH_GRIFFIN_VERSION=$(cat "$BENCH_WORK/griffin-env/share/griffin/version.txt"); fi
-mkdir -p "$BENCH_RESULTS/profiles"
 cp "$BENCH_WORK/sites.bed" "$BENCH_RESULTS/sites.bed"
 sha256sum "$BENCH_INTERVALS" > "$BENCH_RESULTS/sites.sha256"
-
-# One row per tool run, with the actual node and allowed CPU IDs
-header=$'run_order\trepetition\twarmup\tmethod\ttool_version\tcores\ttool_workers'
-header+=$'\tmin_mapq\tmin_length\tmax_length\tsites\tgroups\twindow_bp\tresolution_bp\tmidpoint_policy'
-header+=$'\tnode\tcpu_model\tcpu_ids\tphysical_core_ids\tjob_id\tstep_id\tstarted_utc'
-header+=$'\twall_seconds\tuser_seconds\tsystem_seconds\tmax_rss_kib\ttool_exit_code'
-header+=$'\tflush_seconds\tprocess_plus_flush_seconds\toutput_bytes\tpilot\tstep_exit_code'
-printf '%s\n' "$header" > "$BENCH_RESULTS/timings.tsv"
 
 # The BAM, sites and programs are ready on the compute node. Preparation time
 # above and Griffin's short demo below are excluded from tool timings
 # Each full-input run starts through srun. Once it finishes, this main script saves
 # its results. common.sh explains the temporary files used to pass them back
-benchmark_record_setup
+# Staged files finish writing before warmups. This does not evict the page cache
+sync -f "$BENCH_WORK"
+benchmark_progress "Setup complete. Starting warmups and measurements"
 if [[ "$run_griffin" == true ]]; then
     printf 'griffin_warmup\trelease-demo-1000-sites\n' >> "$BENCH_RESULTS/run.tsv"
     sha256sum "$BENCH_WORK/griffin-env/share/griffin/CTCF.hg38.1000.txt" > "$BENCH_RESULTS/griffin-warmup.sha256"
@@ -276,6 +282,7 @@ failed_method=
 while IFS=$'\t' read -r method cores repetition is_warmup; do
     if [[ "$method" == "$failed_method" ]]; then continue; fi
     run_order=$((run_order + 1))
+    benchmark_progress "Starting run $run_order: $method, repetition $repetition (warmup=$is_warmup)"
     step_exit_code=0
     # Old timings and output paths are removed before each run. If this run fails
     # before writing its own files, it cannot accidentally reuse the preceding results
@@ -396,9 +403,7 @@ STEP
 done < "$BENCH_WORK/order.tsv"
 
 # Single-tool jobs keep their profiles for comparison after the separate jobs finish
-if ((job_exit_code == 0)); then
-    benchmark_compare_results "$SLURM_SUBMIT_DIR/benchmarks/midpoints/compare_midpoints.py"
-fi
+benchmark_compare_results "$SLURM_SUBMIT_DIR/benchmarks/midpoints/compare_midpoints.py"
 
 # The job reports failure if any method failed, while keeping completed results
 exit "$job_exit_code"

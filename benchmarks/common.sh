@@ -17,7 +17,7 @@
 # 4. benchmark_finish_run adds the timing row to timings.tsv and keeps the first
 #    measured output for numerical comparison. Other output is deleted before
 #    the next repetition
-# 5. After all tool runs succeed, benchmark_compare_results writes concordance.tsv
+# 5. After tool attempts finish, benchmark_compare_results writes concordance.tsv
 #    from comparable saved profiles. This work is outside every tool's measurements
 #
 # srun starts a separate Bash program. Setting a variable there cannot update a
@@ -164,6 +164,7 @@ benchmark_unpack() {
     # It runs with the setup Python, which needs no extra packages. The Python in
     # the unpacked environment may depend on paths that still need updating
     local archive=$1 destination=$2
+    benchmark_progress "Unpacking environment archive: $archive"
     mkdir -p "$destination"
     tar -xzf "$archive" -C "$destination"
     "$BENCH_SETUP_PYTHON" "$destination/bin/conda-unpack"
@@ -177,6 +178,7 @@ benchmark_stage_binary() {
     # ldd reports an error for a program with its libraries built in. That case is
     # accepted. Other errors and output naming a missing library stop setup
     local executable=$1 name=$2 linkage
+    benchmark_progress "Copying executable: $name"
     cp -L "$executable" "$BENCH_WORK/bin/$name"
     [[ -x "$BENCH_WORK/bin/$name" ]] || {
         echo "Not an executable: $executable" >&2
@@ -194,9 +196,17 @@ benchmark_stage_binary() {
     fi
 }
 
+benchmark_progress() {
+    # Save a short, dated message in the results directory and in Slurm's output
+    # Setup can spend a long time copying a BAM or unpacking a tool. These messages
+    # distinguish that work from measured runs and identify the last completed run
+    local message=$1
+    printf '%s\t%s\n' "$(date -u +%FT%TZ)" "$message" | tee -a "$BENCH_RESULTS/progress.log"
+}
+
 benchmark_record_setup() {
     # This function saves input paths, run settings, node name and code version
-    # beside the results
+    # beside the results before copying inputs or unpacking tool environments
     # These records help explain differences between jobs run at different times
     # It also copies this file so each srun program loads the same helper functions
     # SLURM_SUBMIT_DIR locates it because Slurm keeps its copy of the submitted
@@ -228,10 +238,8 @@ benchmark_record_setup() {
     scontrol show config > "$BENCH_RESULTS/slurm-config.txt" 2> "$BENCH_RESULTS/slurm-config-error.log" || {
         echo 'Slurm configuration was unavailable. See slurm-config-error.log.' >&2
     }
-    # This wait lets input copies finish writing to disk before a tool is timed
-    # sync -f waits for pending writes on that filesystem, including other files
-    # It does not remove the copied input from the operating system's memory cache
-    sync -f "$BENCH_WORK"
+    # The feature script waits for staged files to finish writing after setup
+    # That wait happens before warmups and does not evict the input from memory
 }
 
 benchmark_schedule() {
@@ -392,4 +400,5 @@ benchmark_finish_run() {
     # run. The copied inputs/programs remain for reuse. The main script removes the whole
     # temporary directory when the job ends, including when it stops after an error
     rm -rf "$BENCH_WORK/output" "$BENCH_WORK/coverage" "$BENCH_WORK/tool.log" "$BENCH_WORK/tool-error.log" "$BENCH_WORK/stdout.path"
+    benchmark_progress "Saved run $run_order: $method, repetition $repetition (step exit $step_exit_code)"
 }

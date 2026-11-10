@@ -78,7 +78,7 @@ bash benchmarks/submit_benchmark.sh ends --constraint=gen6 --time=YOUR_PILOT_BAS
 # The job writes concordance.tsv automatically after timing
 ```
 
-Pilots and full runs automatically write `concordance.tsv` after all tool runs succeed, using the job's `BENCH_K`. This comparison is outside every tool's timing and step memory measurements. Single-method jobs retain their profile and explain that there is no pair to compare. A comparison failure fails the job, with details in `concordance-error.log`, while preserving completed timings and profiles.
+Pilots and full runs automatically write `concordance.tsv` after all tool attempts finish, using the job's `BENCH_K`. This comparison is outside every tool's timing and step memory measurements. Single-method jobs retain their profile and explain that there is no pair to compare. A comparison failure fails the job, with details in `concordance-error.log`, while preserving completed timings and profiles.
 
 For the FrEIA comparison, use `BENCH_K=3`, a new results directory and `BENCH_METHODS="cfdnalab-read-aligned freia"`. The automatic comparison uses 3-mers as well. cfDNAPro can also join this 3-mer series. Left-only versus both-end agreement is approximate and does not support an equivalent-output speed claim.
 

@@ -101,12 +101,29 @@ export BENCH_WORK BENCH_NODE BENCH_CFDNA_VERSION BENCH_MOSDEPTH_VERSION BENCH_AU
 export BENCH_SAMTOOLS_VERSION BENCH_FINALE_VERSION
 export BENCH_PANDEPTH_VERSION
 BENCH_WORK=$(mktemp -d "$TMPDIR/coverage-${SLURM_JOB_ID}.XXXXXX")
-BENCH_NODE=$(hostname)
 trap 'rm -rf "$BENCH_WORK"' EXIT
+BENCH_NODE=$(hostname)
+
+# Create result files before staging so setup failures leave an inspectable record
+mkdir -p "$BENCH_RESULTS/profiles"
+# run_order counts every attempted run in this job, while repetition counts runs
+# of the current method, including warmups. CPU records identify jobs run on
+# different hardware when their timings are interpreted
+# tool_threads means cfDNAlab threads, FinaleToolkit worker processes, or EXTRA
+# decompression threads for mosdepth/samtools. It is not the allocated core count
+# For PanDepth it records the requested -t setting on the allocated CPUs
+# Rows contain elapsed time, CPU time, RAM reported by GNU time and the tool's exit code
+# step_exit_code also records failure to get the expected CPUs or output file
+header=$'run_order\trepetition\twarmup\tmethod\tworkload\ttool_version\tcores\ttool_threads'
+header+=$'\tnode\tcpu_model\tcpu_ids\tphysical_core_ids\tjob_id\tstep_id\tstarted_utc'
+header+=$'\tmin_mapq\tmin_length\tmax_length\tscope\tproper_pair\tlength_filter'
+header+=$'\twall_seconds\tuser_seconds\tsystem_seconds\tmax_rss_kib\ttool_exit_code'
+header+=$'\tflush_seconds\tprocess_plus_flush_seconds\toutput_bytes\tpilot\tstep_exit_code'
+printf '%s\n' "$header" > "$BENCH_RESULTS/timings.tsv"
+benchmark_progress "Initializing $BENCH_FEATURE benchmark on $BENCH_NODE"
+benchmark_record_setup
 mkdir -p "$BENCH_WORK/bin" "$BENCH_WORK/tmp"
 export TMPDIR="$BENCH_WORK/tmp"
-cp -L "$BENCH_BAM" "$BENCH_WORK/sample.bam"
-cp -L "$BENCH_INDEX" "$BENCH_WORK/sample.bam.${BENCH_INDEX##*.}"
 # User setup: submit from the repository root so SLURM_SUBMIT_DIR locates helpers
 # Slurm keeps its own copy of this job script elsewhere, away from those helpers
 
@@ -132,6 +149,20 @@ for method in "${methods_to_run[@]}"; do
             benchmark_unpack "$BENCH_FINALE_ARCHIVE" "$BENCH_WORK/finale-env" ;;
     esac
 done
+benchmark_progress "Checking tool versions"
+# Version records are collected only for the selected tools
+# FinaleToolkit uses its packed Python so its launcher does not search the node's PATH
+if [[ -f "$BENCH_WORK/bin/cfdna" ]]; then BENCH_CFDNA_VERSION=$("$BENCH_WORK/bin/cfdna" --version | tr '\t\n' '  '); fi
+if [[ -f "$BENCH_WORK/bin/mosdepth" ]]; then BENCH_MOSDEPTH_VERSION=$("$BENCH_WORK/bin/mosdepth" --version | tr '\t\n' '  '); fi
+BENCH_SAMTOOLS_VERSION=$("$BENCH_WORK/samtools-env/bin/samtools" --version-only | tr '\t\n' '  ')
+if [[ -d "$BENCH_WORK/finale-env" ]]; then BENCH_FINALE_VERSION=$("$BENCH_WORK/finale-env/bin/python" "$BENCH_WORK/finale-env/bin/finaletoolkit" --version | tr '\t\n' '  '); fi
+if [[ -f "$BENCH_WORK/bin/pandepth" ]]; then
+    BENCH_PANDEPTH_VERSION=$("$BENCH_WORK/bin/pandepth" -h 2>&1 | sed -n 's/.*show this help \[\(v[^]]*\)\].*/\1/p')
+    if [[ -z "$BENCH_PANDEPTH_VERSION" ]]; then echo "Could not read PanDepth version." >&2; exit 1; fi
+fi
+benchmark_progress "Copying BAM and index to node-local scratch"
+cp -L "$BENCH_BAM" "$BENCH_WORK/sample.bam"
+cp -L "$BENCH_INDEX" "$BENCH_WORK/sample.bam.${BENCH_INDEX##*.}"
 "$BENCH_WORK/samtools-env/bin/samtools" idxstats "$BENCH_WORK/sample.bam" |
     awk '$1 != "*" {print $1 "\t" $2}' > "$BENCH_WORK/chrom.sizes"
 
@@ -160,15 +191,6 @@ if [[ " $BENCH_METHODS " == *" cfdnalab-autosomes "* && -z "$BENCH_AUTOSOMES" ]]
     exit 1
 fi
 
-# Version records are collected only for the selected tools
-if [[ -f "$BENCH_WORK/bin/cfdna" ]]; then BENCH_CFDNA_VERSION=$("$BENCH_WORK/bin/cfdna" --version | tr '\t\n' '  '); fi
-if [[ -f "$BENCH_WORK/bin/mosdepth" ]]; then BENCH_MOSDEPTH_VERSION=$("$BENCH_WORK/bin/mosdepth" --version | tr '\t\n' '  '); fi
-BENCH_SAMTOOLS_VERSION=$("$BENCH_WORK/samtools-env/bin/samtools" --version-only | tr '\t\n' '  ')
-if [[ -d "$BENCH_WORK/finale-env" ]]; then BENCH_FINALE_VERSION=$("$BENCH_WORK/finale-env/bin/finaletoolkit" --version | tr '\t\n' '  '); fi
-if [[ -f "$BENCH_WORK/bin/pandepth" ]]; then
-    BENCH_PANDEPTH_VERSION=$("$BENCH_WORK/bin/pandepth" -h 2>&1 | sed -n 's/.*show this help \[\(v[^]]*\)\].*/\1/p')
-    if [[ -z "$BENCH_PANDEPTH_VERSION" ]]; then echo "Could not read PanDepth version." >&2; exit 1; fi
-fi
 # Per-base text outputs are large, so the following block selects chromosomes to keep
 if [[ -n ${BENCH_CAPTURE_CHROMOSOMES:-} ]]; then
     awk -v names="$BENCH_CAPTURE_CHROMOSOMES" '
@@ -183,30 +205,16 @@ else
     if [[ ! -s "$BENCH_WORK/capture.chrom.sizes" ]]; then head -n 1 "$BENCH_WORK/chrom.sizes" > "$BENCH_WORK/capture.chrom.sizes"; fi
 fi
 if [[ ! -s "$BENCH_WORK/capture.chrom.sizes" ]]; then echo "No capture chromosomes found." >&2; exit 1; fi
-mkdir -p "$BENCH_RESULTS/profiles"
 cp "$BENCH_WORK/regions.bed" "$BENCH_RESULTS/regions.bed"
 export BENCH_RESULTS BENCH_MIN_MAPQ BENCH_MIN_LENGTH BENCH_MAX_LENGTH
-
-# run_order counts every attempted run in this job, while repetition counts runs
-# of the current method, including warmups. CPU records identify jobs run on
-# different hardware when their timings are interpreted
-# tool_threads means cfDNAlab threads, FinaleToolkit worker processes, or EXTRA
-# decompression threads for mosdepth/samtools. It is not the allocated core count
-# For PanDepth it records the requested -t setting on the allocated CPUs
-# Rows contain elapsed time, CPU time, RAM reported by GNU time and the tool's exit code
-# step_exit_code also records failure to get the expected CPUs or output file
-header=$'run_order\trepetition\twarmup\tmethod\tworkload\ttool_version\tcores\ttool_threads'
-header+=$'\tnode\tcpu_model\tcpu_ids\tphysical_core_ids\tjob_id\tstep_id\tstarted_utc'
-header+=$'\tmin_mapq\tmin_length\tmax_length\tscope\tproper_pair\tlength_filter'
-header+=$'\twall_seconds\tuser_seconds\tsystem_seconds\tmax_rss_kib\ttool_exit_code'
-header+=$'\tflush_seconds\tprocess_plus_flush_seconds\toutput_bytes\tpilot\tstep_exit_code'
-printf '%s\n' "$header" > "$BENCH_RESULTS/timings.tsv"
 
 # The BAM and programs are ready on the compute node. Preparation time above
 # is excluded from tool timings. The script now lists each method's warmup and measurements
 # srun starts a separate program for each run. After it finishes, this main script
 # saves that run's results. common.sh explains the files used to pass them back
-benchmark_record_setup
+# Staged files finish writing before warmups. This does not evict the page cache
+sync -f "$BENCH_WORK"
+benchmark_progress "Setup complete. Starting warmups and measurements"
 benchmark_schedule > "$BENCH_WORK/order.tsv"
 if [[ ! -s "$BENCH_WORK/order.tsv" ]]; then echo "The requested run matrix is empty." >&2; exit 1; fi
 run_order=0
@@ -215,6 +223,7 @@ failed_method=
 while IFS=$'\t' read -r method cores repetition is_warmup; do
     if [[ "$method" == "$failed_method" ]]; then continue; fi
     run_order=$((run_order + 1))
+    benchmark_progress "Starting run $run_order: $method, repetition $repetition (warmup=$is_warmup)"
     step_exit_code=0
     # Old timings and output paths are removed before each run. If this run fails
     # before writing its own files, it cannot accidentally reuse the preceding results
@@ -368,7 +377,7 @@ else
     tool_version=$BENCH_FINALE_VERSION
     proper_pair=required
     track="$BENCH_WORK/coverage/finaletoolkit.coverage.bed.gz"
-    command=("$BENCH_WORK/finale-env/bin/finaletoolkit" coverage
+    command=("$BENCH_WORK/finale-env/bin/python" "$BENCH_WORK/finale-env/bin/finaletoolkit" coverage
         "$BENCH_WORK/sample.bam" "$BENCH_WORK/regions.bed"
         --output "$track" --intersect-policy any --scale-factor 1
         --min-length "$BENCH_MIN_LENGTH" --max-length "$BENCH_MAX_LENGTH" --min-mapq "$BENCH_MIN_MAPQ" --threads "$tool_threads")
@@ -437,9 +446,7 @@ done < "$BENCH_WORK/order.tsv"
 
 # Concordance runs after all measurements, in both pilots and full benchmark jobs
 # The saved positional subsets are compared on their explicitly shared chromosomes
-if ((job_exit_code == 0)); then
-    benchmark_compare_results "$SLURM_SUBMIT_DIR/benchmarks/coverage/compare_coverage.py" --common-scope
-fi
+benchmark_compare_results "$SLURM_SUBMIT_DIR/benchmarks/coverage/compare_coverage.py" --common-scope
 
 # The job reports failure if any method failed, while keeping completed results
 exit "$job_exit_code"

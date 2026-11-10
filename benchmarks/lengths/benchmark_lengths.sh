@@ -87,12 +87,21 @@ export BENCH_CFDNA_VERSION BENCH_CFDNAPRO_VERSION BENCH_FINALE_VERSION BENCH_SAM
 BENCH_WORK=$(mktemp -d "$TMPDIR/lengths-${SLURM_JOB_ID}.XXXXXX")
 trap 'rm -rf "$BENCH_WORK"' EXIT
 BENCH_NODE=$(hostname)
+
+# Create result files before staging so setup failures leave an inspectable record
+mkdir -p "$BENCH_RESULTS/profiles"
+header=$'run_order\trepetition\twarmup\tmethod\ttool_version\tcores\ttool_threads'
+header+=$'\tmin_mapq\tmin_length\tmax_length\tscope\tlength_definition\tproper_pair'
+header+=$'\tnode\tcpu_model\tcpu_ids\tphysical_core_ids\tjob_id\tstep_id\tstarted_utc'
+header+=$'\twall_seconds\tuser_seconds\tsystem_seconds\tmax_rss_kib\ttool_exit_code'
+header+=$'\tflush_seconds\tprocess_plus_flush_seconds\toutput_bytes\tpilot\tstep_exit_code'
+printf '%s\n' "$header" > "$BENCH_RESULTS/timings.tsv"
+benchmark_progress "Initializing $BENCH_FEATURE benchmark on $BENCH_NODE"
+benchmark_record_setup
 if [[ "$run_cfdnapro" == true ]]; then
     BENCH_APPTAINER=$(command -v apptainer) || { echo "cfDNAPro requires Apptainer." >&2; exit 1; }
 fi
 mkdir -p "$BENCH_WORK/bin" "$BENCH_WORK/tmp" "$BENCH_WORK/cache" "$BENCH_WORK/matplotlib"
-cp -L "$BENCH_BAM" "$BENCH_WORK/sample.bam"
-cp -L "$BENCH_INDEX" "$BENCH_WORK/sample.bam.bai"
 if [[ "$run_cfdna" == true ]]; then benchmark_stage_binary "$BENCH_CFDNA" cfdna; fi
 if [[ "$run_cfdnapro" == true ]]; then cp -L "$BENCH_CFDNAPRO_IMAGE" "$BENCH_WORK/cfdnapro.sif"; fi
 cp "$SLURM_SUBMIT_DIR/benchmarks/lengths/cfdnapro_lengths.R" "$BENCH_WORK/cfdnapro_lengths.R"
@@ -109,12 +118,11 @@ export JAVA_HOME="$BENCH_WORK/picard-env"
 benchmark_unpack "$BENCH_SAMTOOLS_ARCHIVE" "$BENCH_WORK/samtools-env"
 if [[ "$run_finale" == true ]]; then benchmark_unpack "$BENCH_FINALE_ARCHIVE" "$BENCH_WORK/finale-env"; fi
 if [[ "$run_picard" == true ]]; then benchmark_unpack "$BENCH_PICARD_ARCHIVE" "$BENCH_WORK/picard-env"; fi
-"$BENCH_WORK/samtools-env/bin/samtools" idxstats "$BENCH_WORK/sample.bam" |
-    awk '$1 != "*" {print $1 "\t" $2}' > "$BENCH_WORK/chrom.sizes"
-BENCH_AUTOSOMES=$(awk '$1 ~ /^(chr)?([1-9]|1[0-9]|2[0-2])$/ {print $1}' "$BENCH_WORK/chrom.sizes" | paste -sd, -)
-if [[ " $BENCH_METHODS " == *" cfdnalab-autosomes "* && -z "$BENCH_AUTOSOMES" ]]; then echo "No autosomes in BAM." >&2; exit 1; fi
+benchmark_progress "Checking tool versions"
+# A packed Python launcher can use env python3.11, which searches the node's PATH
+# FinaleToolkit uses its own Python explicitly here and in the timed command
 if [[ "$run_cfdna" == true ]]; then BENCH_CFDNA_VERSION=$("$BENCH_WORK/bin/cfdna" --version | tr '\t\n' '  '); fi
-if [[ "$run_finale" == true ]]; then BENCH_FINALE_VERSION=$("$BENCH_WORK/finale-env/bin/finaletoolkit" --version | tr '\t\n' '  '); fi
+if [[ "$run_finale" == true ]]; then BENCH_FINALE_VERSION=$("$BENCH_WORK/finale-env/bin/python" "$BENCH_WORK/finale-env/bin/finaletoolkit" --version | tr '\t\n' '  '); fi
 BENCH_SAMTOOLS_VERSION=$("$BENCH_WORK/samtools-env/bin/samtools" --version-only | tr '\t\n' '  ')
 if [[ "$run_picard" == true ]]; then BENCH_PICARD_VERSION=$(benchmark_picard_version "$BENCH_WORK/picard-env/bin/picard"); fi
 if [[ "$run_cfdnapro" == true ]]; then
@@ -123,19 +131,21 @@ if [[ "$run_cfdnapro" == true ]]; then
     BENCH_CFDNAPRO_VERSION+=" image-sha256:$image_hash"
 fi
 
-mkdir -p "$BENCH_RESULTS/profiles"
-header=$'run_order\trepetition\twarmup\tmethod\ttool_version\tcores\ttool_threads'
-header+=$'\tmin_mapq\tmin_length\tmax_length\tscope\tlength_definition\tproper_pair'
-header+=$'\tnode\tcpu_model\tcpu_ids\tphysical_core_ids\tjob_id\tstep_id\tstarted_utc'
-header+=$'\twall_seconds\tuser_seconds\tsystem_seconds\tmax_rss_kib\ttool_exit_code'
-header+=$'\tflush_seconds\tprocess_plus_flush_seconds\toutput_bytes\tpilot\tstep_exit_code'
-printf '%s\n' "$header" > "$BENCH_RESULTS/timings.tsv"
+benchmark_progress "Copying BAM and index to node-local scratch"
+cp -L "$BENCH_BAM" "$BENCH_WORK/sample.bam"
+cp -L "$BENCH_INDEX" "$BENCH_WORK/sample.bam.bai"
+"$BENCH_WORK/samtools-env/bin/samtools" idxstats "$BENCH_WORK/sample.bam" |
+    awk '$1 != "*" {print $1 "\t" $2}' > "$BENCH_WORK/chrom.sizes"
+BENCH_AUTOSOMES=$(awk '$1 ~ /^(chr)?([1-9]|1[0-9]|2[0-2])$/ {print $1}' "$BENCH_WORK/chrom.sizes" | paste -sd, -)
+if [[ " $BENCH_METHODS " == *" cfdnalab-autosomes "* && -z "$BENCH_AUTOSOMES" ]]; then echo "No autosomes in BAM." >&2; exit 1; fi
 
 # The BAM and programs are ready on the compute node. Preparation time above
 # is excluded from tool timings. The script now lists each method's warmup and measurements
 # srun starts a separate program for each run. After it finishes, this main script
 # saves that run's results. common.sh explains the files used to pass them back
-benchmark_record_setup
+# Staged files finish writing before warmups. This does not evict the page cache
+sync -f "$BENCH_WORK"
+benchmark_progress "Setup complete. Starting warmups and measurements"
 benchmark_schedule > "$BENCH_WORK/order.tsv"
 if [[ ! -s "$BENCH_WORK/order.tsv" ]]; then echo "The requested run matrix is empty." >&2; exit 1; fi
 run_order=0
@@ -144,6 +154,7 @@ failed_method=
 while IFS=$'\t' read -r method cores repetition is_warmup; do
     if [[ "$method" == "$failed_method" ]]; then continue; fi
     run_order=$((run_order + 1))
+    benchmark_progress "Starting run $run_order: $method, repetition $repetition (warmup=$is_warmup)"
     step_exit_code=0
     # Old timings and output paths are removed before each run. If this run fails
     # before writing its own files, it cannot accidentally reuse the preceding results
@@ -242,7 +253,7 @@ case "$method" in
     finaletoolkit)
         tool_version=$BENCH_FINALE_VERSION
         proper_pair=required
-        command=("$BENCH_WORK/finale-env/bin/finaletoolkit" frag-length-bins
+        command=("$BENCH_WORK/finale-env/bin/python" "$BENCH_WORK/finale-env/bin/finaletoolkit" frag-length-bins
             "$BENCH_WORK/sample.bam" --bin-size 1 --min-length "$BENCH_MIN_LENGTH"
             --max-length "$BENCH_MAX_LENGTH" --min-mapq "$BENCH_MIN_MAPQ" --output "$profile")
         ;;
@@ -339,10 +350,8 @@ STEP
 done < "$BENCH_WORK/order.tsv"
 
 # Concordance uses this job's length bounds after all measurements have finished
-if ((job_exit_code == 0)); then
-    benchmark_compare_results "$SLURM_SUBMIT_DIR/benchmarks/lengths/compare_lengths.py" \
-        --min-length "$BENCH_MIN_LENGTH" --max-length "$BENCH_MAX_LENGTH"
-fi
+benchmark_compare_results "$SLURM_SUBMIT_DIR/benchmarks/lengths/compare_lengths.py" \
+    --min-length "$BENCH_MIN_LENGTH" --max-length "$BENCH_MAX_LENGTH"
 
 # The job reports failure if any method failed, while keeping completed results
 exit "$job_exit_code"
