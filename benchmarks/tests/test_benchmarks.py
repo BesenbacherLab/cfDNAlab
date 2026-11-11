@@ -446,7 +446,7 @@ class TimingTests(unittest.TestCase):
         # with 25% margin. A deliberately large normal warmup count adds nothing
         runs = [
             {
-                "method": "griffin",
+                "method": method,
                 "cores": "4",
                 "pilot": "1",
                 "tool_exit_code": "0",
@@ -454,18 +454,22 @@ class TimingTests(unittest.TestCase):
                 "slurm_state": "NA",
                 "slurm_exit_code": "NA",
             }
+            for method in ("griffin", "griffin-gc")
         ]
         summary = [
             {
-                "method": "griffin",
+                "method": method,
                 "cores": "4",
                 "process_plus_flush_seconds_mean": 108000,
             }
+            for method in ("griffin", "griffin-gc")
         ]
         report = timings.pilot_budgets(runs, ["method", "cores"], summary, 10, 3, 0.25)
-        self.assertEqual(report[0]["planned_runs"], 3)
-        self.assertEqual(report[0]["budget_minutes"], 6750)
-        self.assertEqual(report[0]["budget_status"], "complete")
+        self.assertEqual(len(report), 2)
+        for budget in report:
+            self.assertEqual(budget["planned_runs"], 3)
+            self.assertEqual(budget["budget_minutes"], 6750)
+            self.assertEqual(budget["budget_status"], "complete")
 
     def test_accounting_oom_excludes_an_apparently_successful_native_run(self):
         self.assertFalse(

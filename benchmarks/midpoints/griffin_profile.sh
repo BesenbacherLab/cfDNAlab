@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 
 # This script runs Griffin's two profiling scripts for demo or production sites
-# Both calls share settings. Only sites, chromosomes and output paths vary
-# Usage: bash griffin_profile.sh CORES SITES_YAML CHROM_SIZES CHROMOSOMES OUTPUT
+# Demo and production calls share filters and window settings. Sites, chromosomes,
+# output paths and the supplied GC bias can vary
+# Usage: bash griffin_profile.sh CORES SITES_YAML CHROM_SIZES CHROMOSOMES OUTPUT [GC_BIAS]
 
 set -euo pipefail
 cores=${1:?Supply the allocated core budget}
@@ -10,6 +11,8 @@ sites_yaml=${2:?Supply the Griffin site-list YAML}
 chromosome_sizes=${3:?Supply chromosome sizes}
 chromosome_names=${4:?Supply comma-separated chromosome names}
 output_directory=${5:?Supply the output directory}
+# The baseline and demo use unit weights. Corrected runs pass freshly estimated bias
+gc_bias=${6:-$BENCH_WORK/unit_gc_bias.tsv}
 environment="$BENCH_WORK/griffin-env"
 scripts="$environment/share/griffin"
 IFS=, read -r -a chromosomes <<< "$chromosome_names"
@@ -24,7 +27,7 @@ common=(--sample_name sample --tmp_dir "$output_directory/tmp"
     --norm_window "-$BENCH_HALF_WIDTH" "$BENCH_HALF_WIDTH"
     --mappability_correction False --mappability_bw none --CPU "$cores")
 "$environment/bin/python" "$scripts/griffin_coverage.py" "${common[@]}" \
-    --bam "$BENCH_WORK/sample.bam" --GC_bias "$BENCH_WORK/unit_gc_bias.tsv" \
+    --bam "$BENCH_WORK/sample.bam" --GC_bias "$gc_bias" \
     --reference_genome "$BENCH_WORK/reference.fa" --mappability_bias none \
     --size_range "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH" --map_quality "$BENCH_MIN_MAPQ"
 "$environment/bin/python" "$scripts/griffin_merge_sites.py" "${common[@]}" \

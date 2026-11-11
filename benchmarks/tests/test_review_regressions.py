@@ -1174,6 +1174,34 @@ class NativeComparatorTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Invalid midpoint mean"):
                 comparator.main()
 
+    def test_corrected_midpoint_comparison_selects_corrected_profiles(self):
+        import numpy as np
+
+        comparator = self.comparator("midpoints/compare_midpoints.py")
+        # Weighted counts average to 2, giving normalized halves 0.5 and 1.5
+        # Griffin's halves are 0.75 and 1.25, so every absolute residual is 0.25
+        output = StringIO()
+        with (
+            mock.patch.object(comparator, "read_cfdnalab", return_value=(
+                {"TFBS": (np.array([1.0] * 10 + [3.0] * 10), 2)}, 20,
+            )) as cfdnalab_reader,
+            mock.patch.object(comparator, "read_griffin", return_value={
+                "TFBS": (np.array([0.75] * 10 + [1.25] * 10), 2, 0.5),
+            }) as griffin_reader,
+            mock.patch.object(sys, "argv", ["compare_midpoints.py", "profiles", "--gc-corrected"]),
+            redirect_stdout(output),
+        ):
+            comparator.main()
+        cfdnalab_reader.assert_called_once_with(Path("profiles/cfdnalab-gc/midpoint_profiles.zarr"))
+        griffin_reader.assert_called_once_with(Path("profiles/griffin-gc/sample.GC_corrected.coverage.tsv"), 20)
+        row, = csv.DictReader(StringIO(output.getvalue()), delimiter="\t")
+        self.assertEqual(row["gc_correction"], "corrected")
+        self.assertEqual(row["status"], "ok")
+        self.assertAlmostEqual(float(row["pearson_r"]), 1.0)
+        for metric in ("mae_mean_one", "rmse_mean_one", "max_abs_mean_one"):
+            self.assertAlmostEqual(float(row[metric]), 0.25)
+        self.assertAlmostEqual(float(row["cfdnalab_mean_midpoints_per_site_bp"]), 1.0)
+
     def test_samtools_tails_do_not_enter_the_requested_histogram(self):
         import numpy as np
 

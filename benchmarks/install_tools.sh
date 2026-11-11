@@ -79,7 +79,7 @@ artifacts[finaletoolkit]='envs/finaletoolkit/bin/finaletoolkit finaletoolkit.tar
 artifacts[cfdnapro]='cfdnapro-1.7.4.sif'
 artifacts[picard]='envs/picard/bin/picard picard.tar.gz'
 artifacts[freia]='envs/freia/share/freia/version.txt freia.tar.gz'
-artifacts[griffin]='envs/griffin/share/griffin/version.txt envs/griffin/share/griffin/CTCF.hg38.1000.txt griffin.tar.gz'
+artifacts[griffin]='envs/griffin/share/griffin/version.txt envs/griffin/share/griffin/CTCF.hg38.1000.txt envs/griffin/share/griffin/griffin_GC_bias.py envs/griffin/share/griffin/griffin_GC_counts.py envs/griffin/share/griffin/griffin_calc_GC_frequency.py griffin.tar.gz'
 artifacts[comparison]='envs/comparison/bin/python'
 artifacts[snyder-preparation]='envs/snyder-preparation/bin/python'
 tool_exports[cfdnalab]='BENCH_CFDNA=envs/cfdnalab/bin/cfdna'
@@ -344,21 +344,27 @@ install_griffin() {
     # v0.2.0 is the newest published version, marked as a prerelease upstream
     # This environment uses the wiki's libraries with Python 3.7.12 instead of 3.7.4
     # Bioconda supplies the wiki's pybedtools and pysam versions without a local build
-    # PyYAML is included because the scripts import it. Snakemake, plotting and
-    # samtools are omitted because these direct profiling calls do not use them
+    # PyYAML is included because the scripts import it. Native sample-bias fitting
+    # also needs matplotlib. Snakemake and samtools are not used by these calls
     git clone --branch v0.2.0 --depth 1 https://github.com/adoebley/Griffin.git "$install_root/Griffin-source"
     (
         conda create --yes --override-channels --prefix "$install_root/envs/griffin" \
             --channel conda-forge --channel bioconda \
             python=3.7.12 nomkl numpy=1.21.2 pandas=1.3.2 scipy=1.7.1 \
-            pybigwig=0.3.17 pyyaml=5.3.1 bedtools=2.29.2 pybedtools=0.8.0 pysam=0.19.0
+            pybigwig=0.3.17 pyyaml=5.3.1 bedtools=2.29.2 pybedtools=0.8.0 pysam=0.19.0 \
+            matplotlib-base=3.4.3
         conda activate "$install_root/envs/griffin"
         # The archive includes unmodified scripts for execution on the compute node
         mkdir -p "$CONDA_PREFIX/share/griffin"
         cp "$install_root/Griffin-source/scripts/griffin_coverage.py" \
             "$install_root/Griffin-source/scripts/griffin_merge_sites.py" \
             "$install_root/Griffin-source/scripts/griffin_functions.py" \
+            "$install_root/Griffin-source/scripts/griffin_GC_counts.py" \
+            "$install_root/Griffin-source/scripts/griffin_GC_bias.py" \
+            "$install_root/Griffin-source/scripts/griffin_calc_GC_frequency.py" \
             "$CONDA_PREFIX/share/griffin/"
+        # Import checks do not process data. They catch missing estimation libraries
+        MPLBACKEND=Agg python "$CONDA_PREFIX/share/griffin/griffin_GC_bias.py" --help
         # The release's 1000-site demo is included for the short, untimed warmup
         cp "$install_root/Griffin-source/demo/griffin_nucleosome_profiling_demo_files/sites/CTCF.hg38.1000.txt" \
             "$CONDA_PREFIX/share/griffin/"

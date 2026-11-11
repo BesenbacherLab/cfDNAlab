@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+
+# Each call estimates sample GC bias, then applies it to the midpoint profiles
+# The benchmark times this entire script. Only reference tables are precomputed
+# Usage: bash gc_corrected_profile.sh METHOD CORES
+set -euo pipefail
+method=${1:?Supply cfdnalab-gc or griffin-gc}
+cores=${2:?Supply the allocated core budget}
+bias_directory="$BENCH_WORK/output/gc-bias"
+mkdir -p "$bias_directory"
+
+case "$method" in
+    cfdnalab-gc)
+        # Both estimation and profiling read the original staged BAM. The bias
+        # reference determines the estimation length range, so prepare it with
+        # exactly BENCH_MIN_LENGTH through BENCH_MAX_LENGTH
+        "$BENCH_WORK/bin/cfdna" gc-bias \
+            --bam "$BENCH_WORK/sample.bam" --output-dir "$bias_directory" \
+            --ref-2bit "$BENCH_WORK/reference.2bit" \
+            --ref-gc-file "$BENCH_WORK/reference-gc.zarr" \
+            --by-bed "$BENCH_WORK/gc-regions.bed" --chromosomes "$BENCH_GC_CHROMOSOMES" \
+            --min-mapq "$BENCH_MIN_MAPQ" --n-threads "$cores"
+        "$BENCH_WORK/bin/cfdna" midpoints \
+            --bam "$BENCH_WORK/sample.bam" --output-dir "$BENCH_WORK/output" \
+            --intervals "$BENCH_WORK/sites.bed" --chromosomes "$BENCH_CHROMOSOMES" \
+            --length-bins "$BENCH_MIN_LENGTH" "$((BENCH_MAX_LENGTH + 1))" \
+            --min-mapq "$BENCH_MIN_MAPQ" --smoothing none --bin-size 1 --n-threads "$cores" \
+            --ref-2bit "$BENCH_WORK/reference.2bit" \
+            --gc-file "$bias_directory/gc_bias_correction.zarr"
+        ;;
+    griffin-gc)
+        environment="$BENCH_WORK/griffin-env"
+        scripts="$environment/share/griffin"
+        # These are the two native sample-bias steps from Griffin's workflow
+        # GC counting has a CPU argument. Bias fitting itself is serial
+        "$environment/bin/python" "$scripts/griffin_GC_counts.py" \
+            --bam_file "$BENCH_WORK/sample.bam" --bam_file_name sample \
+            --mappable_regions_path "$BENCH_WORK/gc-regions.bed" \
+            --ref_seq "$BENCH_WORK/reference.fa" --chrom_sizes "$BENCH_WORK/bam.chrom.sizes" \
+            --out_dir "$bias_directory" --map_q "$BENCH_MIN_MAPQ" \
+            --size_range "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH" --CPU "$cores"
+        "$environment/bin/python" "$scripts/griffin_GC_bias.py" \
+            --bam_file_name sample --mappable_name "$BENCH_GC_REFERENCE_NAME" \
+            --genome_GC_frequency "$BENCH_WORK/reference-gc" \
+            --out_dir "$bias_directory" --size_range "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH"
+        bash "$BENCH_WORK/griffin_profile.sh" "$cores" "$BENCH_WORK/sites.yaml" \
+            "$BENCH_WORK/chrom.sizes" "$BENCH_CHROMOSOMES" "$BENCH_WORK/output" \
+            "$bias_directory/GC_bias/sample.GC_bias.txt"
+        ;;
+    *) echo "Unknown GC-corrected midpoint method: $method" >&2; exit 1 ;;
+esac

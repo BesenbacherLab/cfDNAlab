@@ -59,38 +59,56 @@ if ((BENCH_CORES > ${SLURM_CPUS_PER_TASK:-0})); then
 fi
 for method in "${methods_to_run[@]}"; do
     case "$method" in
-        cfdnalab|griffin) ;;
+        cfdnalab|griffin|cfdnalab-gc|griffin-gc) ;;
         *) echo "Unknown midpoint tool: $method" >&2; exit 1 ;;
     esac
 done
-if [[ " $BENCH_METHODS " == *" griffin "* && ${BENCH_REF_FASTA:-} == *.gz ]]; then
+if [[ " $BENCH_METHODS " == *" griffin"* && ${BENCH_REF_FASTA:-} == *.gz ]]; then
     echo "Use an uncompressed FASTA and its existing .fai index." >&2
     exit 1
 fi
 
 run_cfdna=false
 run_griffin=false
+export BENCH_RUN_GC=false
 for method in "${methods_to_run[@]}"; do
     case "$method" in
         cfdnalab*) run_cfdna=true ;;
-        griffin) run_griffin=true ;;
+        griffin*) run_griffin=true ;;
     esac
+    if [[ "$method" == *-gc ]]; then BENCH_RUN_GC=true; fi
 done
 if [[ "$run_griffin" == true ]]; then
     if ((${#methods_to_run[@]} != 1)); then
-        echo "Run Griffin in its own job: set BENCH_METHODS=griffin." >&2
+        echo "Run Griffin in its own job: set BENCH_METHODS=griffin or griffin-gc." >&2
         exit 1
     fi
     # The release demo replaces full-input warmups, including in pilot jobs
     BENCH_WARMUPS=0
 fi
+if ((${#methods_to_run[@]} != 1)); then
+    echo "Submit each midpoint workload in a separate job and results directory." >&2
+    exit 1
+fi
 : "${BENCH_SAMTOOLS_ARCHIVE:?Set the packed samtools environment for BAM header preparation}"
 if [[ "$run_cfdna" == true ]]; then : "${BENCH_CFDNA:?Set the cfDNAlab executable}"; fi
 if [[ "$run_griffin" == true ]]; then : "${BENCH_GRIFFIN_ARCHIVE:?Set the packed Griffin environment}"; : "${BENCH_REF_FASTA:?Set the matching reference FASTA}"; fi
+if [[ "$BENCH_RUN_GC" == true ]]; then
+    : "${BENCH_GC_REGIONS:?Set the autosomal BED used to prepare both GC references}"
+    if [[ " $BENCH_METHODS " == *" cfdnalab-gc "* ]]; then
+        : "${BENCH_REF_2BIT:?Set the matching reference 2bit file}"
+        : "${BENCH_CFDNA_REF_GC:?Set the precomputed cfDNAlab reference GC Zarr package}"
+        : "${BENCH_COMPARE_PYTHON:?Set the comparison Python for reference GC validation}"
+    fi
+    if [[ "$run_griffin" == true ]]; then
+        : "${BENCH_GRIFFIN_REF_GC:?Set the precomputed Griffin reference GC-frequency directory}"
+    fi
+fi
 
 # Inputs are copied once before warmups, including the supplied BAM/reference indexes
 export BENCH_WORK BENCH_NODE BENCH_HALF_WIDTH BENCH_SITES BENCH_GROUPS BENCH_CHROMOSOMES
 export BENCH_RESULTS BENCH_CFDNA_VERSION BENCH_GRIFFIN_VERSION
+export BENCH_GC_CHROMOSOMES BENCH_GC_REFERENCE_NAME
 BENCH_WORK=$(mktemp -d "$TMPDIR/midpoints-${SLURM_JOB_ID}.XXXXXX")
 trap 'rm -rf "$BENCH_WORK"' EXIT
 BENCH_NODE=$(hostname)
@@ -101,12 +119,78 @@ mkdir -p "$BENCH_RESULTS/profiles"
 header=$'run_order\trepetition\twarmup\tmethod\ttool_version\tcores\ttool_workers'
 header+=$'\tmin_mapq\tmin_length\tmax_length\tsites\tgroups\twindow_bp\tresolution_bp\tmidpoint_policy'
 header+=$'\tnode\tcpu_model\tcpu_ids\tphysical_core_ids\tjob_id\tstep_id\tstarted_utc'
+header+=$'\tgc_correction'
 header+=$'\twall_seconds\tuser_seconds\tsystem_seconds\tmax_rss_kib\ttool_exit_code'
 header+=$'\tflush_seconds\tprocess_plus_flush_seconds\toutput_bytes\tpilot\tstep_exit_code'
 printf '%s\n' "$header" > "$BENCH_RESULTS/timings.tsv"
 benchmark_progress "Initializing $BENCH_FEATURE benchmark on $BENCH_NODE"
 benchmark_record_setup
 mkdir -p "$BENCH_WORK/bin" "$BENCH_WORK/tmp" "$BENCH_WORK/cache" "$BENCH_WORK/matplotlib" "$BENCH_WORK/griffin-env"
+# Python packages, font caches and temporary files stay with this job's inputs
+# Removing inherited Python paths keeps imports inside the selected environments
+export TMPDIR="$BENCH_WORK/tmp" XDG_CACHE_HOME="$BENCH_WORK/cache"
+export MPLCONFIGDIR="$BENCH_WORK/matplotlib" MPLBACKEND=Agg PYTHONNOUSERSITE=1
+unset PYTHONPATH PYTHONHOME
+if [[ "$run_cfdna" == true ]]; then benchmark_stage_binary "$BENCH_CFDNA" cfdna; fi
+benchmark_unpack "$BENCH_SAMTOOLS_ARCHIVE" "$BENCH_WORK/samtools-env"
+if [[ "$run_griffin" == true ]]; then
+    benchmark_unpack "$BENCH_GRIFFIN_ARCHIVE" "$BENCH_WORK/griffin-env"
+    if [[ "$BENCH_RUN_GC" == true ]]; then
+        for script in griffin_GC_counts.py griffin_GC_bias.py; do
+            if [[ ! -f "$BENCH_WORK/griffin-env/share/griffin/$script" ]]; then
+                echo "The Griffin archive lacks $script. Rerun install_tools.sh ROOT --only griffin and use the new archive." >&2
+                exit 1
+            fi
+        done
+        "$BENCH_WORK/griffin-env/bin/python" -c 'import matplotlib.pyplot'
+    fi
+    # pybedtools must find the packed bedtools, rather than a shared installation
+    export PATH="$BENCH_WORK/griffin-env/bin:$PATH"
+fi
+benchmark_progress "Checking tool versions"
+if [[ "$run_cfdna" == true ]]; then BENCH_CFDNA_VERSION=$("$BENCH_WORK/bin/cfdna" --version 2>&1 | tr '\t\n' '  '); fi
+if [[ "$run_griffin" == true ]]; then BENCH_GRIFFIN_VERSION=$(cat "$BENCH_WORK/griffin-env/share/griffin/version.txt"); fi
+if [[ "$BENCH_RUN_GC" == true ]]; then
+    # Reference inputs are prepared independently of these per-sample measurements
+    # Record their paths so corrected runs cannot be mistaken for the baseline
+    printf 'gc_workload\tsample-bias-and-profiles\ngc_regions\t%s\n' "$BENCH_GC_REGIONS" >> "$BENCH_RESULTS/run.tsv"
+    cp "$SLURM_SUBMIT_DIR/benchmarks/midpoints/gc_corrected_profile.sh" "$BENCH_WORK/gc_corrected_profile.sh"
+    cp -L "$BENCH_GC_REGIONS" "$BENCH_WORK/gc-regions.bed"
+    sha256sum "$BENCH_GC_REGIONS" > "$BENCH_RESULTS/gc-regions.sha256"
+    cp "$BENCH_WORK/gc-regions.bed" "$BENCH_RESULTS/gc-regions.bed"
+    if [[ " $BENCH_METHODS " == *" cfdnalab-gc "* ]]; then
+        # gc-bias inherits its length range from the reference package. A broader
+        # package would silently make this estimate a different workload
+        "$BENCH_COMPARE_PYTHON" - "$BENCH_CFDNA_REF_GC" "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH" <<'PY'
+import sys
+import numpy as np
+import zarr
+
+reference = zarr.open_group(sys.argv[1], mode='r', zarr_format=3)
+expected = np.arange(int(sys.argv[2]), int(sys.argv[3]) + 1)
+if not np.array_equal(reference['length'][:], expected):
+    raise ValueError('Prepare cfDNAlab reference GC bias with exactly the benchmark fragment length range')
+PY
+        benchmark_progress "Copying cfDNAlab reference GC inputs to node-local scratch"
+        cp -L "$BENCH_REF_2BIT" "$BENCH_WORK/reference.2bit"
+        cp -RL "$BENCH_CFDNA_REF_GC" "$BENCH_WORK/reference-gc.zarr"
+        printf 'reference_2bit\t%s\ncfdnalab_reference_gc\t%s\n' "$BENCH_REF_2BIT" "$BENCH_CFDNA_REF_GC" >> "$BENCH_RESULTS/run.tsv"
+    fi
+    if [[ "$run_griffin" == true ]]; then
+        BENCH_GC_REFERENCE_NAME=${BENCH_GC_REGIONS##*/}
+        BENCH_GC_REFERENCE_NAME=${BENCH_GC_REFERENCE_NAME%.*}
+        benchmark_progress "Copying Griffin reference GC frequencies to node-local scratch"
+        mkdir -p "$BENCH_WORK/reference-gc"
+        for ((fragment_length=BENCH_MIN_LENGTH; fragment_length<=BENCH_MAX_LENGTH; fragment_length++)); do
+            reference_file="$BENCH_GRIFFIN_REF_GC/$BENCH_GC_REFERENCE_NAME.${fragment_length}bp.GC_frequency.txt"
+            if [[ ! -s "$reference_file" ]]; then echo "Missing Griffin reference GC frequency: $reference_file" >&2; exit 1; fi
+            cp -L "$reference_file" "$BENCH_WORK/reference-gc/"
+        done
+        printf 'griffin_reference_gc\t%s\n' "$BENCH_GRIFFIN_REF_GC" >> "$BENCH_RESULTS/run.tsv"
+    fi
+else
+    printf 'gc_workload\tuncorrected-profiles\n' >> "$BENCH_RESULTS/run.tsv"
+fi
 benchmark_progress "Copying BAM and index to node-local scratch"
 cp -L "$BENCH_BAM" "$BENCH_WORK/sample.bam"
 cp -L "$BENCH_INDEX" "$BENCH_WORK/sample.bam.${BENCH_INDEX##*.}"
@@ -116,22 +200,11 @@ if [[ "$run_griffin" == true ]]; then
     cp -L "$BENCH_FASTA_INDEX" "$BENCH_WORK/reference.fa.fai"
     cp "$SLURM_SUBMIT_DIR/benchmarks/midpoints/griffin_profile.sh" "$BENCH_WORK/griffin_profile.sh"
 fi
-if [[ "$run_cfdna" == true ]]; then benchmark_stage_binary "$BENCH_CFDNA" cfdna; fi
 # User setup: submit from the repository root so SLURM_SUBMIT_DIR locates helpers
 # Slurm keeps its own copy of this job script elsewhere, away from those helpers
-export TMPDIR="$BENCH_WORK/tmp" XDG_CACHE_HOME="$BENCH_WORK/cache"
-# Python user packages and outside import paths are disabled so imports use
-# Griffin's copied environment. The installation notes in ../README.md explain why
-export MPLCONFIGDIR="$BENCH_WORK/matplotlib" PYTHONNOUSERSITE=1
-unset PYTHONPATH PYTHONHOME
-benchmark_unpack "$BENCH_SAMTOOLS_ARCHIVE" "$BENCH_WORK/samtools-env"
 "$BENCH_WORK/samtools-env/bin/samtools" idxstats "$BENCH_WORK/sample.bam" |
     awk '$1 != "*" {print $1 "\t" $2}' > "$BENCH_WORK/chrom.sizes"
-if [[ "$run_griffin" == true ]]; then
-    benchmark_unpack "$BENCH_GRIFFIN_ARCHIVE" "$BENCH_WORK/griffin-env"
-    # pybedtools must find the packed bedtools, rather than a shared installation
-    export PATH="$BENCH_WORK/griffin-env/bin:$PATH"
-fi
+cp "$BENCH_WORK/chrom.sizes" "$BENCH_WORK/bam.chrom.sizes"
 export BENCH_RUN_GRIFFIN=$run_griffin
 
 # Setup converts the same oriented windows to cfDNAlab and Griffin input formats
@@ -142,6 +215,7 @@ import csv
 import json
 import os
 from pathlib import Path
+import re
 
 work = Path(os.environ['BENCH_WORK'])
 with (work / 'chrom.sizes').open() as source:
@@ -150,6 +224,27 @@ reference_contigs = bam_contigs
 if os.environ['BENCH_RUN_GRIFFIN'] == 'true':
     with (work / 'reference.fa.fai').open() as source:
         reference_contigs = {fields[0]: int(fields[1]) for fields in csv.reader(source, delimiter='\t')}
+# Griffin's native GC-counting script uses chr1 through chr22. Require the same
+# autosomal estimation BED for both tools, independently of the profiling sites
+if os.environ['BENCH_RUN_GC'] == 'true':
+    gc_chromosomes = set()
+    previous_ends = {}
+    with (work / 'gc-regions.bed').open() as source:
+        for fields in csv.reader(source, delimiter='\t'):
+            if len(fields) < 3:
+                raise ValueError('GC regions must be a headerless BED with at least three columns')
+            chromosome, start, end = fields[0], int(fields[1]), int(fields[2])
+            if not re.fullmatch(r'chr([1-9]|1[0-9]|2[0-2])', chromosome):
+                raise ValueError('GC estimation regions must use UCSC autosomes chr1 through chr22')
+            if chromosome not in bam_contigs or reference_contigs.get(chromosome) != bam_contigs[chromosome]:
+                raise ValueError('GC region contig is absent or differs between BAM and FASTA: ' + chromosome)
+            if start < previous_ends.get(chromosome, 0) or end <= start or end > bam_contigs[chromosome]:
+                raise ValueError('GC regions must be sorted, non-overlapping and in chromosome bounds')
+            previous_ends[chromosome] = end
+            gc_chromosomes.add(chromosome)
+    if not gc_chromosomes:
+        raise ValueError('No GC estimation regions in the BED')
+    (work / 'gc-chromosomes.txt').write_text(','.join(sorted(gc_chromosomes)) + '\n')
 rows = []
 window_width = None
 with (work / 'input.bed').open() as source:
@@ -243,8 +338,7 @@ print(window_width // 2, len(rows), len(groups), ','.join(chromosomes), sep='\t'
 PY
 )
 IFS=$'\t' read -r BENCH_HALF_WIDTH BENCH_SITES BENCH_GROUPS BENCH_CHROMOSOMES <<< "$site_summary"
-if [[ "$run_cfdna" == true ]]; then BENCH_CFDNA_VERSION=$("$BENCH_WORK/bin/cfdna" --version 2>&1 | tr '\t\n' '  '); fi
-if [[ "$run_griffin" == true ]]; then BENCH_GRIFFIN_VERSION=$(cat "$BENCH_WORK/griffin-env/share/griffin/version.txt"); fi
+if [[ "$BENCH_RUN_GC" == true ]]; then BENCH_GC_CHROMOSOMES=$(cat "$BENCH_WORK/gc-chromosomes.txt"); fi
 cp "$BENCH_WORK/sites.bed" "$BENCH_RESULTS/sites.bed"
 sha256sum "$BENCH_INTERVALS" > "$BENCH_RESULTS/sites.sha256"
 
@@ -328,7 +422,8 @@ done
 physical_core_ids=$(printf '%s\n' "${physical_cores[@]}" | sort -u | paste -sd, -)
 physical_core_count=$(printf '%s\n' "${physical_cores[@]}" | sort -u | wc -l)
 mkdir -p "$BENCH_WORK/output/tmp" "$BENCH_WORK/output/results"
-if [[ "$method" == cfdnalab ]]; then
+gc_correction=none
+if [[ "$method" == cfdnalab || "$method" == cfdnalab-gc ]]; then
     tool_version=$BENCH_CFDNA_VERSION
     midpoint_policy=coordinate-random-even
     command=("$BENCH_WORK/bin/cfdna" midpoints
@@ -345,13 +440,20 @@ else
         "$BENCH_WORK/chrom.sizes" "$BENCH_CHROMOSOMES" "$BENCH_WORK/output")
     profile="$BENCH_WORK/output/results/sample/sample.uncorrected.coverage.tsv"
 fi
+if [[ "$method" == *-gc ]]; then
+    gc_correction=corrected
+    command=(bash "$BENCH_WORK/gc_corrected_profile.sh" "$method" "$cores")
+    if [[ "$method" == griffin-gc ]]; then
+        profile="$BENCH_WORK/output/results/sample/sample.GC_corrected.coverage.tsv"
+    fi
+fi
 
-# The first 22 fields identify the run, followed by four GNU time values and status
-printf -v prefix '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+# The first 23 fields identify the run, followed by four GNU time values and status
+printf -v prefix '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
     "$run_order" "$repetition" "$is_warmup" "$method" "$tool_version" "$cores" "$cores" \
     "$BENCH_MIN_MAPQ" "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH" "$BENCH_SITES" "$BENCH_GROUPS" \
     "$((2 * BENCH_HALF_WIDTH))" 1 "$midpoint_policy" "$node" "$cpu_model" "$cpu_ids" \
-    "$physical_core_ids" "$SLURM_JOB_ID" "$SLURM_STEP_ID" "$started_utc"
+    "$physical_core_ids" "$SLURM_JOB_ID" "$SLURM_STEP_ID" "$started_utc" "$gc_correction"
 logical_cpu_count=$(env -u OMP_NUM_THREADS -u OMP_THREAD_LIMIT nproc)
 if [[ "$node" != "$BENCH_NODE" ]] || ((logical_cpu_count != cores || physical_core_count != cores)); then
     printf '%s\tNA\tNA\tNA\tNA\t1\n' "$prefix" > "$BENCH_WORK/time.tsv"
@@ -379,13 +481,15 @@ STEP
     # benchmark_finish_run adds disk-write measurements and the srun exit code
     if [[ ! -s "$BENCH_WORK/time.tsv" ]]; then
         fallback=()
-        for ((column=1; column<=27; column++)); do fallback+=(NA); done
+        for ((column=1; column<=28; column++)); do fallback+=(NA); done
         fallback[0]=$run_order
         fallback[1]=$repetition
         fallback[2]=$is_warmup
         fallback[3]=$method
         fallback[5]=$cores
         fallback[19]=$SLURM_JOB_ID
+        fallback[22]=none
+        if [[ "$method" == *-gc ]]; then fallback[22]=corrected; fi
         if [[ -s "$BENCH_WORK/step.id" ]]; then fallback[20]=$(cat "$BENCH_WORK/step.id"); fi
         (IFS=$'\t'; printf '%s\n' "${fallback[*]}") > "$BENCH_WORK/time.tsv"
     fi

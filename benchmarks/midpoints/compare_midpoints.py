@@ -4,6 +4,7 @@
 Write a TSV row per group to stdout. Griffin always writes mean-one profiles, so
 normalize cfDNAlab's counts over the same complete window before comparison.
 Keep every 1 bp position, including zeros. Do not shift, smooth or rebin profiles.
+Use --gc-corrected to compare the separate cfdnalab-gc and griffin-gc workloads.
 """
 
 import argparse
@@ -107,12 +108,25 @@ def main():
     parser.add_argument(
         "profiles", type=Path, help="The benchmark results/profiles directory"
     )
+    parser.add_argument(
+        "--gc-corrected", action="store_true",
+        help="Compare cfdnalab-gc with griffin-gc, using Griffin's GC-corrected output",
+    )
     arguments = parser.parse_args()
+    # Separate method directories prevent pairing a corrected profile with an
+    # uncorrected profile. Their native count readers and normalization are shared
+    cfdnalab_method = "cfdnalab-gc" if arguments.gc_corrected else "cfdnalab"
+    griffin_method = "griffin-gc" if arguments.gc_corrected else "griffin"
+    griffin_filename = (
+        "sample.GC_corrected.coverage.tsv"
+        if arguments.gc_corrected
+        else "sample.uncorrected.coverage.tsv"
+    )
     cfdnalab, width = read_cfdnalab(
-        arguments.profiles / "cfdnalab" / "midpoint_profiles.zarr"
+        arguments.profiles / cfdnalab_method / "midpoint_profiles.zarr"
     )
     griffin = read_griffin(
-        arguments.profiles / "griffin" / "sample.uncorrected.coverage.tsv", width
+        arguments.profiles / griffin_method / griffin_filename, width
     )
     if set(cfdnalab) != set(griffin):
         raise ValueError("The tools did not report the same group set")
@@ -120,6 +134,7 @@ def main():
         "group",
         "sites",
         "positions",
+        "gc_correction",
         "cfdnalab_mean_midpoints_per_site_bp",
         "griffin_mean_midpoints_per_site_bp",
         "pearson_r",
@@ -144,6 +159,7 @@ def main():
             "group": group,
             "sites": site_count,
             "positions": width,
+            "gc_correction": "corrected" if arguments.gc_corrected else "none",
             "cfdnalab_mean_midpoints_per_site_bp": count_mean / site_count,
             "griffin_mean_midpoints_per_site_bp": griffin_mean,
             "pearson_r": "NA",

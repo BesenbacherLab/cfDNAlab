@@ -379,6 +379,11 @@ benchmark_finish_run() {
                     # The motif counts are saved with a record of the reference used
                     cp "$BENCH_WORK/output/reference.tsv" "$BENCH_RESULTS/profiles/$method/"
                 fi
+                if [[ "$BENCH_FEATURE" == midpoints && "$method" == *-gc ]]; then
+                    # Keep the first measured sample estimate with the corrected
+                    # profile. Every repetition still estimates bias from scratch
+                    cp -R "$BENCH_WORK/output/gc-bias" "$BENCH_RESULTS/profiles/$method/sample-gc-bias"
+                fi
                 if [[ -f "$BENCH_WORK/chrom.sizes" ]]; then
                     # An absent chromosome in a sparse coverage file could mean zero
                     # coverage or an unprocessed chromosome. The saved chromosome list
