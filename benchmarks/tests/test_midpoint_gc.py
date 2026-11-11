@@ -39,7 +39,6 @@ class CorrectedMidpointWorkflowTests(unittest.TestCase):
             "BENCH_MIN_MAPQ": "30",
             "BENCH_HALF_WIDTH": "1000",
             "BENCH_CHROMOSOMES": "chr1,chr2",
-            "BENCH_GC_CHROMOSOMES": "chr1,chr2",
             "BENCH_GC_REFERENCE_NAME": "autosomal-regions",
             "FAKE_FAIL_STAGE": "",
         }
@@ -128,6 +127,11 @@ class CorrectedMidpointWorkflowTests(unittest.TestCase):
             if stage == "midpoints":
                 length_index = arguments.index("--length-bins")
                 self.assertEqual(arguments[length_index + 1:length_index + 3], ["100", "201"])
+            else:
+                # Estimation uses native defaults, independently of the TFBS
+                # windows and Griffin's estimation BED
+                for option in ("--by-bed", "--chromosomes", "--min-fragment-length", "--max-fragment-length"):
+                    self.assertNotIn(option, arguments)
 
     def test_griffin_reestimates_bias_before_each_corrected_profile(self):
         for expected_generation in (1, 5):

@@ -11,14 +11,14 @@ mkdir -p "$bias_directory"
 
 case "$method" in
     cfdnalab-gc)
-        # Both estimation and profiling read the original staged BAM. The bias
-        # reference determines the estimation length range, so prepare it with
-        # exactly BENCH_MIN_LENGTH through BENCH_MAX_LENGTH
+        # The reference package is calculated once beforehand with ref-gc-bias
+        # Sample estimation keeps native windows and chromosome selection, and
+        # inherits the reference's full length range. Profiling uses the agreed
+        # midpoint length range below
         "$BENCH_WORK/bin/cfdna" gc-bias \
             --bam "$BENCH_WORK/sample.bam" --output-dir "$bias_directory" \
             --ref-2bit "$BENCH_WORK/reference.2bit" \
             --ref-gc-file "$BENCH_WORK/reference-gc.zarr" \
-            --by-bed "$BENCH_WORK/gc-regions.bed" --chromosomes "$BENCH_GC_CHROMOSOMES" \
             --min-mapq "$BENCH_MIN_MAPQ" --n-threads "$cores"
         "$BENCH_WORK/bin/cfdna" midpoints \
             --bam "$BENCH_WORK/sample.bam" --output-dir "$BENCH_WORK/output" \

@@ -80,6 +80,9 @@ artifacts[cfdnapro]='cfdnapro-1.7.4.sif'
 artifacts[picard]='envs/picard/bin/picard picard.tar.gz'
 artifacts[freia]='envs/freia/share/freia/version.txt freia.tar.gz'
 artifacts[griffin]='envs/griffin/share/griffin/version.txt envs/griffin/share/griffin/CTCF.hg38.1000.txt envs/griffin/share/griffin/griffin_GC_bias.py envs/griffin/share/griffin/griffin_GC_counts.py envs/griffin/share/griffin/griffin_calc_GC_frequency.py griffin.tar.gz'
+# Griffin's source clone already includes its hg38 regions and reference GC tables
+# Corrected runs copy these files directly, separately from the packed environment
+artifacts[griffin]+=' Griffin-source/Ref/k100_minus_exclusion_lists.mappable_regions.hg38.bed Griffin-source/Ref/genome_GC_frequency'
 artifacts[comparison]='envs/comparison/bin/python'
 artifacts[snyder-preparation]='envs/snyder-preparation/bin/python'
 tool_exports[cfdnalab]='BENCH_CFDNA=envs/cfdnalab/bin/cfdna'
@@ -471,3 +474,7 @@ for tool in "${all_tools[@]}"; do
 done
 printf 'export BENCH_INSTALL_MANIFEST=%q\n' "$manifest"
 if completed_tool cfdnalab; then printf 'export BENCH_CFDNA_BUILD=%q\n' "$install_root/cfdnalab-build.tsv"; fi
+if completed_tool griffin; then
+    printf 'export BENCH_GRIFFIN_GC_REGIONS=%q\n' "$install_root/Griffin-source/Ref/k100_minus_exclusion_lists.mappable_regions.hg38.bed"
+    printf 'export BENCH_GRIFFIN_REF_GC=%q\n' "$install_root/Griffin-source/Ref/genome_GC_frequency"
+fi

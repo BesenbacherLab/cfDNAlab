@@ -94,13 +94,12 @@ fi
 if [[ "$run_cfdna" == true ]]; then : "${BENCH_CFDNA:?Set the cfDNAlab executable}"; fi
 if [[ "$run_griffin" == true ]]; then : "${BENCH_GRIFFIN_ARCHIVE:?Set the packed Griffin environment}"; : "${BENCH_REF_FASTA:?Set the matching reference FASTA}"; fi
 if [[ "$BENCH_RUN_GC" == true ]]; then
-    : "${BENCH_GC_REGIONS:?Set the autosomal BED used to prepare both GC references}"
     if [[ " $BENCH_METHODS " == *" cfdnalab-gc "* ]]; then
         : "${BENCH_REF_2BIT:?Set the matching reference 2bit file}"
         : "${BENCH_CFDNA_REF_GC:?Set the precomputed cfDNAlab reference GC Zarr package}"
-        : "${BENCH_COMPARE_PYTHON:?Set the comparison Python for reference GC validation}"
     fi
     if [[ "$run_griffin" == true ]]; then
+        : "${BENCH_GRIFFIN_GC_REGIONS:?Set the autosomal BED matching the Griffin reference GC tables}"
         : "${BENCH_GRIFFIN_REF_GC:?Set the precomputed Griffin reference GC-frequency directory}"
     fi
 fi
@@ -108,7 +107,7 @@ fi
 # Inputs are copied once before warmups, including the supplied BAM/reference indexes
 export BENCH_WORK BENCH_NODE BENCH_HALF_WIDTH BENCH_SITES BENCH_GROUPS BENCH_CHROMOSOMES
 export BENCH_RESULTS BENCH_CFDNA_VERSION BENCH_GRIFFIN_VERSION
-export BENCH_GC_CHROMOSOMES BENCH_GC_REFERENCE_NAME
+export BENCH_GC_REFERENCE_NAME
 BENCH_WORK=$(mktemp -d "$TMPDIR/midpoints-${SLURM_JOB_ID}.XXXXXX")
 trap 'rm -rf "$BENCH_WORK"' EXIT
 BENCH_NODE=$(hostname)
@@ -153,31 +152,22 @@ if [[ "$run_griffin" == true ]]; then BENCH_GRIFFIN_VERSION=$(cat "$BENCH_WORK/g
 if [[ "$BENCH_RUN_GC" == true ]]; then
     # Reference inputs are prepared independently of these per-sample measurements
     # Record their paths so corrected runs cannot be mistaken for the baseline
-    printf 'gc_workload\tsample-bias-and-profiles\ngc_regions\t%s\n' "$BENCH_GC_REGIONS" >> "$BENCH_RESULTS/run.tsv"
+    printf 'gc_workload\tsample-bias-and-profiles\n' >> "$BENCH_RESULTS/run.tsv"
     cp "$SLURM_SUBMIT_DIR/benchmarks/midpoints/gc_corrected_profile.sh" "$BENCH_WORK/gc_corrected_profile.sh"
-    cp -L "$BENCH_GC_REGIONS" "$BENCH_WORK/gc-regions.bed"
-    sha256sum "$BENCH_GC_REGIONS" > "$BENCH_RESULTS/gc-regions.sha256"
-    cp "$BENCH_WORK/gc-regions.bed" "$BENCH_RESULTS/gc-regions.bed"
     if [[ " $BENCH_METHODS " == *" cfdnalab-gc "* ]]; then
-        # gc-bias inherits its length range from the reference package. A broader
-        # package would silently make this estimate a different workload
-        "$BENCH_COMPARE_PYTHON" - "$BENCH_CFDNA_REF_GC" "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH" <<'PY'
-import sys
-import numpy as np
-import zarr
-
-reference = zarr.open_group(sys.argv[1], mode='r', zarr_format=3)
-expected = np.arange(int(sys.argv[2]), int(sys.argv[3]) + 1)
-if not np.array_equal(reference['length'][:], expected):
-    raise ValueError('Prepare cfDNAlab reference GC bias with exactly the benchmark fragment length range')
-PY
+        # Reuse the default reference package. Native GC loading checks reference
+        # compatibility, and midpoint correction checks that its range is covered
         benchmark_progress "Copying cfDNAlab reference GC inputs to node-local scratch"
         cp -L "$BENCH_REF_2BIT" "$BENCH_WORK/reference.2bit"
         cp -RL "$BENCH_CFDNA_REF_GC" "$BENCH_WORK/reference-gc.zarr"
         printf 'reference_2bit\t%s\ncfdnalab_reference_gc\t%s\n' "$BENCH_REF_2BIT" "$BENCH_CFDNA_REF_GC" >> "$BENCH_RESULTS/run.tsv"
     fi
     if [[ "$run_griffin" == true ]]; then
-        BENCH_GC_REFERENCE_NAME=${BENCH_GC_REGIONS##*/}
+        cp -L "$BENCH_GRIFFIN_GC_REGIONS" "$BENCH_WORK/gc-regions.bed"
+        sha256sum "$BENCH_GRIFFIN_GC_REGIONS" > "$BENCH_RESULTS/gc-regions.sha256"
+        cp "$BENCH_WORK/gc-regions.bed" "$BENCH_RESULTS/gc-regions.bed"
+        printf 'griffin_gc_regions\t%s\n' "$BENCH_GRIFFIN_GC_REGIONS" >> "$BENCH_RESULTS/run.tsv"
+        BENCH_GC_REFERENCE_NAME=${BENCH_GRIFFIN_GC_REGIONS##*/}
         BENCH_GC_REFERENCE_NAME=${BENCH_GC_REFERENCE_NAME%.*}
         benchmark_progress "Copying Griffin reference GC frequencies to node-local scratch"
         mkdir -p "$BENCH_WORK/reference-gc"
@@ -224,10 +214,9 @@ reference_contigs = bam_contigs
 if os.environ['BENCH_RUN_GRIFFIN'] == 'true':
     with (work / 'reference.fa.fai').open() as source:
         reference_contigs = {fields[0]: int(fields[1]) for fields in csv.reader(source, delimiter='\t')}
-# Griffin's native GC-counting script uses chr1 through chr22. Require the same
-# autosomal estimation BED for both tools, independently of the profiling sites
-if os.environ['BENCH_RUN_GC'] == 'true':
-    gc_chromosomes = set()
+# Griffin's native GC-counting script uses chr1 through chr22. Validate its
+# estimation BED independently of the profiling sites. cfDNAlab uses its defaults
+if os.environ['BENCH_RUN_GC'] == 'true' and os.environ['BENCH_RUN_GRIFFIN'] == 'true':
     previous_ends = {}
     with (work / 'gc-regions.bed').open() as source:
         for fields in csv.reader(source, delimiter='\t'):
@@ -241,10 +230,8 @@ if os.environ['BENCH_RUN_GC'] == 'true':
             if start < previous_ends.get(chromosome, 0) or end <= start or end > bam_contigs[chromosome]:
                 raise ValueError('GC regions must be sorted, non-overlapping and in chromosome bounds')
             previous_ends[chromosome] = end
-            gc_chromosomes.add(chromosome)
-    if not gc_chromosomes:
+    if not previous_ends:
         raise ValueError('No GC estimation regions in the BED')
-    (work / 'gc-chromosomes.txt').write_text(','.join(sorted(gc_chromosomes)) + '\n')
 rows = []
 window_width = None
 with (work / 'input.bed').open() as source:
@@ -338,7 +325,6 @@ print(window_width // 2, len(rows), len(groups), ','.join(chromosomes), sep='\t'
 PY
 )
 IFS=$'\t' read -r BENCH_HALF_WIDTH BENCH_SITES BENCH_GROUPS BENCH_CHROMOSOMES <<< "$site_summary"
-if [[ "$BENCH_RUN_GC" == true ]]; then BENCH_GC_CHROMOSOMES=$(cat "$BENCH_WORK/gc-chromosomes.txt"); fi
 cp "$BENCH_WORK/sites.bed" "$BENCH_RESULTS/sites.bed"
 sha256sum "$BENCH_INTERVALS" > "$BENCH_RESULTS/sites.sha256"
 

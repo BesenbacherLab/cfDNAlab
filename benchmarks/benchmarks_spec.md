@@ -117,16 +117,16 @@ Submit from the repository root on the login node with `bash benchmarks/submit_b
 | `BENCH_PILOT` | `0`, or `1` for a shared-node submission with zero full-input warmups and one measurement. Griffin retains its short demo warmup |
 | `BENCH_RUN_TIMEOUT_SECONDS` | `0` disables timeouts. A positive integer enables GNU timeout with an additional 60-second kill grace |
 | `BENCH_SETUP_PYTHON` | `python3`, untimed setup/relocation only |
-| `BENCH_COMPARE_PYTHON` | Comparison Python printed by the installer. Required and checked before staging when multiple methods are selected. Also required for untimed reference validation in `cfdnalab-gc` |
+| `BENCH_COMPARE_PYTHON` | Comparison Python printed by the installer. Required and checked before staging when multiple methods are selected |
 | `BENCH_EXPECTED_NODE` | Optional exact hostname check before staging |
 | `BENCH_MIN_MAPQ` | 30 |
 | `BENCH_MIN_LENGTH`, `BENCH_MAX_LENGTH` | Inclusive 30-1000 bp, midpoint defaults 100-200 bp |
 | `BENCH_K` | Ends only, 4 with 3 also accepted |
 | `BENCH_GENOME` | cfDNAPro label, `hg38` |
 | `BENCH_FASTA_INDEX` | `<BENCH_REF_FASTA>.fai` for Griffin |
-| `BENCH_GC_REGIONS` | Corrected midpoints only. Shared sorted, non-overlapping autosomal BED used for reference distributions and sample GC estimation |
-| `BENCH_REF_2BIT`, `BENCH_CFDNA_REF_GC` | `cfdnalab-gc` only. Matching reference 2bit and precomputed reference GC Zarr with exactly the benchmark's fragment length range |
-| `BENCH_GRIFFIN_REF_GC` | `griffin-gc` only. Precomputed per-length GC-frequency directory, with the estimation BED's original basename as file prefix |
+| `BENCH_GRIFFIN_GC_REGIONS` | `griffin-gc` only. Installer-exported `Griffin-source/Ref/k100_minus_exclusion_lists.mappable_regions.hg38.bed`, already downloaded with Griffin |
+| `BENCH_REF_2BIT`, `BENCH_CFDNA_REF_GC` | `cfdnalab-gc` only. Matching reference 2bit and reference GC Zarr calculated once with native defaults, then reused across runs |
+| `BENCH_GRIFFIN_REF_GC` | `griffin-gc` only. Installer-exported `Griffin-source/Ref/genome_GC_frequency`, containing the bundled per-length hg38 tables |
 | `BENCH_CAPTURE_CHROMOSOMES` | Override for saved coverage subset |
 | `BENCH_INSTALL_MANIFEST`, `BENCH_CFDNA_BUILD` | Optional records copied beside results |
 
@@ -186,7 +186,7 @@ Comparison errors fail the job, keep `concordance-error.log` and print its conte
 
 Coverage keeps full compressed cfDNAlab/mosdepth tracks. Saved samtools/PanDepth positions cover chr21/chr22 or 21/22, falling back to the first BAM contig when absent. `BENCH_CAPTURE_CHROMOSOMES` overrides the comma-separated subset and unknown requested names fail. Full native output is still generated inside timing. Subset extraction/recompression occurs afterward. Each coverage profile has its processed `chrom.sizes`, and regional outputs share saved `regions.bed`.
 
-Midpoints also retains normalized `sites.bed` and source `sites.sha256`. The original input BED remains unchanged. Griffin jobs additionally retain `griffin-warmup.log`, `griffin-warmup-error.log`, the demo source SHA-256 and its warmup policy in `run.tsv`. The untimed demo has no timing row and does not enter summaries or production comparisons. Additional `cfdnalab-gc` and `griffin-gc` workloads each estimate sample GC bias and apply it inside every timing. Reference-only inputs are staged beforehand. Each midpoint job selects a single workload and core setting. Corrected runs retain the estimation BED/checksum, reference paths and first measured sample estimate with its diagnostics. Their timing rows carry `gc_correction=corrected`, while baseline rows carry `none`.
+Midpoints also retains normalized `sites.bed` and source `sites.sha256`. The original input BED remains unchanged. Griffin jobs additionally retain `griffin-warmup.log`, `griffin-warmup-error.log`, the demo source SHA-256 and its warmup policy in `run.tsv`. The untimed demo has no timing row and does not enter summaries or production comparisons. Additional `cfdnalab-gc` and `griffin-gc` workloads each estimate sample GC bias and apply it inside every timing. Reference-only inputs are staged beforehand. cfDNAlab's reference is calculated once with native defaults and reused, with native sample-estimation windows and chromosome selection. Each midpoint job selects a single workload and core setting. Corrected runs retain reference paths and the first measured sample estimate with its diagnostics. Corrected Griffin also retains its estimation BED/checksum. Their timing rows carry `gc_correction=corrected`, while baseline rows carry `none`.
 
 ## Slurm accounting and summaries
 

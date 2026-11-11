@@ -42,30 +42,32 @@ Run `cfdnalab-gc` and `griffin-gc` as additional, separate jobs. Each timed repe
 
 Both workflows keep native bias fitting, smoothing, exclusion rules and diagnostic plots. Correction algorithms are not forced to match. cfDNAlab uses directional paired spans, GC percentages and its native reference end offset (10 bp by default). Griffin uses record/TLEN selection, whole-fragment GC counts and its native smoothing. Its estimator counts qualifying forward and reverse records independently. Corrected-profile differences therefore reflect both bias estimates and midpoint counting. Mean per-site/per-bp values represent weighted midpoint counts in this comparison.
 
-Use a shared, broad autosomal BED for GC estimation, not the TFBS windows. Griffin's estimator only accepts `chr1` through `chr22`. The runner checks that the supplied estimation regions use those chromosomes, are nonempty, sorted, non-overlapping and within chromosome bounds. Use the same BED when preparing both reference distributions. It does not replace or modify `BENCH_INTERVALS`.
+cfDNAlab uses its default reference and sample GC-estimation settings. Its reference package is calculated once per alignment reference and reused across all BAMs, repetitions and core settings. The default package covers 30-1000 bp, and sample GC estimation inherits that range. The midpoint profiles still use the agreed 100-200 bp range.
+
+Griffin's downloaded source already includes its hg38 GC-estimation BED and precomputed reference GC-frequency tables under `Griffin-source/Ref/`. Use these bundled inputs for the hg38 benchmark. Its estimator only accepts `chr1` through `chr22`. The runner checks that the supplied estimation regions use those chromosomes, are nonempty, sorted, non-overlapping and within chromosome bounds. This BED is only used by `griffin-gc`. It does not replace or modify `BENCH_INTERVALS` or restrict cfDNAlab's reference calculation.
+
+Add these paths to the local settings file, in addition to the existing BAM, site, FASTA and tool paths. Reuse `BENCH_REF_2BIT` if it is already exported for end motifs:
 
 ```bash
-export BENCH_MIN_MAPQ=30 BENCH_MIN_LENGTH=100 BENCH_MAX_LENGTH=200
-export BENCH_GC_REGIONS=/path/to/autosomal-gc-regions.bed
+# cfDNAlab
 export BENCH_REF_2BIT=/path/to/the-alignment-reference.2bit
 export BENCH_CFDNA_REF_GC=/path/to/cfdnalab-reference-gc/ref_gc_package.zarr
-export BENCH_GRIFFIN_REF_GC=/path/to/griffin-reference-gc
+# Griffin
+export BENCH_GRIFFIN_GC_REGIONS=/path/to/benchmark-tools/Griffin-source/Ref/k100_minus_exclusion_lists.mappable_regions.hg38.bed
+export BENCH_GRIFFIN_REF_GC=/path/to/benchmark-tools/Griffin-source/Ref/genome_GC_frequency
 ```
 
-The FASTA and 2bit must contain the same alignment reference. `BENCH_CFDNA_REF_GC` must cover exactly the benchmark's inclusive fragment length range and the chromosomes in `BENCH_GC_REGIONS`. The comparison Python printed by the installer checks its length axis before timing. Griffin expects a file named `<GC_BED_basename_without_extension>.<length>bp.GC_frequency.txt` for every requested length in `BENCH_GRIFFIN_REF_GC`. These must correspond to the supplied reference, estimation BED and read length. A supplied reference table from another assembly or region set is not interchangeable.
+The FASTA and 2bit must contain the same alignment reference. `BENCH_CFDNA_REF_GC` points to the reusable default reference package. Native loading checks reference compatibility, and midpoint correction checks that the requested length range is covered. Griffin expects a file named `<GC_BED_basename_without_extension>.<length>bp.GC_frequency.txt` for every requested length in `BENCH_GRIFFIN_REF_GC`. These must correspond to the supplied reference, estimation BED and read length. A supplied reference table from another assembly or region set is not interchangeable.
 
-Prepare reference distributions in separate compute jobs, outside benchmark measurements. cfDNAlab's native command is:
+Run cfDNAlab's reference calculation once in a compute allocation, outside benchmark measurements. The following command supplies only the required paths, leaving all calculation settings at their defaults. Keep this command outside the settings file, which should only export paths:
 
 ```bash
-gc_chromosomes=$(cut -f 1 "$BENCH_GC_REGIONS" | LC_ALL=C sort -u | paste -sd, -)
 "$BENCH_CFDNA" ref-gc-bias \
-    --ref-2bit "$BENCH_REF_2BIT" --by-bed "$BENCH_GC_REGIONS" \
-    --chromosomes "$gc_chromosomes" --min-fragment-length "$BENCH_MIN_LENGTH" \
-    --max-fragment-length "$BENCH_MAX_LENGTH" --n-threads 4 \
+    --ref-2bit "$BENCH_REF_2BIT" \
     --output-dir "$(dirname "$BENCH_CFDNA_REF_GC")"
 ```
 
-Griffin's native [reference generator](https://github.com/adoebley/Griffin/blob/v0.2.0/scripts/griffin_calc_GC_frequency.py) runs once per fragment length. Use `griffin_calc_GC_frequency.py --mappable_regions_path "$BENCH_GC_REGIONS" --ref_seq "$BENCH_REF_FASTA" --chrom_sizes "${BENCH_FASTA_INDEX:-$BENCH_REF_FASTA.fai}" --out_dir "$BENCH_GRIFFIN_REF_GC" --fragment_length LENGTH --read_length READ_LENGTH` with its installed environment's Python. Create the output directory beforehand. Supply the actual read length used for the reference calculation, and prepare every length from `BENCH_MIN_LENGTH` through `BENCH_MAX_LENGTH`. Existing matching reference distributions can be reused. The native generator has an undefined `chrom_sizes_dict` variable in its chromosome-boundary branches, so regions whose padded fetch crosses a chromosome boundary fail upstream. Changing the estimation BED would also change both reference distributions and the sample-estimation workload.
+Griffin's bundled hg38 reference tables are already downloaded by the installer, which prints both Griffin input exports. No separate Griffin reference-generation job is needed for these inputs. Its native [reference generator](https://github.com/adoebley/Griffin/blob/v0.2.0/scripts/griffin_calc_GC_frequency.py) is only needed for a different reference or estimation region set. It runs once per fragment length with an explicit read length. Its chromosome-boundary branches contain an undefined `chrom_sizes_dict` variable, which can make custom reference preparation fail upstream. The bundled tables avoid rerunning that generator.
 
 The updated Griffin installation includes its three GC scripts and matplotlib for native bias plots. Rerun `bash benchmarks/install_tools.sh ROOT --only griffin` before corrected runs if the existing archive lacks those scripts. The installer replaces an incomplete installation, and all installation files stay under `ROOT`. No reinstall is needed to keep running the existing uncorrected workloads.
 
@@ -73,10 +75,12 @@ With those references prepared and the usual BAM, site and tool paths exported, 
 
 ```bash
 BENCH_METHODS=cfdnalab-gc BENCH_CORES=4 BENCH_PILOT=1 \
+BENCH_MIN_LENGTH=100 BENCH_MAX_LENGTH=200 \
 BENCH_RESULTS=/path/to/midpoints-cfdnalab-gc-pilot \
     bash benchmarks/submit_benchmark.sh midpoints --time=YOUR_PILOT_BASED_BUDGET
 
 BENCH_METHODS=griffin-gc BENCH_CORES=4 BENCH_PILOT=1 \
+BENCH_MIN_LENGTH=100 BENCH_MAX_LENGTH=200 \
 BENCH_RESULTS=/path/to/midpoints-griffin-gc-pilot \
     bash benchmarks/submit_benchmark.sh midpoints --time=YOUR_GRIFFIN_PILOT_BASED_BUDGET
 ```
