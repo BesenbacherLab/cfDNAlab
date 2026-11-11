@@ -72,6 +72,7 @@ class SubmissionTests(unittest.TestCase):
                         (root / "sites.bed").write_text("chr1\t1000\t3001\tTFBS\n")
                         environment.update({
                             "BENCH_INTERVALS": str(root / "sites.bed"),
+                            "BENCH_RESULTS": str(root / "results"),
                             "BENCH_SETUP_PYTHON": sys.executable,
                         })
                     environment.pop("BENCH_PILOT", None)

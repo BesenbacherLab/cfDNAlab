@@ -35,8 +35,13 @@ export BENCH_MAX_LENGTH=${BENCH_MAX_LENGTH:-200}
 
 benchmark_controls
 read -r -a methods_to_run <<< "$BENCH_METHODS"
-if [[ ${SLURM_JOB_NUM_NODES:-${SLURM_NNODES:-0}} != 1 || -e "$BENCH_RESULTS" ]]; then
-    echo "Use a single-node allocation and a new BENCH_RESULTS directory." >&2
+if [[ ${SLURM_JOB_NUM_NODES:-${SLURM_NNODES:-0}} != 1 ]]; then
+    echo "Expected one allocated node, but Slurm reports ${SLURM_JOB_NUM_NODES:-${SLURM_NNODES:-unset}}. Submit with --nodes=1." >&2
+    exit 1
+fi
+if [[ -e "$BENCH_RESULTS" ]]; then
+    echo "BENCH_RESULTS already exists: $BENCH_RESULTS" >&2
+    echo "Choose a new path without creating it first. The benchmark creates the directory." >&2
     exit 1
 fi
 if ((${#methods_to_run[@]} == 0)); then

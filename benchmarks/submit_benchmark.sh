@@ -30,9 +30,17 @@ if [[ "$BENCH_PILOT" != 0 && "$BENCH_PILOT" != 1 ]]; then
     exit 1
 fi
 
-# Check only the first five lines for the expected grouped BED format before
-# queueing a midpoint job. The tools remain responsible for input validation
+# Catch an existing midpoint results directory before queueing. Failed attempts
+# can leave output behind, and the runner preserves it rather than overwriting it
 if [[ "$feature" == midpoints ]]; then
+    : "${BENCH_RESULTS:?Set a new results directory}"
+    if [[ -e "$BENCH_RESULTS" ]]; then
+        echo "BENCH_RESULTS already exists: $BENCH_RESULTS" >&2
+        echo "Choose a new path without creating it first. The benchmark creates the directory." >&2
+        exit 1
+    fi
+    # Check only the first five lines for the expected grouped BED format
+    # The tools remain responsible for input validation
     : "${BENCH_INTERVALS:?Set the grouped fixed-size BED path}"
     "${BENCH_SETUP_PYTHON:-python3}" - "$BENCH_INTERVALS" <<'PY'
 import csv
