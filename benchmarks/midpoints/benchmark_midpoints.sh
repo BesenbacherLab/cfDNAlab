@@ -109,7 +109,7 @@ if [[ "$BENCH_RUN_GC" == true ]]; then
 fi
 
 # Inputs are copied once before warmups, including the supplied BAM/reference indexes
-export BENCH_WORK BENCH_NODE BENCH_HALF_WIDTH BENCH_SITES BENCH_GROUPS BENCH_CHROMOSOMES
+export BENCH_WORK BENCH_NODE BENCH_HALF_WIDTH BENCH_WINDOW_WIDTH BENCH_SITES BENCH_GROUPS BENCH_CHROMOSOMES
 export BENCH_RESULTS BENCH_CFDNA_VERSION BENCH_GRIFFIN_VERSION
 export BENCH_GC_REFERENCE_NAME
 BENCH_WORK=$(mktemp -d "$TMPDIR/midpoints-${SLURM_JOB_ID}.XXXXXX")
@@ -205,82 +205,47 @@ cp "$BENCH_WORK/chrom.sizes" "$BENCH_WORK/bam.chrom.sizes"
 export BENCH_RUN_GRIFFIN=$run_griffin
 
 # Setup converts the same oriented windows to cfDNAlab and Griffin input formats
-# All sites are retained, including repeated and overlapping rows. Invalid input fails
+# All sites are retained, including repeated and overlapping rows. The native
+# tools check their inputs. This conversion adds no coordinate or strand rules
 # This setup reads headers and BED rows, without scanning or filtering BAM reads
 site_summary=$("$BENCH_SETUP_PYTHON" - <<'PY'
 import csv
 import json
 import os
 from pathlib import Path
-import re
 
 work = Path(os.environ['BENCH_WORK'])
 with (work / 'chrom.sizes').open() as source:
     bam_contigs = {fields[0]: int(fields[1]) for fields in csv.reader(source, delimiter='\t')}
-reference_contigs = bam_contigs
-if os.environ['BENCH_RUN_GRIFFIN'] == 'true':
-    with (work / 'reference.fa.fai').open() as source:
-        reference_contigs = {fields[0]: int(fields[1]) for fields in csv.reader(source, delimiter='\t')}
-# Griffin's native GC-counting script uses chr1 through chr22. Validate its
-# estimation BED independently of the profiling sites. cfDNAlab uses its defaults
-if os.environ['BENCH_RUN_GC'] == 'true' and os.environ['BENCH_RUN_GRIFFIN'] == 'true':
-    previous_ends = {}
-    with (work / 'gc-regions.bed').open() as source:
-        for fields in csv.reader(source, delimiter='\t'):
-            if len(fields) < 3:
-                raise ValueError('GC regions must be a headerless BED with at least three columns')
-            chromosome, start, end = fields[0], int(fields[1]), int(fields[2])
-            if not re.fullmatch(r'chr([1-9]|1[0-9]|2[0-2])', chromosome):
-                raise ValueError('GC estimation regions must use UCSC autosomes chr1 through chr22')
-            if chromosome not in bam_contigs or reference_contigs.get(chromosome) != bam_contigs[chromosome]:
-                raise ValueError('GC region contig is absent or differs between BAM and FASTA: ' + chromosome)
-            if start < previous_ends.get(chromosome, 0) or end <= start or end > bam_contigs[chromosome]:
-                raise ValueError('GC regions must be sorted, non-overlapping and in chromosome bounds')
-            previous_ends[chromosome] = end
-    if not previous_ends:
-        raise ValueError('No GC estimation regions in the BED')
 rows = []
-window_width = None
 with (work / 'input.bed').open() as source:
-    for line_number, fields in enumerate(csv.reader(source, delimiter='\t'), start=1):
+    for fields in csv.reader(source, delimiter='\t'):
         if not fields or fields[0].startswith('#'):
             continue
-        if len(fields) < 4:
-            raise ValueError('BED row {} needs chromosome, start, end and group'.format(line_number))
         chromosome, start, end, group = fields[:4]
-        start, end = int(start), int(end)
-        if not group or any(character.isspace() for character in group) or start < 0 or end <= start:
-            raise ValueError('Invalid interval or group name on BED row {}'.format(line_number))
-        if chromosome not in bam_contigs or reference_contigs.get(chromosome) != bam_contigs[chromosome]:
-            raise ValueError('BAM/FASTA contig missing or length mismatch: ' + chromosome)
-        if end > bam_contigs[chromosome]:
-            raise ValueError('BED row {} extends beyond its chromosome'.format(line_number))
-        if window_width is None:
-            window_width = end - start
-        if end - start != window_width or window_width % 2:
-            raise ValueError('Use equal, even-width BED intervals for symmetric Griffin windows')
-        # Strand parsing follows cfDNAlab's BED5/BED6 convention and ambiguity checks
+        # BED4 has no strand. Optional BED5/BED6 strands follow cfDNAlab's convention
         strand = fields[5] if len(fields) >= 6 else fields[4] if len(fields) == 5 else '.'
-        if len(fields) >= 6 and fields[4] in ('+', '-', '.') and strand not in ('+', '-', '.'):
-            raise ValueError('Ambiguous strand columns on BED row {}'.format(line_number))
-        if strand not in ('+', '-', '.'):
-            raise ValueError('Invalid strand on BED row {}'.format(line_number))
-        rows.append((chromosome, start, end, group, 0, strand))
+        rows.append((chromosome, int(start), int(end), group, 0, strand))
 if not rows:
     raise ValueError('No midpoint sites in the BED')
+# The supplied fixed-size windows define the profile width. Odd widths retain
+# a central base, e.g. 2001 positions span -1000 through +1000
+window_width = rows[0][2] - rows[0][1]
+half_width = window_width // 2
 rows.sort(key=lambda row: (row[0], row[1], row[2]))
 with (work / 'sites.bed').open('w') as destination:
     csv.writer(destination, delimiter='\t', lineterminator='\n').writerows(rows)
 # Griffin takes a table of anchor positions per group, referenced by YAML
-# With symmetric even-width windows these anchors recover the same BED bounds
+# For odd widths Griffin uses [-floor(width/2), ceil(width/2)). Its reverse
+# interval formula needs the other central boundary to recover the original BED
+# bounds. The native reversal then matches cfDNAlab's end - 1 - position indexing
 groups = {}
 for chromosome, start, end, group, score, strand in rows:
-    groups.setdefault(group, []).append((chromosome, start + window_width // 2, strand))
+    anchor = end - half_width if strand == '-' else start + half_width
+    groups.setdefault(group, []).append((chromosome, anchor, strand))
 (work / 'sites').mkdir()
 site_paths = {}
 for group_index, (group, sites) in enumerate(groups.items()):
-    if os.environ['BENCH_RUN_GRIFFIN'] == 'true' and all(site[0].isdigit() for site in sites):
-        raise ValueError('Griffin infers numeric chromosome types for group ' + group + '. Use the selected hg38/UCSC input.')
     path = work / 'sites' / '{}.tsv'.format(group_index)
     with path.open('w') as destination:
         writer = csv.writer(destination, delimiter='\t', lineterminator='\n')
@@ -298,10 +263,6 @@ if os.environ['BENCH_RUN_GRIFFIN'] == 'true':
     with demo_path.open() as source:
         for row in csv.DictReader(source, delimiter='\t'):
             chromosome, position = row['Chrom'], int(row['position'])
-            if chromosome not in bam_contigs or reference_contigs.get(chromosome) != bam_contigs[chromosome]:
-                raise ValueError('Griffin demo contig is absent or has mismatched lengths: ' + chromosome)
-            if position - window_width // 2 < 0 or position + window_width // 2 > bam_contigs[chromosome]:
-                raise ValueError('Griffin demo window extends beyond its chromosome: ' + chromosome)
             demo_rows.append((chromosome, position, '.'))
     if len(demo_rows) != 1000:
         raise ValueError('Expected exactly 1000 sites in the pinned Griffin demo')
@@ -328,10 +289,10 @@ with (work / 'unit_gc_bias.tsv').open('w') as destination:
     for fragment_length in range(int(os.environ['BENCH_MIN_LENGTH']), int(os.environ['BENCH_MAX_LENGTH']) + 1):
         for gc_count in range(fragment_length + 1):
             writer.writerow((fragment_length, gc_count, 1.0))
-print(window_width // 2, len(rows), len(groups), ','.join(chromosomes), sep='\t')
+print(window_width, half_width, len(rows), len(groups), ','.join(chromosomes), sep='\t')
 PY
 )
-IFS=$'\t' read -r BENCH_HALF_WIDTH BENCH_SITES BENCH_GROUPS BENCH_CHROMOSOMES <<< "$site_summary"
+IFS=$'\t' read -r BENCH_WINDOW_WIDTH BENCH_HALF_WIDTH BENCH_SITES BENCH_GROUPS BENCH_CHROMOSOMES <<< "$site_summary"
 cp "$BENCH_WORK/sites.bed" "$BENCH_RESULTS/sites.bed"
 sha256sum "$BENCH_INTERVALS" > "$BENCH_RESULTS/sites.sha256"
 
@@ -445,7 +406,7 @@ fi
 printf -v prefix '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
     "$run_order" "$repetition" "$is_warmup" "$method" "$tool_version" "$cores" "$cores" \
     "$BENCH_MIN_MAPQ" "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH" "$BENCH_SITES" "$BENCH_GROUPS" \
-    "$((2 * BENCH_HALF_WIDTH))" 1 "$midpoint_policy" "$node" "$cpu_model" "$cpu_ids" \
+    "$BENCH_WINDOW_WIDTH" 1 "$midpoint_policy" "$node" "$cpu_model" "$cpu_ids" \
     "$physical_core_ids" "$SLURM_JOB_ID" "$SLURM_STEP_ID" "$started_utc" "$gc_correction"
 logical_cpu_count=$(env -u OMP_NUM_THREADS -u OMP_THREAD_LIMIT nproc)
 if [[ "$node" != "$BENCH_NODE" ]] || ((logical_cpu_count != cores || physical_core_count != cores)); then

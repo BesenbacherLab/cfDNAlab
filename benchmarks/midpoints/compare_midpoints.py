@@ -33,8 +33,8 @@ def read_cfdnalab(path):
     positions = result.positions()
     width = len(positions)
     expected = np.arange(width)
-    if width == 0 or width % 2:
-        raise ValueError("Expected an even, nonzero profile width")
+    if width == 0:
+        raise ValueError("Expected a nonzero profile width")
     if not np.array_equal(
         positions["position_bin_start_bp"], expected
     ) or not np.array_equal(positions["position_bin_end_bp"], expected + 1):
@@ -58,7 +58,8 @@ def read_griffin(path, width):
     shared position range and check that the file contains no extra positions.
     """
     table = pd.read_csv(path, sep="\t", dtype={"site_name": str}, keep_default_na=False)
-    position_columns = [str(position) for position in range(-width // 2, width // 2)]
+    first_position = -(width // 2)
+    position_columns = [str(position) for position in range(first_position, first_position + width)]
     native_positions = {
         column for column in table.columns if column.lstrip("-").isdigit()
     }

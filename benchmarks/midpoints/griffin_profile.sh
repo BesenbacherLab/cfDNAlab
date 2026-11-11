@@ -15,6 +15,9 @@ output_directory=${5:?Supply the output directory}
 gc_bias=${6:-$BENCH_WORK/unit_gc_bias.tsv}
 environment="$BENCH_WORK/griffin-env"
 scripts="$environment/share/griffin"
+# End coordinates are exclusive. A 2001 bp window uses [-1000, 1001),
+# which retains the central base and 1000 bases on each side
+window_end=$((BENCH_WINDOW_WIDTH - BENCH_HALF_WIDTH))
 IFS=, read -r -a chromosomes <<< "$chromosome_names"
 mkdir -p "$output_directory/tmp" "$output_directory/results"
 
@@ -24,7 +27,7 @@ common=(--sample_name sample --tmp_dir "$output_directory/tmp"
     --sites_yaml "$sites_yaml" --griffin_scripts_dir "$scripts"
     --chrom_sizes_path "$chromosome_sizes" --chroms "${chromosomes[@]}"
     --chrom_column Chrom --position_column position --strand_column Strand
-    --norm_window "-$BENCH_HALF_WIDTH" "$BENCH_HALF_WIDTH"
+    --norm_window "-$BENCH_HALF_WIDTH" "$window_end"
     --mappability_correction False --mappability_bw none --CPU "$cores")
 "$environment/bin/python" "$scripts/griffin_coverage.py" "${common[@]}" \
     --bam "$BENCH_WORK/sample.bam" --GC_bias "$gc_bias" \
@@ -34,8 +37,8 @@ common=(--sample_name sample --tmp_dir "$output_directory/tmp"
     --uncorrected_bw_path "$output_directory/tmp/sample/tmp_bigWig/sample.uncorrected.bw" \
     --GC_corrected_bw_path "$output_directory/tmp/sample/tmp_bigWig/sample.GC_corrected.bw" \
     --GC_map_corrected_bw_path none --results_dir "$output_directory/results" \
-    --save_window "-$BENCH_HALF_WIDTH" "$BENCH_HALF_WIDTH" \
-    --center_window "-$BENCH_HALF_WIDTH" "$BENCH_HALF_WIDTH" \
-    --fft_window "-$BENCH_HALF_WIDTH" "$BENCH_HALF_WIDTH" --fft_index 1 \
+    --save_window "-$BENCH_HALF_WIDTH" "$window_end" \
+    --center_window "-$BENCH_HALF_WIDTH" "$window_end" \
+    --fft_window "-$BENCH_HALF_WIDTH" "$window_end" --fft_index 1 \
     --step 1 --exclude_paths none --exclude_zero_mappability False \
     --exclude_outliers False --CNA_normalization False --individual False --smoothing False

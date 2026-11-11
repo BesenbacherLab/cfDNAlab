@@ -36,7 +36,7 @@ Keep the MarkDuplicates metrics beside these records. Measure proper-pair effect
 
 ## Midpoint sites
 
-Supply the midpoint site BED through `BENCH_INTERVALS`. The benchmark uses its coordinates, groups and strands, retaining repeated and overlapping rows. Window width comes from the supplied intervals, with no additional site selection. See the [midpoint input format](../midpoints/README.md#inputs-and-run) for the equal, even-width intervals required by the comparison. The runner saves the normalized rows and source checksum with the results.
+Supply the midpoint site BED through `BENCH_INTERVALS`. The benchmark uses its coordinates, groups and optional strands, retaining repeated and overlapping rows. Window width comes from the supplied intervals, with no additional site selection. See the [midpoint input format](../midpoints/README.md#inputs-and-run) for equal-width intervals. Odd widths such as 2001 bp include a central base with equal numbers of positions on each side. The runner saves the normalized rows and source checksum with the results.
 
 Use Griffin's [public paper TFBS set](https://github.com/adoebley/Griffin_analyses/tree/75467e438a88029206d8d778ddce05eb0ab6efa8/sites/TFBS/10000_unfiltered_sites_CIS_BP_v2), pinned at `75467e438a88029206d8d778ddce05eb0ab6efa8`, as the production source. Record the supplied BED's derivation, window width and actual site/group counts. The runner does not choose or resize those production sites. Griffin's separate 1000-site release demo is used only for its short warmup.
 

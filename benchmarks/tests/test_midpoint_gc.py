@@ -38,6 +38,7 @@ class CorrectedMidpointWorkflowTests(unittest.TestCase):
             "BENCH_MAX_LENGTH": "200",
             "BENCH_MIN_MAPQ": "30",
             "BENCH_HALF_WIDTH": "1000",
+            "BENCH_WINDOW_WIDTH": "2000",
             "BENCH_CHROMOSOMES": "chr1,chr2",
             "BENCH_GC_REFERENCE_NAME": "autosomal-regions",
             "FAKE_FAIL_STAGE": "",
@@ -176,6 +177,19 @@ class CorrectedMidpointWorkflowTests(unittest.TestCase):
                 self.assertEqual([call[0] for call in self.calls()], expected_stages)
                 self.assertFalse((self.work / "output/midpoint_profiles.zarr").exists())
                 self.assertFalse((self.work / "used-bias").exists())
+
+    def test_griffin_corrected_profiles_keep_all_2001_positions(self):
+        self.environment["BENCH_WINDOW_WIDTH"] = "2001"
+        result = self.run_workflow("griffin-gc")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for stage, arguments in self.calls():
+            if stage in ("griffin_coverage.py", "griffin_merge_sites.py"):
+                index = arguments.index("--norm_window")
+                self.assertEqual(arguments[index + 1:index + 3], ["-1000", "1001"])
+            if stage == "griffin_merge_sites.py":
+                for option in ("--save_window", "--center_window", "--fft_window"):
+                    index = arguments.index(option)
+                    self.assertEqual(arguments[index + 1:index + 3], ["-1000", "1001"])
 
     def test_griffin_rejects_profiles_outside_estimation_range_before_setup(self):
         for minimum, maximum in ((14, 200), (100, 501)):

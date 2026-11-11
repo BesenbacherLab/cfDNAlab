@@ -177,7 +177,7 @@ Corrected Griffin jobs retain the untimed unit-weight demo, without estimating s
 
 Griffin fetch padding uses minimum length. `floor(maximum / 2) <= minimum` is sufficient, satisfied by 100-200 bp. Fetch losses become possible from `maximum >= 2 * minimum + 2`, depending on alignment extent. Aggregation parallelism depends on supplied group count.
 
-The comparator requires one cfDNAlab length bin, nonzero even width and contiguous 1 bp positions. Group identities, positive site counts and Griffin signed position labels must match. Unexpected smoothing/CNA settings and invalid profiles fail.
+The comparator requires one cfDNAlab length bin, nonzero width and contiguous 1 bp positions. Odd and even widths are supported. A 2001 bp profile uses Griffin position labels -1000 through +1000, retaining every position. Group identities, positive site counts and Griffin signed position labels must match. Unexpected smoothing/CNA settings and invalid profiles fail.
 
 cfDNAlab summed counts divide by their complete-window mean to produce a mean-one profile. No site-wise normalization, shift, smoothing, rebinning or zero removal occurs. Raw mean per-site/per-bp densities remain separate.
 

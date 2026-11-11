@@ -66,6 +66,14 @@ class SubmissionTests(unittest.TestCase):
                         "SUBMISSION_LOG": str(call_log),
                         "PILOT_LOG": str(pilot_log),
                     }
+                    if feature == "midpoints":
+                        # The launcher's format sample accepts a 2001 bp BED4
+                        # without requiring a BAM or any installed native tool
+                        (root / "sites.bed").write_text("chr1\t1000\t3001\tTFBS\n")
+                        environment.update({
+                            "BENCH_INTERVALS": str(root / "sites.bed"),
+                            "BENCH_SETUP_PYTHON": sys.executable,
+                        })
                     environment.pop("BENCH_PILOT", None)
                     if pilot is not None:
                         environment["BENCH_PILOT"] = pilot
@@ -893,7 +901,7 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
                 if name == "samtools":
                     executable = environment / "bin/samtools"
                     executable.write_text(
-                        '#!/usr/bin/env bash\nprintf "chr1\\t1000\\t0\\t0\\n"\n'
+                        '#!/usr/bin/env bash\nprintf "chr1\\t6000\\t0\\t0\\n"\n'
                     )
                 else:
                     scripts = environment / "share/griffin"
@@ -901,7 +909,7 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
                     (scripts / "version.txt").write_text("v0.2.0 fixture\n")
                     # Duplicates are intentional. The demo must keep exactly 1000 rows
                     (scripts / "CTCF.hg38.1000.txt").write_text(
-                        "Chrom\tposition\n" + "chr1\t500\n" * 1000
+                        "Chrom\tposition\n" + "chr1\t3000\n" * 1000
                     )
                     executable = environment / "bin/python"
                     executable.write_text(
@@ -947,10 +955,19 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
                 profile.write_text('first saved repetition ' + repetition + '\n')
                 (work / 'profile.path').write_text(str(profile) + '\n')
                 results = Path(os.environ['BENCH_RESULTS'])
+                import csv
+                import json
+                site_paths = json.loads((work / 'sites.yaml').read_text())['site_lists']
+                site_rows = {}
+                for group, path in site_paths.items():
+                    with Path(path).open() as source:
+                        site_rows[group] = list(csv.DictReader(source, delimiter='\t'))
+                (results / 'native-sites.json').write_text(json.dumps(site_rows))
                 columns = (results / 'timings.tsv').read_text().splitlines()[0].split('\t')
                 columns = columns[:columns.index('flush_seconds')]
                 values = {'run_order': order, 'repetition': repetition, 'warmup': warmup,
                           'method': method, 'cores': cores, 'job_id': '123', 'step_id': order,
+                          'window_bp': os.environ['BENCH_WINDOW_WIDTH'],
                           'wall_seconds': '1', 'user_seconds': '1', 'system_seconds': '0',
                           'max_rss_kib': '10', 'tool_exit_code': '0'}
                 (work / 'time.tsv').write_text('\t'.join(values.get(column, 'NA') for column in columns) + '\n')
@@ -963,10 +980,11 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
             Path(str(bam) + ".bai").touch()
             fasta = root / "reference.fa"
             fasta.touch()
-            Path(str(fasta) + ".fai").write_text("chr1\t1000\t0\t1000\t1001\n")
+            Path(str(fasta) + ".fai").write_text("chr1\t6000\t0\t6000\t6001\n")
             intervals = root / "production.bed"
             production_sites = (
-                "chr1\t100\t120\tproduction\t+\nchr1\t100\t120\tproduction\t+\n"
+                "chr1\t1000\t3001\tproduction\t+\nchr1\t1000\t3001\tproduction\t+\n"
+                "chr1\t1000\t3001\treverse\t-\nchr1\t1000\t3001\tunstranded\t.\n"
             )
             intervals.write_text(production_sites)
             results = root / "results"
@@ -1017,10 +1035,22 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
                     for call in native_calls
                 )
             )
+            for call in native_calls:
+                arguments = call.split("\t")
+                window_index = arguments.index("--norm_window")
+                self.assertEqual(arguments[window_index + 1:window_index + 3], ["-1000", "1001"])
+            # Forward/unstranded anchors are 2000. Griffin's reverse formula
+            # needs boundary 2001 to fetch the same unchanged [1000, 3001) BED
+            import json
+            sites = json.loads((results / "native-sites.json").read_text())
+            self.assertEqual([row["position"] for row in sites["production"]], ["2000", "2000"])
+            self.assertEqual(sites["reverse"][0]["position"], "2001")
+            self.assertEqual(sites["unstranded"][0]["position"], "2000")
             with (results / "timings.tsv").open() as source:
                 rows = list(csv.DictReader(source, delimiter="\t"))
             self.assertEqual([row["repetition"] for row in rows], ["1", "2", "3"])
             self.assertTrue(all(row["warmup"] == "false" for row in rows))
+            self.assertTrue(all(row["window_bp"] == "2001" for row in rows))
             self.assertEqual(
                 (
                     results / "profiles/griffin/sample.uncorrected.coverage.tsv"
@@ -1028,7 +1058,7 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
                 "first saved repetition 1\n",
             )
             self.assertEqual(intervals.read_text(), production_sites)
-            self.assertEqual(len((results / "sites.bed").read_text().splitlines()), 2)
+            self.assertEqual(len((results / "sites.bed").read_text().splitlines()), 4)
             self.assertIn("warmups\t0\n", (results / "run.tsv").read_text())
 
 
@@ -1255,6 +1285,46 @@ class NativeComparatorTests(unittest.TestCase):
             self.assertEqual(profiles["sparse"][1:], (2, 0))
             np.testing.assert_array_equal(profiles["sparse"][0], [4] * 5 + [0] * 15)
             self.assertTrue(np.isnan(profiles["empty"][0]).all())
+
+    def test_midpoint_comparison_preserves_all_2001_positions(self):
+        import numpy as np
+        import pandas as pd
+
+        comparator = self.comparator("midpoints/compare_midpoints.py")
+        # These 2001 counts sum to 4002, so the mean is exactly 2. The
+        # normalized values are 0.5, 1 at the center, and 1.5, with no lost base
+        counts = np.array([1.0] * 1000 + [2.0] + [3.0] * 1000)
+        native_result = SimpleNamespace(
+            length_bins=lambda: [(100, 201)],
+            positions=lambda: pd.DataFrame({
+                "position_bin_start_bp": range(2001),
+                "position_bin_end_bp": range(1, 2002),
+            }),
+            counts_array=lambda: counts[None, None, :],
+            group_metadata=lambda: pd.DataFrame({"group_name": ["TFBS"], "eligible_intervals": [2]}),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            profiles = Path(temporary)
+            (profiles / "griffin").mkdir()
+            with (profiles / "griffin/sample.uncorrected.coverage.tsv").open("w") as destination:
+                writer = csv.writer(destination, delimiter="\t")
+                writer.writerow([
+                    "site_name", "number_of_sites", "smoothing", "CNA_normalization",
+                    "mean_reads_per_bp_in_normalization_window",
+                ] + list(map(str, range(-1000, 1001))))
+                writer.writerow(["TFBS", 2, False, False, 1] + list(counts / 2))
+            output = StringIO()
+            with (
+                mock.patch.object(comparator, "read_midpoints", return_value=native_result),
+                mock.patch.object(sys, "argv", ["compare_midpoints.py", str(profiles)]),
+                redirect_stdout(output),
+            ):
+                comparator.main()
+            row, = csv.DictReader(StringIO(output.getvalue()), delimiter="\t")
+            self.assertEqual(row["positions"], "2001")
+            self.assertAlmostEqual(float(row["pearson_r"]), 1.0)
+            for metric in ("mae_mean_one", "rmse_mean_one", "max_abs_mean_one"):
+                self.assertEqual(float(row[metric]), 0.0)
 
     def test_midpoint_metrics_keep_zero_positions_and_distinguish_empty_groups(self):
         import numpy as np

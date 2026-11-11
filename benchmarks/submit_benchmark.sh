@@ -30,6 +30,29 @@ if [[ "$BENCH_PILOT" != 0 && "$BENCH_PILOT" != 1 ]]; then
     exit 1
 fi
 
+# Check only the first five lines for the expected grouped BED format before
+# queueing a midpoint job. The tools remain responsible for input validation
+if [[ "$feature" == midpoints ]]; then
+    : "${BENCH_INTERVALS:?Set the grouped fixed-size BED path}"
+    "${BENCH_SETUP_PYTHON:-python3}" - "$BENCH_INTERVALS" <<'PY'
+import csv
+from itertools import islice
+import sys
+
+with open(sys.argv[1]) as source:
+    for line_number, fields in enumerate(csv.reader(islice(source, 5), delimiter='\t'), 1):
+        if not fields or fields[0].startswith('#'):
+            continue
+        if len(fields) < 4:
+            sys.exit('BED row {} needs tab-separated chromosome, start, end and group'.format(line_number))
+        try:
+            int(fields[1])
+            int(fields[2])
+        except ValueError:
+            sys.exit('BED row {} needs integer start/end coordinates and no header'.format(line_number))
+PY
+fi
+
 # Slurm reads resource requests before the batch script starts, so the pilot choice
 # must be made here. Conditional #SBATCH lines inside the job would not work
 # Pilots request 50 GB unless --mem is supplied. User options follow the defaults
