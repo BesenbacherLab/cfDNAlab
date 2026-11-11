@@ -149,8 +149,17 @@ class CorrectedMidpointWorkflowTests(unittest.TestCase):
         arguments = calls[0][1]
         self.assertEqual(arguments[arguments.index("--CPU") + 1], "4")
         self.assertEqual(arguments[arguments.index("--map_q") + 1], "30")
-        length_index = arguments.index("--size_range")
-        self.assertEqual(arguments[length_index + 1:length_index + 3], ["100", "200"])
+        # Both estimation stages use Griffin's release range. Coverage keeps the
+        # narrower midpoint range, so estimation smoothing has neighbouring lengths
+        for stage, arguments in calls:
+            if stage in ("griffin_GC_counts.py", "griffin_GC_bias.py"):
+                expected_range = ["15", "500"]
+            elif stage == "griffin_coverage.py":
+                expected_range = ["100", "200"]
+            else:
+                continue
+            length_index = arguments.index("--size_range")
+            self.assertEqual(arguments[length_index + 1:length_index + 3], expected_range)
 
     def test_failed_sample_estimation_stops_before_profiling(self):
         cases = (
@@ -167,6 +176,37 @@ class CorrectedMidpointWorkflowTests(unittest.TestCase):
                 self.assertEqual([call[0] for call in self.calls()], expected_stages)
                 self.assertFalse((self.work / "output/midpoint_profiles.zarr").exists())
                 self.assertFalse((self.work / "used-bias").exists())
+
+    def test_griffin_rejects_profiles_outside_estimation_range_before_setup(self):
+        for minimum, maximum in ((14, 200), (100, 501)):
+            with self.subTest(minimum=minimum, maximum=maximum):
+                results = self.work / "results"
+                result = subprocess.run(
+                    ["bash", str(BENCHMARKS / "midpoints/benchmark_midpoints.sh")],
+                    env={
+                        **self.environment,
+                        "SLURM_SUBMIT_DIR": str(BENCHMARKS.parent),
+                        "SLURM_JOB_ID": "123",
+                        "SLURM_JOB_NUM_NODES": "1",
+                        "SLURM_CPUS_PER_TASK": "4",
+                        "BENCH_BAM": "/unused/input.bam",
+                        "BENCH_INTERVALS": "/unused/sites.bed",
+                        "BENCH_RESULTS": str(results),
+                        "BENCH_CORES": "4",
+                        "BENCH_METHODS": "griffin-gc",
+                        "BENCH_PILOT": "0",
+                        "BENCH_SETUP_PYTHON": sys.executable,
+                        "BENCH_EXPECTED_NODE": "",
+                        "BENCH_RUN_TIMEOUT_SECONDS": "0",
+                        "BENCH_MIN_LENGTH": str(minimum),
+                        "BENCH_MAX_LENGTH": str(maximum),
+                        "TMPDIR": str(self.work),
+                    },
+                    text=True, capture_output=True,
+                )
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn("Griffin GC estimation uses 15-500 bp", result.stderr)
+                self.assertFalse(results.exists())
 
 
 if __name__ == "__main__":

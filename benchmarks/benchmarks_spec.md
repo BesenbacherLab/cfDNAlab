@@ -126,7 +126,7 @@ Submit from the repository root on the login node with `bash benchmarks/submit_b
 | `BENCH_FASTA_INDEX` | `<BENCH_REF_FASTA>.fai` for Griffin |
 | `BENCH_GRIFFIN_GC_REGIONS` | `griffin-gc` only. Installer-exported `Griffin-source/Ref/k100_minus_exclusion_lists.mappable_regions.hg38.bed`, already downloaded with Griffin |
 | `BENCH_REF_2BIT`, `BENCH_CFDNA_REF_GC` | `cfdnalab-gc` only. Matching reference 2bit and reference GC Zarr calculated once with native defaults, then reused across runs |
-| `BENCH_GRIFFIN_REF_GC` | `griffin-gc` only. Installer-exported `Griffin-source/Ref/genome_GC_frequency`, containing the bundled per-length hg38 tables |
+| `BENCH_GRIFFIN_REF_GC` | `griffin-gc` only. Installer-exported `Griffin-source/Ref/genome_GC_frequency`. Setup copies the bundled 15-500 bp tables for native GC estimation, independently of the profiling range |
 | `BENCH_CAPTURE_CHROMOSOMES` | Override for saved coverage subset |
 | `BENCH_INSTALL_MANIFEST`, `BENCH_CFDNA_BUILD` | Optional records copied beside results |
 

@@ -33,16 +33,18 @@ case "$method" in
         scripts="$environment/share/griffin"
         # These are the two native sample-bias steps from Griffin's workflow
         # GC counting has a CPU argument. Bias fitting itself is serial
+        # The release config estimates GC bias over 15-500 bp, independently of
+        # the profiling range. Neighbouring lengths are needed for native smoothing
         "$environment/bin/python" "$scripts/griffin_GC_counts.py" \
             --bam_file "$BENCH_WORK/sample.bam" --bam_file_name sample \
             --mappable_regions_path "$BENCH_WORK/gc-regions.bed" \
             --ref_seq "$BENCH_WORK/reference.fa" --chrom_sizes "$BENCH_WORK/bam.chrom.sizes" \
             --out_dir "$bias_directory" --map_q "$BENCH_MIN_MAPQ" \
-            --size_range "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH" --CPU "$cores"
+            --size_range 15 500 --CPU "$cores"
         "$environment/bin/python" "$scripts/griffin_GC_bias.py" \
             --bam_file_name sample --mappable_name "$BENCH_GC_REFERENCE_NAME" \
             --genome_GC_frequency "$BENCH_WORK/reference-gc" \
-            --out_dir "$bias_directory" --size_range "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH"
+            --out_dir "$bias_directory" --size_range 15 500
         bash "$BENCH_WORK/griffin_profile.sh" "$cores" "$BENCH_WORK/sites.yaml" \
             "$BENCH_WORK/chrom.sizes" "$BENCH_CHROMOSOMES" "$BENCH_WORK/output" \
             "$bias_directory/GC_bias/sample.GC_bias.txt"

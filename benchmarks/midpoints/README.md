@@ -38,13 +38,15 @@ Run `cfdnalab-gc` and `griffin-gc` as additional, separate jobs. Each timed repe
 | Workload | Commands inside each timing |
 | --- | --- |
 | `cfdnalab-gc` | `cfdna gc-bias`, then `cfdna midpoints --gc-file ... --ref-2bit ...` |
-| `griffin-gc` | Native `griffin_GC_counts.py`, `griffin_GC_bias.py`, `griffin_coverage.py` and `griffin_merge_sites.py`. Retains `sample.GC_corrected.coverage.tsv` |
+| `griffin-gc` | Native `griffin_GC_counts.py --size_range 15 500`, `griffin_GC_bias.py --size_range 15 500`, then `griffin_coverage.py` with the profiling range and `griffin_merge_sites.py`. Retains `sample.GC_corrected.coverage.tsv` |
 
 Both workflows keep native bias fitting, smoothing, exclusion rules and diagnostic plots. Correction algorithms are not forced to match. cfDNAlab uses directional paired spans, GC percentages and its native reference end offset (10 bp by default). Griffin uses record/TLEN selection, whole-fragment GC counts and its native smoothing. Its estimator counts qualifying forward and reverse records independently. Corrected-profile differences therefore reflect both bias estimates and midpoint counting. Mean per-site/per-bp values represent weighted midpoint counts in this comparison.
 
 cfDNAlab uses its default reference and sample GC-estimation settings. Its reference package is calculated once per alignment reference and reused across all BAMs, repetitions and core settings. The default package covers 30-1000 bp, and sample GC estimation inherits that range. The midpoint profiles still use the agreed 100-200 bp range.
 
 Griffin's downloaded source already includes its hg38 GC-estimation BED and precomputed reference GC-frequency tables under `Griffin-source/Ref/`. Use these bundled inputs for the hg38 benchmark. Its estimator only accepts `chr1` through `chr22`. The runner checks that the supplied estimation regions use those chromosomes, are nonempty, sorted, non-overlapping and within chromosome bounds. This BED is only used by `griffin-gc`. It does not replace or modify `BENCH_INTERVALS` or restrict cfDNAlab's reference calculation.
+
+Griffin's GC estimation uses the release's [15-500 bp range](https://github.com/adoebley/Griffin/blob/v0.2.0/snakemakes/griffin_GC_and_mappability_correction/config/config.yaml), independently of the 100-200 bp profiling range. Setup copies every reference table from 15 through 500 bp and records the estimation bounds in `run.tsv`. Corrected profiling ranges outside 15-500 bp fail before input staging. Restricting estimation to the profiling range would omit records from the sample estimate and remove neighbouring lengths from smoothing at its edges. The benchmark requests MAPQ >=30 for estimation and profiling, while Griffin's release configurations use 20.
 
 Add these paths to the local settings file, in addition to the existing BAM, site, FASTA and tool paths. Reuse `BENCH_REF_2BIT` if it is already exported for end motifs:
 
@@ -57,7 +59,7 @@ export BENCH_GRIFFIN_GC_REGIONS=/path/to/benchmark-tools/Griffin-source/Ref/k100
 export BENCH_GRIFFIN_REF_GC=/path/to/benchmark-tools/Griffin-source/Ref/genome_GC_frequency
 ```
 
-The FASTA and 2bit must contain the same alignment reference. `BENCH_CFDNA_REF_GC` points to the reusable default reference package. Native loading checks reference compatibility, and midpoint correction checks that the requested length range is covered. Griffin expects a file named `<GC_BED_basename_without_extension>.<length>bp.GC_frequency.txt` for every requested length in `BENCH_GRIFFIN_REF_GC`. These must correspond to the supplied reference, estimation BED and read length. A supplied reference table from another assembly or region set is not interchangeable.
+The FASTA and 2bit must contain the same alignment reference. `BENCH_CFDNA_REF_GC` points to the reusable default reference package. Native loading checks reference compatibility, and midpoint correction checks that the requested length range is covered. Griffin expects a file named `<GC_BED_basename_without_extension>.<length>bp.GC_frequency.txt` for every length from 15 through 500 bp in `BENCH_GRIFFIN_REF_GC`. The pinned release includes all of these tables. They must correspond to the supplied reference, estimation BED and read length. A supplied reference table from another assembly or region set is not interchangeable.
 
 Run cfDNAlab's reference calculation once in a compute allocation, outside benchmark measurements. The following command supplies only the required paths, leaving all calculation settings at their defaults. Keep this command outside the settings file, which should only export paths:
 
@@ -85,7 +87,9 @@ BENCH_RESULTS=/path/to/midpoints-griffin-gc-pilot \
     bash benchmarks/submit_benchmark.sh midpoints --time=YOUR_GRIFFIN_PILOT_BASED_BUDGET
 ```
 
-Griffin keeps its short, untimed demo with unit weights, without estimating sample bias during that demo. Every measured `griffin-gc` repetition performs the full sample estimation and production profiling. Full `cfdnalab-gc` runs warm up the entire corrected workflow. The first measured bias estimate and its diagnostics are retained under `profiles/<method>/sample-gc-bias/`. Inputs are staged before timing, and both `run.tsv` and the timing rows distinguish corrected runs from the uncorrected baseline.
+Griffin keeps its short, untimed demo with unit weights, without estimating sample bias during that demo. Every measured `griffin-gc` repetition performs the full sample estimation and production profiling. Its first measured estimation has no preceding estimation warmup in that job. Full `cfdnalab-gc` runs warm up the entire corrected workflow. The first measured bias estimate and its diagnostics are retained under `profiles/<method>/sample-gc-bias/`. Inputs are staged before timing, and both `run.tsv` and the timing rows distinguish corrected runs from the uncorrected baseline.
+
+Budget corrected Griffin runs from measurements of the complete estimation-plus-profiling workflow. Its [release cluster configuration](https://github.com/adoebley/Griffin/blob/v0.2.0/snakemakes/griffin_GC_and_mappability_correction/config/cluster_slurm.yaml) requests 48 hours with eight CPUs for GC counting alone and warns that large BAMs can take days. Those are upstream resource requests, not measured runtimes for this input. A 48-hour allocation for the entire single-core workflow has not been validated. Measure a higher-core corrected run before choosing that allocation's time limit. Use `BENCH_REPETITIONS=1` with `BENCH_PILOT=0` for a single measured production run with exclusive allocation.
 
 For corrected concordance, copy the saved `cfdnalab-gc` and `griffin-gc` profile directories into a separate comparison directory as in the uncorrected example below, then run:
 

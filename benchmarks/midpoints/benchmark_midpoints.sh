@@ -63,6 +63,10 @@ for method in "${methods_to_run[@]}"; do
         *) echo "Unknown midpoint tool: $method" >&2; exit 1 ;;
     esac
 done
+if [[ " $BENCH_METHODS " == *" griffin-gc "* ]] && ((BENCH_MIN_LENGTH < 15 || BENCH_MAX_LENGTH > 500)); then
+    echo "Griffin GC estimation uses 15-500 bp. Keep the profiling range within those bounds." >&2
+    exit 1
+fi
 if [[ " $BENCH_METHODS " == *" griffin"* && ${BENCH_REF_FASTA:-} == *.gz ]]; then
     echo "Use an uncompressed FASTA and its existing .fai index." >&2
     exit 1
@@ -169,9 +173,12 @@ if [[ "$BENCH_RUN_GC" == true ]]; then
         printf 'griffin_gc_regions\t%s\n' "$BENCH_GRIFFIN_GC_REGIONS" >> "$BENCH_RESULTS/run.tsv"
         BENCH_GC_REFERENCE_NAME=${BENCH_GRIFFIN_GC_REGIONS##*/}
         BENCH_GC_REFERENCE_NAME=${BENCH_GC_REFERENCE_NAME%.*}
+        # Griffin estimates bias over its release config's 15-500 bp range
+        # These tables include the neighbours used to smooth the 100-200 bp profiles
+        printf 'griffin_gc_estimation_min_length\t15\ngriffin_gc_estimation_max_length\t500\n' >> "$BENCH_RESULTS/run.tsv"
         benchmark_progress "Copying Griffin reference GC frequencies to node-local scratch"
         mkdir -p "$BENCH_WORK/reference-gc"
-        for ((fragment_length=BENCH_MIN_LENGTH; fragment_length<=BENCH_MAX_LENGTH; fragment_length++)); do
+        for ((fragment_length=15; fragment_length<=500; fragment_length++)); do
             reference_file="$BENCH_GRIFFIN_REF_GC/$BENCH_GC_REFERENCE_NAME.${fragment_length}bp.GC_frequency.txt"
             if [[ ! -s "$reference_file" ]]; then echo "Missing Griffin reference GC frequency: $reference_file" >&2; exit 1; fi
             cp -L "$reference_file" "$BENCH_WORK/reference-gc/"
