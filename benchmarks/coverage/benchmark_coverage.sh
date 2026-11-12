@@ -21,9 +21,12 @@
 # This preserves the default biological scope for either BAM naming convention
 # pandepth also processes all BAM contigs, counting overlapping mates twice
 # Its workload is labeled per-base-read-depth to retain that distinction
-# cfdnalab-region-counts and finaletoolkit-coverage count fragments overlapping
-# identical 500 kb windows over all BAM contigs. The workload column separates
-# these regional counts from per-base depth. They measure different quantities
+# cfdnalab-region-counts sums length-normalized fragment coverage in 500 kb windows
+# finaletoolkit-coverage counts fragments overlapping the same window coordinates
+# cfDNAlab splits a boundary fragment's contribution between windows. FinaleToolkit
+# counts it in each overlapping window. Regional counts are separate from base depth
+# cfdnalab-regions, mosdepth-regions, samtools-regions and pandepth-regions instead
+# summarize read depth in the same windows, without writing per-base tracks
 #
 # Example submission from the repository root:
 #   bash benchmarks/install_tools.sh /path/to/benchmark-tools
@@ -90,7 +93,7 @@ if ((BENCH_CORES > ${SLURM_CPUS_PER_TASK:-0})); then
 fi
 for method in "${methods_to_run[@]}"; do
     case "$method" in
-        cfdnalab|cfdnalab-autosomes|cfdnalab-fragment|cfdnalab-fragment-proper|mosdepth|mosdepth-fragment|samtools-depth|pandepth|cfdnalab-region-counts|cfdnalab-region-counts-proper|finaletoolkit-coverage) ;;
+        cfdnalab|cfdnalab-autosomes|cfdnalab-fragment|cfdnalab-fragment-proper|mosdepth|mosdepth-fragment|samtools-depth|pandepth|cfdnalab-region-counts|cfdnalab-region-counts-proper|finaletoolkit-coverage|cfdnalab-regions|mosdepth-regions|samtools-regions|pandepth-regions) ;;
         *) echo "Unknown coverage method: $method" >&2; exit 1 ;;
     esac
 done
@@ -141,7 +144,7 @@ for method in "${methods_to_run[@]}"; do
         mosdepth*)
             : "${BENCH_MOSDEPTH:?Set the mosdepth executable}"
             if [[ ! -f "$BENCH_WORK/bin/mosdepth" ]]; then benchmark_stage_binary "$BENCH_MOSDEPTH" mosdepth; fi ;;
-        pandepth)
+        pandepth|pandepth-regions)
             : "${BENCH_PANDEPTH:?Set the PanDepth executable}"
             benchmark_stage_binary "$BENCH_PANDEPTH" pandepth ;;
         finaletoolkit-coverage)
@@ -168,7 +171,8 @@ cp -L "$BENCH_INDEX" "$BENCH_WORK/sample.bam.${BENCH_INDEX##*.}"
 
 # The script generates a shared BED4 of 500 kb windows, including shorter final windows
 # idxstats supplies contig lengths from the BAM index. Its unmapped '*' row is excluded
-# This setup is outside every timer. Both regional methods read the same BED
+# This setup is outside every timer. FinaleToolkit and samtools bedcov read this BED
+# Native fixed-size windows in cfDNAlab/mosdepth use the same coordinates
 "$BENCH_WORK/samtools-env/bin/samtools" idxstats "$BENCH_WORK/sample.bam" |
     awk 'BEGIN {OFS="\t"} $1 != "*" {
         for (window_start=0; window_start<$2; window_start+=500000) {
@@ -181,6 +185,12 @@ if [[ ! -s "$BENCH_WORK/regions.bed" ]]; then
     echo "No coverage windows could be generated from the BAM index." >&2
     exit 1
 fi
+# PanDepth 2.26 treats its BED coordinates as 1-based inclusive. This scratch
+# copy therefore adds 1 to each start, preserving exactly the same covered bases
+# Three columns keep each window separate rather than grouping BED4 labels
+if [[ " $BENCH_METHODS " == *" pandepth-regions "* ]]; then
+    awk 'BEGIN {OFS="\t"} {print $1, $2+1, $3}' "$BENCH_WORK/regions.bed" > "$BENCH_WORK/pandepth-regions.bed"
+fi
 
 # Autosome selection uses the BAM's actual names. Snyder's reference can use 1..22,
 # while cfDNAlab defaults to chr1..chr22. The file's chromosome names remain unchanged
@@ -191,20 +201,8 @@ if [[ " $BENCH_METHODS " == *" cfdnalab-autosomes "* && -z "$BENCH_AUTOSOMES" ]]
     exit 1
 fi
 
-# Per-base text outputs are large, so the following block selects chromosomes to keep
-if [[ -n ${BENCH_CAPTURE_CHROMOSOMES:-} ]]; then
-    awk -v names="$BENCH_CAPTURE_CHROMOSOMES" '
-        BEGIN {split(names, entries, ","); for (entry_index in entries) selected[entries[entry_index]]=1}
-        $1 in selected {found[$1]=1; print}
-        END {for (chromosome in selected) if (!(chromosome in found)) {
-            print "Capture chromosome absent from BAM: " chromosome > "/dev/stderr"
-            exit 1
-        }}' "$BENCH_WORK/chrom.sizes" > "$BENCH_WORK/capture.chrom.sizes"
-else
-    awk '$1 ~ /^(chr)?(21|22)$/' "$BENCH_WORK/chrom.sizes" > "$BENCH_WORK/capture.chrom.sizes"
-    if [[ ! -s "$BENCH_WORK/capture.chrom.sizes" ]]; then head -n 1 "$BENCH_WORK/chrom.sizes" > "$BENCH_WORK/capture.chrom.sizes"; fi
-fi
-if [[ ! -s "$BENCH_WORK/capture.chrom.sizes" ]]; then echo "No capture chromosomes found." >&2; exit 1; fi
+# Every processed chromosome is retained for concordance, including positional
+# samtools/PanDepth outputs. Saving those profiles happens after the tool timer
 cp "$BENCH_WORK/regions.bed" "$BENCH_RESULTS/regions.bed"
 export BENCH_RESULTS BENCH_MIN_MAPQ BENCH_MIN_LENGTH BENCH_MAX_LENGTH
 
@@ -232,6 +230,8 @@ while IFS=$'\t' read -r method cores repetition is_warmup; do
     if [[ "$method" == *fragment* ]]; then workload=per-base-fragment-coverage; fi
     if [[ "$method" == cfdnalab-region-counts* || "$method" == finaletoolkit-coverage ]]; then
         workload=region-counts-500kb
+    elif [[ "$method" == *-regions ]]; then
+        workload=regional-read-depth-500kb
     elif [[ "$method" == pandepth ]]; then
         workload=per-base-read-depth
     fi
@@ -287,7 +287,7 @@ mkdir -p "$BENCH_WORK/coverage"
 scope=all
 proper_pair=not-required
 length_filter=applied
-if [[ "$method" == cfdnalab || "$method" == cfdnalab-autosomes || "$method" == cfdnalab-fragment* ]]; then
+if [[ "$method" == cfdnalab || "$method" == cfdnalab-autosomes || "$method" == cfdnalab-fragment* || "$method" == cfdnalab-regions ]]; then
     tool_threads=$cores
     tool_version=$BENCH_CFDNA_VERSION
     # Both cfDNAlab variants use the same coverage, filtering and pairing settings
@@ -306,7 +306,12 @@ if [[ "$method" == cfdnalab || "$method" == cfdnalab-autosomes || "$method" == c
     if [[ "$method" != *fragment* ]]; then command+=(--ignore-gap); fi
     if [[ "$method" == cfdnalab-fragment-proper ]]; then command+=(--require-proper-pair); proper_pair=required; fi
     track="$BENCH_WORK/coverage/fcoverage.per_position.bedgraph.zst"
-elif [[ "$method" == mosdepth || "$method" == mosdepth-fragment ]]; then
+    if [[ "$method" == cfdnalab-regions ]]; then
+        # Regional read depth is the sum of covered bases, without length normalization
+        command+=(--by-size 500000 --per-window total)
+        track="$BENCH_WORK/coverage/fcoverage.total.tsv.zst"
+    fi
+elif [[ "$method" == mosdepth || "$method" == mosdepth-fragment || "$method" == mosdepth-regions ]]; then
     # mosdepth has a main calculation thread plus extra decompression threads
     # The decompression setting uses the remaining cores after the main thread
     tool_threads=$((cores - 1))
@@ -321,24 +326,41 @@ elif [[ "$method" == mosdepth || "$method" == mosdepth-fragment ]]; then
         command+=(--fragment-mode)
         proper_pair=required
     fi
+    if [[ "$method" == mosdepth-regions ]]; then
+        command+=(--by 500000 --no-per-base)
+    fi
     command+=("$BENCH_WORK/coverage/coverage" "$BENCH_WORK/sample.bam")
     track="$BENCH_WORK/coverage/coverage.per-base.bed.gz"
+    if [[ "$method" == mosdepth-regions ]]; then track="$BENCH_WORK/coverage/coverage.regions.bed.gz"; fi
 elif [[ "$method" == samtools-depth ]]; then
     # Requesting cores - 1 decoding threads leaves a core for the main calculation
     # -s removes mate overlap, -aa includes zero-depth bases on all contigs
     # -q is base quality and -Q is MAPQ. No -J means deletions are excluded
-    # Basic flags match without requiring proper pairs. samtools depth has no
-    # fragment length filter and does not require both mates to pass filtering
+    # Basic flags match without requiring proper pairs. The HTSlib input expression
+    # filters both TLEN signs with inclusive bounds during the same BAM read pass
+    # This does not require both mates to pass filtering or reconstruct their span
     # Its native output is uncompressed text with a 1-based position per row
     # https://www.htslib.org/doc/samtools-depth.html
     tool_threads=$((cores - 1))
     tool_version=$BENCH_SAMTOOLS_VERSION
-    length_filter=unsupported
     track="$BENCH_WORK/coverage/samtools.depth.tsv"
     command=("$BENCH_WORK/samtools-env/bin/samtools" depth -@ "$tool_threads"
+        --input-fmt-option "filter=(tlen >= $BENCH_MIN_LENGTH && tlen <= $BENCH_MAX_LENGTH) || (tlen <= -$BENCH_MIN_LENGTH && tlen >= -$BENCH_MAX_LENGTH)"
         -aa -s -q 0 -Q "$BENCH_MIN_MAPQ" -G 3852 --require-flags 1
         -o "$track" "$BENCH_WORK/sample.bam")
-elif [[ "$method" == pandepth ]]; then
+elif [[ "$method" == samtools-regions ]]; then
+    # bedcov sums read depth directly over the BED. -j excludes D/N positions
+    # Unlike depth -s, bedcov counts overlapping mates twice. The HTSlib input
+    # options supply decoding threads, paired-read selection and TLEN bounds
+    tool_threads=$((cores - 1))
+    tool_version=$BENCH_SAMTOOLS_VERSION
+    track="$BENCH_WORK/coverage/samtools.bedcov.tsv"
+    command=("$BENCH_WORK/samtools-env/bin/samtools" bedcov
+        --input-fmt-option "nthreads=$tool_threads"
+        --input-fmt-option "filter=flag.paired && ((tlen >= $BENCH_MIN_LENGTH && tlen <= $BENCH_MAX_LENGTH) || (tlen <= -$BENCH_MIN_LENGTH && tlen >= -$BENCH_MAX_LENGTH))"
+        -j -Q "$BENCH_MIN_MAPQ" -G 3852
+        "$BENCH_WORK/regions.bed" "$BENCH_WORK/sample.bam")
+elif [[ "$method" == pandepth || "$method" == pandepth-regions ]]; then
     # -a writes every base, including zeros, to a compressed SiteDepth table
     # MAPQ and exclusion flags match. PanDepth has no fragment length filter,
     # paired-read inclusion flag, complete-pair check or mate-overlap correction
@@ -350,22 +372,29 @@ elif [[ "$method" == pandepth ]]; then
     length_filter=unsupported
     command=("$BENCH_WORK/bin/pandepth"
         -i "$BENCH_WORK/sample.bam" -o "$BENCH_WORK/coverage/pandepth"
-        -a -q "$BENCH_MIN_MAPQ" -x 3852 -t "$tool_threads")
+        -q "$BENCH_MIN_MAPQ" -x 3852 -t "$tool_threads")
     track="$BENCH_WORK/coverage/pandepth.SiteDepth.gz"
+    if [[ "$method" == pandepth-regions ]]; then
+        # Native regional statistics include TotalDepth, avoiding a per-base table
+        command+=(-b "$BENCH_WORK/pandepth-regions.bed")
+        track="$BENCH_WORK/coverage/pandepth.bed.stat.gz"
+    else
+        command+=(-a)
+    fi
 elif [[ "$method" == cfdnalab-region-counts* ]]; then
-    # A single length bin gives a fragment count per region, with any overlap
-    # Each included fragment contributes 1 to each window it overlaps
-    # This matches FinaleToolkit coverage's quantity. fcoverage window means
-    # measure base depth instead. cfDNAlab's normal pairing policy is retained
+    # Length normalization gives each fragment a total weight of 1. Summing this
+    # coverage estimates fragment counts in each fixed-size window. A fragment
+    # crossing a boundary splits its contribution, unlike FinaleToolkit's full
+    # count in each overlapping window. Native pairing and coverage rules remain
     tool_threads=$cores
     tool_version=$BENCH_CFDNA_VERSION
-    command=("$BENCH_WORK/bin/cfdna" lengths
+    command=("$BENCH_WORK/bin/cfdna" fcoverage
         --bam "$BENCH_WORK/sample.bam" --output-dir "$BENCH_WORK/coverage"
-        --chromosomes all --by-bed "$BENCH_WORK/regions.bed" --assign-by any
-        --length-bins "$BENCH_MIN_LENGTH" "$((BENCH_MAX_LENGTH + 1))" --indel-mode ignore --clip-mode aligned
+        --chromosomes all --by-size 500000 --per-window total --normalize-by-length
+        --min-fragment-length "$BENCH_MIN_LENGTH" --max-fragment-length "$BENCH_MAX_LENGTH"
         --min-mapq "$BENCH_MIN_MAPQ" --n-threads "$tool_threads")
     if [[ "$method" == cfdnalab-region-counts-proper ]]; then command+=(--require-proper-pair); proper_pair=required; fi
-    track="$BENCH_WORK/coverage/length_counts.tsv.zst"
+    track="$BENCH_WORK/coverage/length_normalized.fcoverage.total.tsv.zst"
 else
     # This command calculates raw fragment counts with no normalization and scale factor 1
     # --threads controls worker processes in the current FinaleToolkit CLI
@@ -402,10 +431,13 @@ fi
 # Timing covers the tool command, including writing and compressing its output
 # Waiting for Slurm, checking CPUs and later saving/cleaning output are excluded
 tool_exit_code=0
+# bedcov prints its native table to stdout rather than accepting an output path
+tool_stdout="$BENCH_WORK/tool.log"
+if [[ "$method" == samtools-regions ]]; then tool_stdout=$track; fi
 benchmark_time_command "$prefix" "$BENCH_WORK/coverage" \
-    "$BENCH_WORK/tool.log" "$BENCH_WORK/tool-error.log" "${command[@]}" || tool_exit_code=$?
+    "$tool_stdout" "$BENCH_WORK/tool-error.log" "${command[@]}" || tool_exit_code=$?
 if ((tool_exit_code != 0)); then
-    cat "$BENCH_WORK/tool-error.log" "$BENCH_WORK/tool.log" >&2
+    cat "$BENCH_WORK/tool-error.log" "$tool_stdout" >&2
     exit "$tool_exit_code"
 fi
 if [[ ! -s "$track" ]]; then
@@ -445,7 +477,8 @@ STEP
 done < "$BENCH_WORK/order.tsv"
 
 # Concordance runs after all measurements, in both pilots and full benchmark jobs
-# The saved positional subsets are compared on their explicitly shared chromosomes
+# All-contig profiles retain the full scope. Optional autosome diagnostics are
+# compared on the chromosomes shared with their whole-reference counterparts
 benchmark_compare_results "$SLURM_SUBMIT_DIR/benchmarks/coverage/compare_coverage.py" --common-scope
 
 # The job reports failure if any method failed, while keeping completed results

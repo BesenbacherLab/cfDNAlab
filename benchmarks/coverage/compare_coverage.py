@@ -2,9 +2,9 @@
 """Compare retained coverage tracks without expanding them into genomic arrays.
 
 Run boundaries carry base weights. Temporary per-contig run files reconcile
-different native contig orders and keep memory bounded. Regional counts are
-compared separately by their exact shared BED coordinates. Requires zstd for
-cfDNAlab tracks and the comparison environment for regional length tables.
+different native contig orders and keep memory bounded. Regional read depth and
+fragment counts are compared separately at exact shared BED coordinates. Requires zstd for
+cfDNAlab tracks and length-normalized regional coverage tables.
 Always save exact base-weighted residual counts to residuals.tsv beside profiles/.
 Summary metrics go to stdout. Base-resolution MAE is the primary similarity measure.
 """
@@ -26,6 +26,11 @@ import tempfile
 # The shared checks live in benchmarks/, above this feature's script directory
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from benchmark_metrics import checked_metric, correlation_value
+
+
+REGIONAL_COVERAGE_METHODS = {
+    "cfdnalab-regions", "mosdepth-regions", "samtools-regions", "pandepth-regions"
+}
 
 
 @contextmanager
@@ -292,20 +297,48 @@ def compare_tracks(left_paths, right_paths, scope, residual_database):
 
 
 def regional_counts(directory, expected_regions):
-    """Require the exact same unique BED rows and a single length bin."""
-    if directory.name.startswith("cfdnalab"):
-        from cfdnalab import read_lengths, WindowedLengthCounts
+    """Read fragment or covered-base counts at exact shared coordinates.
 
-        result = read_lengths(directory / "length_counts.tsv.zst")
-        if (
-            not isinstance(result, WindowedLengthCounts)
-            or len(result.length_bins()) != 1
-        ):
-            raise ValueError("Expected a BED count table with a single length bin")
-        table = result.data_frame()
-        entries = table[["chrom", "start", "end", "count"]].itertuples(
-            index=False, name=None
+    mosdepth reports mean depth, converted to covered-base totals by window width.
+    PanDepth's native inclusive coordinates convert back to BED coordinates.
+    """
+    is_cfdnalab = directory.name.startswith("cfdnalab")
+    if is_cfdnalab:
+        length_normalized = "region-counts" in directory.name
+        filename = (
+            "length_normalized.fcoverage.total.tsv.zst"
+            if length_normalized else "fcoverage.total.tsv.zst"
         )
+        value_column = "total_fragment_mass" if length_normalized else "total_coverage"
+        with open_track(directory / filename) as source:
+            entries = [
+                (row["chromosome"], row["start"], row["end"], row[value_column])
+                for row in csv.DictReader(source, delimiter="\t")
+            ]
+    elif directory.name == "mosdepth-regions":
+        with open_track(directory / "coverage.regions.bed.gz") as source:
+            entries = [
+                (
+                    fields[0], fields[1], fields[2],
+                    float(fields[-1]) * (int(fields[2]) - int(fields[1])),
+                )
+                for fields in csv.reader(source, delimiter="\t")
+                if fields and not fields[0].startswith("#")
+            ]
+    elif directory.name == "samtools-regions":
+        with open_track(directory / "samtools.bedcov.tsv") as source:
+            entries = [
+                fields[:3] + fields[-1:]
+                for fields in csv.reader(source, delimiter="\t")
+                if fields and not fields[0].startswith("#")
+            ]
+    elif directory.name == "pandepth-regions":
+        with open_track(directory / "pandepth.bed.stat.gz") as source:
+            entries = [
+                (fields[0], int(fields[1]) - 1, fields[2], fields[6])
+                for fields in csv.reader(source, delimiter="\t")
+                if fields and not fields[0].startswith("#")
+            ]
     else:
         with open_track(directory / "finaletoolkit.coverage.bed.gz") as source:
             entries = [
@@ -321,9 +354,9 @@ def regional_counts(directory, expected_regions):
             key in counts
             or not math.isfinite(count)
             or count < 0
-            or not count.is_integer()
+            or (directory.name == "finaletoolkit-coverage" and not count.is_integer())
         ):
-            raise ValueError(f"Duplicate region or invalid raw count in {directory}")
+            raise ValueError(f"Duplicate region or invalid count in {directory}")
         counts[key] = count
     if set(counts) != expected_regions:
         raise ValueError(
@@ -333,7 +366,7 @@ def regional_counts(directory, expected_regions):
 
 
 def compare_regions(left, right):
-    """Keep summed regional counts distinct from unique-fragment totals."""
+    """Compare regional totals without rounding fractional values."""
     differences = [left[key] - right[key] for key in left]
     correlation = Correlation()
     for key in left:
@@ -380,7 +413,10 @@ def main():
     regional_directories = [
         path
         for path in directories
-        if "region-counts" in path.name or path.name == "finaletoolkit-coverage"
+        if (
+            "region-counts" in path.name or path.name == "finaletoolkit-coverage"
+            or path.name in REGIONAL_COVERAGE_METHODS
+        )
     ]
     track_scopes = {
         path.name: read_scope(path)
@@ -498,16 +534,25 @@ def main():
             residual_database.execute("DELETE FROM residual_counts")
             residual_database.commit()
         for left_name, right_name in combinations(regions, 2):
+            covered_bases = left_name in REGIONAL_COVERAGE_METHODS
+            if covered_bases != (right_name in REGIONAL_COVERAGE_METHODS):
+                continue
+            metrics = compare_regions(regions[left_name], regions[right_name])
+            if covered_bases:
+                # These totals count covered bases rather than fragments
+                metrics["left_integrated_depth"] = metrics.pop("left_summed_region_counts")
+                metrics["right_integrated_depth"] = metrics.pop("right_summed_region_counts")
+                metrics["net_coverage_difference"] = metrics.pop("net_count_difference")
             rows.append(
                 {
                     "left_profile": left_name,
                     "right_profile": right_name,
-                    "quantity": "regional-fragment-counts",
+                    "quantity": "regional-read-depth" if covered_bases else "regional-fragment-counts",
                     "same_native_scope": True,
                     "chromosomes": ",".join(
                         sorted({key[0] for key in regions[left_name]})
                     ),
-                    **compare_regions(regions[left_name], regions[right_name]),
+                    **metrics,
                 }
             )
         if not rows:

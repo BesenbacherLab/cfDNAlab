@@ -276,11 +276,13 @@ case "$method" in
         # filter that streams uncompressed BAM into Picard. Both programs share
         # the allocated CPU cores. PDF plotting is omitted
         # Explicit width prevents Picard from trimming the histogram tail
+        # Keep the launcher's default starting heap but let Java choose its maximum
+        # Passing -Xms prevents the launcher from adding its own fixed -Xmx limit
         command=(bash -c '
             set -euo pipefail
             cores=$1
             "$BENCH_WORK/samtools-env/bin/samtools" view -@ "$((cores - 1))" -u -q "$BENCH_MIN_MAPQ" -f 1 -F 3852 "$BENCH_WORK/sample.bam" |
-                "$BENCH_WORK/picard-env/bin/picard" -Xmx4g -XX:ActiveProcessorCount="$cores" \
+                "$BENCH_WORK/picard-env/bin/picard" -Xms512m -XX:ActiveProcessorCount="$cores" \
                 -Djava.io.tmpdir="$BENCH_WORK/tmp" \
                 CollectInsertSizeMetrics \
                 INPUT=/dev/stdin OUTPUT="$BENCH_WORK/output/metrics.txt" \

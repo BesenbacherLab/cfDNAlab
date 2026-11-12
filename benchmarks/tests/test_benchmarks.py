@@ -358,28 +358,37 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(residuals[0]["chromosomes"], "chr1")
         self.assertEqual(residuals[0]["same_native_scope"], "False")
 
-    def test_regional_comparison_checks_coordinates_and_raw_counts(self):
-        # Counts (2, 1) versus (1, 3) give differences (1, -2), MAE 1.5
+    def test_regional_comparison_preserves_fractional_counts_and_coordinates(self):
+        # Fragments [10,40), [40,80), [60,90) give normalized totals (1.25,1.75)
+        # The 40 bp boundary fragment contributes 10/40 and 30/40 to the windows
+        # Any-overlap counts are (2,2). Differences (-.75,-.25) give MAE .5,
+        # RMSE sqrt(5)/4 and summed-count ratio 3/4
         (self.profiles.parent / "regions.bed").write_text(
             "chr1\t0\t50\t.\nchr1\t50\t100\t.\n"
         )
         left = self.profiles / "cfdnalab-region-counts"
         left.mkdir()
-        table = "chrom\tstart\tend\tcount_30_1001\nchr1\t0\t50\t2\nchr1\t50\t100\t1\n"
-        (left / "length_counts.tsv.zst").write_bytes(
+        table = (
+            "chromosome\tstart\tend\ttotal_fragment_mass\tblacklisted_positions\n"
+            "chr1\t0\t50\t1.25\t0\nchr1\t50\t100\t1.75\t0\n"
+        )
+        (left / "length_normalized.fcoverage.total.tsv.zst").write_bytes(
             subprocess.check_output(["zstd", "-q", "-c"], input=table.encode())
         )
         right = self.profiles / "finaletoolkit-coverage"
         right.mkdir()
         with gzip.open(right / "finaletoolkit.coverage.bed.gz", "wt") as destination:
-            destination.write("chr1\t50\t100\t.\t3.0\nchr1\t0\t50\t.\t1.0\n")
+            destination.write("chr1\t50\t100\t.\t2.0\nchr1\t0\t50\t.\t2.0\n")
         result = self.compare()
         self.assertEqual(result.returncode, 0, result.stderr)
         row = next(csv.DictReader(result.stdout.splitlines(), delimiter="\t"))
-        self.assertEqual(float(row["mae"]), 1.5)
-        self.assertAlmostEqual(float(row["rmse"]), math.sqrt(2.5))
+        self.assertEqual(float(row["mae"]), 0.5)
+        self.assertAlmostEqual(float(row["rmse"]), math.sqrt(5) / 4)
         self.assertEqual(float(row["regional_total_ratio"]), 0.75)
-        self.assertEqual(float(row["pearson_r_regions"]), -1)
+        self.assertEqual(float(row["left_summed_region_counts"]), 3)
+        self.assertEqual(float(row["right_summed_region_counts"]), 4)
+        self.assertEqual(float(row["net_count_difference"]), -1)
+        self.assertEqual(row["pearson_r_regions"], "NA")
         # Regional-only comparisons keep the automatic residual file header-only
         with (self.profiles.parent / "residuals.tsv").open() as source:
             self.assertEqual(list(csv.DictReader(source, delimiter="\t")), [])
@@ -387,6 +396,139 @@ class CoverageTests(unittest.TestCase):
         with gzip.open(right / "finaletoolkit.coverage.bed.gz", "wt") as destination:
             destination.write("chr1\t0\t51\t.\t1\nchr1\t50\t100\t.\t3\n")
         self.assertNotEqual(self.compare().returncode, 0)
+
+    def test_regional_reader_rejects_invalid_counts_and_fractional_finale_counts(self):
+        expected_regions = {("chr1", 0, 50)}
+        for method, invalid_values in (
+            ("cfdnalab-region-counts", ("-0.25", "nan", "inf")),
+            ("finaletoolkit-coverage", ("-1", "nan", "inf", "0.5")),
+        ):
+            directory = self.profiles / method
+            directory.mkdir()
+            for invalid_value in invalid_values:
+                with self.subTest(method=method, value=invalid_value):
+                    if method.startswith("cfdnalab"):
+                        table = (
+                            "chromosome\tstart\tend\ttotal_fragment_mass\tblacklisted_positions\n"
+                            f"chr1\t0\t50\t{invalid_value}\t0\n"
+                        )
+                        (directory / "length_normalized.fcoverage.total.tsv.zst").write_bytes(
+                            subprocess.check_output(["zstd", "-q", "-c"], input=table.encode())
+                        )
+                    else:
+                        with gzip.open(directory / "finaletoolkit.coverage.bed.gz", "wt") as destination:
+                            destination.write(f"chr1\t0\t50\t.\t{invalid_value}\n")
+                    with self.assertRaises(ValueError):
+                        coverage.regional_counts(directory, expected_regions)
+
+    def test_native_regional_coverage_formats_match_including_one_base_tail(self):
+        # A 50 bp window at mean depth 2 has 100 covered bases. The final
+        # 1 bp window at depth 3 has 3. Every native table describes (100,3)
+        # PanDepth's [1,50] and [51,51] become BED [0,50) and [50,51)
+        (self.profiles.parent / "regions.bed").write_text(
+            "chr1\t0\t50\t.\nchr1\t50\t51\t.\n"
+        )
+        for method in (
+            "cfdnalab-regions", "mosdepth-regions", "samtools-regions", "pandepth-regions"
+        ):
+            directory = self.profiles / method
+            directory.mkdir()
+            if method == "cfdnalab-regions":
+                table = (
+                    "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions\n"
+                    "chr1\t0\t50\t100\t0\nchr1\t50\t51\t3\t0\n"
+                )
+                (directory / "fcoverage.total.tsv.zst").write_bytes(
+                    subprocess.check_output(["zstd", "-q", "-c"], input=table.encode())
+                )
+            elif method == "mosdepth-regions":
+                with gzip.open(directory / "coverage.regions.bed.gz", "wt") as destination:
+                    destination.write("chr1\t0\t50\t2.00\nchr1\t50\t51\t3.00\n")
+            elif method == "samtools-regions":
+                (directory / "samtools.bedcov.tsv").write_text(
+                    "chr1\t50\t51\t.\t3\nchr1\t0\t50\t.\t100\n"
+                )
+            else:
+                with gzip.open(directory / "pandepth.bed.stat.gz", "wt") as destination:
+                    destination.write(
+                        "#Chr\tStart\tEnd\tRegionID\tLength\tCoveredSite\tTotalDepth\tCoverage(%)\tMeanDepth\n"
+                        "chr1\t1\t50\tchr1_1_50\t50\t50\t100\t100.00\t2.00\n"
+                        "chr1\t51\t51\tchr1_51_51\t1\t1\t3\t100.00\t3.00\n"
+                        "##RegionLength: 51\tCoveredSite: 51\n"
+                    )
+        result = self.compare()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rows = list(csv.DictReader(result.stdout.splitlines(), delimiter="\t"))
+        self.assertEqual(len(rows), 6)
+        for row in rows:
+            self.assertEqual(row["quantity"], "regional-read-depth")
+            self.assertEqual(int(row["regions"]), 2)
+            self.assertEqual(float(row["mae"]), 0)
+            self.assertEqual(float(row["left_integrated_depth"]), 103)
+            self.assertEqual(float(row["right_integrated_depth"]), 103)
+            self.assertEqual(float(row["net_coverage_difference"]), 0)
+        # A fragment-count table must not be paired with covered-base totals
+        counts = self.profiles / "finaletoolkit-coverage"
+        counts.mkdir()
+        with gzip.open(counts / "finaletoolkit.coverage.bed.gz", "wt") as destination:
+            destination.write("chr1\t0\t50\t.\t2\nchr1\t50\t51\t.\t1\n")
+        result = self.compare()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(list(csv.DictReader(result.stdout.splitlines(), delimiter="\t"))), 6)
+
+
+class RegionalCommandTests(unittest.TestCase):
+    """Inspect the real command arrays without starting Slurm or native tools."""
+
+    def test_regional_commands_use_allocated_threads_and_omit_per_base_output(self):
+        script = (BENCHMARKS / "coverage/benchmark_coverage.sh").read_text()
+        command_setup = script.split('mkdir -p "$BENCH_WORK/coverage"\n', 1)[1].split(
+            "# The timing row starts", 1
+        )[0]
+        for cores in (1, 4, 12, 32):
+            for method in (
+                "cfdnalab-regions", "mosdepth-regions", "samtools-regions", "pandepth-regions"
+            ):
+                with self.subTest(cores=cores, method=method):
+                    result = subprocess.run(
+                        ["bash", "-euo", "pipefail", "-c",
+                         'method=$SELECTED_METHOD\ncores=$BENCH_CORES\n' + command_setup
+                         + 'printf "%s\\n" "$tool_threads" "$track" "${command[@]}"\n'],
+                        env={
+                            **os.environ,
+                            "SELECTED_METHOD": method,
+                            "BENCH_CORES": str(cores),
+                            "BENCH_WORK": "/unused/benchmark scratch",
+                            "BENCH_MIN_MAPQ": "30", "BENCH_MIN_LENGTH": "30",
+                            "BENCH_MAX_LENGTH": "1000", "BENCH_CFDNA_VERSION": "fixture",
+                            "BENCH_MOSDEPTH_VERSION": "fixture", "BENCH_SAMTOOLS_VERSION": "fixture",
+                            "BENCH_PANDEPTH_VERSION": "fixture",
+                        },
+                        text=True, capture_output=True,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    threads, track, *command = result.stdout.splitlines()
+                    expected_threads = cores - 1 if method in ("mosdepth-regions", "samtools-regions") else cores
+                    self.assertEqual(int(threads), expected_threads)
+                    if method == "cfdnalab-regions":
+                        self.assertEqual(command[1], "fcoverage")
+                        self.assertIn("--ignore-gap", command)
+                        self.assertNotIn("--normalize-by-length", command)
+                        self.assertEqual(command[command.index("--n-threads") + 1], str(cores))
+                        self.assertTrue(track.endswith("fcoverage.total.tsv.zst"))
+                    elif method == "mosdepth-regions":
+                        self.assertIn("--no-per-base", command)
+                        self.assertEqual(command[command.index("--by") + 1], "500000")
+                        self.assertTrue(track.endswith("coverage.regions.bed.gz"))
+                    elif method == "samtools-regions":
+                        self.assertEqual(command[1], "bedcov")
+                        self.assertIn(f"nthreads={cores - 1}", command)
+                        self.assertIn("-j", command)
+                        self.assertTrue(track.endswith("samtools.bedcov.tsv"))
+                    else:
+                        self.assertIn("-b", command)
+                        self.assertNotIn("-a", command)
+                        self.assertTrue(track.endswith("pandepth.bed.stat.gz"))
 
 
 class TimingTests(unittest.TestCase):

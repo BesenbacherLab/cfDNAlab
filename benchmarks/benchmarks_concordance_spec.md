@@ -28,28 +28,34 @@ Sources: [runner](coverage/benchmark_coverage.sh), [comparator](coverage/compare
 | `cfdnalab-autosomes` | Read-depth configuration restricted to actual BAM autosomes |
 | `mosdepth-fragment` | `--fragment-mode --include-flag 1 --flag 3852`, requested MAPQ/lengths. `coverage.per-base.bed.gz` |
 | `mosdepth` | Same native filters without fragment mode |
-| `samtools-depth` | `depth -aa -s -q 0 -Q MAPQ -G 3852 --require-flags 1`, uncompressed positions |
+| `samtools-depth` | `depth -aa -s -q 0 -Q MAPQ -G 3852 --require-flags 1` with HTSlib inclusive absolute TLEN bounds, uncompressed positions |
 | `pandepth` | `-a -q MAPQ -x 3852 -t CORES`, compressed SiteDepth and summaries |
-| `cfdnalab-region-counts` | `lengths --by-bed --assign-by any --length-bins MIN MAX+1 --indel-mode ignore --clip-mode aligned`, all contigs. `length_counts.tsv.zst` |
-| `cfdnalab-region-counts-proper` | Same regional counts plus proper-pair requirement |
+| `cfdnalab-regions` | `fcoverage --ignore-gap --by-size 500000 --per-window total`, requested MAPQ/lengths/all contigs. `fcoverage.total.tsv.zst` |
+| `mosdepth-regions` | Ordinary mosdepth filters plus `--by 500000 --no-per-base`. `coverage.regions.bed.gz` |
+| `samtools-regions` | `bedcov -j -Q MAPQ -G 3852`, HTSlib paired/TLEN filter and `nthreads=CORES-1`. `samtools.bedcov.tsv` |
+| `pandepth-regions` | `-b` native-coordinate windows, `-q MAPQ -x 3852 -t CORES`, no `-a`. `pandepth.bed.stat.gz` |
+| `cfdnalab-region-counts` | `fcoverage --by-size 500000 --per-window total --normalize-by-length`, requested MAPQ/lengths, all contigs. `length_normalized.fcoverage.total.tsv.zst` |
+| `cfdnalab-region-counts-proper` | Same normalized totals plus proper-pair requirement |
 | `finaletoolkit-coverage` | `coverage --intersect-policy any --scale-factor 1`, requested MAPQ/lengths, no normalization. Compressed BED |
 
-Choose methods explicitly through `BENCH_METHODS`. A complete baseline contains `cfdnalab-fragment`, `mosdepth-fragment`, `cfdnalab`, `mosdepth`, `samtools-depth`, `pandepth`, `cfdnalab-region-counts`, `finaletoolkit-coverage`, split into feasible jobs at each core setting. Proper-pair/autosome diagnostics are optional. cfDNAlab/PanDepth receive the allocated cores, mosdepth/samtools get `cores - 1` additional decompression threads, and FinaleToolkit gets the allocated worker count.
+Choose methods explicitly through `BENCH_METHODS`. A complete baseline contains `cfdnalab-fragment`, `mosdepth-fragment`, `cfdnalab`, `mosdepth`, `samtools-depth`, `pandepth`, `cfdnalab-regions`, `mosdepth-regions`, `samtools-regions`, `pandepth-regions`, `cfdnalab-region-counts`, `finaletoolkit-coverage`, split into feasible jobs at each core setting. Proper-pair/autosome diagnostics are optional. cfDNAlab/PanDepth receive the allocated cores, mosdepth/samtools get `cores - 1` additional decompression threads, and FinaleToolkit gets the allocated worker count.
 
-Regional methods share disjoint 500 kb BED4 windows generated from the BAM index, including shorter final windows. Each fragment counts in every overlapping window, so summed regional counts are not unique-fragment totals.
+Regional methods use the same disjoint 500 kb coordinates from the BAM index, including shorter final windows. cfDNAlab generates them with `--by-size 500000`, while FinaleToolkit reads the shared BED4. cfDNAlab's length-normalized coverage gives each fragment total weight 1 before output rounding, split between windows when it crosses a boundary. FinaleToolkit counts that fragment once in each overlapping window. Their regional counts are therefore approximate comparisons with different boundary handling.
+
+The four `*-regions` methods instead measure summed read depth in those windows and form a separate comparison set. cfDNAlab omits length normalization and uses `--ignore-gap`. mosdepth writes native regional means with no per-base output. samtools bedcov reads the shared BED4 and excludes D/N positions with `-j`, retaining native double counting of mate overlaps. Its HTSlib input expression requires paired records and inclusive absolute TLEN bounds, and `nthreads=CORES-1` enables BAM decoding threads. PanDepth retains its native lack of length/paired-read filters and overlap removal. Its BED reader uses 1-based inclusive coordinates, so setup adds 1 to starts in a scratch-only BED3. No input BAM or source BED is modified. These native commands write regional results directly, including any compulsory summaries/indexes inside timing.
 
 ### Native differences
 
 - cfDNAlab checks both mates and their directional span. Fragment coverage includes inter-mate gaps, excluding D/N positions unsupported by the other mate. Read depth additionally omits the inter-mate gap.
 - mosdepth fragment mode requires proper pairs and fills complete TLEN intervals including D/N positions. Ordinary overlap correction depends on proper pairs, allowing some non-proper overlapping mates to count twice.
-- samtools depth lacks a matching length filter or complete-pair/MAPQ check. PanDepth additionally lacks paired-read inclusion and overlap removal. Unsupported length filtering is recorded.
+- samtools depth applies inclusive absolute TLEN bounds through HTSlib's input-expression filter. It does not reconstruct directional fragment spans or check that both mates pass MAPQ. PanDepth lacks fragment length filtering, paired-read inclusion and overlap removal. Its unsupported length filtering is recorded.
 - FinaleToolkit regional coverage uses proper read1/TLEN selection. Its indexed read1 fetch can miss fragments whose spans alone overlap window boundaries. The end-motif length-bound bug does not establish the same bug in regional coverage.
 
 See [cfDNAlab coverage](../src/commands/fcoverage/fcoverage.rs), [segmented fragment construction](../src/shared/fragment/segment_fragment.rs) and [pinned mosdepth source](https://github.com/brentp/mosdepth/blob/v0.3.14/mosdepth.nim). These native differences can produce unequal coverage on the same BAM.
 
 ### Loading, scope and memory
 
-Supported retained formats are cfDNAlab zstd bedGraph, mosdepth gzip bedGraph and samtools/PanDepth `positions.tsv.gz`. samtools 1-based positions convert to 0-based half-open intervals. PanDepth positions are already 0-based. zstd reads all concatenated frames and propagates decompression errors.
+Supported retained formats are cfDNAlab zstd bedGraph, mosdepth gzip bedGraph and samtools/PanDepth `positions.tsv.gz`. Every processed chromosome is retained. samtools text is compressed outside timing, and PanDepth's compressed table is copied intact. samtools 1-based positions convert to 0-based half-open intervals. PanDepth positions are already 0-based. zstd reads all concatenated frames and propagates decompression errors.
 
 Each per-base profile requires nonempty `chrom.sizes` with unique positive lengths. Runs must be finite/nonnegative, in bounds, sorted and non-overlapping within contiguous contig blocks. Different tools can order those blocks differently. Repeated blocks fail.
 
@@ -89,9 +95,11 @@ Aggregation buffers at most 4096 distinct residual values before merging them in
 
 ### Regional metrics
 
-The shared BED must have unique chromosome/start/end rows. cfDNAlab input is a windowed count table with a single length bin. FinaleToolkit supplies raw BED counts. Counts must be finite nonnegative integers without duplicate regions. Each table must exactly match the shared coordinate set, independently of row order.
+The shared BED must have unique chromosome/start/end rows. cfDNAlab supplies the native `total_fragment_mass` column from its length-normalized `fcoverage` total table. FinaleToolkit supplies raw BED counts. Counts must be finite and nonnegative without duplicate regions. cfDNAlab values may be fractional and are not rounded by the comparator. FinaleToolkit values must remain integers. Each table must exactly match the shared coordinate set, independently of row order.
 
-Results include region count, left/right summed regional counts, left/right total ratio, net difference, MAE/RMSE, identical fraction and Pearson r. Zero right total yields `NA` ratio, including two zero totals. Constant-count correlation is `NA`. Quantity is `regional-fragment-counts`.
+Results include region count, left/right summed regional counts, left/right total ratio, net difference, MAE/RMSE, identical fraction and Pearson r. FinaleToolkit's summed regional counts can exceed its unique-fragment total because of boundary fragments. Zero right total yields `NA` ratio, including two zero totals. Constant-count correlation is `NA`. Quantity is `regional-fragment-counts`.
+
+Regional read-depth inputs use cfDNAlab's `total_coverage`, samtools bedcov's final column, PanDepth's `TotalDepth`, and mosdepth's native mean multiplied by the actual window width. PanDepth output coordinates convert from 1-based inclusive to 0-based half-open. Every table must match the shared coordinate set and contain finite nonnegative totals without duplicates. mosdepth's default two-decimal means limit the precision of reconstructed totals. Results use quantity `regional-read-depth`, `left_integrated_depth`, `right_integrated_depth`, `net_coverage_difference`, the regional total ratio, MAE/RMSE of covered-base totals, identical fraction and regional Pearson r. These metrics compare window summaries and do not replace base-resolution coverage concordance. No residual-distribution rows are written for either regional comparison set.
 
 ## Fragment lengths
 
@@ -108,7 +116,7 @@ Sources: [runner](lengths/benchmark_lengths.sh), [R call](lengths/cfdnapro_lengt
 | `samtools` | Full `stats`, `filter=mapq >= MAPQ`, `-f 1 -F 3852 -m 1 -i MAX+1` |
 | `picard` | Timed `samtools view -u -q MAPQ -f 1 -F 3852` pipeline into `CollectInsertSizeMetrics HISTOGRAM_WIDTH=MAX MINIMUM_PCT=0 INCLUDE_DUPLICATES=false`, no PDF |
 
-Choose methods explicitly through `BENCH_METHODS`. The baseline contains `cfdnalab`, `cfdnalab-autosomes`, `cfdnapro`, `finaletoolkit`, `samtools`, `picard`, split into feasible jobs at each core setting. Proper-pair/outer-span diagnostics are optional. Full R/container startup and Picard's filter/JVM pipeline remain timed. Picard uses a 4 GiB heap and allocated `ActiveProcessorCount`. samtools gets `cores - 1` additional threads.
+Choose methods explicitly through `BENCH_METHODS`. The baseline contains `cfdnalab`, `cfdnalab-autosomes`, `cfdnapro`, `finaletoolkit`, `samtools`, `picard`, split into feasible jobs at each core setting. Proper-pair/outer-span diagnostics are optional. Full R/container startup and Picard's filter/JVM pipeline remain timed. Picard keeps the launcher's 512 MiB starting heap, lets Java choose its maximum heap from available memory, and receives the allocated `ActiveProcessorCount`. samtools gets `cores - 1` additional threads.
 
 Curated cfDNAPro uses the directional aligned span and uncurated mode uses the outer alignment span. Native pairing, orientation and reference-bound checks can differ. FinaleToolkit selects proper read1/TLEN. samtools supplies inward IS counts and halves passing alignment counts with integer truncation. Picard supplies its all-reads FR histogram.
 

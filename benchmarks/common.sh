@@ -124,9 +124,10 @@ benchmark_compare_results() {
         method=${directory##*/}
         quantity=$BENCH_FEATURE
         if [[ "$BENCH_FEATURE" == coverage ]]; then
-            # Read depth, fragment coverage and regional counts need separate pairs
+            # Positional depth, regional depth and fragment counts need separate pairs
             case "$method" in
                 *region-counts*|finaletoolkit-coverage) quantity=regional-counts ;;
+                *-regions) quantity=regional-read-depth ;;
                 *fragment*) quantity=fragment-coverage ;;
                 *) quantity=read-depth ;;
             esac
@@ -359,19 +360,16 @@ benchmark_finish_run() {
                 cp "$profile" "$BENCH_RESULTS/profiles/$method/left-motifs.pq"
                 ;;
             samtools-depth|pandepth)
-                # Whole-genome per-base tables are very large, so only the selected
-                # chromosomes are kept for comparison. The timed run still produced
-                # the full table. The saved chrom.sizes file records which chromosomes
-                # and lengths are present in this subset
+                # Keep every processed chromosome so concordance covers the full run
+                # PanDepth's compressed native table is copied intact. samtools text
+                # is compressed here, after its timer and Slurm step have finished
+                # The chromosome list records the complete retained scope
                 if [[ "$profile" == *.gz ]]; then
-                    gzip -dc "$profile" |
-                        awk 'NR==FNR {selected[$1]=1; next} $1 in selected' "$BENCH_WORK/capture.chrom.sizes" - |
-                        gzip > "$BENCH_RESULTS/profiles/$method/positions.tsv.gz"
+                    cp "$profile" "$BENCH_RESULTS/profiles/$method/positions.tsv.gz"
                 else
-                    awk 'NR==FNR {selected[$1]=1; next} $1 in selected' "$BENCH_WORK/capture.chrom.sizes" "$profile" |
-                        gzip > "$BENCH_RESULTS/profiles/$method/positions.tsv.gz"
+                    gzip -c "$profile" > "$BENCH_RESULTS/profiles/$method/positions.tsv.gz"
                 fi
-                cp "$BENCH_WORK/capture.chrom.sizes" "$BENCH_RESULTS/profiles/$method/chrom.sizes"
+                cp "$BENCH_WORK/chrom.sizes" "$BENCH_RESULTS/profiles/$method/chrom.sizes"
                 ;;
             *)
                 cp -R "$profile" "$BENCH_RESULTS/profiles/$method/"
