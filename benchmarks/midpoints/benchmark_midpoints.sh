@@ -5,7 +5,7 @@
 #SBATCH --threads-per-core=1
 #SBATCH --no-requeue
 
-# This job produces native, unsmoothed 1 bp midpoint profiles
+# This job produces native midpoint profiles with 165 bp smoothing at 15 bp resolution
 # The submission launcher requests an exclusive node for full runs and allows shared pilots
 # Full-input runs get timing rows. Griffin's short demo warmup is untimed
 # A profile is kept from the first measured repetition of each tool
@@ -100,6 +100,10 @@ if ((${#methods_to_run[@]} != 1)); then
     exit 1
 fi
 : "${BENCH_SAMTOOLS_ARCHIVE:?Set the packed samtools environment for BAM header preparation}"
+: "${BENCH_GRIFFIN_REF_DIR:?Set the Griffin Ref directory containing the shared exclusion BEDs}"
+if [[ "$run_griffin" == true ]]; then
+    BENCH_GRIFFIN_MAPPABILITY_BW=${BENCH_GRIFFIN_MAPPABILITY_BW:-$BENCH_GRIFFIN_REF_DIR/k100.Umap.MultiTrackMappability.bw}
+fi
 if [[ "$run_cfdna" == true ]]; then : "${BENCH_CFDNA:?Set the cfDNAlab executable}"; fi
 if [[ "$run_griffin" == true ]]; then : "${BENCH_GRIFFIN_ARCHIVE:?Set the packed Griffin environment}"; : "${BENCH_REF_FASTA:?Set the matching reference FASTA}"; fi
 if [[ "$BENCH_RUN_GC" == true ]]; then
@@ -134,6 +138,19 @@ printf '%s\n' "$header" > "$BENCH_RESULTS/timings.tsv"
 benchmark_progress "Initializing $BENCH_FEATURE benchmark on $BENCH_NODE"
 benchmark_record_setup
 mkdir -p "$BENCH_WORK/bin" "$BENCH_WORK/tmp" "$BENCH_WORK/cache" "$BENCH_WORK/matplotlib" "$BENCH_WORK/griffin-env"
+# The same public exclusion BEDs are passed to each tool's native masking code
+# cfDNAlab can drop intervals near blacklists. Griffin masks individual positions
+# Those native differences are preserved rather than forcing identical site counts
+mkdir -p "$BENCH_WORK/exclusions"
+for exclusion_file in encode_unified_GRCh38_exclusion_list.bed hg38_centromeres.bed hg38_gaps.bed hg38_fix_patches.bed hg38_alternative_haplotypes.bed; do
+    cp -L "$BENCH_GRIFFIN_REF_DIR/$exclusion_file" "$BENCH_WORK/exclusions/"
+done
+printf 'exclusion_reference_directory\t%s\n' "$BENCH_GRIFFIN_REF_DIR" >> "$BENCH_RESULTS/run.tsv"
+if [[ "$run_griffin" == true ]]; then
+    benchmark_progress "Copying Griffin mappability mask to node-local scratch"
+    cp -L "$BENCH_GRIFFIN_MAPPABILITY_BW" "$BENCH_WORK/mappability.bw"
+    printf 'griffin_mappability_bw\t%s\n' "$BENCH_GRIFFIN_MAPPABILITY_BW" >> "$BENCH_RESULTS/run.tsv"
+fi
 # Python packages, font caches and temporary files stay with this job's inputs
 # Removing inherited Python paths keeps imports inside the selected environments
 export TMPDIR="$BENCH_WORK/tmp" XDG_CACHE_HOME="$BENCH_WORK/cache"
@@ -389,7 +406,10 @@ if [[ "$method" == cfdnalab || "$method" == cfdnalab-gc ]]; then
         --bam "$BENCH_WORK/sample.bam" --output-dir "$BENCH_WORK/output"
         --intervals "$BENCH_WORK/sites.bed" --chromosomes "$BENCH_CHROMOSOMES"
         --length-bins "$BENCH_MIN_LENGTH" "$((BENCH_MAX_LENGTH + 1))"
-        --min-mapq "$BENCH_MIN_MAPQ" --smoothing none --bin-size 1 --n-threads "$cores")
+        --min-mapq "$BENCH_MIN_MAPQ" --bin-size 15 --n-threads "$cores"
+        --blacklist "$BENCH_WORK/exclusions/encode_unified_GRCh38_exclusion_list.bed"
+        "$BENCH_WORK/exclusions/hg38_centromeres.bed" "$BENCH_WORK/exclusions/hg38_gaps.bed"
+        "$BENCH_WORK/exclusions/hg38_fix_patches.bed" "$BENCH_WORK/exclusions/hg38_alternative_haplotypes.bed")
     profile="$BENCH_WORK/output/midpoint_profiles.zarr"
 else
     tool_version=$BENCH_GRIFFIN_VERSION
@@ -411,7 +431,7 @@ fi
 printf -v prefix '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
     "$run_order" "$repetition" "$is_warmup" "$method" "$tool_version" "$cores" "$cores" \
     "$BENCH_MIN_MAPQ" "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH" "$BENCH_SITES" "$BENCH_GROUPS" \
-    "$BENCH_WINDOW_WIDTH" 1 "$midpoint_policy" "$node" "$cpu_model" "$cpu_ids" \
+    "$BENCH_WINDOW_WIDTH" 15 "$midpoint_policy" "$node" "$cpu_model" "$cpu_ids" \
     "$physical_core_ids" "$SLURM_JOB_ID" "$SLURM_STEP_ID" "$started_utc" "$gc_correction"
 logical_cpu_count=$(env -u OMP_NUM_THREADS -u OMP_THREAD_LIMIT nproc)
 if [[ "$node" != "$BENCH_NODE" ]] || ((logical_cpu_count != cores || physical_core_count != cores)); then

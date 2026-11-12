@@ -25,7 +25,7 @@ suppressPackageStartupMessages(library(cfDNAPro))
 # Match cfDNAlab's MAPQ and flag exclusions without requiring proper pairs
 # Both mates must survive reading before cfDNAPro can form a fragment
 # Keep read names, which its native outward-pair curation uses for ordering
-# NM and MD tags are unnecessary for a length-only calculation
+# Native alignment fields and NM/MD tag loading are left at their defaults
 fragments <- readBam(
     bamfile = bam_path,
     genome_label = genome_label,
@@ -41,7 +41,6 @@ fragments <- readBam(
         isDuplicate = FALSE,
         isNotPassingQualityControls = FALSE
     ),
-    galp_tag = character(),
     outdir = NA
 )
 

@@ -475,6 +475,7 @@ done
 printf 'export BENCH_INSTALL_MANIFEST=%q\n' "$manifest"
 if completed_tool cfdnalab; then printf 'export BENCH_CFDNA_BUILD=%q\n' "$install_root/cfdnalab-build.tsv"; fi
 if completed_tool griffin; then
+    printf 'export BENCH_GRIFFIN_REF_DIR=%q\n' "$install_root/Griffin-source/Ref"
     printf 'export BENCH_GRIFFIN_GC_REGIONS=%q\n' "$install_root/Griffin-source/Ref/k100_minus_exclusion_lists.mappable_regions.hg38.bed"
     printf 'export BENCH_GRIFFIN_REF_GC=%q\n' "$install_root/Griffin-source/Ref/genome_GC_frequency"
 fi

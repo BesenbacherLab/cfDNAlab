@@ -298,16 +298,20 @@ elif [[ "$method" == freia ]]; then
     # The samtools exclusion flags are unmapped, secondary, duplicate and
     # supplementary, respectively, as in the authors' preprocessing rule
     # Both samtools thread options receive the allocated core count
+    # The upstream rule streams filtered BAM through tee into the indexer, so
+    # indexing does not reread the completed filtered BAM from disk
+    # https://github.com/mouliere-lab/FrEIA/blob/2c32fb9d9fab774f4ae57931df7fd7d75654d343/workflow/rules/2_FrEIA/1_preprocessing.smk
     printf 'sample_name group\nsample benchmark\n' > "$BENCH_WORK/output/samples.tsv"
     command=(bash -c '
         set -euo pipefail
         cores=$1
         environment="$BENCH_WORK/freia"
         scripts="$environment/share/freia"
-        "$environment/bin/samtools" view -@ "$cores" -q "$BENCH_MIN_MAPQ" \
+        "$environment/bin/samtools" view -@ "$cores" -h -q "$BENCH_MIN_MAPQ" \
             -F 4 -F 256 -F 1024 -F 2048 \
-            -b -o "$BENCH_WORK/output/filtered.bam" "$BENCH_WORK/sample.bam"
-        "$environment/bin/samtools" index -@ "$cores" "$BENCH_WORK/output/filtered.bam"
+            -b "$BENCH_WORK/sample.bam" |
+            tee "$BENCH_WORK/output/filtered.bam" |
+            "$environment/bin/samtools" index -@ "$cores" - "$BENCH_WORK/output/filtered.bam.bai"
         "$environment/bin/python" "$scripts/1_extract_fragment_ends.py" \
             -b "$BENCH_WORK/output/filtered.bam" -o "$BENCH_WORK/output/sample.pq" \
             -c "$BENCH_CONTIGS" -t "$cores" -n 3

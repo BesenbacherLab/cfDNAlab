@@ -15,20 +15,29 @@ output_directory=${5:?Supply the output directory}
 gc_bias=${6:-$BENCH_WORK/unit_gc_bias.tsv}
 environment="$BENCH_WORK/griffin-env"
 scripts="$environment/share/griffin"
-# End coordinates are exclusive. A 2001 bp window uses [-1000, 1001),
-# which retains the central base and 1000 bases on each side
+# End coordinates are exclusive. The supplied wide window is used for both
+# normalization and saved output. Griffin rounds these bounds inward to multiples
+# of its 15 bp step. Crop the central region only after benchmarking
 window_end=$((BENCH_WINDOW_WIDTH - BENCH_HALF_WIDTH))
 IFS=, read -r -a chromosomes <<< "$chromosome_names"
 mkdir -p "$output_directory/tmp" "$output_directory/results"
 
-# No masking, outlier removal, site-wise CNA normalization or smoothing
-# Griffin's final group-wise mean-one normalization cannot be disabled
+# Keep the profiling workflow's native masks, outlier removal and 165 bp smoothing
+# Site-wise CNA correction stays off, as in the release config. FFT features are
+# compulsory in the merge script and remain timed with the official feature settings
+exclusion_paths=(
+    "$BENCH_WORK/exclusions/encode_unified_GRCh38_exclusion_list.bed"
+    "$BENCH_WORK/exclusions/hg38_centromeres.bed"
+    "$BENCH_WORK/exclusions/hg38_gaps.bed"
+    "$BENCH_WORK/exclusions/hg38_fix_patches.bed"
+    "$BENCH_WORK/exclusions/hg38_alternative_haplotypes.bed"
+)
 common=(--sample_name sample --tmp_dir "$output_directory/tmp"
     --sites_yaml "$sites_yaml" --griffin_scripts_dir "$scripts"
     --chrom_sizes_path "$chromosome_sizes" --chroms "${chromosomes[@]}"
     --chrom_column Chrom --position_column position --strand_column Strand
     --norm_window "-$BENCH_HALF_WIDTH" "$window_end"
-    --mappability_correction False --mappability_bw none --CPU "$cores")
+    --mappability_correction False --mappability_bw "$BENCH_WORK/mappability.bw" --CPU "$cores")
 "$environment/bin/python" "$scripts/griffin_coverage.py" "${common[@]}" \
     --bam "$BENCH_WORK/sample.bam" --GC_bias "$gc_bias" \
     --reference_genome "$BENCH_WORK/reference.fa" --mappability_bias none \
@@ -38,7 +47,7 @@ common=(--sample_name sample --tmp_dir "$output_directory/tmp"
     --GC_corrected_bw_path "$output_directory/tmp/sample/tmp_bigWig/sample.GC_corrected.bw" \
     --GC_map_corrected_bw_path none --results_dir "$output_directory/results" \
     --save_window "-$BENCH_HALF_WIDTH" "$window_end" \
-    --center_window "-$BENCH_HALF_WIDTH" "$window_end" \
-    --fft_window "-$BENCH_HALF_WIDTH" "$window_end" --fft_index 1 \
-    --step 1 --exclude_paths none --exclude_zero_mappability False \
-    --exclude_outliers False --CNA_normalization False --individual False --smoothing False
+    --center_window -30 30 --fft_window -960 960 --fft_index 10 \
+    --step 15 --exclude_paths "${exclusion_paths[@]}" --exclude_zero_mappability True \
+    --exclude_outliers True --CNA_normalization False --individual False \
+    --smoothing True --smoothing_length 165

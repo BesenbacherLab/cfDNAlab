@@ -20,6 +20,7 @@ suppressPackageStartupMessages(library(cfDNAPro))
 
 # Match MAPQ and flag exclusions without requiring proper pairs or autosomes
 # Native curation uses directional fragment spans. Both mates must survive
+# Native alignment fields and NM/MD tag loading are left at their defaults
 fragments <- readBam(
     bamfile = bam_path,
     genome_label = genome_label,
@@ -35,7 +36,6 @@ fragments <- readBam(
         isDuplicate = FALSE,
         isNotPassingQualityControls = FALSE
     ),
-    galp_tag = character(),
     outdir = NA
 )
 fragment_lengths <- BiocGenerics::width(fragments)

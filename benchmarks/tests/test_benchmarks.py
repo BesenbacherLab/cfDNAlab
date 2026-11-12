@@ -487,7 +487,8 @@ class RegionalCommandTests(unittest.TestCase):
         )[0]
         for cores in (1, 4, 12, 32):
             for method in (
-                "cfdnalab-regions", "mosdepth-regions", "samtools-regions", "pandepth-regions"
+                "cfdnalab-regions", "mosdepth-regions", "samtools-regions", "pandepth-regions",
+                "finaletoolkit-coverage",
             ):
                 with self.subTest(cores=cores, method=method):
                     result = subprocess.run(
@@ -503,6 +504,7 @@ class RegionalCommandTests(unittest.TestCase):
                             "BENCH_MAX_LENGTH": "1000", "BENCH_CFDNA_VERSION": "fixture",
                             "BENCH_MOSDEPTH_VERSION": "fixture", "BENCH_SAMTOOLS_VERSION": "fixture",
                             "BENCH_PANDEPTH_VERSION": "fixture",
+                            "BENCH_FINALE_VERSION": "fixture",
                         },
                         text=True, capture_output=True,
                     )
@@ -525,11 +527,63 @@ class RegionalCommandTests(unittest.TestCase):
                         self.assertIn(f"nthreads={cores}", command)
                         self.assertIn("-j", command)
                         self.assertTrue(track.endswith("samtools.bedcov.tsv"))
-                    else:
+                    elif method == "pandepth-regions":
                         self.assertEqual(command[command.index("-t") + 1], str(cores))
                         self.assertIn("-b", command)
                         self.assertNotIn("-a", command)
                         self.assertTrue(track.endswith("pandepth.bed.stat.gz"))
+                    else:
+                        self.assertEqual(command[2], "coverage")
+                        self.assertEqual(command[command.index("--threads") + 1], str(cores))
+                        # Leaving these options unset retains midpoint assignment,
+                        # unit scale and no genome-wide normalization
+                        for option in ("--intersect-policy", "--scale-factor", "--normalize"):
+                            self.assertNotIn(option, command)
+                        self.assertTrue(track.endswith("finaletoolkit.coverage.bed.gz"))
+
+
+class FreiaPreprocessingTests(unittest.TestCase):
+    """Check the upstream streaming pipeline with stand-ins for external tools."""
+
+    def test_filtered_bytes_are_saved_and_streamed_to_indexer(self):
+        script = (BENCHMARKS / "ends/benchmark_end_motifs.sh").read_text()
+        freia_section = script.split('elif [[ "$method" == freia ]]; then', 1)[1]
+        pipeline = freia_section.split("command=(bash -c '\n", 1)[1].split(
+            '        "$environment/bin/python"', 1
+        )[0]
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary) / "scratch with spaces"
+            binary = work / "freia/bin/samtools"
+            binary.parent.mkdir(parents=True)
+            (work / "output").mkdir()
+            (work / "sample.bam").write_bytes(b"filtered fixture\n")
+            # A fake filter copies the fixture to stdout. The fake indexer accepts
+            # stdin only and saves those bytes, so a separate file read cannot pass
+            binary.write_text(
+                f"#!{sys.executable}\n"
+                "from pathlib import Path\n"
+                "import sys\n"
+                "stage, *arguments = sys.argv[1:]\n"
+                "assert arguments[arguments.index('-@') + 1] == '4'\n"
+                "if stage == 'view':\n"
+                "    assert arguments[arguments.index('-q') + 1] == '30'\n"
+                "    assert '-o' not in arguments\n"
+                "    sys.stdout.buffer.write(Path(arguments[-1]).read_bytes())\n"
+                "elif stage == 'index':\n"
+                "    assert arguments[-2] == '-'\n"
+                "    Path(arguments[-1]).write_bytes(sys.stdin.buffer.read())\n"
+                "else:\n"
+                "    raise ValueError(stage)\n"
+            )
+            binary.chmod(0o755)
+            result = subprocess.run(
+                ["bash", "-c", pipeline, "--", "4"],
+                env={**os.environ, "BENCH_WORK": str(work), "BENCH_MIN_MAPQ": "30"},
+                text=True, capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((work / "output/filtered.bam").read_bytes(), b"filtered fixture\n")
+            self.assertEqual((work / "output/filtered.bam.bai").read_bytes(), b"filtered fixture\n")
 
 
 class TimingTests(unittest.TestCase):

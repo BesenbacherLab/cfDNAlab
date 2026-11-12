@@ -128,6 +128,8 @@ class CorrectedMidpointWorkflowTests(unittest.TestCase):
             if stage == "midpoints":
                 length_index = arguments.index("--length-bins")
                 self.assertEqual(arguments[length_index + 1:length_index + 3], ["100", "201"])
+                self.assertEqual(arguments[arguments.index("--bin-size") + 1], "15")
+                self.assertNotIn("--smoothing", arguments)
             else:
                 # Estimation uses native defaults, independently of the TFBS
                 # windows and Griffin's estimation BED
@@ -178,18 +180,34 @@ class CorrectedMidpointWorkflowTests(unittest.TestCase):
                 self.assertFalse((self.work / "output/midpoint_profiles.zarr").exists())
                 self.assertFalse((self.work / "used-bias").exists())
 
-    def test_griffin_corrected_profiles_keep_all_2001_positions(self):
-        self.environment["BENCH_WINDOW_WIDTH"] = "2001"
-        result = self.run_workflow("griffin-gc")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        for stage, arguments in self.calls():
-            if stage in ("griffin_coverage.py", "griffin_merge_sites.py"):
-                index = arguments.index("--norm_window")
-                self.assertEqual(arguments[index + 1:index + 3], ["-1000", "1001"])
-            if stage == "griffin_merge_sites.py":
-                for option in ("--save_window", "--center_window", "--fft_window"):
-                    index = arguments.index(option)
-                    self.assertEqual(arguments[index + 1:index + 3], ["-1000", "1001"])
+    def test_griffin_retains_wide_windows_and_native_profiling_steps(self):
+        for width, half_width, end in ((9990, "4995", "4995"), (10001, "5000", "5001")):
+            with self.subTest(width=width):
+                (self.work / "calls.jsonl").unlink(missing_ok=True)
+                self.environment["BENCH_WINDOW_WIDTH"] = str(width)
+                self.environment["BENCH_HALF_WIDTH"] = half_width
+                result = self.run_workflow("griffin-gc")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                for stage, arguments in self.calls():
+                    if stage in ("griffin_coverage.py", "griffin_merge_sites.py"):
+                        index = arguments.index("--norm_window")
+                        self.assertEqual(arguments[index + 1:index + 3], ["-" + half_width, end])
+                        self.assertEqual(arguments[arguments.index("--mappability_bw") + 1], str(self.work / "mappability.bw"))
+                        self.assertEqual(arguments[arguments.index("--mappability_correction") + 1], "False")
+                    if stage == "griffin_merge_sites.py":
+                        index = arguments.index("--save_window")
+                        self.assertEqual(arguments[index + 1:index + 3], ["-" + half_width, end])
+                        self.assertEqual(arguments[arguments.index("--step") + 1], "15")
+                        for option in ("--exclude_outliers", "--exclude_zero_mappability", "--smoothing"):
+                            self.assertEqual(arguments[arguments.index(option) + 1], "True")
+                        self.assertEqual(arguments[arguments.index("--CNA_normalization") + 1], "False")
+                        self.assertEqual(arguments[arguments.index("--fft_index") + 1], "10")
+                        index = arguments.index("--fft_window")
+                        self.assertEqual(arguments[index + 1:index + 3], ["-960", "960"])
+                        index = arguments.index("--center_window")
+                        self.assertEqual(arguments[index + 1:index + 3], ["-30", "30"])
+                        index = arguments.index("--exclude_paths")
+                        self.assertEqual(len(arguments[index + 1:arguments.index("--exclude_zero_mappability")]), 5)
 
     def test_griffin_rejects_profiles_outside_estimation_range_before_setup(self):
         for minimum, maximum in ((14, 200), (100, 501)):

@@ -40,7 +40,6 @@ fragments <- readBam(
         isDuplicate = FALSE,
         isNotPassingQualityControls = FALSE
     ),
-    galp_tag = character(),
     outdir = NA
 )
 
@@ -55,7 +54,7 @@ write.table(counts, "lengths.tsv", sep = "\t", quote = FALSE, row.names = FALSE)
 
 The runner times the complete R process, including package loading, BAM reading, pairing, curation and histogram writing. Timing only the second function would exclude most of the work. Record peak memory as well, since cfDNAPro materializes the paired alignments and fragments. A speed difference must be measured rather than inferred from R versus Rust.
 
-Keep the native cfDNAPro filters visible. Its default `scanBamFlag` excludes unmapped, secondary, supplementary and duplicate records, but does not explicitly exclude QC-fail records. The benchmark supplies `isNotPassingQualityControls=FALSE` and `hasUnmappedMate=FALSE` through `readBam(galp_flag=...)` to match cfDNAlab's exclusions. NM/MD tags are not loaded for this length-only calculation. Its strict 1-based 5'-end comparison is equivalent to `forward.pos < reverse.reference_end - 1`, whereas cfDNAlab additionally requires `forward.pos <= reverse.pos`. Overlapping pairs with the reverse alignment starting first can therefore remain a source of differences even with matched flags. GenomicAlignments pairing and reference-bound checks can also affect selection.
+Keep the native cfDNAPro filters visible. Its default `scanBamFlag` excludes unmapped, secondary, supplementary and duplicate records, but does not explicitly exclude QC-fail records. The benchmark supplies `isNotPassingQualityControls=FALSE` and `hasUnmappedMate=FALSE` through `readBam(galp_flag=...)` to match cfDNAlab's exclusions. Alignment fields and NM/MD tag loading retain the package defaults. Its strict 1-based 5'-end comparison is equivalent to `forward.pos < reverse.reference_end - 1`, whereas cfDNAlab additionally requires `forward.pos <= reverse.pos`. Overlapping pairs with the reverse alignment starting first can therefore remain a source of differences even with matched flags. GenomicAlignments pairing and reference-bound checks can also affect selection.
 
 ## How much does the fragment definition matter in this sample?
 

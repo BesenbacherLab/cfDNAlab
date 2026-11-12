@@ -4,14 +4,20 @@ Compare `cfdna midpoints` with Griffin's native BAM-to-profile workflow on the s
 
 ## Comparable settings
 
-The baseline uses unsmoothed 1 bp profiles of fragments 100-200 bp inclusive, MAPQ >=30, and no blacklist, mappability mask, outlier removal, GC correction or genomic scaling. This length range follows Griffin's nucleosome-profile example. Both tools retain their native alignment filtering and pairing behavior. Proper-pair selection is not added to cfDNAlab.
+The benchmark runs the native profiling workflows on the same grouped sites, with inclusive fragment lengths 100-200 bp and MAPQ >=30. Supply 9,990 bp BED windows centered on those sites (`center - 4995`, `center + 4995`). Both tools retain the complete supplied window in 666 bins of 15 bp, with 165 bp order-3 Savitzky-Golay smoothing. Crop the central region for figures after benchmarking. No per-site CNA correction or `fragment-count-weights` is added.
 
 | Tool | Settings | Expected differences |
 | --- | --- | --- |
-| cfDNAlab | `midpoints --length-bins 100 201 --min-mapq 30 --bin-size 1 --smoothing none`, shared intervals and their chromosomes | Uses actual paired spans from `forward.pos` to `reverse.reference_end` and checks both mates. Even-length fragments reproducibly choose either central base. Writes summed counts across each group. |
-| Griffin v0.2.0 | `griffin_coverage.py --size_range 100 200 --map_quality 30`, then `griffin_merge_sites.py --step 1 --smoothing False --CNA_normalization False --individual False --exclude_paths none --exclude_outliers False --exclude_zero_mappability False` | Uses forward records with positive TLEN. Always uses the right central base for even lengths. Averages sites and always normalizes the group profile to mean one. |
+| cfDNAlab | `midpoints --length-bins 100 201 --min-mapq 30 --bin-size 15`, default smoothing, shared exclusion BEDs | Uses paired spans from `forward.pos` to `reverse.reference_end`, checks both mates and applies native blacklist filtering. Even-length fragments reproducibly choose either central base. Writes group sums averaged across the bases in each bin. |
+| Griffin v0.2.0 | `griffin_coverage.py`, then `griffin_merge_sites.py`, native exclusion BEDs, zero-mappability masking, outlier removal and 165 bp smoothing | Uses forward records with positive TLEN and the right central base for even lengths. Averages sites and normalizes the combined group profile to mean one. |
 
-The comparator divides each cfDNAlab group profile by its mean over the complete window. This equals Griffin's group normalization when site sets and counts agree. It does not normalize each site separately, change midpoint choices, smooth, shift or rebin the profiles. All zero positions remain. Check Pearson r together with MAE/RMSE and each tool's mean midpoints per site per bp, since normalization can conceal differences in total counts. Griffin rounds its saved values and mean-count metadata to five decimal places.
+Griffin receives a centered anchor per site. Its normalization and saved windows both use `[-4995, 4995)`, covering the full supplied BED width. These bounds align with Griffin's signed 15 bp bin boundaries and cfDNAlab's bins from the BED start. A 10,000 or 10,001 bp BED would give offset bins because Griffin rounds the bounds inward while cfDNAlab retains the BED bounds. The runner does not resize the supplied windows, and the comparator rejects misaligned bins. The official profiling configuration normally normalizes over 10 kb and saves a central subset. This benchmark retains the full normalization window so cropping does not change the normalization denominator.
+
+Griffin keeps its official center feature window `[-30, 30)`, FFT window `[-960, 960)` and FFT index 10. Its merge script always computes FFT features, so this native work remains timed. Mappability correction remains off as recommended upstream, while exclusion of zero-mappability positions is on. Both tools use the guide's 15 bp output step. Common MAPQ is 30 rather than the guide's 20.
+
+The comparator divides each cfDNAlab group profile by its mean over the complete window. This matches Griffin's final group normalization. cfDNAlab saves average per-bp counts within each bin, while Griffin sums the 15 positions. This constant factor cancels in mean-one normalization. Native smoothing order still differs: cfDNAlab smooths at base resolution before binning, while Griffin smooths the binned profile with an 11-bin (165 bp) filter. Group mean-one normalization does not equalize individual sites. Griffin's optional per-site CNA normalization remains off. Comparison adds no smoothing, cropping, shifting or rebinning. It reports signed Pearson r, Pearson r squared, MAE/RMSE and the maximum absolute difference. Retaining signed r prevents an anticorrelation from being mistaken for agreement based on its square alone.
+
+The same five public exclusion BEDs go through each tool's native implementation. cfDNAlab can exclude whole intervals near blacklists, while Griffin masks individual positions and removes outliers. Griffin also uses its Umap zero-mappability mask. These are native algorithm differences, not forced-equivalent filters. Both eligible site counts are reported. Finite negative smoothing undershoots are retained. If Griffin leaves undefined positions, metrics for that group are unavailable instead of silently comparing a subset. Constant-profile correlations are also unavailable. Griffin rounds saved values to five decimal places.
 
 The source also shows filtering differences. Griffin checks the forward record's MAPQ, duplicate and QC-fail flags and paired status. It does not explicitly reject secondary/supplementary records or validate the actual mate's MAPQ, chromosome and orientation. cfDNAlab performs these checks. Neither baseline requires flag 0x2. The source-specific behavior stays in the comparison.
 
@@ -99,11 +105,22 @@ For corrected concordance, copy the saved `cfdnalab-gc` and `griffin-gc` profile
     > /path/to/corrected-comparison/concordance.tsv
 ```
 
-This selects corrected profiles from both tools, with the same mean-one normalization and 1 bp metrics as the baseline. It does not pair a corrected output with an uncorrected output.
+This selects corrected profiles from both tools, with the same full-window mean-one normalization and 15 bp metrics as the baseline. It does not pair a corrected output with an uncorrected output.
 
 ## Inputs and run
 
-Supply the prepared coordinate-sorted BAM and its index, the matching **uncompressed FASTA plus existing `.fai`** for Griffin, and your BED-like file with `chromosome, start, end, group` through `BENCH_INTERVALS`. Use tab-separated rows without a header. BED4 is unstranded. Optional strands follow cfDNAlab's BED5/BED6 convention. Supply equal-width windows within their chromosomes. Odd widths include a central base: 2001 bp represents positions -1000 through +1000. Griffin receives these exact bounds using the half-open range `[-1000, 1001)`. Reverse-stranded windows are reversed by both tools. The runner retains all supplied site rows, including repeats and overlaps, without selecting or resizing sites. Before submission, the launcher checks only the first five lines for the expected columns and integer coordinates. Input validation belongs to the native tools.
+The same exclusion BEDs are used by both tools. Point `BENCH_GRIFFIN_REF_DIR` to the existing installation's `Griffin-source/Ref` directory. It contains the five BEDs used by Griffin's release config. Griffin additionally needs the hg38 k100 Umap bigWig. Download that reference once outside timed jobs:
+
+```bash
+export BENCH_GRIFFIN_REF_DIR=/path/to/benchmark-tools/Griffin-source/Ref
+export BENCH_GRIFFIN_MAPPABILITY_BW="$BENCH_GRIFFIN_REF_DIR/k100.Umap.MultiTrackMappability.bw"
+wget -O "$BENCH_GRIFFIN_MAPPABILITY_BW" \
+    https://hgdownload.soe.ucsc.edu/gbdb/hg38/hoffmanMappability/k100.Umap.MultiTrackMappability.bw
+```
+
+Keep the two exports in the local settings file. Downloading is a separate preparation command. No environment reinstall is required for an existing Griffin installation. The launcher checks reference-file existence before submission. Benchmark jobs copy these references to node-local scratch before timing.
+
+Supply the prepared coordinate-sorted BAM and its index, the matching **uncompressed FASTA plus existing `.fai`** for Griffin, and your BED-like file with `chromosome, start, end, group` through `BENCH_INTERVALS`. Use tab-separated rows without a header. BED4 is unstranded. Optional strands follow cfDNAlab's BED5/BED6 convention. Supply equal-width windows within their chromosomes. For production, use BED `[center-4995, center+4995)`, 9,990 bp total, to align both tools' 15 bp bins. Reverse-stranded windows are reversed by both tools. The runner retains all supplied site rows, including repeats and overlaps, without selecting or resizing sites. Before submission, the launcher checks only the first five lines for the expected columns and integer coordinates. Input validation belongs to the native tools.
 
 ```bash
 # The shared installer prints these tool paths
@@ -164,23 +181,23 @@ Timing includes native startup, counting, output writing and Griffin's bigWig-to
 
 [deepTools 4.0.0](https://github.com/deeptools/deepTools/releases/tag/4.0.0) provides `bamCoverage --MNase`. Its current [native counting code](https://github.com/deeptools/deepTools/blob/4.0.0/src/filtering.rs) counts two central bases for even insert lengths and four for odd lengths. `--centerReads` centers a read-sized span rather than reducing a fragment to a 1 bp midpoint. These settings do not directly reproduce this single-midpoint definition. A wider-kernel comparison could be separately labeled, but it is not included in this baseline. See also the [current CLI](https://github.com/deeptools/deepTools/blob/4.0.0/pydeeptools/deeptools/bamCoverage2.py).
 
-[LIQUORICE](https://www.nature.com/articles/s41467-021-23445-w) describes a fragment-coverage workflow rather than this 1 bp midpoint-count profile. [FinaleToolkit's regional coverage and WPS outputs](https://epifluidlab.github.io/FinaleToolkit/documentation/user_guide/features.html) are also different quantities. No 1 bp genomic intervals file is generated to force these tools into a midpoint comparison.
+[LIQUORICE](https://www.nature.com/articles/s41467-021-23445-w) describes a fragment-coverage workflow rather than counting fragment midpoints. [FinaleToolkit's regional coverage and WPS outputs](https://epifluidlab.github.io/FinaleToolkit/documentation/user_guide/features.html) are also different quantities. No 1 bp genomic intervals file is generated to force these tools into a midpoint comparison.
 
 ## Supplementary result templates
 
 The tables below contain no measured results. Fill them from the saved concordance metrics and completed timing/accounting records.
 
-| Group | Sites | Pearson r, 1 bp | MAE / RMSE, mean-one | Max. difference | Mean midpoint density, cfDNAlab / Griffin |
+| Group | Sites, cfDNAlab / Griffin | Pearson r / r squared, 15 bp | MAE / RMSE, mean-one | Max. difference | Mean midpoint density, cfDNAlab / Griffin |
 | --- | --- | --- | --- | --- | --- |
 | [group] | [ ] | [ ] | [ ] / [ ] | [ ] | [ ] / [ ] |
 
-Expected differences: even-length midpoint choices, actual paired spans versus TLEN, filtering, and Griffin's five-decimal output. Site counts and coordinate axes must agree before interpreting these metrics.
+Expected differences: even-length midpoint choices, actual paired spans versus TLEN, filtering, and Griffin's five-decimal output. Coordinate axes must agree. Both eligible site counts remain visible because native masking can change site selection.
 
 | Tool | Cores | Warmups / measured | Mean process+flush, s | SD seconds | Slurm peak, KiB |
 | --- | --- | --- | --- | --- | --- |
 | cfDNAlab | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] |
 | Griffin v0.2.0 | 1 / 4 / 12 / 32, separate jobs | 1000-site demo / 3 full-input each | [ ] | [ ] | [ ] |
 
-Expand the timing rows to a core budget per row for the final A4 supplement. Report the shared site set, groups, window width, 1 bp resolution and 100-200 bp length range alongside the table, and place the workload notes below it.
+Expand the timing rows to a core budget per row for the final A4 supplement. Report the shared site set, groups, window width, 15 bp resolution and 100-200 bp length range alongside the table, and place the workload notes below it.
 
 Join completed Slurm step memory after the job. Timing rows also record filesystem flush time, process-plus-flush time and output bytes. See the [shared timing TSV documentation](../README.md) for units and measurement limits. Submit from the repository root so helper scripts can be staged before warmups.

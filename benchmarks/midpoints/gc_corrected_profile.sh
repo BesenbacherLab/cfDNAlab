@@ -24,7 +24,10 @@ case "$method" in
             --bam "$BENCH_WORK/sample.bam" --output-dir "$BENCH_WORK/output" \
             --intervals "$BENCH_WORK/sites.bed" --chromosomes "$BENCH_CHROMOSOMES" \
             --length-bins "$BENCH_MIN_LENGTH" "$((BENCH_MAX_LENGTH + 1))" \
-            --min-mapq "$BENCH_MIN_MAPQ" --smoothing none --bin-size 1 --n-threads "$cores" \
+            --min-mapq "$BENCH_MIN_MAPQ" --bin-size 15 --n-threads "$cores" \
+            --blacklist "$BENCH_WORK/exclusions/encode_unified_GRCh38_exclusion_list.bed" \
+            "$BENCH_WORK/exclusions/hg38_centromeres.bed" "$BENCH_WORK/exclusions/hg38_gaps.bed" \
+            "$BENCH_WORK/exclusions/hg38_fix_patches.bed" "$BENCH_WORK/exclusions/hg38_alternative_haplotypes.bed" \
             --ref-2bit "$BENCH_WORK/reference.2bit" \
             --gc-file "$bias_directory/gc_bias_correction.zarr"
         ;;

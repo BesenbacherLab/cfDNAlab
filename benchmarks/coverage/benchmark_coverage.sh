@@ -24,7 +24,7 @@
 # cfdnalab-region-counts sums length-normalized fragment coverage in 500 kb windows
 # finaletoolkit-coverage counts fragments overlapping the same window coordinates
 # cfDNAlab splits a boundary fragment's contribution between windows. FinaleToolkit
-# counts it in each overlapping window. Regional counts are separate from base depth
+# assigns it to the window containing its midpoint. Regional counts are separate from base depth
 # cfdnalab-regions, mosdepth-regions, samtools-regions and pandepth-regions instead
 # summarize read depth in the same windows, without writing per-base tracks
 #
@@ -386,7 +386,7 @@ elif [[ "$method" == cfdnalab-region-counts* ]]; then
     # Length normalization gives each fragment a total weight of 1. Summing this
     # coverage estimates fragment counts in each fixed-size window. A fragment
     # crossing a boundary splits its contribution, unlike FinaleToolkit's full
-    # count in each overlapping window. Native pairing and coverage rules remain
+    # count in its midpoint's window. Native pairing and coverage rules remain
     tool_threads=$cores
     tool_version=$BENCH_CFDNA_VERSION
     command=("$BENCH_WORK/bin/cfdna" fcoverage
@@ -397,7 +397,9 @@ elif [[ "$method" == cfdnalab-region-counts* ]]; then
     if [[ "$method" == cfdnalab-region-counts-proper ]]; then command+=(--require-proper-pair); proper_pair=required; fi
     track="$BENCH_WORK/coverage/length_normalized.fcoverage.total.tsv.zst"
 else
-    # This command calculates raw fragment counts with no normalization and scale factor 1
+    # This command calculates raw fragment counts with the native midpoint rule
+    # A boundary fragment belongs to the window containing its midpoint
+    # No normalization is requested, and the native scale factor is 1
     # --threads controls worker processes in the current FinaleToolkit CLI
     # Its BAM reader requires proper pairs and uses read1/TLEN. Its indexed query
     # also needs read1 to overlap the window, which can miss boundary fragments
@@ -409,7 +411,7 @@ else
     track="$BENCH_WORK/coverage/finaletoolkit.coverage.bed.gz"
     command=("$BENCH_WORK/finale-env/bin/python" "$BENCH_WORK/finale-env/bin/finaletoolkit" coverage
         "$BENCH_WORK/sample.bam" "$BENCH_WORK/regions.bed"
-        --output "$track" --intersect-policy any --scale-factor 1
+        --output "$track"
         --min-length "$BENCH_MIN_LENGTH" --max-length "$BENCH_MAX_LENGTH" --min-mapq "$BENCH_MIN_MAPQ" --threads "$tool_threads")
 fi
 

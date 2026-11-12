@@ -204,12 +204,11 @@ These commands write regional output directly. mosdepth's native regional means 
 ```bash
 "$finale_python" "$finale" coverage "$bam" "$regions" \
     --output "$coverage_output/finaletoolkit.coverage.bed.gz" \
-    --intersect-policy any --scale-factor 1 \
     --min-length "$min_length" --max-length "$max_length" \
     --min-mapq "$min_mapq" --threads "$cores"
 ```
 
-cfDNAlab gives each fragment total weight 1 before output rounding, split across windows when it crosses a boundary. FinaleToolkit counts a fragment once in every overlapping window and requires proper read1/TLEN selection. Its indexed read1 query can miss fragments whose span alone overlaps a boundary. These counts are compared separately from regional read-depth totals. The end-motif length-filter bug described below does not apply to this coverage call.
+cfDNAlab gives each fragment total weight 1 before output rounding, split across windows when it crosses a boundary. FinaleToolkit uses its default midpoint assignment and requires proper read1/TLEN selection. Its indexed read1 query can miss fragments whose midpoint is inside the window while read1 lies outside. These counts are compared separately from regional read-depth totals. The end-motif length-filter bug described below does not apply to this coverage call.
 
 ### Additional coverage configurations
 
@@ -372,13 +371,13 @@ The samples table is prepared outside the timer:
 printf 'sample_name group\nsample benchmark\n' > "$output/samples.tsv"
 ```
 
-All four native calls below share one timer:
+The upstream filtering/indexing pipeline and the two motif scripts share one timer:
 
 ```bash
-"$freia_environment/bin/samtools" view -@ "$cores" -q "$min_mapq" \
-    -F 4 -F 256 -F 1024 -F 2048 -b \
-    -o "$output/filtered.bam" "$bam"
-"$freia_environment/bin/samtools" index -@ "$cores" "$output/filtered.bam"
+"$freia_environment/bin/samtools" view -@ "$cores" -h -q "$min_mapq" \
+    -F 4 -F 256 -F 1024 -F 2048 -b "$bam" |
+    tee "$output/filtered.bam" |
+    "$freia_environment/bin/samtools" index -@ "$cores" - "$output/filtered.bam.bai"
 "$freia_environment/bin/python" "$freia_scripts/1_extract_fragment_ends.py" \
     -b "$output/filtered.bam" -o "$output/sample.pq" \
     -c "$BENCH_CONTIGS" -t "$cores" -n 3
@@ -427,7 +426,6 @@ fragments <- readBam(
         isDuplicate = FALSE,
         isNotPassingQualityControls = FALSE
     ),
-    galp_tag = character(),
     outdir = NA
 )
 ```
@@ -463,7 +461,17 @@ The motif helper also writes `reference.tsv` from the native fragment object's r
 
 ## Midpoint profiles
 
-The [midpoint runner](midpoints/benchmark_midpoints.sh) uses the supplied grouped windows, normally 2001 bp wide, and profiling length bounds 100-200 bp. `BENCH_CHROMOSOMES` is derived from the chromosomes in those windows. The runner preserves the sites, including repeated and overlapping rows, and creates the native Griffin anchor tables outside timing. Each workload runs in its own job.
+The [midpoint runner](midpoints/benchmark_midpoints.sh) uses the supplied grouped 9,990 bp windows (`center - 4995` to `center + 4995`) and profiling length bounds 100-200 bp. `BENCH_CHROMOSOMES` is derived from the chromosomes in those windows. The runner preserves the sites, including repeated and overlapping rows, and creates the native Griffin anchor tables outside timing. Each workload runs in its own job. Both tools retain the complete window in 666 bins of 15 bp, with native 165 bp smoothing. Cropping to the central region happens after benchmarking. The following shared exclusion paths name the staged release BEDs:
+
+```bash
+exclusions=(
+    "$BENCH_WORK/exclusions/encode_unified_GRCh38_exclusion_list.bed"
+    "$BENCH_WORK/exclusions/hg38_centromeres.bed"
+    "$BENCH_WORK/exclusions/hg38_gaps.bed"
+    "$BENCH_WORK/exclusions/hg38_fix_patches.bed"
+    "$BENCH_WORK/exclusions/hg38_alternative_haplotypes.bed"
+)
+```
 
 ### cfDNAlab without GC correction
 
@@ -473,7 +481,8 @@ Method `cfdnalab`:
 "$cfdna" midpoints --bam "$bam" --output-dir "$output" \
     --intervals "$BENCH_WORK/sites.bed" --chromosomes "$BENCH_CHROMOSOMES" \
     --length-bins "$min_length" "$length_end" \
-    --min-mapq "$min_mapq" --smoothing none --bin-size 1 --n-threads "$cores"
+    --min-mapq "$min_mapq" --bin-size 15 --n-threads "$cores" \
+    --blacklist "${exclusions[@]}"
 ```
 
 ### Griffin profiling calls
@@ -492,7 +501,7 @@ gc_bias="$BENCH_WORK/unit_gc_bias.tsv"
 IFS=, read -r -a chromosomes <<< "$BENCH_CHROMOSOMES"
 ```
 
-For a 2001 bp window, every relative window argument below is `-1000 1001`, with an exclusive end. The arguments shared by the two scripts are:
+The 9,990 bp windows use normalization and saved bounds `-4995 4995`. Ends are exclusive. Both bounds are multiples of 15, so Griffin's native inward rounding leaves them unchanged and the two tools' bins align. The runner does not resize the supplied BED. Auxiliary feature windows follow the official configuration. The arguments shared by the two scripts are:
 
 ```bash
 griffin_common=(
@@ -501,7 +510,7 @@ griffin_common=(
     --chrom_sizes_path "$chromosome_sizes" --chroms "${chromosomes[@]}"
     --chrom_column Chrom --position_column position --strand_column Strand
     --norm_window "-$half_width" "$window_end"
-    --mappability_correction False --mappability_bw none --CPU "$cores"
+    --mappability_correction False --mappability_bw "$BENCH_WORK/mappability.bw" --CPU "$cores"
 )
 ```
 
@@ -518,13 +527,13 @@ The two timed native calls are:
     --GC_corrected_bw_path "$output/tmp/sample/tmp_bigWig/sample.GC_corrected.bw" \
     --GC_map_corrected_bw_path none --results_dir "$output/results" \
     --save_window "-$half_width" "$window_end" \
-    --center_window "-$half_width" "$window_end" \
-    --fft_window "-$half_width" "$window_end" --fft_index 1 \
-    --step 1 --exclude_paths none --exclude_zero_mappability False \
-    --exclude_outliers False --CNA_normalization False --individual False --smoothing False
+    --center_window -30 30 --fft_window -960 960 --fft_index 10 \
+    --step 15 --exclude_paths "${exclusions[@]}" --exclude_zero_mappability True \
+    --exclude_outliers True --CNA_normalization False --individual False \
+    --smoothing True --smoothing_length 165
 ```
 
-For the uncorrected experiment, setup supplies unit GC bias for all requested lengths and GC counts. Griffin still performs its compulsory reference/GC work and writes uncorrected and weighted bigWigs inside timing. The retained profile is `sample.uncorrected.coverage.tsv`. Its native group normalization gives mean-one profiles. Concordance normalizes cfDNAlab's group profile over the complete window outside timing, without shifting, smoothing or rebinning.
+For the uncorrected experiment, setup supplies unit GC bias for all requested lengths and GC counts. Griffin still performs its compulsory reference/GC work and writes uncorrected and weighted bigWigs inside timing. The retained profile is `sample.uncorrected.coverage.tsv`. Its native group normalization gives mean-one profiles over the full saved window. Concordance normalizes cfDNAlab's group profile over that same complete window outside timing, without additional smoothing, shifting, cropping or rebinning. It reports Pearson r and r squared with absolute-error metrics. Native masking differences and eligible site counts remain visible. Neither workflow adds per-site CNA normalization or fragment-count weights.
 
 ### cfDNAlab with GC correction
 
@@ -541,7 +550,8 @@ bias_directory="$output/gc-bias"
 "$cfdna" midpoints --bam "$bam" --output-dir "$output" \
     --intervals "$BENCH_WORK/sites.bed" --chromosomes "$BENCH_CHROMOSOMES" \
     --length-bins "$min_length" "$length_end" \
-    --min-mapq "$min_mapq" --smoothing none --bin-size 1 --n-threads "$cores" \
+    --min-mapq "$min_mapq" --bin-size 15 --n-threads "$cores" \
+    --blacklist "${exclusions[@]}" \
     --ref-2bit "$reference_2bit" \
     --gc-file "$bias_directory/gc_bias_correction.zarr"
 ```

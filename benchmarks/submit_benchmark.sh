@@ -33,6 +33,22 @@ fi
 # Catch an existing midpoint results directory before queueing. Failed attempts
 # can leave output behind, and the runner preserves it rather than overwriting it
 if [[ "$feature" == midpoints ]]; then
+    # Check required reference files before queueing a long midpoint job
+    # These are existence checks only. The native tools validate their contents
+    : "${BENCH_GRIFFIN_REF_DIR:?Set the Griffin Ref directory containing the shared exclusion BEDs}"
+    for exclusion_file in encode_unified_GRCh38_exclusion_list.bed hg38_centromeres.bed hg38_gaps.bed hg38_fix_patches.bed hg38_alternative_haplotypes.bed; do
+        if [[ ! -f "$BENCH_GRIFFIN_REF_DIR/$exclusion_file" ]]; then
+            echo "Missing midpoint exclusion BED: $BENCH_GRIFFIN_REF_DIR/$exclusion_file" >&2
+            exit 1
+        fi
+    done
+    if [[ " ${BENCH_METHODS:-} " == *" griffin"* ]]; then
+        griffin_mappability=${BENCH_GRIFFIN_MAPPABILITY_BW:-$BENCH_GRIFFIN_REF_DIR/k100.Umap.MultiTrackMappability.bw}
+        if [[ ! -f "$griffin_mappability" ]]; then
+            echo "Missing Griffin mappability track: $griffin_mappability. Set BENCH_GRIFFIN_MAPPABILITY_BW to the hg38 k100 Umap bigWig." >&2
+            exit 1
+        fi
+    fi
     : "${BENCH_RESULTS:?Set a new results directory}"
     if [[ -e "$BENCH_RESULTS" ]]; then
         echo "BENCH_RESULTS already exists: $BENCH_RESULTS" >&2

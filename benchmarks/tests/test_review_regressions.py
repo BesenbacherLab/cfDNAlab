@@ -24,6 +24,10 @@ from unittest import mock
 
 
 BENCHMARKS = Path(__file__).resolve().parents[1]
+EXCLUSION_FILENAMES = (
+    "encode_unified_GRCh38_exclusion_list.bed", "hg38_centromeres.bed", "hg38_gaps.bed",
+    "hg38_fix_patches.bed", "hg38_alternative_haplotypes.bed",
+)
 
 
 class SubmissionTests(unittest.TestCase):
@@ -67,6 +71,10 @@ class SubmissionTests(unittest.TestCase):
                         "PILOT_LOG": str(pilot_log),
                     }
                     if feature == "midpoints":
+                        references = root / "references"
+                        references.mkdir()
+                        for filename in EXCLUSION_FILENAMES:
+                            (references / filename).touch()
                         # The launcher's format sample accepts a 2001 bp BED4
                         # without requiring a BAM or any installed native tool
                         (root / "sites.bed").write_text("chr1\t1000\t3001\tTFBS\n")
@@ -74,6 +82,8 @@ class SubmissionTests(unittest.TestCase):
                             "BENCH_INTERVALS": str(root / "sites.bed"),
                             "BENCH_RESULTS": str(root / "results"),
                             "BENCH_SETUP_PYTHON": sys.executable,
+                            "BENCH_METHODS": "cfdnalab",
+                            "BENCH_GRIFFIN_REF_DIR": str(references),
                         })
                     environment.pop("BENCH_PILOT", None)
                     if pilot is not None:
@@ -988,6 +998,12 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
                 "chr1\t1000\t3001\treverse\t-\nchr1\t1000\t3001\tunstranded\t.\n"
             )
             intervals.write_text(production_sites)
+            references = root / "references"
+            references.mkdir()
+            for filename in EXCLUSION_FILENAMES:
+                (references / filename).touch()
+            mappability = references / "mappability.bw"
+            mappability.touch()
             results = root / "results"
             result = subprocess.run(
                 ["bash", str(BENCHMARKS / "midpoints/benchmark_midpoints.sh")],
@@ -1007,6 +1023,8 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
                     "BENCH_RESULTS": str(results),
                     "BENCH_SAMTOOLS_ARCHIVE": str(archives["samtools"]),
                     "BENCH_GRIFFIN_ARCHIVE": str(archives["griffin"]),
+                    "BENCH_GRIFFIN_REF_DIR": str(references),
+                    "BENCH_GRIFFIN_MAPPABILITY_BW": str(mappability),
                     "BENCH_METHODS": "griffin",
                     "BENCH_CORES": "4",
                     "BENCH_WARMUPS": "10",
@@ -1193,7 +1211,7 @@ class NativeComparatorTests(unittest.TestCase):
         with (
             mock.patch.object(
                 comparator, "read_cfdnalab",
-                return_value=({"group": (np.full(20, 1e308), 2)}, 20),
+                return_value=({"group": (np.full(20, 1e308), 2)}, 300, 15),
             ),
             mock.patch.object(
                 comparator, "read_griffin",
@@ -1214,7 +1232,7 @@ class NativeComparatorTests(unittest.TestCase):
         output = StringIO()
         with (
             mock.patch.object(comparator, "read_cfdnalab", return_value=(
-                {"TFBS": (np.array([1.0] * 10 + [3.0] * 10), 2)}, 20,
+                {"TFBS": (np.array([1.0] * 10 + [3.0] * 10), 2)}, 300, 15,
             )) as cfdnalab_reader,
             mock.patch.object(comparator, "read_griffin", return_value={
                 "TFBS": (np.array([0.75] * 10 + [1.25] * 10), 2, 0.5),
@@ -1224,7 +1242,7 @@ class NativeComparatorTests(unittest.TestCase):
         ):
             comparator.main()
         cfdnalab_reader.assert_called_once_with(Path("profiles/cfdnalab-gc/midpoint_profiles.zarr"))
-        griffin_reader.assert_called_once_with(Path("profiles/griffin-gc/sample.GC_corrected.coverage.tsv"), 20)
+        griffin_reader.assert_called_once_with(Path("profiles/griffin-gc/sample.GC_corrected.coverage.tsv"), 300, 15)
         row, = csv.DictReader(StringIO(output.getvalue()), delimiter="\t")
         self.assertEqual(row["gc_correction"], "corrected")
         self.assertEqual(row["status"], "ok")
@@ -1248,6 +1266,51 @@ class NativeComparatorTests(unittest.TestCase):
             self.assertEqual(counts[0], 1)
             self.assertEqual(counts[-1], 2)
             self.assertEqual(counts.sum(), 3)
+
+    def test_midpoint_comparison_keeps_smoothing_undershoots_and_native_site_counts(self):
+        import numpy as np
+        import pandas as pd
+
+        comparator = self.comparator("midpoints/compare_midpoints.py")
+        # Both profiles have mean 1. Their halves differ by exactly 0.25,
+        # including negative smoothing values. Pearson r and r squared are 1
+        counts = np.array([-0.5] * 10 + [2.5] * 10)
+        native_result = SimpleNamespace(
+            length_bins=lambda: [(100, 201)],
+            positions=lambda: pd.DataFrame({
+                "position_bin_start_bp": range(0, 300, 15), "position_bin_end_bp": range(15, 301, 15),
+            }),
+            counts_array=lambda: counts[None, None, :],
+            group_metadata=lambda: pd.DataFrame({"group_name": ["TFBS"], "eligible_intervals": [1]}),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            profiles = Path(temporary)
+            (profiles / "griffin").mkdir()
+            with (profiles / "griffin/sample.uncorrected.coverage.tsv").open("w") as destination:
+                writer = csv.writer(destination, delimiter="\t")
+                writer.writerow([
+                    "site_name", "number_of_sites", "smoothing", "CNA_normalization",
+                    "mean_reads_per_bp_in_normalization_window",
+                ] + list(map(str, range(-150, 150, 15))))
+                writer.writerow(["TFBS", 2, True, False, 0.5] + [-0.25] * 10 + [2.25] * 10)
+            output = StringIO()
+            with (
+                mock.patch.object(comparator, "read_midpoints", return_value=native_result),
+                mock.patch.object(sys, "argv", ["compare_midpoints.py", str(profiles)]),
+                redirect_stdout(output),
+            ):
+                comparator.main()
+            row, = csv.DictReader(StringIO(output.getvalue()), delimiter="\t")
+            self.assertEqual(row["cfdnalab_sites"], "1")
+            self.assertEqual(row["griffin_sites"], "2")
+            self.assertEqual(row["positions"], "20")
+            self.assertEqual(row["window_bp"], "300")
+            self.assertEqual(row["resolution_bp"], "15")
+            self.assertEqual(row["status"], "ok")
+            self.assertAlmostEqual(float(row["pearson_r"]), 1)
+            self.assertAlmostEqual(float(row["pearson_r_squared"]), 1)
+            for metric in ("mae_mean_one", "rmse_mean_one", "max_abs_mean_one"):
+                self.assertAlmostEqual(float(row[metric]), 0.25)
 
     def test_valid_picard_histogram_without_fr_is_an_empty_fr_profile(self):
         import numpy as np
@@ -1282,24 +1345,25 @@ class NativeComparatorTests(unittest.TestCase):
                 # Five positions at four and fifteen zeros give mean one
                 writer.writerow(["sparse", 2, False, False, 0] + [4] * 5 + [0] * 15)
                 writer.writerow(["empty", 2, False, False, 0] + [""] * 20)
-            profiles = comparator.read_griffin(path, 20)
+            profiles = comparator.read_griffin(path, 20, 1)
             self.assertEqual(profiles["sparse"][1:], (2, 0))
             np.testing.assert_array_equal(profiles["sparse"][0], [4] * 5 + [0] * 15)
             self.assertTrue(np.isnan(profiles["empty"][0]).all())
 
-    def test_midpoint_comparison_preserves_all_2001_positions(self):
+    def test_midpoint_comparison_preserves_all_666_aligned_bins(self):
         import numpy as np
         import pandas as pd
 
         comparator = self.comparator("midpoints/compare_midpoints.py")
-        # These 2001 counts sum to 4002, so the mean is exactly 2. The
-        # normalized values are 0.5, 1 at the center, and 1.5, with no lost base
-        counts = np.array([1.0] * 1000 + [2.0] + [3.0] * 1000)
+        # A 9990 bp window has 666 full 15 bp bins, 333 on each side. The
+        # saved per-bp counts average to 2, so normalized halves are 0.5 and 1.5
+        # Dividing by two sites gives a mean density of 1 per site per bp, not 15
+        counts = np.array([1.0] * 333 + [3.0] * 333)
         native_result = SimpleNamespace(
             length_bins=lambda: [(100, 201)],
             positions=lambda: pd.DataFrame({
-                "position_bin_start_bp": range(2001),
-                "position_bin_end_bp": range(1, 2002),
+                "position_bin_start_bp": range(0, 9990, 15),
+                "position_bin_end_bp": range(15, 9991, 15),
             }),
             counts_array=lambda: counts[None, None, :],
             group_metadata=lambda: pd.DataFrame({"group_name": ["TFBS"], "eligible_intervals": [2]}),
@@ -1312,7 +1376,7 @@ class NativeComparatorTests(unittest.TestCase):
                 writer.writerow([
                     "site_name", "number_of_sites", "smoothing", "CNA_normalization",
                     "mean_reads_per_bp_in_normalization_window",
-                ] + list(map(str, range(-1000, 1001))))
+                ] + list(map(str, range(-4995, 4995, 15))))
                 writer.writerow(["TFBS", 2, False, False, 1] + list(counts / 2))
             output = StringIO()
             with (
@@ -1322,10 +1386,22 @@ class NativeComparatorTests(unittest.TestCase):
             ):
                 comparator.main()
             row, = csv.DictReader(StringIO(output.getvalue()), delimiter="\t")
-            self.assertEqual(row["positions"], "2001")
+            self.assertEqual(row["positions"], "666")
+            self.assertEqual(row["window_bp"], "9990")
+            self.assertEqual(row["resolution_bp"], "15")
+            self.assertAlmostEqual(float(row["cfdnalab_mean_midpoints_per_site_bp"]), 1.0)
             self.assertAlmostEqual(float(row["pearson_r"]), 1.0)
             for metric in ("mae_mean_one", "rmse_mean_one", "max_abs_mean_one"):
                 self.assertEqual(float(row[metric]), 0.0)
+
+    def test_midpoint_comparison_rejects_misaligned_native_bins(self):
+        comparator = self.comparator("midpoints/compare_midpoints.py")
+        # Griffin rounds both windows to [-4995, 4995), whereas cfDNAlab
+        # starts its first bin at -5000. Equal step sizes do not align the bins
+        for width in (10000, 10001):
+            with self.subTest(width=width):
+                with self.assertRaisesRegex(ValueError, "does not align"):
+                    comparator.read_griffin(Path("unused.tsv"), width, 15)
 
     def test_midpoint_metrics_keep_zero_positions_and_distinguish_empty_groups(self):
         import numpy as np
