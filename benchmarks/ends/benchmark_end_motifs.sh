@@ -297,16 +297,17 @@ elif [[ "$method" == freia ]]; then
     # extracted 3-base sequence contains N. These native choices are retained
     # The samtools exclusion flags are unmapped, secondary, duplicate and
     # supplementary, respectively, as in the authors' preprocessing rule
+    # Both samtools thread options receive the allocated core count
     printf 'sample_name group\nsample benchmark\n' > "$BENCH_WORK/output/samples.tsv"
     command=(bash -c '
         set -euo pipefail
         cores=$1
         environment="$BENCH_WORK/freia"
         scripts="$environment/share/freia"
-        "$environment/bin/samtools" view -@ "$((cores - 1))" -q "$BENCH_MIN_MAPQ" \
+        "$environment/bin/samtools" view -@ "$cores" -q "$BENCH_MIN_MAPQ" \
             -F 4 -F 256 -F 1024 -F 2048 \
             -b -o "$BENCH_WORK/output/filtered.bam" "$BENCH_WORK/sample.bam"
-        "$environment/bin/samtools" index -@ "$((cores - 1))" "$BENCH_WORK/output/filtered.bam"
+        "$environment/bin/samtools" index -@ "$cores" "$BENCH_WORK/output/filtered.bam"
         "$environment/bin/python" "$scripts/1_extract_fragment_ends.py" \
             -b "$BENCH_WORK/output/filtered.bam" -o "$BENCH_WORK/output/sample.pq" \
             -c "$BENCH_CONTIGS" -t "$cores" -n 3

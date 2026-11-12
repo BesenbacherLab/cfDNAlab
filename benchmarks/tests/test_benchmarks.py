@@ -508,8 +508,7 @@ class RegionalCommandTests(unittest.TestCase):
                     )
                     self.assertEqual(result.returncode, 0, result.stderr)
                     threads, track, *command = result.stdout.splitlines()
-                    expected_threads = cores - 1 if method in ("mosdepth-regions", "samtools-regions") else cores
-                    self.assertEqual(int(threads), expected_threads)
+                    self.assertEqual(int(threads), cores)
                     if method == "cfdnalab-regions":
                         self.assertEqual(command[1], "fcoverage")
                         self.assertIn("--ignore-gap", command)
@@ -517,15 +516,17 @@ class RegionalCommandTests(unittest.TestCase):
                         self.assertEqual(command[command.index("--n-threads") + 1], str(cores))
                         self.assertTrue(track.endswith("fcoverage.total.tsv.zst"))
                     elif method == "mosdepth-regions":
+                        self.assertEqual(command[command.index("--threads") + 1], str(cores))
                         self.assertIn("--no-per-base", command)
                         self.assertEqual(command[command.index("--by") + 1], "500000")
                         self.assertTrue(track.endswith("coverage.regions.bed.gz"))
                     elif method == "samtools-regions":
                         self.assertEqual(command[1], "bedcov")
-                        self.assertIn(f"nthreads={cores - 1}", command)
+                        self.assertIn(f"nthreads={cores}", command)
                         self.assertIn("-j", command)
                         self.assertTrue(track.endswith("samtools.bedcov.tsv"))
                     else:
+                        self.assertEqual(command[command.index("-t") + 1], str(cores))
                         self.assertIn("-b", command)
                         self.assertNotIn("-a", command)
                         self.assertTrue(track.endswith("pandepth.bed.stat.gz"))

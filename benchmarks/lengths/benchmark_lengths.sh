@@ -259,11 +259,11 @@ case "$method" in
         ;;
     samtools)
         tool_version=$BENCH_SAMTOOLS_VERSION
-        # -@ counts additional decoding threads, leaving a core for calculation
+        # -@ receives the allocated core count and controls additional decoding threads
         # The HTSlib input filter applies MAPQ without an extra BAM/filtering pass
         # -m 1 prevents tail truncation. The final bin collects overflow and is placed
         # above our range. The comparator selects inward pairs after timing
-        tool_threads=$((cores - 1))
+        tool_threads=$cores
         profile="$BENCH_WORK/output/stats.txt"
         command=("$BENCH_WORK/samtools-env/bin/samtools" stats -@ "$tool_threads"
             --input-fmt-option "filter=mapq >= $BENCH_MIN_MAPQ"
@@ -274,14 +274,15 @@ case "$method" in
         profile="$BENCH_WORK/output/metrics.txt"
         # Picard has no MAPQ option for this command. Timing includes a samtools
         # filter that streams uncompressed BAM into Picard. Both programs share
-        # the allocated CPU cores. PDF plotting is omitted
+        # the allocated CPU cores. The samtools thread option receives that same
+        # core count. PDF plotting is omitted
         # Explicit width prevents Picard from trimming the histogram tail
         # Keep the launcher's default starting heap but let Java choose its maximum
         # Passing -Xms prevents the launcher from adding its own fixed -Xmx limit
         command=(bash -c '
             set -euo pipefail
             cores=$1
-            "$BENCH_WORK/samtools-env/bin/samtools" view -@ "$((cores - 1))" -u -q "$BENCH_MIN_MAPQ" -f 1 -F 3852 "$BENCH_WORK/sample.bam" |
+            "$BENCH_WORK/samtools-env/bin/samtools" view -@ "$cores" -u -q "$BENCH_MIN_MAPQ" -f 1 -F 3852 "$BENCH_WORK/sample.bam" |
                 "$BENCH_WORK/picard-env/bin/picard" -Xms512m -XX:ActiveProcessorCount="$cores" \
                 -Djava.io.tmpdir="$BENCH_WORK/tmp" \
                 CollectInsertSizeMetrics \

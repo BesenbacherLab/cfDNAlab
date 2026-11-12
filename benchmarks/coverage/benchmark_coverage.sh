@@ -112,9 +112,10 @@ mkdir -p "$BENCH_RESULTS/profiles"
 # run_order counts every attempted run in this job, while repetition counts runs
 # of the current method, including warmups. CPU records identify jobs run on
 # different hardware when their timings are interpreted
-# tool_threads means cfDNAlab threads, FinaleToolkit worker processes, or EXTRA
-# decompression threads for mosdepth/samtools. It is not the allocated core count
-# For PanDepth it records the requested -t setting on the allocated CPUs
+# tool_threads records the native option, set to the allocated core count
+# It means cfDNAlab threads, FinaleToolkit workers, PanDepth's -t setting, or
+# additional BAM decoding threads for mosdepth/samtools. Each tool's threads
+# share the CPUs allocated by Slurm, including its main calculation thread
 # Rows contain elapsed time, CPU time, RAM reported by GNU time and the tool's exit code
 # step_exit_code also records failure to get the expected CPUs or output file
 header=$'run_order\trepetition\twarmup\tmethod\tworkload\ttool_version\tcores\ttool_threads'
@@ -312,9 +313,9 @@ if [[ "$method" == cfdnalab || "$method" == cfdnalab-autosomes || "$method" == c
         track="$BENCH_WORK/coverage/fcoverage.total.tsv.zst"
     fi
 elif [[ "$method" == mosdepth || "$method" == mosdepth-fragment || "$method" == mosdepth-regions ]]; then
-    # mosdepth has a main calculation thread plus extra decompression threads
-    # The decompression setting uses the remaining cores after the main thread
-    tool_threads=$((cores - 1))
+    # --threads controls BAM decoding, while coverage calculation runs separately
+    # Pass the allocated core count directly, as for every native thread option
+    tool_threads=$cores
     tool_version=$BENCH_MOSDEPTH_VERSION
     # Ordinary mode excludes inter-mate gaps and retains normal CIGAR processing
     # The flag mask removes unmapped, secondary, supplementary, failed and duplicate
@@ -333,7 +334,7 @@ elif [[ "$method" == mosdepth || "$method" == mosdepth-fragment || "$method" == 
     track="$BENCH_WORK/coverage/coverage.per-base.bed.gz"
     if [[ "$method" == mosdepth-regions ]]; then track="$BENCH_WORK/coverage/coverage.regions.bed.gz"; fi
 elif [[ "$method" == samtools-depth ]]; then
-    # Requesting cores - 1 decoding threads leaves a core for the main calculation
+    # -@ receives the allocated core count and controls additional decoding threads
     # -s removes mate overlap, -aa includes zero-depth bases on all contigs
     # -q is base quality and -Q is MAPQ. No -J means deletions are excluded
     # Basic flags match without requiring proper pairs. The HTSlib input expression
@@ -341,7 +342,7 @@ elif [[ "$method" == samtools-depth ]]; then
     # This does not require both mates to pass filtering or reconstruct their span
     # Its native output is uncompressed text with a 1-based position per row
     # https://www.htslib.org/doc/samtools-depth.html
-    tool_threads=$((cores - 1))
+    tool_threads=$cores
     tool_version=$BENCH_SAMTOOLS_VERSION
     track="$BENCH_WORK/coverage/samtools.depth.tsv"
     command=("$BENCH_WORK/samtools-env/bin/samtools" depth -@ "$tool_threads"
@@ -352,7 +353,7 @@ elif [[ "$method" == samtools-regions ]]; then
     # bedcov sums read depth directly over the BED. -j excludes D/N positions
     # Unlike depth -s, bedcov counts overlapping mates twice. The HTSlib input
     # options supply decoding threads, paired-read selection and TLEN bounds
-    tool_threads=$((cores - 1))
+    tool_threads=$cores
     tool_version=$BENCH_SAMTOOLS_VERSION
     track="$BENCH_WORK/coverage/samtools.bedcov.tsv"
     command=("$BENCH_WORK/samtools-env/bin/samtools" bedcov
