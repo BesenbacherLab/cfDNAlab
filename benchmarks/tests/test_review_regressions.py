@@ -34,14 +34,14 @@ class SubmissionTests(unittest.TestCase):
     """Check allocation requests without contacting Slurm or running a benchmark."""
 
     def test_only_production_submissions_request_the_whole_node(self):
-        for feature, filename in (
+        for feature, job_filename in (
             ("coverage", "benchmark_coverage.sh"),
             ("lengths", "benchmark_lengths.sh"),
             ("ends", "benchmark_end_motifs.sh"),
             ("midpoints", "benchmark_midpoints.sh"),
         ):
             # Unconditional header options would also apply to pilots
-            header = (BENCHMARKS / feature / filename).read_text().splitlines()
+            header = (BENCHMARKS / feature / job_filename).read_text().splitlines()
             self.assertNotIn("#SBATCH --exclusive", header)
             self.assertNotIn("#SBATCH --mem=0", header)
             self.assertNotIn("#SBATCH --cpus-per-task=32", header)
@@ -73,8 +73,8 @@ class SubmissionTests(unittest.TestCase):
                     if feature == "midpoints":
                         references = root / "references"
                         references.mkdir()
-                        for filename in EXCLUSION_FILENAMES:
-                            (references / filename).touch()
+                        for exclusion_filename in EXCLUSION_FILENAMES:
+                            (references / exclusion_filename).touch()
                         # The launcher's format sample accepts a 2001 bp BED4
                         # without requiring a BAM or any installed native tool
                         (root / "sites.bed").write_text("chr1\t1000\t3001\tTFBS\n")
@@ -115,7 +115,7 @@ class SubmissionTests(unittest.TestCase):
                         expected += ["--mem=50G"]
                     expected += [
                         *extra_options,
-                        f"benchmarks/{feature}/{filename}",
+                        f"benchmarks/{feature}/{job_filename}",
                     ]
                     self.assertEqual(call_log.read_text().splitlines(), expected)
                     self.assertEqual(pilot_log.read_text(), (pilot or "0") + "\n")
@@ -273,6 +273,7 @@ class SetupAndScopeTests(unittest.TestCase):
                         "BENCH_BAM": "/unused/input.bam",
                         "BENCH_INDEX": "/unused/input.bam.bai",
                         "BENCH_INTERVALS": "/unused/sites.bed",
+                        "BENCH_GRIFFIN_REF_DIR": "/unused/griffin-references",
                         "BENCH_SAMTOOLS_ARCHIVE": "/unused/samtools.tar.gz",
                         "BENCH_CFDNA": "/unused/cfdna",
                         "BENCH_RESULTS": str(root / "results"),
@@ -1396,6 +1397,33 @@ class NativeComparatorTests(unittest.TestCase):
             self.assertEqual(profiles["sparse"][1:], (2, 0))
             np.testing.assert_array_equal(profiles["sparse"][0], [4] * 5 + [0] * 127)
             self.assertTrue(np.isnan(profiles["empty"][0]).all())
+            self.assertEqual(profiles["empty"][2], 0)
+
+    def test_griffin_blank_density_is_undefined_rather_than_zero(self):
+        import numpy as np
+
+        comparator = self.comparator("midpoints/compare_midpoints.py")
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "griffin.tsv"
+            columns = [
+                "site_name", "number_of_sites", "smoothing", "CNA_normalization",
+                "mean_reads_per_bp_in_normalization_window",
+            ] + list(map(str, range(-990, 990, 15)))
+            with path.open("w") as destination:
+                writer = csv.writer(destination, delimiter="\t")
+                writer.writerow(columns)
+                writer.writerow(["masked", 2, True, False, ""] + [""] * 132)
+            profiles = comparator.read_griffin(path, 9990, 15)
+            self.assertTrue(np.isnan(profiles["masked"][0]).all())
+            self.assertTrue(np.isnan(profiles["masked"][2]))
+
+            # Undefined density is only valid when the profile is undefined too
+            with path.open("w") as destination:
+                writer = csv.writer(destination, delimiter="\t")
+                writer.writerow(columns)
+                writer.writerow(["invalid", 2, True, False, ""] + [1] * 132)
+            with self.assertRaisesRegex(ValueError, "Invalid Griffin mean-count metadata"):
+                comparator.read_griffin(path, 9990, 15)
 
     def test_midpoint_normalizes_all_666_bins_before_comparing_132_saved_bins(self):
         import numpy as np
@@ -1515,7 +1543,7 @@ class NativeComparatorTests(unittest.TestCase):
                     output.getvalue().splitlines(), delimiter="\t"
                 )
             }
-            # Opposite half-window peaks: 20 absolute differences of two, r=-1
+            # Opposite half-window peaks: 132 absolute differences of two, r=-1
             self.assertAlmostEqual(float(rows["reversed"]["pearson_r"]), -1)
             self.assertEqual(float(rows["reversed"]["mae_mean_one"]), 2)
             self.assertEqual(float(rows["reversed"]["rmse_mean_one"]), 2)
