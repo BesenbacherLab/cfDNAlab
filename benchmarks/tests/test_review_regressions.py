@@ -353,6 +353,10 @@ class SetupAndScopeTests(unittest.TestCase):
                     "SLURM_JOB_NUM_NODES": "1",
                     "SLURM_CPUS_PER_TASK": "4",
                     "BENCH_METHODS": "cfdnalab griffin-gc",
+                    # Keep the GC range valid so this reaches the job-isolation check
+                    "BENCH_MIN_LENGTH": "100",
+                    "BENCH_MAX_LENGTH": "200",
+                    "BENCH_MIN_MAPQ": "20",
                     "BENCH_COMPARE_PYTHON": sys.executable,
                     "BENCH_CORES": "4",
                     "BENCH_PILOT": "0",
@@ -1045,6 +1049,10 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
                     "BENCH_GRIFFIN_REF_DIR": str(references),
                     "BENCH_GRIFFIN_MAPPABILITY_BW": str(mappability),
                     "BENCH_METHODS": "griffin-gc",
+                    # Production settings must not leak in from the caller's shell
+                    "BENCH_MIN_LENGTH": "100",
+                    "BENCH_MAX_LENGTH": "200",
+                    "BENCH_MIN_MAPQ": "20",
                     "BENCH_GRIFFIN_GC_REGIONS": str(gc_regions),
                     "BENCH_GRIFFIN_REF_GC": str(gc_frequencies),
                     "BENCH_CORES": "4",
@@ -1079,6 +1087,10 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
                 arguments = call.split("\t")
                 window_index = arguments.index("--norm_window")
                 self.assertEqual(arguments[window_index + 1:window_index + 3], ["-1000", "1001"])
+                if arguments[0].endswith("griffin_coverage.py"):
+                    size_index = arguments.index("--size_range")
+                    self.assertEqual(arguments[size_index + 1:size_index + 3], ["100", "200"])
+                    self.assertEqual(arguments[arguments.index("--map_quality") + 1], "20")
             # Forward/unstranded anchors are 2000. Griffin's reverse formula
             # needs boundary 2001 to fetch the same unchanged [1000, 3001) BED
             import json

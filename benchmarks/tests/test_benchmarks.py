@@ -1052,6 +1052,9 @@ install_freia
     def test_finaletoolkit_installs_loess_with_pip_before_packing(self):
         # Local shell functions replace Conda, Python and FinaleToolkit
         # No package manager or installed tool is invoked by this fixture
+        revision = "d16632ec5ae8999e774234457f6b0f9405c8f590"
+        source_requirement = f"FinaleToolkit @ git+https://github.com/epifluidlab/FinaleToolkit.git@{revision}"
+        pip_command = f"python -m pip install loess==2.1.2 {source_requirement}"
         for pip_status in (0, 9):
             with self.subTest(pip_status=pip_status), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
@@ -1066,6 +1069,8 @@ install_freia
                     ["bash", "-euc", r'''
 source <(sed -n '/^install_finaletoolkit() {$/,/^}$/p' "$BENCH_INSTALLER")
 install_root=$BENCH_INSTALL_ROOT
+# The function uses the installer's source pin as well as its installation root
+declare -A versions=([finaletoolkit]="$BENCH_FINALE_REVISION")
 conda() {
     printf 'conda %s\n' "$*" >> "$BENCH_CALLS"
     if [[ "$*" == *loess=* ]]; then return 7; fi
@@ -1073,7 +1078,11 @@ conda() {
 }
 python() {
     printf 'python %s\n' "$*" >> "$BENCH_CALLS"
-    if [[ "$*" == '-m pip install loess==2.1.2' ]]; then return "$BENCH_PIP_STATUS"; fi
+    if [[ "$1" == -m && "$2" == pip && "$3" == install ]]; then
+        # Keep the VCS requirement as a single argument, including its spaces
+        [[ "$#" == 5 && "$4" == loess==2.1.2 && "$5" == "$BENCH_FINALE_REQUIREMENT" ]] || return 17
+        return "$BENCH_PIP_STATUS"
+    fi
     if [[ "$*" == '-m pip freeze' ]]; then printf 'loess==2.1.2\n'; fi
 }
 finaletoolkit() { printf 'version\n' >> "$BENCH_CALLS"; }
@@ -1085,18 +1094,24 @@ install_finaletoolkit
                         "BENCH_INSTALL_ROOT": str(root),
                         "BENCH_CALLS": str(calls),
                         "BENCH_PIP_STATUS": str(pip_status),
+                        "BENCH_FINALE_REVISION": revision,
+                        "BENCH_FINALE_REQUIREMENT": source_requirement,
                     },
                     capture_output=True, text=True,
                 )
                 commands = calls.read_text().splitlines()
-                self.assertIn("python -m pip install loess==2.1.2", commands)
+                self.assertIn(pip_command, commands)
+                revision_file = root / "envs/finaletoolkit/share/finaletoolkit/revision.txt"
                 if pip_status:
                     self.assertEqual(result.returncode, pip_status, result.stderr)
                     self.assertNotIn("pack", commands)
                     self.assertNotIn("version", commands)
+                    self.assertFalse(revision_file.exists())
                 else:
                     self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertLess(commands.index(pip_command), commands.index("python -m pip check"))
                     self.assertLess(commands.index("python -m pip check"), commands.index("pack"))
+                    self.assertEqual(revision_file.read_text(), revision + "\n")
                     self.assertEqual(
                         (root / "records/finaletoolkit.pip.txt").read_text(),
                         "loess==2.1.2\n",
