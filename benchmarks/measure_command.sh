@@ -54,6 +54,9 @@ stderr_file="$BENCH_WORK/tool-stderr.log"
 
 # Appends a value to the measurement record. Tabs and newlines become spaces, so
 # every value stays a single cell in timings.tsv
+# Each value is computed in its own assignment before it is recorded. With set -e,
+# a failing assignment stops the script, but a failing $(...) passed directly as an
+# argument would be ignored and could leave a wrong value in a successful run
 record() {
     local name=$1
     local value=$2
@@ -70,7 +73,8 @@ record() {
 record step_id "$SLURM_STEP_ID"
 node=$(hostname)
 record node "$node"
-record cpu_model "$(awk -F ': ' '/^model name/ {print $2; exit}' /proc/cpuinfo)"
+cpu_model=$(awk -F ': ' '/^model name/ {print $2; exit}' /proc/cpuinfo)
+record cpu_model "$cpu_model"
 cpu_ids=$(awk '/Cpus_allowed_list/ {print $2}' /proc/self/status)
 record cpu_ids "$cpu_ids"
 
@@ -121,7 +125,8 @@ fi
 # adding a line to that file when the command fails
 gnu_time_file="$BENCH_WORK/gnu-time.tsv"
 rm -f "$gnu_time_file"
-record started_utc "$(date -u +%FT%TZ)"
+started_utc=$(date -u +%FT%TZ)
+record started_utc "$started_utc"
 tool_exit_code=0
 /usr/bin/time --quiet --format $'%e\t%U\t%S\t%M' --output "$gnu_time_file" \
     "${timed_command[@]}" > "$stdout_file" 2> "$stderr_file" || tool_exit_code=$?
@@ -150,7 +155,8 @@ flush_time_file="$BENCH_WORK/flush-time.txt"
 /usr/bin/time --quiet --format '%e' --output "$flush_time_file" sync -f "$output_directory"
 flush_seconds=$(cat "$flush_time_file")
 record flush_seconds "$flush_seconds"
-record process_plus_flush_seconds "$(awk -v wall="$wall_seconds" -v flush="$flush_seconds" 'BEGIN {printf "%.3f", wall + flush}')"
+process_plus_flush_seconds=$(awk -v wall="$wall_seconds" -v flush="$flush_seconds" 'BEGIN {printf "%.3f", wall + flush}')
+record process_plus_flush_seconds "$process_plus_flush_seconds"
 
 # ---------------------------------------------------------------------------
 # 4. Output size
@@ -158,7 +164,8 @@ record process_plus_flush_seconds "$(awk -v wall="$wall_seconds" -v flush="$flus
 
 # The size includes intermediate files that a tool's workflow writes, such as
 # FrEIA's filtered BAM
-record output_bytes "$(du -sb "$output_directory" | cut -f 1)"
+output_bytes=$(du -sb "$output_directory" | cut -f 1)
+record output_bytes "$output_bytes"
 
 # ---------------------------------------------------------------------------
 # 5. Expected output

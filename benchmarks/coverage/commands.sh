@@ -91,7 +91,8 @@ saved_profiles_share_a_quantity() {
 # Sets (see common.sh for how they are used):
 #   command, expected_output, empty_output_allowed, stdout_file, row[...]
 prepare_command() {
-    local method=$1
+    local method=$1 workload
+    workload=$(coverage_quantity "$method")
     # Defaults shared by most methods. The branches below change only what differs
     #   workload       The quantity the method measures (see coverage_quantity)
     #   tool_threads   Value passed to the tool's thread option, NA if it has none.
@@ -100,7 +101,7 @@ prepare_command() {
     #                  All of a tool's threads share the CPUs Slurm allocated
     #   length_filter  applied, or unsupported when the tool has no length filter
     row=(
-        [workload]=$(coverage_quantity "$method")
+        [workload]=$workload
         [tool_threads]=$cores
         [min_mapq]=$min_mapq
         [min_length]=$min_length

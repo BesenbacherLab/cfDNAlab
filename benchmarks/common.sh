@@ -209,15 +209,19 @@ create_results_directory() {
 # Parameters:
 #   $1  Feature name (coverage, lengths, ends or midpoints)
 record_job_setup() {
-    local feature=$1
+    local feature=$1 commit uncommitted_changes
     cp "$SLURM_SUBMIT_DIR/benchmarks/measure_command.sh" "$BENCH_WORK/measure_command.sh"
+    # Separate assignments, so a failing git stops the job instead of recording an
+    # empty commit or a clean checkout
+    commit=$(git -C "$SLURM_SUBMIT_DIR" rev-parse HEAD)
+    uncommitted_changes=$(git -C "$SLURM_SUBMIT_DIR" status --porcelain)
     {
         printf 'node\t%s\npilot\t%s\n' "$BENCH_NODE" "$BENCH_PILOT"
         printf 'methods\t%s\ncores\t%s\n' "$BENCH_METHODS" "$BENCH_CORES"
         printf 'warmups\t%s\nmeasured_repetitions\t%s\n' "$BENCH_WARMUPS" "$BENCH_REPETITIONS"
         printf 'run_timeout_seconds\t%s\n' "$BENCH_RUN_TIMEOUT_SECONDS"
-        printf 'benchmark_commit\t%s\n' "$(git -C "$SLURM_SUBMIT_DIR" rev-parse HEAD)"
-        if [[ -n $(git -C "$SLURM_SUBMIT_DIR" status --porcelain) ]]; then
+        printf 'benchmark_commit\t%s\n' "$commit"
+        if [[ -n "$uncommitted_changes" ]]; then
             printf 'benchmark_dirty\ttrue\n'
         else
             printf 'benchmark_dirty\tfalse\n'

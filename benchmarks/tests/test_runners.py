@@ -1178,6 +1178,23 @@ class MeasureCommandTests(unittest.TestCase):
                 result = self.measure(': > "$BENCH_WORK/output/empty.tsv"', "output/empty.tsv", allowed)
                 self.assertEqual(result.returncode, expected_status, result.stderr)
 
+    def test_failed_size_measurement_fails_the_run(self):
+        # A du failure after a successful command must not be recorded as a
+        # successful run with a missing or partial size
+        fake_bin = self.work / "bin"
+        write_executable(fake_bin / "du", "#!/usr/bin/env bash\necho 'du fixture failed' >&2\nexit 1\n")
+
+        result = self.measure(
+            'printf "native result" > "$BENCH_WORK/output/result.txt"',
+            PATH=str(fake_bin) + ":" + self.environment["PATH"],
+        )
+
+        self.assertEqual(result.returncode, 1)
+        record = self.record()
+        self.assertEqual(record["tool_exit_code"], "0")
+        self.assertIn("flush_seconds", record)
+        self.assertNotIn("output_bytes", record)
+
     def test_wrong_placement_stops_before_running_the_command(self):
         # The step can use a single CPU, but the job expects two cores or another node
         for variables in ({"BENCH_CORES": "2"}, {"BENCH_NODE": "another-node"}):
