@@ -36,7 +36,7 @@ Before invoking Conda, the installer sets `CONDA_PKGS_DIRS=<root>/cache/conda/pk
 | `mosdepth` | 0.3.14 | Authors' standalone executable |
 | `samtools` | 1.25 | Conda executable and `samtools.tar.gz` |
 | `pandepth` | 2.26 | Authors' Linux release executable |
-| `finaletoolkit` | 1.1.0, Python 3.11 | Conda executable and `finaletoolkit.tar.gz` |
+| `finaletoolkit` | Commit `d16632ec5ae8999e774234457f6b0f9405c8f590`, Python 3.11 | Conda executable and `finaletoolkit.tar.gz` |
 | `cfdnapro` | 1.7.4, source `ab9eeb166b8614b9ec2ce4ceda190dc295c65a7c` | Apptainer image pinned by digest |
 | `picard` | 3.5.0, Java 17 | Conda launcher and `picard.tar.gz` |
 | `freia` | `2c32fb9d9fab774f4ae57931df7fd7d75654d343` | Unmodified scripts and `freia.tar.gz` |
@@ -102,7 +102,7 @@ Setup retains all rows, including repeats and overlaps, sorts chromosome/start/e
 
 ### Native midpoint workflow
 
-Both midpoint methods retain the full supplied 9,990 bp window (`center - 4995` to `center + 4995`), apply native 165 bp Savitzky-Golay smoothing and save 666 bins of 15 bp. These bounds align cfDNAlab's BED-relative bins with Griffin's signed bins without resizing supplied intervals. cfDNAlab smooths before binning. Griffin sums into bins before smoothing over 11 bins. Griffin uses its release exclusion BEDs, zero-mappability filtering, outlier removal and compulsory FFT features with the official feature settings. The same exclusion BEDs enter cfDNAlab's native blacklist handling. Per-site CNA correction and fragment-count weights are off. Full-window group normalization is performed on cfDNAlab profiles outside timing for comparison with Griffin. Pearson r, r squared and absolute-error metrics are calculated without cropping. Eligible site counts can differ and are reported separately.
+The midpoint input is the supplied 9,990 bp BED (`center - 4995` to `center + 4995`). Both methods use MAPQ 20, 15 bp bins and native 165 bp smoothing. cfDNAlab saves all 666 normalization bins. Griffin normalizes over that full window and saves its official central 132 bins, `[-990, 990)`. The comparator normalizes cfDNAlab over all 666 bins before selecting the same central bins. Griffin retains exclusion BEDs, zero-mappability masking, outlier removal and compulsory FFT features. The same BEDs enter cfDNAlab's native blacklist handling. Per-site CNA correction and fragment-count weights stay off. `cfdnalab_sites` counts eligible intervals; `griffin_sites` counts input sites, including masked sites.
 
 `BENCH_GRIFFIN_REF_DIR` supplies the five release exclusion BEDs for either tool. Griffin also uses `BENCH_GRIFFIN_MAPPABILITY_BW`, defaulting to `k100.Umap.MultiTrackMappability.bw` under that directory. The installer prints the reference directory without reinstalling completed tools. Reference files must exist before submission. Their staging remains outside timing.
 
@@ -125,7 +125,7 @@ Submit from the repository root on the login node with `bash benchmarks/submit_b
 | `BENCH_SETUP_PYTHON` | `python3`, untimed setup/relocation only |
 | `BENCH_COMPARE_PYTHON` | Comparison Python printed by the installer. Required and checked before staging when multiple methods are selected |
 | `BENCH_EXPECTED_NODE` | Optional exact hostname check before staging |
-| `BENCH_MIN_MAPQ` | 30 |
+| `BENCH_MIN_MAPQ` | 30, or 20 for midpoints. Timed Picard applies no MAPQ threshold |
 | `BENCH_MIN_LENGTH`, `BENCH_MAX_LENGTH` | Inclusive 30-1000 bp, midpoint defaults 100-200 bp |
 | `BENCH_K` | Ends only, 4 with 3 also accepted |
 | `BENCH_GENOME` | cfDNAPro label, `hg38` |
@@ -145,7 +145,7 @@ Jobs request one node, one task, `BENCH_CORES` CPUs per task, one hardware threa
 
 Each job uses exactly one core setting. Every selected method runs as a contiguous block at that setting. Its warmup repetitions precede measurements, with actual order retained in the timing TSV. Normally production repetition 1 is a warmup and 2-4 are measured.
 
-Griffin must be selected alone with `BENCH_METHODS=griffin`. Full-input warmups are set to zero. Every Griffin job, including a pilot, first runs its release's 1000-site CTCF demo untimed on the same staged production BAM/reference and node. It uses the production length/MAPQ/window settings with the demo's own site coordinates and chromosomes. The demo gets a separate Slurm step so its resource use does not enter measured step memory. Its outputs are removed and flushed before the first production run. The supplied production BED is unchanged. A failed demo preserves logs and stops before measurements. The normal Griffin schedule is three measured full-input runs, numbered 1-3.
+Griffin must be selected alone with `BENCH_METHODS=griffin-gc`. Each timed repetition includes sample GC estimation and profiling. Both raw and corrected tables are preserved from the first measured run. There is no separate timed `griffin` method. The release's 1000-site demo is an untimed warmup in a separate Slurm step, using production filters/windows and a unit GC table. Full-input warmups are zero. Three production measurements follow, numbered 1-3. The supplied site BED remains unchanged. A failed demo preserves logs and stops before measurements.
 
 No method is automatically excluded. cfDNAPro and FinaleToolkit lengths are initially compared at 1 and 4 cores in separate jobs. Higher-core runs are deferred until those results are inspected. If no consistent benefit is observed, stop higher-core measurements for this workload. If a benefit is observed, add 12/32-core jobs. Choose the method list explicitly for each job. Picard's timed pipeline includes samtools and the JVM, whose resource use must be measured.
 

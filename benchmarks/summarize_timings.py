@@ -199,7 +199,7 @@ def pilot_budgets(runs, setting_columns, summaries, warmups, repetitions, margin
         failures = sum(not successful(row) for row in attempts)
         row = {**dict(zip(setting_columns, key)), **(summary or {})}
         # Griffin gets a short untimed demo warmup instead of a full-input run
-        planned_runs = repetitions + (0 if row["method"] in ("griffin", "griffin-gc") else warmups)
+        planned_runs = repetitions + (0 if row["method"] == "griffin-gc" else warmups)
         row.update(
             {
                 "planned_runs": planned_runs,

@@ -11,13 +11,13 @@ sites_yaml=${2:?Supply the Griffin site-list YAML}
 chromosome_sizes=${3:?Supply chromosome sizes}
 chromosome_names=${4:?Supply comma-separated chromosome names}
 output_directory=${5:?Supply the output directory}
-# The baseline and demo use unit weights. Corrected runs pass freshly estimated bias
+# The untimed demo uses unit weights. Production passes freshly estimated bias
 gc_bias=${6:-$BENCH_WORK/unit_gc_bias.tsv}
 environment="$BENCH_WORK/griffin-env"
 scripts="$environment/share/griffin"
-# End coordinates are exclusive. The supplied wide window is used for both
-# normalization and saved output. Griffin rounds these bounds inward to multiples
-# of its 15 bp step. Crop the central region only after benchmarking
+# End coordinates are exclusive. The supplied wide window defines
+# normalization. Saved output follows Griffin's official central window, rounded
+# inward from [-1000, 1000) to [-990, 990) at its 15 bp step
 window_end=$((BENCH_WINDOW_WIDTH - BENCH_HALF_WIDTH))
 IFS=, read -r -a chromosomes <<< "$chromosome_names"
 mkdir -p "$output_directory/tmp" "$output_directory/results"
@@ -46,7 +46,7 @@ common=(--sample_name sample --tmp_dir "$output_directory/tmp"
     --uncorrected_bw_path "$output_directory/tmp/sample/tmp_bigWig/sample.uncorrected.bw" \
     --GC_corrected_bw_path "$output_directory/tmp/sample/tmp_bigWig/sample.GC_corrected.bw" \
     --GC_map_corrected_bw_path none --results_dir "$output_directory/results" \
-    --save_window "-$BENCH_HALF_WIDTH" "$window_end" \
+    --save_window -1000 1000 \
     --center_window -30 30 --fft_window -960 960 --fft_index 10 \
     --step 15 --exclude_paths "${exclusion_paths[@]}" --exclude_zero_mappability True \
     --exclude_outliers True --CNA_normalization False --individual False \

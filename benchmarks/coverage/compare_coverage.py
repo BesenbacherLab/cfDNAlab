@@ -78,12 +78,12 @@ def read_scope(directory):
 def spool_track(directory, scope, destination):
     """Validate native runs, then coalesce equal adjacent values on disk.
 
-    Only cfDNAlab's sparse format may omit zero positions. Other native formats
+    cfDNAlab and samtools depth may omit zero positions. Other native formats
     must cover every base of their declared scope, so truncated tables fail.
     """
     method = directory.name
     positional = method in ("samtools-depth", "pandepth")
-    sparse = method.startswith("cfdnalab")
+    sparse = method.startswith("cfdnalab") or method == "samtools-depth"
     filename = (
         "positions.tsv.gz"
         if positional
@@ -222,12 +222,15 @@ def flush_residual_counts(database, counts):
 
 def compare_tracks(left_paths, right_paths, scope, residual_database):
     """Integrate errors, Pearson and residual counts at base resolution."""
-    bases = identical = union_bases = union_identical = 0
+    bases = identical = union_bases = union_identical = intersection_bases = 0
     below = above = 0
     absolute_error = squared_error = signed_error = left_total = right_total = 0.0
     correlation = Correlation()
     residual_counts = Counter()
+    chromosome_metrics = []
     for chromosome, length in scope.items():
+        chromosome_union = chromosome_intersection = 0
+        left_nonzero = right_nonzero = 0
         left_runs = iter(zero_filled_runs(left_paths[chromosome], length))
         right_runs = iter(zero_filled_runs(right_paths[chromosome], length))
         left_run, right_run = next(left_runs), next(right_runs)
@@ -243,7 +246,13 @@ def compare_tracks(left_paths, right_paths, scope, residual_database):
             above += weight if difference > 0 else 0
             if left != 0 or right != 0:
                 union_bases += weight
+                chromosome_union += weight
                 union_identical += weight if difference == 0 else 0
+            if left != 0 and right != 0:
+                intersection_bases += weight
+                chromosome_intersection += weight
+            left_nonzero += weight if left != 0 else 0
+            right_nonzero += weight if right != 0 else 0
             absolute_error += abs(difference) * weight
             squared_error += difference**2 * weight
             signed_error += difference * weight
@@ -259,6 +268,17 @@ def compare_tracks(left_paths, right_paths, scope, residual_database):
                 left_run = next(left_runs)
             if end == right_run[1] and end < length:
                 right_run = next(right_runs)
+        chromosome_metrics.append({
+            "chromosome": chromosome,
+            "bases": length,
+            "left_nonzero_bases": left_nonzero,
+            "right_nonzero_bases": right_nonzero,
+            "nonzero_union_bases": chromosome_union,
+            "nonzero_intersection_bases": chromosome_intersection,
+            "coverage_jaccard": checked_metric(
+                chromosome_intersection / chromosome_union, "chromosome coverage Jaccard", maximum=1.0
+            ) if chromosome_union else "NA",
+        })
     flush_residual_counts(residual_database, residual_counts)
     return {
         "bases": bases,
@@ -277,6 +297,11 @@ def compare_tracks(left_paths, right_paths, scope, residual_database):
             above / bases, "left-above fraction", maximum=1.0
         ),
         "nonzero_union_bases": union_bases,
+        "nonzero_intersection_bases": intersection_bases,
+        "coverage_jaccard": checked_metric(
+            intersection_bases / union_bases, "coverage Jaccard", maximum=1.0
+        ) if union_bases else "NA",
+        "chromosome_metrics": chromosome_metrics,
         "union_fraction_identical": checked_metric(
             union_identical / union_bases, "union identical fraction", maximum=1.0
         )
@@ -333,9 +358,11 @@ def regional_counts(directory, expected_regions):
                 if fields and not fields[0].startswith("#")
             ]
     elif directory.name == "pandepth-regions":
-        with open_track(directory / "pandepth.bed.stat.gz") as source:
+        # The v2.26 -w writer uses inclusive 1-based Start/End and puts TotalDepth
+        # after Length and CoveredSite. Its file has no BED RegionID column
+        with open_track(directory / "pandepth.win.stat.gz") as source:
             entries = [
-                (fields[0], int(fields[1]) - 1, fields[2], fields[6])
+                (fields[0], int(fields[1]) - 1, fields[2], fields[5])
                 for fields in csv.reader(source, delimiter="\t")
                 if fields and not fields[0].startswith("#")
             ]
@@ -358,7 +385,15 @@ def regional_counts(directory, expected_regions):
         ):
             raise ValueError(f"Duplicate region or invalid count in {directory}")
         counts[key] = count
-    if set(counts) != expected_regions:
+    missing = expected_regions - set(counts)
+    # PanDepth's j < chromosome_length loop omits a final window of exactly 1 bp
+    # No other missing windows or unexpected coordinates are silently accepted
+    allowed_missing = {
+        key for key in expected_regions
+        if key[2] - key[1] == 1
+        and key[2] == max(region[2] for region in expected_regions if region[0] == key[0])
+    } if directory.name == "pandepth-regions" else set()
+    if set(counts) - expected_regions or not missing <= allowed_missing:
         raise ValueError(
             f"Regional row identity differs from the shared BED: {directory}"
         )
@@ -397,6 +432,28 @@ def compare_regions(left, right):
         ),
         "pearson_r_regions": correlation.value(),
     }
+
+
+def possible_samtools_truncation(left_name, right_name, chromosomes):
+    """Flag partial overlap followed by a zero-coverage suffix in BAM order.
+
+    This is a diagnostic pattern, not a failure criterion. Chromosomes with no
+    coverage from either tool cannot distinguish truncation from real zeros.
+    """
+    if "samtools-depth" not in (left_name, right_name):
+        return set()
+    samtools_column = "left_nonzero_bases" if left_name == "samtools-depth" else "right_nonzero_bases"
+    other_column = "right_nonzero_bases" if left_name == "samtools-depth" else "left_nonzero_bases"
+    informative = [row for row in chromosomes if row["nonzero_union_bases"]]
+    for index, row in enumerate(informative[:-1]):
+        later = informative[index + 1:]
+        if (
+            0 < row["coverage_jaccard"] < 1
+            and row[samtools_column] > 0
+            and all(following[samtools_column] == 0 and following[other_column] > 0 for following in later)
+        ):
+            return {entry["chromosome"] for entry in informative[index:]}
+    return set()
 
 
 def main():
@@ -445,6 +502,7 @@ def main():
             raise ValueError("Empty shared scope or mismatched chromosome lengths")
         comparisons.append((left_name, right_name, scope, same_scope))
     rows = []
+    chromosome_rows = []
     with (
         tempfile.TemporaryDirectory(prefix="coverage-concordance-") as temporary,
         ExitStack() as resources,
@@ -517,6 +575,20 @@ def main():
             metrics = compare_tracks(
                 tracks[left_name], tracks[right_name], scope, residual_database
             )
+            chromosomes = metrics.pop("chromosome_metrics")
+            flagged = possible_samtools_truncation(left_name, right_name, chromosomes)
+            if flagged:
+                print(
+                    f"Possible samtools-depth truncation in {left_name} versus {right_name}. "
+                    "Partial chromosome overlap is followed by zero samtools coverage on later "
+                    "covered chromosomes in BAM order. Inspect coverage_jaccard.tsv and the run logs.",
+                    file=sys.stderr,
+                )
+            chromosome_rows.extend(
+                {**comparison, **row, "chromosome_order": index,
+                 "possible_samtools_truncation": row["chromosome"] in flagged}
+                for index, row in enumerate(chromosomes, 1)
+            )
             rows.append({**comparison, **metrics})
             for residual, bases in residual_database.execute(
                 "SELECT residual, bases FROM residual_counts ORDER BY residual"
@@ -537,7 +609,14 @@ def main():
             covered_bases = left_name in REGIONAL_COVERAGE_METHODS
             if covered_bases != (right_name in REGIONAL_COVERAGE_METHODS):
                 continue
-            metrics = compare_regions(regions[left_name], regions[right_name])
+            common_regions = regions[left_name].keys() & regions[right_name].keys()
+            if not common_regions:
+                raise ValueError(f"No shared regional windows: {left_name}, {right_name}")
+            left_counts = {key: value for key, value in regions[left_name].items() if key in common_regions}
+            right_counts = {key: regions[right_name][key] for key in left_counts}
+            metrics = compare_regions(left_counts, right_counts)
+            metrics["left_missing_regions"] = len(expected) - len(regions[left_name])
+            metrics["right_missing_regions"] = len(expected) - len(regions[right_name])
             if covered_bases:
                 # These totals count covered bases rather than fragments
                 metrics["left_integrated_depth"] = metrics.pop("left_summed_region_counts")
@@ -548,15 +627,32 @@ def main():
                     "left_profile": left_name,
                     "right_profile": right_name,
                     "quantity": "regional-read-depth" if covered_bases else "regional-fragment-counts",
-                    "same_native_scope": True,
+                    "same_native_scope": regions[left_name].keys() == regions[right_name].keys(),
                     "chromosomes": ",".join(
-                        sorted({key[0] for key in regions[left_name]})
+                        sorted({key[0] for key in common_regions})
                     ),
                     **metrics,
                 }
             )
         if not rows:
             parser.error("No pair of saved profiles measures the same quantity")
+        # This small table records overlap per chromosome in BAM order. It is
+        # separate from the exact residual histogram, which remains base-weighted
+        with tempfile.NamedTemporaryFile(
+            mode="w", dir=arguments.profiles.parent, prefix=".coverage-jaccard-", delete=False
+        ) as diagnostics:
+            diagnostics_path = Path(diagnostics.name)
+            resources.callback(diagnostics_path.unlink, missing_ok=True)
+            diagnostic_writer = csv.DictWriter(
+                diagnostics, delimiter="\t", lineterminator="\n",
+                fieldnames=["left_profile", "right_profile", "quantity", "same_native_scope",
+                            "chromosomes", "chromosome", "chromosome_order", "bases",
+                            "left_nonzero_bases", "right_nonzero_bases", "nonzero_union_bases",
+                            "nonzero_intersection_bases", "coverage_jaccard", "possible_samtools_truncation"],
+            )
+            diagnostic_writer.writeheader()
+            diagnostic_writer.writerows(chromosome_rows)
+        os.replace(diagnostics_path, arguments.profiles.parent / "coverage_jaccard.tsv")
         output.close()
         os.replace(pending_path, arguments.profiles.parent / "residuals.tsv")
     columns = list(dict.fromkeys(column for row in rows for column in row))

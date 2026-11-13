@@ -6,10 +6,10 @@ Compare global histograms with one bin per fragment length from **30 through 100
 
 | Tool | Native calculation and settings | Role | Expected differences |
 | --- | --- | --- | --- |
-| cfDNAPro 1.7.4 | `readBam(curate_start_and_end=TRUE, galp_mapqFilter=30)`, with explicit matching flag exclusions, then `read_bam_insert_metrics(fragment_obj=..., isize_min=30L, isize_max=1000L)` | Primary definition check | Uses the same directional aligned span as cfDNAlab. Overlapping outward-pair handling and native pairing can differ, as described below. Neither tool needs proper-pair filtering for this comparison. |
-| FinaleToolkit 1.1.0 | `frag-length-bins BAM --bin-size 1 --min-length 30 --max-length 1000 --min-mapq 30 --output lengths.tsv` | Direct cfDNA CLI comparator | Uses absolute TLEN from read1 and requires proper pairs. Does not verify both mates' MAPQ. This command has no worker-count option. |
-| samtools 1.25 | `stats --input-fmt-option 'filter=mapq >= 30' -f 1 -F 3852 -m 1 -i 1001`, using its `IS` inward-pair column and retaining lengths 30-1000 afterward | Established compiled baseline | Uses absolute TLEN. The last bin collects lengths at or above its maximum, hence 1001 rather than 1000. Counts passing alignments, halves each bin and truncates the integer result, so independently filtering mates can change counts. Computes many additional QC statistics. |
-| Picard 3.5.0 | `samtools view -u -q 30 -f 1 -F 3852`, piped into `CollectInsertSizeMetrics HISTOGRAM_WIDTH=1000 MINIMUM_PCT=0 INCLUDE_DUPLICATES=false`, using the `All_Reads.fr_count` histogram column | Familiar insert-size comparator | Uses TLEN from the second mate. Explicit histogram width prevents automatic tail trimming. Input filtering remains inside timing. Compare only lengths 30-1000. |
+| cfDNAPro 1.7.4 | `readBam(curate_start_and_end=TRUE, galp_mapqFilter=30)`, with explicit matching flag exclusions, then `callLength(frag_obj=..., isize_min=30L, isize_max=1000L)` | Primary definition check | Uses the same directional aligned span as cfDNAlab. Overlapping outward-pair handling and native pairing can differ, as described below. Neither tool needs proper-pair filtering for this comparison. |
+| FinaleToolkit `d16632ec` | `frag-length-bins BAM --bin-size 1 --min-length 30 --max-length 1000 --min-mapq 30 --output lengths.tsv` | Direct cfDNA CLI comparator | Uses absolute TLEN from read1 and requires proper pairs. Does not verify both mates' MAPQ. This command has no worker-count option. |
+| samtools stats (full QC report, insert-size section extracted) 1.25 | `stats --input-fmt-option 'filter=mapq >= 30' -f 1 -F 3852 -m 1 -i 1001`, using its `IS` inward-pair column and retaining lengths 30-1000 afterward | Established compiled baseline | Uses absolute TLEN. The last bin collects lengths at or above its maximum, hence 1001 rather than 1000. Counts passing alignments, halves each bin and truncates the integer result, so independently filtering mates can change counts. Computes many additional QC statistics. |
+| Picard 3.5.0 | `picard -Xmx2g CollectInsertSizeMetrics I=sample.bam O=metrics.txt HISTOGRAM_WIDTH=1000` | Native insert-size timing | No MAPQ or QC-fail prefilter inside timing. Concordance uses the separately generated, untimed filtered histogram. No PDF. |
 
 For cfDNAlab, use `lengths --length-bins 30:1001:1 --indel-mode ignore --clip-mode aligned --min-mapq 30`. Use the same explicit chromosome selection on both sides. Keep a separate `cfdnalab-autosomes` run when reporting whole-reference tools alongside cfDNAlab's usual autosome selection. A separately labeled `--require-proper-pair` run can diagnose FinaleToolkit's selection difference. It should not replace the normal cfDNAlab run.
 
@@ -17,7 +17,7 @@ For cfDNAlab, use `lengths --length-bins 30:1001:1 --indel-mode ignore --clip-mo
 
 The inspected author source reports version **1.7.4**, commit `ab9eeb166b8614b9ec2ce4ceda190dc295c65a7c`, checked on 2026-10-29. Its curation constructs each fragment from the forward alignment's start to the reverse alignment's end. The inclusive R coordinates give the same width as cfDNAlab's half-open `forward.pos` to `reverse.reference_end` interval. Neither calculation extends soft clipping or adjusts the length for insertions and deletions in this configuration.
 
-There are two important configuration details. `readBam()` currently defaults to **MAPQ 40**, although the README says 30. Also, `read_bam_insert_metrics(bamfile=..., ...)` does not forward `...` to `readBam()`. Read the BAM explicitly, then pass its fragment object to the native histogram function:
+Read the BAM explicitly with the shared MAPQ and flag settings, then pass its fragment object to `callLength()`, the entry point used in cfDNAPro's tutorial and paper. `readBam()` defaults to MAPQ 40, so MAPQ 30 remains explicit. The resulting histogram may include a zero-filling `prop` column, which the comparator ignores.
 
 ```r
 library(cfDNAPro)
@@ -44,8 +44,8 @@ fragments <- readBam(
 )
 
 # Return the native histogram without saving a large per-fragment RDS file
-counts <- read_bam_insert_metrics(
-    fragment_obj = fragments,
+counts <- callLength(
+    frag_obj = fragments,
     isize_min = 30L,
     isize_max = 1000L
 )
@@ -72,13 +72,13 @@ For ordinary inward bwa mem alignments, stored TLEN spans the forward `pos` thro
 
 samtools `stats` has no dedicated MAPQ switch. Its `-q` controls base-quality trimming. The runner uses HTSlib's general `--input-fmt-option 'filter=mapq >= 30'` instead, applying MAPQ in the same BAM read pass. Select the `IS` inward-pair column after timing. This does not establish that both mates pass MAPQ or reproduce cfDNAlab pairing. Timing includes the full native command needed to obtain the histogram, including its other statistics.
 
-Picard has no MAPQ setting for this command, so the runner streams an uncompressed, filtered BAM from samtools into its native command. Both processes share the allocated CPU mask. The complete pipeline remains timed. The JVM sees the full core budget through `-XX:ActiveProcessorCount`. It keeps the launcher's 512 MiB starting heap and chooses its maximum heap from available memory. Passing `-Xms512m` prevents the [Bioconda launcher](https://github.com/bioconda/bioconda-recipes/blob/master/recipes/picard-slim/picard.sh) from supplying a fixed maximum instead. Histogram width and orientation settings above are essential to preserving the requested length range. PDF plotting is omitted.
+Picard timing uses its documented standalone `picard -Xmx2g CollectInsertSizeMetrics I=sample.bam O=metrics.txt HISTOGRAM_WIDTH=1000` call. It has no MAPQ option, so timed output retains low-MAPQ and QC-fail pairs and timing rows record `min_mapq=NA`. Once after the timed runs, an untimed `samtools view -u -q 30 -f 1 -F 3852 | picard -Xmx2g CollectInsertSizeMetrics I=/dev/stdin ...` pipeline writes `concordance.metrics.txt`. Only that filtered histogram enters concordance. The extra pass adds job wall time but no reported tool time. Picard's optional PDF is omitted because picard-slim lacks R. cfDNAlab's default QC plot remains timed.
 
 deepTools `bamPEFragmentSize` is lower priority. It samples genomic regions by default. `--distanceBetweenBins 0 --outRawFragmentLengths lengths.tsv` removes the sampling gaps, but its indexed queries can count alignments crossing chunk boundaries more than once. Its native selection also lacks the MAPQ/duplicate/QC-fail filtering needed here and falls back to other mapped reads in chunks without proper read1 records. These differences make it a less direct full-histogram comparison.
 
-For production timing, use the established exclusive-node, local-scratch procedure. Use **1, 4, 12 and 32 cores in separate jobs** for parallel methods. First measure cfDNAPro and FinaleToolkit lengths at 1 versus 4 cores, also in separate jobs. If wall time and CPU use show no consistent benefit, stop higher-core measurements for this workload. If they improve, add 12/32-core jobs. The runner executes every explicitly selected method and does not automatically skip tools. cfDNAlab's `--n-threads` and samtools `-@` receive the allocated core count directly, including the samtools filter in Picard's pipeline. The JVM receives the allocated processor count. No numerical-library thread overrides are added. The timing TSV records `NA` for a command without an explicit native thread setting.
+For production timing, use the established exclusive-node, local-scratch procedure. Use **1, 4, 12 and 32 cores in separate jobs** for parallel methods. First measure cfDNAPro and FinaleToolkit lengths at 1 versus 4 cores, also in separate jobs. If wall time and CPU use show no consistent benefit, stop higher-core measurements for this workload. If they improve, add 12/32-core jobs. The runner executes every explicitly selected method and does not automatically skip tools. cfDNAlab's `--n-threads` and samtools `-@` receive the allocated core count directly, including the samtools filter in the separate untimed Picard concordance pipeline. Picard has no thread option and receives no JVM processor override. No numerical-library thread overrides are added. The timing TSV records `NA` for a command without an explicit native thread setting.
 
-Plot wall time against allocated cores for every method. Calculate effective cores as `(user_seconds + system_seconds) / wall_seconds` and allocated CPU utilization as that value divided by `cores`. This shows actual utilization without assuming that a tool will or will not scale. Picard's utilization includes its samtools input filter, and cfDNAPro's includes container startup. Include native output generation in timing and perform concordance calculations afterward.
+Plot wall time against allocated cores for every method. Calculate effective cores as `(user_seconds + system_seconds) / wall_seconds` and allocated CPU utilization as that value divided by `cores`. This shows actual utilization without assuming that a tool will or will not scale. Picard's utilization reflects its standalone native call, and cfDNAPro's includes container startup. Include native output generation in timing and perform concordance calculations afterward.
 
 Compare raw totals and per-bin count differences as well as normalized frequencies. Report Pearson r and MAE/RMSE of the frequencies. High correlation alone can conceal a systematic count difference. Supply zero counts for absent length bins before comparing.
 
@@ -133,8 +133,8 @@ The tables below contain no measured results. Fill them from the saved concordan
 | cfDNAlab vs tool | Pearson r | MAE / RMSE | Count difference | Wasserstein, bp | Main expected differences |
 | --- | --- | --- | --- | --- | --- |
 | cfDNAPro 1.7.4 | [ ] | [ ] / [ ] | [ ] | [ ] | Pair selection and overlapping outward-pair checks. |
-| FinaleToolkit 1.1.0 | [ ] | [ ] / [ ] | [ ] | [ ] | Proper-pair selection, read1 MAPQ and TLEN. |
-| samtools 1.25 | [ ] | [ ] / [ ] | [ ] | [ ] | TLEN, per-record filters and halved counts. |
+| FinaleToolkit `d16632ec` | [ ] | [ ] / [ ] | [ ] | [ ] | Proper-pair selection, read1 MAPQ and TLEN. |
+| samtools stats (full QC report, insert-size section extracted) 1.25 | [ ] | [ ] / [ ] | [ ] | [ ] | TLEN, per-record filters and halved counts. |
 | Picard 3.5.0 | [ ] | [ ] / [ ] | [ ] | [ ] | TLEN from read2 and orientation classification. |
 
 All rows use whole-reference counts, MAPQ >=30 and lengths 30-1000 bp. MAE/RMSE use within-range frequencies. Count differences are cfDNAlab minus comparator. Interpret the separately labeled autosome run as a different scope.
@@ -151,8 +151,8 @@ Report the definition diagnostic's Pearson r, frequency MAE/RMSE and Wasserstein
 | cfDNAlab, all contigs | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] |
 | cfDNAlab, autosomes | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] |
 | cfDNAPro 1.7.4 | 1 / 4, separate jobs, then decide | 1 / 3 each | [ ] | [ ] | [ ] |
-| FinaleToolkit 1.1.0 | 1 / 4, separate jobs, then decide | 1 / 3 each | [ ] | [ ] | [ ] |
-| samtools 1.25 | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] |
+| FinaleToolkit `d16632ec` | 1 / 4, separate jobs, then decide | 1 / 3 each | [ ] | [ ] | [ ] |
+| samtools stats (full QC report, insert-size section extracted) 1.25 | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] |
 | Picard 3.5.0 | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] |
 
 Expand timing rows to a core budget per row in the final A4 supplement. Put workload notes below the table and report maximum RSS separately if needed.
@@ -160,8 +160,8 @@ Expand timing rows to a core budget per row in the final A4 supplement. Put work
 ## Source references
 
 - cfDNAlab: [length construction](../../src/shared/fragment/indel_counting_fragment.rs), [orientation checks](../../src/shared/fragment/minimal_fragment.rs), [read filtering](../../src/shared/read.rs), [CLI settings](../../src/commands/lengths/config.rs).
-- cfDNAPro: [readBam](https://github.com/hw538/cfDNAPro/blob/ab9eeb166b8614b9ec2ce4ceda190dc295c65a7c/R/readBam.R), [curation and orientation](https://github.com/hw538/cfDNAPro/blob/ab9eeb166b8614b9ec2ce4ceda190dc295c65a7c/R/internalFunctions.R), [histogram](https://github.com/hw538/cfDNAPro/blob/ab9eeb166b8614b9ec2ce4ceda190dc295c65a7c/R/read_bam_insert_metrics.R).
-- FinaleToolkit: [histogram implementation](https://github.com/epifluidlab/FinaleToolkit/blob/v1.1.0/src/finaletoolkit/frag/_frag_length.py), [alignment reader](https://github.com/epifluidlab/FinaleToolkit/blob/v1.1.0/src/finaletoolkit/io/alignment.py).
+- cfDNAPro: [readBam](https://github.com/hw538/cfDNAPro/blob/ab9eeb166b8614b9ec2ce4ceda190dc295c65a7c/R/readBam.R), [curation and orientation](https://github.com/hw538/cfDNAPro/blob/ab9eeb166b8614b9ec2ce4ceda190dc295c65a7c/R/internalFunctions.R), [histogram](https://github.com/hw538/cfDNAPro/blob/ab9eeb166b8614b9ec2ce4ceda190dc295c65a7c/R/callLength.R).
+- FinaleToolkit: [histogram implementation](https://github.com/epifluidlab/FinaleToolkit/blob/d16632ec5ae8999e774234457f6b0f9405c8f590/src/finaletoolkit/frag/_frag_length.py), [alignment reader](https://github.com/epifluidlab/FinaleToolkit/blob/d16632ec5ae8999e774234457f6b0f9405c8f590/src/finaletoolkit/io/alignment.py).
 - samtools: [stats manual](https://www.htslib.org/doc/samtools-stats.html), [1.25 counting and output](https://github.com/samtools/samtools/blob/1.25/stats.c), [HTSlib input filter parsing](https://github.com/samtools/htslib/blob/1.25/hts.c), [filtering during BAM reads](https://github.com/samtools/htslib/blob/1.25/sam.c).
 - Picard: [3.5.0 release](https://github.com/broadinstitute/picard/releases/tag/3.5.0), [command](https://github.com/broadinstitute/picard/blob/3.5.0/src/main/java/picard/analysis/CollectInsertSizeMetrics.java), [collector](https://github.com/broadinstitute/picard/blob/3.5.0/src/main/java/picard/analysis/directed/InsertSizeMetricsCollector.java).
 - deepTools: [4.0.0 fragment sampling and filtering](https://github.com/deeptools/deepTools/blob/4.0.0/pydeeptools/deeptools/getFragmentAndReadSize.py).

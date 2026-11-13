@@ -112,7 +112,7 @@ BENCH_NODE=$(hostname)
 # Create result files before staging so setup failures leave an inspectable record
 mkdir -p "$BENCH_RESULTS/profiles"
 # The requested length bounds and whether a method applies them are separate
-# columns. This makes FinaleToolkit 1.1.0's limitation visible in every run
+# columns. This distinguishes native filters from cfDNAPro's user-side subsetting
 header=$'run_order\trepetition\twarmup\tmethod\ttool_version\tcores\ttool_workers\tk\tmin_mapq'
 header+=$'\trequested_min_length\trequested_max_length\tlength_filter\tscope\tsource\tclip\tproper_pair'
 header+=$'\tnode\tcpu_model\tcpu_ids\tphysical_core_ids\tjob_id\tstep_id\tstarted_utc'
@@ -171,13 +171,16 @@ with py2bit.open(work + '/reference.2bit') as reference:
         raise SystemExit('BAM and 2bit contig names/lengths differ.')
 for chromosome, length in bam_contigs.items():
     if length % 1000000 == 0:
-        raise SystemExit('FinaleToolkit 1.1.0 omits its last window for this contig length: ' + chromosome)
+        raise SystemExit('The pinned FinaleToolkit window builder omits its last window for this contig length: ' + chromosome)
 PYHEADER
 fi
 if [[ " $BENCH_METHODS " == *" cfdnalab-reference-autosomes "* && -z "$BENCH_AUTOSOMES" ]]; then echo "No autosomes in BAM." >&2; exit 1; fi
 if [[ "$run_cfdna" == true ]]; then BENCH_CFDNA_VERSION=$("$BENCH_WORK/bin/cfdna" --version | tr '\t\n' '  '); fi
 # FinaleToolkit uses its packed Python so its launcher does not search the node's PATH
-if [[ "$run_finale" == true ]]; then BENCH_FINALE_VERSION=$("$BENCH_WORK/finale-env/bin/python" "$BENCH_WORK/finale-env/bin/finaletoolkit" --version | tr '\t\n' '  '); fi
+if [[ "$run_finale" == true ]]; then
+    BENCH_FINALE_VERSION=$("$BENCH_WORK/finale-env/bin/python" "$BENCH_WORK/finale-env/bin/finaletoolkit" --version | tr '\t\n' '  ')
+    BENCH_FINALE_VERSION+=" commit:$(cat "$BENCH_WORK/finale-env/share/finaletoolkit/revision.txt")"
+fi
 if [[ "$run_cfdnapro" == true ]]; then
     BENCH_CFDNAPRO_VERSION=$("$BENCH_APPTAINER" exec --cleanenv --containall "$BENCH_WORK/cfdnapro.sif" Rscript --vanilla -e 'cat(as.character(packageVersion("cfDNAPro")))')
     image_hash=$(sha256sum "$BENCH_WORK/cfdnapro.sif" | cut -d ' ' -f 1)
@@ -319,11 +322,13 @@ elif [[ "$method" == freia ]]; then
             -i "$BENCH_WORK/output/sample.pq" -o "$BENCH_WORK/output/" \
             -st "$BENCH_WORK/output/samples.tsv" \
             -fsmin "$BENCH_MIN_LENGTH" -fsmax "$((BENCH_MAX_LENGTH + 1))" \
-            -subs 1 --bootstrap_sample 0 --subchroff
+            -subs 1 --bootstrap_sample 0
     ' -- "$cores")
     # Extraction forces one worker above 8000 MiB of filtered BAM input
     # The actual choice is only known after filtering and is recorded below
 elif [[ "$method" == cfdnapro ]]; then
+    scope=bam-contigs-in-cfdnapro-reference
+    length_filter=applied-in-r
     tool_version=$BENCH_CFDNAPRO_VERSION
     tool_workers=NA
     clip=unrestricted
@@ -337,11 +342,9 @@ elif [[ "$method" == cfdnapro ]]; then
         "$BENCH_MIN_MAPQ" "$BENCH_GENOME" "$BENCH_K")
 else
     # FinaleToolkit reconstructs coordinates from read1/TLEN and requires 0x2
-    # Its current end-motif reader ignores the requested length bounds
+    # The pinned upstream fix applies inclusive length bounds and assigns each
+    # fragment to the window containing its midpoint
     tool_version=$BENCH_FINALE_VERSION
-    length_filter=ignored-by-release
-    effective_min_length=NA
-    effective_max_length=NA
     proper_pair=required
     clip=unrestricted
     profile="$BENCH_WORK/output/motifs.tsv"

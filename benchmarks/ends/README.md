@@ -2,15 +2,15 @@
 
 Compare runnable tools on the same prepared, coordinate-sorted hg38 BAM, retaining non-autosomes and all alignment flags. Each tool applies its own filters. Use the exact alignment reference as a `.2bit` file with matching contig names and lengths. Disable GC correction, genomic scaling, blacklists, base-quality filtering and complement collapsing.
 
-The main comparison uses all 256 inward-oriented 5' 4-mers, MAPQ >=30 and fragment lengths 30-1000 bp inclusive. cfDNAPro supplies native reference-derived left ends. FrEIA joins a separate 3-mer comparison using its intact default left-only workflow. Normalize each profile by its native counted-end total and compare motifs by label. Left-end versus both-end frequency comparisons are explicitly approximate under the side-mirroring assumption. Native left counts are retained without doubling.
+The main comparison uses all 256 inward-oriented 5' 4-mers, MAPQ >=30 and fragment lengths 30-1000 bp inclusive. cfDNAPro supplies native reference-derived left ends. FrEIA joins a separate 3-mer comparison using its intact left-only extraction and abundance steps. Normalize each profile by its native counted-end total and compare motifs by label. Left-end versus both-end frequency comparisons are explicitly approximate under the side-mirroring assumption. Native left counts are retained without doubling.
 
 ## Tools and matching settings
 
 | CLI tool | Native command and settings | Closest cfDNAlab settings | Expected differences |
 | --- | --- | --- | --- |
-| FinaleToolkit 1.1.0 | `end-motifs BAM REF -k 4 --strand both --min-length 30 --max-length 1000 --min-mapq 30 --threads C` | `ends --k-inside 4 --k-outside 0 --source-inside reference --clip-strategy aligned --all-motifs --chromosomes all`, matching requested MAPQ/length bounds | Reference bases at both ends, proper pairs and read1/TLEN-based selection. **This release does not apply the requested end-motif length bounds.** Its window queries can also count boundary-crossing read1 alignments twice. Keep these limitations visible. |
-| FrEIA, commit `2c32fb9` | Native BAM filter, `1_extract_fragment_ends.py`, then default left-only `2_data_transformation.py -fsmin 30 -fsmax 1001 -subs 1 --bootstrap_sample 0 --subchroff` | `ends --k-inside 3 --k-outside 0 --source-inside read --clip-strategy aligned --all-motifs --chromosomes all`, matching MAPQ/length bounds | Native 3-mer left ends, coordinate deduplication and removal of pairs with N at either extracted end (`-n 3`). Approximate comparison against both ends assumes mirrored side frequencies. Broken `--both` output remains excluded. |
-| cfDNAPro 1.7.4 | Curated `readBam()` with explicit MAPQ/flag selection, inclusive fragment width filter, then `callMotif(motif_type="s", motif_length=4)` | Reference/aligned cfDNAlab, normal pairs/all contigs, matching MAPQ/length bounds | Leftmost reference bases only. Uses the selected bundled BSgenome reference and native pair/orientation/reference-bound checks. The reference manifest is retained. Comparison against both ends assumes mirrored side frequencies. |
+| FinaleToolkit `d16632ec` | `end-motifs BAM REF -k 4 --strand both --min-length 30 --max-length 1000 --min-mapq 30 --threads C` | Reference/aligned cfDNAlab with matching bounds | Applies inclusive length bounds and midpoint window ownership. Proper read1/TLEN selection remains native. |
+| FrEIA, commit `2c32fb9` | Native BAM filter, `1_extract_fragment_ends.py`, then default left-only `2_data_transformation.py -fsmin 30 -fsmax 1001 -subs 1 --bootstrap_sample 0` | `ends --k-inside 3 --k-outside 0 --source-inside read --clip-strategy aligned --all-motifs --chromosomes all`, matching MAPQ/length bounds | Native 3-mer left ends, coordinate deduplication and removal of pairs with N at either extracted end (`-n 3`). Approximate comparison against both ends assumes mirrored side frequencies. Broken `--both` output remains excluded. |
+| cfDNAPro 1.7.4 | Curated `readBam()` with explicit MAPQ/flag selection, user-side inclusive R width subsetting, then `callMotif(motif_type="s", motif_length=4)` | Reference/aligned cfDNAlab, normal pairs/all contigs, matching MAPQ/length bounds except cfDNAPro reference compatibility | Leftmost reference bases only. Uses the selected bundled BSgenome reference and native pair/orientation/reference-bound checks. The reference manifest is retained. Comparison against both ends assumes mirrored side frequencies. |
 | cfDNAFE, commit `90c6979` | `cfDNAFE bam` | No equivalent configuration for the inspected counting code | Apparent end-motif counting error, detailed below. Excluded from equivalent-output timing pending a correction. |
 
 The original Lo-group FRAGMA paper's [Methods and availability section](https://pmc.ncbi.nlm.nih.gov/articles/PMC9636966/) did not identify a runnable original software release. FRAGMA is therefore excluded. The [epifluidlab repository](https://github.com/epifluidlab/FRAGMA) calls itself a reimplementation for FinaleMe review and is not substituted for original software.
@@ -19,11 +19,11 @@ The original Lo-group FRAGMA paper's [Methods and availability section](https://
 
 cfDNAlab defines paired fragment spans as `forward.pos` to `reverse.reference_end`, requires both mates to pass filtering, and keeps its normal pairing policy unless `--require-proper-pair` is requested. FinaleToolkit selects read1 and reconstructs spans using TLEN. Its reader does not check the mate's `MQ` tag. A separately labeled cfDNAlab `--require-proper-pair` run isolates the proper-pair selection difference.
 
-cfDNAlab excludes fragments with hard clipping on either mate. Reference-derived motifs affected by terminal indels are excluded at the affected end, and outer soft clipping is limited to 256 bp per end. FinaleToolkit has no corresponding CIGAR filters or unique fragment ownership check across its 1 Mb queries. Counts can therefore differ even when proper-pair selection is matched.
+cfDNAlab excludes fragments with hard clipping on either mate. Reference-derived motifs affected by terminal indels are excluded at the affected end, and outer soft clipping is limited to 256 bp per end. FinaleToolkit has no corresponding CIGAR filters. The pinned fix assigns motifs by midpoint to avoid counting a fragment in two adjacent windows. Counts can therefore differ even when proper-pair selection is matched.
 
-Use `cfdnalab-reference-proper-wide` (10-50,000 bp) as a practical diagnostic without the usual 30-1000 bp restriction. The timing TSV records requested and effective bounds. The runner also rejects FinaleToolkit-selected contigs whose lengths are exact multiples of 1 Mb because the pinned window builder omits their last full window. The ignored length bounds are documented from source inspection of unmodified FinaleToolkit 1.1.0.
+The optional `cfdnalab-reference-proper-wide` diagnostic uses 10-50,000 bp. It is not required to work around FinaleToolkit length filtering: the pinned upstream fix applies both bounds. FinaleToolkit no longer double-counts adjacent windows, but a fragment longer than twice its read length can still be lost when its midpoint lies in a different window from its read1 alignment. The guard for contigs with lengths exactly divisible by 1 Mb remains, because the native window builder still omits their last full window.
 
-Sources: [cfDNAlab pairing and end handling](../../src/shared/fragment/ends_fragment.rs), [motif encoding](../../src/commands/ends/motifs.rs), [FinaleToolkit end motifs](https://github.com/epifluidlab/FinaleToolkit/blob/v1.1.0/src/finaletoolkit/frag/_end_motifs.py), [alignment reader](https://github.com/epifluidlab/FinaleToolkit/blob/v1.1.0/src/finaletoolkit/io/alignment.py), [window construction](https://github.com/epifluidlab/FinaleToolkit/blob/v1.1.0/src/finaletoolkit/frag/_motif_common.py).
+Sources: [cfDNAlab pairing and end handling](../../src/shared/fragment/ends_fragment.rs), [motif encoding](../../src/commands/ends/motifs.rs), [FinaleToolkit end motifs](https://github.com/epifluidlab/FinaleToolkit/blob/d16632ec5ae8999e774234457f6b0f9405c8f590/src/finaletoolkit/frag/_end_motifs.py), [alignment reader](https://github.com/epifluidlab/FinaleToolkit/blob/d16632ec5ae8999e774234457f6b0f9405c8f590/src/finaletoolkit/io/alignment.py), [window construction](https://github.com/epifluidlab/FinaleToolkit/blob/d16632ec5ae8999e774234457f6b0f9405c8f590/src/finaletoolkit/frag/_motif_common.py).
 
 ### FrEIA differences and workload
 
@@ -37,7 +37,7 @@ FrEIA forces extraction to **one worker when its filtered BAM exceeds 8000 MiB**
 
 ### cfDNAPro motifs
 
-The [R entry point](cfdnapro_end_motifs.R) reads and curates fragments with the explicit flags and MAPQ used by the [length comparison](../lengths/README.md#cfdnapro-settings-and-definition), then filters inclusive fragment widths before calling native `callMotif()`. Type `s` extracts the leftmost K forward-reference bases. Mutation integration and reference downsampling are disabled. BAM reading, pairing, curation, reference loading, extraction and native table writing are all timed. This call has no native thread argument and still runs within the allocated CPU binding.
+The [R entry point](cfdnapro_end_motifs.R) uses the BAM contigs present in its selected BSgenome reference, computed from both contig lists and passed through the documented `chromosome_to_keep` argument. Dropped contigs are logged and retained in `contig_scope.tsv`. For this hg38 no-alt BAM, the missing contig is chrEBV (13 MAPQ >=30 alignments reported for the input). Other tools retain whole-BAM scope. Inclusive fragment widths are filtered by user-side R subsetting inside timing because cfDNAPro has no motif length-filter option. Native type `s` extracts the leftmost K forward-reference bases. BAM reading, curation, reference loading, motif extraction and table writing remain timed. There is no native thread option.
 
 `BENCH_GENOME=hg38` selects the image's UCSC hg38 BSgenome. The result retains the package name/version and sequence metadata in `reference.tsv`. Verify its sequence identity with the alignment reference before treating reference-source differences as resolved. cfDNAPro does not use the supplied `.2bit` directly. Its native pairing/orientation/reference-bound checks and cfDNAlab's CIGAR/end handling can still differ.
 
@@ -119,8 +119,8 @@ The tables below contain no measured results. Fill them from the saved concordan
 
 | Tool comparison | k | Pearson r | MAE / RMSE | Max. diff. / TV | Expected differences |
 | --- | --- | --- | --- | --- | --- |
-| cfDNAlab reference/proper vs FinaleToolkit 1.1.0 | 4 | [ ] | [ ] / [ ] | [ ] / [ ] | Ignored length bounds, both-mate filtering, actual span vs TLEN, CIGAR and query boundaries. |
-| cfDNAlab reference/native vs FinaleToolkit 1.1.0 | 4 | [ ] | [ ] / [ ] | [ ] / [ ] | Above differences plus proper-pair selection. |
+| cfDNAlab reference/proper vs FinaleToolkit `d16632ec` | 4 | [ ] | [ ] / [ ] | [ ] / [ ] | Both-mate filtering, actual span vs TLEN, CIGAR and query boundaries. |
+| cfDNAlab reference/native vs FinaleToolkit `d16632ec` | 4 | [ ] | [ ] / [ ] | [ ] / [ ] | Above differences plus proper-pair selection. |
 | cfDNAlab reference/native vs cfDNAPro left | 4 | [ ] | [ ] / [ ] | [ ] / [ ] | Approximate side mirroring, reference identity and native selection. |
 | cfDNAlab read/aligned vs FrEIA left | 3 | [ ] | [ ] / [ ] | [ ] / [ ] | Approximate side mirroring, coordinate deduplication and N removal. |
 
@@ -130,10 +130,14 @@ All rows request all contigs, MAPQ >=30 and inclusive lengths 30-1000 bp, with t
 | --- | --- | --- | --- | --- | --- | --- |
 | cfDNAlab reference/native | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] | 4-mers, normal pairing. |
 | cfDNAlab reference/proper | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] | 4-mers, flag 0x2 required. |
-| FinaleToolkit 1.1.0 | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] | 4-mers, length bounds ignored. |
-| FrEIA | Report selected settings, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] | Native left-only 3-mers, full BAM-to-profile workflow. Extraction forced serial above 8000 MiB. |
+| FinaleToolkit `d16632ec` | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] | 4-mers, native inclusive length bounds. |
+| FrEIA | Report selected settings, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] | Rules filter_and_index_FrEIA, FragmEndSeq and data_transformation, run without Snakemake. Native left-only 3-mers. Extraction forced serial above 8000 MiB. |
 | cfDNAPro 1.7.4 | Report selected settings, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] | Reference-derived left motifs, full BAM-to-profile process. No native thread argument. |
 
 Expand timing rows to a core budget per row for the final A4 supplementary table. Keep long notes below the table if needed. GNU time's maximum RSS is not the simultaneous total memory of a multiprocessing tree. Retain the native CLI versions and dependency environment archives with the benchmark record.
 
 Join completed Slurm step memory after the job. Timing rows also record filesystem flush time, process-plus-flush time and output bytes. See the [shared timing TSV documentation](../README.md) for units and measurement limits. Submit from the repository root so helper scripts can be staged before warmups.
+
+FrEIA times the shell commands from rules `filter_and_index_FrEIA`, `FragmEndSeq` and `data_transformation`, run without Snakemake. It stops before group comparison and FrEIA scoring. The native mate cache is unchanged: clearing it can lose the pending unmatched pairs.
+
+FinaleToolkit is installed from upstream merge commit `d16632ec5ae8999e774234457f6b0f9405c8f590` ([PR #194](https://github.com/epifluidlab/FinaleToolkit/pull/194)). Timing rows include that commit. Reinstall only FinaleToolkit with `bash benchmarks/install_tools.sh ROOT --only finaletoolkit` before these runs.

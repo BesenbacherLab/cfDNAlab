@@ -11,6 +11,7 @@
 # Downloads, package/build caches and temporary files also stay under this root
 # The cfDNAlab build uses this repository's current checkout
 # Tool versions and installation routes were checked on 2026-10-29
+# FinaleToolkit's source pin was updated on 2026-11-13 for the upstream motif fixes
 # Those versions are pinned here so the benchmark can be reproduced later
 # Conda, Apptainer, Git, wget, tar, GNU make and C/C++ compilers must be available
 # Only cfDNAlab itself needs a local native build
@@ -63,7 +64,7 @@ versions[cfdnalab]=$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$repository_root/Ca
 versions[mosdepth]=0.3.14
 versions[samtools]=1.25
 versions[pandepth]=2.26
-versions[finaletoolkit]=1.1.0
+versions[finaletoolkit]=d16632ec5ae8999e774234457f6b0f9405c8f590
 versions[cfdnapro]=1.7.4
 versions[picard]=3.5.0
 versions[freia]=2c32fb9d9fab774f4ae57931df7fd7d75654d343
@@ -75,7 +76,7 @@ artifacts[cfdnalab]='envs/cfdnalab/bin/cfdna cfdnalab-build.tsv'
 artifacts[mosdepth]='mosdepth-0.3.14/mosdepth'
 artifacts[samtools]='envs/samtools/bin/samtools samtools.tar.gz'
 artifacts[pandepth]='PanDepth-2.26-Linux-x86_64/pandepth'
-artifacts[finaletoolkit]='envs/finaletoolkit/bin/finaletoolkit finaletoolkit.tar.gz'
+artifacts[finaletoolkit]='envs/finaletoolkit/bin/finaletoolkit envs/finaletoolkit/share/finaletoolkit/revision.txt finaletoolkit.tar.gz'
 artifacts[cfdnapro]='cfdnapro-1.7.4.sif'
 artifacts[picard]='envs/picard/bin/picard picard.tar.gz'
 artifacts[freia]='envs/freia/share/freia/version.txt freia.tar.gz'
@@ -242,22 +243,26 @@ install_finaletoolkit() {
     # FinaleToolkit
     # Guide: https://epifluidlab.github.io/FinaleToolkit/documentation/user_guide/installation.html
     # Conda alternative: https://bioconda.github.io/recipes/finaletoolkit/README.html
-    # Bioconda supplies the selected release and its prebuilt compiled dependencies
-    # The required loess version comes from PyPI, after Conda has finished installing
+    # Conda supplies compiled dependencies. Pip installs the upstream merge commit
+    # that restores motif length filtering and unique midpoint window ownership
     # Coverage, end-motif and length benchmarks use this same environment archive
     (
         conda create --yes --override-channels --prefix "$install_root/envs/finaletoolkit" \
-            --channel conda-forge --channel bioconda python=3.11 pip finaletoolkit=1.1.0 \
+            --channel conda-forge --channel bioconda python=3.11 pip \
             'numpy>=2' 'pandas>=2.3.0' \
             pysam=0.24.0 pybigwig=0.3.25 py2bit=0.3.3 numba=0.63.1 \
             scipy=1.17.0 statsmodels=0.14.6 tqdm=4.67.3 matplotlib=3.10.8
         conda activate "$install_root/envs/finaletoolkit"
         # Pip supplies loess and any missing dependencies inside this environment
         # The check rejects inconsistent requirements before the environment is packed
-        python -m pip install loess==2.1.2
+        python -m pip install loess==2.1.2 \
+            "FinaleToolkit @ git+https://github.com/epifluidlab/FinaleToolkit.git@${versions[finaletoolkit]}"
         python -m pip check
         python -m pip freeze > "$install_root/records/finaletoolkit.pip.txt"
         finaletoolkit --version
+        # The archive carries its source identity to every benchmark timing row
+        mkdir -p "$CONDA_PREFIX/share/finaletoolkit"
+        printf '%s\n' "${versions[finaletoolkit]}" > "$CONDA_PREFIX/share/finaletoolkit/revision.txt"
         "$install_root/envs/packaging/bin/conda-pack" -p "$CONDA_PREFIX" -o "$install_root/finaletoolkit.tar.gz"
     )
     conda list --prefix "$install_root/envs/finaletoolkit" --explicit > "$install_root/records/finaletoolkit.explicit.txt"

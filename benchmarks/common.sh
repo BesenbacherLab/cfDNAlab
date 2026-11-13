@@ -376,11 +376,18 @@ benchmark_finish_run() {
                 if [[ "$method" == cfdnapro && "$BENCH_FEATURE" == ends ]]; then
                     # The motif counts are saved with a record of the reference used
                     cp "$BENCH_WORK/output/reference.tsv" "$BENCH_RESULTS/profiles/$method/"
+                    cp "$BENCH_WORK/output/contig_scope.tsv" "$BENCH_RESULTS/profiles/$method/"
                 fi
                 if [[ "$BENCH_FEATURE" == midpoints && "$method" == *-gc ]]; then
                     # Keep the first measured sample estimate with the corrected
                     # profile. Every repetition still estimates bias from scratch
                     cp -R "$BENCH_WORK/output/gc-bias" "$BENCH_RESULTS/profiles/$method/sample-gc-bias"
+                    if [[ "$method" == griffin-gc ]]; then
+                        # The full Griffin workflow writes both profiles. Its raw
+                        # table supplies uncorrected concordance without another job
+                        cp "$BENCH_WORK/output/results/sample/sample.uncorrected.coverage.tsv" \
+                            "$BENCH_RESULTS/profiles/$method/"
+                    fi
                 fi
                 if [[ -f "$BENCH_WORK/chrom.sizes" ]]; then
                     # An absent chromosome in a sparse coverage file could mean zero

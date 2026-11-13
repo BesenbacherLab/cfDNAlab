@@ -122,7 +122,10 @@ benchmark_progress "Checking tool versions"
 # A packed Python launcher can use env python3.11, which searches the node's PATH
 # FinaleToolkit uses its own Python explicitly here and in the timed command
 if [[ "$run_cfdna" == true ]]; then BENCH_CFDNA_VERSION=$("$BENCH_WORK/bin/cfdna" --version | tr '\t\n' '  '); fi
-if [[ "$run_finale" == true ]]; then BENCH_FINALE_VERSION=$("$BENCH_WORK/finale-env/bin/python" "$BENCH_WORK/finale-env/bin/finaletoolkit" --version | tr '\t\n' '  '); fi
+if [[ "$run_finale" == true ]]; then
+    BENCH_FINALE_VERSION=$("$BENCH_WORK/finale-env/bin/python" "$BENCH_WORK/finale-env/bin/finaletoolkit" --version | tr '\t\n' '  ')
+    BENCH_FINALE_VERSION+=" commit:$(cat "$BENCH_WORK/finale-env/share/finaletoolkit/revision.txt")"
+fi
 BENCH_SAMTOOLS_VERSION=$("$BENCH_WORK/samtools-env/bin/samtools" --version-only | tr '\t\n' '  ')
 if [[ "$run_picard" == true ]]; then BENCH_PICARD_VERSION=$(benchmark_picard_version "$BENCH_WORK/picard-env/bin/picard"); fi
 if [[ "$run_cfdnapro" == true ]]; then
@@ -211,6 +214,7 @@ scope=all
 length_definition=abs-TLEN
 proper_pair=not-required
 tool_threads=NA
+effective_min_mapq=$BENCH_MIN_MAPQ
 case "$method" in
     cfdnalab|cfdnalab-autosomes|cfdnalab-proper)
         tool_version=$BENCH_CFDNA_VERSION
@@ -271,31 +275,22 @@ case "$method" in
         ;;
     picard)
         tool_version=$BENCH_PICARD_VERSION
+        effective_min_mapq=NA
         profile="$BENCH_WORK/output/metrics.txt"
-        # Picard has no MAPQ option for this command. Timing includes a samtools
-        # filter that streams uncompressed BAM into Picard. Both programs share
-        # the allocated CPU cores. The samtools thread option receives that same
-        # core count. PDF plotting is omitted
-        # Explicit width prevents Picard from trimming the histogram tail
-        # Keep the launcher's default starting heap but let Java choose its maximum
-        # Passing -Xms prevents the launcher from adding its own fixed -Xmx limit
-        command=(bash -c '
-            set -euo pipefail
-            cores=$1
-            "$BENCH_WORK/samtools-env/bin/samtools" view -@ "$cores" -u -q "$BENCH_MIN_MAPQ" -f 1 -F 3852 "$BENCH_WORK/sample.bam" |
-                "$BENCH_WORK/picard-env/bin/picard" -Xms512m -XX:ActiveProcessorCount="$cores" \
-                -Djava.io.tmpdir="$BENCH_WORK/tmp" \
-                CollectInsertSizeMetrics \
-                INPUT=/dev/stdin OUTPUT="$BENCH_WORK/output/metrics.txt" \
-                HISTOGRAM_WIDTH="$BENCH_MAX_LENGTH" MINIMUM_PCT=0 INCLUDE_DUPLICATES=false
-        ' -- "$cores")
+        # Time Picard's documented standalone call with its recommended 2 GB heap
+        # It has no MAPQ option, so this timed output keeps low-MAPQ and QC-fail pairs
+        # Explicit width prevents tail truncation. The optional PDF is not produced
+        # A separate untimed filtered run supplies the concordance histogram below
+        command=("$BENCH_WORK/picard-env/bin/picard" -Xmx2g CollectInsertSizeMetrics
+            "I=$BENCH_WORK/sample.bam" "O=$profile" "HISTOGRAM_WIDTH=$BENCH_MAX_LENGTH"
+            "TMP_DIR=$BENCH_WORK/tmp")
         ;;
 esac
 
 # Twenty identifying fields precede four GNU time values and the native status
 printf -v prefix '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
     "$run_order" "$repetition" "$is_warmup" "$method" "$tool_version" "$cores" "$tool_threads" \
-    "$BENCH_MIN_MAPQ" "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH" "$scope" "$length_definition" \
+    "$effective_min_mapq" "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH" "$scope" "$length_definition" \
     "$proper_pair" "$node" "$cpu_model" "$cpu_ids" "$physical_core_ids" "$SLURM_JOB_ID" "$SLURM_STEP_ID" "$started_utc"
 logical_cpu_count=$(env -u OMP_NUM_THREADS -u OMP_THREAD_LIMIT nproc)
 if [[ "$node" != "$BENCH_NODE" ]] || ((logical_cpu_count != cores || physical_core_count != cores)); then
@@ -351,6 +346,28 @@ STEP
         echo "Skipping remaining repetitions of $method after failure; continuing other selected methods." >&2
     fi
 done < "$BENCH_WORK/order.tsv"
+
+# Picard's timing uses its native selection. Only concordance needs the common
+# MAPQ/flag filter, so run this extra pipeline once after all timed measurements
+# A failure here preserves completed timing rows and the timed native histogram
+if [[ -s "$BENCH_RESULTS/profiles/picard/metrics.txt" ]]; then
+    benchmark_progress "Generating the untimed filtered Picard concordance histogram"
+    if ! srun --jobid="$SLURM_JOB_ID" --exact --nodes=1 --ntasks=1 \
+        --cpus-per-task="$BENCH_CORES" --threads-per-core=1 --cpu-bind=threads \
+        --export=ALL bash -s -- "$BENCH_CORES" <<'PICARD_CONCORDANCE'
+set -euo pipefail
+cores=$1
+"$BENCH_WORK/samtools-env/bin/samtools" view -@ "$cores" -u -q "$BENCH_MIN_MAPQ" -f 1 -F 3852 "$BENCH_WORK/sample.bam" |
+    "$BENCH_WORK/picard-env/bin/picard" -Xmx2g CollectInsertSizeMetrics \
+        I=/dev/stdin "O=$BENCH_RESULTS/profiles/picard/concordance.metrics.txt" \
+        "HISTOGRAM_WIDTH=$BENCH_MAX_LENGTH" "TMP_DIR=$BENCH_WORK/tmp"
+PICARD_CONCORDANCE
+    then
+        echo "Untimed Picard concordance failed. Completed timing results are retained." >&2
+        rm -f "$BENCH_RESULTS/profiles/picard/concordance.metrics.txt"
+        exit 1
+    fi
+fi
 
 # Concordance uses this job's length bounds after all measurements have finished
 benchmark_compare_results "$SLURM_SUBMIT_DIR/benchmarks/lengths/compare_lengths.py" \

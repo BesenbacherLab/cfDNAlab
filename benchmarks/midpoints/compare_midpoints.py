@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Compare the native midpoint profiles saved by benchmark_midpoints.sh.
 
-Write a TSV row per group to stdout. Griffin always writes mean-one profiles, so
-normalize cfDNAlab's native profiles over the same complete window before comparison.
-Keep every saved bin, including zeros and native smoothing undershoots.
-Do not shift, smooth or rebin profiles during comparison.
+Write a TSV row per group to stdout. Normalize cfDNAlab over the complete window
+before selecting Griffin's central saved bins, including zeros and native smoothing
+undershoots. Griffin normalizes before saving that subset. Do not shift, smooth or
+rebin profiles during comparison.
 Use --gc-corrected to compare the separate cfdnalab-gc and griffin-gc workloads.
 """
 
@@ -60,7 +60,7 @@ def read_cfdnalab(path):
 
 
 def read_griffin(path, width, bin_size):
-    """Read native mean-one profiles by their signed position labels.
+    """Read native normalized central profiles by their signed position labels.
 
     Griffin's other columns contain features and metadata. Select only the exact
     shared position range and check that the file contains no extra positions.
@@ -73,17 +73,20 @@ def read_griffin(path, width, bin_size):
         raise ValueError(
             "The BED window does not align with Griffin's signed bin boundaries. "
             "For 15 bp bins, use matching bounds such as +/-4995 bp (9990 bp total). "
-            "The comparator does not trim or shift profiles."
+            "The comparator does not realign bin boundaries."
         )
     table = pd.read_csv(path, sep="\t", dtype={"site_name": str}, keep_default_na=False)
-    position_columns = [
-        str(position) for position in range(first_position, first_position + width, bin_size)
-    ]
+    # The official save window is [-1000, 1000), rounded inward to the step
+    # At 15 bp this is [-990, 990), containing 132 bins
+    saved_half_width = (1000 // bin_size) * bin_size
+    if width // 2 < saved_half_width:
+        raise ValueError("cfDNAlab's normalization window must cover Griffin's saved window")
+    position_columns = [str(position) for position in range(-saved_half_width, saved_half_width, bin_size)]
     native_positions = {
         column for column in table.columns if column.lstrip("-").isdigit()
     }
     if native_positions != set(position_columns):
-        raise ValueError("Griffin position labels do not match the cfDNAlab window")
+        raise ValueError("Griffin position labels do not match its official saved window")
     profiles = {}
     for row_index, row in table.iterrows():
         group = row["site_name"]
@@ -107,12 +110,8 @@ def read_griffin(path, width, bin_size):
             raise ValueError(f"Invalid Griffin mean-count metadata for {group}")
         if np.isinf(profile).any():
             raise ValueError(f"Infinite Griffin profile values for {group}")
-        if np.isfinite(profile).all():
-            # Its native TSV rounds values to five decimal places
-            # A nonempty sparse profile can have mean-count metadata rounded
-            # to zero. Determine emptiness from the profile, not that metadata
-            if not np.isclose(profile.mean(), 1.0, rtol=0, atol=1e-5):
-                raise ValueError(f"Griffin profile does not have mean one: {group}")
+        # Griffin normalizes over the full window before saving the central bins
+        # The saved subset need not have mean one, so it must not be renormalized
         # Native masking can leave undefined positions. Keep them as NaN and
         # report unavailable metrics for that group rather than choosing a subset
         if not np.isfinite(mean_per_site) and not np.isnan(profile).all():
@@ -122,7 +121,7 @@ def read_griffin(path, width, bin_size):
 
 
 def main():
-    """Check shared groups/windows and compare native profiles over all positions."""
+    """Check shared groups/windows and compare the native saved positions."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "profiles", type=Path, help="The benchmark results/profiles directory"
@@ -135,7 +134,7 @@ def main():
     # Separate method directories prevent pairing a corrected profile with an
     # uncorrected profile. Their native count readers and normalization are shared
     cfdnalab_method = "cfdnalab-gc" if arguments.gc_corrected else "cfdnalab"
-    griffin_method = "griffin-gc" if arguments.gc_corrected else "griffin"
+    griffin_method = "griffin-gc"
     griffin_filename = (
         "sample.GC_corrected.coverage.tsv"
         if arguments.gc_corrected
@@ -155,6 +154,7 @@ def main():
         "griffin_sites",
         "positions",
         "window_bp",
+        "normalization_window_bp",
         "resolution_bp",
         "gc_correction",
         "cfdnalab_mean_midpoints_per_site_bp",
@@ -173,15 +173,19 @@ def main():
     for group in sorted(cfdnalab):
         counts, site_count = cfdnalab[group]
         griffin_profile, griffin_sites, griffin_mean = griffin[group]
-        # Native blacklist handling differs. Report both eligible site counts
-        # rather than silently changing either tool's site selection
+        # cfDNAlab reports eligible intervals. Griffin reports the full site-list
+        # size, including masked sites. Preserve both native meanings
         count_mean = checked_metric(float(counts.mean()), f"midpoint mean for {group}", minimum=None)
+        signed_positions = np.arange(len(counts)) * bin_size - width // 2
+        saved_half_width = (1000 // bin_size) * bin_size
+        saved_bins = (signed_positions >= -saved_half_width) & (signed_positions < saved_half_width)
         row = {
             "group": group,
             "cfdnalab_sites": site_count,
             "griffin_sites": griffin_sites,
-            "positions": len(counts),
-            "window_bp": width,
+            "positions": int(saved_bins.sum()),
+            "window_bp": 2 * saved_half_width,
+            "normalization_window_bp": width,
             "resolution_bp": bin_size,
             "gc_correction": "corrected" if arguments.gc_corrected else "none",
             "cfdnalab_mean_midpoints_per_site_bp": count_mean / site_count if site_count else "NA",
@@ -193,7 +197,7 @@ def main():
             "max_abs_mean_one": "NA",
             "status": "both-zero-coverage",
         }
-        if np.isnan(griffin_profile).all() and not np.isfinite(griffin_mean):
+        if np.isnan(griffin_profile).all() and (not np.isfinite(griffin_mean) or griffin_mean > 0):
             row["status"] = "griffin-undefined-profile"
         elif count_mean == 0 and np.isfinite(griffin_profile).all():
             row["status"] = "cfdnalab-zero-coverage"
@@ -204,7 +208,7 @@ def main():
         elif np.isnan(griffin_profile).any() and not np.isnan(griffin_profile).all():
             row["status"] = "griffin-undefined-positions"
         if count_mean > 0 and np.isfinite(griffin_profile).all():
-            normalized = counts / count_mean
+            normalized = (counts / count_mean)[saved_bins]
             difference = normalized - griffin_profile
             row["status"] = "ok"
             row["pearson_r"] = pearson_correlation(normalized, griffin_profile)

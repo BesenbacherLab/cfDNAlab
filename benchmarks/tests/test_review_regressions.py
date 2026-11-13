@@ -351,7 +351,7 @@ class SetupAndScopeTests(unittest.TestCase):
                     "SLURM_JOB_ID": "123",
                     "SLURM_JOB_NUM_NODES": "1",
                     "SLURM_CPUS_PER_TASK": "4",
-                    "BENCH_METHODS": "cfdnalab griffin",
+                    "BENCH_METHODS": "cfdnalab griffin-gc",
                     "BENCH_COMPARE_PYTHON": sys.executable,
                     "BENCH_CORES": "4",
                     "BENCH_PILOT": "0",
@@ -475,6 +475,7 @@ class RunLifecycleTests(unittest.TestCase):
                 (work / "output/reference.tsv").write_text(
                     "native reference manifest\n"
                 )
+                (work / "output/contig_scope.tsv").write_text("chromosome\tretained\nchr1\tTRUE\n")
                 (work / "profile.path").write_text(
                     str(work / "output" / native_name) + "\n"
                 )
@@ -695,6 +696,8 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
                 'print("1.1.0")\n'
             )
             finale_launcher.chmod(0o755)
+            (finale_environment / "share/finaletoolkit").mkdir(parents=True)
+            (finale_environment / "share/finaletoolkit/revision.txt").write_text("d16632ec fixture\n")
             finale_archive = root / "finaletoolkit.tar.gz"
             with tarfile.open(finale_archive, "w:gz") as destination:
                 destination.add(finale_environment, arcname=".")
@@ -918,6 +921,8 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
                     scripts = environment / "share/griffin"
                     scripts.mkdir(parents=True)
                     (scripts / "version.txt").write_text("v0.2.0 fixture\n")
+                    for script in ("griffin_GC_counts.py", "griffin_GC_bias.py"):
+                        (scripts / script).touch()
                     # Duplicates are intentional. The demo must keep exactly 1000 rows
                     (scripts / "CTCF.hg38.1000.txt").write_text(
                         "Chrom\tposition\n" + "chr1\t3000\n" * 1000
@@ -930,6 +935,9 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
                         from pathlib import Path
                         import sys
 
+                        if sys.argv[1] == '-c':
+                            # The setup import check does not process any data
+                            raise SystemExit(0)
                         # Fake only the outbound native tools. Retain their argument lists
                         with Path(os.environ['NATIVE_CALL_LOG']).open('a') as destination:
                             destination.write('\t'.join(sys.argv[1:]) + '\n')
@@ -962,7 +970,11 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
                 order, repetition, warmup, method, cores = sys.argv[sys.argv.index('--') + 1:]
                 output = work / 'output'
                 output.mkdir()
-                profile = output / 'sample.uncorrected.coverage.tsv'
+                native_results = output / 'results/sample'
+                native_results.mkdir(parents=True)
+                (output / 'gc-bias').mkdir()
+                (native_results / 'sample.uncorrected.coverage.tsv').write_text('raw repetition ' + repetition + '\n')
+                profile = native_results / 'sample.GC_corrected.coverage.tsv'
                 profile.write_text('first saved repetition ' + repetition + '\n')
                 (work / 'profile.path').write_text(str(profile) + '\n')
                 results = Path(os.environ['BENCH_RESULTS'])
@@ -1004,6 +1016,12 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
                 (references / filename).touch()
             mappability = references / "mappability.bw"
             mappability.touch()
+            gc_regions = references / "gc-regions.bed"
+            gc_regions.write_text("chr1\t0\t6000\n")
+            gc_frequencies = references / "genome_GC_frequency"
+            gc_frequencies.mkdir()
+            for fragment_length in range(15, 501):
+                (gc_frequencies / f"gc-regions.{fragment_length}bp.GC_frequency.txt").write_text("fixture\n")
             results = root / "results"
             result = subprocess.run(
                 ["bash", str(BENCHMARKS / "midpoints/benchmark_midpoints.sh")],
@@ -1025,7 +1043,9 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
                     "BENCH_GRIFFIN_ARCHIVE": str(archives["griffin"]),
                     "BENCH_GRIFFIN_REF_DIR": str(references),
                     "BENCH_GRIFFIN_MAPPABILITY_BW": str(mappability),
-                    "BENCH_METHODS": "griffin",
+                    "BENCH_METHODS": "griffin-gc",
+                    "BENCH_GRIFFIN_GC_REGIONS": str(gc_regions),
+                    "BENCH_GRIFFIN_REF_GC": str(gc_frequencies),
                     "BENCH_CORES": "4",
                     "BENCH_WARMUPS": "10",
                     "BENCH_REPETITIONS": "3",
@@ -1072,9 +1092,13 @@ printf 'must not continue\n' > "$BENCH_RESULTS/continued"
             self.assertTrue(all(row["window_bp"] == "2001" for row in rows))
             self.assertEqual(
                 (
-                    results / "profiles/griffin/sample.uncorrected.coverage.tsv"
+                    results / "profiles/griffin-gc/sample.GC_corrected.coverage.tsv"
                 ).read_text(),
                 "first saved repetition 1\n",
+            )
+            self.assertEqual(
+                (results / "profiles/griffin-gc/sample.uncorrected.coverage.tsv").read_text(),
+                "raw repetition 1\n",
             )
             self.assertEqual(intervals.read_text(), production_sites)
             self.assertEqual(len((results / "sites.bed").read_text().splitlines()), 4)
@@ -1211,11 +1235,11 @@ class NativeComparatorTests(unittest.TestCase):
         with (
             mock.patch.object(
                 comparator, "read_cfdnalab",
-                return_value=({"group": (np.full(20, 1e308), 2)}, 300, 15),
+                return_value=({"group": (np.full(666, 1e308), 2)}, 9990, 15),
             ),
             mock.patch.object(
                 comparator, "read_griffin",
-                return_value={"group": (np.ones(20), 2, 1.0)},
+                return_value={"group": (np.ones(132), 2, 1.0)},
             ),
             mock.patch.object(sys, "argv", ["compare_midpoints.py", "profiles"]),
             redirect_stdout(StringIO()),
@@ -1232,17 +1256,17 @@ class NativeComparatorTests(unittest.TestCase):
         output = StringIO()
         with (
             mock.patch.object(comparator, "read_cfdnalab", return_value=(
-                {"TFBS": (np.array([1.0] * 10 + [3.0] * 10), 2)}, 300, 15,
+                {"TFBS": (np.array([1.0] * 333 + [3.0] * 333), 2)}, 9990, 15,
             )) as cfdnalab_reader,
             mock.patch.object(comparator, "read_griffin", return_value={
-                "TFBS": (np.array([0.75] * 10 + [1.25] * 10), 2, 0.5),
+                "TFBS": (np.array([0.75] * 66 + [1.25] * 66), 2, 0.5),
             }) as griffin_reader,
             mock.patch.object(sys, "argv", ["compare_midpoints.py", "profiles", "--gc-corrected"]),
             redirect_stdout(output),
         ):
             comparator.main()
         cfdnalab_reader.assert_called_once_with(Path("profiles/cfdnalab-gc/midpoint_profiles.zarr"))
-        griffin_reader.assert_called_once_with(Path("profiles/griffin-gc/sample.GC_corrected.coverage.tsv"), 300, 15)
+        griffin_reader.assert_called_once_with(Path("profiles/griffin-gc/sample.GC_corrected.coverage.tsv"), 9990, 15)
         row, = csv.DictReader(StringIO(output.getvalue()), delimiter="\t")
         self.assertEqual(row["gc_correction"], "corrected")
         self.assertEqual(row["status"], "ok")
@@ -1274,25 +1298,25 @@ class NativeComparatorTests(unittest.TestCase):
         comparator = self.comparator("midpoints/compare_midpoints.py")
         # Both profiles have mean 1. Their halves differ by exactly 0.25,
         # including negative smoothing values. Pearson r and r squared are 1
-        counts = np.array([-0.5] * 10 + [2.5] * 10)
+        counts = np.array([-0.5] * 333 + [2.5] * 333)
         native_result = SimpleNamespace(
             length_bins=lambda: [(100, 201)],
             positions=lambda: pd.DataFrame({
-                "position_bin_start_bp": range(0, 300, 15), "position_bin_end_bp": range(15, 301, 15),
+                "position_bin_start_bp": range(0, 9990, 15), "position_bin_end_bp": range(15, 9991, 15),
             }),
             counts_array=lambda: counts[None, None, :],
             group_metadata=lambda: pd.DataFrame({"group_name": ["TFBS"], "eligible_intervals": [1]}),
         )
         with tempfile.TemporaryDirectory() as temporary:
             profiles = Path(temporary)
-            (profiles / "griffin").mkdir()
-            with (profiles / "griffin/sample.uncorrected.coverage.tsv").open("w") as destination:
+            (profiles / "griffin-gc").mkdir()
+            with (profiles / "griffin-gc/sample.uncorrected.coverage.tsv").open("w") as destination:
                 writer = csv.writer(destination, delimiter="\t")
                 writer.writerow([
                     "site_name", "number_of_sites", "smoothing", "CNA_normalization",
                     "mean_reads_per_bp_in_normalization_window",
-                ] + list(map(str, range(-150, 150, 15))))
-                writer.writerow(["TFBS", 2, True, False, 0.5] + [-0.25] * 10 + [2.25] * 10)
+                ] + list(map(str, range(-990, 990, 15))))
+                writer.writerow(["TFBS", 2, True, False, 0.5] + [-0.25] * 66 + [2.25] * 66)
             output = StringIO()
             with (
                 mock.patch.object(comparator, "read_midpoints", return_value=native_result),
@@ -1303,8 +1327,8 @@ class NativeComparatorTests(unittest.TestCase):
             row, = csv.DictReader(StringIO(output.getvalue()), delimiter="\t")
             self.assertEqual(row["cfdnalab_sites"], "1")
             self.assertEqual(row["griffin_sites"], "2")
-            self.assertEqual(row["positions"], "20")
-            self.assertEqual(row["window_bp"], "300")
+            self.assertEqual(row["positions"], "132")
+            self.assertEqual(row["window_bp"], "1980")
             self.assertEqual(row["resolution_bp"], "15")
             self.assertEqual(row["status"], "ok")
             self.assertAlmostEqual(float(row["pearson_r"]), 1)
@@ -1319,12 +1343,35 @@ class NativeComparatorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary) / "picard"
             directory.mkdir()
-            (directory / "metrics.txt").write_text(
+            (directory / "concordance.metrics.txt").write_text(
                 "## HISTOGRAM\tjava.lang.Integer\n"
                 "insert_size\tAll_Reads.rf_count\n30\t5\n1000\t4\n\n"
             )
             counts = comparator.read_profile(directory, np.arange(30, 1001))
             self.assertEqual(counts.sum(), 0)
+
+    def test_picard_concordance_reads_filtered_histogram_and_cfdnapro_ignores_prop(self):
+        import numpy as np
+
+        comparator = self.comparator("lengths/compare_lengths.py")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            picard = root / "picard"
+            picard.mkdir()
+            header = "## HISTOGRAM\tjava.lang.Integer\ninsert_size\tAll_Reads.fr_count\n"
+            (picard / "metrics.txt").write_text(header + "30\t99\n31\t88\n32\t77\n")
+            (picard / "concordance.metrics.txt").write_text(header + "30\t0\n31\t2\n32\t3\n")
+            cfdnapro = root / "cfdnapro"
+            cfdnapro.mkdir()
+            (cfdnapro / "lengths.tsv").write_text(
+                "insert_size\tAll_Reads.fr_count\tprop\n30\t0\t0\n31\t2\t0.4\n32\t3\t0.6\n"
+            )
+            # Concordance uses the filtered counts 0,2,3, not Picard's timed
+            # 99,88,77. cfDNAPro's optional proportion column is not another count
+            for directory in (picard, cfdnapro):
+                np.testing.assert_array_equal(
+                    comparator.read_profile(directory, np.array([30, 31, 32])), [0, 2, 3]
+                )
 
     def test_griffin_rounded_density_zero_does_not_erase_a_positive_profile(self):
         import numpy as np
@@ -1338,27 +1385,27 @@ class NativeComparatorTests(unittest.TestCase):
                 "smoothing",
                 "CNA_normalization",
                 "mean_reads_per_bp_in_normalization_window",
-            ] + list(map(str, range(-10, 10)))
+            ] + list(map(str, range(-990, 990, 15)))
             with path.open("w") as destination:
                 writer = csv.writer(destination, delimiter="\t")
                 writer.writerow(columns)
-                # Five positions at four and fifteen zeros give mean one
-                writer.writerow(["sparse", 2, False, False, 0] + [4] * 5 + [0] * 15)
-                writer.writerow(["empty", 2, False, False, 0] + [""] * 20)
-            profiles = comparator.read_griffin(path, 20, 1)
+                # The saved subset can have a mean different from one
+                writer.writerow(["sparse", 2, False, False, 0] + [4] * 5 + [0] * 127)
+                writer.writerow(["empty", 2, False, False, 0] + [""] * 132)
+            profiles = comparator.read_griffin(path, 9990, 15)
             self.assertEqual(profiles["sparse"][1:], (2, 0))
-            np.testing.assert_array_equal(profiles["sparse"][0], [4] * 5 + [0] * 15)
+            np.testing.assert_array_equal(profiles["sparse"][0], [4] * 5 + [0] * 127)
             self.assertTrue(np.isnan(profiles["empty"][0]).all())
 
-    def test_midpoint_comparison_preserves_all_666_aligned_bins(self):
+    def test_midpoint_normalizes_all_666_bins_before_comparing_132_saved_bins(self):
         import numpy as np
         import pandas as pd
 
         comparator = self.comparator("midpoints/compare_midpoints.py")
-        # A 9990 bp window has 666 full 15 bp bins, 333 on each side. The
-        # saved per-bp counts average to 2, so normalized halves are 0.5 and 1.5
-        # Dividing by two sites gives a mean density of 1 per site per bp, not 15
-        counts = np.array([1.0] * 333 + [3.0] * 333)
+        # The 666 counts sum to 1332, giving full-window mean 2. The central
+        # 132 counts are all 4 and must become 2, not be renormalized to 1
+        # Dividing the full mean by two sites gives density 1 per site per bp
+        counts = np.array([1.0] * 264 + [2.0] * 3 + [4.0] * 132 + [2.0] * 267)
         native_result = SimpleNamespace(
             length_bins=lambda: [(100, 201)],
             positions=lambda: pd.DataFrame({
@@ -1370,14 +1417,14 @@ class NativeComparatorTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as temporary:
             profiles = Path(temporary)
-            (profiles / "griffin").mkdir()
-            with (profiles / "griffin/sample.uncorrected.coverage.tsv").open("w") as destination:
+            (profiles / "griffin-gc").mkdir()
+            with (profiles / "griffin-gc/sample.uncorrected.coverage.tsv").open("w") as destination:
                 writer = csv.writer(destination, delimiter="\t")
                 writer.writerow([
                     "site_name", "number_of_sites", "smoothing", "CNA_normalization",
                     "mean_reads_per_bp_in_normalization_window",
-                ] + list(map(str, range(-4995, 4995, 15))))
-                writer.writerow(["TFBS", 2, False, False, 1] + list(counts / 2))
+                ] + list(map(str, range(-990, 990, 15))))
+                writer.writerow(["TFBS", 2, False, False, 1] + list(counts[267:399] / 2))
             output = StringIO()
             with (
                 mock.patch.object(comparator, "read_midpoints", return_value=native_result),
@@ -1386,11 +1433,12 @@ class NativeComparatorTests(unittest.TestCase):
             ):
                 comparator.main()
             row, = csv.DictReader(StringIO(output.getvalue()), delimiter="\t")
-            self.assertEqual(row["positions"], "666")
-            self.assertEqual(row["window_bp"], "9990")
+            self.assertEqual(row["positions"], "132")
+            self.assertEqual(row["window_bp"], "1980")
             self.assertEqual(row["resolution_bp"], "15")
             self.assertAlmostEqual(float(row["cfdnalab_mean_midpoints_per_site_bp"]), 1.0)
-            self.assertAlmostEqual(float(row["pearson_r"]), 1.0)
+            self.assertEqual(row["pearson_r"], "NA")
+            self.assertEqual(row["normalization_window_bp"], "9990")
             for metric in ("mae_mean_one", "rmse_mean_one", "max_abs_mean_one"):
                 self.assertEqual(float(row[metric]), 0.0)
 
@@ -1415,14 +1463,14 @@ class NativeComparatorTests(unittest.TestCase):
             "griffin-empty",
             "constant",
         ]
-        counts = np.array([[2] * 10 + [0] * 10, [0] * 20, [0] * 20, [2] * 20, [2] * 20])
+        counts = np.array([[2] * 333 + [0] * 333, [0] * 666, [0] * 666, [2] * 666, [2] * 666])
         # Fake only the external reader result, exercising the real comparator CLI
         native_result = SimpleNamespace(
             length_bins=lambda: [(100, 201)],
             positions=lambda: pd.DataFrame(
                 {
-                    "position_bin_start_bp": range(20),
-                    "position_bin_end_bp": range(1, 21),
+                    "position_bin_start_bp": range(0, 9990, 15),
+                    "position_bin_end_bp": range(15, 9991, 15),
                 }
             ),
             counts_array=lambda: counts[:, None, :],
@@ -1432,26 +1480,26 @@ class NativeComparatorTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as temporary:
             profiles = Path(temporary) / "profiles"
-            (profiles / "griffin").mkdir(parents=True)
+            (profiles / "griffin-gc").mkdir(parents=True)
             columns = [
                 "site_name",
                 "number_of_sites",
                 "smoothing",
                 "CNA_normalization",
                 "mean_reads_per_bp_in_normalization_window",
-            ] + list(map(str, range(-10, 10)))
-            with (profiles / "griffin/sample.uncorrected.coverage.tsv").open(
+            ] + list(map(str, range(-990, 990, 15)))
+            with (profiles / "griffin-gc/sample.uncorrected.coverage.tsv").open(
                 "w"
             ) as destination:
                 writer = csv.writer(destination, delimiter="\t")
                 writer.writerow(columns)
                 writer.writerow(
-                    ["reversed", 2, False, False, 0.5] + [0] * 10 + [2] * 10
+                    ["reversed", 2, False, False, 0.5] + [0] * 66 + [2] * 66
                 )
-                writer.writerow(["both-empty", 2, False, False, 0] + [""] * 20)
-                writer.writerow(["cfdnalab-empty", 2, False, False, 1] + [1] * 20)
-                writer.writerow(["griffin-empty", 2, False, False, 0] + [""] * 20)
-                writer.writerow(["constant", 2, False, False, 1] + [1] * 20)
+                writer.writerow(["both-empty", 2, False, False, 0] + [""] * 132)
+                writer.writerow(["cfdnalab-empty", 2, False, False, 1] + [1] * 132)
+                writer.writerow(["griffin-empty", 2, False, False, 0] + [""] * 132)
+                writer.writerow(["constant", 2, False, False, 1] + [1] * 132)
             output = StringIO()
             with (
                 mock.patch.object(

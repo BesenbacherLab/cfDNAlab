@@ -159,7 +159,10 @@ benchmark_progress "Checking tool versions"
 if [[ -f "$BENCH_WORK/bin/cfdna" ]]; then BENCH_CFDNA_VERSION=$("$BENCH_WORK/bin/cfdna" --version | tr '\t\n' '  '); fi
 if [[ -f "$BENCH_WORK/bin/mosdepth" ]]; then BENCH_MOSDEPTH_VERSION=$("$BENCH_WORK/bin/mosdepth" --version | tr '\t\n' '  '); fi
 BENCH_SAMTOOLS_VERSION=$("$BENCH_WORK/samtools-env/bin/samtools" --version-only | tr '\t\n' '  ')
-if [[ -d "$BENCH_WORK/finale-env" ]]; then BENCH_FINALE_VERSION=$("$BENCH_WORK/finale-env/bin/python" "$BENCH_WORK/finale-env/bin/finaletoolkit" --version | tr '\t\n' '  '); fi
+if [[ -d "$BENCH_WORK/finale-env" ]]; then
+    BENCH_FINALE_VERSION=$("$BENCH_WORK/finale-env/bin/python" "$BENCH_WORK/finale-env/bin/finaletoolkit" --version | tr '\t\n' '  ')
+    BENCH_FINALE_VERSION+=" commit:$(cat "$BENCH_WORK/finale-env/share/finaletoolkit/revision.txt")"
+fi
 if [[ -f "$BENCH_WORK/bin/pandepth" ]]; then
     BENCH_PANDEPTH_VERSION=$("$BENCH_WORK/bin/pandepth" -h 2>&1 | sed -n 's/.*show this help \[\(v[^]]*\)\].*/\1/p')
     if [[ -z "$BENCH_PANDEPTH_VERSION" ]]; then echo "Could not read PanDepth version." >&2; exit 1; fi
@@ -186,12 +189,8 @@ if [[ ! -s "$BENCH_WORK/regions.bed" ]]; then
     echo "No coverage windows could be generated from the BAM index." >&2
     exit 1
 fi
-# PanDepth 2.26 treats its BED coordinates as 1-based inclusive. This scratch
-# copy therefore adds 1 to each start, preserving exactly the same covered bases
-# Three columns keep each window separate rather than grouping BED4 labels
-if [[ " $BENCH_METHODS " == *" pandepth-regions "* ]]; then
-    awk 'BEGIN {OFS="\t"} {print $1, $2+1, $3}' "$BENCH_WORK/regions.bed" > "$BENCH_WORK/pandepth-regions.bed"
-fi
+# PanDepth generates its own 500 kb windows with -w, like cfDNAlab and mosdepth
+# Its native window table is converted to BED coordinates only during comparison
 
 # Autosome selection uses the BAM's actual names. Snyder's reference can use 1..22,
 # while cfDNAlab defaults to chr1..chr22. The file's chromosome names remain unchanged
@@ -328,6 +327,9 @@ elif [[ "$method" == mosdepth || "$method" == mosdepth-fragment || "$method" == 
         proper_pair=required
     fi
     if [[ "$method" == mosdepth-regions ]]; then
+        # The documented precision setting limits rounding when means are later
+        # multiplied by window widths. It changes output precision, not counting
+        export MOSDEPTH_PRECISION=5
         command+=(--by 500000 --no-per-base)
     fi
     command+=("$BENCH_WORK/coverage/coverage" "$BENCH_WORK/sample.bam")
@@ -335,7 +337,7 @@ elif [[ "$method" == mosdepth || "$method" == mosdepth-fragment || "$method" == 
     if [[ "$method" == mosdepth-regions ]]; then track="$BENCH_WORK/coverage/coverage.regions.bed.gz"; fi
 elif [[ "$method" == samtools-depth ]]; then
     # -@ receives the allocated core count and controls additional decoding threads
-    # -s removes mate overlap, -aa includes zero-depth bases on all contigs
+    # -s removes mate overlap. Native sparse output omits zero-depth positions
     # -q is base quality and -Q is MAPQ. No -J means deletions are excluded
     # Basic flags match without requiring proper pairs. The HTSlib input expression
     # filters both TLEN signs with inclusive bounds during the same BAM read pass
@@ -347,17 +349,16 @@ elif [[ "$method" == samtools-depth ]]; then
     track="$BENCH_WORK/coverage/samtools.depth.tsv"
     command=("$BENCH_WORK/samtools-env/bin/samtools" depth -@ "$tool_threads"
         --input-fmt-option "filter=(tlen >= $BENCH_MIN_LENGTH && tlen <= $BENCH_MAX_LENGTH) || (tlen <= -$BENCH_MIN_LENGTH && tlen >= -$BENCH_MAX_LENGTH)"
-        -aa -s -q 0 -Q "$BENCH_MIN_MAPQ" -G 3852 --require-flags 1
+        -s -q 0 -Q "$BENCH_MIN_MAPQ" -G 3852 --require-flags 1
         -o "$track" "$BENCH_WORK/sample.bam")
 elif [[ "$method" == samtools-regions ]]; then
     # bedcov sums read depth directly over the BED. -j excludes D/N positions
-    # Unlike depth -s, bedcov counts overlapping mates twice. The HTSlib input
-    # options supply decoding threads, paired-read selection and TLEN bounds
-    tool_threads=$cores
+    # Unlike depth -s, bedcov counts overlapping mates twice and has no thread
+    # option. samtools' global input filter supplies paired selection and TLEN bounds
+    tool_threads=NA
     tool_version=$BENCH_SAMTOOLS_VERSION
     track="$BENCH_WORK/coverage/samtools.bedcov.tsv"
     command=("$BENCH_WORK/samtools-env/bin/samtools" bedcov
-        --input-fmt-option "nthreads=$tool_threads"
         --input-fmt-option "filter=flag.paired && ((tlen >= $BENCH_MIN_LENGTH && tlen <= $BENCH_MAX_LENGTH) || (tlen <= -$BENCH_MIN_LENGTH && tlen >= -$BENCH_MAX_LENGTH))"
         -j -Q "$BENCH_MIN_MAPQ" -G 3852
         "$BENCH_WORK/regions.bed" "$BENCH_WORK/sample.bam")
@@ -377,8 +378,8 @@ elif [[ "$method" == pandepth || "$method" == pandepth-regions ]]; then
     track="$BENCH_WORK/coverage/pandepth.SiteDepth.gz"
     if [[ "$method" == pandepth-regions ]]; then
         # Native regional statistics include TotalDepth, avoiding a per-base table
-        command+=(-b "$BENCH_WORK/pandepth-regions.bed")
-        track="$BENCH_WORK/coverage/pandepth.bed.stat.gz"
+        command+=(-w 500000)
+        track="$BENCH_WORK/coverage/pandepth.win.stat.gz"
     else
         command+=(-a)
     fi
@@ -443,7 +444,9 @@ if ((tool_exit_code != 0)); then
     cat "$BENCH_WORK/tool-error.log" "$tool_stdout" >&2
     exit "$tool_exit_code"
 fi
-if [[ ! -s "$track" ]]; then
+# With sparse samtools depth output, a real all-zero result is an empty file
+# Other native formats retain headers/compression frames even with no coverage
+if [[ ! -f "$track" || ( ! -s "$track" && "$method" != samtools-depth ) ]]; then
     echo "The command succeeded but its expected track is missing: $track" >&2
     exit 1
 fi

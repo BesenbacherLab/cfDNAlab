@@ -44,10 +44,10 @@ fragments <- readBam(
     outdir = NA
 )
 
-# Supplying fragment_obj is necessary because the BAM shortcut does not forward
-# the MAPQ/flag options above. It would silently use readBam's defaults instead
-counts <- read_bam_insert_metrics(
-    fragment_obj = fragments,
+# The tutorial calls callLength() on the fragments returned by readBam()
+# This keeps the MAPQ and flag choices above and uses native histogram counting
+counts <- callLength(
+    frag_obj = fragments,
     isize_min = minimum_length,
     isize_max = maximum_length
 )

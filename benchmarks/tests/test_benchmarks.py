@@ -138,6 +138,51 @@ class CoverageTests(unittest.TestCase):
         self.assertAlmostEqual(float(row["union_mae"]), 1)
         self.assertEqual(row["pearson_r_1bp"], "NA")
 
+    def test_sparse_samtools_reports_jaccard_and_truncation_in_bam_order(self):
+        # Each chromosome has 6 covered bases in cfDNAlab. samtools shares
+        # 6, 3 and 0 bases respectively, so genome-wide Jaccard is 9/18 = 0.5
+        # The intentionally non-lexicographic header order is the BAM order
+        scope = "chr2\t10\nchr10\t10\nchr1\t10\n"
+        self.profile("cfdnalab", "chr2\t2\t8\t1\nchr10\t2\t8\t1\nchr1\t2\t8\t1\n", scope)
+        positions = "".join(f"chr2\t{position}\t1\n" for position in range(3, 9))
+        positions += "".join(f"chr10\t{position}\t1\n" for position in range(3, 6))
+        self.profile("samtools-depth", positions, scope)
+        result = self.compare()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        row, = csv.DictReader(result.stdout.splitlines(), delimiter="\t")
+        self.assertEqual(int(row["nonzero_intersection_bases"]), 9)
+        self.assertEqual(int(row["nonzero_union_bases"]), 18)
+        self.assertEqual(float(row["coverage_jaccard"]), 0.5)
+        with (self.profiles.parent / "coverage_jaccard.tsv").open() as source:
+            diagnostics = list(csv.DictReader(source, delimiter="\t"))
+        self.assertEqual([row["chromosome"] for row in diagnostics], ["chr2", "chr10", "chr1"])
+        self.assertEqual([float(row["coverage_jaccard"]) for row in diagnostics], [1.0, 0.5, 0.0])
+        self.assertEqual([row["possible_samtools_truncation"] for row in diagnostics], ["False", "True", "True"])
+        self.assertIn("Possible samtools-depth truncation", result.stderr)
+
+    def test_internal_zero_chromosome_does_not_flag_truncation(self):
+        # Coverage resumes after the zero-overlap chromosome, so there is no
+        # zero-coverage suffix even though native chromosome Jaccards differ
+        chromosomes = [
+            {"chromosome": "chr1", "nonzero_union_bases": 6, "coverage_jaccard": 0.5,
+             "left_nonzero_bases": 6, "right_nonzero_bases": 3},
+            {"chromosome": "chr2", "nonzero_union_bases": 6, "coverage_jaccard": 0.0,
+             "left_nonzero_bases": 6, "right_nonzero_bases": 0},
+            {"chromosome": "chr3", "nonzero_union_bases": 6, "coverage_jaccard": 1.0,
+             "left_nonzero_bases": 6, "right_nonzero_bases": 6},
+        ]
+        self.assertEqual(coverage.possible_samtools_truncation("cfdnalab", "samtools-depth", chromosomes), set())
+
+    def test_empty_sparse_samtools_output_represents_zero_coverage(self):
+        self.profile("cfdnalab", "")
+        self.profile("samtools-depth", "")
+        result = self.compare()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        row, = csv.DictReader(result.stdout.splitlines(), delimiter="\t")
+        self.assertEqual(float(row["mae"]), 0)
+        self.assertEqual(row["coverage_jaccard"], "NA")
+        self.assertNotIn("Possible samtools-depth truncation", result.stderr)
+
     def test_rejects_overflow_in_a_derived_coverage_metric(self):
         # Each depth and squared difference is finite, but the weighted sum overflows
         self.profile("cfdnalab", "chr1\t0\t100\t1e154\n")
@@ -421,10 +466,10 @@ class CoverageTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         coverage.regional_counts(directory, expected_regions)
 
-    def test_native_regional_coverage_formats_match_including_one_base_tail(self):
+    def test_native_regional_formats_report_pandepth_missing_one_base_tail(self):
         # A 50 bp window at mean depth 2 has 100 covered bases. The final
-        # 1 bp window at depth 3 has 3. Every native table describes (100,3)
-        # PanDepth's [1,50] and [51,51] become BED [0,50) and [50,51)
+        # 1 bp window at depth 3 has 3. PanDepth omits that last 1 bp window
+        # Its inclusive [1,50] becomes BED [0,50), with covered-base total 100
         (self.profiles.parent / "regions.bed").write_text(
             "chr1\t0\t50\t.\nchr1\t50\t51\t.\n"
         )
@@ -449,12 +494,11 @@ class CoverageTests(unittest.TestCase):
                     "chr1\t50\t51\t.\t3\nchr1\t0\t50\t.\t100\n"
                 )
             else:
-                with gzip.open(directory / "pandepth.bed.stat.gz", "wt") as destination:
+                with gzip.open(directory / "pandepth.win.stat.gz", "wt") as destination:
                     destination.write(
-                        "#Chr\tStart\tEnd\tRegionID\tLength\tCoveredSite\tTotalDepth\tCoverage(%)\tMeanDepth\n"
-                        "chr1\t1\t50\tchr1_1_50\t50\t50\t100\t100.00\t2.00\n"
-                        "chr1\t51\t51\tchr1_51_51\t1\t1\t3\t100.00\t3.00\n"
-                        "##RegionLength: 51\tCoveredSite: 51\n"
+                        "#Chr\tStart\tEnd\tLength\tCoveredSite\tTotalDepth\tCoverage(%)\tMeanDepth\n"
+                        "chr1\t1\t50\t50\t50\t100\t100.00\t2.00\n"
+                        "##RegionLength: 50\tCoveredSite: 50\n"
                     )
         result = self.compare()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -462,10 +506,12 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(len(rows), 6)
         for row in rows:
             self.assertEqual(row["quantity"], "regional-read-depth")
-            self.assertEqual(int(row["regions"]), 2)
+            includes_pandepth = "pandepth-regions" in (row["left_profile"], row["right_profile"])
+            self.assertEqual(int(row["regions"]), 1 if includes_pandepth else 2)
             self.assertEqual(float(row["mae"]), 0)
-            self.assertEqual(float(row["left_integrated_depth"]), 103)
-            self.assertEqual(float(row["right_integrated_depth"]), 103)
+            self.assertEqual(float(row["left_integrated_depth"]), 100 if includes_pandepth else 103)
+            self.assertEqual(float(row["right_integrated_depth"]), 100 if includes_pandepth else 103)
+            self.assertEqual(int(row["left_missing_regions"]) + int(row["right_missing_regions"]), int(includes_pandepth))
             self.assertEqual(float(row["net_coverage_difference"]), 0)
         # A fragment-count table must not be paired with covered-base totals
         counts = self.profiles / "finaletoolkit-coverage"
@@ -494,7 +540,7 @@ class RegionalCommandTests(unittest.TestCase):
                     result = subprocess.run(
                         ["bash", "-euo", "pipefail", "-c",
                          'method=$SELECTED_METHOD\ncores=$BENCH_CORES\n' + command_setup
-                         + 'printf "%s\\n" "$tool_threads" "$track" "${command[@]}"\n'],
+                         + 'printf "%s\\n" "$tool_threads" "$track" "${MOSDEPTH_PRECISION:-unset}" "${command[@]}"\n'],
                         env={
                             **os.environ,
                             "SELECTED_METHOD": method,
@@ -509,8 +555,8 @@ class RegionalCommandTests(unittest.TestCase):
                         text=True, capture_output=True,
                     )
                     self.assertEqual(result.returncode, 0, result.stderr)
-                    threads, track, *command = result.stdout.splitlines()
-                    self.assertEqual(int(threads), cores)
+                    threads, track, precision, *command = result.stdout.splitlines()
+                    self.assertEqual(threads, "NA" if method == "samtools-regions" else str(cores))
                     if method == "cfdnalab-regions":
                         self.assertEqual(command[1], "fcoverage")
                         self.assertIn("--ignore-gap", command)
@@ -518,20 +564,22 @@ class RegionalCommandTests(unittest.TestCase):
                         self.assertEqual(command[command.index("--n-threads") + 1], str(cores))
                         self.assertTrue(track.endswith("fcoverage.total.tsv.zst"))
                     elif method == "mosdepth-regions":
+                        self.assertEqual(precision, "5")
                         self.assertEqual(command[command.index("--threads") + 1], str(cores))
                         self.assertIn("--no-per-base", command)
                         self.assertEqual(command[command.index("--by") + 1], "500000")
                         self.assertTrue(track.endswith("coverage.regions.bed.gz"))
                     elif method == "samtools-regions":
                         self.assertEqual(command[1], "bedcov")
-                        self.assertIn(f"nthreads={cores}", command)
+                        self.assertFalse(any("nthreads=" in option for option in command))
                         self.assertIn("-j", command)
                         self.assertTrue(track.endswith("samtools.bedcov.tsv"))
                     elif method == "pandepth-regions":
                         self.assertEqual(command[command.index("-t") + 1], str(cores))
-                        self.assertIn("-b", command)
+                        self.assertEqual(command[command.index("-w") + 1], "500000")
+                        self.assertNotIn("-b", command)
                         self.assertNotIn("-a", command)
-                        self.assertTrue(track.endswith("pandepth.bed.stat.gz"))
+                        self.assertTrue(track.endswith("pandepth.win.stat.gz"))
                     else:
                         self.assertEqual(command[2], "coverage")
                         self.assertEqual(command[command.index("--threads") + 1], str(cores))
@@ -540,6 +588,69 @@ class RegionalCommandTests(unittest.TestCase):
                         for option in ("--intersect-policy", "--scale-factor", "--normalize"):
                             self.assertNotIn(option, command)
                         self.assertTrue(track.endswith("finaletoolkit.coverage.bed.gz"))
+
+
+class PicardCommandTests(unittest.TestCase):
+    """Inspect the timed command and exercise only the untimed fake pipeline."""
+
+    def test_timed_picard_has_no_filter_pipeline_or_thread_override(self):
+        script = (BENCHMARKS / "lengths/benchmark_lengths.sh").read_text()
+        setup = script.split('mkdir -p "$BENCH_WORK/output"\n', 1)[1].split(
+            "# Twenty identifying fields", 1
+        )[0]
+        result = subprocess.run(
+            ["bash", "-euo", "pipefail", "-c", 'method=picard\ncores=32\n' + setup
+             + 'printf "%s\\n" "$tool_threads" "$effective_min_mapq" "${command[@]}"\n'],
+            env={**os.environ, "BENCH_WORK": "/unused/benchmark scratch",
+                 "BENCH_MIN_MAPQ": "30", "BENCH_MAX_LENGTH": "1000", "BENCH_PICARD_VERSION": "fixture"},
+            text=True, capture_output=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        threads, mapq, *command = result.stdout.splitlines()
+        self.assertEqual((threads, mapq), ("NA", "NA"))
+        self.assertTrue(command[0].endswith("picard-env/bin/picard"))
+        self.assertEqual(command[1:3], ["-Xmx2g", "CollectInsertSizeMetrics"])
+        self.assertIn("I=/unused/benchmark scratch/sample.bam", command)
+        self.assertIn("HISTOGRAM_WIDTH=1000", command)
+        self.assertFalse(any("samtools" in argument or "ActiveProcessorCount" in argument for argument in command))
+        self.assertNotIn("I=/dev/stdin", command)
+
+    def test_untimed_filter_pipeline_writes_a_distinct_histogram(self):
+        script = (BENCHMARKS / "lengths/benchmark_lengths.sh").read_text()
+        body = script.split("<<'PICARD_CONCORDANCE'\n", 1)[1].split("\nPICARD_CONCORDANCE", 1)[0]
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            results = work / "results"
+            (results / "profiles/picard").mkdir(parents=True)
+            for environment in ("samtools-env", "picard-env"):
+                (work / environment / "bin").mkdir(parents=True)
+            samtools = work / "samtools-env/bin/samtools"
+            samtools.write_text(
+                '#!/usr/bin/env bash\nset -euo pipefail\n'
+                '[[ "$*" == "view -@ 4 -u -q 30 -f 1 -F 3852 "* ]]\n'
+                'printf "filtered BAM fixture"\n'
+            )
+            picard = work / "picard-env/bin/picard"
+            picard.write_text(
+                f'#!{sys.executable}\n'
+                'from pathlib import Path\nimport sys\n'
+                'assert sys.argv[1:4] == ["-Xmx2g", "CollectInsertSizeMetrics", "I=/dev/stdin"]\n'
+                'assert sys.stdin.read() == "filtered BAM fixture"\n'
+                'output = next(argument[2:] for argument in sys.argv if argument.startswith("O="))\n'
+                'Path(output).write_text("filtered histogram fixture\\n")\n'
+            )
+            samtools.chmod(0o755)
+            picard.chmod(0o755)
+            timed = results / "profiles/picard/metrics.txt"
+            timed.write_text("timed native histogram\n")
+            result = subprocess.run(
+                ["bash", "-s", "--", "4"], input=body, text=True, capture_output=True,
+                env={**os.environ, "BENCH_WORK": str(work), "BENCH_RESULTS": str(results),
+                     "BENCH_MIN_MAPQ": "30", "BENCH_MAX_LENGTH": "1000"},
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(timed.read_text(), "timed native histogram\n")
+            self.assertEqual((timed.parent / "concordance.metrics.txt").read_text(), "filtered histogram fixture\n")
 
 
 class FreiaPreprocessingTests(unittest.TestCase):
@@ -651,7 +762,7 @@ class TimingTests(unittest.TestCase):
                 "slurm_state": "NA",
                 "slurm_exit_code": "NA",
             }
-            for method in ("griffin", "griffin-gc")
+            for method in ("griffin-gc",)
         ]
         summary = [
             {
@@ -659,10 +770,10 @@ class TimingTests(unittest.TestCase):
                 "cores": "4",
                 "process_plus_flush_seconds_mean": 108000,
             }
-            for method in ("griffin", "griffin-gc")
+            for method in ("griffin-gc",)
         ]
         report = timings.pilot_budgets(runs, ["method", "cores"], summary, 10, 3, 0.25)
-        self.assertEqual(len(report), 2)
+        self.assertEqual(len(report), 1)
         for budget in report:
             self.assertEqual(budget["planned_runs"], 3)
             self.assertEqual(budget["budget_minutes"], 6750)

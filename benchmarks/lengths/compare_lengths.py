@@ -92,7 +92,7 @@ def read_profile(directory, lengths):
             [float(row[3]) for row in entries], index=[int(row[1]) for row in entries]
         )
     elif directory.name == "picard":
-        counts = read_picard(directory / "metrics.txt")
+        counts = read_picard(directory / "concordance.metrics.txt")
     else:
         raise ValueError(f"Unknown profile directory: {directory}")
 

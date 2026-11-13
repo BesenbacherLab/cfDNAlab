@@ -29,7 +29,7 @@ BENCH_FASTA_INDEX=${BENCH_FASTA_INDEX:-${BENCH_REF_FASTA:-}.fai}
 BENCH_WARMUPS=${BENCH_WARMUPS:-1}
 BENCH_REPETITIONS=${BENCH_REPETITIONS:-3}
 : "${BENCH_METHODS:?Set the methods for this job explicitly in BENCH_METHODS}"
-export BENCH_MIN_MAPQ=${BENCH_MIN_MAPQ:-30}
+export BENCH_MIN_MAPQ=${BENCH_MIN_MAPQ:-20}
 export BENCH_MIN_LENGTH=${BENCH_MIN_LENGTH:-100}
 export BENCH_MAX_LENGTH=${BENCH_MAX_LENGTH:-200}
 
@@ -64,7 +64,7 @@ if ((BENCH_CORES > ${SLURM_CPUS_PER_TASK:-0})); then
 fi
 for method in "${methods_to_run[@]}"; do
     case "$method" in
-        cfdnalab|griffin|cfdnalab-gc|griffin-gc) ;;
+        cfdnalab|cfdnalab-gc|griffin-gc) ;;
         *) echo "Unknown midpoint tool: $method" >&2; exit 1 ;;
     esac
 done
@@ -89,7 +89,7 @@ for method in "${methods_to_run[@]}"; do
 done
 if [[ "$run_griffin" == true ]]; then
     if ((${#methods_to_run[@]} != 1)); then
-        echo "Run Griffin in its own job: set BENCH_METHODS=griffin or griffin-gc." >&2
+        echo "Run Griffin in its own job: set BENCH_METHODS=griffin-gc." >&2
         exit 1
     fi
     # The release demo replaces full-input warmups, including in pilot jobs
@@ -303,14 +303,15 @@ chromosomes = sorted(set(row[0] for row in rows))
 with (work / 'chrom.sizes').open('w') as destination:
     for chromosome in chromosomes:
         destination.write('{}\t{}\n'.format(chromosome, bam_contigs[chromosome]))
-# Griffin always calculates GC-weighted output alongside raw counts. Unit bias
-# supplies the mandatory table without performing a sample-specific correction
-with (work / 'unit_gc_bias.tsv').open('w') as destination:
-    writer = csv.writer(destination, delimiter='\t', lineterminator='\n')
-    writer.writerow(('length', 'num_GC', 'smoothed_GC_bias'))
-    for fragment_length in range(int(os.environ['BENCH_MIN_LENGTH']), int(os.environ['BENCH_MAX_LENGTH']) + 1):
-        for gc_count in range(fragment_length + 1):
-            writer.writerow((fragment_length, gc_count, 1.0))
+# Only the untimed Griffin demo uses unit weights. Production repetitions fit
+# their own sample GC bias and preserve both raw and corrected profile tables
+if os.environ['BENCH_RUN_GRIFFIN'] == 'true':
+    with (work / 'unit_gc_bias.tsv').open('w') as destination:
+        writer = csv.writer(destination, delimiter='\t', lineterminator='\n')
+        writer.writerow(('length', 'num_GC', 'smoothed_GC_bias'))
+        for fragment_length in range(int(os.environ['BENCH_MIN_LENGTH']), int(os.environ['BENCH_MAX_LENGTH']) + 1):
+            for gc_count in range(fragment_length + 1):
+                writer.writerow((fragment_length, gc_count, 1.0))
 print(window_width, half_width, len(rows), len(groups), ','.join(chromosomes), sep='\t')
 PY
 )
@@ -414,17 +415,13 @@ if [[ "$method" == cfdnalab || "$method" == cfdnalab-gc ]]; then
 else
     tool_version=$BENCH_GRIFFIN_VERSION
     midpoint_policy=right-central-even
-    # Timing includes both Griffin scripts, bigWig writing and group aggregation
-    command=(bash "$BENCH_WORK/griffin_profile.sh" "$cores" "$BENCH_WORK/sites.yaml"
-        "$BENCH_WORK/chrom.sizes" "$BENCH_CHROMOSOMES" "$BENCH_WORK/output")
-    profile="$BENCH_WORK/output/results/sample/sample.uncorrected.coverage.tsv"
+    # All Griffin production runs use the GC-estimation helper below, including
+    # bigWig writing and group aggregation. The raw table is kept alongside this one
+    profile="$BENCH_WORK/output/results/sample/sample.GC_corrected.coverage.tsv"
 fi
 if [[ "$method" == *-gc ]]; then
     gc_correction=corrected
     command=(bash "$BENCH_WORK/gc_corrected_profile.sh" "$method" "$cores")
-    if [[ "$method" == griffin-gc ]]; then
-        profile="$BENCH_WORK/output/results/sample/sample.GC_corrected.coverage.tsv"
-    fi
 fi
 
 # The first 23 fields identify the run, followed by four GNU time values and status

@@ -9,9 +9,9 @@ The configurations describe the current runners. For an existing result, `run.ts
 | Setting | Coverage and lengths | End motifs | Midpoints |
 | --- | --- | --- | --- |
 | Allocated cores | 1, 4, 12 or 32, in separate jobs | Same | Same |
-| Minimum MAPQ | 30 | 30 | 30 |
+| Minimum MAPQ | 30, except native timed Picard | 30 | 20 for profiling and GC estimation |
 | Included fragment lengths | 30-1000 bp inclusive | Requested 30-1000 bp inclusive | 100-200 bp inclusive for profiling |
-| Chromosome selection | All BAM contigs, except named autosome configurations | All BAM contigs, except named autosome configuration | Chromosomes in the supplied site set |
+| Chromosome selection | All BAM contigs, except named autosome configurations | All BAM contigs, except cfDNAPro reference compatibility and named autosome configuration | Chromosomes in the supplied site set |
 | Production repetitions | 1 warmup, then 3 measurements | Same | Same for cfDNAlab. Griffin uses an untimed 1000-site demo, then 3 measurements |
 
 The variables in the calls correspond to the job settings:
@@ -45,7 +45,7 @@ Every available native thread/core/worker option receives `cores` directly. Comm
 
 The native options have different meanings. For example, the [mosdepth CLI](https://github.com/brentp/mosdepth/blob/v0.3.14/README.md#usage) defines `--threads` as BAM decompression threads, while coverage calculation runs separately. A 4-core allocation uses `--threads 4`, and all of the tool's threads share those allocated CPUs. `timings.tsv` records the core allocation and the native thread/worker setting separately.
 
-The installer requests mosdepth 0.3.14, samtools 1.25, PanDepth 2.26, FinaleToolkit 1.1.0, cfDNAPro 1.7.4, Picard 3.5.0 and Griffin v0.2.0. FrEIA is pinned to `2c32fb9d9fab774f4ae57931df7fd7d75654d343`. cfDNAlab is built from the checkout recorded in `cfdnalab-build.tsv`.
+The installer requests mosdepth 0.3.14, samtools 1.25, PanDepth 2.26, FinaleToolkit commit `d16632ec5ae8999e774234457f6b0f9405c8f590`, cfDNAPro 1.7.4, Picard 3.5.0 and Griffin v0.2.0. FrEIA is pinned to `2c32fb9d9fab774f4ae57931df7fd7d75654d343`. cfDNAlab is built from the checkout recorded in `cfdnalab-build.tsv`.
 
 The exclusion mask `3852`, or `0xF0C`, combines unmapped (`4`), mate unmapped (`8`), secondary (`256`), QC-fail (`512`), duplicate (`1024`) and supplementary (`2048`) flags. It does not require the proper-pair flag. FrEIA's native preprocessing uses its own exclusions, shown explicitly below.
 
@@ -83,11 +83,11 @@ The [coverage runner](coverage/benchmark_coverage.sh) contains three comparisons
 ```bash
 "$samtools" depth -@ "$cores" \
     --input-fmt-option "filter=(tlen >= $min_length && tlen <= $max_length) || (tlen <= -$min_length && tlen >= -$max_length)" \
-    -aa -s -q 0 -Q "$min_mapq" -G 3852 --require-flags 1 \
+    -s -q 0 -Q "$min_mapq" -G 3852 --require-flags 1 \
     -o "$coverage_output/samtools.depth.tsv" "$bam"
 ```
 
-Here `-q 0` is the base-quality threshold and `-Q` is MAPQ. `-s` removes mate overlap, and `-aa` includes zero-depth positions. The input expression applies inclusive absolute TLEN bounds to both signs during BAM reading.
+Here `-q 0` is the base-quality threshold and `-Q` is MAPQ. `-s` removes mate overlap. Native sparse output omits zero-depth positions, which the comparator treats as zero. samtools' global HTSlib input expression applies inclusive absolute TLEN bounds to both signs during BAM reading.
 
 **PanDepth, method `pandepth`:**
 
@@ -136,12 +136,7 @@ Before timing, the runner creates disjoint 500 kb BED4 windows over every BAM co
     }' > "$regions"
 ```
 
-cfDNAlab and mosdepth generate the same window coordinates through their fixed-size options. samtools and FinaleToolkit read the shared BED. PanDepth 2.26 interprets its BED input as 1-based inclusive, so its scratch-only BED3 is prepared outside timing:
-
-```bash
-awk 'BEGIN {OFS="\t"} {print $1, $2+1, $3}' \
-    "$regions" > "$BENCH_WORK/pandepth-regions.bed"
-```
+cfDNAlab, mosdepth and PanDepth generate 500 kb windows with their native fixed-window options. samtools and FinaleToolkit read the shared BED. PanDepth coordinates are converted only when its native output is read for concordance.
 
 ### Regional read depth
 
@@ -161,7 +156,7 @@ These four methods measure summed read depth, or covered-base totals, in each 50
 **mosdepth, method `mosdepth-regions`:**
 
 ```bash
-"$mosdepth" --threads "$cores" \
+MOSDEPTH_PRECISION=5 "$mosdepth" --threads "$cores" \
     --include-flag 1 --flag 3852 --mapq "$min_mapq" \
     --min-frag-len "$min_length" --max-frag-len "$max_length" \
     --by 500000 --no-per-base "$coverage_output/coverage" "$bam"
@@ -171,7 +166,6 @@ These four methods measure summed read depth, or covered-base totals, in each 50
 
 ```bash
 "$samtools" bedcov \
-    --input-fmt-option "nthreads=$cores" \
     --input-fmt-option "filter=flag.paired && ((tlen >= $min_length && tlen <= $max_length) || (tlen <= -$min_length && tlen >= -$max_length))" \
     -j -Q "$min_mapq" -G 3852 "$regions" "$bam" \
     > "$coverage_output/samtools.bedcov.tsv"
@@ -182,10 +176,10 @@ These four methods measure summed read depth, or covered-base totals, in each 50
 ```bash
 "$pandepth" -i "$bam" -o "$coverage_output/pandepth" \
     -q "$min_mapq" -x 3852 -t "$cores" \
-    -b "$BENCH_WORK/pandepth-regions.bed"
+    -w 500000
 ```
 
-These commands write regional output directly. mosdepth's native regional means are multiplied by the actual window widths during concordance, outside timing. Their default two-decimal precision can introduce rounding differences in the resulting totals. PanDepth supplies `TotalDepth`, and the comparator converts its coordinates back to BED coordinates. samtools `-j` excludes D/N positions, but `bedcov` does not remove mate overlap. PanDepth also retains overlapping mates and has no length filter. Regional summaries do not replace the separate base-resolution concordance calculation.
+These commands write regional output directly. mosdepth uses its documented `MOSDEPTH_PRECISION=5`, and concordance multiplies each mean by its actual window width. PanDepth writes `pandepth.win.stat.gz` with 1-based inclusive coordinates and `TotalDepth`. Its missing final 1 bp windows are counted in the comparison metadata. samtools bedcov has no native thread option (`tool_threads=NA`). Its paired/TLEN filter is samtools' global input option. `-j` excludes D/N positions but does not remove mate overlap. PanDepth also counts overlapping mates twice and has no length filter.
 
 ### Regional fragment counts
 
@@ -275,17 +269,26 @@ The timer includes the complete native `stats` command. The comparator later sel
 
 ### Picard
 
-Method `picard`. Both programs below share one timer and the same allocated CPU set:
+Method `picard` times the standalone native command:
+
+```bash
+"$picard" -Xmx2g CollectInsertSizeMetrics \
+    "I=$bam" "O=$output/metrics.txt" "HISTOGRAM_WIDTH=$max_length" \
+    "TMP_DIR=$BENCH_WORK/tmp"
+```
+
+Picard has no MAPQ option, so this timed call retains low-MAPQ and QC-fail pairs. Its timing rows record `min_mapq=NA`. The 2 GB heap is Picard's documented recommendation. No PDF is requested because picard-slim lacks R, while cfDNAlab's default plot stays timed.
+
+Once after all timed measurements, the following untimed pipeline supplies the common-filter concordance histogram. It adds job wall time and has no benchmark timing row:
 
 ```bash
 "$samtools" view -@ "$cores" -u -q "$min_mapq" -f 1 -F 3852 "$bam" |
-    "$picard" -Xms512m -XX:ActiveProcessorCount="$cores" \
-        -Djava.io.tmpdir="$BENCH_WORK/tmp" CollectInsertSizeMetrics \
-        INPUT=/dev/stdin OUTPUT="$output/metrics.txt" \
-        HISTOGRAM_WIDTH="$max_length" MINIMUM_PCT=0 INCLUDE_DUPLICATES=false
+    "$picard" -Xmx2g CollectInsertSizeMetrics I=/dev/stdin \
+        "O=$BENCH_RESULTS/profiles/picard/concordance.metrics.txt" \
+        "HISTOGRAM_WIDTH=$max_length" "TMP_DIR=$BENCH_WORK/tmp"
 ```
 
-The input filter supplies MAPQ selection absent from this Picard command. `-Xms512m` preserves the launcher's initial heap while preventing its fixed maximum-heap fallback. Java chooses the maximum heap. No PDF is requested. The comparator later selects the all-reads FR histogram and requested length range.
+The comparator reads only `concordance.metrics.txt`, selects the all-reads FR histogram, and limits it to the requested length range. The timed `metrics.txt` is retained separately.
 
 ### Additional length configurations
 
@@ -340,7 +343,7 @@ Method `finaletoolkit`:
     --output "$output/motifs.tsv"
 ```
 
-FinaleToolkit 1.1.0 ignores the supplied motif length bounds. Timing rows record `length_filter=ignored-by-release` and unknown effective bounds. It also has a native last-window omission when a contig length is exactly divisible by 1,000,000, which the runner rejects before timing. This call uses reference-derived motifs and proper read1/TLEN selection.
+FinaleToolkit uses the upstream merge commit `d16632ec5ae8999e774234457f6b0f9405c8f590`, which applies inclusive length bounds and unique midpoint window membership. Requested and effective bounds match (`length_filter=applied`). A fragment longer than twice its read length can still be lost when read1 does not overlap the window containing its midpoint. The unchanged 1 Mb window-builder omission is guarded before timing. Native proper read1/TLEN selection remains.
 
 ### cfDNAPro
 
@@ -384,7 +387,7 @@ The upstream filtering/indexing pipeline and the two motif scripts share one tim
 "$freia_environment/bin/python" "$freia_scripts/2_data_transformation.py" \
     -i "$output/sample.pq" -o "$output/" -st "$output/samples.tsv" \
     -fsmin "$min_length" -fsmax "$length_end" \
-    -subs 1 --bootstrap_sample 0 --subchroff
+    -subs 1 --bootstrap_sample 0
 ```
 
 `BENCH_CONTIGS` lists all BAM contigs. The maximum is supplied as `max_length + 1` because FrEIA's upper bound is exclusive. The native transformation retains coordinate deduplication, rejects fragments containing N in either extracted end, and calculates mononucleotide as well as trinucleotide abundances. There is no subsampling or bootstrap resampling in this call. The extractor itself forces one worker when its filtered BAM exceeds 8000 MiB, and the timing row records that worker count.
@@ -406,7 +409,7 @@ These configurations are only run when explicitly selected in `BENCH_METHODS`.
 
 The complete R helpers are [cfdnapro_lengths.R](lengths/cfdnapro_lengths.R) and [cfdnapro_end_motifs.R](ends/cfdnapro_end_motifs.R). Their computational calls are expanded here so the container invocation does not hide the filtering or calculation. Argument parsing and error checks remain in the linked helpers.
 
-Both helpers read the BAM explicitly with the following options. `bam_path`, `genome_label`, `minimum_mapq`, `minimum_length` and `maximum_length` are their positional command-line arguments. `curate_coordinates` is `TRUE` for normal lengths and motifs, and `FALSE` only for `cfdnapro-outer-span`.
+The length helper reads the BAM with the following options. The motif helper uses the same call with `chromosome_to_keep = retained_contigs`, computed from the BAM and reference headers as shown below. `bam_path`, `genome_label`, `minimum_mapq`, `minimum_length` and `maximum_length` are their positional command-line arguments. `curate_coordinates` is `TRUE` for normal lengths and motifs, and `FALSE` only for `cfdnapro-outer-span`.
 
 ```r
 suppressPackageStartupMessages(library(cfDNAPro))
@@ -433,15 +436,15 @@ fragments <- readBam(
 The **length** calculation is:
 
 ```r
-counts <- read_bam_insert_metrics(
-    fragment_obj = fragments,
+counts <- callLength(
+    frag_obj = fragments,
     isize_min = minimum_length,
     isize_max = maximum_length
 )
 write.table(counts, output_path, sep = "\t", quote = FALSE, row.names = FALSE)
 ```
 
-The **motif** calculation applies inclusive length bounds to the curated fragments, then calls the native left-end function. `motif_length` is the supplied `k` argument:
+The **motif** calculation applies user-side R subsetting for inclusive length bounds to the curated fragments, then calls the native left-end function. `motif_length` is the supplied `k` argument:
 
 ```r
 fragment_lengths <- BiocGenerics::width(fragments)
@@ -457,11 +460,28 @@ write.table(counts, file.path(output_directory, "cfdnapro-motifs.tsv"),
             sep = "\t", quote = FALSE, row.names = FALSE)
 ```
 
+The BAM-reading call above uses `chromosome_to_keep = FALSE` for lengths. For motifs it instead uses `chromosome_to_keep = retained_contigs`, computed inside the timed R process:
+
+```r
+reference_package <- switch(
+    genome_label,
+    hg19 = "BSgenome.Hsapiens.UCSC.hg19",
+    hg38 = "BSgenome.Hsapiens.UCSC.hg38",
+    `hg38-NCBI` = "BSgenome.Hsapiens.NCBI.GRCh38"
+)
+reference_contigs <- GenomeInfoDb::seqlevels(BSgenome::getBSgenome(reference_package))
+bam_contigs <- names(Rsamtools::scanBamHeader(bam_path)[[1L]]$targets)
+retained_contigs <- intersect(bam_contigs, reference_contigs)
+dropped_contigs <- setdiff(bam_contigs, retained_contigs)
+```
+
+The dropped contigs are logged and saved in `contig_scope.tsv`. The motif timing scope is `bam-contigs-in-cfdnapro-reference`, which excludes chrEBV for this BAM. Other tools keep whole-BAM scope. The length benchmark keeps every BAM contig.
+
 The motif helper also writes `reference.tsv` from the native fragment object's reference metadata. Both reads and writes occur inside the R process timer.
 
 ## Midpoint profiles
 
-The [midpoint runner](midpoints/benchmark_midpoints.sh) uses the supplied grouped 9,990 bp windows (`center - 4995` to `center + 4995`) and profiling length bounds 100-200 bp. `BENCH_CHROMOSOMES` is derived from the chromosomes in those windows. The runner preserves the sites, including repeated and overlapping rows, and creates the native Griffin anchor tables outside timing. Each workload runs in its own job. Both tools retain the complete window in 666 bins of 15 bp, with native 165 bp smoothing. Cropping to the central region happens after benchmarking. The following shared exclusion paths name the staged release BEDs:
+The [midpoint runner](midpoints/benchmark_midpoints.sh) uses the supplied grouped 9,990 bp windows (`center - 4995` to `center + 4995`) and profiling length bounds 100-200 bp. `BENCH_CHROMOSOMES` is derived from the chromosomes in those windows. The runner preserves the sites, including repeated and overlapping rows, and creates the native Griffin anchor tables outside timing. Each workload runs in its own job. cfDNAlab retains 666 bins of 15 bp, with native 165 bp smoothing. Griffin normalizes over that full window and saves its official central window. Concordance normalizes cfDNAlab over all 666 bins before selecting the same 132 central bins. The following shared exclusion paths name the staged release BEDs:
 
 ```bash
 exclusions=(
@@ -472,6 +492,46 @@ exclusions=(
     "$BENCH_WORK/exclusions/hg38_alternative_haplotypes.bed"
 )
 ```
+
+### Site preparation
+
+The supplied windows are prepared once, before any job, from Griffin's [paper TFBS set](https://github.com/adoebley/Griffin_analyses/tree/75467e438a88029206d8d778ddce05eb0ab6efa8/sites/TFBS/10000_unfiltered_sites_CIS_BP_v2) of 377 transcription factors with up to 10,000 sites each. The repository's `main` branch has pointed to that pinned revision since December 2022.
+
+```bash
+git clone --depth 1 --filter=blob:none --sparse --branch main \
+    https://github.com/adoebley/Griffin_analyses.git griffin-sites
+site_folder=sites/TFBS/10000_unfiltered_sites_CIS_BP_v2
+git -C griffin-sites sparse-checkout set "$site_folder"
+
+awk -F '\t' 'BEGIN {OFS="\t"} FNR>1 {print $1,$2,$3,$5}' \
+    "griffin-sites/$site_folder/"*.txt |
+    LC_ALL=C sort -t $'\t' -k1,1 -k2,2n -k3,3n \
+    > griffin_tfbs.bed
+```
+
+This keeps each site's `Chrom`, `Start`, `End` and `Gene` columns. The site files have no strand column, so every window is unstranded. Group names are then cleaned by removing the `.hg38` suffix and all non-alphanumeric characters, so `NKX2-1.hg38` becomes `NKX21`. The original cleaning command was not kept. This reconstruction applies the same rule and gives no name collisions across the 377 site lists:
+
+```bash
+awk 'BEGIN {FS=OFS="\t"} {sub(/\.[Hh][Gg]38$/, "", $4); gsub(/[^A-Za-z0-9]/, "", $4); print}' \
+    griffin_tfbs.bed > griffin_tfbs.cleaned.bed
+```
+
+The final windows are 9,990 bp long:
+
+```bash
+cfdna prep-windows -i griffin_tfbs.cleaned.bed -o griffin_tfbs.prepared_9990bp.bed \
+    --sep tab --group-cols 3 \
+    --blacklist hg38-blacklist.v2.bed --blacklist k100.umap.exclusion_intervals.bed \
+    --blacklist-halo 200 --resize 9990 --chrom-sizes hg38.chrom.sizes
+```
+
+The inputs are:
+
+- `hg38-blacklist.v2.bed` is the ENCODE Blacklist v2 file `lists/hg38-blacklist.v2.bed.gz` from [Boyle-Lab/Blacklist](https://github.com/Boyle-Lab/Blacklist), decompressed.
+- `k100.umap.exclusion_intervals.bed` was made by the benchmark author from the [Umap](https://bismap.hoffmanlab.org/) k100 hg38 mappability intervals.
+- `hg38.chrom.sizes` is a standard hg38 chromosome sizes file. The primary chromosomes have the same lengths in all GRCh38 builds, so the file's source does not change the prepared windows.
+
+`--resize` centers each window on `start + floor(length / 2)`, which matches Griffin's `position` column. For odd-length site intervals, the two equally centered placements are chosen by a deterministic hash, while Griffin always uses the placement starting at `position - 4995`. Windows within 200 bp of the two blacklists are removed before benchmarking. These lists are separate from the shared exclusion BEDs above, which both tools apply natively. Both tools receive the identical prepared BED as `BENCH_INTERVALS`.
 
 ### cfDNAlab without GC correction
 
@@ -487,7 +547,7 @@ Method `cfdnalab`:
 
 ### Griffin profiling calls
 
-Method `griffin` times both native profiling scripts in [griffin_profile.sh](midpoints/griffin_profile.sh). The following variables express that helper's production arguments:
+Method `griffin-gc` times GC estimation followed by both native profiling scripts in [griffin_profile.sh](midpoints/griffin_profile.sh). The following variables express that helper's production arguments:
 
 ```bash
 griffin_python="$BENCH_WORK/griffin-env/bin/python"
@@ -497,7 +557,7 @@ chromosome_sizes="$BENCH_WORK/chrom.sizes"
 reference_fasta="$BENCH_WORK/reference.fa"
 half_width=$BENCH_HALF_WIDTH
 window_end=$((BENCH_WINDOW_WIDTH - half_width))
-gc_bias="$BENCH_WORK/unit_gc_bias.tsv"
+gc_bias="$output/gc-bias/GC_bias/sample.GC_bias.txt"
 IFS=, read -r -a chromosomes <<< "$BENCH_CHROMOSOMES"
 ```
 
@@ -526,14 +586,14 @@ The two timed native calls are:
     --uncorrected_bw_path "$output/tmp/sample/tmp_bigWig/sample.uncorrected.bw" \
     --GC_corrected_bw_path "$output/tmp/sample/tmp_bigWig/sample.GC_corrected.bw" \
     --GC_map_corrected_bw_path none --results_dir "$output/results" \
-    --save_window "-$half_width" "$window_end" \
+    --save_window -1000 1000 \
     --center_window -30 30 --fft_window -960 960 --fft_index 10 \
     --step 15 --exclude_paths "${exclusions[@]}" --exclude_zero_mappability True \
     --exclude_outliers True --CNA_normalization False --individual False \
     --smoothing True --smoothing_length 165
 ```
 
-For the uncorrected experiment, setup supplies unit GC bias for all requested lengths and GC counts. Griffin still performs its compulsory reference/GC work and writes uncorrected and weighted bigWigs inside timing. The retained profile is `sample.uncorrected.coverage.tsv`. Its native group normalization gives mean-one profiles over the full saved window. Concordance normalizes cfDNAlab's group profile over that same complete window outside timing, without additional smoothing, shifting, cropping or rebinning. It reports Pearson r and r squared with absolute-error metrics. Native masking differences and eligible site counts remain visible. Neither workflow adds per-site CNA normalization or fragment-count weights.
+The `griffin-gc` workload retains both `sample.uncorrected.coverage.tsv` and `sample.GC_corrected.coverage.tsv`. There is no separate timed `griffin` method. Corrected timings compare `griffin-gc` with `cfdnalab-gc`, and uncorrected concordance compares `cfdnalab` with the raw table from `griffin-gc`. Griffin normalizes before saving `[-1000, 1000)`, rounded to `[-990, 990)`. The comparator normalizes cfDNAlab over its complete 9,990 bp output, then selects the same 132 bins. Griffin's cropped profile need not have mean one. No per-site CNA correction or fragment-count weights are added. `cfdnalab_sites` counts eligible intervals, while `griffin_sites` counts sites in its input site list, including masked sites.
 
 ### cfDNAlab with GC correction
 
@@ -582,7 +642,7 @@ bash "$BENCH_WORK/griffin_profile.sh" "$cores" "$sites_yaml" \
     "$chromosome_sizes" "$BENCH_CHROMOSOMES" "$output" "$gc_bias"
 ```
 
-The final helper invocation expands to the two Griffin profiling calls above, with the newly fitted `gc_bias`. Estimation uses Griffin's native 15-500 bp range. Profiling uses the supplied 100-200 bp range. MAPQ is 30 for both. The estimator's region BED and reference GC frequencies come from Griffin's bundled inputs, independently of cfDNAlab's reference package. `BENCH_GC_REFERENCE_NAME` is the estimation BED's basename without its final extension. The retained profile is `sample.GC_corrected.coverage.tsv`.
+The final helper invocation expands to the two Griffin profiling calls above, with the newly fitted `gc_bias`. Estimation uses Griffin's native 15-500 bp range. Profiling uses the supplied 100-200 bp range. MAPQ is 20 for both tools and both estimation paths. The estimator's region BED and reference GC frequencies come from Griffin's bundled inputs, independently of cfDNAlab's reference package. `BENCH_GC_REFERENCE_NAME` is the estimation BED's basename without its final extension. The retained profile is `sample.GC_corrected.coverage.tsv`.
 
 ### Griffin demo warmup outside timing
 
@@ -595,3 +655,5 @@ bash "$BENCH_WORK/griffin_profile.sh" "$cores" \
 ```
 
 `warmup_chromosomes` lists the demo's chromosomes. The helper uses the same BAM, reference, profile width, length bounds, MAPQ and core allocation as production, with unit GC bias and the demo's own sites. No sample GC estimate is fitted for this warmup. The demo has a separate untimed Slurm step, and its outputs are removed before production measurements. There is no full-input Griffin warmup.
+
+mosdepth stays in exact mode to match cfDNAlab's mate-overlap and deletion handling, although its help recommends fast mode for many uses. PanDepth per-base timing includes its native single-threaded gzip after worker calculations. samtools lengths is labeled "samtools stats (full QC report, insert-size section extracted)". FrEIA runs rules `filter_and_index_FrEIA`, `FragmEndSeq` and `data_transformation` directly, without Snakemake, and stops before group comparison/scoring. Griffin's final plotting rule is omitted, while its GC-bias plots and compulsory FFT features remain timed.

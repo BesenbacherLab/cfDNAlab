@@ -196,7 +196,7 @@ class CorrectedMidpointWorkflowTests(unittest.TestCase):
                         self.assertEqual(arguments[arguments.index("--mappability_correction") + 1], "False")
                     if stage == "griffin_merge_sites.py":
                         index = arguments.index("--save_window")
-                        self.assertEqual(arguments[index + 1:index + 3], ["-" + half_width, end])
+                        self.assertEqual(arguments[index + 1:index + 3], ["-1000", "1000"])
                         self.assertEqual(arguments[arguments.index("--step") + 1], "15")
                         for option in ("--exclude_outliers", "--exclude_zero_mappability", "--smoothing"):
                             self.assertEqual(arguments[arguments.index(option) + 1], "True")
