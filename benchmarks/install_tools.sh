@@ -67,7 +67,6 @@ versions[pandepth]=2.26
 versions[finaletoolkit]=d16632ec5ae8999e774234457f6b0f9405c8f590
 versions[cfdnapro]=1.7.4
 versions[picard]=3.5.0
-versions[freia]=2c32fb9d9fab774f4ae57931df7fd7d75654d343
 versions[griffin]=v0.2.0
 versions[comparison]=checkout
 versions[snyder-preparation]=0.24.1
@@ -79,7 +78,6 @@ artifacts[pandepth]='PanDepth-2.26-Linux-x86_64/pandepth'
 artifacts[finaletoolkit]='envs/finaletoolkit/bin/finaletoolkit envs/finaletoolkit/share/finaletoolkit/revision.txt finaletoolkit.tar.gz'
 artifacts[cfdnapro]='cfdnapro-1.7.4.sif'
 artifacts[picard]='envs/picard/bin/picard picard.tar.gz'
-artifacts[freia]='envs/freia/share/freia/version.txt freia.tar.gz'
 artifacts[griffin]='envs/griffin/share/griffin/version.txt envs/griffin/share/griffin/CTCF.hg38.1000.txt envs/griffin/share/griffin/griffin_GC_bias.py envs/griffin/share/griffin/griffin_GC_counts.py envs/griffin/share/griffin/griffin_calc_GC_frequency.py griffin.tar.gz'
 # Griffin's source clone already includes its hg38 regions and reference GC tables
 # Corrected runs copy these files directly, separately from the packed environment
@@ -93,11 +91,10 @@ tool_exports[pandepth]='BENCH_PANDEPTH=PanDepth-2.26-Linux-x86_64/pandepth'
 tool_exports[finaletoolkit]='BENCH_FINALE_ARCHIVE=finaletoolkit.tar.gz'
 tool_exports[cfdnapro]='BENCH_CFDNAPRO_IMAGE=cfdnapro-1.7.4.sif'
 tool_exports[picard]='BENCH_PICARD_ARCHIVE=picard.tar.gz'
-tool_exports[freia]='BENCH_FREIA_ARCHIVE=freia.tar.gz'
 tool_exports[griffin]='BENCH_GRIFFIN_ARCHIVE=griffin.tar.gz'
 tool_exports[comparison]='BENCH_COMPARE_PYTHON=envs/comparison/bin/python'
 tool_exports[snyder-preparation]='BENCH_PREPARE_PYTHON=envs/snyder-preparation/bin/python'
-all_tools=(packaging cfdnalab mosdepth samtools pandepth finaletoolkit cfdnapro picard freia griffin comparison snyder-preparation)
+all_tools=(packaging cfdnalab mosdepth samtools pandepth finaletoolkit cfdnapro picard griffin comparison snyder-preparation)
 for selection in "$only_tools" "$force_tools" "$outdated_tools"; do
     for tool in ${selection//,/ }; do
         if [[ "$tool" != all && -z ${versions[$tool]:-} ]]; then echo "Unknown tool: $tool" >&2; exit 1; fi
@@ -303,49 +300,6 @@ install_picard() {
     conda list --prefix "$install_root/envs/picard" --explicit > "$install_root/records/picard.explicit.txt"
 }
 
-install_freia() {
-    # FrEIA
-    # Guide: https://github.com/mouliere-lab/FrEIA#installation-guide
-    # This installation uses a pinned source commit rather than a release archive
-    # The authors' Conda dependency pins are retained, with outside channels excluded
-    # Only the end-extraction and abundance scripts are needed for an existing BAM
-    git clone https://github.com/mouliere-lab/FrEIA.git "$install_root/FrEIA-source"
-    git -C "$install_root/FrEIA-source" checkout 2c32fb9d9fab774f4ae57931df7fd7d75654d343
-    (
-        # The generated file has no upstream environment name or home-directory prefix
-        # The --prefix argument below is the only installation destination
-        # statannot and combat serve downstream plotting and batch correction
-        # The benchmark's extraction/abundance scripts and helper do not import them
-        # Removing these two unpinned pip requirements avoids an unnecessary PyPI step
-        awk '
-            /^(name|prefix):/ {next}
-            /^  - pip:$/ {next}
-            /^    - (statannot|combat)$/ {next}
-            /^dependencies:/ {print "  - nodefaults"}
-            {print}
-        ' \
-            "$install_root/FrEIA-source/workflow/envs/FrEIA_env.yaml" \
-            > "$install_root/freia-environment.yaml"
-        conda env create --yes --prefix "$install_root/envs/freia" \
-            --file "$install_root/freia-environment.yaml"
-        conda activate "$install_root/envs/freia"
-        # The archive includes unmodified scripts for execution on the compute node
-        mkdir -p "$CONDA_PREFIX/share/freia"
-        cp "$install_root/FrEIA-source/workflow/scripts/1_FrEIA/1_extract_fragment_ends.py" \
-            "$install_root/FrEIA-source/workflow/scripts/1_FrEIA/2_data_transformation.py" \
-            "$install_root/FrEIA-source/workflow/scripts/1_FrEIA/FrEIA_tools.py" \
-            "$CONDA_PREFIX/share/freia/"
-        # Argument help imports each native script and the shared helper without reading a BAM
-        # An import failure stops installation before an unusable environment can be packed
-        python "$CONDA_PREFIX/share/freia/1_extract_fragment_ends.py" --help >/dev/null
-        python "$CONDA_PREFIX/share/freia/2_data_transformation.py" --help >/dev/null
-        git -C "$install_root/FrEIA-source" rev-parse HEAD > "$CONDA_PREFIX/share/freia/version.txt"
-        "$install_root/envs/packaging/bin/conda-pack" -p "$CONDA_PREFIX" -o "$install_root/freia.tar.gz"
-    )
-    conda list --prefix "$install_root/envs/freia" --explicit > "$install_root/records/freia.explicit.txt"
-    "$install_root/envs/freia/bin/python" -m pip freeze > "$install_root/records/freia.pip.txt"
-}
-
 install_griffin() {
     # Griffin
     # Guide: https://github.com/adoebley/Griffin/wiki
@@ -389,9 +343,8 @@ install_comparison() {
     # These dependencies have their own environment, separate from the timed tools
     (
         conda create --yes --override-channels --prefix "$install_root/envs/comparison" --channel conda-forge \
-            python=3.11 pip zstd pyarrow
+            python=3.11 pip zstd
         conda activate "$install_root/envs/comparison"
-        # pyarrow reads FrEIA's intact left-only native Parquet abundance table
         # The Python output reader is installed from this checkout
         python -m pip install "$repository_root/py-cfdnalab"
     )
@@ -416,7 +369,7 @@ install_snyder_preparation() {
 # can copy them to a compute node. conda-pack is installed first when a selected
 # tool needs such an archive. It is the only tool added automatically to --only
 need_packaging=false
-for tool in samtools finaletoolkit picard freia griffin; do
+for tool in samtools finaletoolkit picard griffin; do
     if [[ "$only_tools" == all || ",$only_tools," == *,$tool,* ]]; then need_packaging=true; fi
 done
 # The error message uses this name to locate the tool's installation log
@@ -443,12 +396,11 @@ for tool in "${all_tools[@]}"; do
         # files stay in its separate Cargo build folder to avoid unnecessary rebuilds
         cleanup_paths=("envs/$tool")
         case "$tool" in
-            samtools|finaletoolkit|picard|freia|griffin) cleanup_paths+=("$tool.tar.gz") ;;
+            samtools|finaletoolkit|picard|griffin) cleanup_paths+=("$tool.tar.gz") ;;
             mosdepth) cleanup_paths+=(mosdepth-0.3.14) ;;
             pandepth) cleanup_paths+=(PanDepth-2.26-Linux-x86_64 PanDepth-2.26-Linux-x86_64.tar.gz) ;;
             cfdnapro) cleanup_paths+=(cfdnapro-1.7.4.sif) ;;
         esac
-        if [[ "$tool" == freia ]]; then cleanup_paths+=(FrEIA-source); fi
         if [[ "$tool" == griffin ]]; then cleanup_paths+=(Griffin-source); fi
         for artifact in "${cleanup_paths[@]}"; do
             if [[ -L "$install_root/$artifact" || -L "$install_root/envs" ]]; then

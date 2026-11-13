@@ -385,7 +385,7 @@ save_run_record() {
     # A step that failed before running the command has no logs
     if [[ -f "$stdout_file" ]]; then cp "$stdout_file" "$run_directory/stdout.log"; fi
     if [[ -f "$BENCH_WORK/tool-stderr.log" ]]; then cp "$BENCH_WORK/tool-stderr.log" "$run_directory/stderr.log"; fi
-    # Methods that run a helper script (freia, cfdnalab-gc, griffin-gc) also trace
+    # Methods that run a helper script (cfdnalab-gc, griffin-gc) also trace
     # each native call the helper made, with its variables filled in
     if [[ -f "$BENCH_WORK/command-trace.log" ]]; then cp "$BENCH_WORK/command-trace.log" "$run_directory/command-trace.log"; fi
     write_timing_row

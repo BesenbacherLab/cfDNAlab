@@ -163,7 +163,7 @@ record process_plus_flush_seconds "$process_plus_flush_seconds"
 # ---------------------------------------------------------------------------
 
 # The size includes intermediate files that a tool's workflow writes, such as
-# FrEIA's filtered BAM
+# Griffin's temporary bigWig tracks
 output_bytes=$(du -sb "$output_directory" | cut -f 1)
 record output_bytes "$output_bytes"
 

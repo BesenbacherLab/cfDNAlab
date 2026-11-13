@@ -19,7 +19,7 @@
 #   reference_2bit     The copied 2bit reference
 #   cfdna, finale_python, finale, apptainer, cfdnapro_image
 #                      Tool paths
-#   cfdna_version, finale_version, cfdnapro_version, freia_version
+#   cfdna_version, finale_version, cfdnapro_version
 #                      Tool versions recorded at setup
 
 # The columns of timings.tsv, in order. common.sh fills the run's identity and
@@ -77,6 +77,8 @@ prepare_command() {
     stdout_file="$BENCH_WORK/tool-stdout.log"
     empty_output_allowed=false
 
+    # The cfDNAlab configurations differ in motif source, clipping, pair selection
+    # and chromosome scope. All use the requested fragment length bounds
     case "$method" in
         cfdnalab-reference)
             # Reference bases at the aligned fragment ends, on all BAM contigs
@@ -101,21 +103,6 @@ prepare_command() {
             row[tool_version]=$cfdna_version
             row[proper_pair]=required
             ;;
-        cfdnalab-reference-proper-wide)
-            # Additional configuration: the proper-pair reference call with the widest
-            # length bounds cfDNAlab accepts, 10-50000 bp
-            command=("$cfdna" ends --bam "$bam" --output-dir "$output"
-                --k-inside "$k" --k-outside 0 --all-motifs
-                --min-mapq "$min_mapq"
-                --min-fragment-length 10 --max-fragment-length 50000
-                --n-threads "$cores" --source-inside reference --clip-strategy aligned
-                --ref-2bit "$reference_2bit" --chromosomes all --require-proper-pair)
-            expected_output="$output/end_motifs.zarr"
-            row[tool_version]=$cfdna_version
-            row[proper_pair]=required
-            row[effective_min_length]=10
-            row[effective_max_length]=50000
-            ;;
         cfdnalab-reference-autosomes)
             # Additional configuration: the reference call on autosomes only
             command=("$cfdna" ends --bam "$bam" --output-dir "$output"
@@ -129,8 +116,8 @@ prepare_command() {
             row[scope]=autosomes
             ;;
         cfdnalab-read-aligned)
-            # Read bases at the aligned fragment ends. Compared with FrEIA, which
-            # also takes motif bases from the reads
+            # Read bases at the aligned fragment ends, for comparison with the
+            # reference-derived motifs at the same positions
             command=("$cfdna" ends --bam "$bam" --output-dir "$output"
                 --k-inside "$k" --k-outside 0 --all-motifs
                 --min-mapq "$min_mapq"
@@ -202,15 +189,6 @@ prepare_command() {
             row[length_filter]=applied-in-r
             row[clip]=unrestricted
             ;;
-        freia)
-            # FrEIA's filtering, end extraction and motif counting, in freia_motifs.sh
-            # Its intact output is the left-end table. The broken native both-end
-            # aggregate is not requested
-            command=(bash "$BENCH_WORK/freia_motifs.sh" "$cores")
-            expected_output="$output/4_FrEIA/3_Abundances/benchmark/Genome_Lvl/T__sample.pq"
-            row[tool_version]=$freia_version
-            row[source]=read
-            ;;
         *)
             echo "Unknown end-motif method: $method" >&2
             return 1
@@ -240,11 +218,6 @@ save_profile() {
             # The motif counts are saved with the reference cfDNAPro used and the
             # list of BAM contigs it kept
             cp "$output/cfdnapro-motifs.tsv" "$output/reference.tsv" "$output/contig_scope.tsv" "$destination/"
-            ;;
-        freia)
-            # The new name says these are FrEIA's intact left-end counts, not its
-            # incorrect both-end abundance table
-            cp "$output/4_FrEIA/3_Abundances/benchmark/Genome_Lvl/T__sample.pq" "$destination/left-motifs.pq"
             ;;
         *)
             echo "No saved profile defined for end-motif method: $method" >&2

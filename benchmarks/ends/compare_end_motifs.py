@@ -3,7 +3,7 @@
 
 Write one TSV row per pair of saved profiles to stdout. Compare the full labeled
 motif set using frequencies, because FinaleToolkit's output has no raw counts.
-FrEIA and cfDNAPro supply native left-end profiles. Comparisons against both ends
+cfDNAPro supplies native left-end profiles. Comparisons against both ends
 use an explicitly labeled side-mirroring approximation, without doubling counts.
 """
 
@@ -25,15 +25,13 @@ def load_profile(directory, motifs):
     """Read a native tool output onto the same inward-oriented motif axis.
 
     cfDNAlab's one-sided labels have a leading underscore, which is removed for
-    matching to FinaleToolkit labels. FrEIA's sparse left table is summed over
-    fragment lengths and missing motifs receive zero. Other formats must contain
-    every ACGT motif. Reject invalid labels/values and return normalized frequencies,
+    matching to FinaleToolkit labels. All formats must contain every ACGT motif.
+    Reject invalid labels/values and return normalized frequencies,
     native counted-end totals when available, and the native end selection.
     """
     # The saved native file identifies the tool (see save_profile in ends/commands.sh)
     zarr_path = directory / "end_motifs.zarr"
     tsv_path = directory / "motifs.tsv"
-    freia_path = directory / "left-motifs.pq"
     cfdnapro_path = directory / "cfdnapro-motifs.tsv"
     end_selection = "both"
     if zarr_path.is_dir():
@@ -52,33 +50,6 @@ def load_profile(directory, motifs):
         with tsv_path.open() as source:
             entries = list(csv.reader(source, delimiter="\t"))
         contains_counts = False
-    elif freia_path.is_file():
-        # FrEIA: the genome-level left-end table, with a row per motif and length
-        table = pd.read_parquet(freia_path)
-        required = {"Base", "Length", "CountLen", "WhichEnd", "Unit"}
-        if not required.issubset(table.columns) or table.empty:
-            raise ValueError(
-                f"Missing native FrEIA left-abundance columns or rows in {directory.name}"
-            )
-        if set(table["WhichEnd"]) != {"leftmost"} or set(table["Unit"]) != {"GRCh38"}:
-            raise ValueError(
-                "FrEIA concordance requires intact genome-level leftmost output"
-            )
-        if table["Base"].isna().any() or not set(table["Base"]).issubset(motifs):
-            raise ValueError(f"Unexpected FrEIA motif labels in {directory.name}")
-        counts = pd.to_numeric(table["CountLen"], errors="raise")
-        if (
-            not np.isfinite(counts).all()
-            or (counts < 0).any()
-            or (counts % 1 != 0).any()
-        ):
-            raise ValueError(f"Invalid native FrEIA counts in {directory.name}")
-        # CountSamp repeats a motif total for each length. Sum CountLen instead
-        table = table.assign(CountLen=counts)
-        totals = table.groupby("Base", observed=True)["CountLen"].sum()
-        entries = [(motif, totals.get(motif, 0)) for motif in motifs]
-        contains_counts = True
-        end_selection = "left"
     elif cfdnapro_path.is_file():
         # cfDNAPro: callMotif()'s table of left-end motifs, with counts in column n
         with cfdnapro_path.open() as source:

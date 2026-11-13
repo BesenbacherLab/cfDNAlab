@@ -41,9 +41,8 @@ Before invoking Conda, the installer sets `CONDA_PKGS_DIRS=<root>/cache/conda/pk
 | `finaletoolkit` | Commit `d16632ec5ae8999e774234457f6b0f9405c8f590`, Python 3.11 | Conda executable and `finaletoolkit.tar.gz` |
 | `cfdnapro` | 1.7.4, source `ab9eeb166b8614b9ec2ce4ceda190dc295c65a7c` | Apptainer image pinned by digest |
 | `picard` | 3.5.0, Java 17 | Conda launcher and `picard.tar.gz` |
-| `freia` | `2c32fb9d9fab774f4ae57931df7fd7d75654d343` | Unmodified scripts and `freia.tar.gz` |
 | `griffin` | v0.2.0 | Unmodified scripts and `griffin.tar.gz` |
-| `comparison` | Local py-cfdnalab checkout, Python 3.11, zstd and pyarrow | `envs/comparison/bin/python` |
+| `comparison` | Local py-cfdnalab checkout, Python 3.11 and zstd | `envs/comparison/bin/python` |
 | `snyder-preparation` | pysam 0.24.1, Python 3.11 | `envs/snyder-preparation/bin/python` |
 
 The cfDNAPro image digest is `sha256:26a28821a272856e77fdf3d13d902ce8ca5c1e60475b1d4f2f076ef2ac3e2b45`.
@@ -54,9 +53,9 @@ FinaleToolkit additionally pins pysam 0.24.0, pybigwig 0.3.25, py2bit 0.3.3, num
 
 Griffin uses Python 3.7.12, `nomkl`, numpy 1.21.2, pandas 1.3.2, scipy 1.7.1, pybigwig 0.3.17, PyYAML 5.3.1, bedtools 2.29.2, pybedtools 0.8.0 and pysam 0.19.0. Python 3.7.12 replaces the unavailable 3.7.4 guide pin.
 
-Its packed archive includes the unmodified release demo `CTCF.hg38.1000.txt`. A missing demo artifact causes reinstall on resume. The comparison environment includes pyarrow for native FrEIA Parquet profiles.
+Its packed archive includes the unmodified release demo `CTCF.hg38.1000.txt`. A missing demo artifact causes reinstall on resume.
 
-Conda creates use explicit channels, `--override-channels` and strict channel priority. FrEIA preserves all supplied Conda dependencies and pins in a derived YAML with `nodefaults`. The generated YAML omits the upstream `name` and `prefix`, leaving the explicit command-line prefix `<root>/envs/freia` as its destination. It also omits the pip section containing `statannot` and `combat`, which the benchmark's native extraction/abundance scripts and shared helper do not import. No FrEIA pip installation step runs. Both copied native scripts must successfully print `--help` before the environment is packed, checking their imports without processing input data. Its source checkout and derived YAML remain at the installation root. Python user packages and inherited Python import paths are disabled during installation and job setup.
+Conda creates use explicit channels, `--override-channels` and strict channel priority. Python user packages and inherited Python import paths are disabled during installation and job setup.
 
 Picard's version probe accepts status 0 or 1 only with a `Version:3.5.0` field. Missing/wrong versions or other statuses fail. The installer and lengths setup share this behavior.
 
@@ -70,7 +69,7 @@ A reinstall records `outdated` before work and `complete` only after successful 
 
 Same-version source/dependency changes require explicitly forcing or marking outdated. The recorded commit supplies provenance and does not automatically trigger rebuilding. There are no recipe hashes or source-tree checksum scans on resume.
 
-Each Conda step saves an explicit environment export. FrEIA and comparison environments also save pip records. Image metadata and cfDNAPro/GenomicAlignments/Rsamtools versions are retained. Path exports are printed only for matching completed installations with existing artifacts.
+Each Conda step saves an explicit environment export. The comparison environment also saves pip records. Image metadata and cfDNAPro/GenomicAlignments/Rsamtools versions are retained. Path exports are printed only for matching completed installations with existing artifacts.
 
 ## Biological inputs
 
@@ -175,7 +174,7 @@ After native success, a second timer measures `sync -f` on the output filesystem
 
 Rows additionally record run order, repetition, warmup/pilot labels, method/version, core/native workers, feature filters/scope, node/CPU placement, job/step IDs and UTC start. Schemas have 31 coverage, 30 lengths, 35 ends and 33 midpoint columns, listed in each feature's `commands.sh`.
 
-Native, placement, expected-output or flush failure saves available timing information, skips the remaining repetitions of that method and continues other selected methods. The overall job returns nonzero after those methods finish. Setup and results-bookkeeping failures remain fatal. Missing measurements are `NA`. Pre-timer failures retain the run's identifiers, its method settings and any recorded step ID. Every run's exact command is saved in `runs/<run_order>/command.sh` before its step starts. After the step, its standard output and error are copied there as `stdout.log` and `stderr.log`, for successful and failed runs alike. The helper scripts of `freia`, `cfdnalab-gc` and `griffin-gc` trace each native call with Bash's `set -x` into `command-trace.log` in the same folder. This adds a few short writes inside those methods' timing. For samtools stats and bedcov, `stdout.log` is the native table. Whole-allocation termination can prevent final bookkeeping and continuation.
+Native, placement, expected-output or flush failure saves available timing information, skips the remaining repetitions of that method and continues other selected methods. The overall job returns nonzero after those methods finish. Setup and results-bookkeeping failures remain fatal. Missing measurements are `NA`. Pre-timer failures retain the run's identifiers, its method settings and any recorded step ID. Every run's exact command is saved in `runs/<run_order>/command.sh` before its step starts. After the step, its standard output and error are copied there as `stdout.log` and `stderr.log`, for successful and failed runs alike. The helper scripts of `cfdnalab-gc` and `griffin-gc` trace each native call with Bash's `set -x` into `command-trace.log` in the same folder. This adds a few short writes inside those methods' timing. For samtools stats and bedcov, `stdout.log` is the native table. Whole-allocation termination can prevent final bookkeeping and continuation.
 
 When enabled, GNU `timeout --verbose --kill-after=60` wraps each native command inside GNU time. Its limit is recorded in `run.tsv`, and actual values are chosen from pilots. Timeout 124 is recorded as failure. A 137 status is ambiguous without timeout diagnostics/accounting. The limit excludes the subsequent filesystem flush and parent bookkeeping. Leave room for those operations and termination grace before the allocation ends. This does not guarantee cleanup of processes that escape their process group or survival of an allocation-wide OOM kill.
 
@@ -185,7 +184,7 @@ The result directory, `timings.tsv` header and `run.tsv` are created before inpu
 
 `timings.tsv` is written incrementally and keeps warmups, pilots and failures. Skipped repetitions have no invented timing rows. `run.tsv` records feature, node, requested methods/cores, repetitions, run timeout, benchmark commit/dirty flag and input paths. Optional installation/build TSVs are copied beside it. Available Slurm configuration is captured once per job, with diagnostics and a warning if unavailable. Completed timing rows and saved measured profiles survive later failures or allocation termination. A hard termination can prevent the active run's final bookkeeping and profile copy.
 
-One native output per method is preserved from the first measured repetition at the job's core setting. Copying happens after `srun`, outside tool-step memory accounting. Other temporary outputs are removed. FrEIA's native left-only table is retained as `profiles/freia/left-motifs.pq`. FrEIA's both-end aggregate is incorrect and is not requested. cfDNAPro motifs retain native counts and a reference manifest together in `profiles/cfdnapro/`.
+One native output per method is preserved from the first measured repetition at the job's core setting. Copying happens after `srun`, outside tool-step memory accounting. Other temporary outputs are removed. cfDNAPro motifs retain native counts and a reference manifest together in `profiles/cfdnapro/`.
 
 After all tool attempts finish, pilots and full runs automatically compare saved profiles and write `concordance.tsv`. The comparison runs in the batch shell after all timed steps, so its time and memory do not enter tool measurements. Lengths use the job's inclusive bounds and motifs use its K. Coverage pairs positional read depth, fragment coverage, regional read depth and regional fragment counts separately, explicitly allowing the shared chromosome scope recorded in each comparison row. The comparison environment's `bin/` is added to PATH only for this command so its zstd is available. Jobs with fewer than two saved profiles and coverage jobs without a comparable pair print a skip explanation. Midpoint jobs run a single method and do not call the comparison. Their saved profiles are combined for cross-job comparison.
 

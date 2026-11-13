@@ -767,64 +767,6 @@ fi
                 self.assertEqual(storage["HOME"], os.environ["HOME"])
                 self.assertFalse((root / "outside-installation").exists())
 
-    def test_freia_environment_is_conda_only_and_uses_the_supplied_root(self):
-        # The upstream pip packages are not needed by the benchmark's native scripts
-        # Every Conda dependency, including its existing version pin, must survive
-        dependencies = (
-            "biopython=1.78", "fastparquet=0.5", "logomaker=0.8", "mpmath=1.1.0",
-            "numpy=1.18.5", "pandas=1.1.5", "patsy=0.5.1", "pip=21.0.1",
-            "pysam=0.16.0.1", "python=3.8", "samtools=1.12",
-            "scikit-learn=0.24.1", "scikit-bio=0.5.6", "seaborn", "umap-learn",
-        )
-        upstream = (
-            "name: FrEIA\nprefix: ~/miniconda3/envs/FrEIA\n"
-            "channels:\n  - conda-forge\n  - bioconda\ndependencies:\n"
-            + "".join(f"  - {dependency}\n" for dependency in dependencies)
-        ).replace("  - pip=21.0.1\n", "  - pip=21.0.1\n  - pip:\n    - statannot\n    - combat\n")
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary) / "installation with spaces"
-            source = root / "FrEIA-source/workflow/envs/FrEIA_env.yaml"
-            source.parent.mkdir(parents=True)
-            source.write_text(upstream)
-            arguments = root / "conda-arguments.txt"
-
-            # Fake the source checkout and stop at Conda. No downloads or installation occur
-            result = subprocess.run(
-                ["bash", "-euc", r'''
-source <(sed -n '/^install_freia() {$/,/^}$/p' "$BENCH_INSTALLER")
-install_root=$BENCH_INSTALL_ROOT
-git() { return 0; }
-conda() {
-    printf '%s\n' "$@" > "$BENCH_CONDA_ARGUMENTS"
-    return 9
-}
-install_freia
-'''],
-                env={
-                    **os.environ,
-                    "BENCH_INSTALLER": str(BENCHMARKS / "install_tools.sh"),
-                    "BENCH_INSTALL_ROOT": str(root),
-                    "BENCH_CONDA_ARGUMENTS": str(arguments),
-                },
-                capture_output=True, text=True,
-            )
-
-            self.assertEqual(result.returncode, 9, result.stderr)
-            generated = (root / "freia-environment.yaml").read_text()
-            self.assertEqual(
-                generated.split("dependencies:\n")[0],
-                "channels:\n  - conda-forge\n  - bioconda\n  - nodefaults\n",
-            )
-            self.assertEqual(
-                generated.split("dependencies:\n")[1].splitlines(),
-                [f"  - {dependency}" for dependency in dependencies],
-            )
-            self.assertEqual(arguments.read_text().splitlines(), [
-                "env", "create", "--yes", "--prefix", str(root / "envs/freia"),
-                "--file", str(root / "freia-environment.yaml"),
-            ])
-            self.assertEqual(source.read_text(), upstream)
-
     def test_finaletoolkit_installs_loess_with_pip_before_packing(self):
         # Local shell functions replace Conda, Python and FinaleToolkit
         # No package manager or installed tool is invoked by this fixture
@@ -929,7 +871,7 @@ class BiologicalInputTests(unittest.TestCase):
 
 
 class MotifTests(unittest.TestCase):
-    """Compare native left-end frequencies and reject damaged both-end output."""
+    """Compare motif frequencies while preserving native counts and end selection."""
 
     def test_absent_abundant_motif_retains_an_infinite_log_ratio(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -979,92 +921,46 @@ class MotifTests(unittest.TestCase):
                 320 * math.log2(10), delta=1e-4,
             )
 
-    @unittest.skipUnless(
-        importlib.util.find_spec("pyarrow") is not None,
-        "Requires native Parquet support",
-    )
     def test_left_profiles_retain_native_counts_and_label_side_mirroring(self):
-        import pandas as pd
-
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            for name in ("finaletoolkit", "cfdnapro", "freia"):
+            for name in ("finaletoolkit", "cfdnapro"):
                 (root / name).mkdir()
-            motifs = ["".join(bases) for bases in product("ACGT", repeat=3)]
+            motifs = ["".join(bases) for bases in product("ACGT", repeat=4)]
             with (root / "finaletoolkit/motifs.tsv").open("w") as destination:
                 for motif in motifs:
                     destination.write(
-                        f"{motif}\t{0.5 if motif in ('AAA', 'CCC') else 0}\n"
+                        f"{motif}\t{0.5 if motif in ('AAAA', 'CCCC') else 0}\n"
                     )
             with (root / "cfdnapro/cfdnapro-motifs.tsv").open("w") as destination:
                 destination.write("motif\tn\tfraction\n")
                 for motif in motifs:
-                    count = {"AAA": 6, "CCC": 2}.get(motif, 0)
+                    count = {"AAAA": 6, "CCCC": 2}.get(motif, 0)
                     destination.write(f"{motif}\t{count}\t{count / 8}\n")
-            # CountSamp repeats the motif total per length. Only CountLen is additive
-            pd.DataFrame(
-                {
-                    "Base": ["AAA", "AAA", "CCC"],
-                    "Length": [30, 40, 30],
-                    "CountLen": [2, 3, 5],
-                    "CountSamp": [5, 5, 5],
-                    "WhichEnd": ["leftmost"] * 3,
-                    "Unit": ["GRCh38"] * 3,
-                }
-            ).to_parquet(root / "freia/left-motifs.pq", index=False)
             result = subprocess.run(
                 [
                     sys.executable,
                     str(BENCHMARKS / "ends/compare_end_motifs.py"),
                     str(root),
                     "--k",
-                    "3",
+                    "4",
                 ],
                 text=True,
                 capture_output=True,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            rows = {
-                (row["left_profile"], row["right_profile"]): row
-                for row in csv.DictReader(result.stdout.splitlines(), delimiter="\t")
-            }
-            self.assertEqual(len(rows), 3)
-            mirrored = rows[("finaletoolkit", "freia")]
-            self.assertEqual(mirrored["right_end_selection"], "left")
+            rows = list(csv.DictReader(result.stdout.splitlines(), delimiter="\t"))
+            self.assertEqual(len(rows), 1)
+            mirrored = rows[0]
+            self.assertEqual((mirrored["left_profile"], mirrored["right_profile"]), ("cfdnapro", "finaletoolkit"))
+            self.assertEqual(mirrored["left_end_selection"], "left")
+            self.assertEqual(mirrored["right_end_selection"], "both")
             self.assertEqual(mirrored["side_comparison"], "approximate-side-mirroring")
-            self.assertEqual(float(mirrored["right_counted_ends"]), 10)
-            self.assertEqual(float(mirrored["total_variation"]), 0)
-            native_left = rows[("cfdnapro", "freia")]
-            self.assertEqual(native_left["side_comparison"], "same-sides")
-            self.assertEqual(float(native_left["left_counted_ends"]), 8)
-            self.assertEqual(float(native_left["right_counted_ends"]), 10)
-            # .75/.25 versus .5/.5 gives TV .25 and mean error .5/64
-            self.assertAlmostEqual(float(native_left["total_variation"]), 0.25)
-            self.assertAlmostEqual(float(native_left["mae_frequency"]), 0.0078125)
-
-    @unittest.skipUnless(
-        importlib.util.find_spec("pyarrow") is not None,
-        "Requires native Parquet support",
-    )
-    def test_a_right_end_table_cannot_be_labeled_as_intact_left_output(self):
-        import pandas as pd
-
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            pd.DataFrame(
-                {
-                    "Base": ["AAA"],
-                    "Length": [30],
-                    "CountLen": [4],
-                    "WhichEnd": ["rightmost"],
-                    "Unit": ["GRCh38"],
-                }
-            ).to_parquet(root / "left-motifs.pq")
-            comparator = load_script("motif_comparator", "ends/compare_end_motifs.py")
-            with self.assertRaisesRegex(ValueError, "leftmost"):
-                comparator.load_profile(
-                    root, ["".join(bases) for bases in product("ACGT", repeat=3)]
-                )
+            self.assertEqual(float(mirrored["left_counted_ends"]), 8)
+            self.assertEqual(mirrored["right_counted_ends"], "NA")
+            # .75/.25 versus .5/.5 gives TV .25 and mean error .5/256
+            self.assertAlmostEqual(float(mirrored["total_variation"]), 0.25)
+            self.assertAlmostEqual(float(mirrored["mae_frequency"]), 1 / 512)
 
 
 if __name__ == "__main__":

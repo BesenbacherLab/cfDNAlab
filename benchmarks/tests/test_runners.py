@@ -217,12 +217,11 @@ END_MOTIF_VARIABLES = {
     **LENGTH_VARIABLES,
     "k": "4",
     "reference_2bit": f"{WORK}/reference.2bit",
-    "freia_version": "freia fixture",
 }
 END_MOTIF_METHODS = (
-    "cfdnalab-reference", "cfdnalab-reference-proper", "cfdnalab-reference-proper-wide",
+    "cfdnalab-reference", "cfdnalab-reference-proper",
     "cfdnalab-reference-autosomes", "cfdnalab-read-aligned", "cfdnalab-read",
-    "cfdnalab-read-include", "finaletoolkit", "cfdnapro", "freia",
+    "cfdnalab-read-include", "finaletoolkit", "cfdnapro",
 )
 
 MIDPOINT_VARIABLES = {
@@ -525,19 +524,21 @@ class EndMotifCommandTests(unittest.TestCase):
                 )
                 self.assertEqual(prepared["expected_output"], f"{WORK}/output/end_motifs.zarr")
 
-    def test_wide_configuration_records_requested_and_effective_bounds_separately(self):
-        prepared = prepare("ends", "cfdnalab-reference-proper-wide", END_MOTIF_VARIABLES)
+    def test_proper_reference_configuration_uses_requested_length_bounds(self):
+        prepared = prepare(
+            "ends", "cfdnalab-reference-proper",
+            {**END_MOTIF_VARIABLES, "min_length": "50", "max_length": "700"},
+        )
         command, row = prepared["command"], prepared["row"]
 
-        self.assertEqual(argument_after(command, "--min-fragment-length"), "10")
-        self.assertEqual(argument_after(command, "--max-fragment-length"), "50000")
-        self.assertEqual((row["requested_min_length"], row["requested_max_length"]), ("30", "1000"))
-        self.assertEqual((row["effective_min_length"], row["effective_max_length"]), ("10", "50000"))
+        self.assertEqual(argument_after(command, "--min-fragment-length"), "50")
+        self.assertEqual(argument_after(command, "--max-fragment-length"), "700")
+        self.assertEqual((row["requested_min_length"], row["requested_max_length"]), ("50", "700"))
+        self.assertEqual((row["effective_min_length"], row["effective_max_length"]), ("50", "700"))
 
     def test_other_tools_use_their_native_calls(self):
         finale = prepare("ends", "finaletoolkit", END_MOTIF_VARIABLES)
         cfdnapro = prepare("ends", "cfdnapro", END_MOTIF_VARIABLES)
-        freia = prepare("ends", "freia", END_MOTIF_VARIABLES)
 
         self.assertEqual(finale["command"], [
             f"{WORK}/finale-env/bin/python", f"{WORK}/finale-env/bin/finaletoolkit", "end-motifs",
@@ -552,12 +553,6 @@ class EndMotifCommandTests(unittest.TestCase):
         self.assertEqual(cfdnapro["row"]["tool_threads"], "NA")
         self.assertEqual(cfdnapro["row"]["length_filter"], "applied-in-r")
         self.assertEqual(cfdnapro["row"]["scope"], "bam-contigs-in-cfdnapro-reference")
-        self.assertEqual(freia["command"], ["bash", f"{WORK}/freia_motifs.sh", "4"])
-        self.assertEqual(freia["row"]["source"], "read")
-        self.assertEqual(
-            freia["expected_output"],
-            f"{WORK}/output/4_FrEIA/3_Abundances/benchmark/Genome_Lvl/T__sample.pq",
-        )
 
 
 class MidpointCommandTests(unittest.TestCase):
@@ -674,22 +669,16 @@ class SaveProfileTests(unittest.TestCase):
             # Regional profiles are compared on the shared regions.bed instead
             self.assertEqual(sorted(path.name for path in saved.iterdir()), ["coverage.regions.bed.gz"])
 
-    def test_left_motif_profiles_keep_counts_and_reference_together(self):
+    def test_cfdnapro_motif_profile_keeps_counts_and_reference_together(self):
         with tempfile.TemporaryDirectory() as temporary:
             work = Path(temporary)
-            freia_table = work / "output/4_FrEIA/3_Abundances/benchmark/Genome_Lvl/T__sample.pq"
-            freia_table.parent.mkdir(parents=True)
-            freia_table.write_text("native left counts\n")
+            (work / "output").mkdir()
             (work / "output/cfdnapro-motifs.tsv").write_text("motif counts\n")
             (work / "output/reference.tsv").write_text("native reference manifest\n")
             (work / "output/contig_scope.tsv").write_text("chromosome\tretained\nchr1\tTRUE\n")
 
-            freia = self.save("ends", "freia", work)
             cfdnapro = self.save("ends", "cfdnapro", work)
 
-            # The rename says these are FrEIA's intact left-end counts
-            self.assertEqual(sorted(path.name for path in freia.iterdir()), ["left-motifs.pq"])
-            self.assertEqual((freia / "left-motifs.pq").read_text(), "native left counts\n")
             self.assertEqual((cfdnapro / "cfdnapro-motifs.tsv").read_text(), "motif counts\n")
             self.assertEqual((cfdnapro / "reference.tsv").read_text(), "native reference manifest\n")
             self.assertEqual((cfdnapro / "contig_scope.tsv").read_text(), "chromosome\tretained\nchr1\tTRUE\n")
@@ -734,96 +723,6 @@ class SaveProfileTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Helper scripts for multi-command workflows
 # ---------------------------------------------------------------------------
-
-
-class FreiaWorkflowTests(unittest.TestCase):
-    """FrEIA's filter, extraction and counting, with fakes for its samtools and Python."""
-
-    def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temporary.cleanup)
-        self.work = Path(self.temporary.name) / "scratch with spaces"
-        (self.work / "output").mkdir(parents=True)
-        (self.work / "sample.bam").write_bytes(b"filtered fixture\n")
-        # The fake filter copies the BAM to stdout. The fake indexer only accepts
-        # stdin and saves those bytes, so reading the finished file again cannot pass
-        write_executable(self.work / "freia/bin/samtools", f"#!{sys.executable}\n" + textwrap.dedent(r"""
-            import os
-            from pathlib import Path
-            import sys
-
-            stage, *arguments = sys.argv[1:]
-            with open(os.environ["CALL_LOG"], "a") as log:
-                log.write(stage + "\n")
-            assert arguments[arguments.index("-@") + 1] == "4"
-            if stage == "view":
-                assert arguments[arguments.index("-q") + 1] == "30"
-                assert arguments[:-2] == ["-@", "4", "-h", "-q", "30", "-F", "4", "-F", "256", "-F", "1024", "-F", "2048"]
-                sys.stdout.buffer.write(Path(arguments[-1]).read_bytes())
-            elif stage == "index":
-                assert arguments[-2] == "-"
-                Path(arguments[-1]).write_bytes(sys.stdin.buffer.read())
-            else:
-                raise ValueError(stage)
-        """))
-        write_executable(self.work / "freia/bin/python", f"#!{sys.executable}\n" + textwrap.dedent(r"""
-            import json
-            import os
-            from pathlib import Path
-            import sys
-
-            script = Path(sys.argv[1]).name
-            with open(os.environ["CALL_LOG"], "a") as log:
-                log.write(json.dumps([script, sys.argv[2:]]) + "\n")
-            if script == os.environ.get("FAIL_SCRIPT"):
-                raise SystemExit(5)
-        """))
-        self.environment = clean_environment(
-            BENCH_WORK=str(self.work), BENCH_MIN_MAPQ="30", BENCH_MIN_LENGTH="30",
-            BENCH_MAX_LENGTH="1000", BENCH_CONTIGS="chr1,chr2,chrEBV",
-            CALL_LOG=str(self.work / "calls"),
-        )
-
-    def run_workflow(self, **variables):
-        return subprocess.run(
-            ["bash", str(BENCHMARKS / "ends/freia_motifs.sh"), "4"],
-            env={**self.environment, **variables}, text=True, capture_output=True,
-        )
-
-    def test_filtered_bytes_are_saved_and_streamed_to_the_indexer_before_extraction(self):
-        result = self.run_workflow()
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.work / "output/filtered.bam").read_bytes(), b"filtered fixture\n")
-        self.assertEqual((self.work / "output/filtered.bam.bai").read_bytes(), b"filtered fixture\n")
-        calls = (self.work / "calls").read_text().splitlines()
-        # The filter and the indexer run together in a pipeline, so their order varies
-        self.assertEqual(sorted(calls[:2]), ["index", "view"])
-        output = f"{self.work}/output"
-        self.assertEqual(json.loads(calls[2]), [
-            "1_extract_fragment_ends.py",
-            ["-b", f"{output}/filtered.bam", "-o", f"{output}/sample.pq",
-             "-c", "chr1,chr2,chrEBV", "-t", "4", "-n", "3"],
-        ])
-        # FrEIA's upper length bound is exclusive, so 1000 bp is passed as 1001
-        self.assertEqual(json.loads(calls[3]), [
-            "2_data_transformation.py",
-            ["-i", f"{output}/sample.pq", "-o", f"{output}/", "-st", f"{self.work}/freia-samples.tsv",
-             "-fsmin", "30", "-fsmax", "1001", "-subs", "1", "--bootstrap_sample", "0"],
-        ])
-        # The trace shows each native call with its variables filled in
-        trace = (self.work / "command-trace.log").read_text()
-        self.assertIn("1_extract_fragment_ends.py", trace)
-        self.assertIn("-c chr1,chr2,chrEBV -t 4 -n 3", trace)
-        self.assertIn("-fsmin 30 -fsmax 1001", trace)
-
-    def test_failed_extraction_stops_before_counting(self):
-        result = self.run_workflow(FAIL_SCRIPT="1_extract_fragment_ends.py")
-
-        self.assertEqual(result.returncode, 5)
-        calls = (self.work / "calls").read_text().splitlines()
-        self.assertEqual(len(calls), 3)
-        self.assertNotIn("2_data_transformation.py", calls[-1])
 
 
 class PicardFilteredHistogramTests(unittest.TestCase):

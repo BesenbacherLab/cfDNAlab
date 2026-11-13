@@ -2,14 +2,13 @@
 
 Compare runnable tools on the same prepared, coordinate-sorted hg38 BAM, retaining non-autosomes and all alignment flags. Each tool applies its own filters. Use the exact alignment reference as a `.2bit` file with matching contig names and lengths. Disable GC correction, genomic scaling, blacklists, base-quality filtering and complement collapsing.
 
-The main comparison uses all 256 inward-oriented 5' 4-mers, MAPQ >=30 and fragment lengths 30-1000 bp inclusive. cfDNAPro supplies native reference-derived left ends. FrEIA joins a separate 3-mer comparison using its intact left-only extraction and abundance steps. Normalize each profile by its native counted-end total and compare motifs by label. Left-end versus both-end frequency comparisons are explicitly approximate under the side-mirroring assumption. Native left counts are retained without doubling.
+The main comparison uses all 256 inward-oriented 5' 4-mers, MAPQ >=30 and fragment lengths 30-1000 bp inclusive. cfDNAPro supplies native reference-derived left ends. Normalize each profile by its native counted-end total and compare motifs by label. Left-end versus both-end frequency comparisons are explicitly approximate under the side-mirroring assumption. Native left counts are retained without doubling.
 
 ## Tools and matching settings
 
 | CLI tool | Native command and settings | Closest cfDNAlab settings | Expected differences |
 | --- | --- | --- | --- |
 | FinaleToolkit `d16632ec` | `end-motifs BAM REF -k 4 --strand both --min-length 30 --max-length 1000 --min-mapq 30 --threads C` | Reference/aligned cfDNAlab with matching bounds | Applies inclusive length bounds and midpoint window ownership. Proper read1/TLEN selection remains native. |
-| FrEIA, commit `2c32fb9` | Native BAM filter, `1_extract_fragment_ends.py`, then default left-only `2_data_transformation.py -fsmin 30 -fsmax 1001 -subs 1 --bootstrap_sample 0` | `ends --k-inside 3 --k-outside 0 --source-inside read --clip-strategy aligned --all-motifs --chromosomes all`, matching MAPQ/length bounds | Native 3-mer left ends, coordinate deduplication and removal of pairs with N at either extracted end (`-n 3`). Approximate comparison against both ends assumes mirrored side frequencies. Broken `--both` output remains excluded. |
 | cfDNAPro 1.7.4 | Curated `readBam()` with explicit MAPQ/flag selection, user-side inclusive R width subsetting, then `callMotif(motif_type="s", motif_length=4)` | Reference/aligned cfDNAlab, normal pairs/all contigs, matching MAPQ/length bounds except cfDNAPro reference compatibility | Leftmost reference bases only. Uses the selected bundled BSgenome reference and native pair/orientation/reference-bound checks. The reference manifest is retained. Comparison against both ends assumes mirrored side frequencies. |
 | cfDNAFE, commit `90c6979` | `cfDNAFE bam` | No equivalent configuration for the inspected counting code | Apparent end-motif counting error, detailed below. Excluded from equivalent-output timing pending a correction. |
 
@@ -21,19 +20,9 @@ cfDNAlab defines paired fragment spans as `forward.pos` to `reverse.reference_en
 
 cfDNAlab excludes fragments with hard clipping on either mate. Reference-derived motifs affected by terminal indels are excluded at the affected end, and outer soft clipping is limited to 256 bp per end. FinaleToolkit has no corresponding CIGAR filters. The pinned fix assigns motifs by midpoint to avoid counting a fragment in two adjacent windows. Counts can therefore differ even when proper-pair selection is matched.
 
-The optional `cfdnalab-reference-proper-wide` diagnostic uses 10-50,000 bp. The pinned FinaleToolkit commit applies both length bounds and counts each fragment in a single window. A fragment longer than twice its read length can still be lost when its midpoint lies in a different window from its read1 alignment. The job refuses contigs with lengths exactly divisible by 1 Mb, because the native window builder omits their last full window.
+The pinned FinaleToolkit commit applies both length bounds and counts each fragment in a single window. A fragment longer than twice its read length can still be lost when its midpoint lies in a different window from its read1 alignment. The job refuses contigs with lengths exactly divisible by 1 Mb, because the native window builder omits their last full window.
 
 Sources: [cfDNAlab pairing and end handling](../../src/shared/fragment/ends_fragment.rs), [motif encoding](../../src/commands/ends/motifs.rs), [FinaleToolkit end motifs](https://github.com/epifluidlab/FinaleToolkit/blob/d16632ec5ae8999e774234457f6b0f9405c8f590/src/finaletoolkit/frag/_end_motifs.py), [alignment reader](https://github.com/epifluidlab/FinaleToolkit/blob/d16632ec5ae8999e774234457f6b0f9405c8f590/src/finaletoolkit/io/alignment.py), [window construction](https://github.com/epifluidlab/FinaleToolkit/blob/d16632ec5ae8999e774234457f6b0f9405c8f590/src/finaletoolkit/frag/_motif_common.py).
-
-### FrEIA differences and workload
-
-The runner follows the authors' streaming `samtools view | tee | samtools index -` [BAM filtering and extraction rule](https://github.com/mouliere-lab/FrEIA/blob/2c32fb9d9fab774f4ae57931df7fd7d75654d343/workflow/rules/2_FrEIA/1_preprocessing.smk), skipping remapping. Its [extraction script](https://github.com/mouliere-lab/FrEIA/blob/2c32fb9d9fab774f4ae57931df7fd7d75654d343/workflow/scripts/1_FrEIA/1_extract_fragment_ends.py) uses aligned read sequences and TLEN. It caches records by QNAME without cfDNAlab's orientation checks, and clears the cache when it exceeds 10,000 entries. Its preprocessing excludes unmapped, secondary, supplementary and duplicate records but has no explicit QC-fail or proper-pair requirement.
-
-The [aggregation script](https://github.com/mouliere-lab/FrEIA/blob/2c32fb9d9fab774f4ae57931df7fd7d75654d343/workflow/scripts/1_FrEIA/2_data_transformation.py) uses an exclusive maximum length, hence `1001` for inclusive 1000 bp. The runner omits `--both` and keeps the intact default left ends, without bootstrap sampling or intentional downsampling. The pinned both-end aggregation reuses the left-end data frame index for right-end assignment and can truncate or pad right-end rows. See the [aggregation bug description](../freia_issue.md).
-
-Intact left output is retained as `left-motifs.pq`. The comparator checks genome-level `WhichEnd=leftmost` and sums `CountLen` over fragment lengths for each motif. `CountSamp` repeats the per-motif total on each length row and must not be summed. Missing motifs receive zero before normalization.
-
-FrEIA forces extraction to **one worker when its filtered BAM exceeds 8000 MiB**, regardless of `-t`. The timing TSV records that actual extraction-worker count. Filtering and indexing still use the allocated core budget, and aggregation is serial. Its timed workload also writes an intermediate BAM/index, a per-fragment Parquet table and mononucleotide summaries. Label this as the complete native BAM-to-profile workflow. The per-fragment table is held in memory, so pilot it before scheduling the full repetitions.
 
 ### cfDNAPro motifs
 
@@ -51,7 +40,7 @@ Other differences include proper-pair selection, rejecting both mates when eithe
 
 ## Install and run
 
-[../install_tools.sh](../install_tools.sh) installs all coverage and end-motif benchmark tools, with separate environments for each tool and for reading outputs. It builds the current cfDNAlab checkout. FrEIA uses the authors' dependency pins. Tool versions and source revisions are pinned for reproducibility, as listed in the [installation reference](../README.md#installation). Installation is separate from timing. Both benchmarks use the same FinaleToolkit archive.
+[../install_tools.sh](../install_tools.sh) installs all coverage and end-motif benchmark tools, with separate environments for each tool and for reading outputs. It builds the current cfDNAlab checkout. Tool versions and source revisions are pinned for reproducibility, as listed in the [installation reference](../README.md#installation). Installation is separate from timing. Both benchmarks use the same FinaleToolkit archive.
 
 ```bash
 bash benchmarks/install_tools.sh /path/to/benchmark-tools
@@ -60,7 +49,6 @@ export BENCH_BAM=/path/to/BH01.hg38.paired.15x.bam
 export BENCH_REF_2BIT=/path/to/the-alignment-reference.2bit
 export BENCH_CFDNA=/path/to/benchmark-tools/envs/cfdnalab/bin/cfdna
 export BENCH_FINALE_ARCHIVE=/path/to/benchmark-tools/finaletoolkit.tar.gz
-export BENCH_FREIA_ARCHIVE=/path/to/benchmark-tools/freia.tar.gz
 export BENCH_CFDNAPRO_IMAGE=/path/to/benchmark-tools/cfdnapro-1.7.4.sif
 export BENCH_GENOME=hg38
 export BENCH_SAMTOOLS_ARCHIVE=/path/to/benchmark-tools/samtools.tar.gz
@@ -72,7 +60,7 @@ export BENCH_RESULTS=/path/to/end-motif-pilot
 export BENCH_K=4
 export BENCH_CORES="1"
 export BENCH_PILOT=1
-export BENCH_METHODS="cfdnalab-read cfdnalab-read-aligned cfdnalab-read-include cfdnalab-reference cfdnalab-reference-proper cfdnalab-reference-proper-wide cfdnalab-reference-autosomes finaletoolkit cfdnapro"
+export BENCH_METHODS="cfdnalab-read cfdnalab-read-aligned cfdnalab-read-include cfdnalab-reference cfdnalab-reference-proper cfdnalab-reference-autosomes finaletoolkit cfdnapro"
 bash benchmarks/submit_benchmark.sh ends --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET
 
 # The job writes concordance.tsv automatically after timing
@@ -80,15 +68,12 @@ bash benchmarks/submit_benchmark.sh ends --constraint=gen6 --time=YOUR_PILOT_BAS
 
 Pilots and full runs automatically write `concordance.tsv` after all tool attempts finish, using the job's `BENCH_K`. This comparison is outside every tool's timing and step memory measurements. Single-method jobs retain their profile and explain that there is no pair to compare. A comparison failure fails the job, with details in `concordance-error.log`, while preserving completed timings and profiles.
 
-For the FrEIA comparison, use `BENCH_K=3`, a new results directory and `BENCH_METHODS="cfdnalab-read-aligned freia"`. The automatic comparison uses 3-mers as well. cfDNAPro can also join this 3-mer series. Left-only versus both-end agreement is approximate and does not support an equivalent-output speed claim.
-
 The cfDNAlab run labels select these configurations. They are not additional competing tools:
 
 | Run label | Configuration |
 | --- | --- |
 | `cfdnalab-reference` | Reference bases, aligned boundaries, normal pairing, all BAM contigs. |
 | `cfdnalab-reference-proper` | Same, adding `--require-proper-pair` as a diagnostic comparison. |
-| `cfdnalab-reference-proper-wide` | Proper-pair/reference with effective bounds 10-50,000 bp to remove the usual length restriction. |
 | `cfdnalab-read` | Read bases, `--clip-strategy skip`. Omit a soft-clipped end while retaining the other usable end. |
 | `cfdnalab-read-aligned` | Read bases, `--clip-strategy aligned`. Compare against reference/aligned to quantify read/reference differences. |
 | `cfdnalab-read-include` | Read bases, `--clip-strategy include-at-aligned-boundary`. Include terminal soft-clipped bases, keeping aligned spans for length filtering. |
@@ -122,7 +107,6 @@ The tables below contain no measured results. Fill them from the saved concordan
 | cfDNAlab reference/proper vs FinaleToolkit `d16632ec` | 4 | [ ] | [ ] / [ ] | [ ] / [ ] | Both-mate filtering, actual span vs TLEN, CIGAR and query boundaries. |
 | cfDNAlab reference/native vs FinaleToolkit `d16632ec` | 4 | [ ] | [ ] / [ ] | [ ] / [ ] | Above differences plus proper-pair selection. |
 | cfDNAlab reference/native vs cfDNAPro left | 4 | [ ] | [ ] / [ ] | [ ] / [ ] | Approximate side mirroring, reference identity and native selection. |
-| cfDNAlab read/aligned vs FrEIA left | 3 | [ ] | [ ] / [ ] | [ ] / [ ] | Approximate side mirroring, coordinate deduplication and N removal. |
 
 All rows request all contigs, MAPQ >=30 and inclusive lengths 30-1000 bp, with the exceptions noted. Report clipping/read-source diagnostic results separately if useful for explaining differences.
 
@@ -131,13 +115,10 @@ All rows request all contigs, MAPQ >=30 and inclusive lengths 30-1000 bp, with t
 | cfDNAlab reference/native | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] | 4-mers, normal pairing. |
 | cfDNAlab reference/proper | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] | 4-mers, flag 0x2 required. |
 | FinaleToolkit `d16632ec` | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] | 4-mers, native inclusive length bounds. |
-| FrEIA | Report selected settings, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] | Rules filter_and_index_FrEIA, FragmEndSeq and data_transformation, run without Snakemake. Native left-only 3-mers. Extraction forced serial above 8000 MiB. |
 | cfDNAPro 1.7.4 | Report selected settings, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] | Reference-derived left motifs, full BAM-to-profile process. No native thread argument. |
 
 Expand timing rows to a core budget per row for the final A4 supplementary table. Keep long notes below the table if needed. GNU time's maximum RSS is not the simultaneous total memory of a multiprocessing tree. Retain the native CLI versions and dependency environment archives with the benchmark record.
 
 Join completed Slurm step memory after the job. Timing rows also record filesystem flush time, process-plus-flush time and output bytes. See the [shared timing TSV documentation](../README.md) for units and measurement limits. Submit from the repository root so helper scripts can be staged before warmups.
-
-FrEIA times the shell commands from rules `filter_and_index_FrEIA`, `FragmEndSeq` and `data_transformation`, run without Snakemake. It stops before group comparison and FrEIA scoring. The native mate cache is unchanged: clearing it can lose the pending unmatched pairs.
 
 FinaleToolkit is installed from upstream merge commit `d16632ec5ae8999e774234457f6b0f9405c8f590` ([PR #194](https://github.com/epifluidlab/FinaleToolkit/pull/194)). Timing rows include that commit. Reinstall only FinaleToolkit with `bash benchmarks/install_tools.sh ROOT --only finaletoolkit` before these runs.

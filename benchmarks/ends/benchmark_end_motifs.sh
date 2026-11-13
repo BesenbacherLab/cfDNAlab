@@ -56,11 +56,10 @@ fi
 needs_cfdna=false
 needs_finale=false
 needs_cfdnapro=false
-needs_freia=false
 needs_reference=false
 for method in "${methods[@]}"; do
     case "$method" in
-        cfdnalab-reference|cfdnalab-reference-proper|cfdnalab-reference-proper-wide|cfdnalab-reference-autosomes)
+        cfdnalab-reference|cfdnalab-reference-proper|cfdnalab-reference-autosomes)
             needs_cfdna=true
             needs_reference=true
             ;;
@@ -70,14 +69,6 @@ for method in "${methods[@]}"; do
             needs_reference=true
             ;;
         cfdnapro) needs_cfdnapro=true ;;
-        freia)
-            if [[ "$BENCH_K" != 3 ]]; then
-                echo "FrEIA's native abundance command produces 3-mers. Set BENCH_K=3 for this series." >&2
-                exit 1
-            fi
-            needs_freia=true
-            echo "FrEIA uses native left ends. Comparison against both ends assumes mirrored sides." >&2
-            ;;
         *) echo "Unknown end-motif method: $method" >&2; exit 1 ;;
     esac
 done
@@ -85,7 +76,6 @@ done
 if [[ "$needs_cfdna" == true ]]; then : "${BENCH_CFDNA:?Set the cfDNAlab executable}"; fi
 if [[ "$needs_finale" == true ]]; then : "${BENCH_FINALE_ARCHIVE:?Set the packed FinaleToolkit environment}"; fi
 if [[ "$needs_cfdnapro" == true ]]; then : "${BENCH_CFDNAPRO_IMAGE:?Set the cfDNAPro image}"; fi
-if [[ "$needs_freia" == true ]]; then : "${BENCH_FREIA_ARCHIVE:?Set the packed FrEIA environment for the freia comparison}"; fi
 if [[ "$needs_reference" == true ]]; then : "${BENCH_REF_2BIT:?Set the matching 2bit reference}"; fi
 
 # ---------------------------------------------------------------------------
@@ -134,14 +124,6 @@ if [[ " ${methods[*]} " == *" cfdnalab-reference-autosomes "* && -z "$autosomes"
     exit 1
 fi
 if [[ "$needs_finale" == true ]]; then unpack_environment "$BENCH_FINALE_ARCHIVE" "$BENCH_WORK/finale-env"; fi
-if [[ "$needs_freia" == true ]]; then
-    unpack_environment "$BENCH_FREIA_ARCHIVE" "$BENCH_WORK/freia"
-    cp "$benchmarks/ends/freia_motifs.sh" "$BENCH_WORK/freia_motifs.sh"
-    # FrEIA reads every BAM contig and needs a samples table naming the sample's group
-    export BENCH_CONTIGS
-    BENCH_CONTIGS=$(cut -f 1 "$BENCH_WORK/chrom.sizes" | paste -sd, -)
-    printf 'sample_name group\nsample benchmark\n' > "$BENCH_WORK/freia-samples.tsv"
-fi
 
 # FinaleToolkit visits the reference's contigs, while cfDNAlab --chromosomes all uses
 # the BAM's contigs. This check requires matching names and lengths. It reads
@@ -176,7 +158,6 @@ log_progress "Checking tool versions"
 cfdna_version=NA
 finale_version=NA
 cfdnapro_version=NA
-freia_version=NA
 if [[ "$needs_cfdna" == true ]]; then cfdna_version=$("$cfdna" --version | tr '\t\n' '  '); fi
 if [[ "$needs_finale" == true ]]; then
     finale_version=$("$finale_python" "$finale" --version | tr '\t\n' '  ')
@@ -186,7 +167,6 @@ if [[ "$needs_cfdnapro" == true ]]; then
     cfdnapro_version=$("$apptainer" exec --cleanenv --containall "$cfdnapro_image" Rscript --vanilla -e 'cat(as.character(packageVersion("cfDNAPro")))')
     cfdnapro_version+=" image-sha256:$(sha256sum "$cfdnapro_image" | cut -d ' ' -f 1) genome:$BENCH_GENOME"
 fi
-if [[ "$needs_freia" == true ]]; then freia_version=$(cat "$BENCH_WORK/freia/share/freia/version.txt"); fi
 
 # The remaining names used by commands.sh
 cores=$BENCH_CORES
@@ -216,13 +196,6 @@ for method in "${methods[@]}"; do
     for ((repetition = 1; repetition <= BENCH_WARMUPS + BENCH_REPETITIONS; repetition++)); do
         prepare_command "$method"
         run_in_slurm_step "$method" "$repetition"
-        # FrEIA's extractor switches to a single worker when its filtered BAM is larger
-        # than 8000 MiB. Record the worker count it actually used. samtools in the
-        # same workflow still uses the allocated cores
-        if [[ "$method" == freia && "${row[tool_exit_code]}" == 0 && -f "$output/filtered.bam" ]] &&
-            (($(stat -c '%s' "$output/filtered.bam") > 8000 * 1024 * 1024)); then
-            row[tool_threads]=1
-        fi
         save_run_record
         # The first measured repetition's output is kept for concordance
         if ((step_exit_code == 0 && repetition == BENCH_WARMUPS + 1)); then

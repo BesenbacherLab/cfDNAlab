@@ -1,6 +1,6 @@
 # Benchmark experiment commands
 
-Each measured repetition runs the native commands below on the same staged BAM. Commands are shown once, with variables for the allocated cores, paths and experimental settings. Executable aliases resolve to the staged paths used by the runners. Shell argument arrays are written as ordinary command lines, and timed shell pipelines are expanded into their constituent commands. The executable definitions are in each feature's `commands.sh` ([coverage](coverage/commands.sh), [lengths](lengths/commands.sh), [end motifs](ends/commands.sh), [midpoints](midpoints/commands.sh)), which uses the same variable names. Every repetition runs its command through [measure_command.sh](measure_command.sh) in its own Slurm step, and `runs/<run_order>/command.sh` in the results records the exact command. For `freia`, `cfdnalab-gc` and `griffin-gc`, which run a helper script, `runs/<run_order>/command-trace.log` also records each native call the helper made, with its variables filled in.
+Each measured repetition runs the native commands below on the same staged BAM. Commands are shown once, with variables for the allocated cores, paths and experimental settings. Executable aliases resolve to the staged paths used by the runners. Shell argument arrays are written as ordinary command lines, and timed shell pipelines are expanded into their constituent commands. The executable definitions are in each feature's `commands.sh` ([coverage](coverage/commands.sh), [lengths](lengths/commands.sh), [end motifs](ends/commands.sh), [midpoints](midpoints/commands.sh)), which uses the same variable names. Every repetition runs its command through [measure_command.sh](measure_command.sh) in its own Slurm step, and `runs/<run_order>/command.sh` in the results records the exact command. For `cfdnalab-gc` and `griffin-gc`, which run a helper script, `runs/<run_order>/command-trace.log` also records each native call the helper made, with its variables filled in.
 
 The configurations describe the current runners. For an existing result, `run.tsv` identifies the benchmark revision and `timings.tsv` records the tool version, filters and core allocation. Installation and cfDNAlab build records identify the installed tools independently of the benchmark revision.
 
@@ -43,13 +43,13 @@ apptainer=$(command -v apptainer)
 
 `BENCH_WORK` is the job's temporary directory under the compute node's `$TMPDIR`. The runners copy the BAM, index, selected tools and required references there before timing. `output` is created empty for every repetition. Container paths under `/work` refer to the same directory through an Apptainer bind mount.
 
-Every available native thread/core/worker option receives `cores` directly. Commands without a native thread option still run within the allocated CPU set. This also applies to samtools inside the Picard and FrEIA pipelines.
+Every available native thread/core/worker option receives `cores` directly. Commands without a native thread option still run within the allocated CPU set. This also applies to samtools inside the Picard pipeline.
 
 The native options have different meanings. For example, the [mosdepth CLI](https://github.com/brentp/mosdepth/blob/v0.3.14/README.md#usage) defines `--threads` as BAM decompression threads, while coverage calculation runs separately. A 4-core allocation uses `--threads 4`, and all of the tool's threads share those allocated CPUs. `timings.tsv` records the core allocation and the native thread/worker setting separately.
 
-The installer requests mosdepth 0.3.14, samtools 1.25, PanDepth 2.26, FinaleToolkit commit `d16632ec5ae8999e774234457f6b0f9405c8f590`, cfDNAPro 1.7.4, Picard 3.5.0 and Griffin v0.2.0. FrEIA is pinned to `2c32fb9d9fab774f4ae57931df7fd7d75654d343`. cfDNAlab is built from the checkout recorded in `cfdnalab-build.tsv`.
+The installer requests mosdepth 0.3.14, samtools 1.25, PanDepth 2.26, FinaleToolkit commit `d16632ec5ae8999e774234457f6b0f9405c8f590`, cfDNAPro 1.7.4, Picard 3.5.0 and Griffin v0.2.0. cfDNAlab is built from the checkout recorded in `cfdnalab-build.tsv`.
 
-The exclusion mask `3852`, or `0xF0C`, combines unmapped (`4`), mate unmapped (`8`), secondary (`256`), QC-fail (`512`), duplicate (`1024`) and supplementary (`2048`) flags. It does not require the proper-pair flag. FrEIA's native preprocessing uses its own exclusions, shown explicitly below.
+The exclusion mask `3852`, or `0xF0C`, combines unmapped (`4`), mate unmapped (`8`), secondary (`256`), QC-fail (`512`), duplicate (`1024`) and supplementary (`2048`) flags. It does not require the proper-pair flag.
 
 GNU time surrounds each complete native command or shell pipeline. `wall_seconds` includes startup, BAM reading, native calculations, output writing/compression and enabled default plots. The full R process and Apptainer startup are included for cfDNAPro. Pipeline shells use `set -euo pipefail`.
 
@@ -304,7 +304,7 @@ cfDNAlab uses directional paired spans. Curated cfDNAPro also uses directional s
 
 ## End motifs
 
-The [end-motif runner](ends/benchmark_end_motifs.sh) uses `k=$BENCH_K`. The four-mer comparison selects `cfdnalab-reference`, `cfdnalab-reference-proper`, `finaletoolkit` and `cfdnapro`. The three-mer comparison selects `cfdnalab-read-aligned` and `freia`. Every selected tool can be allocated each requested core setting, including tools without a native thread option.
+The [end-motif runner](ends/benchmark_end_motifs.sh) uses `k=$BENCH_K`. The four-mer comparison selects `cfdnalab-reference`, `cfdnalab-reference-proper`, `finaletoolkit` and `cfdnapro`. Every selected tool can be allocated each requested core setting, including tools without a native thread option.
 
 ### cfDNAlab reference motifs
 
@@ -361,41 +361,6 @@ Method `cfdnapro`:
 
 The native R calculation below selects reference-derived left ends. Reference loading, BAM reading, curation, motif calling and output/provenance writing are timed. The package's bundled reference is selected by `BENCH_GENOME`, normally `hg38`. Sequence identity with the supplied alignment reference remains to be established before interpreting differences solely as tool differences.
 
-### FrEIA
-
-Method `freia` requires `k=3`. Its extraction and aggregation use the pinned environment's own Python and samtools:
-
-```bash
-freia_environment="$BENCH_WORK/freia"
-freia_scripts="$freia_environment/share/freia"
-```
-
-The samples table is written once during setup, outside the timer:
-
-```bash
-printf 'sample_name group\nsample benchmark\n' > "$BENCH_WORK/freia-samples.tsv"
-```
-
-The upstream filtering/indexing pipeline and the two motif scripts share one timer. They are in [freia_motifs.sh](ends/freia_motifs.sh), which the method runs as `bash "$BENCH_WORK/freia_motifs.sh" "$cores"`:
-
-```bash
-"$freia_environment/bin/samtools" view -@ "$cores" -h -q "$min_mapq" \
-    -F 4 -F 256 -F 1024 -F 2048 -b "$bam" |
-    tee "$output/filtered.bam" |
-    "$freia_environment/bin/samtools" index -@ "$cores" - "$output/filtered.bam.bai"
-"$freia_environment/bin/python" "$freia_scripts/1_extract_fragment_ends.py" \
-    -b "$output/filtered.bam" -o "$output/sample.pq" \
-    -c "$BENCH_CONTIGS" -t "$cores" -n 3
-"$freia_environment/bin/python" "$freia_scripts/2_data_transformation.py" \
-    -i "$output/sample.pq" -o "$output/" -st "$BENCH_WORK/freia-samples.tsv" \
-    -fsmin "$min_length" -fsmax "$length_end" \
-    -subs 1 --bootstrap_sample 0
-```
-
-`BENCH_CONTIGS` lists all BAM contigs. The maximum is supplied as `max_length + 1` because FrEIA's upper bound is exclusive. The native transformation retains coordinate deduplication, rejects fragments containing N in either extracted end, and calculates mononucleotide as well as trinucleotide abundances. There is no subsampling or bootstrap resampling in this call. The extractor itself forces one worker when its filtered BAM exceeds 8000 MiB, and the timing row records that worker count.
-
-The broken native `--both` aggregate is not requested. The intact left-only table is retained as `left-motifs.pq`. FrEIA and cfDNAPro left-end frequencies are compared with cfDNAlab/FinaleToolkit both-end frequencies using the documented side-mirroring approximation. Counts are not doubled.
-
 ### Additional motif configurations
 
 | Method | Exact change |
@@ -403,7 +368,6 @@ The broken native `--both` aggregate is not requested. The intact left-only tabl
 | `cfdnalab-read` | Aligned-read call with `--clip-strategy skip` |
 | `cfdnalab-read-include` | Aligned-read call with `--clip-strategy include-at-aligned-boundary` |
 | `cfdnalab-reference-autosomes` | Reference call with `--chromosomes "$autosomes"` instead of `all` |
-| `cfdnalab-reference-proper-wide` | Reference call with `--require-proper-pair`, minimum length 10 and maximum length 50000 |
 
 These configurations are only run when explicitly selected in `BENCH_METHODS`.
 
@@ -658,4 +622,4 @@ bash "$BENCH_WORK/griffin_profile.sh" "$cores" \
 
 `warmup_chromosomes` lists the demo's chromosomes. The helper uses the same BAM, reference, profile width, length bounds, MAPQ and core allocation as production, with unit GC bias and the demo's own sites. No sample GC estimate is fitted for this warmup. The demo has a separate untimed Slurm step, and its outputs are removed before production measurements. There is no full-input Griffin warmup.
 
-mosdepth stays in exact mode to match cfDNAlab's mate-overlap and deletion handling, although its help recommends fast mode for many uses. PanDepth per-base timing includes its native single-threaded gzip after worker calculations. samtools lengths is labeled "samtools stats (full QC report, insert-size section extracted)". FrEIA runs rules `filter_and_index_FrEIA`, `FragmEndSeq` and `data_transformation` directly, without Snakemake, and stops before group comparison/scoring. Griffin's final plotting rule is omitted, while its GC-bias plots and compulsory FFT features remain timed.
+mosdepth stays in exact mode to match cfDNAlab's mate-overlap and deletion handling, although its help recommends fast mode for many uses. PanDepth per-base timing includes its native single-threaded gzip after worker calculations. samtools lengths is labeled "samtools stats (full QC report, insert-size section extracted)". Griffin's final plotting rule is omitted, while its GC-bias plots and compulsory FFT features remain timed.

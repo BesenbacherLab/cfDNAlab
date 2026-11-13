@@ -138,28 +138,22 @@ cfDNAlab uses `ends --k-inside K --k-outside 0 --all-motifs` with requested filt
 | --- | --- |
 | `cfdnalab-reference` | Reference, aligned boundaries, normal pairs, all contigs |
 | `cfdnalab-reference-proper` | Same with proper pairs |
-| `cfdnalab-reference-proper-wide` | Proper/reference, fixed effective 10-50,000 bp |
 | `cfdnalab-reference-autosomes` | Reference/aligned, actual autosomes |
 | `cfdnalab-read` | Read source, skip soft-clipped ends, all contigs |
 | `cfdnalab-read-aligned` | Read source at aligned boundaries |
 | `cfdnalab-read-include` | Read source, `include-at-aligned-boundary` |
 | `finaletoolkit` | Reference `end-motifs --strand both`, requested K/bounds/MAPQ and allocated workers |
-| `freia` | Native three-base extraction and default left-only aggregation |
 | `cfdnapro` | Curated `readBam()` followed by reference-derived left-end `callMotif(motif_type="s")` |
 
-The 4-mer comparison includes reference/native, reference/proper, FinaleToolkit and cfDNAPro. `BENCH_METHODS` must be supplied explicitly. K=3 is also supported and required for FrEIA. Both-end cfDNAlab/FinaleToolkit profiles and native left-end FrEIA/cfDNAPro profiles retain their end selection labels.
+The 4-mer comparison includes reference/native, reference/proper, FinaleToolkit and cfDNAPro. `BENCH_METHODS` must be supplied explicitly. Both-end cfDNAlab/FinaleToolkit profiles and native left-end cfDNAPro profiles retain their end selection labels.
 
 FinaleToolkit is pinned to commit `d16632ec5ae8999e774234457f6b0f9405c8f590`, with inclusive motif length bounds and unique midpoint window ownership fixed. Rows record effective bounds (`length_filter=applied`) and the source commit. Fragments longer than twice their read length can still be lost when read1 does not overlap the window containing their midpoint.
 
-FinaleToolkit selection requires identical BAM/2bit contig dictionaries. Lengths divisible by 1,000,000 fail with the pinned last-window omission named. Read-only cfDNAlab and FrEIA-only selections need no 2bit. FinaleToolkit's read1 window queries can still double-count boundaries, and proper read1/TLEN selection differs from cfDNAlab pair/CIGAR checks. See the pinned [end-motif implementation](https://github.com/epifluidlab/FinaleToolkit/blob/d16632ec5ae8999e774234457f6b0f9405c8f590/src/finaletoolkit/frag/_end_motifs.py).
-
-FrEIA timing includes the authors' streaming `samtools view | tee | samtools index -` filtering/indexing pipeline, extraction `-n 3`, unchanged default left-only aggregation, exclusive maximum `MAX+1`, and no intentional downsampling/bootstrap. Native coordinate deduplication, filtering N at either end, intermediates and mononucleotide work remain. The samtools filtering and indexing commands each receive N directly through `-@`. Extraction receives N workers, with the native size safeguard still forcing one worker above 8000 MiB filtered BAM size. The actual extraction-worker count is recorded.
-
-FrEIA's broken `--both` aggregate remains excluded. The runner uses intact left-only output and retains it as `left-motifs.pq`. The comparator verifies genome-level `WhichEnd=leftmost`, then sums additive `CountLen` over fragment lengths for each motif. `CountSamp` repeats a motif total across lengths and is not summed. Missing ACGT motifs receive zero.
+FinaleToolkit selection requires identical BAM/2bit contig dictionaries. Lengths divisible by 1,000,000 fail with the pinned last-window omission named. Read-only cfDNAlab selections need no 2bit. FinaleToolkit's read1 window queries can still double-count boundaries, and proper read1/TLEN selection differs from cfDNAlab pair/CIGAR checks. See the pinned [end-motif implementation](https://github.com/epifluidlab/FinaleToolkit/blob/d16632ec5ae8999e774234457f6b0f9405c8f590/src/finaletoolkit/frag/_end_motifs.py).
 
 cfDNAPro uses the same explicit `readBam` MAPQ/flags as its curated length comparison, all contigs and inclusive width filtering. Native `callMotif(motif_type="s", motif_length=K, integrate_mut=FALSE, downsample_ref=FALSE)` counts the leftmost K reference bases on the forward strand. It writes `motif`, `n` and `fraction`. BAM reading, curation, reference loading, motif extraction and writing stay timed. There is no native thread option for this call. The image's selected BSgenome label/package/version/sequence metadata are retained in `reference.tsv`. Reference identity with the alignment FASTA/2bit must be verified before attributing differences solely to tools. Native pair/orientation/reference-bound checks and cfDNAlab end/CIGAR checks remain different.
 
-Profiles must contain exactly all `4^K` inward ACGT labels after filling FrEIA's sparse zeros, without duplicate/non-finite/negative values. cfDNAlab's leading underscore is removed, raw global counts are loaded natively, cfDNAPro native counts are read directly and FinaleToolkit TSV frequencies read directly. Total mass must be positive. FinaleToolkit sums must be close to 1 with `rtol=1e-6`, `atol=1e-9`. Profiles normalize by their native counted-end totals, which are `NA` for FinaleToolkit.
+Profiles must contain exactly all `4^K` inward ACGT labels, without duplicate/non-finite/negative values. cfDNAlab's leading underscore is removed, raw global counts are loaded natively, cfDNAPro native counts are read directly and FinaleToolkit TSV frequencies read directly. Total mass must be positive. FinaleToolkit sums must be close to 1 with `rtol=1e-6`, `atol=1e-9`. Profiles normalize by their native counted-end totals, which are `NA` for FinaleToolkit.
 
 Pairwise rows report `left_end_selection`, `right_end_selection` and `side_comparison`. A left-end versus both-end comparison is labeled `approximate-side-mirroring`. This assumes the two sides have sufficiently similar inward-oriented motif frequencies for the intended approximate comparison, and does not establish that their observed frequencies are identical. Comparisons selecting the same sides are labeled `same-sides`. Native left counts remain native left counts. No doubled count estimate is produced, and these approximations do not support an equivalent-output timing claim.
 
@@ -195,4 +189,4 @@ Rows report group, cfDNAlab eligible intervals (cfdnalab_sites), Griffin listed 
 
 Positional metrics also report nonzero_intersection_bases and coverage_jaccard (intersection / union, or NA if both are empty). coverage_jaccard.tsv records these per chromosome in BAM order. A partial Jaccard followed by zero samtools coverage on every later informative chromosome flags possible truncation without failing on a similarity threshold. Missing samtools positions are zero.
 
-cfDNAPro motifs use timed user-side R length subsetting and retain BAM contigs present in the selected BSgenome, recorded in contig_scope.tsv. For this BAM the excluded contig is chrEBV. Lengths keep whole-BAM scope. FrEIA runs its three per-sample extraction/abundance rules directly without Snakemake and stops before group comparison/scoring.
+cfDNAPro motifs use timed user-side R length subsetting and retain BAM contigs present in the selected BSgenome, recorded in contig_scope.tsv. For this BAM the excluded contig is chrEBV. Lengths keep whole-BAM scope.
