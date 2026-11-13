@@ -9,6 +9,13 @@ cores=${2:?Supply the allocated core budget}
 bias_directory="$BENCH_WORK/output/gc-bias"
 mkdir -p "$bias_directory"
 
+# Record each native call below with its variables filled in. Bash writes the trace
+# to $BENCH_WORK/command-trace.log, which the job saves in runs/<run_order>/
+# griffin_profile.sh adds its own calls to the same file
+exec {trace_descriptor}>> "$BENCH_WORK/command-trace.log"
+BASH_XTRACEFD=$trace_descriptor
+set -x
+
 case "$method" in
     cfdnalab-gc)
         # The reference package is calculated once beforehand with ref-gc-bias

@@ -27,7 +27,7 @@
 
 # The columns of timings.tsv, in order. common.sh fills the run's identity and
 # measurements, and prepare_command below fills the method's settings
-#   tool_workers       Value passed to the tool's thread/CPU option
+#   tool_threads       Value passed to the tool's thread or CPU option
 #   sites, groups      Rows and groups in the supplied BED
 #   window_bp          Width of every site window
 #   resolution_bp      Bin size of the profile
@@ -40,7 +40,7 @@
 #   step_exit_code     The Slurm step's exit status, which is also nonzero for a
 #                      wrong CPU placement or a missing output
 timing_columns=(
-    run_order repetition warmup method tool_version cores tool_workers
+    run_order repetition warmup method tool_version cores tool_threads
     min_mapq min_length max_length sites groups window_bp resolution_bp midpoint_policy
     node cpu_model cpu_ids physical_core_ids job_id step_id started_utc
     gc_correction
@@ -57,12 +57,12 @@ timing_columns=(
 prepare_command() {
     local method=$1
     # Defaults shared by all methods. The branches below change only what differs
-    #   tool_workers     Value passed to the tool's thread/CPU option
+    #   tool_threads     Value passed to the tool's thread or CPU option
     #   sites, groups    Rows and groups in the supplied BED
     #   window_bp        Width of every site window
     #   midpoint_policy  Which central base gets an even-length fragment's midpoint
     row=(
-        [tool_workers]=$cores
+        [tool_threads]=$cores
         [min_mapq]=$min_mapq
         [min_length]=$min_length
         [max_length]=$max_length

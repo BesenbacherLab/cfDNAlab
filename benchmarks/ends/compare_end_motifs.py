@@ -137,17 +137,6 @@ def main():
     arguments = parser.parse_args()
     motifs = ["".join(bases) for bases in product("ACGT", repeat=arguments.k)]
     directories = sorted(path for path in arguments.profiles.iterdir() if path.is_dir())
-    freia_directories = [
-        path
-        for path in directories
-        if (path / "T__sample.pq").is_file() and not (path / "left-motifs.pq").is_file()
-    ]
-    if freia_directories:
-        print(
-            "Skipping FrEIA concordance: the pinned native both-end aggregation is incorrect.",
-            file=sys.stderr,
-        )
-        directories = [path for path in directories if path not in freia_directories]
     if len(directories) < 2:
         parser.error("At least two saved tool profiles are required")
     profiles = {path.name: load_profile(path, motifs) for path in directories}

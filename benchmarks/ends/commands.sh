@@ -26,7 +26,7 @@
 # measurements, and prepare_command below fills the method's settings. The
 # requested length bounds and how a method applies them are separate columns, which
 # tells native filters apart from cfDNAPro's subsetting in R
-#   tool_workers       Value passed to the tool's thread/worker option, NA if it has none
+#   tool_threads       Value passed to the tool's thread or worker option, NA if it has none
 #   source             Whether motif bases come from the reference or the read
 #   clip               How soft-clipped ends are handled
 #   effective_*_length The length bounds actually passed to the tool
@@ -37,7 +37,7 @@
 #   step_exit_code     The Slurm step's exit status, which is also nonzero for a
 #                      wrong CPU placement or a missing output
 timing_columns=(
-    run_order repetition warmup method tool_version cores tool_workers k min_mapq
+    run_order repetition warmup method tool_version cores tool_threads k min_mapq
     requested_min_length requested_max_length length_filter scope source clip proper_pair
     node cpu_model cpu_ids physical_core_ids job_id step_id started_utc
     effective_min_length effective_max_length
@@ -54,14 +54,14 @@ timing_columns=(
 prepare_command() {
     local method=$1
     # Defaults shared by most methods. The branches below change only what differs
-    #   tool_workers          Value passed to the tool's thread/worker option, NA if none
+    #   tool_threads          Value passed to the tool's thread or worker option, NA if none
     #   requested_*_length    The job's length bounds
     #   length_filter         How the bounds are applied: natively, or in R for cfDNAPro
     #   source                Whether motif bases come from the reference or the read
     #   clip                  How soft-clipped ends are handled
     #   effective_*_length    The bounds actually passed to the tool
     row=(
-        [tool_workers]=$cores
+        [tool_threads]=$cores
         [k]=$k
         [min_mapq]=$min_mapq
         [requested_min_length]=$min_length
@@ -197,7 +197,7 @@ prepare_command() {
                 "$min_length" "$max_length" "$min_mapq" "$genome" "$k")
             expected_output="$output/cfdnapro-motifs.tsv"
             row[tool_version]=$cfdnapro_version
-            row[tool_workers]=NA
+            row[tool_threads]=NA
             row[scope]=bam-contigs-in-cfdnapro-reference
             row[length_filter]=applied-in-r
             row[clip]=unrestricted

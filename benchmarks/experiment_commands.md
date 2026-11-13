@@ -1,6 +1,6 @@
 # Benchmark experiment commands
 
-Each measured repetition runs the native commands below on the same staged BAM. Commands are shown once, with variables for the allocated cores, paths and experimental settings. Executable aliases resolve to the staged paths used by the runners. Shell argument arrays are written as ordinary command lines, and timed shell pipelines are expanded into their constituent commands. The executable definitions are in each feature's `commands.sh` ([coverage](coverage/commands.sh), [lengths](lengths/commands.sh), [end motifs](ends/commands.sh), [midpoints](midpoints/commands.sh)), which uses the same variable names. Every repetition runs its command through [measure_command.sh](measure_command.sh) in its own Slurm step, and `runs/<run_order>/command.sh` in the results records the exact command.
+Each measured repetition runs the native commands below on the same staged BAM. Commands are shown once, with variables for the allocated cores, paths and experimental settings. Executable aliases resolve to the staged paths used by the runners. Shell argument arrays are written as ordinary command lines, and timed shell pipelines are expanded into their constituent commands. The executable definitions are in each feature's `commands.sh` ([coverage](coverage/commands.sh), [lengths](lengths/commands.sh), [end motifs](ends/commands.sh), [midpoints](midpoints/commands.sh)), which uses the same variable names. Every repetition runs its command through [measure_command.sh](measure_command.sh) in its own Slurm step, and `runs/<run_order>/command.sh` in the results records the exact command. For `freia`, `cfdnalab-gc` and `griffin-gc`, which run a helper script, `runs/<run_order>/command-trace.log` also records each native call the helper made, with its variables filled in.
 
 The configurations describe the current runners. For an existing result, `run.tsv` identifies the benchmark revision and `timings.tsv` records the tool version, filters and core allocation. Installation and cfDNAlab build records identify the installed tools independently of the benchmark revision.
 
@@ -537,7 +537,7 @@ The inputs are:
 
 ### cfDNAlab without GC correction
 
-Method `cfdnalab`:
+Method `cfdnalab` supplies cfDNAlab's uncorrected profiles, which are compared with the uncorrected table that `griffin-gc` also writes. With a GC file, cfDNAlab writes only corrected profiles. Its timing has no Griffin counterpart:
 
 ```bash
 "$cfdna" midpoints --bam "$bam" --output-dir "$output" \

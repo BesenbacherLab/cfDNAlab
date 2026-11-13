@@ -18,6 +18,12 @@ freia_scripts="$freia_environment/share/freia"
 bam="$BENCH_WORK/sample.bam"
 output="$BENCH_WORK/output"
 
+# Record each native call below with its variables filled in. Bash writes the trace
+# to $BENCH_WORK/command-trace.log, which the job saves in runs/<run_order>/
+exec {trace_descriptor}>> "$BENCH_WORK/command-trace.log"
+BASH_XTRACEFD=$trace_descriptor
+set -x
+
 # 1. The authors' BAM filter. The exclusion flags are unmapped (4), secondary (256),
 #    duplicate (1024) and supplementary (2048). The filtered BAM streams through tee
 #    into the indexer, as in the upstream rule, so indexing does not read the

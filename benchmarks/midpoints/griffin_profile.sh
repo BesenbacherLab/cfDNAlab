@@ -38,6 +38,13 @@ common=(--sample_name sample --tmp_dir "$output_directory/tmp"
     --chrom_column Chrom --position_column position --strand_column Strand
     --norm_window "-$BENCH_HALF_WIDTH" "$window_end"
     --mappability_correction False --mappability_bw "$BENCH_WORK/mappability.bw" --CPU "$cores")
+
+# Record both native calls with their variables filled in. Bash writes the trace
+# to $BENCH_WORK/command-trace.log, which the job saves in runs/<run_order>/ for
+# measured runs. The untimed demo's trace is removed before the first measured run
+exec {trace_descriptor}>> "$BENCH_WORK/command-trace.log"
+BASH_XTRACEFD=$trace_descriptor
+set -x
 "$environment/bin/python" "$scripts/griffin_coverage.py" "${common[@]}" \
     --bam "$BENCH_WORK/sample.bam" --GC_bias "$gc_bias" \
     --reference_genome "$BENCH_WORK/reference.fa" --mappability_bias none \

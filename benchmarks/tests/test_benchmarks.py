@@ -1066,38 +1066,6 @@ class MotifTests(unittest.TestCase):
                     root, ["".join(bases) for bases in product("ACGT", repeat=3)]
                 )
 
-    def test_existing_freia_profile_is_skipped_without_recovery(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            for name in ("finaletoolkit", "second-profile"):
-                directory = root / name
-                directory.mkdir()
-                with (directory / "motifs.tsv").open("w") as destination:
-                    for bases in product("ACGT", repeat=3):
-                        motif = "".join(bases)
-                        destination.write(f"{motif}\t{1 if motif == 'AAA' else 0}\n")
-            (root / "freia").mkdir()
-            (root / "freia/T__sample.pq").write_text(
-                "Deliberately unreadable damaged aggregate"
-            )
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    str(BENCHMARKS / "ends/compare_end_motifs.py"),
-                    str(root),
-                    "--k",
-                    "3",
-                ],
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("Skipping FrEIA", result.stderr)
-            rows = list(csv.DictReader(result.stdout.splitlines(), delimiter="\t"))
-            self.assertEqual(len(rows), 1)
-            self.assertEqual(float(rows[0]["total_variation"]), 0)
-            self.assertNotIn("freia", result.stdout)
-
 
 if __name__ == "__main__":
     unittest.main()

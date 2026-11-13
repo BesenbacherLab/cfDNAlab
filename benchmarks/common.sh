@@ -239,6 +239,19 @@ record_job_setup() {
     fi
 }
 
+# Prints the autosome rows (name and length) of a chrom.sizes file
+#
+# Autosomes are the contigs named chr1..chr22 or 1..22, so both naming conventions
+# work. The rows keep the file's names and order. A job that needs a comma-separated
+# list uses: autosome_sizes FILE | cut -f 1 | paste -sd, -
+#
+# Parameters:
+#   $1  A chrom.sizes file with contig name and length columns
+autosome_sizes() {
+    local chromosome_sizes=$1
+    awk '$1 ~ /^(chr)?([1-9]|1[0-9]|2[0-2])$/' "$chromosome_sizes"
+}
+
 # Unpacks a tool's packed Conda environment onto the compute node's disk
 #
 # Programs in the archive can still refer to the original installation folder
@@ -320,7 +333,8 @@ run_in_slurm_step() {
     # Remove the previous run's record and logs, so a failed step can never be
     # reported with values or messages from an earlier run. The output directory must
     # not exist yet, because clear_run_output deleted the previous run's
-    rm -f "$BENCH_WORK/measurement.tsv" "$BENCH_WORK/tool-stdout.log" "$BENCH_WORK/tool-stderr.log"
+    rm -f "$BENCH_WORK/measurement.tsv" "$BENCH_WORK/tool-stdout.log" "$BENCH_WORK/tool-stderr.log" \
+        "$BENCH_WORK/command-trace.log"
     mkdir "$output"
 
     # --exact and --cpus-per-task give the step exactly BENCH_CORES CPUs of the
@@ -367,6 +381,9 @@ save_run_record() {
     # A step that failed before running the command has no logs
     if [[ -f "$stdout_file" ]]; then cp "$stdout_file" "$run_directory/stdout.log"; fi
     if [[ -f "$BENCH_WORK/tool-stderr.log" ]]; then cp "$BENCH_WORK/tool-stderr.log" "$run_directory/stderr.log"; fi
+    # Methods that run a helper script (freia, cfdnalab-gc, griffin-gc) also trace
+    # each native call the helper made, with its variables filled in
+    if [[ -f "$BENCH_WORK/command-trace.log" ]]; then cp "$BENCH_WORK/command-trace.log" "$run_directory/command-trace.log"; fi
     write_timing_row
     if ((step_exit_code != 0)); then
         if [[ -f "$run_directory/stderr.log" ]]; then cat "$run_directory/stderr.log" >&2; fi

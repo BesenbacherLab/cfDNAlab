@@ -322,7 +322,7 @@ save_profile() {
         cfdnalab-autosomes)
             # This run only processed the autosomes, so only they are listed
             cp "$output/fcoverage.per_position.bedgraph.zst" "$destination/"
-            awk '$1 ~ /^(chr)?([1-9]|1[0-9]|2[0-2])$/' "$BENCH_WORK/chrom.sizes" > "$destination/chrom.sizes"
+            autosome_sizes "$BENCH_WORK/chrom.sizes" > "$destination/chrom.sizes"
             ;;
         mosdepth|mosdepth-fragment)
             cp "$output/coverage.per-base.bed.gz" "$destination/"

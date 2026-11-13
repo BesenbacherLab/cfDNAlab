@@ -549,7 +549,7 @@ class EndMotifCommandTests(unittest.TestCase):
         self.assertEqual(cfdnapro["command"][-7:], [
             "/work/sample.bam", "/work/output", "30", "1000", "30", "hg38", "4",
         ])
-        self.assertEqual(cfdnapro["row"]["tool_workers"], "NA")
+        self.assertEqual(cfdnapro["row"]["tool_threads"], "NA")
         self.assertEqual(cfdnapro["row"]["length_filter"], "applied-in-r")
         self.assertEqual(cfdnapro["row"]["scope"], "bam-contigs-in-cfdnapro-reference")
         self.assertEqual(freia["command"], ["bash", f"{WORK}/freia_motifs.sh", "4"])
@@ -593,7 +593,7 @@ class MidpointCommandTests(unittest.TestCase):
                 self.assertEqual(prepared["expected_output"], expected_output)
                 self.assertEqual(prepared["row"]["gc_correction"], "corrected")
                 self.assertEqual(prepared["row"]["midpoint_policy"], policy)
-                self.assertEqual(prepared["row"]["tool_workers"], "4")
+                self.assertEqual(prepared["row"]["tool_threads"], "4")
 
 
 # ---------------------------------------------------------------------------
@@ -811,6 +811,11 @@ class FreiaWorkflowTests(unittest.TestCase):
             ["-i", f"{output}/sample.pq", "-o", f"{output}/", "-st", f"{self.work}/freia-samples.tsv",
              "-fsmin", "30", "-fsmax", "1001", "-subs", "1", "--bootstrap_sample", "0"],
         ])
+        # The trace shows each native call with its variables filled in
+        trace = (self.work / "command-trace.log").read_text()
+        self.assertIn("1_extract_fragment_ends.py", trace)
+        self.assertIn("-c chr1,chr2,chrEBV -t 4 -n 3", trace)
+        self.assertIn("-fsmin 30 -fsmax 1001", trace)
 
     def test_failed_extraction_stops_before_counting(self):
         result = self.run_workflow(FAIL_SCRIPT="1_extract_fragment_ends.py")
@@ -1568,7 +1573,7 @@ class GriffinJobTests(unittest.TestCase):
             self.assertEqual([row["repetition"] for row in rows], ["1", "2", "3"])
             for row in rows:
                 self.assertEqual(
-                    (row["warmup"], row["window_bp"], row["gc_correction"], row["tool_workers"], row["step_exit_code"]),
+                    (row["warmup"], row["window_bp"], row["gc_correction"], row["tool_threads"], row["step_exit_code"]),
                     ("false", "2001", "corrected", "1", "0"),
                 )
             # The demo's merge was call 1, so the first measured repetition is call 2
@@ -1576,6 +1581,13 @@ class GriffinJobTests(unittest.TestCase):
             self.assertEqual((saved / "sample.GC_corrected.coverage.tsv").read_text(), "corrected from merge 2\n")
             self.assertEqual((saved / "sample.uncorrected.coverage.tsv").read_text(), "uncorrected from merge 2\n")
             self.assertTrue((saved / "sample-gc-bias").is_dir())
+            # The first measured run's trace has its GC estimation and both profiling
+            # calls, with values filled in, but not the demo's calls
+            trace = (results / "runs/1/command-trace.log").read_text()
+            self.assertIn("griffin_GC_counts.py", trace)
+            self.assertIn("--size_range 15 500 --CPU 1", trace)
+            self.assertIn("griffin_merge_sites.py", trace)
+            self.assertNotIn("warmup-sites.yaml", trace)
             self.assertEqual(intervals.read_text(), production_sites)
             self.assertEqual(len((results / "sites.bed").read_text().splitlines()), 4)
             self.assertIn("warmups\t0\n", (results / "run.tsv").read_text())

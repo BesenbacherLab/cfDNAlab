@@ -123,6 +123,64 @@ def read_griffin(path, width, bin_size):
     return profiles
 
 
+def cfdnalab_profile_state(mean):
+    """Classify cfDNAlab's profile by its mean, which normalization divides by.
+
+    - `positive`: the profile can be scaled to mean one.
+    - `zero`: the group has no midpoints, so the profile cannot be scaled.
+    - `negative`: smoothing undershoots made the mean negative, so scaling would
+      flip the profile.
+    """
+    if mean > 0:
+        return "positive"
+    if mean == 0:
+        return "zero"
+    return "negative"
+
+
+def griffin_profile_state(profile, mean):
+    """Classify Griffin's saved profile by its undefined (empty, NaN) positions.
+
+    - `complete`: every saved position has a value.
+    - `partly-masked`: Griffin's masks left some positions undefined.
+    - `zero-coverage`: every position is undefined because the group had no
+      midpoints (mean 0), so Griffin divided by zero.
+    - `undefined`: every position is undefined although the mean is missing or
+      positive.
+    """
+    undefined = np.isnan(profile)
+    if not undefined.any():
+        return "complete"
+    if not undefined.all():
+        return "partly-masked"
+    if mean == 0:
+        return "zero-coverage"
+    return "undefined"
+
+
+# The comparison status of a group, from the two profiles' states. Metrics are only
+# calculated for "ok". Every other status explains why that group's metrics are NA
+STATUS_BY_CASE = {
+    # (cfDNAlab state, Griffin state): status
+    # Both profiles can be compared
+    ("positive", "complete"): "ok",
+    # Only Griffin's profile prevents the comparison
+    ("positive", "partly-masked"): "griffin-undefined-positions",
+    ("positive", "zero-coverage"): "griffin-zero-coverage",
+    ("positive", "undefined"): "griffin-undefined-profile",
+    # Only cfDNAlab's profile prevents the comparison
+    ("zero", "complete"): "cfdnalab-zero-coverage",
+    ("negative", "complete"): "cfdnalab-nonpositive-profile-mean",
+    # Both prevent it. Apart from both-zero-coverage, the status names one of them
+    ("zero", "zero-coverage"): "both-zero-coverage",
+    ("zero", "partly-masked"): "griffin-undefined-positions",
+    ("zero", "undefined"): "griffin-undefined-profile",
+    ("negative", "partly-masked"): "cfdnalab-nonpositive-profile-mean",
+    ("negative", "zero-coverage"): "cfdnalab-nonpositive-profile-mean",
+    ("negative", "undefined"): "griffin-undefined-profile",
+}
+
+
 def main():
     """Check shared groups/windows and compare the native saved positions."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -198,22 +256,13 @@ def main():
             "mae_mean_one": "NA",
             "rmse_mean_one": "NA",
             "max_abs_mean_one": "NA",
-            "status": "both-zero-coverage",
+            "status": STATUS_BY_CASE[
+                (cfdnalab_profile_state(count_mean), griffin_profile_state(griffin_profile, griffin_mean))
+            ],
         }
-        if np.isnan(griffin_profile).all() and (not np.isfinite(griffin_mean) or griffin_mean > 0):
-            row["status"] = "griffin-undefined-profile"
-        elif count_mean == 0 and np.isfinite(griffin_profile).all():
-            row["status"] = "cfdnalab-zero-coverage"
-        elif count_mean < 0:
-            row["status"] = "cfdnalab-nonpositive-profile-mean"
-        elif count_mean > 0 and np.isnan(griffin_profile).all():
-            row["status"] = "griffin-zero-coverage"
-        elif np.isnan(griffin_profile).any() and not np.isnan(griffin_profile).all():
-            row["status"] = "griffin-undefined-positions"
-        if count_mean > 0 and np.isfinite(griffin_profile).all():
+        if row["status"] == "ok":
             normalized = (counts / count_mean)[saved_bins]
             difference = normalized - griffin_profile
-            row["status"] = "ok"
             row["pearson_r"] = pearson_correlation(normalized, griffin_profile)
             if row["pearson_r"] != "NA":
                 row["pearson_r_squared"] = checked_metric(

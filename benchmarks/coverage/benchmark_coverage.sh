@@ -185,7 +185,7 @@ cp "$BENCH_WORK/regions.bed" "$BENCH_RESULTS/regions.bed"
 
 # Autosomes use the BAM's own names. Snyder's reference can use 1..22, while
 # cfDNAlab defaults to chr1..chr22. The file's chromosome names remain unchanged
-autosomes=$(awk '$1 ~ /^(chr)?([1-9]|1[0-9]|2[0-2])$/ {print $1}' "$BENCH_WORK/chrom.sizes" | paste -sd, -)
+autosomes=$(autosome_sizes "$BENCH_WORK/chrom.sizes" | cut -f 1 | paste -sd, -)
 if [[ " ${methods[*]} " == *" cfdnalab-autosomes "* && -z "$autosomes" ]]; then
     echo "The BAM has no autosomes named chr1..chr22 or 1..22." >&2
     exit 1

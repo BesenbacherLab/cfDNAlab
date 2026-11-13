@@ -128,7 +128,7 @@ export MPLCONFIGDIR="$BENCH_WORK/matplotlib"
 unpack_environment "$BENCH_SAMTOOLS_ARCHIVE" "$BENCH_WORK/samtools-env"
 "$BENCH_WORK/samtools-env/bin/samtools" idxstats "$BENCH_WORK/sample.bam" |
     awk '$1 != "*" {print $1 "\t" $2}' > "$BENCH_WORK/chrom.sizes"
-autosomes=$(awk '$1 ~ /^(chr)?([1-9]|1[0-9]|2[0-2])$/ {print $1}' "$BENCH_WORK/chrom.sizes" | paste -sd, -)
+autosomes=$(autosome_sizes "$BENCH_WORK/chrom.sizes" | cut -f 1 | paste -sd, -)
 if [[ " ${methods[*]} " == *" cfdnalab-reference-autosomes "* && -z "$autosomes" ]]; then
     echo "The BAM has no autosomes named chr1..chr22 or 1..22." >&2
     exit 1
@@ -221,7 +221,7 @@ for method in "${methods[@]}"; do
         # same workflow still uses the allocated cores
         if [[ "$method" == freia && "${row[tool_exit_code]}" == 0 && -f "$output/filtered.bam" ]] &&
             (($(stat -c '%s' "$output/filtered.bam") > 8000 * 1024 * 1024)); then
-            row[tool_workers]=1
+            row[tool_threads]=1
         fi
         save_run_record
         # The first measured repetition's output is kept for concordance
