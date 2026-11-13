@@ -105,7 +105,10 @@ def read_griffin(path, width, bin_size):
         profile = pd.to_numeric(row[position_columns].replace("", np.nan)).to_numpy(
             dtype=float
         )
-        mean_per_site = float(row["mean_reads_per_bp_in_normalization_window"] or "nan")
+        # Pandas can parse this column as numeric. Zero is valid rounded density,
+        # so only an empty field represents missing metadata
+        mean_field = row["mean_reads_per_bp_in_normalization_window"]
+        mean_per_site = float("nan") if mean_field == "" else float(mean_field)
         if np.isinf(mean_per_site) or mean_per_site < 0:
             raise ValueError(f"Invalid Griffin mean-count metadata for {group}")
         if np.isinf(profile).any():
