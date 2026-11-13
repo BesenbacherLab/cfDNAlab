@@ -30,12 +30,14 @@ def load_profile(directory, motifs):
     every ACGT motif. Reject invalid labels/values and return normalized frequencies,
     native counted-end totals when available, and the native end selection.
     """
+    # The saved native file identifies the tool (see save_profile in ends/commands.sh)
     zarr_path = directory / "end_motifs.zarr"
     tsv_path = directory / "motifs.tsv"
     freia_path = directory / "left-motifs.pq"
     cfdnapro_path = directory / "cfdnapro-motifs.tsv"
     end_selection = "both"
     if zarr_path.is_dir():
+        # cfDNAlab: counts of both fragment ends, read with the cfdnalab package
         from cfdnalab import read_end_motifs
 
         result = read_end_motifs(zarr_path)
@@ -45,10 +47,13 @@ def load_profile(directory, motifs):
         entries = zip(table["motif"], table["count"])
         contains_counts = True
     elif tsv_path.is_file():
+        # FinaleToolkit: a headerless motif/frequency table for both ends. It has
+        # no raw counts, so its frequencies must already sum to 1
         with tsv_path.open() as source:
             entries = list(csv.reader(source, delimiter="\t"))
         contains_counts = False
     elif freia_path.is_file():
+        # FrEIA: the genome-level left-end table, with a row per motif and length
         table = pd.read_parquet(freia_path)
         required = {"Base", "Length", "CountLen", "WhichEnd", "Unit"}
         if not required.issubset(table.columns) or table.empty:
@@ -75,6 +80,7 @@ def load_profile(directory, motifs):
         contains_counts = True
         end_selection = "left"
     elif cfdnapro_path.is_file():
+        # cfDNAPro: callMotif()'s table of left-end motifs, with counts in column n
         with cfdnapro_path.open() as source:
             table = list(csv.DictReader(source, delimiter="\t"))
         entries = [(row["motif"], row["n"]) for row in table]

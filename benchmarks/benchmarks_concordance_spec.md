@@ -16,7 +16,7 @@ Calculated metrics must be finite and respect their mathematical bounds. Correla
 
 ## Coverage
 
-Sources: [runner](coverage/benchmark_coverage.sh), [comparator](coverage/compare_coverage.py), [operating notes](coverage/README.md).
+Sources: [runner](coverage/benchmark_coverage.sh), [commands](coverage/commands.sh), [comparator](coverage/compare_coverage.py), [operating notes](coverage/README.md).
 
 ### Methods
 
@@ -103,7 +103,7 @@ Regional read-depth inputs use cfDNAlab total_coverage, samtools bedcov's final 
 
 ## Fragment lengths
 
-Sources: [runner](lengths/benchmark_lengths.sh), [R call](lengths/cfdnapro_lengths.R), [comparator](lengths/compare_lengths.py), [definition notes](lengths/README.md).
+Sources: [runner](lengths/benchmark_lengths.sh), [commands](lengths/commands.sh), [R call](lengths/cfdnapro_lengths.R), [comparator](lengths/compare_lengths.py), [definition notes](lengths/README.md).
 
 | Method | Configuration |
 | --- | --- |
@@ -130,7 +130,7 @@ Zero totals retain raw-count results with normalized metrics `NA` and status `ze
 
 ## End motifs
 
-Sources: [runner](ends/benchmark_end_motifs.sh), [comparator](ends/compare_end_motifs.py), [native limitations](ends/README.md).
+Sources: [runner](ends/benchmark_end_motifs.sh), [commands](ends/commands.sh), [comparator](ends/compare_end_motifs.py), [native limitations](ends/README.md).
 
 cfDNAlab uses `ends --k-inside K --k-outside 0 --all-motifs` with requested filters:
 
@@ -169,7 +169,7 @@ All supported profiles are compared pairwise. Metrics are Pearson r, Spearman r 
 
 ## Midpoint profiles
 
-Sources: [runner](midpoints/benchmark_midpoints.sh), [comparator](midpoints/compare_midpoints.py), [workload notes](midpoints/README.md).
+Sources: [runner](midpoints/benchmark_midpoints.sh), [commands](midpoints/commands.sh), [comparator](midpoints/compare_midpoints.py), [workload notes](midpoints/README.md).
 
 Select `cfdnalab`, `cfdnalab-gc` and `griffin-gc` in separate jobs. Only the latter two form a timed comparison. Griffin's full workflow also writes the raw table used for uncorrected concordance. All midpoint jobs use MAPQ >=20, inclusive 100-200 bp fragments, supplied 9,990 bp windows and 15 bp bins. No extra site selection or proper-pair requirement is added. Site derivation is documented in [the command report](experiment_commands.md#site-preparation).
 

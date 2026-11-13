@@ -6,105 +6,95 @@
 #SBATCH --no-requeue
 
 # This job benchmarks global fragment length histograms
-# The submission launcher requests an exclusive node for full runs and allows shared pilots
+#
+# Submit from the repository root: bash benchmarks/submit_benchmark.sh lengths
+# The launcher requests an exclusive node for full runs and allows shared pilots
 # See README.md for installation, a concordance pilot and the full timing run
-# Every run is saved in timings.tsv, including warmups, with a profile per method
-# Inputs and programs are copied locally before warmups. Host caches are not evicted
+#
+# The job:
+#   1. Checks the settings
+#   2. Copies the BAM, index, R helper and selected tools to the compute node (untimed)
+#   3. Runs each method's warmups, then its measured repetitions. Every run is its own
+#      Slurm step, bound to BENCH_CORES physical cores. The commands are in commands.sh
+#   4. Makes Picard's filtered histogram for concordance (untimed)
+#   5. Compares the saved histograms with compare_lengths.py (untimed)
+# Results: timings.tsv (every run, including warmups), runs/<run_order>/ (each run's
+# command and logs), profiles/<method>/ (first measured output) and concordance.tsv
+# Host caches are not evicted
 
 set -euo pipefail
 export LC_ALL=C
-source "${SLURM_SUBMIT_DIR:?Submit from the repository root}/benchmarks/common.sh"
-BENCH_FEATURE=lengths
+# Slurm runs a copy of this script from elsewhere, so the repository is found
+# through the submission directory. Submit from the repository root
+benchmarks="${SLURM_SUBMIT_DIR:?Submit from the repository root}/benchmarks"
+source "$benchmarks/common.sh"
+source "$benchmarks/lengths/commands.sh"
 
-: "${SLURM_JOB_ID:?Submit with bash benchmarks/submit_benchmark.sh lengths}"
-: "${BENCH_BAM:?Set the prepared input BAM path}"
-# TMPDIR is supplied on the compute node when the batch job starts
-: "${TMPDIR:?The compute node must provide TMPDIR for node-local scratch}"
-: "${BENCH_RESULTS:?Set a new results directory}"
-BENCH_INDEX=${BENCH_INDEX:-${BENCH_BAM}.bai}
-: "${BENCH_CORES:?Set a single core budget for this job: 1, 4, 12 or 32}"
+# ---------------------------------------------------------------------------
+# 1. Settings
+# ---------------------------------------------------------------------------
+
 BENCH_WARMUPS=${BENCH_WARMUPS:-1}
 BENCH_REPETITIONS=${BENCH_REPETITIONS:-3}
-: "${BENCH_METHODS:?Set the methods for this job explicitly in BENCH_METHODS}"
 export BENCH_MIN_MAPQ=${BENCH_MIN_MAPQ:-30}
 export BENCH_MIN_LENGTH=${BENCH_MIN_LENGTH:-30}
 export BENCH_MAX_LENGTH=${BENCH_MAX_LENGTH:-1000}
-export BENCH_GENOME=${BENCH_GENOME:-hg38}
+BENCH_GENOME=${BENCH_GENOME:-hg38}
+BENCH_INDEX=${BENCH_INDEX:-${BENCH_BAM:-}.bai}
+check_job_settings lengths
+if [[ "$BENCH_INDEX" != *.bai ]]; then
+    echo "Supply a BAI index. FinaleToolkit requires one." >&2
+    exit 1
+fi
 
-benchmark_controls
-read -r -a methods_to_run <<< "$BENCH_METHODS"
-if [[ ${SLURM_JOB_NUM_NODES:-${SLURM_NNODES:-0}} != 1 || -e "$BENCH_RESULTS" ]]; then
-    echo "Use a single-node allocation and a new results directory." >&2
-    exit 1
-fi
-if [[ "$BENCH_INDEX" != *.bai || ${#methods_to_run[@]} == 0 ]]; then
-    echo "Supply a BAI index, at least a method and at least a core budget." >&2
-    exit 1
-fi
-for value in "$BENCH_WARMUPS" "$BENCH_REPETITIONS" "$BENCH_MIN_MAPQ" "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH"; do
-    if [[ ! "$value" =~ ^(0|[1-9][0-9]*)$ ]]; then
-        echo "Core counts, repetitions and filters must be integers: $value" >&2
-        exit 1
-    fi
-done
-if ((BENCH_REPETITIONS < 1 || BENCH_MIN_MAPQ > 255 || BENCH_MIN_LENGTH < 10 || BENCH_MAX_LENGTH < BENCH_MIN_LENGTH || BENCH_MAX_LENGTH > 50000)); then
-    echo "Use MAPQ 0-255, lengths within 10-50000 bp, and at least a measured repetition." >&2
-    exit 1
-fi
-if ((BENCH_CORES > ${SLURM_CPUS_PER_TASK:-0})); then
-    echo "Core budget $BENCH_CORES exceeds allocated CPUs: ${SLURM_CPUS_PER_TASK:-0}" >&2
-    exit 1
-fi
-for method in "${methods_to_run[@]}"; do
+# Check the method names and the tool paths they need
+needs_cfdna=false
+needs_cfdnapro=false
+needs_finale=false
+needs_picard=false
+for method in "${methods[@]}"; do
     case "$method" in
-        cfdnalab|cfdnalab-autosomes|cfdnalab-proper|cfdnapro|cfdnapro-outer-span|finaletoolkit|samtools|picard) ;;
+        cfdnalab|cfdnalab-autosomes|cfdnalab-proper) needs_cfdna=true ;;
+        cfdnapro|cfdnapro-outer-span) needs_cfdnapro=true ;;
+        finaletoolkit) needs_finale=true ;;
+        picard) needs_picard=true ;;
+        # samtools is always copied, because setup also uses it to read the BAM header
+        samtools) ;;
         *) echo "Unknown length benchmark method: $method" >&2; exit 1 ;;
     esac
 done
-
-run_cfdna=false
-run_finale=false
-run_cfdnapro=false
-run_picard=false
-for method in "${methods_to_run[@]}"; do
-    case "$method" in
-        cfdnalab*) run_cfdna=true ;;
-        finaletoolkit) run_finale=true ;;
-        cfdnapro*) run_cfdnapro=true ;;
-        picard) run_picard=true ;;
-    esac
-done
 : "${BENCH_SAMTOOLS_ARCHIVE:?Set the packed samtools environment for BAM header preparation}"
-if [[ "$run_cfdna" == true ]]; then : "${BENCH_CFDNA:?Set the cfDNAlab executable}"; fi
-if [[ "$run_finale" == true ]]; then : "${BENCH_FINALE_ARCHIVE:?Set the packed FinaleToolkit environment}"; fi
-if [[ "$run_cfdnapro" == true ]]; then : "${BENCH_CFDNAPRO_IMAGE:?Set the cfDNAPro image}"; fi
-if [[ "$run_picard" == true ]]; then : "${BENCH_PICARD_ARCHIVE:?Set the packed Picard environment}"; fi
+if [[ "$needs_cfdna" == true ]]; then : "${BENCH_CFDNA:?Set the cfDNAlab executable}"; fi
+if [[ "$needs_cfdnapro" == true ]]; then : "${BENCH_CFDNAPRO_IMAGE:?Set the cfDNAPro image}"; fi
+if [[ "$needs_finale" == true ]]; then : "${BENCH_FINALE_ARCHIVE:?Set the packed FinaleToolkit environment}"; fi
+if [[ "$needs_picard" == true ]]; then : "${BENCH_PICARD_ARCHIVE:?Set the packed Picard environment}"; fi
 
-# User setup: submit from the repository root so SLURM_SUBMIT_DIR locates the R helper
-# Slurm keeps its own copy of the job script away from that helper
-export BENCH_WORK BENCH_NODE BENCH_RESULTS BENCH_AUTOSOMES BENCH_APPTAINER
-export BENCH_CFDNA_VERSION BENCH_CFDNAPRO_VERSION BENCH_FINALE_VERSION BENCH_SAMTOOLS_VERSION BENCH_PICARD_VERSION
+# ---------------------------------------------------------------------------
+# 2. Copy inputs and tools to the compute node (untimed)
+# ---------------------------------------------------------------------------
+
 BENCH_WORK=$(mktemp -d "$TMPDIR/lengths-${SLURM_JOB_ID}.XXXXXX")
 trap 'rm -rf "$BENCH_WORK"' EXIT
 BENCH_NODE=$(hostname)
+export BENCH_WORK BENCH_NODE
 
-# Create result files before staging so setup failures leave an inspectable record
-mkdir -p "$BENCH_RESULTS/profiles"
-header=$'run_order\trepetition\twarmup\tmethod\ttool_version\tcores\ttool_threads'
-header+=$'\tmin_mapq\tmin_length\tmax_length\tscope\tlength_definition\tproper_pair'
-header+=$'\tnode\tcpu_model\tcpu_ids\tphysical_core_ids\tjob_id\tstep_id\tstarted_utc'
-header+=$'\twall_seconds\tuser_seconds\tsystem_seconds\tmax_rss_kib\ttool_exit_code'
-header+=$'\tflush_seconds\tprocess_plus_flush_seconds\toutput_bytes\tpilot\tstep_exit_code'
-printf '%s\n' "$header" > "$BENCH_RESULTS/timings.tsv"
-benchmark_progress "Initializing $BENCH_FEATURE benchmark on $BENCH_NODE"
-benchmark_record_setup
-if [[ "$run_cfdnapro" == true ]]; then
-    BENCH_APPTAINER=$(command -v apptainer) || { echo "cfDNAPro requires Apptainer." >&2; exit 1; }
-fi
+# Results are created before staging, so a setup failure leaves an inspectable record
+# The columns of timings.tsv are listed in commands.sh
+create_results_directory
+log_progress "Initializing lengths benchmark on $BENCH_NODE"
+record_job_setup lengths
+
 mkdir -p "$BENCH_WORK/bin" "$BENCH_WORK/tmp" "$BENCH_WORK/cache" "$BENCH_WORK/matplotlib"
-if [[ "$run_cfdna" == true ]]; then benchmark_stage_binary "$BENCH_CFDNA" cfdna; fi
-if [[ "$run_cfdnapro" == true ]]; then cp -L "$BENCH_CFDNAPRO_IMAGE" "$BENCH_WORK/cfdnapro.sif"; fi
-cp "$SLURM_SUBMIT_DIR/benchmarks/lengths/cfdnapro_lengths.R" "$BENCH_WORK/cfdnapro_lengths.R"
+if [[ "$needs_cfdna" == true ]]; then copy_executable "$BENCH_CFDNA" cfdna; fi
+if [[ "$needs_cfdnapro" == true ]]; then
+    apptainer=$(command -v apptainer) || { echo "cfDNAPro requires Apptainer." >&2; exit 1; }
+    cp -L "$BENCH_CFDNAPRO_IMAGE" "$BENCH_WORK/cfdnapro.sif"
+    # The container can only see files under $BENCH_WORK, mounted as /work
+    cp "$benchmarks/lengths/cfdnapro_lengths.R" "$BENCH_WORK/cfdnapro_lengths.R"
+fi
+if [[ "$needs_picard" == true ]]; then
+    cp "$benchmarks/lengths/picard_filtered_histogram.sh" "$BENCH_WORK/picard_filtered_histogram.sh"
+fi
 export TMPDIR="$BENCH_WORK/tmp" APPTAINER_TMPDIR="$BENCH_WORK/tmp"
 export XDG_CACHE_HOME="$BENCH_WORK/cache" MPLCONFIGDIR="$BENCH_WORK/matplotlib"
 # Python user packages and outside import paths are disabled so imports use
@@ -114,264 +104,119 @@ unset PYTHONPATH PYTHONHOME JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS
 # JAVA_HOME selects the Java copied with Picard, rather than another Java on the node
 export JAVA_HOME="$BENCH_WORK/picard-env"
 
-# Selected tools are copied, and samtools reads BAM chromosome names/lengths before timing
-benchmark_unpack "$BENCH_SAMTOOLS_ARCHIVE" "$BENCH_WORK/samtools-env"
-if [[ "$run_finale" == true ]]; then benchmark_unpack "$BENCH_FINALE_ARCHIVE" "$BENCH_WORK/finale-env"; fi
-if [[ "$run_picard" == true ]]; then benchmark_unpack "$BENCH_PICARD_ARCHIVE" "$BENCH_WORK/picard-env"; fi
-benchmark_progress "Checking tool versions"
+unpack_environment "$BENCH_SAMTOOLS_ARCHIVE" "$BENCH_WORK/samtools-env"
+if [[ "$needs_finale" == true ]]; then unpack_environment "$BENCH_FINALE_ARCHIVE" "$BENCH_WORK/finale-env"; fi
+if [[ "$needs_picard" == true ]]; then unpack_environment "$BENCH_PICARD_ARCHIVE" "$BENCH_WORK/picard-env"; fi
+
+# Tool paths, as used by commands.sh and experiment_commands.md
+cfdna="$BENCH_WORK/bin/cfdna"
+samtools="$BENCH_WORK/samtools-env/bin/samtools"
 # A packed Python launcher can use env python3.11, which searches the node's PATH
-# FinaleToolkit uses its own Python explicitly here and in the timed command
-if [[ "$run_cfdna" == true ]]; then BENCH_CFDNA_VERSION=$("$BENCH_WORK/bin/cfdna" --version | tr '\t\n' '  '); fi
-if [[ "$run_finale" == true ]]; then
-    BENCH_FINALE_VERSION=$("$BENCH_WORK/finale-env/bin/python" "$BENCH_WORK/finale-env/bin/finaletoolkit" --version | tr '\t\n' '  ')
-    BENCH_FINALE_VERSION+=" commit:$(cat "$BENCH_WORK/finale-env/share/finaletoolkit/revision.txt")"
+# FinaleToolkit therefore runs with its own Python, here and in the timed command
+finale_python="$BENCH_WORK/finale-env/bin/python"
+finale="$BENCH_WORK/finale-env/bin/finaletoolkit"
+picard="$BENCH_WORK/picard-env/bin/picard"
+cfdnapro_image="$BENCH_WORK/cfdnapro.sif"
+
+# Versions are checked before the large BAM is copied, so a broken tool fails early
+# Tabs and newlines become spaces, so each version fits in a timings.tsv cell
+log_progress "Checking tool versions"
+cfdna_version=NA
+finale_version=NA
+picard_version=NA
+cfdnapro_version=NA
+if [[ "$needs_cfdna" == true ]]; then cfdna_version=$("$cfdna" --version | tr '\t\n' '  '); fi
+if [[ "$needs_finale" == true ]]; then
+    finale_version=$("$finale_python" "$finale" --version | tr '\t\n' '  ')
+    finale_version+=" commit:$(cat "$BENCH_WORK/finale-env/share/finaletoolkit/revision.txt")"
 fi
-BENCH_SAMTOOLS_VERSION=$("$BENCH_WORK/samtools-env/bin/samtools" --version-only | tr '\t\n' '  ')
-if [[ "$run_picard" == true ]]; then BENCH_PICARD_VERSION=$(benchmark_picard_version "$BENCH_WORK/picard-env/bin/picard"); fi
-if [[ "$run_cfdnapro" == true ]]; then
-    BENCH_CFDNAPRO_VERSION=$("$BENCH_APPTAINER" exec --cleanenv --containall "$BENCH_WORK/cfdnapro.sif" Rscript --vanilla -e 'cat(as.character(packageVersion("cfDNAPro")))')
-    image_hash=$(sha256sum "$BENCH_WORK/cfdnapro.sif" | cut -d ' ' -f 1)
-    BENCH_CFDNAPRO_VERSION+=" image-sha256:$image_hash"
+samtools_version=$("$samtools" --version-only | tr '\t\n' '  ')
+if [[ "$needs_picard" == true ]]; then picard_version=$(benchmark_picard_version "$picard"); fi
+if [[ "$needs_cfdnapro" == true ]]; then
+    cfdnapro_version=$("$apptainer" exec --cleanenv --containall "$cfdnapro_image" Rscript --vanilla -e 'cat(as.character(packageVersion("cfDNAPro")))')
+    cfdnapro_version+=" image-sha256:$(sha256sum "$cfdnapro_image" | cut -d ' ' -f 1)"
 fi
 
-benchmark_progress "Copying BAM and index to node-local scratch"
+log_progress "Copying BAM and index to node-local scratch"
 cp -L "$BENCH_BAM" "$BENCH_WORK/sample.bam"
 cp -L "$BENCH_INDEX" "$BENCH_WORK/sample.bam.bai"
-"$BENCH_WORK/samtools-env/bin/samtools" idxstats "$BENCH_WORK/sample.bam" |
+# The BAM's contig names and lengths come from its index. The unmapped '*' row is skipped
+"$samtools" idxstats "$BENCH_WORK/sample.bam" |
     awk '$1 != "*" {print $1 "\t" $2}' > "$BENCH_WORK/chrom.sizes"
-BENCH_AUTOSOMES=$(awk '$1 ~ /^(chr)?([1-9]|1[0-9]|2[0-2])$/ {print $1}' "$BENCH_WORK/chrom.sizes" | paste -sd, -)
-if [[ " $BENCH_METHODS " == *" cfdnalab-autosomes "* && -z "$BENCH_AUTOSOMES" ]]; then echo "No autosomes in BAM." >&2; exit 1; fi
+# Autosomes use the BAM's own names, chr1..chr22 or 1..22
+autosomes=$(awk '$1 ~ /^(chr)?([1-9]|1[0-9]|2[0-2])$/ {print $1}' "$BENCH_WORK/chrom.sizes" | paste -sd, -)
+if [[ " ${methods[*]} " == *" cfdnalab-autosomes "* && -z "$autosomes" ]]; then
+    echo "The BAM has no autosomes named chr1..chr22 or 1..22." >&2
+    exit 1
+fi
 
-# The BAM and programs are ready on the compute node. Preparation time above
-# is excluded from tool timings. The script now lists each method's warmup and measurements
-# srun starts a separate program for each run. After it finishes, this main script
-# saves that run's results. common.sh explains the files used to pass them back
-# Staged files finish writing before warmups. This does not evict the page cache
+# The remaining names used by commands.sh
+cores=$BENCH_CORES
+bam="$BENCH_WORK/sample.bam"
+output="$BENCH_WORK/output"
+min_mapq=$BENCH_MIN_MAPQ
+min_length=$BENCH_MIN_LENGTH
+max_length=$BENCH_MAX_LENGTH
+length_end=$((max_length + 1))
+genome=$BENCH_GENOME
+
+# Staged files finish writing before the first run. This does not evict the page cache
 sync -f "$BENCH_WORK"
-benchmark_progress "Setup complete. Starting warmups and measurements"
-benchmark_schedule > "$BENCH_WORK/order.tsv"
-if [[ ! -s "$BENCH_WORK/order.tsv" ]]; then echo "The requested run matrix is empty." >&2; exit 1; fi
+log_progress "Setup complete. Starting warmups and measurements"
+
+# ---------------------------------------------------------------------------
+# 3. Warmups and measured repetitions
+# ---------------------------------------------------------------------------
+
+# Each method runs as a block: its warmups first, then its measured repetitions
+# A failed run is recorded, the method's remaining repetitions are skipped and the
+# next method starts. The job then exits with status 1 at the end
 run_order=0
 job_exit_code=0
-failed_method=
-while IFS=$'\t' read -r method cores repetition is_warmup; do
-    if [[ "$method" == "$failed_method" ]]; then continue; fi
-    run_order=$((run_order + 1))
-    benchmark_progress "Starting run $run_order: $method, repetition $repetition (warmup=$is_warmup)"
-    step_exit_code=0
-    # Old timings and output paths are removed before each run. If this run fails
-    # before writing its own files, it cannot accidentally reuse the preceding results
-    rm -f "$BENCH_WORK/time.tsv" "$BENCH_WORK/io.tsv" "$BENCH_WORK/profile.path" "$BENCH_WORK/step.id" "$BENCH_WORK/stdout.path"
-
-    # srun starts the next run on the reserved node with the requested cores. The code between
-    # <<'STEP' and the closing STEP line does this run's work, then this main script
-    # resumes and saves its results. Quoting STEP delays variable expansion until
-    # that program starts. --export=ALL passes paths/settings and the arguments
-    # identify the run. Results come back in files under BENCH_WORK
-    # The code below checks the assigned CPUs because enforcement depends on cluster settings
-    # srun's exit code is saved so a failure can be recorded before another method is tried
-    srun --jobid="$SLURM_JOB_ID" --exact --nodes=1 --ntasks=1 \
-        --cpus-per-task="$cores" --threads-per-core=1 --cpu-bind=threads \
-        --export=ALL bash -s -- "$run_order" "$repetition" "$is_warmup" "$method" "$cores" \
-        <<'STEP' || step_exit_code=$?
-set -euo pipefail
-source "$BENCH_WORK/common.sh"
-printf '%s\n' "$SLURM_STEP_ID" > "$BENCH_WORK/step.id"
-run_order=$1
-repetition=$2
-is_warmup=$3
-method=$4
-cores=$5
-
-# Each tool's thread option receives the allocated core count when it has that option
-# A tool without such an option still runs on the same requested number of cores
-
-node=$(hostname)
-cpu_model=$(awk -F ': ' '/^model name/ {print $2; exit}' /proc/cpuinfo)
-cpu_ids=$(awk '/Cpus_allowed_list/ {print $2}' /proc/self/status)
-started_utc=$(date -u +%FT%TZ)
-physical_cores=()
-# Hyperthreading can give a physical core two CPU IDs. The script looks up
-# the actual core behind each allowed ID to verify the requested core count
-# Core numbers can repeat across CPU chips, so chip (socket) and core number
-# together identify a core
-for cpu_range in ${cpu_ids//,/ }; do
-    first_cpu=${cpu_range%-*}
-    last_cpu=${cpu_range#*-}
-    for ((cpu_id=first_cpu; cpu_id<=last_cpu; cpu_id++)); do
-        topology="/sys/devices/system/cpu/cpu${cpu_id}/topology"
-        socket_id=$(cat "$topology/physical_package_id")
-        core_id=$(cat "$topology/core_id")
-        physical_cores+=("$socket_id:$core_id")
+for method in "${methods[@]}"; do
+    for ((repetition = 1; repetition <= BENCH_WARMUPS + BENCH_REPETITIONS; repetition++)); do
+        prepare_command "$method"
+        run_in_slurm_step "$method" "$repetition"
+        save_run_record
+        # The first measured repetition's output is kept for concordance
+        if ((step_exit_code == 0 && repetition == BENCH_WARMUPS + 1)); then
+            save_profile "$method"
+        fi
+        clear_run_output
+        if ((step_exit_code != 0)); then
+            echo "Skipping the remaining repetitions of $method and continuing with the other methods." >&2
+            job_exit_code=1
+            break
+        fi
     done
 done
-physical_core_ids=$(printf '%s\n' "${physical_cores[@]}" | sort -u | paste -sd, -)
-physical_core_count=$(printf '%s\n' "${physical_cores[@]}" | sort -u | wc -l)
 
-mkdir -p "$BENCH_WORK/output"
-profile="$BENCH_WORK/output/lengths.tsv"
-scope=all
-length_definition=abs-TLEN
-proper_pair=not-required
-tool_threads=NA
-effective_min_mapq=$BENCH_MIN_MAPQ
-case "$method" in
-    cfdnalab|cfdnalab-autosomes|cfdnalab-proper)
-        tool_version=$BENCH_CFDNA_VERSION
-        tool_threads=$cores
-        length_definition=directional-aligned-span
-        command=("$BENCH_WORK/bin/cfdna" lengths
-            --bam "$BENCH_WORK/sample.bam" --output-dir "$BENCH_WORK/output"
-            --length-bins "$BENCH_MIN_LENGTH:$((BENCH_MAX_LENGTH + 1)):1"
-            --indel-mode ignore --clip-mode aligned --min-mapq "$BENCH_MIN_MAPQ"
-            --n-threads "$cores")
-        if [[ "$method" == cfdnalab-autosomes ]]; then
-            scope=autosomes
-            command+=(--chromosomes "$BENCH_AUTOSOMES")
-        else
-            command+=(--chromosomes all)
-        fi
-        if [[ "$method" == cfdnalab-proper ]]; then
-            proper_pair=required
-            command+=(--require-proper-pair)
-        fi
-        profile="$BENCH_WORK/output/length_counts.tsv.zst"
-        ;;
-    cfdnapro|cfdnapro-outer-span)
-        tool_version=$BENCH_CFDNAPRO_VERSION
-        length_definition=directional-aligned-span
-        curate=TRUE
-        if [[ "$method" == cfdnapro-outer-span ]]; then
-            length_definition=outer-aligned-span
-            curate=FALSE
-        fi
-        # The image contains R, cfDNAPro and the authors' reference packages
-        # Containment and --vanilla avoid reading home-directory R settings
-        # cfDNAPro has no native thread option for this calculation
-        command=("$BENCH_APPTAINER" exec --cleanenv --containall
-            --bind "$BENCH_WORK:/work" --pwd /work
-            "$BENCH_WORK/cfdnapro.sif" Rscript --vanilla /work/cfdnapro_lengths.R
-            /work/sample.bam /work/output/lengths.tsv "$BENCH_MIN_LENGTH"
-            "$BENCH_MAX_LENGTH" "$BENCH_MIN_MAPQ" "$BENCH_GENOME" "$curate")
-        ;;
-    finaletoolkit)
-        tool_version=$BENCH_FINALE_VERSION
-        proper_pair=required
-        command=("$BENCH_WORK/finale-env/bin/python" "$BENCH_WORK/finale-env/bin/finaletoolkit" frag-length-bins
-            "$BENCH_WORK/sample.bam" --bin-size 1 --min-length "$BENCH_MIN_LENGTH"
-            --max-length "$BENCH_MAX_LENGTH" --min-mapq "$BENCH_MIN_MAPQ" --output "$profile")
-        ;;
-    samtools)
-        tool_version=$BENCH_SAMTOOLS_VERSION
-        # -@ receives the allocated core count and controls additional decoding threads
-        # The HTSlib input filter applies MAPQ without an extra BAM/filtering pass
-        # -m 1 prevents tail truncation. The final bin collects overflow and is placed
-        # above our range. The comparator selects inward pairs after timing
-        tool_threads=$cores
-        profile="$BENCH_WORK/output/stats.txt"
-        command=("$BENCH_WORK/samtools-env/bin/samtools" stats -@ "$tool_threads"
-            --input-fmt-option "filter=mapq >= $BENCH_MIN_MAPQ"
-            -f 1 -F 3852 -m 1 -i "$((BENCH_MAX_LENGTH + 1))" "$BENCH_WORK/sample.bam")
-        ;;
-    picard)
-        tool_version=$BENCH_PICARD_VERSION
-        effective_min_mapq=NA
-        profile="$BENCH_WORK/output/metrics.txt"
-        # Time Picard's documented standalone call with its recommended 2 GB heap
-        # It has no MAPQ option, so this timed output keeps low-MAPQ and QC-fail pairs
-        # Explicit width prevents tail truncation. The optional PDF is not produced
-        # A separate untimed filtered run supplies the concordance histogram below
-        command=("$BENCH_WORK/picard-env/bin/picard" -Xmx2g CollectInsertSizeMetrics
-            "I=$BENCH_WORK/sample.bam" "O=$profile" "HISTOGRAM_WIDTH=$BENCH_MAX_LENGTH"
-            "TMP_DIR=$BENCH_WORK/tmp")
-        ;;
-esac
+# ---------------------------------------------------------------------------
+# 4. Filtered Picard histogram for concordance (untimed)
+# ---------------------------------------------------------------------------
 
-# Twenty identifying fields precede four GNU time values and the native status
-printf -v prefix '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
-    "$run_order" "$repetition" "$is_warmup" "$method" "$tool_version" "$cores" "$tool_threads" \
-    "$effective_min_mapq" "$BENCH_MIN_LENGTH" "$BENCH_MAX_LENGTH" "$scope" "$length_definition" \
-    "$proper_pair" "$node" "$cpu_model" "$cpu_ids" "$physical_core_ids" "$SLURM_JOB_ID" "$SLURM_STEP_ID" "$started_utc"
-logical_cpu_count=$(env -u OMP_NUM_THREADS -u OMP_THREAD_LIMIT nproc)
-if [[ "$node" != "$BENCH_NODE" ]] || ((logical_cpu_count != cores || physical_core_count != cores)); then
-    printf '%s\tNA\tNA\tNA\tNA\t1\n' "$prefix" > "$BENCH_WORK/time.tsv"
-    echo "Unexpected placement: node=$node, CPUs=$cpu_ids, physical cores=$physical_core_ids" >&2
-    exit 1
-fi
-
-# samtools prints its full native report to stdout. The other commands write
-# their profiles directly. Success logs are temporary, and failure messages are printed
-tool_stdout="$BENCH_WORK/tool.log"
-if [[ "$method" == samtools ]]; then tool_stdout=$profile; fi
-tool_exit_code=0
-benchmark_time_command "$prefix" "$BENCH_WORK/output" \
-    "$tool_stdout" "$BENCH_WORK/tool-error.log" "${command[@]}" || tool_exit_code=$?
-if ((tool_exit_code != 0)); then
-    cat "$BENCH_WORK/tool-error.log" "$tool_stdout" >&2
-    exit "$tool_exit_code"
-fi
-if [[ ! -s "$profile" ]]; then
-    cat "$BENCH_WORK/tool-error.log" "$tool_stdout" >&2
-    echo "The expected length profile is missing or empty: $profile" >&2
-    exit 1
-fi
-printf '%s\n' "$profile" > "$BENCH_WORK/profile.path"
-STEP
-
-    # A run that failed before timing still gets a row naming the attempted
-    # method and repetition. Unknown measurements are recorded as NA
-    # Column numbers below start at 0 and must match the timing-table header above
-    # benchmark_finish_run adds disk-write measurements and the srun exit code
-    if [[ ! -s "$BENCH_WORK/time.tsv" ]]; then
-        fallback=()
-        for ((column=1; column<=25; column++)); do fallback+=(NA); done
-        fallback[0]=$run_order
-        fallback[1]=$repetition
-        fallback[2]=$is_warmup
-        fallback[3]=$method
-        fallback[5]=$cores
-        fallback[17]=$SLURM_JOB_ID
-        if [[ -s "$BENCH_WORK/step.id" ]]; then fallback[18]=$(cat "$BENCH_WORK/step.id"); fi
-        (IFS=$'\t'; printf '%s\n' "${fallback[*]}") > "$BENCH_WORK/time.tsv"
-    fi
-    # benchmark_finish_run saves the timing row and useful output before cleanup
-    # It is called on its own line so Bash stops the job if saving fails
-    # A tool failure is recorded first and then handled by the following if block
-    benchmark_finish_run "$method" "$repetition" "$is_warmup" "$step_exit_code"
-    if ((step_exit_code != 0)); then
-        # All repetitions of this method are listed together. After failure, its
-        # remaining runs are skipped until the next method name is reached
-        failed_method=$method
-        job_exit_code=1
-        echo "Skipping remaining repetitions of $method after failure; continuing other selected methods." >&2
-    fi
-done < "$BENCH_WORK/order.tsv"
-
-# Picard's timing uses its native selection. Only concordance needs the common
-# MAPQ/flag filter, so run this extra pipeline once after all timed measurements
-# A failure here preserves completed timing rows and the timed native histogram
+# Picard's timed run keeps all MAPQs. Concordance needs the shared MAPQ and flag
+# filters, so a filtered run is made once here, in its own Slurm step with the same
+# CPU binding. It adds job time but no timing row. A failure keeps the completed
+# timings and the timed Picard histogram
 if [[ -s "$BENCH_RESULTS/profiles/picard/metrics.txt" ]]; then
-    benchmark_progress "Generating the untimed filtered Picard concordance histogram"
+    log_progress "Generating the untimed filtered Picard concordance histogram"
     if ! srun --jobid="$SLURM_JOB_ID" --exact --nodes=1 --ntasks=1 \
-        --cpus-per-task="$BENCH_CORES" --threads-per-core=1 --cpu-bind=threads \
-        --export=ALL bash -s -- "$BENCH_CORES" <<'PICARD_CONCORDANCE'
-set -euo pipefail
-cores=$1
-"$BENCH_WORK/samtools-env/bin/samtools" view -@ "$cores" -u -q "$BENCH_MIN_MAPQ" -f 1 -F 3852 "$BENCH_WORK/sample.bam" |
-    "$BENCH_WORK/picard-env/bin/picard" -Xmx2g CollectInsertSizeMetrics \
-        I=/dev/stdin "O=$BENCH_RESULTS/profiles/picard/concordance.metrics.txt" \
-        "HISTOGRAM_WIDTH=$BENCH_MAX_LENGTH" "TMP_DIR=$BENCH_WORK/tmp"
-PICARD_CONCORDANCE
-    then
+        --cpus-per-task="$cores" --threads-per-core=1 --cpu-bind=threads \
+        --export=ALL bash "$BENCH_WORK/picard_filtered_histogram.sh" "$cores" \
+        "$BENCH_RESULTS/profiles/picard/concordance.metrics.txt"; then
         echo "Untimed Picard concordance failed. Completed timing results are retained." >&2
         rm -f "$BENCH_RESULTS/profiles/picard/concordance.metrics.txt"
         exit 1
     fi
 fi
 
-# Concordance uses this job's length bounds after all measurements have finished
-benchmark_compare_results "$SLURM_SUBMIT_DIR/benchmarks/lengths/compare_lengths.py" \
-    --min-length "$BENCH_MIN_LENGTH" --max-length "$BENCH_MAX_LENGTH"
+# ---------------------------------------------------------------------------
+# 5. Concordance (untimed)
+# ---------------------------------------------------------------------------
+
+compare_saved_profiles "$benchmarks/lengths/compare_lengths.py" \
+    --min-length "$min_length" --max-length "$max_length"
 
 # The job reports failure if any method failed, while keeping completed results
 exit "$job_exit_code"

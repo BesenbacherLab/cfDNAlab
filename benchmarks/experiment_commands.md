@@ -1,6 +1,6 @@
 # Benchmark experiment commands
 
-Each measured repetition runs the native commands below on the same staged BAM. Commands are shown once, with variables for the allocated cores, paths and experimental settings. Executable aliases resolve to the staged paths used by the runners. Shell argument arrays are written as ordinary command lines, and timed shell pipelines are expanded into their constituent commands.
+Each measured repetition runs the native commands below on the same staged BAM. Commands are shown once, with variables for the allocated cores, paths and experimental settings. Executable aliases resolve to the staged paths used by the runners. Shell argument arrays are written as ordinary command lines, and timed shell pipelines are expanded into their constituent commands. The executable definitions are in each feature's `commands.sh` ([coverage](coverage/commands.sh), [lengths](lengths/commands.sh), [end motifs](ends/commands.sh), [midpoints](midpoints/commands.sh)), which uses the same variable names. Every repetition runs its command through [measure_command.sh](measure_command.sh) in its own Slurm step, and `runs/<run_order>/command.sh` in the results records the exact command.
 
 The configurations describe the current runners. For an existing result, `run.tsv` identifies the benchmark revision and `timings.tsv` records the tool version, filters and core allocation. Installation and cfDNAlab build records identify the installed tools independently of the benchmark revision.
 
@@ -25,9 +25,10 @@ length_end=$((max_length + 1))
 
 bam="$BENCH_WORK/sample.bam"
 output="$BENCH_WORK/output"
-coverage_output="$BENCH_WORK/coverage"
 regions="$BENCH_WORK/regions.bed"
 reference_2bit="$BENCH_WORK/reference.2bit"
+genome=$BENCH_GENOME
+autosomes=...  # Comma-separated BAM contigs named chr1..chr22 or 1..22
 
 cfdna="$BENCH_WORK/bin/cfdna"
 mosdepth="$BENCH_WORK/bin/mosdepth"
@@ -37,9 +38,10 @@ finale_python="$BENCH_WORK/finale-env/bin/python"
 finale="$BENCH_WORK/finale-env/bin/finaletoolkit"
 picard="$BENCH_WORK/picard-env/bin/picard"
 cfdnapro_image="$BENCH_WORK/cfdnapro.sif"
+apptainer=$(command -v apptainer)
 ```
 
-`BENCH_WORK` is the job's temporary directory under the compute node's `$TMPDIR`. The runners copy the BAM, index, selected tools and required references there before timing. `output` and `coverage_output` are recreated between repetitions. Container paths under `/work` refer to the same directory through an Apptainer bind mount.
+`BENCH_WORK` is the job's temporary directory under the compute node's `$TMPDIR`. The runners copy the BAM, index, selected tools and required references there before timing. `output` is created empty for every repetition. Container paths under `/work` refer to the same directory through an Apptainer bind mount.
 
 Every available native thread/core/worker option receives `cores` directly. Commands without a native thread option still run within the allocated CPU set. This also applies to samtools inside the Picard and FrEIA pipelines.
 
@@ -63,7 +65,7 @@ The [coverage runner](coverage/benchmark_coverage.sh) contains three comparisons
 
 ```bash
 "$cfdna" fcoverage \
-    --bam "$bam" --output-dir "$coverage_output" \
+    --bam "$bam" --output-dir "$output" \
     --min-mapq "$min_mapq" \
     --min-fragment-length "$min_length" --max-fragment-length "$max_length" \
     --n-threads "$cores" --chromosomes all --ignore-gap
@@ -75,7 +77,7 @@ The [coverage runner](coverage/benchmark_coverage.sh) contains three comparisons
 "$mosdepth" --threads "$cores" \
     --include-flag 1 --flag 3852 --mapq "$min_mapq" \
     --min-frag-len "$min_length" --max-frag-len "$max_length" \
-    "$coverage_output/coverage" "$bam"
+    "$output/coverage" "$bam"
 ```
 
 **samtools, method `samtools-depth`:**
@@ -84,7 +86,7 @@ The [coverage runner](coverage/benchmark_coverage.sh) contains three comparisons
 "$samtools" depth -@ "$cores" \
     --input-fmt-option "filter=(tlen >= $min_length && tlen <= $max_length) || (tlen <= -$min_length && tlen >= -$max_length)" \
     -s -q 0 -Q "$min_mapq" -G 3852 --require-flags 1 \
-    -o "$coverage_output/samtools.depth.tsv" "$bam"
+    -o "$output/samtools.depth.tsv" "$bam"
 ```
 
 Here `-q 0` is the base-quality threshold and `-Q` is MAPQ. `-s` removes mate overlap. Native sparse output omits zero-depth positions, which the comparator treats as zero. samtools' global HTSlib input expression applies inclusive absolute TLEN bounds to both signs during BAM reading.
@@ -92,7 +94,7 @@ Here `-q 0` is the base-quality threshold and `-Q` is MAPQ. `-s` removes mate ov
 **PanDepth, method `pandepth`:**
 
 ```bash
-"$pandepth" -i "$bam" -o "$coverage_output/pandepth" \
+"$pandepth" -i "$bam" -o "$output/pandepth" \
     -q "$min_mapq" -x 3852 -t "$cores" -a
 ```
 
@@ -104,7 +106,7 @@ PanDepth counts overlapping mates twice and has no fragment length filter. cfDNA
 
 ```bash
 "$cfdna" fcoverage \
-    --bam "$bam" --output-dir "$coverage_output" \
+    --bam "$bam" --output-dir "$output" \
     --min-mapq "$min_mapq" \
     --min-fragment-length "$min_length" --max-fragment-length "$max_length" \
     --n-threads "$cores" --chromosomes all
@@ -116,7 +118,7 @@ PanDepth counts overlapping mates twice and has no fragment length filter. cfDNA
 "$mosdepth" --threads "$cores" \
     --include-flag 1 --flag 3852 --mapq "$min_mapq" \
     --min-frag-len "$min_length" --max-frag-len "$max_length" \
-    --fragment-mode "$coverage_output/coverage" "$bam"
+    --fragment-mode "$output/coverage" "$bam"
 ```
 
 Both include the inter-mate gap. mosdepth fragment mode requires proper pairs and fills the complete TLEN span. cfDNAlab uses directional paired spans and excludes D/N positions unsupported by the other mate.
@@ -146,7 +148,7 @@ These four methods measure summed read depth, or covered-base totals, in each 50
 
 ```bash
 "$cfdna" fcoverage \
-    --bam "$bam" --output-dir "$coverage_output" \
+    --bam "$bam" --output-dir "$output" \
     --min-mapq "$min_mapq" \
     --min-fragment-length "$min_length" --max-fragment-length "$max_length" \
     --n-threads "$cores" --chromosomes all --ignore-gap \
@@ -156,10 +158,10 @@ These four methods measure summed read depth, or covered-base totals, in each 50
 **mosdepth, method `mosdepth-regions`:**
 
 ```bash
-MOSDEPTH_PRECISION=5 "$mosdepth" --threads "$cores" \
+env MOSDEPTH_PRECISION=5 "$mosdepth" --threads "$cores" \
     --include-flag 1 --flag 3852 --mapq "$min_mapq" \
     --min-frag-len "$min_length" --max-frag-len "$max_length" \
-    --by 500000 --no-per-base "$coverage_output/coverage" "$bam"
+    --by 500000 --no-per-base "$output/coverage" "$bam"
 ```
 
 **samtools, method `samtools-regions`:**
@@ -168,13 +170,13 @@ MOSDEPTH_PRECISION=5 "$mosdepth" --threads "$cores" \
 "$samtools" bedcov \
     --input-fmt-option "filter=flag.paired && ((tlen >= $min_length && tlen <= $max_length) || (tlen <= -$min_length && tlen >= -$max_length))" \
     -j -Q "$min_mapq" -G 3852 "$regions" "$bam" \
-    > "$coverage_output/samtools.bedcov.tsv"
+    > "$output/samtools.bedcov.tsv"
 ```
 
 **PanDepth, method `pandepth-regions`:**
 
 ```bash
-"$pandepth" -i "$bam" -o "$coverage_output/pandepth" \
+"$pandepth" -i "$bam" -o "$output/pandepth" \
     -q "$min_mapq" -x 3852 -t "$cores" \
     -w 500000
 ```
@@ -187,7 +189,7 @@ These commands write regional output directly. mosdepth uses its documented `MOS
 
 ```bash
 "$cfdna" fcoverage \
-    --bam "$bam" --output-dir "$coverage_output" \
+    --bam "$bam" --output-dir "$output" \
     --chromosomes all --by-size 500000 --per-window total --normalize-by-length \
     --min-fragment-length "$min_length" --max-fragment-length "$max_length" \
     --min-mapq "$min_mapq" --n-threads "$cores"
@@ -197,7 +199,7 @@ These commands write regional output directly. mosdepth uses its documented `MOS
 
 ```bash
 "$finale_python" "$finale" coverage "$bam" "$regions" \
-    --output "$coverage_output/finaletoolkit.coverage.bed.gz" \
+    --output "$output/finaletoolkit.coverage.bed.gz" \
     --min-length "$min_length" --max-length "$max_length" \
     --min-mapq "$min_mapq" --threads "$cores"
 ```
@@ -208,11 +210,11 @@ cfDNAlab gives each fragment total weight 1 before output rounding, split across
 
 | Method | Exact change to the corresponding call above |
 | --- | --- |
-| `cfdnalab-autosomes` | Read-depth call, replacing `--chromosomes all` with `--chromosomes "$BENCH_AUTOSOMES"` |
+| `cfdnalab-autosomes` | Read-depth call, replacing `--chromosomes all` with `--chromosomes "$autosomes"` |
 | `cfdnalab-fragment-proper` | Fragment-coverage call plus `--require-proper-pair` |
 | `cfdnalab-region-counts-proper` | Normalized regional-count call plus `--require-proper-pair` |
 
-`BENCH_AUTOSOMES` is the comma-separated set of BAM contigs named `chr1` through `chr22`, or `1` through `22`.
+`autosomes` is the comma-separated set of BAM contigs named `chr1` through `chr22`, or `1` through `22`.
 
 ## Fragment lengths
 
@@ -234,11 +236,11 @@ Method `cfdnalab`:
 Method `cfdnapro`, with the final argument selecting native coordinate curation:
 
 ```bash
-"$BENCH_APPTAINER" exec --cleanenv --containall \
+"$apptainer" exec --cleanenv --containall \
     --bind "$BENCH_WORK:/work" --pwd /work \
     "$cfdnapro_image" Rscript --vanilla /work/cfdnapro_lengths.R \
     /work/sample.bam /work/output/lengths.tsv \
-    "$min_length" "$max_length" "$min_mapq" "$BENCH_GENOME" TRUE
+    "$min_length" "$max_length" "$min_mapq" "$genome" TRUE
 ```
 
 The native R calculation is shown under [cfDNAPro BAM reading and calculations](#cfdnapro-bam-reading-and-calculations). This function has no native thread option. The allocated CPU set still applies to the complete container/R process.
@@ -279,7 +281,7 @@ Method `picard` times the standalone native command:
 
 Picard has no MAPQ option, so this timed call retains low-MAPQ and QC-fail pairs. Its timing rows record `min_mapq=NA`. The 2 GB heap is Picard's documented recommendation. No PDF is requested because picard-slim lacks R, while cfDNAlab's default plot stays timed.
 
-Once after all timed measurements, the following untimed pipeline supplies the common-filter concordance histogram. It adds job wall time and has no benchmark timing row:
+Once after all timed measurements, the following untimed pipeline in [picard_filtered_histogram.sh](lengths/picard_filtered_histogram.sh) supplies the common-filter concordance histogram. It runs in its own Slurm step with the same CPU binding, adds job wall time and has no benchmark timing row:
 
 ```bash
 "$samtools" view -@ "$cores" -u -q "$min_mapq" -f 1 -F 3852 "$bam" |
@@ -294,7 +296,7 @@ The comparator reads only `concordance.metrics.txt`, selects the all-reads FR hi
 
 | Method | Exact change |
 | --- | --- |
-| `cfdnalab-autosomes` | cfDNAlab call with `--chromosomes "$BENCH_AUTOSOMES"` instead of `all` |
+| `cfdnalab-autosomes` | cfDNAlab call with `--chromosomes "$autosomes"` instead of `all` |
 | `cfdnalab-proper` | cfDNAlab all-contig call plus `--require-proper-pair` |
 | `cfdnapro-outer-span` | cfDNAPro container call with its final argument changed from `TRUE` to `FALSE` |
 
@@ -350,11 +352,11 @@ FinaleToolkit uses the upstream merge commit `d16632ec5ae8999e774234457f6b0f9405
 Method `cfdnapro`:
 
 ```bash
-"$BENCH_APPTAINER" exec --cleanenv --containall \
+"$apptainer" exec --cleanenv --containall \
     --bind "$BENCH_WORK:/work" --pwd /work \
     "$cfdnapro_image" Rscript --vanilla /work/cfdnapro_end_motifs.R \
     /work/sample.bam /work/output \
-    "$min_length" "$max_length" "$min_mapq" "$BENCH_GENOME" "$k"
+    "$min_length" "$max_length" "$min_mapq" "$genome" "$k"
 ```
 
 The native R calculation below selects reference-derived left ends. Reference loading, BAM reading, curation, motif calling and output/provenance writing are timed. The package's bundled reference is selected by `BENCH_GENOME`, normally `hg38`. Sequence identity with the supplied alignment reference remains to be established before interpreting differences solely as tool differences.
@@ -368,13 +370,13 @@ freia_environment="$BENCH_WORK/freia"
 freia_scripts="$freia_environment/share/freia"
 ```
 
-The samples table is prepared outside the timer:
+The samples table is written once during setup, outside the timer:
 
 ```bash
-printf 'sample_name group\nsample benchmark\n' > "$output/samples.tsv"
+printf 'sample_name group\nsample benchmark\n' > "$BENCH_WORK/freia-samples.tsv"
 ```
 
-The upstream filtering/indexing pipeline and the two motif scripts share one timer:
+The upstream filtering/indexing pipeline and the two motif scripts share one timer. They are in [freia_motifs.sh](ends/freia_motifs.sh), which the method runs as `bash "$BENCH_WORK/freia_motifs.sh" "$cores"`:
 
 ```bash
 "$freia_environment/bin/samtools" view -@ "$cores" -h -q "$min_mapq" \
@@ -385,7 +387,7 @@ The upstream filtering/indexing pipeline and the two motif scripts share one tim
     -b "$output/filtered.bam" -o "$output/sample.pq" \
     -c "$BENCH_CONTIGS" -t "$cores" -n 3
 "$freia_environment/bin/python" "$freia_scripts/2_data_transformation.py" \
-    -i "$output/sample.pq" -o "$output/" -st "$output/samples.tsv" \
+    -i "$output/sample.pq" -o "$output/" -st "$BENCH_WORK/freia-samples.tsv" \
     -fsmin "$min_length" -fsmax "$length_end" \
     -subs 1 --bootstrap_sample 0
 ```
@@ -400,7 +402,7 @@ The broken native `--both` aggregate is not requested. The intact left-only tabl
 | --- | --- |
 | `cfdnalab-read` | Aligned-read call with `--clip-strategy skip` |
 | `cfdnalab-read-include` | Aligned-read call with `--clip-strategy include-at-aligned-boundary` |
-| `cfdnalab-reference-autosomes` | Reference call with `--chromosomes "$BENCH_AUTOSOMES"` instead of `all` |
+| `cfdnalab-reference-autosomes` | Reference call with `--chromosomes "$autosomes"` instead of `all` |
 | `cfdnalab-reference-proper-wide` | Reference call with `--require-proper-pair`, minimum length 10 and maximum length 50000 |
 
 These configurations are only run when explicitly selected in `BENCH_METHODS`.
@@ -481,7 +483,7 @@ The motif helper also writes `reference.tsv` from the native fragment object's r
 
 ## Midpoint profiles
 
-The [midpoint runner](midpoints/benchmark_midpoints.sh) uses the supplied grouped 9,990 bp windows (`center - 4995` to `center + 4995`) and profiling length bounds 100-200 bp. `BENCH_CHROMOSOMES` is derived from the chromosomes in those windows. The runner preserves the sites, including repeated and overlapping rows, and creates the native Griffin anchor tables outside timing. Each workload runs in its own job. cfDNAlab retains 666 bins of 15 bp, with native 165 bp smoothing. Griffin normalizes over that full window and saves its official central window. Concordance normalizes cfDNAlab over all 666 bins before selecting the same 132 central bins. The following shared exclusion paths name the staged release BEDs:
+The [midpoint runner](midpoints/benchmark_midpoints.sh) uses the supplied grouped 9,990 bp windows (`center - 4995` to `center + 4995`) and profiling length bounds 100-200 bp. `BENCH_CHROMOSOMES` is derived from the chromosomes in those windows. The runner preserves the sites, including repeated and overlapping rows, and creates the native Griffin anchor tables outside timing with [prepare_sites.py](midpoints/prepare_sites.py). Each workload runs in its own job. cfDNAlab retains 666 bins of 15 bp, with native 165 bp smoothing. Griffin normalizes over that full window and saves its official central window. Concordance normalizes cfDNAlab over all 666 bins before selecting the same 132 central bins. The following shared exclusion paths name the staged release BEDs:
 
 ```bash
 exclusions=(

@@ -1,9 +1,9 @@
-"""Regression tests for failures, pilot budgets and native output formats.
+"""Regression tests for submission, setup checks, concordance, pilot budgets and native formats.
 
 Expected numerical values are manually derived from the synthetic inputs.
 
-Timing integration cases require Linux GNU time. Native histogram readers also
-require the comparison environment. No Slurm allocation or real BAM is used.
+Native histogram readers require the comparison environment. No Slurm allocation
+or real BAM is used. Measurement and the job scripts are tested in test_runners.py.
 """
 
 import csv
@@ -15,9 +15,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import tarfile
 import tempfile
-import textwrap
 from types import SimpleNamespace
 import unittest
 from unittest import mock
@@ -155,12 +153,11 @@ class AutomaticConcordanceTests(unittest.TestCase):
                 timings = results / "timings.tsv"
                 timings.write_text("native timing records remain unchanged\n")
                 result = subprocess.run(
-                    ["bash", "-euc", 'source "$BENCH_COMMON"\nbenchmark_compare_results "$COMPARATOR" --common-scope'],
+                    ["bash", "-euc", 'source "$BENCH_COMMON"\ncompare_saved_profiles "$COMPARATOR" --common-scope'],
                     env={
                         **os.environ,
                         "BENCH_COMMON": str(BENCHMARKS / "common.sh"),
                         "BENCH_COMPARE_PYTHON": str(comparison_python),
-                        "BENCH_FEATURE": "coverage",
                         "BENCH_RESULTS": str(results),
                         "BENCH_PILOT": pilot,
                         "COMPARATOR": str(BENCHMARKS / "coverage/compare_coverage.py"),
@@ -186,25 +183,35 @@ class AutomaticConcordanceTests(unittest.TestCase):
                 self.assertEqual(timings.read_text(), "native timing records remain unchanged\n")
                 self.assertEqual((root / "zstd-log").read_text(), "comparison zstd used\n")
 
-    def test_unrelated_coverage_quantities_skip_concordance_with_an_explanation(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            results = Path(temporary)
-            for method in ("cfdnalab", "mosdepth-fragment", "finaletoolkit-coverage"):
-                (results / "profiles" / method).mkdir(parents=True)
-            result = subprocess.run(
-                ["bash", "-euc", 'source "$BENCH_COMMON"\nbenchmark_compare_results /unused/comparator.py'],
-                env={
-                    **os.environ,
-                    "BENCH_COMMON": str(BENCHMARKS / "common.sh"),
-                    "BENCH_FEATURE": "coverage",
-                    "BENCH_RESULTS": str(results),
-                },
-                text=True,
-                capture_output=True,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("no pair", result.stdout)
-            self.assertFalse((results / "concordance.tsv").exists())
+    def test_only_profiles_of_the_same_quantity_form_a_comparable_pair(self):
+        # Per-base read depth, per-base fragment coverage and regional fragment
+        # counts are three different quantities, so the coverage job skips
+        # concordance. Adding pandepth gives a second read-depth profile
+        for methods, expected in (
+            (("cfdnalab", "mosdepth-fragment", "finaletoolkit-coverage"), "no pair"),
+            (("cfdnalab", "mosdepth-fragment", "finaletoolkit-coverage", "pandepth"), "pair"),
+        ):
+            with self.subTest(methods=methods), tempfile.TemporaryDirectory() as temporary:
+                results = Path(temporary)
+                for method in methods:
+                    (results / "profiles" / method).mkdir(parents=True)
+                result = subprocess.run(
+                    [
+                        "bash", "-euc",
+                        'source "$BENCH_COMMON"\nsource "$COVERAGE_COMMANDS"\n'
+                        'if saved_profiles_share_a_quantity; then echo pair; else echo "no pair"; fi',
+                    ],
+                    env={
+                        **os.environ,
+                        "BENCH_COMMON": str(BENCHMARKS / "common.sh"),
+                        "COVERAGE_COMMANDS": str(BENCHMARKS / "coverage/commands.sh"),
+                        "BENCH_RESULTS": str(results),
+                    },
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, expected + "\n")
 
     def test_comparison_failure_preserves_previous_metrics_and_prints_the_error(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -215,12 +222,11 @@ class AutomaticConcordanceTests(unittest.TestCase):
             comparator = results / "broken-comparator.py"
             comparator.write_text('print("partial output")\nraise ValueError("invalid profile")\n')
             result = subprocess.run(
-                ["bash", "-euc", 'source "$BENCH_COMMON"\nbenchmark_compare_results "$COMPARATOR"'],
+                ["bash", "-euc", 'source "$BENCH_COMMON"\ncompare_saved_profiles "$COMPARATOR"'],
                 env={
                     **os.environ,
                     "BENCH_COMMON": str(BENCHMARKS / "common.sh"),
                     "BENCH_COMPARE_PYTHON": sys.executable,
-                    "BENCH_FEATURE": "lengths",
                     "BENCH_RESULTS": str(results),
                     "COMPARATOR": str(comparator),
                 },
@@ -405,25 +411,6 @@ class SetupAndScopeTests(unittest.TestCase):
                 (root / "residuals.tsv").read_text(), "previous successful histogram\n"
             )
 
-    def test_duplicate_method_blocks_are_rejected_instead_of_doubling_repetitions(self):
-        result = subprocess.run(
-            ["bash", "-euc", 'source "$BENCH_COMMON"; benchmark_controls'],
-            env={
-                **os.environ,
-                "BENCH_COMMON": str(BENCHMARKS / "common.sh"),
-                "BENCH_CORES": "4",
-                "BENCH_METHODS": "cfdnalab cfdnalab",
-                "BENCH_PILOT": "0",
-                "BENCH_EXPECTED_NODE": "",
-                "BENCH_RUN_TIMEOUT_SECONDS": "0",
-                "BENCH_SETUP_PYTHON": sys.executable,
-            },
-            text=True,
-            capture_output=True,
-        )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Duplicate method", result.stderr)
-
     def test_invalid_track_after_scope_preflight_keeps_previous_histogram(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -453,669 +440,6 @@ class SetupAndScopeTests(unittest.TestCase):
                 (root / "residuals.tsv").read_text(), "previous successful histogram\n"
             )
             self.assertEqual(list(root.glob(".residuals-*")), [])
-
-
-@unittest.skipUnless(
-    sys.platform.startswith("linux"), "Requires Linux GNU time and sync -f"
-)
-class RunLifecycleTests(unittest.TestCase):
-    """Exercise native statuses and retained failure diagnostics through the helpers."""
-
-    def test_first_measured_left_motif_profiles_keep_counts_and_reference_together(
-        self,
-    ):
-        for method, native_name, retained_name in (
-            ("freia", "T__sample.pq", "left-motifs.pq"),
-            ("cfdnapro", "cfdnapro-motifs.tsv", "cfdnapro-motifs.tsv"),
-        ):
-            with (
-                self.subTest(method=method),
-                tempfile.TemporaryDirectory() as temporary,
-            ):
-                root = Path(temporary)
-                work, results = root / "work", root / "results"
-                (work / "output").mkdir(parents=True)
-                results.mkdir()
-                (work / "output" / native_name).write_text("native left counts\n")
-                (work / "output/reference.tsv").write_text(
-                    "native reference manifest\n"
-                )
-                (work / "output/contig_scope.tsv").write_text("chromosome\tretained\nchr1\tTRUE\n")
-                (work / "profile.path").write_text(
-                    str(work / "output" / native_name) + "\n"
-                )
-                (work / "time.tsv").write_text("fixture\t1\t1\t0\t10\t0\n")
-                result = subprocess.run(
-                    [
-                        "bash",
-                        "-euo",
-                        "pipefail",
-                        "-c",
-                        """source "$BENCH_COMMON"
-run_order=1
-benchmark_finish_run "$SELECTED_METHOD" 2 false 0
-""",
-                    ],
-                    env={
-                        **os.environ,
-                        "BENCH_COMMON": str(BENCHMARKS / "common.sh"),
-                        "BENCH_WORK": str(work),
-                        "BENCH_RESULTS": str(results),
-                        "BENCH_PILOT": "0",
-                        "BENCH_WARMUPS": "1",
-                        "BENCH_FEATURE": "ends",
-                        "SELECTED_METHOD": method,
-                    },
-                    text=True,
-                    capture_output=True,
-                )
-                self.assertEqual(result.returncode, 0, result.stderr)
-                retained = results / "profiles" / method
-                self.assertEqual(
-                    (retained / retained_name).read_text(), "native left counts\n"
-                )
-                if method == "cfdnapro":
-                    self.assertEqual(
-                        (retained / "reference.tsv").read_text(),
-                        "native reference manifest\n",
-                    )
-                self.assertFalse((work / "output").exists())
-
-    def test_exit_and_signal_statuses_are_recorded_without_fabricating_success(self):
-        for command, expected_status in (("exit 3", 3), ("kill -9 $$", 137)):
-            with (
-                self.subTest(command=command),
-                tempfile.TemporaryDirectory() as temporary,
-            ):
-                work = Path(temporary)
-                (work / "output").mkdir()
-                script = """source "$BENCH_COMMON"
-benchmark_time_command fixture "$BENCH_WORK/output" "$BENCH_WORK/tool.log" "$BENCH_WORK/tool-error.log" bash -c "$NATIVE_COMMAND"
-"""
-                result = subprocess.run(
-                    ["bash", "-euo", "pipefail", "-c", script],
-                    env={
-                        **os.environ,
-                        "BENCH_COMMON": str(BENCHMARKS / "common.sh"),
-                        "BENCH_WORK": str(work),
-                        "BENCH_RUN_TIMEOUT_SECONDS": "0",
-                        "NATIVE_COMMAND": command,
-                    },
-                    text=True,
-                    capture_output=True,
-                )
-                self.assertEqual(result.returncode, expected_status, result.stderr)
-                fields = (work / "time.tsv").read_text().strip().split("\t")
-                self.assertEqual(fields[0], "fixture")
-                self.assertEqual(len(fields), 6)
-                self.assertEqual(int(fields[-1]), expected_status)
-                self.assertFalse((work / "io.tsv").exists())
-
-    def test_timeout_wrapper_status_is_recorded(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            work = Path(temporary)
-            (work / "output").mkdir()
-            (work / "bin").mkdir()
-            # Fake only the outbound timeout command, avoiding clock-dependent waits
-            timeout = work / "bin/timeout"
-            timeout.write_text(
-                '#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$BENCH_WORK/timeout.args"\nexit 124\n'
-            )
-            timeout.chmod(0o755)
-            script = """source "$BENCH_COMMON"
-benchmark_time_command fixture "$BENCH_WORK/output" "$BENCH_WORK/tool.log" "$BENCH_WORK/tool-error.log" bash -c 'exit 0'
-"""
-            result = subprocess.run(
-                ["bash", "-euo", "pipefail", "-c", script],
-                env={
-                    **os.environ,
-                    "BENCH_COMMON": str(BENCHMARKS / "common.sh"),
-                    "BENCH_WORK": str(work),
-                    "BENCH_RUN_TIMEOUT_SECONDS": "43",
-                    "PATH": str(work / "bin") + ":" + os.environ["PATH"],
-                },
-                text=True,
-                capture_output=True,
-            )
-            self.assertEqual(result.returncode, 124, result.stderr)
-            self.assertEqual(
-                (work / "timeout.args").read_text().splitlines()[:3],
-                ["--verbose", "--kill-after=60", "43"],
-            )
-            self.assertEqual(
-                (work / "time.tsv").read_text().strip().split("\t")[-1], "124"
-            )
-
-    def test_recorded_native_failure_preserves_logs_and_allows_the_next_method(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            work, results = root / "work", root / "results"
-            work.mkdir()
-            results.mkdir()
-            (work / "output").mkdir()
-            (work / "time.tsv").write_text("fixture\t1\t0\t0\t10\t3\n")
-            (work / "tool-error.log").write_text("native failure\n")
-            (work / "output/stats.txt").write_text("partial native stdout\n")
-            (work / "stdout.path").write_text(str(work / "output/stats.txt") + "\n")
-            script = """source "$BENCH_COMMON"
-run_order=1
-benchmark_finish_run samtools 1 true 3
-printf 'next method\n' > "$BENCH_RESULTS/continued"
-"""
-            result = subprocess.run(
-                ["bash", "-euo", "pipefail", "-c", script],
-                env={
-                    **os.environ,
-                    "BENCH_COMMON": str(BENCHMARKS / "common.sh"),
-                    "BENCH_WORK": str(work),
-                    "BENCH_RESULTS": str(results),
-                    "BENCH_PILOT": "0",
-                    "BENCH_WARMUPS": "2",
-                },
-                text=True,
-                capture_output=True,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual((results / "continued").read_text(), "next method\n")
-            self.assertEqual(
-                (results / "failed-run-1/tool-error.log").read_text(),
-                "native failure\n",
-            )
-            self.assertEqual(
-                (results / "failed-run-1/tool-stdout.log").read_text(),
-                "partial native stdout\n",
-            )
-            self.assertEqual(
-                (results / "timings.tsv").read_text().strip().split("\t")[-1], "3"
-            )
-            self.assertFalse((work / "output").exists())
-
-    def test_missing_timing_record_is_a_fatal_bookkeeping_error(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            work, results = root / "work", root / "results"
-            work.mkdir()
-            results.mkdir()
-            script = """source "$BENCH_COMMON"
-run_order=1
-benchmark_finish_run samtools 1 true 3
-printf 'must not continue\n' > "$BENCH_RESULTS/continued"
-"""
-            result = subprocess.run(
-                ["bash", "-euo", "pipefail", "-c", script],
-                env={
-                    **os.environ,
-                    "BENCH_COMMON": str(BENCHMARKS / "common.sh"),
-                    "BENCH_WORK": str(work),
-                    "BENCH_RESULTS": str(results),
-                    "BENCH_PILOT": "0",
-                    "BENCH_WARMUPS": "2",
-                },
-                text=True,
-                capture_output=True,
-            )
-            self.assertNotEqual(result.returncode, 0)
-            self.assertFalse((results / "continued").exists())
-            self.assertFalse((results / "timings.tsv").exists())
-
-    def test_lengths_runner_skips_failed_method_repetitions_and_finishes_other_methods(
-        self,
-    ):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            fake_bin = root / "bin"
-            fake_bin.mkdir()
-            scratch = root / "scratch"
-            scratch.mkdir()
-            environment_root = root / "samtools-env"
-            (environment_root / "bin").mkdir(parents=True)
-            samtools = environment_root / "bin/samtools"
-            samtools.write_text(
-                '#!/usr/bin/env bash\ncase "$1" in idxstats) printf "chr1\\t100\\t0\\t0\\n" ;; --version-only) echo 1.25 ;; *) exit 9 ;; esac\n'
-            )
-            samtools.chmod(0o755)
-            (environment_root / "bin/conda-unpack").write_text(
-                "# Relocation boundary fixture\n"
-            )
-            archive = root / "samtools.tar.gz"
-            with tarfile.open(archive, "w:gz") as destination:
-                destination.add(environment_root, arcname=".")
-            finale_environment = root / "finale-env"
-            (finale_environment / "bin").mkdir(parents=True)
-            (finale_environment / "bin/conda-unpack").write_text("# Relocation fixture\n")
-            finale_python = finale_environment / "bin/python"
-            finale_python.write_text(
-                '#!/usr/bin/env bash\n'
-                'export PACKED_FINALE_PYTHON_USED=1\n'
-                'exec "$BENCH_TEST_PYTHON" "$@"\n'
-            )
-            finale_python.chmod(0o755)
-            finale_launcher = finale_environment / "bin/finaletoolkit"
-            # A packed launcher can depend on a Python name absent from the node's PATH
-            finale_launcher.write_text(
-                '#!/usr/bin/env python3.11\n'
-                'import os\n'
-                'assert os.environ["PACKED_FINALE_PYTHON_USED"] == "1", "wrong interpreter"\n'
-                'if os.environ.get("FAIL_FINALE_SETUP") == "1":\n'
-                '    raise RuntimeError("FinaleToolkit startup fixture failed")\n'
-                'print("1.1.0")\n'
-            )
-            finale_launcher.chmod(0o755)
-            (finale_environment / "share/finaletoolkit").mkdir(parents=True)
-            (finale_environment / "share/finaletoolkit/revision.txt").write_text("d16632ec fixture\n")
-            finale_archive = root / "finaletoolkit.tar.gz"
-            with tarfile.open(finale_archive, "w:gz") as destination:
-                destination.add(finale_environment, arcname=".")
-            for name, body in (
-                ("cfdna", 'echo "cfdna fixture"'),
-                ("ldd", 'echo "statically linked"'),
-                ("scontrol", 'echo "fixture configuration"'),
-            ):
-                executable = fake_bin / name
-                executable.write_text("#!/usr/bin/env bash\n" + body + "\n")
-                executable.chmod(0o755)
-            srun = fake_bin / "srun"
-            srun.write_text(
-                f"#!{sys.executable}\n"
-                + textwrap.dedent(r"""
-                import os
-                from pathlib import Path
-                import sys
-
-                order, repetition, warmup, method, cores = sys.argv[sys.argv.index('--') + 1:]
-                work = Path(os.environ['BENCH_WORK'])
-                results = Path(os.environ['BENCH_RESULTS'])
-                with Path(os.environ['CALL_LOG']).open('a') as destination:
-                    destination.write(method + '\n')
-                if ((method == 'cfdnalab' and os.environ['FAIL_CFDNALAB'] == '1')
-                    or (method == 'finaletoolkit' and os.environ.get('FAIL_FINALE_RUN') == '1')):
-                    (work / 'tool-error.log').write_text('native boundary failed\n')
-                    raise SystemExit(3)
-                output = work / 'output'
-                output.mkdir()
-                profile = output / 'stats.txt'
-                profile.write_text('IS\t30\t1\t1\t0\t0\n')
-                (work / 'profile.path').write_text(str(profile) + '\n')
-                columns = (results / 'timings.tsv').read_text().splitlines()[0].split('\t')
-                columns = columns[:columns.index('flush_seconds')]
-                values = {'run_order': order, 'repetition': repetition, 'warmup': warmup,
-                          'method': method, 'cores': cores, 'job_id': '123', 'step_id': order,
-                          'wall_seconds': '1', 'user_seconds': '1', 'system_seconds': '0',
-                          'max_rss_kib': '10', 'tool_exit_code': '0'}
-                (work / 'time.tsv').write_text('\t'.join(values.get(column, 'NA') for column in columns) + '\n')
-                (work / 'io.tsv').write_text('0\t1\t20\n')
-            """)
-            )
-            srun.chmod(0o755)
-            comparison_python = fake_bin / "comparison-python"
-            comparison_python.write_text(
-                f"#!{sys.executable}\n"
-                + textwrap.dedent(r"""
-                import os
-                from pathlib import Path
-                import sys
-
-                with Path(os.environ['CALL_LOG']).open('a') as destination:
-                    destination.write('concordance\n')
-                Path(os.environ['COMPARISON_ARGUMENTS']).write_text('\n'.join(sys.argv[1:]) + '\n')
-                print('mae_frequency\n0')
-            """)
-            )
-            comparison_python.chmod(0o755)
-            bam = root / "input.bam"
-            bam.write_text("BAM data is handled by the fake samtools boundary\n")
-            Path(str(bam) + ".bai").touch()
-            results = root / "results"
-            benchmark_environment = {
-                **os.environ,
-                "PATH": str(fake_bin) + ":" + os.environ["PATH"],
-                "SLURM_SUBMIT_DIR": str(BENCHMARKS.parent),
-                "SLURM_JOB_ID": "123",
-                "SLURM_JOB_NUM_NODES": "1",
-                "SLURM_CPUS_PER_TASK": "32",
-                "BENCH_BAM": str(bam),
-                "BENCH_INDEX": str(bam) + ".bai",
-                "TMPDIR": str(scratch),
-                "BENCH_RESULTS": str(results),
-                "BENCH_CFDNA": str(fake_bin / "cfdna"),
-                "BENCH_SAMTOOLS_ARCHIVE": str(archive),
-                "BENCH_CORES": "4",
-                "BENCH_METHODS": "cfdnalab samtools finaletoolkit",
-                "BENCH_FINALE_ARCHIVE": str(finale_archive),
-                "BENCH_TEST_PYTHON": sys.executable,
-                "PACKED_FINALE_PYTHON_USED": "0",
-                "FAIL_FINALE_SETUP": "0",
-                "BENCH_COMPARE_PYTHON": str(comparison_python),
-                "BENCH_WARMUPS": "0",
-                "BENCH_REPETITIONS": "2",
-                "BENCH_PILOT": "0",
-                "BENCH_SETUP_PYTHON": sys.executable,
-                "BENCH_EXPECTED_NODE": "",
-                "BENCH_RUN_TIMEOUT_SECONDS": "0",
-                "CALL_LOG": str(root / "calls"),
-                "COMPARISON_ARGUMENTS": str(root / "comparison-arguments"),
-                "FAIL_CFDNALAB": "1",
-            }
-            result = subprocess.run(
-                ["bash", str(BENCHMARKS / "lengths/benchmark_lengths.sh")],
-                env=benchmark_environment,
-                text=True,
-                capture_output=True,
-            )
-            self.assertEqual(result.returncode, 1, result.stderr)
-            self.assertEqual(
-                (root / "calls").read_text().splitlines(),
-                ["cfdnalab", "samtools", "samtools", "finaletoolkit", "finaletoolkit", "concordance"],
-            )
-            with (results / "timings.tsv").open() as source:
-                rows = list(csv.DictReader(source, delimiter="\t"))
-            self.assertEqual([row["step_exit_code"] for row in rows], ["3", "0", "0", "0", "0"])
-            for row in rows:
-                self.assertNotIn(None, row)
-                self.assertNotIn(None, row.values())
-            self.assertTrue((results / "profiles/samtools/stats.txt").exists())
-            self.assertTrue((results / "profiles/finaletoolkit/stats.txt").exists())
-            self.assertEqual(
-                (results / "failed-run-1/tool-error.log").read_text(),
-                "native boundary failed\n",
-            )
-            self.assertTrue((results / "concordance.tsv").exists())
-
-            # A second job with successful tools must compare once after all six runs
-            (root / "calls").unlink()
-            successful_results = root / "successful-results"
-            benchmark_environment.update(
-                BENCH_RESULTS=str(successful_results), FAIL_CFDNALAB="0", BENCH_MAX_LENGTH="200"
-            )
-            result = subprocess.run(
-                ["bash", str(BENCHMARKS / "lengths/benchmark_lengths.sh")],
-                env=benchmark_environment,
-                text=True,
-                capture_output=True,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(
-                (root / "calls").read_text().splitlines(),
-                ["cfdnalab", "cfdnalab", "samtools", "samtools", "finaletoolkit", "finaletoolkit", "concordance"],
-            )
-            self.assertEqual(
-                (root / "comparison-arguments").read_text().splitlines(),
-                [
-                    str(BENCHMARKS / "lengths/compare_lengths.py"),
-                    str(successful_results / "profiles"),
-                    "--min-length", "30", "--max-length", "200",
-                ],
-            )
-            self.assertEqual(
-                (successful_results / "concordance.tsv").read_text(), "mae_frequency\n0\n"
-            )
-            with (successful_results / "timings.tsv").open() as source:
-                self.assertEqual(len(list(csv.DictReader(source, delimiter="\t"))), 6)
-
-            # A startup failure must leave provenance and the empty timing table
-            # Removing the BAM proves version checks happen before the expensive copy
-            bam.unlink()
-            (root / "calls").unlink()
-            for feature, finale_method in (
-                ("lengths", "finaletoolkit"), ("coverage", "finaletoolkit-coverage")
-            ):
-                with self.subTest(setup_failure=feature):
-                    failed_setup = root / (feature + "-failed-setup")
-                    benchmark_environment.update(
-                        BENCH_RESULTS=str(failed_setup), FAIL_FINALE_SETUP="1",
-                        BENCH_METHODS="cfdnalab " + finale_method,
-                    )
-                    result = subprocess.run(
-                        ["bash", str(BENCHMARKS / feature / f"benchmark_{feature}.sh")],
-                        env=benchmark_environment,
-                        text=True,
-                        capture_output=True,
-                    )
-                    self.assertNotEqual(result.returncode, 0)
-                    self.assertIn("FinaleToolkit startup fixture failed", result.stderr)
-                    self.assertTrue((failed_setup / "run.tsv").exists())
-                    with (failed_setup / "timings.tsv").open() as source:
-                        self.assertEqual(list(csv.DictReader(source, delimiter="\t")), [])
-                    self.assertIn("Checking tool versions", (failed_setup / "progress.log").read_text())
-                    self.assertNotIn("Copying BAM", (failed_setup / "progress.log").read_text())
-                    self.assertFalse((root / "calls").exists())
-
-            # Failure of the final method must keep earlier timings, profiles and concordance
-            bam.write_text("BAM data is handled by the fake samtools boundary\n")
-            late_failure = root / "late-failure"
-            benchmark_environment.update(
-                BENCH_RESULTS=str(late_failure), BENCH_METHODS="cfdnalab samtools finaletoolkit",
-                FAIL_FINALE_SETUP="0", FAIL_FINALE_RUN="1",
-            )
-            result = subprocess.run(
-                ["bash", str(BENCHMARKS / "lengths/benchmark_lengths.sh")],
-                env=benchmark_environment,
-                text=True,
-                capture_output=True,
-            )
-            self.assertEqual(result.returncode, 1, result.stderr)
-            with (late_failure / "timings.tsv").open() as source:
-                rows = list(csv.DictReader(source, delimiter="\t"))
-            self.assertEqual([row["step_exit_code"] for row in rows], ["0", "0", "0", "0", "3"])
-            self.assertTrue((late_failure / "profiles/cfdnalab/stats.txt").exists())
-            self.assertTrue((late_failure / "profiles/samtools/stats.txt").exists())
-            self.assertTrue((late_failure / "concordance.tsv").exists())
-            self.assertIn("Saved run 5", (late_failure / "progress.log").read_text())
-
-    def test_griffin_demo_has_a_separate_step_before_three_full_input_measurements(
-        self,
-    ):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            fake_bin, scratch = root / "bin", root / "scratch"
-            fake_bin.mkdir()
-            scratch.mkdir()
-            archives = {}
-            for name in ("samtools", "griffin"):
-                environment = root / (name + "-env")
-                (environment / "bin").mkdir(parents=True)
-                (environment / "bin/conda-unpack").write_text(
-                    "# Untimed relocation fixture\n"
-                )
-                if name == "samtools":
-                    executable = environment / "bin/samtools"
-                    executable.write_text(
-                        '#!/usr/bin/env bash\nprintf "chr1\\t6000\\t0\\t0\\n"\n'
-                    )
-                else:
-                    scripts = environment / "share/griffin"
-                    scripts.mkdir(parents=True)
-                    (scripts / "version.txt").write_text("v0.2.0 fixture\n")
-                    for script in ("griffin_GC_counts.py", "griffin_GC_bias.py"):
-                        (scripts / script).touch()
-                    # Duplicates are intentional. The demo must keep exactly 1000 rows
-                    (scripts / "CTCF.hg38.1000.txt").write_text(
-                        "Chrom\tposition\n" + "chr1\t3000\n" * 1000
-                    )
-                    executable = environment / "bin/python"
-                    executable.write_text(
-                        f"#!{sys.executable}\n"
-                        + textwrap.dedent(r"""
-                        import os
-                        from pathlib import Path
-                        import sys
-
-                        if sys.argv[1] == '-c':
-                            # The setup import check does not process any data
-                            raise SystemExit(0)
-                        # Fake only the outbound native tools. Retain their argument lists
-                        with Path(os.environ['NATIVE_CALL_LOG']).open('a') as destination:
-                            destination.write('\t'.join(sys.argv[1:]) + '\n')
-                    """)
-                    )
-                executable.chmod(0o755)
-                archive = root / (name + ".tar.gz")
-                with tarfile.open(archive, "w:gz") as destination:
-                    destination.add(environment, arcname=".")
-                archives[name] = archive
-            scontrol = fake_bin / "scontrol"
-            scontrol.write_text("#!/usr/bin/env bash\necho fixture\n")
-            scontrol.chmod(0o755)
-            srun = fake_bin / "srun"
-            srun.write_text(
-                f"#!{sys.executable}\n"
-                + textwrap.dedent(r"""
-                import os
-                from pathlib import Path
-                import subprocess
-                import sys
-
-                work = Path(os.environ['BENCH_WORK'])
-                with Path(os.environ['STEP_CALL_LOG']).open('a') as destination:
-                    destination.write('\t'.join(sys.argv[1:]) + '\n')
-                if '--' not in sys.argv:
-                    # Execute the real demo helper with the fake native Python boundary
-                    raise SystemExit(subprocess.run(sys.argv[sys.argv.index('bash'):]).returncode)
-                sys.stdin.read()
-                order, repetition, warmup, method, cores = sys.argv[sys.argv.index('--') + 1:]
-                output = work / 'output'
-                output.mkdir()
-                native_results = output / 'results/sample'
-                native_results.mkdir(parents=True)
-                (output / 'gc-bias').mkdir()
-                (native_results / 'sample.uncorrected.coverage.tsv').write_text('raw repetition ' + repetition + '\n')
-                profile = native_results / 'sample.GC_corrected.coverage.tsv'
-                profile.write_text('first saved repetition ' + repetition + '\n')
-                (work / 'profile.path').write_text(str(profile) + '\n')
-                results = Path(os.environ['BENCH_RESULTS'])
-                import csv
-                import json
-                site_paths = json.loads((work / 'sites.yaml').read_text())['site_lists']
-                site_rows = {}
-                for group, path in site_paths.items():
-                    with Path(path).open() as source:
-                        site_rows[group] = list(csv.DictReader(source, delimiter='\t'))
-                (results / 'native-sites.json').write_text(json.dumps(site_rows))
-                columns = (results / 'timings.tsv').read_text().splitlines()[0].split('\t')
-                columns = columns[:columns.index('flush_seconds')]
-                values = {'run_order': order, 'repetition': repetition, 'warmup': warmup,
-                          'method': method, 'cores': cores, 'job_id': '123', 'step_id': order,
-                          'window_bp': os.environ['BENCH_WINDOW_WIDTH'],
-                          'wall_seconds': '1', 'user_seconds': '1', 'system_seconds': '0',
-                          'max_rss_kib': '10', 'tool_exit_code': '0'}
-                (work / 'time.tsv').write_text('\t'.join(values.get(column, 'NA') for column in columns) + '\n')
-                (work / 'io.tsv').write_text('0\t1\t20\n')
-            """)
-            )
-            srun.chmod(0o755)
-            bam = root / "input.bam"
-            bam.touch()
-            Path(str(bam) + ".bai").touch()
-            fasta = root / "reference.fa"
-            fasta.touch()
-            Path(str(fasta) + ".fai").write_text("chr1\t6000\t0\t6000\t6001\n")
-            intervals = root / "production.bed"
-            production_sites = (
-                "chr1\t1000\t3001\tproduction\t+\nchr1\t1000\t3001\tproduction\t+\n"
-                "chr1\t1000\t3001\treverse\t-\nchr1\t1000\t3001\tunstranded\t.\n"
-            )
-            intervals.write_text(production_sites)
-            references = root / "references"
-            references.mkdir()
-            for filename in EXCLUSION_FILENAMES:
-                (references / filename).touch()
-            mappability = references / "mappability.bw"
-            mappability.touch()
-            gc_regions = references / "gc-regions.bed"
-            gc_regions.write_text("chr1\t0\t6000\n")
-            gc_frequencies = references / "genome_GC_frequency"
-            gc_frequencies.mkdir()
-            for fragment_length in range(15, 501):
-                (gc_frequencies / f"gc-regions.{fragment_length}bp.GC_frequency.txt").write_text("fixture\n")
-            results = root / "results"
-            result = subprocess.run(
-                ["bash", str(BENCHMARKS / "midpoints/benchmark_midpoints.sh")],
-                env={
-                    **os.environ,
-                    "PATH": str(fake_bin) + ":" + os.environ["PATH"],
-                    "SLURM_SUBMIT_DIR": str(BENCHMARKS.parent),
-                    "SLURM_JOB_ID": "123",
-                    "SLURM_JOB_NUM_NODES": "1",
-                    "SLURM_CPUS_PER_TASK": "4",
-                    "BENCH_BAM": str(bam),
-                    "BENCH_INDEX": str(bam) + ".bai",
-                    "BENCH_REF_FASTA": str(fasta),
-                    "BENCH_FASTA_INDEX": str(fasta) + ".fai",
-                    "BENCH_INTERVALS": str(intervals),
-                    "TMPDIR": str(scratch),
-                    "BENCH_RESULTS": str(results),
-                    "BENCH_SAMTOOLS_ARCHIVE": str(archives["samtools"]),
-                    "BENCH_GRIFFIN_ARCHIVE": str(archives["griffin"]),
-                    "BENCH_GRIFFIN_REF_DIR": str(references),
-                    "BENCH_GRIFFIN_MAPPABILITY_BW": str(mappability),
-                    "BENCH_METHODS": "griffin-gc",
-                    # Production settings must not leak in from the caller's shell
-                    "BENCH_MIN_LENGTH": "100",
-                    "BENCH_MAX_LENGTH": "200",
-                    "BENCH_MIN_MAPQ": "20",
-                    "BENCH_GRIFFIN_GC_REGIONS": str(gc_regions),
-                    "BENCH_GRIFFIN_REF_GC": str(gc_frequencies),
-                    "BENCH_CORES": "4",
-                    "BENCH_WARMUPS": "10",
-                    "BENCH_REPETITIONS": "3",
-                    "BENCH_PILOT": "0",
-                    "BENCH_EXPECTED_NODE": "",
-                    "BENCH_SETUP_PYTHON": sys.executable,
-                    "BENCH_RUN_TIMEOUT_SECONDS": "0",
-                    "STEP_CALL_LOG": str(root / "steps"),
-                    "NATIVE_CALL_LOG": str(root / "native-calls"),
-                },
-                text=True,
-                capture_output=True,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            steps = [
-                line.split("\t") for line in (root / "steps").read_text().splitlines()
-            ]
-            self.assertEqual(len(steps), 4)
-            self.assertNotIn("--", steps[0])
-            self.assertIn("--cpus-per-task=4", steps[0])
-            native_calls = (root / "native-calls").read_text().splitlines()
-            self.assertEqual(len(native_calls), 2)
-            self.assertTrue(
-                all(
-                    "warmup-sites.yaml" in call and "--CPU\t4" in call
-                    for call in native_calls
-                )
-            )
-            for call in native_calls:
-                arguments = call.split("\t")
-                window_index = arguments.index("--norm_window")
-                self.assertEqual(arguments[window_index + 1:window_index + 3], ["-1000", "1001"])
-                if arguments[0].endswith("griffin_coverage.py"):
-                    size_index = arguments.index("--size_range")
-                    self.assertEqual(arguments[size_index + 1:size_index + 3], ["100", "200"])
-                    self.assertEqual(arguments[arguments.index("--map_quality") + 1], "20")
-            # Forward/unstranded anchors are 2000. Griffin's reverse formula
-            # needs boundary 2001 to fetch the same unchanged [1000, 3001) BED
-            import json
-            sites = json.loads((results / "native-sites.json").read_text())
-            self.assertEqual([row["position"] for row in sites["production"]], ["2000", "2000"])
-            self.assertEqual(sites["reverse"][0]["position"], "2001")
-            self.assertEqual(sites["unstranded"][0]["position"], "2000")
-            with (results / "timings.tsv").open() as source:
-                rows = list(csv.DictReader(source, delimiter="\t"))
-            self.assertEqual([row["repetition"] for row in rows], ["1", "2", "3"])
-            self.assertTrue(all(row["warmup"] == "false" for row in rows))
-            self.assertTrue(all(row["window_bp"] == "2001" for row in rows))
-            self.assertEqual(
-                (
-                    results / "profiles/griffin-gc/sample.GC_corrected.coverage.tsv"
-                ).read_text(),
-                "first saved repetition 1\n",
-            )
-            self.assertEqual(
-                (results / "profiles/griffin-gc/sample.uncorrected.coverage.tsv").read_text(),
-                "raw repetition 1\n",
-            )
-            self.assertEqual(intervals.read_text(), production_sites)
-            self.assertEqual(len((results / "sites.bed").read_text().splitlines()), 4)
-            self.assertIn("warmups\t0\n", (results / "run.tsv").read_text())
 
 
 class PilotBudgetTests(unittest.TestCase):

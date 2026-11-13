@@ -1,46 +1,174 @@
 #!/usr/bin/env bash
 
-# Functions shared by the coverage, fragment length, motif and midpoint benchmarks
-# Each feature script chooses the tool commands and biological filters. This file
-# handles repeated runs, timing, saving results and cleaning up temporary output
-# The scripts load these functions with "source", then call them as needed
-# They use set -euo pipefail to stop on errors, missing variables or failed pipelines
-# The installer also uses the Picard version check defined here
+# Steps shared by the coverage, fragment length, end motif and midpoint benchmarks
 #
-# What happens to the sample and its results:
-# 1. The feature script copies the BAM, index, required references and programs to
-#    the compute node's local disk. These copies finish before any tool is timed
-# 2. benchmark_schedule lists a tool's warmups followed by its measured repetitions
-#    A "method" can also mean a labeled configuration of a tool
-# 3. The feature script uses srun to start each run with the requested CPU cores
-#    Each run has its own Slurm step ID for looking up memory usage after the job
-# 4. benchmark_finish_run adds the timing row to timings.tsv and keeps the first
-#    measured output for numerical comparison. Other output is deleted before
-#    the next repetition
-# 5. After tool attempts finish, benchmark_compare_results writes concordance.tsv
-#    from comparable saved profiles. This work is outside every tool's measurements
+# Each feature has a Slurm job script (for example lengths/benchmark_lengths.sh) that
+# loads this file with "source". The job script reads from top to bottom:
+#   1. Check the settings, before any slow work
+#   2. Copy the BAM, references and tools to the compute node's local disk (untimed)
+#   3. Run every method's warmups and measured repetitions. Each repetition is its own
+#      srun step on the job's exclusive node, bound to BENCH_CORES physical cores.
+#      The step runs measure_command.sh, which checks the CPUs and times the command
+#   4. Compare the saved outputs (untimed)
+# The native commands, and the files kept from them, are in <feature>/commands.sh
 #
-# srun starts a separate Bash program. Setting a variable there cannot update a
-# variable in the main job script. Both can read BENCH_WORK, the job's temporary
-# directory on the compute node, so that program leaves its results in these files:
-#   time.tsv     Which run this was, its run time, CPU time, memory and exit code
-#   io.tsv       Time spent finishing disk writes, total time and output file sizes
-#   profile.path Path to the coverage, length, motif or midpoint output to keep
-#   stdout.path  Path to the tool's printed output, useful when investigating failure
-#   step.id      Slurm step ID, available even if the tool fails before timing starts
-# The main script reads these files after srun finishes. Each attempt starts with
-# fresh files so a failed run cannot accidentally reuse the preceding run's results
+# This file only holds the mechanical parts shared by the four jobs. It does not
+# choose commands, filters or which outputs are kept
 #
-# If a tool fails, the script keeps its available measurements and error messages,
-# skips its remaining repetitions and tries the next selected method. The job is
-# reported as failed at the end. Setup or result-saving errors stop it immediately,
-# because subsequent measurements could otherwise be lost or treated as successful
+# Variables shared between the job script, commands.sh and this file:
+#   Set by the job script:
+#     BENCH_*          Job settings from the submission environment
+#     BENCH_WORK       The job's temporary directory on the compute node
+#     BENCH_NODE       The compute node's name
+#     output           The run's output directory, $BENCH_WORK/output
+#     run_order        Counts the runs in this job. run_in_slurm_step increases it
+#   Set when commands.sh is loaded:
+#     timing_columns   The timings.tsv columns, in order
+#   Set by prepare_command in commands.sh, before each run:
+#     command               The native command, as an array of arguments
+#     expected_output       The file or directory the command must create
+#     empty_output_allowed  true when an empty output file is a valid result
+#     stdout_file           Where the command's standard output goes
+#     row[...]              The method's settings for its timings.tsv row
+#   Set by run_in_slurm_step:
+#     row[...]              The run's identity and measurements
+#     step_exit_code        srun's exit status. 0 means the run succeeded
+#
+# The job scripts use set -euo pipefail. A failed tool is recorded and the job moves
+# on to the next method. Failures in setup or in saving results stop the job
+# immediately, because later results could otherwise be lost or mislabeled
 
+# Holds the current run's timings.tsv row, as column name -> value. -g keeps it
+# global even when this file is loaded from inside a function
+declare -gA row=()
+
+# ---------------------------------------------------------------------------
+# Settings checks
+# ---------------------------------------------------------------------------
+
+# Checks the settings that all four jobs share, before any input is copied
+#
+# The job script sets its defaults first and checks its own methods and
+# feature-specific settings afterwards
+#
+# Parameters:
+#   $1  Feature name, used in error messages (coverage, lengths, ends or midpoints)
+# Sets:
+#   methods          The methods from BENCH_METHODS, as an array
+#   BENCH_WARMUPS, BENCH_REPETITIONS
+#                    Set to 0 and 1 for a pilot (BENCH_PILOT=1)
+check_job_settings() {
+    local feature=$1
+    : "${SLURM_JOB_ID:?Submit with bash benchmarks/submit_benchmark.sh $feature}"
+    : "${BENCH_BAM:?Set the input BAM path}"
+    # Slurm sets TMPDIR to node-local scratch when the job starts
+    : "${TMPDIR:?The compute node must provide TMPDIR for node-local scratch}"
+    : "${BENCH_RESULTS:?Set a new results directory}"
+    : "${BENCH_CORES:?Set a single core budget for this job: 1, 4, 12 or 32}"
+    : "${BENCH_METHODS:?Set the methods for this job explicitly in BENCH_METHODS}"
+
+    if [[ ! "$BENCH_CORES" =~ ^[1-9][0-9]*$ ]]; then
+        echo 'Set BENCH_CORES to a single positive core count for this job.' >&2
+        return 1
+    fi
+    if ((BENCH_CORES > ${SLURM_CPUS_PER_TASK:-0})); then
+        echo "Core budget $BENCH_CORES exceeds allocated CPUs: ${SLURM_CPUS_PER_TASK:-0}" >&2
+        return 1
+    fi
+    if [[ ${SLURM_JOB_NUM_NODES:-${SLURM_NNODES:-0}} != 1 ]]; then
+        echo "Expected one allocated node, but Slurm reports ${SLURM_JOB_NUM_NODES:-${SLURM_NNODES:-none}}." >&2
+        return 1
+    fi
+    if [[ -e "$BENCH_RESULTS" ]]; then
+        echo "BENCH_RESULTS already exists: $BENCH_RESULTS" >&2
+        echo 'Choose a new path without creating it first. The benchmark creates the directory.' >&2
+        return 1
+    fi
+    if [[ -n ${BENCH_EXPECTED_NODE:-} && $(hostname) != "$BENCH_EXPECTED_NODE" ]]; then
+        echo "Expected node $BENCH_EXPECTED_NODE, received $(hostname)." >&2
+        return 1
+    fi
+
+    export BENCH_PILOT=${BENCH_PILOT:-0}
+    if [[ "$BENCH_PILOT" != 0 && "$BENCH_PILOT" != 1 ]]; then
+        echo 'BENCH_PILOT must be 0 or 1.' >&2
+        return 1
+    fi
+    if [[ "$BENCH_PILOT" == 1 ]]; then
+        # A pilot runs each method once to estimate the time and memory it needs
+        BENCH_WARMUPS=0
+        BENCH_REPETITIONS=1
+    fi
+
+    local name
+    for name in BENCH_WARMUPS BENCH_REPETITIONS BENCH_MIN_MAPQ BENCH_MIN_LENGTH BENCH_MAX_LENGTH; do
+        if [[ ! "${!name}" =~ ^(0|[1-9][0-9]*)$ ]]; then
+            echo "$name must be a nonnegative integer, not: ${!name}" >&2
+            return 1
+        fi
+    done
+    if ((BENCH_REPETITIONS < 1)); then
+        echo 'Measure at least one repetition (BENCH_REPETITIONS).' >&2
+        return 1
+    fi
+    if ((BENCH_MIN_MAPQ > 255 || BENCH_MIN_LENGTH < 10 || BENCH_MAX_LENGTH < BENCH_MIN_LENGTH || BENCH_MAX_LENGTH > 50000)); then
+        echo 'Use a MAPQ within 0-255 and fragment lengths within 10-50000 bp.' >&2
+        return 1
+    fi
+
+    read -r -a methods <<< "$BENCH_METHODS"
+    if ((${#methods[@]} == 0)); then
+        echo 'Set at least one method in BENCH_METHODS.' >&2
+        return 1
+    fi
+    # A repeated name would double that method's repetitions. The spaces around each
+    # name tell, for example, cfdnalab apart from cfdnalab-proper
+    local method seen_methods=' '
+    for method in "${methods[@]}"; do
+        if [[ "$seen_methods" == *" $method "* ]]; then
+            echo "Duplicate method in BENCH_METHODS: $method" >&2
+            return 1
+        fi
+        seen_methods+="$method "
+    done
+
+    export BENCH_RUN_TIMEOUT_SECONDS=${BENCH_RUN_TIMEOUT_SECONDS:-0}
+    if [[ ! "$BENCH_RUN_TIMEOUT_SECONDS" =~ ^(0|[1-9][0-9]*)$ ]]; then
+        echo 'BENCH_RUN_TIMEOUT_SECONDS must be zero (disabled) or a positive integer.' >&2
+        return 1
+    fi
+    if [[ "$BENCH_RUN_TIMEOUT_SECONDS" != 0 ]] && ! command -v timeout > /dev/null; then
+        echo 'A run time limit requires GNU timeout on the compute node.' >&2
+        return 1
+    fi
+
+    # The setup Python only runs untimed helpers that need its standard library
+    export BENCH_SETUP_PYTHON=${BENCH_SETUP_PYTHON:-python3}
+    if ! command -v "$BENCH_SETUP_PYTHON" > /dev/null; then
+        echo 'Set BENCH_SETUP_PYTHON to an existing Python 3 executable for untimed setup.' >&2
+        return 1
+    fi
+    # Two or more methods can be compared at the end of the job. Check the comparison
+    # Python now, so a missing setting does not waste a full benchmark job
+    if ((${#methods[@]} >= 2)); then
+        : "${BENCH_COMPARE_PYTHON:?Set the comparison Python printed by install_tools.sh}"
+        if ! command -v "$BENCH_COMPARE_PYTHON" > /dev/null; then
+            echo 'BENCH_COMPARE_PYTHON must name an existing Python executable.' >&2
+            return 1
+        fi
+    fi
+}
+
+# Checks that Picard is the version selected for this benchmark and prints it
+#
+# Picard prints a valid --version result but exits with status 1, normally an error
+# status. That status is accepted only when the printed version is also correct
+# Tabs and newlines become spaces, so the version fits in a timings.tsv cell
+# install_tools.sh also uses this check
+#
+# Parameters:
+#   $1  The Picard executable
 benchmark_picard_version() {
-    # This function checks that Picard is the version selected for this benchmark
-    # Picard prints a valid --version result but exits with code 1, normally an
-    # error code. This is accepted only when the printed version is also correct
-    # Tabs/newlines become spaces so the version fits in a timing-table cell
     local executable=$1 version_output version_status=0
     version_output=$("$executable" CollectInsertSizeMetrics --version 2>&1) || version_status=$?
     if ((version_status > 1)) || [[ ! "$version_output" =~ (^|[[:space:]])Version:[[:space:]]*3\.5\.0($|[[:space:]]) ]]; then
@@ -50,169 +178,39 @@ benchmark_picard_version() {
     printf '%s\n' "$version_output" | tr '\t\n' '  '
 }
 
-benchmark_controls() {
-    # This function checks cores, methods, pilot mode and the optional run time limit
-    # It runs before the BAM is copied so an invalid setting fails without a long wait
-    # Each feature script separately checks its tool names and biological filters
-    export BENCH_PILOT=${BENCH_PILOT:-0}
-    if [[ "$BENCH_PILOT" != 0 && "$BENCH_PILOT" != 1 ]]; then
-        echo 'BENCH_PILOT must be 0 or 1.' >&2
-        return 1
-    fi
-    if [[ ! ${BENCH_CORES:-} =~ ^[1-9][0-9]*$ ]]; then
-        echo 'Set BENCH_CORES to a single positive core count for this job.' >&2
-        return 1
-    fi
-    # Duplicate method names are rejected because they would double the repetitions
-    # Spaces around each name distinguish, for example, cfdnalab from cfdnalab-proper
-    local selected_method seen_methods=' ' selected_methods=()
-    read -r -a selected_methods <<< "${BENCH_METHODS:-}"
-    for selected_method in "${selected_methods[@]}"; do
-        if [[ "$seen_methods" == *" $selected_method "* ]]; then
-            echo "Duplicate method in BENCH_METHODS: $selected_method" >&2
-            return 1
-        fi
-        seen_methods+="$selected_method "
-    done
-    export BENCH_RUN_TIMEOUT_SECONDS=${BENCH_RUN_TIMEOUT_SECONDS:-0}
-    if [[ ! "$BENCH_RUN_TIMEOUT_SECONDS" =~ ^(0|[1-9][0-9]*)$ ]]; then
-        echo 'BENCH_RUN_TIMEOUT_SECONDS must be zero (disabled) or a positive integer.' >&2
-        return 1
-    fi
-    if [[ "$BENCH_RUN_TIMEOUT_SECONDS" != 0 ]]; then
-        command -v timeout >/dev/null || {
-            echo 'A run time limit requires GNU timeout on the compute node.' >&2
-            return 1
-        }
-    fi
-    if [[ -n ${BENCH_EXPECTED_NODE:-} && $(hostname) != "$BENCH_EXPECTED_NODE" ]]; then
-        echo "Expected node $BENCH_EXPECTED_NODE, received $(hostname)." >&2
-        return 1
-    fi
-    if [[ "$BENCH_PILOT" == 1 ]]; then
-        # A pilot runs each selected method once to estimate time and memory needs
-        # These counts take effect before the main script lists runs or records settings
-        BENCH_WARMUPS=0
-        BENCH_REPETITIONS=1
-    fi
-    export BENCH_SETUP_PYTHON=${BENCH_SETUP_PYTHON:-python3}
-    command -v "$BENCH_SETUP_PYTHON" >/dev/null || {
-        echo 'Set BENCH_SETUP_PYTHON to an existing Python 3 executable for untimed setup.' >&2
-        return 1
-    }
-    # Multiple methods may produce a comparable pair. Check the comparison Python
-    # before staging inputs so a missing setting does not waste a full benchmark job
-    if ((${#selected_methods[@]} >= 2)); then
-        : "${BENCH_COMPARE_PYTHON:?Set the comparison Python printed by install_tools.sh}"
-        command -v "$BENCH_COMPARE_PYTHON" >/dev/null || {
-            echo 'BENCH_COMPARE_PYTHON must name an existing Python executable.' >&2
-            return 1
-        }
-    fi
-}
+# ---------------------------------------------------------------------------
+# Setup records and staging
+# ---------------------------------------------------------------------------
 
-benchmark_compare_results() {
-    # This function compares saved outputs after every native tool run has finished
-    # Arguments: the feature's comparison script, followed by its biological settings
-    # It runs in the batch shell, outside the timed srun steps and their memory records
-    # Call it on its own line so an error saving the comparison stops the job
-    local comparator=$1
-    shift
-    local directory method quantity seen_quantities=' ' comparable=false
-    for directory in "$BENCH_RESULTS"/profiles/*; do
-        [[ -d "$directory" ]] || continue
-        method=${directory##*/}
-        quantity=$BENCH_FEATURE
-        if [[ "$BENCH_FEATURE" == coverage ]]; then
-            # Positional depth, regional depth and fragment counts need separate pairs
-            case "$method" in
-                *region-counts*|finaletoolkit-coverage) quantity=regional-counts ;;
-                *-regions) quantity=regional-read-depth ;;
-                *fragment*) quantity=fragment-coverage ;;
-                *) quantity=read-depth ;;
-            esac
-        fi
-        if [[ "$seen_quantities" == *" $quantity "* ]]; then
-            comparable=true
-            break
-        fi
-        seen_quantities+="$quantity "
-    done
-    if [[ "$comparable" == false ]]; then
-        echo 'Concordance skipped: no pair of saved profiles measures the same quantity.'
-        return 0
-    fi
-    : "${BENCH_COMPARE_PYTHON:?Set the comparison Python printed by install_tools.sh}"
-    echo "Calculating concordance from $BENCH_RESULTS/profiles"
-    # The comparison environment also supplies zstd for reading compressed tracks
-    # Write to a temporary name so a failed comparison cannot replace valid metrics
-    if ! PATH="$(dirname -- "$BENCH_COMPARE_PYTHON"):$PATH" \
-        "$BENCH_COMPARE_PYTHON" "$comparator" "$BENCH_RESULTS/profiles" "$@" \
-        > "$BENCH_RESULTS/.concordance.tsv" 2> "$BENCH_RESULTS/concordance-error.log"; then
-        cat "$BENCH_RESULTS/concordance-error.log" >&2
-        echo "Concordance failed. See $BENCH_RESULTS/concordance-error.log" >&2
-        rm -f "$BENCH_RESULTS/.concordance.tsv"
-        return 1
-    fi
-    mv "$BENCH_RESULTS/.concordance.tsv" "$BENCH_RESULTS/concordance.tsv"
-    echo "Concordance saved to $BENCH_RESULTS/concordance.tsv"
-}
-
-benchmark_unpack() {
-    # This function unpacks a tool's Conda environment onto the compute node's disk
-    # Programs in the archive can still refer to the original installation folder
-    # conda-unpack updates those paths to the folder just created here
-    # It runs with the setup Python, which needs no extra packages. The Python in
-    # the unpacked environment may depend on paths that still need updating
-    local archive=$1 destination=$2
-    benchmark_progress "Unpacking environment archive: $archive"
-    mkdir -p "$destination"
-    tar -xzf "$archive" -C "$destination"
-    "$BENCH_SETUP_PYTHON" "$destination/bin/conda-unpack"
-}
-
-benchmark_stage_binary() {
-    # This function copies a standalone program and checks for the libraries it needs
-    # Arguments: path to the program and the name to give its local copy
-    # A copied executable may still need libraries installed on the compute node
-    # ldd checks them before the script attempts repeated runs that cannot start
-    # ldd reports an error for a program with its libraries built in. That case is
-    # accepted. Other errors and output naming a missing library stop setup
-    local executable=$1 name=$2 linkage
-    benchmark_progress "Copying executable: $name"
-    cp -L "$executable" "$BENCH_WORK/bin/$name"
-    [[ -x "$BENCH_WORK/bin/$name" ]] || {
-        echo "Not an executable: $executable" >&2
-        return 1
-    }
-    linkage=$(ldd "$BENCH_WORK/bin/$name" 2>&1) || {
-        if [[ "$linkage" != *'not a dynamic executable'* && "$linkage" != *'statically linked'* ]]; then
-            printf 'Could not inspect %s linkage: %s\n' "$name" "$linkage" >&2
-            return 1
-        fi
-    }
-    if [[ "$linkage" == *'not found'* ]]; then
-        printf 'Missing shared libraries for %s:\n%s\n' "$name" "$linkage" >&2
-        return 1
-    fi
-}
-
-benchmark_progress() {
-    # Save a short, dated message in the results directory and in Slurm's output
-    # Setup can spend a long time copying a BAM or unpacking a tool. These messages
-    # distinguish that work from measured runs and identify the last completed run
+# Saves a short, dated message in progress.log and prints it to Slurm's output
+#
+# Copying a BAM or unpacking a tool can take a long time. These messages tell that
+# work apart from measured runs, and identify the last run that was started or saved
+log_progress() {
     local message=$1
     printf '%s\t%s\n' "$(date -u +%FT%TZ)" "$message" | tee -a "$BENCH_RESULTS/progress.log"
 }
 
-benchmark_record_setup() {
-    # This function saves input paths, run settings, node name and code version
-    # beside the results before copying inputs or unpacking tool environments
-    # These records help explain differences between jobs run at different times
-    # It also copies this file so each srun program loads the same helper functions
-    # SLURM_SUBMIT_DIR locates it because Slurm keeps its copy of the submitted
-    # job script elsewhere, away from the other repository files
-    cp "$SLURM_SUBMIT_DIR/benchmarks/common.sh" "$BENCH_WORK/common.sh"
+# Creates the results directory with a header-only timings.tsv
+#
+# This happens before any input is copied, so a setup failure still leaves an
+# inspectable record. A header-only timings.tsv means no run has finished yet
+create_results_directory() {
+    mkdir -p "$BENCH_RESULTS/profiles" "$BENCH_RESULTS/runs"
+    (IFS=$'\t'; printf '%s\n' "${timing_columns[*]}") > "$BENCH_RESULTS/timings.tsv"
+}
+
+# Saves the input paths, run settings, node name and benchmark code version
+#
+# These records explain differences between jobs run at different times. This also
+# copies measure_command.sh to the compute node. Every Slurm step runs that copy, so
+# an edit to the repository during a long job cannot change its later runs
+#
+# Parameters:
+#   $1  Feature name (coverage, lengths, ends or midpoints)
+record_job_setup() {
+    local feature=$1
+    cp "$SLURM_SUBMIT_DIR/benchmarks/measure_command.sh" "$BENCH_WORK/measure_command.sh"
     {
         printf 'node\t%s\npilot\t%s\n' "$BENCH_NODE" "$BENCH_PILOT"
         printf 'methods\t%s\ncores\t%s\n' "$BENCH_METHODS" "$BENCH_CORES"
@@ -224,7 +222,7 @@ benchmark_record_setup() {
         else
             printf 'benchmark_dirty\tfalse\n'
         fi
-        printf 'feature\t%s\n' "$BENCH_FEATURE"
+        printf 'feature\t%s\n' "$feature"
         printf 'input_bam\t%s\ninput_index\t%s\n' "$BENCH_BAM" "$BENCH_INDEX"
     } > "$BENCH_RESULTS/run.tsv"
     if [[ -n ${BENCH_INSTALL_MANIFEST:-} ]]; then
@@ -233,182 +231,220 @@ benchmark_record_setup() {
     if [[ -n ${BENCH_CFDNA_BUILD:-} ]]; then
         cp "$BENCH_CFDNA_BUILD" "$BENCH_RESULTS/cfdnalab-build.tsv"
     fi
-    # Slurm's settings help interpret its reported peak memory after the job
-    # If those settings are unavailable, the script saves an error log and warns
-    # Tool timings and outputs can still be collected, so this failure is not fatal
-    scontrol show config > "$BENCH_RESULTS/slurm-config.txt" 2> "$BENCH_RESULTS/slurm-config-error.log" || {
+    # Slurm's settings help interpret the peak memory it reports after the job
+    # Timings and outputs can still be collected without them, so a failure here
+    # only saves an error log and prints a warning
+    if ! scontrol show config > "$BENCH_RESULTS/slurm-config.txt" 2> "$BENCH_RESULTS/slurm-config-error.log"; then
         echo 'Slurm configuration was unavailable. See slurm-config-error.log.' >&2
-    }
-    # The feature script waits for staged files to finish writing after setup
-    # That wait happens before warmups and does not evict the input from memory
+    fi
 }
 
-benchmark_schedule() {
-    # This function lists each method's warmups immediately before its measurements
-    # It reads methods_to_run, BENCH_CORES, BENCH_WARMUPS and BENCH_REPETITIONS from
-    # the main script. Each line gives method, cores, repetition and warmup flag
-    # With 1 warmup + 3 measurements, repetition 1 is marked true and 2-4 are false
-    # The summary excludes warmup rows. Griffin instead gets its separate short demo,
-    # so its runner sets full-input warmups to zero before asking for this list
-    local method repetition is_warmup
-    for method in "${methods_to_run[@]}"; do
-        for ((repetition=1; repetition<=BENCH_WARMUPS+BENCH_REPETITIONS; repetition++)); do
-            is_warmup=false
-            if ((repetition <= BENCH_WARMUPS)); then is_warmup=true; fi
-            printf '%s\t%s\t%s\t%s\n' "$method" "$BENCH_CORES" "$repetition" "$is_warmup"
-        done
+# Unpacks a tool's packed Conda environment onto the compute node's disk
+#
+# Programs in the archive can still refer to the original installation folder
+# conda-unpack updates those paths to the folder created here. It runs with the
+# setup Python, which needs no extra packages. The unpacked environment's own
+# Python may depend on paths that are not yet updated
+#
+# Parameters:
+#   $1  The packed archive (.tar.gz) made by install_tools.sh
+#   $2  The folder to unpack into
+unpack_environment() {
+    local archive=$1 destination=$2
+    log_progress "Unpacking environment archive: $archive"
+    mkdir -p "$destination"
+    tar -xzf "$archive" -C "$destination"
+    "$BENCH_SETUP_PYTHON" "$destination/bin/conda-unpack"
+}
+
+# Copies a standalone program to $BENCH_WORK/bin and checks its shared libraries
+#
+# A copied program may still need libraries installed on the compute node. ldd checks
+# them before any run, instead of every repetition failing to start. ldd reports an
+# error for a program with its libraries built in, which is accepted
+#
+# Parameters:
+#   $1  The program to copy
+#   $2  The name of the local copy
+copy_executable() {
+    local executable=$1 name=$2 linkage
+    log_progress "Copying executable: $name"
+    cp -L "$executable" "$BENCH_WORK/bin/$name"
+    if [[ ! -x "$BENCH_WORK/bin/$name" ]]; then
+        echo "Not an executable: $executable" >&2
+        return 1
+    fi
+    if ! linkage=$(ldd "$BENCH_WORK/bin/$name" 2>&1); then
+        if [[ "$linkage" != *'not a dynamic executable'* && "$linkage" != *'statically linked'* ]]; then
+            printf 'Could not inspect %s linkage: %s\n' "$name" "$linkage" >&2
+            return 1
+        fi
+    fi
+    if [[ "$linkage" == *'not found'* ]]; then
+        printf 'Missing shared libraries for %s:\n%s\n' "$name" "$linkage" >&2
+        return 1
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Warmups and measured repetitions
+# ---------------------------------------------------------------------------
+
+# Runs a repetition of the prepared command in its own Slurm step
+#
+# Call prepare_command from commands.sh first. srun starts measure_command.sh on the
+# job's node, bound to BENCH_CORES physical cores. It receives the native command as
+# arguments, so the timed command is exactly the one saved in runs/<run_order>/command.sh
+# The step gets its own Slurm step ID, used to look up its peak memory with sacct
+#
+# Parameters:
+#   $1  Method name
+#   $2  Repetition number. Repetitions up to BENCH_WARMUPS are warmups
+# Sets:
+#   run_order, step_exit_code, and the run's identity and measurements in `row`
+run_in_slurm_step() {
+    local method=$1
+    local repetition=$2
+    local warmup=false
+    if ((repetition <= BENCH_WARMUPS)); then warmup=true; fi
+    run_order=$((run_order + 1))
+    log_progress "Starting run $run_order: $method, repetition $repetition (warmup=$warmup)"
+
+    # The command is saved before the run starts, so it is known even if the
+    # allocation ends during the run. %q quotes each argument for a shell
+    local run_directory="$BENCH_RESULTS/runs/$run_order"
+    mkdir "$run_directory"
+    printf '%q ' "${command[@]}" > "$run_directory/command.sh"
+    printf '\n' >> "$run_directory/command.sh"
+
+    # Remove the previous run's record and logs, so a failed step can never be
+    # reported with values or messages from an earlier run. The output directory must
+    # not exist yet, because clear_run_output deleted the previous run's
+    rm -f "$BENCH_WORK/measurement.tsv" "$BENCH_WORK/tool-stdout.log" "$BENCH_WORK/tool-stderr.log"
+    mkdir "$output"
+
+    # --exact and --cpus-per-task give the step exactly BENCH_CORES CPUs of the
+    # allocation. --threads-per-core=1 makes those CPUs separate physical cores, and
+    # --cpu-bind=threads keeps every process of the step on them
+    step_exit_code=0
+    srun --jobid="$SLURM_JOB_ID" --exact --nodes=1 --ntasks=1 \
+        --cpus-per-task="$BENCH_CORES" --threads-per-core=1 --cpu-bind=threads \
+        --export=ALL bash "$BENCH_WORK/measure_command.sh" \
+        "$stdout_file" "$expected_output" "$empty_output_allowed" -- "${command[@]}" \
+        || step_exit_code=$?
+
+    row[run_order]=$run_order
+    row[repetition]=$repetition
+    row[warmup]=$warmup
+    row[method]=$method
+    row[cores]=$BENCH_CORES
+    row[job_id]=$SLURM_JOB_ID
+    row[pilot]=$BENCH_PILOT
+    row[step_exit_code]=$step_exit_code
+
+    # Copy the step's measurements into the row. A value the step did not reach,
+    # for example the timing of a run with the wrong CPUs, is recorded as NA
+    local -A measured=()
+    local name value
+    if [[ -f "$BENCH_WORK/measurement.tsv" ]]; then
+        while IFS=$'\t' read -r name value; do
+            measured[$name]=$value
+        done < "$BENCH_WORK/measurement.tsv"
+    fi
+    for name in step_id node cpu_model cpu_ids physical_core_ids started_utc \
+        wall_seconds user_seconds system_seconds max_rss_kib tool_exit_code \
+        flush_seconds process_plus_flush_seconds output_bytes; do
+        row[$name]=${measured[$name]:-NA}
     done
 }
 
-benchmark_time_command() {
-    # This function times the tool, then measures the wait for its disk writes
-    # The first argument is the start of its timing row: method, settings and run ID
-    # Next come its output folder, printed-output file and error file, followed by
-    # the complete tool command. The command is stored as an array so a file path
-    # with spaces stays a single argument
-    # printf adds the identifying columns after timing. GNU time's format string
-    # could misread '%' or backslashes in a name as formatting instructions
-    #
-    # The main script catches errors from this function so it can record failed runs
-    # In that situation Bash does not automatically stop this function on an error,
-    # even with set -e. Each required file operation therefore has "|| return 1" to
-    # prevent a failed read/write from being treated as a successful measurement
-    local prefix=$1 output_directory=$2 stdout_path=$3 stderr_path=$4
-    shift 4
-    local command_status=0 measurements flush_seconds output_bytes wall_seconds combined_seconds
-    local timed_command=("$@")
-    if [[ ${BENCH_RUN_TIMEOUT_SECONDS:-0} != 0 ]]; then
-        # GNU time records the command even if the time limit stops it
-        # timeout asks it to stop at the limit and forces it after another 60 seconds
-        # Available measurements are retained, with the run counted as failed
-        timed_command=(timeout --verbose --kill-after=60 "$BENCH_RUN_TIMEOUT_SECONDS" "${timed_command[@]}")
+# Saves a finished run: its timings.tsv row, and its logs in runs/<run_order>/
+#
+# This runs after the Slurm step, outside the run's measured time and memory
+# Failed runs are saved in the same way, so their row and messages stay available
+save_run_record() {
+    local run_directory="$BENCH_RESULTS/runs/$run_order"
+    # A step that failed before running the command has no logs
+    if [[ -f "$stdout_file" ]]; then cp "$stdout_file" "$run_directory/stdout.log"; fi
+    if [[ -f "$BENCH_WORK/tool-stderr.log" ]]; then cp "$BENCH_WORK/tool-stderr.log" "$run_directory/stderr.log"; fi
+    write_timing_row
+    if ((step_exit_code != 0)); then
+        if [[ -f "$run_directory/stderr.log" ]]; then cat "$run_directory/stderr.log" >&2; fi
+        echo "Run $run_order (${row[method]}, repetition ${row[repetition]}) failed with step exit code $step_exit_code." >&2
+        echo "Its command and logs are in $run_directory" >&2
     fi
-    # Old measurements are removed in case the timing program itself fails to start
-    rm -f "$BENCH_WORK/measurements.tsv" "$BENCH_WORK/flush.tsv" || return 1
-    # samtools stats prints its results instead of writing a named output file
-    # This file records where that text goes so it can be kept if the run fails
-    printf '%s\n' "$stdout_path" > "$BENCH_WORK/stdout.path" || return 1
-    # GNU time records elapsed seconds, CPU seconds spent by the tool and operating
-    # system, and maximum RAM use (RSS, in KiB). The exit code is recorded separately,
-    # including termination by a signal or time limit
-    /usr/bin/time --quiet --format $'%e\t%U\t%S\t%M' \
-        --output "$BENCH_WORK/measurements.tsv" "${timed_command[@]}" \
-        > "$stdout_path" 2> "$stderr_path" || command_status=$?
-    measurements=$(cat "$BENCH_WORK/measurements.tsv") || return 1
-    # Measurements are saved before a failure is returned, so unsuccessful attempts
-    # remain visible in timings.tsv
-    printf '%s\t%s\t%s\n' "$prefix" "$measurements" "$command_status" > "$BENCH_WORK/time.tsv" || return 1
-    if ((command_status != 0)); then return "$command_status"; fi
-    # A tool may finish while Linux is still holding output in memory to write later
-    # This command waits for those writes and records the wait separately from run time
-    # sync -f also waits for other pending writes on the same filesystem, so this
-    # number can include more than the time spent writing this tool's output alone
-    /usr/bin/time --quiet --format '%e' --output "$BENCH_WORK/flush.tsv" \
-        sync -f "$output_directory" || return 1
-    flush_seconds=$(cat "$BENCH_WORK/flush.tsv") || return 1
-    # Output size includes intermediate BAMs/tables required by the tool's workflow
-    output_bytes=$(du -sb "$output_directory" | cut -f 1) || return 1
-    wall_seconds=$(cut -f 1 "$BENCH_WORK/measurements.tsv") || return 1
-    combined_seconds=$(awk -v wall="$wall_seconds" -v flush="$flush_seconds" 'BEGIN {printf "%.3f", wall+flush}') || return 1
-    # Disk-write time, combined time and output size are saved together once all are known
-    # If the tool or disk-write check failed, the main script uses NA for these fields
-    printf '%s\t%s\t%s\n' "$flush_seconds" "$combined_seconds" "$output_bytes" > "$BENCH_WORK/io.tsv" || return 1
 }
 
-benchmark_finish_run() {
-    # This function adds an attempt to timings.tsv, keeps useful output and clears space
-    # It runs after srun finishes so copying a large coverage track is excluded from
-    # the tool's measured time and its Slurm step's memory usage
-    # Arguments: method name, repetition number, warmup flag and srun exit code
-    # The job's BENCH_* settings and run_order locate and label its results
-    #
-    # A failed tool is recorded here and the main script can continue with other tools
-    # Call-site requirement: this function must be called on its own line, because
-    # saving errors must stop the job. An if/|| condition would prevent Bash from
-    # automatically stopping on errors inside the function
-    local method=$1 repetition=$2 is_warmup=$3 step_exit_code=$4
-    local io_values=$'NA\tNA\tNA' profile stdout_path timing_values
-    if [[ -s "$BENCH_WORK/io.tsv" ]]; then io_values=$(cat "$BENCH_WORK/io.tsv"); fi
-    # A failed tool may have no disk-write measurements, which is represented by NA
-    # Its timing row must exist. Reading it separately makes a missing file stop the
-    # job instead of printf succeeding with an empty row
-    timing_values=$(cat "$BENCH_WORK/time.tsv")
-    printf '%s\t%s\t%s\t%s\n' "$timing_values" "$io_values" "$BENCH_PILOT" "$step_exit_code" >> "$BENCH_RESULTS/timings.tsv"
-    if ((step_exit_code != 0)); then
-        # The tool's messages are saved before temporary files are deleted, along
-        # with printed result tables such as samtools stats that may explain failure
-        mkdir -p "$BENCH_RESULTS/failed-run-$run_order"
-        for profile in "$BENCH_WORK/tool.log" "$BENCH_WORK/tool-error.log"; do
-            if [[ -f "$profile" ]]; then cp "$profile" "$BENCH_RESULTS/failed-run-$run_order/"; fi
-        done
-        if [[ -s "$BENCH_WORK/stdout.path" ]]; then
-            stdout_path=$(cat "$BENCH_WORK/stdout.path")
-            if [[ -f "$stdout_path" ]]; then cp "$stdout_path" "$BENCH_RESULTS/failed-run-$run_order/tool-stdout.log"; fi
+# Appends `row` to timings.tsv, in the column order of timing_columns
+#
+# Every column needs a value and every value needs a column. A misspelled or
+# forgotten setting therefore stops the job instead of leaving a wrong cell
+write_timing_row() {
+    local column values=()
+    for column in "${timing_columns[@]}"; do
+        # ${row[x]+present} is "present" only when row has the key x
+        if [[ -z "${row[$column]+present}" ]]; then
+            echo "No value for timing column '$column'. This is a bug in the benchmark scripts." >&2
+            return 1
         fi
-        echo "Run $run_order failed. Completed rows and diagnostics are in $BENCH_RESULTS" >&2
-    fi
-    # Output from the first measured repetition is kept for numerical comparisons
-    # Every repetition still recomputes its full output, so saving a single copy
-    # reduces stored data without reducing the work included in the timing
-    if [[ "$is_warmup" == false ]] && ((step_exit_code == 0 && repetition == BENCH_WARMUPS+1)); then
-        profile=$(cat "$BENCH_WORK/profile.path")
-        mkdir -p "$BENCH_RESULTS/profiles/$method"
-        case "$method" in
-            freia)
-                # The saved name distinguishes intact left-end counts from FrEIA's
-                # old, incorrect both-end abundance tables
-                cp "$profile" "$BENCH_RESULTS/profiles/$method/left-motifs.pq"
-                ;;
-            samtools-depth|pandepth)
-                # Keep every processed chromosome so concordance covers the full run
-                # PanDepth's compressed native table is copied intact. samtools text
-                # is compressed here, after its timer and Slurm step have finished
-                # The chromosome list records the complete retained scope
-                if [[ "$profile" == *.gz ]]; then
-                    cp "$profile" "$BENCH_RESULTS/profiles/$method/positions.tsv.gz"
-                else
-                    gzip -c "$profile" > "$BENCH_RESULTS/profiles/$method/positions.tsv.gz"
-                fi
-                cp "$BENCH_WORK/chrom.sizes" "$BENCH_RESULTS/profiles/$method/chrom.sizes"
-                ;;
-            *)
-                cp -R "$profile" "$BENCH_RESULTS/profiles/$method/"
-                if [[ "$method" == cfdnapro && "$BENCH_FEATURE" == ends ]]; then
-                    # The motif counts are saved with a record of the reference used
-                    cp "$BENCH_WORK/output/reference.tsv" "$BENCH_RESULTS/profiles/$method/"
-                    cp "$BENCH_WORK/output/contig_scope.tsv" "$BENCH_RESULTS/profiles/$method/"
-                fi
-                if [[ "$BENCH_FEATURE" == midpoints && "$method" == *-gc ]]; then
-                    # Keep the first measured sample estimate with the corrected
-                    # profile. Every repetition still estimates bias from scratch
-                    cp -R "$BENCH_WORK/output/gc-bias" "$BENCH_RESULTS/profiles/$method/sample-gc-bias"
-                    if [[ "$method" == griffin-gc ]]; then
-                        # The full Griffin workflow writes both profiles. Its raw
-                        # table supplies uncorrected concordance without another job
-                        cp "$BENCH_WORK/output/results/sample/sample.uncorrected.coverage.tsv" \
-                            "$BENCH_RESULTS/profiles/$method/"
-                    fi
-                fi
-                if [[ -f "$BENCH_WORK/chrom.sizes" ]]; then
-                    # An absent chromosome in a sparse coverage file could mean zero
-                    # coverage or an unprocessed chromosome. The saved chromosome list
-                    # and lengths distinguish those cases. An autosome-only run gets
-                    # a restricted list matching its actual selection
-                    if [[ "$method" == *autosomes* ]]; then
-                        awk '$1 ~ /^(chr)?([1-9]|1[0-9]|2[0-2])$/' "$BENCH_WORK/chrom.sizes" > "$BENCH_RESULTS/profiles/$method/chrom.sizes"
-                    else
-                        cp "$BENCH_WORK/chrom.sizes" "$BENCH_RESULTS/profiles/$method/chrom.sizes"
-                    fi
-                fi
-                ;;
-        esac
-    fi
-    # Pending writes on the temporary disk finish before the next run starts
-    # This also covers saved results if they use that disk. The timer has stopped
+        values+=("${row[$column]}")
+    done
+    for column in "${!row[@]}"; do
+        if [[ " ${timing_columns[*]} " != *" $column "* ]]; then
+            echo "'$column' is not a timing column. This is a bug in the benchmark scripts." >&2
+            return 1
+        fi
+    done
+    (IFS=$'\t'; printf '%s\n' "${values[*]}") >> "$BENCH_RESULTS/timings.tsv"
+}
+
+# Deletes the run's output, after its row and any saved profile are in the results
+#
+# sync first lets pending writes on the scratch disk finish, so they cannot overlap
+# the next measurement. The copied inputs and tools stay for the next run. The job's
+# exit trap removes the whole scratch directory at the end
+clear_run_output() {
     sync -f "$BENCH_WORK"
-    # This run's output and temporary messages are removed to make space for the next
-    # run. The copied inputs/programs remain for reuse. The main script removes the whole
-    # temporary directory when the job ends, including when it stops after an error
-    rm -rf "$BENCH_WORK/output" "$BENCH_WORK/coverage" "$BENCH_WORK/tool.log" "$BENCH_WORK/tool-error.log" "$BENCH_WORK/stdout.path"
-    benchmark_progress "Saved run $run_order: $method, repetition $repetition (step exit $step_exit_code)"
+    rm -rf "$output"
+    log_progress "Saved run $run_order: ${row[method]}, repetition ${row[repetition]} (step exit $step_exit_code)"
+}
+
+# ---------------------------------------------------------------------------
+# Concordance
+# ---------------------------------------------------------------------------
+
+# Compares the saved profiles with the feature's comparison script
+#
+# This runs in the batch shell after all runs, outside every measured Slurm step
+# It writes concordance.tsv in the results directory. A failed comparison keeps its
+# error in concordance-error.log and stops the job. The timings and profiles are
+# already saved by then
+#
+# Parameters:
+#   $1   The comparison script
+#   $2-  Its options, such as the job's length bounds
+compare_saved_profiles() {
+    local comparator=$1
+    shift
+    local saved_profile_count
+    saved_profile_count=$(find "$BENCH_RESULTS/profiles" -mindepth 1 -maxdepth 1 -type d | wc -l)
+    if ((saved_profile_count < 2)); then
+        echo 'Concordance skipped: fewer than two methods saved a profile.'
+        return 0
+    fi
+    : "${BENCH_COMPARE_PYTHON:?Set the comparison Python printed by install_tools.sh}"
+    echo "Calculating concordance from $BENCH_RESULTS/profiles"
+    # The comparison environment also supplies zstd, used to read cfDNAlab's tables
+    # The table is first written under a temporary name, so a failed comparison
+    # cannot replace an earlier valid concordance.tsv
+    if ! PATH="$(dirname -- "$BENCH_COMPARE_PYTHON"):$PATH" \
+        "$BENCH_COMPARE_PYTHON" "$comparator" "$BENCH_RESULTS/profiles" "$@" \
+        > "$BENCH_RESULTS/.concordance.tsv" 2> "$BENCH_RESULTS/concordance-error.log"; then
+        cat "$BENCH_RESULTS/concordance-error.log" >&2
+        echo "Concordance failed. See $BENCH_RESULTS/concordance-error.log" >&2
+        rm -f "$BENCH_RESULTS/.concordance.tsv"
+        return 1
+    fi
+    mv "$BENCH_RESULTS/.concordance.tsv" "$BENCH_RESULTS/concordance.tsv"
+    echo "Concordance saved to $BENCH_RESULTS/concordance.tsv"
 }

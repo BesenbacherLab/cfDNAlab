@@ -9,15 +9,17 @@ The benchmark runs selected native commands repeatedly, records timing and Slurm
 | Responsibility | Source |
 | --- | --- |
 | Installer and explicit reinstall controls | [install_tools.sh](install_tools.sh) |
-| Shared setup, scheduling, measurement and preservation | [common.sh](common.sh) |
-| Coverage | [benchmark_coverage.sh](coverage/benchmark_coverage.sh) |
-| Lengths | [benchmark_lengths.sh](lengths/benchmark_lengths.sh) |
-| End motifs | [benchmark_end_motifs.sh](ends/benchmark_end_motifs.sh) |
-| Midpoints | [benchmark_midpoints.sh](midpoints/benchmark_midpoints.sh) |
+| Shared setting checks, staging, run records and the concordance call | [common.sh](common.sh) |
+| Placement check and measurement inside each Slurm step | [measure_command.sh](measure_command.sh) |
+| Coverage job, and its native commands and saved files | [benchmark_coverage.sh](coverage/benchmark_coverage.sh), [commands.sh](coverage/commands.sh) |
+| Lengths job, and its native commands and saved files | [benchmark_lengths.sh](lengths/benchmark_lengths.sh), [commands.sh](lengths/commands.sh) |
+| End-motif job, and its native commands and saved files | [benchmark_end_motifs.sh](ends/benchmark_end_motifs.sh), [commands.sh](ends/commands.sh) |
+| Midpoint job, and its native commands and saved files | [benchmark_midpoints.sh](midpoints/benchmark_midpoints.sh), [commands.sh](midpoints/commands.sh) |
 | Summaries, accounting join and estimates | [summarize_timings.py](summarize_timings.py) |
 | BAM preparation utility | [prepare_snyder.py](data/prepare_snyder.py) |
-| Coverage, scheduling, installation and input regression tests | [test_benchmarks.py](tests/test_benchmarks.py) |
-| Failure handling, pilot budgets and native-format regression tests | [test_review_regressions.py](tests/test_review_regressions.py) |
+| Native commands, saved files, measurement and whole-job tests | [test_runners.py](tests/test_runners.py) |
+| Coverage comparison, installation and input regression tests | [test_benchmarks.py](tests/test_benchmarks.py) |
+| Submission, setup checks, concordance, pilot budgets and native-format regression tests | [test_review_regressions.py](tests/test_review_regressions.py) |
 
 Submission examples and operating instructions are in the [benchmark README](README.md).
 
@@ -165,15 +167,15 @@ After native success, a second timer measures `sync -f` on the output filesystem
 | --- | --- |
 | `wall_seconds`, `user_seconds`, `system_seconds` | Native process/pipeline GNU time |
 | `max_rss_kib` | GNU time maximum RSS, separate from Slurm memory |
-| `tool_exit_code` | Shell-observed native/timeout exit status, including signal exits |
+| `tool_exit_code` | Shell-observed native/timeout exit status, including signal exits. `NA` when a wrong CPU placement stopped the step before the command ran |
 | `flush_seconds` | Post-command filesystem flush duration |
 | `process_plus_flush_seconds` | Process wall plus flush, the selected end-to-end result |
 | `output_bytes` | Apparent output-directory bytes from `du -sb` |
 | `step_exit_code` | Scheduler-step status including placement/output/flush failures |
 
-Rows additionally record run order, repetition, warmup/pilot labels, method/version, core/native workers, feature filters/scope, node/CPU placement, job/step IDs and UTC start. Schemas have 31 coverage, 30 lengths, 35 ends and 32 midpoint columns.
+Rows additionally record run order, repetition, warmup/pilot labels, method/version, core/native workers, feature filters/scope, node/CPU placement, job/step IDs and UTC start. Schemas have 31 coverage, 30 lengths, 35 ends and 33 midpoint columns, listed in each feature's `commands.sh`.
 
-Native, placement, expected-output or flush failure saves available timing information, skips the remaining repetitions of that method and continues other selected methods. The overall job returns nonzero after those methods finish. Setup and results-bookkeeping failures remain fatal. Missing measurements are `NA`. Pre-timer failures retain known run/method/core/job identifiers and any recorded step ID. Failed tool logs and redirected native stdout are copied to `failed-run-<run_order>/` before scratch removal when parent bookkeeping can complete. Whole-allocation termination can prevent final bookkeeping and continuation.
+Native, placement, expected-output or flush failure saves available timing information, skips the remaining repetitions of that method and continues other selected methods. The overall job returns nonzero after those methods finish. Setup and results-bookkeeping failures remain fatal. Missing measurements are `NA`. Pre-timer failures retain the run's identifiers, its method settings and any recorded step ID. Every run's exact command is saved in `runs/<run_order>/command.sh` before its step starts. After the step, its standard output and error are copied there as `stdout.log` and `stderr.log`, for successful and failed runs alike. For samtools stats and bedcov, `stdout.log` is the native table. Whole-allocation termination can prevent final bookkeeping and continuation.
 
 When enabled, GNU `timeout --verbose --kill-after=60` wraps each native command inside GNU time. Its limit is recorded in `run.tsv`, and actual values are chosen from pilots. Timeout 124 is recorded as failure. A 137 status is ambiguous without timeout diagnostics/accounting. The limit excludes the subsequent filesystem flush and parent bookkeeping. Leave room for those operations and termination grace before the allocation ends. This does not guarantee cleanup of processes that escape their process group or survival of an allocation-wide OOM kill.
 
@@ -185,11 +187,11 @@ The result directory, `timings.tsv` header and `run.tsv` are created before inpu
 
 One native output per method is preserved from the first measured repetition at the job's core setting. Copying happens after `srun`, outside tool-step memory accounting. Other temporary outputs are removed. FrEIA's native left-only table is retained as `profiles/freia/left-motifs.pq`, distinct from damaged old both-end aggregates. cfDNAPro motifs retain native counts and a reference manifest together in `profiles/cfdnapro/`.
 
-After all tool attempts finish, pilots and full runs automatically compare saved profiles and write `concordance.tsv`. The comparison runs in the batch shell after all timed steps, so its time and memory do not enter tool measurements. Lengths use the job's inclusive bounds and motifs use its K. Coverage pairs positional read depth, fragment coverage, regional read depth and regional fragment counts separately, explicitly allowing the shared chromosome scope recorded in each comparison row. The comparison environment's `bin/` is added to PATH only for this command so its zstd is available. Single-tool jobs and coverage jobs without a comparable pair print a skip explanation. Separate midpoint jobs still need their saved profiles combined for cross-job comparison.
+After all tool attempts finish, pilots and full runs automatically compare saved profiles and write `concordance.tsv`. The comparison runs in the batch shell after all timed steps, so its time and memory do not enter tool measurements. Lengths use the job's inclusive bounds and motifs use its K. Coverage pairs positional read depth, fragment coverage, regional read depth and regional fragment counts separately, explicitly allowing the shared chromosome scope recorded in each comparison row. The comparison environment's `bin/` is added to PATH only for this command so its zstd is available. Jobs with fewer than two saved profiles and coverage jobs without a comparable pair print a skip explanation. Midpoint jobs run a single method and do not call the comparison. Their saved profiles are combined for cross-job comparison.
 
 Comparison errors fail the job, keep `concordance-error.log` and print its contents to the Slurm log. Timings and profiles are preserved. The completed concordance table replaces its generated output only on success. Coverage also writes the residual histogram described in the concordance specification. A native-tool failure leaves the job failed while automatic concordance uses any comparable profiles from successful measured runs.
 
-Coverage keeps every processed chromosome in the saved tracks for all tools. Full native output is generated inside timing. PanDepth's compressed positions are copied intact, and samtools text is compressed after its Slurm step. Each coverage profile has its processed `chrom.sizes`, and regional outputs share saved `regions.bed`. All-contig comparisons therefore evaluate the full BAM reference scope.
+Coverage keeps every processed chromosome in the saved tracks for all tools. Full native output is generated inside timing. PanDepth's compressed positions are copied intact, and samtools text is compressed after its Slurm step. Each per-base coverage profile has its processed `chrom.sizes`, and regional outputs share saved `regions.bed`. All-contig comparisons therefore evaluate the full BAM reference scope.
 
 Midpoints also retains normalized `sites.bed` and source `sites.sha256`. The original input BED remains unchanged. Griffin jobs additionally retain `griffin-warmup.log`, `griffin-warmup-error.log`, the demo source SHA-256 and its warmup policy in `run.tsv`. The untimed demo has no timing row and does not enter summaries or production comparisons. Additional `cfdnalab-gc` and `griffin-gc` workloads each estimate sample GC bias and apply it inside every timing. Reference-only inputs are staged beforehand. cfDNAlab's reference is calculated once with native defaults and reused, with native sample-estimation windows and chromosome selection. Each midpoint job selects a single workload and core setting. Corrected runs retain reference paths and the first measured sample estimate with its diagnostics. Corrected Griffin also retains its estimation BED/checksum. Their timing rows carry `gc_correction=corrected`, while baseline rows carry `none`.
 
