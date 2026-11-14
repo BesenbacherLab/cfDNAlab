@@ -4,7 +4,7 @@ Compare `cfdna midpoints` with Griffin's native BAM-to-profile workflow on the s
 
 ## Comparable settings
 
-The benchmark uses the same grouped sites, inclusive fragment lengths 100-200 bp and MAPQ >=20 for both tools and their sample GC estimators. Supply 9,990 bp BED windows (`center - 4995`, `center + 4995`). cfDNAlab saves all 666 bins of 15 bp. Griffin normalizes over that same window but saves its official central 132 bins, `[-990, 990)`. Both use native 165 bp order-3 Savitzky-Golay smoothing. No per-site CNA correction or fragment-count weights are added.
+The benchmark uses the same grouped sites, inclusive fragment lengths 100-200 bp and MAPQ >=20 for both profilers. Both sample GC estimators use MAPQ >=20 and the native estimation ranges described below. Supply 9,990 bp BED windows (`center - 4995`, `center + 4995`). cfDNAlab saves all 666 bins of 15 bp. Griffin normalizes over that same window but saves its official central 132 bins, `[-990, 990)`. Both use native 165 bp order-3 Savitzky-Golay smoothing. No per-site CNA correction or fragment-count weights are added.
 
 | Tool | Settings | Expected differences |
 | --- | --- | --- |
@@ -25,7 +25,7 @@ The preparation utility assigns positive TLEN to the reconstructed forward mate.
 
 Griffin pads queried regions by the **minimum** fragment length. The 100-200 bp baseline provides at least half the maximum length as padding. The sufficient padding condition is `floor(max_length / 2) <= min_length`. Fetch losses become possible from `max_length >= 2 * min_length + 2`, depending on read alignment extent. Group aggregation parallelizes across site lists, so a single group cannot use all aggregation workers even when counting scales.
 
-Pilot the actual site set before scheduling all repetitions. Griffin holds per-base dictionaries across merged fetch regions and dense site-by-position matrices during aggregation. Large or heavily overlapping site sets can therefore require substantial memory.
+Griffin holds per-base dictionaries across merged fetch regions and dense site-by-position matrices during aggregation. Large or heavily overlapping site sets can therefore require substantial memory.
 
 The production source is Griffin's [public paper TFBS set](https://github.com/adoebley/Griffin_analyses/tree/75467e438a88029206d8d778ddce05eb0ab6efa8/sites/TFBS/10000_unfiltered_sites_CIS_BP_v2), pinned to the linked revision. Supply its prepared BED windows rather than selecting sites in the runner. Record the actual site/group counts, window width and derivation with the results.
 
@@ -48,7 +48,7 @@ Run `cfdnalab-gc` and `griffin-gc` in separate jobs for the timing comparison. E
 
 Both workflows keep native bias fitting, smoothing, exclusion rules and diagnostic plots. Correction algorithms are not forced to match. cfDNAlab uses directional paired spans, GC percentages and its native reference end offset (10 bp by default). Griffin uses record/TLEN selection, whole-fragment GC counts and its native smoothing. Its estimator counts qualifying forward and reverse records independently. Corrected-profile differences therefore reflect both bias estimates and midpoint counting. Mean per-site/per-bp values represent weighted midpoint counts in this comparison.
 
-cfDNAlab uses its default reference and sample GC-estimation settings. Its reference package is calculated once per alignment reference and reused across all BAMs, repetitions and core settings. The default package covers 30-1000 bp, and sample GC estimation inherits that range. The midpoint profiles still use the agreed 100-200 bp range.
+cfDNAlab uses its default reference and sample GC-estimation settings. Its reference package is calculated once per alignment reference and reused across all BAMs, repetitions and core settings. The default package covers 30-1000 bp, and sample GC estimation inherits that range. The midpoint profiles use the 100-200 bp range.
 
 Griffin's downloaded source already includes its hg38 GC-estimation BED and precomputed reference GC-frequency tables under `Griffin-source/Ref/`. Use these bundled inputs for the hg38 benchmark. Its estimator uses `chr1` through `chr22` and handles the supplied estimation regions itself. This BED is only used by `griffin-gc`. It does not replace or modify `BENCH_INTERVALS` or restrict cfDNAlab's reference calculation.
 
@@ -79,33 +79,13 @@ Griffin's bundled hg38 reference tables are already downloaded by the installer,
 
 The Griffin archive must contain its GC scripts and matplotlib for native bias plots. If those files are missing, rerun `bash benchmarks/install_tools.sh ROOT --only griffin`. All installation files remain under ROOT.
 
-With those references prepared and the usual BAM, site and tool paths exported, submit pilots from the login node:
-
-```bash
-BENCH_METHODS=cfdnalab-gc BENCH_CORES=4 BENCH_PILOT=1 \
-BENCH_MIN_LENGTH=100 BENCH_MAX_LENGTH=200 \
-BENCH_RESULTS=/path/to/midpoints-cfdnalab-gc-pilot \
-    bash benchmarks/submit_benchmark.sh midpoints --time=YOUR_PILOT_BASED_BUDGET
-
-BENCH_METHODS=griffin-gc BENCH_CORES=4 BENCH_PILOT=1 \
-BENCH_MIN_LENGTH=100 BENCH_MAX_LENGTH=200 \
-BENCH_RESULTS=/path/to/midpoints-griffin-gc-pilot \
-    bash benchmarks/submit_benchmark.sh midpoints --time=YOUR_GRIFFIN_PILOT_BASED_BUDGET
-```
+With those references prepared, use the commented [production run procedure](../README.md#runs-and-budgets). It submits uncorrected cfDNAlab, GC-corrected cfDNAlab and GC-corrected Griffin as three separate midpoint jobs at each of 1, 4, 12 and 32 cores. Each midpoint job has its own result directory and an explicitly named midpoint wall-time variable.
 
 Griffin keeps its short, untimed demo with unit weights, without estimating sample bias during that demo. Every measured `griffin-gc` repetition performs the full sample estimation and production profiling. Its first measured estimation has no preceding estimation warmup in that job. Full `cfdnalab-gc` runs warm up the entire corrected workflow. The first measured bias estimate and its diagnostics are retained under `profiles/<method>/sample-gc-bias/`. Inputs are staged before timing, and both `run.tsv` and the timing rows distinguish corrected runs from the uncorrected baseline.
 
-Budget corrected Griffin runs from measurements of the complete estimation-plus-profiling workflow. Its [release cluster configuration](https://github.com/adoebley/Griffin/blob/v0.2.0/snakemakes/griffin_GC_and_mappability_correction/config/cluster_slurm.yaml) requests 48 hours with eight CPUs for GC counting alone and warns that large BAMs can take days. Those are upstream resource requests, not measured runtimes for this input. A 48-hour allocation for the entire single-core workflow has not been validated. Measure a higher-core corrected run before choosing that allocation's time limit. Use `BENCH_REPETITIONS=1` with `BENCH_PILOT=0` for a single measured production run with exclusive allocation.
+Budget corrected Griffin jobs for all three complete estimation-plus-profiling runs, plus the demo and setup. Its [release cluster configuration](https://github.com/adoebley/Griffin/blob/v0.2.0/snakemakes/griffin_GC_and_mappability_correction/config/cluster_slurm.yaml) requests 48 hours with eight CPUs for GC counting alone and warns that large BAMs can take days. Those are upstream resource requests, not measured runtimes for this input. No complete-job time limit is established here.
 
-For corrected concordance, copy the saved `cfdnalab-gc` and `griffin-gc` profile directories into a separate comparison directory as in the uncorrected example below, then run:
-
-```bash
-"$BENCH_COMPARE_PYTHON" benchmarks/midpoints/compare_midpoints.py \
-    /path/to/corrected-comparison/profiles --gc-corrected \
-    > /path/to/corrected-comparison/concordance.tsv
-```
-
-This selects corrected profiles with full-window normalization followed by central-window comparison. The default comparator instead pairs uncorrected `cfdnalab` with `profiles/griffin-gc/sample.uncorrected.coverage.tsv`.
+The shared [completed-job commands](../README.md#completed-job-accounting-and-concordance) compare both raw and corrected profiles at matching core settings. `--gc-corrected` selects `cfdnalab-gc` and Griffin's corrected table. The default comparator pairs uncorrected `cfdnalab` with `profiles/griffin-gc/sample.uncorrected.coverage.tsv`. In both comparisons, cfDNAlab is normalized over the full window before selecting the shared central bins. Griffin's saved profiles already use full-window normalization.
 
 ## Inputs and run
 
@@ -122,67 +102,17 @@ Keep the two exports in the local settings file. Downloading is a separate prepa
 
 Supply the prepared coordinate-sorted BAM and its index, the matching **uncompressed FASTA plus existing `.fai`** for Griffin, and your BED-like file with `chromosome, start, end, group` through `BENCH_INTERVALS`. Use tab-separated rows without a header. BED4 is unstranded. Optional strands follow cfDNAlab's BED5/BED6 convention. Supply equal-width windows within their chromosomes. For production, use BED `[center-4995, center+4995)`, 9,990 bp total, to align both tools' 15 bp bins. Reverse-stranded windows are reversed by both tools. The runner retains all supplied site rows, including repeats and overlaps, without selecting or resizing sites. Before submission, the launcher checks only the first five lines for the expected columns and integer coordinates. Input validation belongs to the native tools.
 
-```bash
-# The shared installer prints these tool paths
-export BENCH_CFDNA=/path/to/benchmark-tools/envs/cfdnalab/bin/cfdna
-export BENCH_GRIFFIN_ARCHIVE=/path/to/benchmark-tools/griffin.tar.gz
-export BENCH_BAM=/path/to/BH01.hg38.paired.15x.bam
-export BENCH_REF_FASTA=/path/to/the-alignment-reference.fa
-export BENCH_INTERVALS=/path/to/grouped-midpoint-windows.bed
-export BENCH_SAMTOOLS_ARCHIVE=/path/to/benchmark-tools/samtools.tar.gz
-# The batch job uses TMPDIR supplied on the compute node
-
-# Concordance pilots: separate jobs, each with a new results directory
-export BENCH_RESULTS=/path/to/midpoint-cfdnalab-pilot
-export BENCH_CORES="1"
-export BENCH_PILOT=1
-export BENCH_METHODS=cfdnalab
-bash benchmarks/submit_benchmark.sh midpoints --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET
-
-export BENCH_RESULTS=/path/to/midpoint-griffin-pilot
-export BENCH_METHODS=griffin-gc
-bash benchmarks/submit_benchmark.sh midpoints --constraint=gen6 --time=YOUR_GRIFFIN_PILOT_BASED_BUDGET
-
-# Each midpoint job has a single tool. Cross-job concordance combines their saved profiles
-mkdir -p /path/to/midpoint-comparison/profiles
-cp -R /path/to/midpoint-cfdnalab-pilot/profiles/cfdnalab /path/to/midpoint-comparison/profiles/
-cp -R /path/to/midpoint-griffin-pilot/profiles/griffin-gc /path/to/midpoint-comparison/profiles/
-/path/to/benchmark-tools/envs/comparison/bin/python \
-    benchmarks/midpoints/compare_midpoints.py /path/to/midpoint-comparison/profiles \
-    > /path/to/midpoint-comparison/concordance.tsv
-
-# Submit a separate job and results directory for each core setting
-export BENCH_RESULTS=/path/to/midpoint-cfdnalab-timing-4cores
-export BENCH_CORES=4
-export BENCH_MIN_MAPQ=20
-export BENCH_PILOT=0
-export BENCH_WARMUPS=1
-export BENCH_REPETITIONS=3
-export BENCH_METHODS=cfdnalab
-bash benchmarks/submit_benchmark.sh midpoints --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET
-
-export BENCH_RESULTS=/path/to/midpoint-griffin-timing-4cores
-export BENCH_METHODS=griffin-gc
-bash benchmarks/submit_benchmark.sh midpoints --constraint=gen6 --time=YOUR_GRIFFIN_PILOT_BASED_BUDGET
-```
-
-Set the generation selector and wall time from the cluster settings and full-input pilots. Each job uses one core setting and one workload. Griffin runs alone with `BENCH_METHODS=griffin-gc` and needs an allocation long enough to finish, including beyond 24 hours. These single-tool jobs do not run concordance themselves. Their cross-job comparison above remains separate. Use matched hardware as described in [the shared run controls](../README.md#runs-and-budgets). `BENCH_INDEX` and `BENCH_FASTA_INDEX` can override the usual index paths. `BENCH_MIN_LENGTH`, `BENCH_MAX_LENGTH` and `BENCH_MIN_MAPQ` override the common filters. Keep the same production BED and settings across the two jobs.
+Use the shared [production run procedure](../README.md#runs-and-budgets) for the exported paths, all three workloads, fresh result directories and cross-job comparisons. Each midpoint job uses a single core setting and method. `BENCH_INDEX` and `BENCH_FASTA_INDEX` can override the usual index paths. `BENCH_MIN_LENGTH`, `BENCH_MAX_LENGTH` and `BENCH_MIN_MAPQ` override the profiling filters. Keep the same production BED and settings across the jobs.
 
 Griffin receives a short, untimed warmup on the release's [1000-site CTCF demo](https://github.com/adoebley/Griffin/blob/v0.2.0/demo/griffin_nucleosome_profiling_demo_files/sites/CTCF.hg38.1000.txt), using the same staged production BAM/reference and core budget. It runs the same two native scripts and production window/filter settings on those demo coordinates in a separate Slurm step. This gives Griffin a practical warmup without another full production run. Demo timings and memory do not enter measured results. Logs and the demo checksum are retained, and demo outputs are removed before measurements. The supplied production sites are unchanged.
 
-The normal cfDNAlab schedule is a full-input warmup plus three measurements. Griffin has no full-input warmup and performs three measured runs after its demo. `BENCH_PILOT=1` reduces either tool to one measured full-input run, retaining Griffin's demo warmup. If Griffin takes 30 hours per run at a setting, three measurements need about 90 hours raw, or 112 h 30 min with the illustrative 25% margin, plus demo/setup overhead. Choose whether to split repetitions using pilot results and existing repetition controls. Every new Griffin job receives the demo.
+The production cfDNAlab schedule is a full-input warmup plus three measurements. Griffin has no full-input warmup and performs three measured runs after its demo. Every new Griffin job receives the demo.
 
-For full runs, the submission launcher reserves an exclusive node and all its memory. Pilots allow shared nodes and request 50 GB unless `--mem` is passed. Sequential `srun --jobid` steps use that allocation and check their actual node and allowed logical/physical CPU IDs. Hard confinement also depends on Slurm's cgroup setup. All inputs and Griffin's environment are staged on local scratch before warmups. Methods run in contiguous blocks with warmups before measurements at the job's single core count. Submit separate jobs and results directories for the other core settings. No caches are evicted. Both tools use exactly the chromosomes present in the supplied site set, while the BAM retains its other chromosomes and records.
+For full runs, the submission launcher reserves an exclusive node and all its memory. Sequential `srun --jobid` steps use that allocation and check their actual node and allowed logical/physical CPU IDs. Hard confinement also depends on Slurm's cgroup setup. All inputs and Griffin's environment are staged on local scratch before warmups. No caches are evicted. Both tools profile the chromosomes present in the supplied site set, while the BAM retains its other chromosomes and records.
 
 `timings.tsv` contains a row for every attempted full-input run, including full-input warmups and failures, with `gc_correction=none` or `corrected`. Griffin's demo is untimed, with logs and its checksum retained separately. A native profile is saved under `profiles/<method>/` from the first measured repetition at the job's single core count. Corrected workloads also retain that repetition's sample bias and diagnostics. Other temporary files and logs are deleted. Failed diagnostics are retained and the remaining repetitions of that method are skipped. See the [shared failure and timeout behavior](../README.md#timing-and-slurm-memory). Source files are not modified or downloaded by benchmark jobs.
 
 Timing includes native startup, counting, output writing and Griffin's bigWig-to-profile aggregation. cfDNAlab's native default QC plot also remains timed. Input staging, scheduler startup, profile preservation, cleanup and concordance calculations are outside the timer. GNU time's maximum RSS is not the simultaneous total memory of a multiprocessing tree.
-
-## Other software checked
-
-[deepTools 4.0.0](https://github.com/deeptools/deepTools/releases/tag/4.0.0) provides `bamCoverage --MNase`. Its current [native counting code](https://github.com/deeptools/deepTools/blob/4.0.0/src/filtering.rs) counts two central bases for even insert lengths and four for odd lengths. `--centerReads` centers a read-sized span rather than reducing a fragment to a 1 bp midpoint. These settings do not directly reproduce this single-midpoint definition. A wider-kernel comparison could be separately labeled, but it is not included in this baseline. See also the [current CLI](https://github.com/deeptools/deepTools/blob/4.0.0/pydeeptools/deeptools/bamCoverage2.py).
-
-[LIQUORICE](https://www.nature.com/articles/s41467-021-23445-w) describes a fragment-coverage workflow rather than counting fragment midpoints. [FinaleToolkit's regional coverage and WPS outputs](https://epifluidlab.github.io/FinaleToolkit/documentation/user_guide/features.html) are also different quantities. No 1 bp genomic intervals file is generated to force these tools into a midpoint comparison.
 
 ## Supplementary result templates
 

@@ -14,7 +14,6 @@
 #   min_mapq, min_length, max_length
 #                      Shared filters. Length bounds are inclusive
 #   length_end         max_length + 1, for options with an exclusive upper bound
-#   autosomes          Comma-separated autosome names found in the BAM
 #   genome             cfDNAPro's genome label (BENCH_GENOME)
 #   cfdna, samtools, picard, finale_python, finale, apptainer, cfdnapro_image
 #                      Tool paths
@@ -75,18 +74,6 @@ prepare_command() {
             row[tool_threads]=$cores
             row[length_definition]=directional-aligned-span
             ;;
-        cfdnalab-autosomes)
-            # Additional configuration: the same call on autosomes only
-            command=("$cfdna" lengths --bam "$bam" --output-dir "$output"
-                --length-bins "$min_length:$length_end:1"
-                --indel-mode ignore --clip-mode aligned --min-mapq "$min_mapq"
-                --n-threads "$cores" --chromosomes "$autosomes")
-            expected_output="$output/length_counts.tsv.zst"
-            row[tool_version]=$cfdna_version
-            row[tool_threads]=$cores
-            row[length_definition]=directional-aligned-span
-            row[scope]=autosomes
-            ;;
         cfdnalab-proper)
             # Additional configuration: the same call, requiring properly paired reads
             command=("$cfdna" lengths --bam "$bam" --output-dir "$output"
@@ -104,28 +91,16 @@ prepare_command() {
             # image contains R, cfDNAPro and the authors' reference packages
             # --cleanenv, --containall and --vanilla keep home-directory R settings out
             # The container sees $BENCH_WORK as /work, so /work/output is $output
-            # The final TRUE selects cfDNAPro's native coordinate curation, which
-            # measures directional fragment spans. cfDNAPro has no thread option here
+            # Native coordinate curation measures directional fragment spans
+            # cfDNAPro has no thread option here
             command=("$apptainer" exec --cleanenv --containall
                 --bind "$BENCH_WORK:/work" --pwd /work
                 "$cfdnapro_image" Rscript --vanilla /work/cfdnapro_lengths.R
                 /work/sample.bam /work/output/lengths.tsv
-                "$min_length" "$max_length" "$min_mapq" "$genome" TRUE)
+                "$min_length" "$max_length" "$min_mapq" "$genome")
             expected_output="$output/lengths.tsv"
             row[tool_version]=$cfdnapro_version
             row[length_definition]=directional-aligned-span
-            ;;
-        cfdnapro-outer-span)
-            # Additional configuration: the same call without coordinate curation
-            # (final argument FALSE), which measures outer alignment spans instead
-            command=("$apptainer" exec --cleanenv --containall
-                --bind "$BENCH_WORK:/work" --pwd /work
-                "$cfdnapro_image" Rscript --vanilla /work/cfdnapro_lengths.R
-                /work/sample.bam /work/output/lengths.tsv
-                "$min_length" "$max_length" "$min_mapq" "$genome" FALSE)
-            expected_output="$output/lengths.tsv"
-            row[tool_version]=$cfdnapro_version
-            row[length_definition]=outer-aligned-span
             ;;
         finaletoolkit)
             # The packed environment's Python runs the FinaleToolkit launcher, so the
@@ -186,10 +161,10 @@ save_profile() {
     local destination="$BENCH_RESULTS/profiles/$method"
     mkdir -p "$destination"
     case "$method" in
-        cfdnalab|cfdnalab-autosomes|cfdnalab-proper)
+        cfdnalab|cfdnalab-proper)
             cp "$output/length_counts.tsv.zst" "$destination/"
             ;;
-        cfdnapro|cfdnapro-outer-span|finaletoolkit)
+        cfdnapro|finaletoolkit)
             cp "$output/lengths.tsv" "$destination/"
             ;;
         samtools)

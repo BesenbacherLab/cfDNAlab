@@ -9,7 +9,7 @@
 #
 # Submit from the repository root: bash benchmarks/submit_benchmark.sh ends
 # The launcher requests an exclusive node for full runs and allows shared pilots
-# See README.md for the settings, known differences and pilot invocation
+# See README.md for the production settings and known differences
 #
 # The job:
 #   1. Checks the settings
@@ -59,11 +59,10 @@ needs_cfdnapro=false
 needs_reference=false
 for method in "${methods[@]}"; do
     case "$method" in
-        cfdnalab-reference|cfdnalab-reference-proper|cfdnalab-reference-autosomes)
+        cfdnalab-reference|cfdnalab-reference-proper)
             needs_cfdna=true
             needs_reference=true
             ;;
-        cfdnalab-read|cfdnalab-read-aligned|cfdnalab-read-include) needs_cfdna=true ;;
         finaletoolkit)
             needs_finale=true
             needs_reference=true
@@ -113,16 +112,11 @@ unset PYTHONPATH PYTHONHOME
 export XDG_CACHE_HOME="$BENCH_WORK/cache"
 export MPLCONFIGDIR="$BENCH_WORK/matplotlib"
 
-# samtools reads the BAM's contig names and lengths from its index. The unmapped
-# '*' row is skipped. Autosomes use the BAM's own names, chr1..chr22 or 1..22
+# samtools reads the BAM's contig names and lengths from its index
+# The unmapped '*' row is skipped
 unpack_environment "$BENCH_SAMTOOLS_ARCHIVE" "$BENCH_WORK/samtools-env"
 "$BENCH_WORK/samtools-env/bin/samtools" idxstats "$BENCH_WORK/sample.bam" |
     awk '$1 != "*" {print $1 "\t" $2}' > "$BENCH_WORK/chrom.sizes"
-autosomes=$(autosome_sizes "$BENCH_WORK/chrom.sizes" | cut -f 1 | paste -sd, -)
-if [[ " ${methods[*]} " == *" cfdnalab-reference-autosomes "* && -z "$autosomes" ]]; then
-    echo "The BAM has no autosomes named chr1..chr22 or 1..22." >&2
-    exit 1
-fi
 if [[ "$needs_finale" == true ]]; then unpack_environment "$BENCH_FINALE_ARCHIVE" "$BENCH_WORK/finale-env"; fi
 
 # FinaleToolkit visits the reference's contigs, while cfDNAlab --chromosomes all uses
@@ -197,6 +191,11 @@ for method in "${methods[@]}"; do
         prepare_command "$method"
         run_in_slurm_step "$method" "$repetition"
         save_run_record
+        # Keep the R stage breakdown for every successful cfDNAPro invocation
+        # Copy after the tool step so preservation stays outside its measurements
+        if [[ "$method" == cfdnapro && "$step_exit_code" == 0 ]]; then
+            cp "$output/stage_timings.tsv" "$BENCH_RESULTS/runs/$run_order/cfdnapro-stage-timings.tsv"
+        fi
         # The first measured repetition's output is kept for concordance
         if ((step_exit_code == 0 && repetition == BENCH_WARMUPS + 1)); then
             save_profile "$method"

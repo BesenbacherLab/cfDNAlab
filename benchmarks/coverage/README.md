@@ -27,19 +27,7 @@ For example, forward `pos=100`, `30M`, reverse `pos=170`, `30M` spans 100 bp. Fr
 
 ## Run and compare
 
-Set the input/tool paths printed by the installer and use a new results directory. Every run also needs `BENCH_SAMTOOLS_ARCHIVE` for untimed header preparation and Python 3 for environment relocation. Jobs selecting multiple methods require `BENCH_COMPARE_PYTHON`, also printed by the installer.
-
-```bash
-export BENCH_BAM=/path/to/BH01.hg38.paired.15x.bam
-# The batch job uses TMPDIR supplied on the compute node
-export BENCH_RESULTS=/path/to/coverage-concordance
-export BENCH_CORES=1
-export BENCH_PILOT=1
-export BENCH_METHODS="cfdnalab-fragment cfdnalab-fragment-proper mosdepth-fragment cfdnalab mosdepth samtools-depth pandepth cfdnalab-regions mosdepth-regions samtools-regions pandepth-regions cfdnalab-region-counts cfdnalab-region-counts-proper finaletoolkit-coverage"
-bash benchmarks/submit_benchmark.sh coverage --time=YOUR_PILOT_BASED_BUDGET
-
-# The job writes concordance.tsv and residuals.tsv automatically after timing
-```
+Use the commented [production run procedure](../README.md#runs-and-budgets) for the complete 1/4/12/32-core matrix, local path settings, fresh result directories and accounting commands. It times the 12 normal whole-reference configurations and the `cfdnalab-autosomes` coverage configuration at every core setting. The autosome run measures cfDNAlab's usual scope and processes fewer chromosomes than the whole-reference calls. The two proper-pair diagnostics run once each at 32 cores for concordance against mosdepth fragment mode and FinaleToolkit, outside the timing summaries.
 
 Pilots and full runs calculate concordance after all tool attempts finish. Results are saved as `concordance.tsv`, including the primary base-resolution `mae`, and `residuals.tsv`, the residual histogram. Only profiles measuring the same quantity are paired. Different retained chromosome scopes are compared on their intersection, with the evaluated scope recorded in each row. A job without a comparable pair prints why concordance was skipped. A comparison failure fails the job and keeps its error in `concordance-error.log`, while preserving the completed timings and profiles.
 
@@ -61,7 +49,7 @@ For a regional-only job, select `BENCH_METHODS="cfdnalab-regions mosdepth-region
 
 ## Production measurements
 
-Use `BENCH_PILOT=1` on the actual production method/core matrix to estimate all work, splitting pilots when necessary. The submission launcher allows shared nodes for pilots and requests 50 GB unless `--mem` is passed. Then set `BENCH_PILOT=0`, a warmup and three measurements, and submit core/method blocks that fit the allocation limit on matched hardware. Full runs reserve an exclusive node and all its memory. Prefer the same physical node when available. See [shared run controls and Slurm memory](../README.md#runs-and-budgets). `BENCH_MIN_MAPQ`, `BENCH_MIN_LENGTH` and `BENCH_MAX_LENGTH` override the filters. The timing TSV records applied/unsupported length filtering, proper-pair selection and scope.
+The shared production procedure uses exclusive nodes, a full-input warmup and three measurements for every normal timing configuration at each core count. The two proper-pair configurations run once without a warmup at 32 cores for concordance. `BENCH_MIN_MAPQ`, `BENCH_MIN_LENGTH` and `BENCH_MAX_LENGTH` override the filters. The timing TSV records applied/unsupported length filtering, proper-pair selection and scope.
 
 Keep process-plus-filesystem-flush time, output bytes and the joined Slurm peak alongside process time and GNU time RSS. Native positional output costs stay in the comparison. Include sample size, SD and median/quartiles and retain all measured points. The table below is a result template, not measured concordance data.
 

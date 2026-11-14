@@ -14,7 +14,6 @@
 #   k                  Motif length (BENCH_K)
 #   min_mapq, min_length, max_length
 #                      Shared filters. Length bounds are inclusive
-#   autosomes          Comma-separated autosome names found in the BAM
 #   genome             cfDNAPro's genome label (BENCH_GENOME)
 #   reference_2bit     The copied 2bit reference
 #   cfdna, finale_python, finale, apptainer, cfdnapro_image
@@ -77,8 +76,8 @@ prepare_command() {
     stdout_file="$BENCH_WORK/tool-stdout.log"
     empty_output_allowed=false
 
-    # The cfDNAlab configurations differ in motif source, clipping, pair selection
-    # and chromosome scope. All use the requested fragment length bounds
+    # Both cfDNAlab configurations use reference motifs at aligned boundaries
+    # The proper-pair configuration checks FinaleToolkit concordance
     case "$method" in
         cfdnalab-reference)
             # Reference bases at the aligned fragment ends, on all BAM contigs
@@ -102,58 +101,6 @@ prepare_command() {
             expected_output="$output/end_motifs.zarr"
             row[tool_version]=$cfdna_version
             row[proper_pair]=required
-            ;;
-        cfdnalab-reference-autosomes)
-            # Additional configuration: the reference call on autosomes only
-            command=("$cfdna" ends --bam "$bam" --output-dir "$output"
-                --k-inside "$k" --k-outside 0 --all-motifs
-                --min-mapq "$min_mapq"
-                --min-fragment-length "$min_length" --max-fragment-length "$max_length"
-                --n-threads "$cores" --source-inside reference --clip-strategy aligned
-                --ref-2bit "$reference_2bit" --chromosomes "$autosomes")
-            expected_output="$output/end_motifs.zarr"
-            row[tool_version]=$cfdna_version
-            row[scope]=autosomes
-            ;;
-        cfdnalab-read-aligned)
-            # Read bases at the aligned fragment ends, for comparison with the
-            # reference-derived motifs at the same positions
-            command=("$cfdna" ends --bam "$bam" --output-dir "$output"
-                --k-inside "$k" --k-outside 0 --all-motifs
-                --min-mapq "$min_mapq"
-                --min-fragment-length "$min_length" --max-fragment-length "$max_length"
-                --n-threads "$cores" --source-inside read --clip-strategy aligned
-                --chromosomes all)
-            expected_output="$output/end_motifs.zarr"
-            row[tool_version]=$cfdna_version
-            row[source]=read
-            ;;
-        cfdnalab-read)
-            # Additional configuration: read bases, skipping soft-clipped ends
-            command=("$cfdna" ends --bam "$bam" --output-dir "$output"
-                --k-inside "$k" --k-outside 0 --all-motifs
-                --min-mapq "$min_mapq"
-                --min-fragment-length "$min_length" --max-fragment-length "$max_length"
-                --n-threads "$cores" --source-inside read --clip-strategy skip
-                --chromosomes all)
-            expected_output="$output/end_motifs.zarr"
-            row[tool_version]=$cfdna_version
-            row[source]=read
-            row[clip]=skip
-            ;;
-        cfdnalab-read-include)
-            # Additional configuration: read bases, keeping clipped bases at the
-            # aligned boundary
-            command=("$cfdna" ends --bam "$bam" --output-dir "$output"
-                --k-inside "$k" --k-outside 0 --all-motifs
-                --min-mapq "$min_mapq"
-                --min-fragment-length "$min_length" --max-fragment-length "$max_length"
-                --n-threads "$cores" --source-inside read --clip-strategy include-at-aligned-boundary
-                --chromosomes all)
-            expected_output="$output/end_motifs.zarr"
-            row[tool_version]=$cfdna_version
-            row[source]=read
-            row[clip]=include-at-aligned-boundary
             ;;
         finaletoolkit)
             # FinaleToolkit reconstructs fragment coordinates from read1 and TLEN and

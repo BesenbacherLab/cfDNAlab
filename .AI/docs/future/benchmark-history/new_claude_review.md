@@ -26,20 +26,20 @@ Decisions this review follows:
 
 ## 1. Fix before the pilot
 
-1. **One failure ends the job.** `benchmark_finish_run` returns the failure status ([common.sh:140-147](common.sh#L140-L147)) and `set -e` stops the runner. In a job holding several methods, an out-of-memory failure in an early method discards all the methods after it. Fix: record the row, skip the remaining runs of *that* method, continue with the next method, and exit non-zero at the end.
+1. **One failure ends the job.** `benchmark_finish_run` returns the failure status ([common.sh:140-147](../../../../benchmarks/common.sh#L140-L147)) and `set -e` stops the runner. In a job holding several methods, an out-of-memory failure in an early method discards all the methods after it. Fix: record the row, skip the remaining runs of *that* method, continue with the next method, and exit non-zero at the end.
 2. **There is no per-run time limit.** This affects FinaleToolkit, Griffin and any run that is longer than the job.
    - FinaleToolkit and Griffin use `multiprocessing.Pool`. If the kernel kills a worker, `Pool.map` waits forever (CPython bpo-22393), and the job runs until Slurm stops it.
    - When Slurm kills the job, the row and logs of the run in progress are never written. A run that is simply longer than the job (Griffin at 1 core, section 4) is lost the same way.
    - Fix: add an optional `BENCH_RUN_TIMEOUT_SECONDS` and apply it as `timeout --kill-after=60 "$limit" ...` inside GNU time. Exit status 124 then becomes a recorded "did not finish within X h".
 3. **The default method lists create infeasible jobs.**
-   - Coverage defaults to 8 methods ([coverage runner:66](coverage/benchmark_coverage.sh#L66)), which the README itself estimates at 92 h for 1 core.
-   - Lengths puts cfDNAPro and FinaleToolkit in the same job as everything else ([lengths runner:29](lengths/benchmark_lengths.sh#L29)).
+   - Coverage defaults to 8 methods ([coverage runner:66](../../../../benchmarks/coverage/benchmark_coverage.sh#L66)), which the README itself estimates at 92 h for 1 core.
+   - Lengths puts cfDNAPro and FinaleToolkit in the same job as everything else ([lengths runner:29](../../../../benchmarks/lengths/benchmark_lengths.sh#L29)).
    - Fix: remove the defaults and require `BENCH_METHODS`.
-4. **Numerical-library thread settings differ between features.** Lengths sets the OMP/BLAS variables to `cores` ([lengths runner:167-168](lengths/benchmark_lengths.sh#L167-L168)); the other three runners set them to 1. FinaleToolkit runs under both settings. None of the benchmarked code paths use BLAS, OpenMP or parallel numba, so the measured effect should be nil. Fix: set a single policy in `common.sh`. `1` is simplest.
+4. **Numerical-library thread settings differ between features.** Lengths sets the OMP/BLAS variables to `cores` ([lengths runner:167-168](../../../../benchmarks/lengths/benchmark_lengths.sh#L167-L168)); the other three runners set them to 1. FinaleToolkit runs under both settings. None of the benchmarked code paths use BLAS, OpenMP or parallel numba, so the measured effect should be nil. Fix: set a single policy in `common.sh`. `1` is simplest.
 5. **Change the repetition defaults to 1 warmup and 3 measured runs.** The current values are 2 and 5, set in all four runners, the docs and `summarize_timings.py --estimate`.
-6. **Schedule the serial length tools at every core count.** [README.md:68](README.md#L68) and [:87-88](README.md#L87-L88) defer cfDNAPro and FinaleToolkit lengths at 12 and 32 cores, pending a 1 vs 4 comparison. Schedule them at all four core counts.
-7. **`--estimate` aborts on any failed pilot configuration** ([summarize_timings.py:151-155](summarize_timings.py#L151-L155)), and it prints only a grand total. Fix: print `budget_minutes = mean × 4 × 1.25` per configuration and list the failed configurations.
-8. **The coverage comparator stops partway through.** The saved samtools-depth and PanDepth profiles cover chr21/22, while cfDNAlab and mosdepth cover all contigs. Without `--common-scope`, the comparator stops at the first mismatched pair, after computing every full-genome pair before it ([compare_coverage.py:316-317](coverage/compare_coverage.py#L316-L317)). Fix: always compare on the shared chromosomes and remove the flag. `same_native_scope` is already recorded on each row.
+6. **Schedule the serial length tools at every core count.** [README.md:68](../../../../benchmarks/README.md#L68) and [:87-88](../../../../benchmarks/README.md#L87-L88) defer cfDNAPro and FinaleToolkit lengths at 12 and 32 cores, pending a 1 vs 4 comparison. Schedule them at all four core counts.
+7. **`--estimate` aborts on any failed pilot configuration** ([summarize_timings.py:151-155](../../../../benchmarks/summarize_timings.py#L151-L155)), and it prints only a grand total. Fix: print `budget_minutes = mean × 4 × 1.25` per configuration and list the failed configurations.
+8. **The coverage comparator stops partway through.** The saved samtools-depth and PanDepth profiles cover chr21/22, while cfDNAlab and mosdepth cover all contigs. Without `--common-scope`, the comparator stops at the first mismatched pair, after computing every full-genome pair before it ([compare_coverage.py:316-317](../../../../benchmarks/coverage/compare_coverage.py#L316-L317)). Fix: always compare on the shared chromosomes and remove the flag. `same_native_scope` is already recorded on each row.
 
 ## 2. Competitor commands against the pinned source
 
@@ -67,7 +67,7 @@ Keep the flush time. On a large-memory node, samtools' 55 GB can still be sittin
 
 ## 3. Pilot and job plan
 
-**Wiring run** (tiny BAM, as in [data/README.md:41-48](data/README.md#L41-L48)). Run every method once at 4 cores, then **run the four comparators on its outputs**. This is the only check of native-output parsing before you spend days of node time. Also check free scratch space.
+**Wiring run** (tiny BAM, as in [data/README.md:41-48](../../../../benchmarks/data/README.md#L41-L48)). Run every method once at 4 cores, then **run the four comparators on its outputs**. This is the only check of native-output parsing before you spend days of node time. Also check free scratch space.
 
 **Pilot: full input, 4 cores, `BENCH_PILOT=1`.** Run a job per feature with every method, and Griffin on site subsets (section 4). This gives T(4), effective cores and peak memory. For CPU-bound tools on a warm cache, `user + system` seconds at 4 cores should be an upper bound on 1-core wall time *(inference)*, because parallel overhead only adds CPU time. If that isn't enough to judge the 1-core runs, add 32-core pilots.
 
@@ -111,7 +111,7 @@ Calendar time depends on how many same-generation nodes you get at once, because
 **Running it.**
 - **Pilot:** at 4 cores, run random 1% and 4% subsets of every list. Fit time against merged window bp and extrapolate to the full set. Griffin's own log timestamps ("Done with fetch", "Done with export") separate the parallel and serial parts.
 - **Jobs:** Griffin gets its own node of the same CPU generation. cfDNAlab midpoints runs once per core count, in a single one of the Griffin jobs, not in every job. A Griffin configuration whose four runs don't fit in a job gets a job per run, and those jobs can run in parallel. At this scale, node-to-node variation and warmup effects are noise: staging already warms the page cache, and startup takes seconds against hours. Keep 3 measured runs.
-- **Summaries:** `summarize_timings.py` groups rows by `node` ([summarize_timings.py:93-98](summarize_timings.py#L93-L98)), so Griffin runs from separate nodes show up as separate rows. Pool those Griffin rows by `cpu_model`.
+- **Summaries:** `summarize_timings.py` groups rows by `node` ([summarize_timings.py:93-98](../../../../benchmarks/summarize_timings.py#L93-L98)), so Griffin runs from separate nodes show up as separate rows. Pool those Griffin rows by `cpu_model`.
 - **1 core:** if a 1-core run exceeds the 24 h limit, it cannot complete. Use a longer partition if one exists; otherwise record it once as "> 24 h" with the timeout from 1.2. Repeating a censored run adds nothing.
 
 ## 5. End motifs: FinaleToolkit, FrEIA (left ends) and cfDNAPro
@@ -124,7 +124,7 @@ Calendar time depends on how many same-generation nodes you get at once, because
   - Read `T__sample.pq` (add `pyarrow` to the comparison environment).
   - Take a per-motif count from the `leftmost` rows: `CountSamp` is already the per-motif total on each length row ([2_data_transformation.py:130-134](https://github.com/mouliere-lab/FrEIA/blob/2c32fb9d9fab774f4ae57931df7fd7d75654d343/workflow/scripts/1_FrEIA/2_data_transformation.py#L130-L134)).
   - Multiply by 2 before comparing counts. Frequencies are unaffected by the factor. Doubling assumes the right ends have the same motif distribution as the left ends (strand symmetry), which should hold closely genome-wide *(inference)*.
-- **Remove the `--both` special cases.** These are the comparator skip, the capture exclusion ([common.sh:148](common.sh#L148)) and the worker-count rewrite ([ends:327-334](ends/benchmark_end_motifs.sh#L327-L334)). For this BAM, extraction is always a single worker: the filtered BAM exceeds the 8000 MiB threshold ([1_extract_fragment_ends.py:137-140](https://github.com/mouliere-lab/FrEIA/blob/2c32fb9d9fab774f4ae57931df7fd7d75654d343/workflow/scripts/1_FrEIA/1_extract_fragment_ends.py#L137-L140)). State that in the docs instead.
+- **Remove the `--both` special cases.** These are the comparator skip, the capture exclusion ([common.sh:148](../../../../benchmarks/common.sh#L148)) and the worker-count rewrite ([ends:327-334](../../../../benchmarks/ends/benchmark_end_motifs.sh#L327-L334)). For this BAM, extraction is always a single worker: the filtered BAM exceeds the 8000 MiB threshold ([1_extract_fragment_ends.py:137-140](https://github.com/mouliere-lab/FrEIA/blob/2c32fb9d9fab774f4ae57931df7fd7d75654d343/workflow/scripts/1_FrEIA/1_extract_fragment_ends.py#L137-L140)). State that in the docs instead.
 
 Text for the methods (replace the bracket with your issue link):
 
@@ -142,7 +142,7 @@ It is already in the installed image (from the [callMotif source](https://github
 - Bases come from the image's `BSgenome.Hsapiens.UCSC.hg38`. Compare against `cfdnalab-reference`.
 
 **Implementation.**
-- Add a `cfdnapro_end_motifs.R` with the same `readBam()` call as [cfdnapro_lengths.R](lengths/cfdnapro_lengths.R).
+- Add a `cfdnapro_end_motifs.R` with the same `readBam()` call as [cfdnapro_lengths.R](../../../../benchmarks/lengths/cfdnapro_lengths.R).
 - Subset to 30–1000 bp: `callMotif()` has no length bounds, and a one-line `width()` filter matches cfDNAlab's bounds.
 - Then call `callMotif` and write `motif` and `n`.
 - Add a `cfdnapro` method to the ends runner, reusing the lengths runner's Apptainer command.
@@ -154,28 +154,28 @@ It is already in the installed image (from the [callMotif source](https://github
 Each item guards against something you control or that the wiring run shows immediately. Each line names the code to delete.
 
 **Runners and `common.sh`**
-- **Hostname checks** inside every step ([coverage:373](coverage/benchmark_coverage.sh#L373), and the same line in each runner) and `BENCH_EXPECTED_NODE` ([common.sh:28-31](common.sh#L28-L31)). An `srun --jobid` step in a single-node allocation cannot run elsewhere, and `run.tsv` records the node for each job.
-- **CPU-topology block:** 18 lines copied four times ([coverage:248-262](coverage/benchmark_coverage.sh#L248-L262)). Keep the `nproc == cores` check and record `Cpus_allowed_list`. Save `lscpu -p` once per job if you want the socket and core map.
-- **Fallback-row reconstruction for failures before GNU time** (`step.id`, column indices per runner): [coverage:395-407](coverage/benchmark_coverage.sh#L395-L407), [lengths:304-316](lengths/benchmark_lengths.sh#L304-L316), [ends:344-356](ends/benchmark_end_motifs.sh#L344-L356), [midpoints:330-342](midpoints/benchmark_midpoints.sh#L330-L342). The Slurm log already shows what failed. A row with method, repetition and status is enough.
-- **Leftovers from multi-core jobs:** `cores_to_run` arrays, per-core validation loops, `BENCH_CAPTURE_CORES`, the `cores` column in `order.tsv` and the `cores == capture_cores` test ([coverage:71-90](coverage/benchmark_coverage.sh#L71-L90), [:188](coverage/benchmark_coverage.sh#L188), [common.sh:137-148](common.sh#L137-L148)). `BENCH_CORES` is a single value now.
-- **Argument validation:** integer and range checks for MAPQ, lengths and repetitions, the BAI-vs-CSI check and index-extension handling ([coverage:77-96](coverage/benchmark_coverage.sh#L77-L96) and the equivalents). The tools validate their own arguments.
-- **Autosome and capture-contig detection for both `chr1` and `1` naming,** the `BENCH_CAPTURE_CHROMOSOMES` override and the first-contig fallback ([coverage:154-161](coverage/benchmark_coverage.sh#L154-L161), [:172-185](coverage/benchmark_coverage.sh#L172-L185), [common.sh:167-168](common.sh#L167-L168)). Hard-code `chr1..chr22` and `chr21,chr22`.
-- **`ldd` parsing in `benchmark_stage_binary`** ([common.sh:59-68](common.sh#L59-L68)). A missing library fails the wiring run anyway.
-- **Picard version probe** that accepts status 1 with a regex ([common.sh:6-15](common.sh#L6-L15)), and the PanDepth version scraping that fails on mismatch ([coverage:168-171](coverage/benchmark_coverage.sh#L168-L171)). Just record the version output.
-- **Midpoint BED checks** for ambiguous strand columns, all-numeric chromosome names, BAM/FASTA length match and `.gz` FASTA ([midpoints:70-73](midpoints/benchmark_midpoints.sh#L70-L73), [:148-149](midpoints/benchmark_midpoints.sh#L148-L149), [:156-159](midpoints/benchmark_midpoints.sh#L156-L159), [:176-177](midpoints/benchmark_midpoints.sh#L176-L177)). Keep the equal/even-width check and the strand parsing.
-- **End-motif header check:** the BAM/2bit contig comparison and the 1 Mb-multiple guard ([ends:139-157](ends/benchmark_end_motifs.sh#L139-L157)). FinaleToolkit validates contigs itself at startup, and the 1 Mb bug doesn't affect hg38's main chromosomes. A sentence in the docs is enough.
+- **Hostname checks** inside every step ([coverage:373](../../../../benchmarks/coverage/benchmark_coverage.sh#L373), and the same line in each runner) and `BENCH_EXPECTED_NODE` ([common.sh:28-31](../../../../benchmarks/common.sh#L28-L31)). An `srun --jobid` step in a single-node allocation cannot run elsewhere, and `run.tsv` records the node for each job.
+- **CPU-topology block:** 18 lines copied four times ([coverage:248-262](../../../../benchmarks/coverage/benchmark_coverage.sh#L248-L262)). Keep the `nproc == cores` check and record `Cpus_allowed_list`. Save `lscpu -p` once per job if you want the socket and core map.
+- **Fallback-row reconstruction for failures before GNU time** (`step.id`, column indices per runner): [coverage:395-407](../../../../benchmarks/coverage/benchmark_coverage.sh#L395-L407), [lengths:304-316](../../../../benchmarks/lengths/benchmark_lengths.sh#L304-L316), [ends:344-356](../../../../benchmarks/ends/benchmark_end_motifs.sh#L344-L356), [midpoints:330-342](../../../../benchmarks/midpoints/benchmark_midpoints.sh#L330-L342). The Slurm log already shows what failed. A row with method, repetition and status is enough.
+- **Leftovers from multi-core jobs:** `cores_to_run` arrays, per-core validation loops, `BENCH_CAPTURE_CORES`, the `cores` column in `order.tsv` and the `cores == capture_cores` test ([coverage:71-90](../../../../benchmarks/coverage/benchmark_coverage.sh#L71-L90), [:188](../../../../benchmarks/coverage/benchmark_coverage.sh#L188), [common.sh:137-148](../../../../benchmarks/common.sh#L137-L148)). `BENCH_CORES` is a single value now.
+- **Argument validation:** integer and range checks for MAPQ, lengths and repetitions, the BAI-vs-CSI check and index-extension handling ([coverage:77-96](../../../../benchmarks/coverage/benchmark_coverage.sh#L77-L96) and the equivalents). The tools validate their own arguments.
+- **Autosome and capture-contig detection for both `chr1` and `1` naming,** the `BENCH_CAPTURE_CHROMOSOMES` override and the first-contig fallback ([coverage:154-161](../../../../benchmarks/coverage/benchmark_coverage.sh#L154-L161), [:172-185](../../../../benchmarks/coverage/benchmark_coverage.sh#L172-L185), [common.sh:167-168](../../../../benchmarks/common.sh#L167-L168)). Hard-code `chr1..chr22` and `chr21,chr22`.
+- **`ldd` parsing in `benchmark_stage_binary`** ([common.sh:59-68](../../../../benchmarks/common.sh#L59-L68)). A missing library fails the wiring run anyway.
+- **Picard version probe** that accepts status 1 with a regex ([common.sh:6-15](../../../../benchmarks/common.sh#L6-L15)), and the PanDepth version scraping that fails on mismatch ([coverage:168-171](../../../../benchmarks/coverage/benchmark_coverage.sh#L168-L171)). Just record the version output.
+- **Midpoint BED checks** for ambiguous strand columns, all-numeric chromosome names, BAM/FASTA length match and `.gz` FASTA ([midpoints:70-73](../../../../benchmarks/midpoints/benchmark_midpoints.sh#L70-L73), [:148-149](../../../../benchmarks/midpoints/benchmark_midpoints.sh#L148-L149), [:156-159](../../../../benchmarks/midpoints/benchmark_midpoints.sh#L156-L159), [:176-177](../../../../benchmarks/midpoints/benchmark_midpoints.sh#L176-L177)). Keep the equal/even-width check and the strand parsing.
+- **End-motif header check:** the BAM/2bit contig comparison and the 1 Mb-multiple guard ([ends:139-157](../../../../benchmarks/ends/benchmark_end_motifs.sh#L139-L157)). FinaleToolkit validates contigs itself at startup, and the 1 Mb bug doesn't affect hg38's main chromosomes. A sentence in the docs is enough.
 
 **Installer**
-- **The `snyder-preparation` environment** ([install_tools.sh:318-329](install_tools.sh#L318-L329)). The BAM exists. Keep `prepare_snyder.py` as a record of how it was made, and drop its test.
+- **The `snyder-preparation` environment** ([install_tools.sh:318-329](../../../../benchmarks/install_tools.sh#L318-L329)). The BAM exists. Keep `prepare_snyder.py` as a record of how it was made, and drop its test.
 - Keep the manifest and resume logic.
 
 **Summarizer and comparators**
-- **`summarize_timings.py`:** the conflicting-accounting and NTasks checks and the MaxRSS unit-suffix parser ([summarize_timings.py:18-39](summarize_timings.py#L18-L39), [:49-59](summarize_timings.py#L49-L59)). With `--units=K` the unit is always K.
-- **`compare_coverage.py`:** the SQLite residual store with 4096-value batching ([:168-176](coverage/compare_coverage.py#L168-L176), [:291-294](coverage/compare_coverage.py#L291-L294)). Residuals of unweighted integer depths take a few hundred distinct values, so a `Counter` holds them.
+- **`summarize_timings.py`:** the conflicting-accounting and NTasks checks and the MaxRSS unit-suffix parser ([summarize_timings.py:18-39](../../../../benchmarks/summarize_timings.py#L18-L39), [:49-59](../../../../benchmarks/summarize_timings.py#L49-L59)). With `--units=K` the unit is always K.
+- **`compare_coverage.py`:** the SQLite residual store with 4096-value batching ([:168-176](../../../../benchmarks/coverage/compare_coverage.py#L168-L176), [:291-294](../../../../benchmarks/coverage/compare_coverage.py#L291-L294)). Residuals of unweighted integer depths take a few hundred distinct values, so a `Counter` holds them.
   - A larger, optional change: per-chromosome NumPy arrays instead of the pure-Python run merge. That is less code and far faster; each full-genome pair currently takes on the order of an hour *(estimate)*.
-- **Comparator value checks:** the non-finite and negative checks in every comparator, and Griffin's mean-one tolerance and empty-profile status categories ([compare_midpoints.py:64-81](midpoints/compare_midpoints.py#L64-L81)). Keep the structural checks (axis, labels, group/site agreement); they catch real format mistakes.
+- **Comparator value checks:** the non-finite and negative checks in every comparator, and Griffin's mean-one tolerance and empty-profile status categories ([compare_midpoints.py:64-81](../../../../benchmarks/midpoints/compare_midpoints.py#L64-L81)). Keep the structural checks (axis, labels, group/site agreement); they catch real format mistakes.
 
-**Docs.** README.md, two specs, the plan and four feature READMEs add up to about 1,000 lines. Run controls, Slurm memory, staging, failure rows and budgets are each described three to five times, and the copies have started to disagree. For example, [lengths/README.md:150-155](lengths/README.md#L150-L155) and [midpoints/README.md:90-91](midpoints/README.md#L90-L91) list cores 1/4/8/12/32. Proposal:
+**Docs.** README.md, two specs, the plan and four feature READMEs add up to about 1,000 lines. Run controls, Slurm memory, staging, failure rows and budgets are each described three to five times, and the copies have started to disagree. For example, [lengths/README.md:150-155](../../../../benchmarks/lengths/README.md#L150-L155) and [midpoints/README.md:90-91](../../../../benchmarks/midpoints/README.md#L90-L91) list cores 1/4/8/12/32. Proposal:
 - `README.md` covers how to run, measurement definitions and the job plan.
 - `METHODS.md` covers per-feature configurations and native differences, with source links. It includes the FrEIA paragraph above.
 - Each feature README keeps only its run example.

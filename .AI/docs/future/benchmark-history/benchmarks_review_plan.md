@@ -1,6 +1,6 @@
 # Remaining benchmark work
 
-Implemented behavior is specified in [benchmarks_spec.md](benchmarks_spec.md) and [benchmarks_concordance_spec.md](benchmarks_concordance_spec.md). This plan retains only unfinished implementation, verification and experimental work.
+Implemented behavior is specified in [benchmarks_spec.md](../../../../benchmarks/benchmarks_spec.md) and [benchmarks_concordance_spec.md](../../../../benchmarks/benchmarks_concordance_spec.md). This plan retains only unfinished implementation, verification and experimental work.
 
 Preserve the supplied production sites and the existing remapped BAM. Do not restore automatic production-site selection or regenerate that BAM to obtain extra preparation statistics.
 
@@ -10,7 +10,7 @@ Unresolved parts of D2/D4/D6 and D7-D10 remain in [new_review_plan.md](new_revie
 
 ## Planned regression fixtures still to prepare
 
-The existing [fixture file](tests/test_benchmarks.py) covers native coverage formats, base weighting, residual distributions including disk batches, base-resolution Pearson, contig order, concatenated zstd frames, incomplete/invalid tracks, regional coordinate identity, scope intersection, timing summaries, Slurm joins, single-core-setting jobs without automatic tool exclusions, Picard version status, failed installer retries, reconstructed TLEN/flags and native left-motif comparison. [Review regressions](tests/test_review_regressions.py) prepare explicit-method/duplicate rejection, early scope errors, native signal/timeout statuses, failure diagnostics and continuation, partial/all-failed budgets, Griffin demo isolation from measured runs, samtools tail bins, missing Picard FR and midpoint normalization/empty-profile checks. Neither file has been executed during implementation.
+The existing [fixture file](../../../../benchmarks/tests/test_benchmarks.py) covers native coverage formats, base weighting, residual distributions including disk batches, base-resolution Pearson, contig order, concatenated zstd frames, incomplete/invalid tracks, regional coordinate identity, scope intersection, timing summaries, Slurm joins, single-core-setting jobs without automatic tool exclusions, Picard version status, failed installer retries, reconstructed TLEN/flags and native left-motif comparison. [Review regressions](../../../../benchmarks/tests/test_review_regressions.py) prepare explicit-method/duplicate rejection, early scope errors, native signal/timeout statuses, failure diagnostics and continuation, partial/all-failed budgets, Griffin demo isolation from measured runs, samtools tail bins, missing Picard FR and midpoint normalization/empty-profile checks. Neither file has been executed during implementation.
 
 These cases from the original plan are not fully represented in those fixtures:
 
@@ -39,9 +39,9 @@ Fragment fixtures must be at least 10 bp. Fixtures using normal filters must res
 
 - [ ] Record the existing final BAM/BAI and exact FASTA/FAI/2bit identities/checksums, header, flagstat, idxstats, MarkDuplicates metrics and actual remapping versions/commands. Retain original preparation logs if available. Do not rebuild the BAM solely to fill missing counters.
 - [ ] Record the supplied midpoint BED identity/checksum and its derivation from the pinned public Griffin set. Keep its agreed coordinates, groups, strands, site count and selection unchanged during benchmarking.
-- [ ] Run native/proper-pair concordance on the actual remap. Measure filtered count effects from outputs rather than reusing the original BAM's sampled non-proper percentage. Keep biological differences/scopes explicit.
-- [ ] Pilot cfDNAPro progressively from about 0.1x to choose a physical node with demonstrated headroom for all methods. Run full-input method/core pilots, splitting when necessary, and establish scratch capacity/filesystem behavior.
-- [ ] Replace the illustrative [scaling scenarios](README.md#runs-and-budgets) with full-input pilot budgets using 1+3 normally, three measurements plus the short demo for Griffin, and margin plus staging/preservation/cleanup. Use separate jobs for 1, 4, 12 and 32 cores. Griffin gets its own jobs and is not subject to a 24-hour cap. Other packing and serial-tool settings remain open in D2. Use matched hardware, preferring the same physical node when available, and retain resource failures as outcomes.
+- [ ] Run the proper-pair concordance diagnostics once at 32 cores on the actual remap, outside the normal timing matrix. Measure filtered count effects from outputs rather than reusing the original BAM's sampled non-proper percentage. Keep biological differences/scopes explicit.
+- [ ] Record runtime, memory and scratch use from the selected production jobs. Preserve resource failures as outcomes. The [production procedure](../../../../benchmarks/README.md#runs-and-budgets) uses no pilot jobs or illustrative scaling estimates.
+- [ ] Use separate timing jobs for 1, 4, 12 and 32 cores, with 1+3 normally and three measurements plus the short demo for Griffin. Budget setup, preservation, concordance and cleanup within each allocation. Use matched hardware and retain node identity with each result.
 - [ ] Collect production timings, completed accounting, retained profiles and measured points. Fill supplementary tables with sample sizes, mean/SD, median/quartiles, memory policy and workload notes. No final timing, capacity or concordance conclusion has been measured here.
 
 ## Optional later scope, still deferred

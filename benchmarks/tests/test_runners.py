@@ -183,8 +183,7 @@ LENGTH_VARIABLES = {
     "cfdnapro_version": "cfdnapro fixture",
 }
 LENGTH_METHODS = (
-    "cfdnalab", "cfdnalab-autosomes", "cfdnalab-proper", "cfdnapro",
-    "cfdnapro-outer-span", "finaletoolkit", "samtools", "picard",
+    "cfdnalab", "cfdnalab-proper", "cfdnapro", "finaletoolkit", "samtools", "picard",
 )
 
 COVERAGE_VARIABLES = {
@@ -220,8 +219,7 @@ END_MOTIF_VARIABLES = {
 }
 END_MOTIF_METHODS = (
     "cfdnalab-reference", "cfdnalab-reference-proper",
-    "cfdnalab-reference-autosomes", "cfdnalab-read-aligned", "cfdnalab-read",
-    "cfdnalab-read-include", "finaletoolkit", "cfdnapro",
+    "finaletoolkit", "cfdnapro",
 )
 
 MIDPOINT_VARIABLES = {
@@ -299,15 +297,11 @@ class LengthCommandTests(unittest.TestCase):
         self.assertEqual(prepared["row"]["scope"], "all")
         self.assertEqual(prepared["empty_output_allowed"], "false")
 
-    def test_cfdnalab_variants_change_only_scope_or_pairing(self):
+    def test_cfdnalab_proper_pair_check_changes_only_pairing(self):
         base = prepare("lengths", "cfdnalab", LENGTH_VARIABLES)["command"]
-        autosomes = prepare("lengths", "cfdnalab-autosomes", LENGTH_VARIABLES)
         proper = prepare("lengths", "cfdnalab-proper", LENGTH_VARIABLES)
 
-        # The autosome call replaces "all" with the BAM's autosome names
-        self.assertEqual(autosomes["command"], base[:-1] + ["chr1,chr2"])
-        self.assertEqual(autosomes["row"]["scope"], "autosomes")
-        # The proper-pair call appends a single option
+        # The concordance check appends only the proper-pair option
         self.assertEqual(proper["command"], base + ["--require-proper-pair"])
         self.assertEqual(proper["row"]["proper_pair"], "required")
 
@@ -337,20 +331,17 @@ class LengthCommandTests(unittest.TestCase):
         self.assertEqual(prepared["row"]["tool_threads"], "NA")
         self.assertEqual(prepared["stdout_file"], f"{WORK}/tool-stdout.log")
 
-    def test_cfdnapro_curated_and_outer_span_runs_differ_only_in_curation(self):
+    def test_cfdnapro_uses_the_native_curated_length_workflow(self):
         curated = prepare("lengths", "cfdnapro", LENGTH_VARIABLES)
-        outer = prepare("lengths", "cfdnapro-outer-span", LENGTH_VARIABLES)
 
         # The container sees $BENCH_WORK as /work, so /work/output is the output directory
         self.assertEqual(curated["command"], [
             "/usr/bin/apptainer", "exec", "--cleanenv", "--containall",
             "--bind", f"{WORK}:/work", "--pwd", "/work",
             f"{WORK}/cfdnapro.sif", "Rscript", "--vanilla", "/work/cfdnapro_lengths.R",
-            "/work/sample.bam", "/work/output/lengths.tsv", "30", "1000", "30", "hg38", "TRUE",
+            "/work/sample.bam", "/work/output/lengths.tsv", "30", "1000", "30", "hg38",
         ])
-        self.assertEqual(outer["command"], curated["command"][:-1] + ["FALSE"])
         self.assertEqual(curated["row"]["length_definition"], "directional-aligned-span")
-        self.assertEqual(outer["row"]["length_definition"], "outer-aligned-span")
         self.assertEqual(curated["row"]["tool_threads"], "NA")
 
     def test_finaletoolkit_runs_its_launcher_with_the_packed_python(self):
@@ -491,15 +482,11 @@ class CoverageCommandTests(unittest.TestCase):
 class EndMotifCommandTests(unittest.TestCase):
     """The literal end-motif commands and their recorded settings."""
 
-    def test_cfdnalab_configurations_choose_motif_source_clipping_and_scope(self):
+    def test_cfdnalab_reference_configurations_differ_only_in_proper_pair_selection(self):
         # method: (source, clip, proper_pair, scope, --chromosomes value)
         expected = {
             "cfdnalab-reference": ("reference", "aligned", "not-required", "all", "all"),
             "cfdnalab-reference-proper": ("reference", "aligned", "required", "all", "all"),
-            "cfdnalab-reference-autosomes": ("reference", "aligned", "not-required", "autosomes", "chr1,chr2"),
-            "cfdnalab-read-aligned": ("read", "aligned", "not-required", "all", "all"),
-            "cfdnalab-read": ("read", "skip", "not-required", "all", "all"),
-            "cfdnalab-read-include": ("read", "include-at-aligned-boundary", "not-required", "all", "all"),
         }
         for method, (source, clip, proper_pair, scope, chromosomes) in expected.items():
             with self.subTest(method=method):

@@ -2,12 +2,11 @@
 
 # Read the BAM and write cfDNAPro's native fragment length histogram
 # The runner times this complete process, including loading R packages
-# Usage: Rscript --vanilla cfdnapro_lengths.R BAM OUTPUT MIN MAX MAPQ GENOME CURATE
-# CURATE is TRUE for directional spans and FALSE for outer alignment spans
+# Usage: Rscript --vanilla cfdnapro_lengths.R BAM OUTPUT MIN MAX MAPQ GENOME
 
 arguments <- commandArgs(trailingOnly = TRUE)
-if (length(arguments) != 7L) {
-    stop("Expected BAM OUTPUT MIN MAX MAPQ GENOME CURATE")
+if (length(arguments) != 6L) {
+    stop("Expected BAM OUTPUT MIN MAX MAPQ GENOME")
 }
 bam_path <- arguments[[1L]]
 output_path <- arguments[[2L]]
@@ -15,10 +14,6 @@ minimum_length <- as.integer(arguments[[3L]])
 maximum_length <- as.integer(arguments[[4L]])
 minimum_mapq <- as.integer(arguments[[5L]])
 genome_label <- arguments[[6L]]
-if (!arguments[[7L]] %in% c("TRUE", "FALSE")) {
-    stop("CURATE must be TRUE or FALSE")
-}
-curate_coordinates <- as.logical(arguments[[7L]])
 
 suppressPackageStartupMessages(library(cfDNAPro))
 
@@ -30,7 +25,7 @@ fragments <- readBam(
     bamfile = bam_path,
     genome_label = genome_label,
     chromosome_to_keep = FALSE,
-    curate_start_and_end = curate_coordinates,
+    curate_start_and_end = TRUE,
     galp_mapqFilter = minimum_mapq,
     galp_flag = Rsamtools::scanBamFlag(
         isPaired = TRUE,

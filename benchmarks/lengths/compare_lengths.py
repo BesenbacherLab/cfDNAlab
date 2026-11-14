@@ -122,10 +122,8 @@ def read_picard(directory):
 #               normalization (samtools and Picard report their whole histogram)
 READERS = {
     "cfdnalab": (read_cfdnalab, "exact"),
-    "cfdnalab-autosomes": (read_cfdnalab, "exact"),
     "cfdnalab-proper": (read_cfdnalab, "exact"),
     "cfdnapro": (read_cfdnapro, "inside"),
-    "cfdnapro-outer-span": (read_cfdnapro, "inside"),
     "finaletoolkit": (read_finaletoolkit, "inside"),
     "samtools": (read_samtools, "anything"),
     "picard": (read_picard, "anything"),
@@ -254,13 +252,8 @@ def main():
         left_counts, right_counts = profiles[left_name], profiles[right_name]
         left_total, left_frequency, left_summary = summaries[left_name]
         right_total, right_frequency, right_summary = summaries[right_name]
-        # The label tells cross-tool comparisons apart from the two diagnostics:
-        # cfDNAPro's outer-span definition and the autosome-only cfDNAlab run
+        # Normal and proper-pair histograms are cross-tool or filter comparisons
         comparison = "cross-tool-or-filter"
-        if {left_name, right_name} == {"cfdnapro", "cfdnapro-outer-span"}:
-            comparison = "span-definition-diagnostic"
-        if (left_name == "cfdnalab-autosomes") != (right_name == "cfdnalab-autosomes"):
-            comparison = "different-chromosome-scope"
         count_difference = left_counts - right_counts
         row = {column: "NA" for column in columns}
         row.update(

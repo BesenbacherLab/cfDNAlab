@@ -2,7 +2,7 @@
 
 Each measured repetition runs the native commands below on the same staged BAM. Commands are shown once, with variables for the allocated cores, paths and experimental settings. Executable aliases resolve to the staged paths used by the runners. Shell argument arrays are written as ordinary command lines, and timed shell pipelines are expanded into their constituent commands. The executable definitions are in each feature's `commands.sh` ([coverage](coverage/commands.sh), [lengths](lengths/commands.sh), [end motifs](ends/commands.sh), [midpoints](midpoints/commands.sh)), which uses the same variable names. Every repetition runs its command through [measure_command.sh](measure_command.sh) in its own Slurm step, and `runs/<run_order>/command.sh` in the results records the exact command. For `cfdnalab-gc` and `griffin-gc`, which run a helper script, `runs/<run_order>/command-trace.log` also records each native call the helper made, with its variables filled in.
 
-The configurations describe the current runners. For an existing result, `run.tsv` identifies the benchmark revision and `timings.tsv` records the tool version, filters and core allocation. Installation and cfDNAlab build records identify the installed tools independently of the benchmark revision.
+Normal timing runs use 1, 4, 12 and 32 cores. The four proper-pair checks run once each at 32 cores for concordance, without warmups, and are excluded from timing summaries. The configurations describe the current runners. For an existing result, `run.tsv` identifies the benchmark revision and `timings.tsv` records the tool version, filters and core allocation. Installation and cfDNAlab build records identify the installed tools independently of the benchmark revision.
 
 ## Shared settings and timing
 
@@ -11,7 +11,7 @@ The configurations describe the current runners. For an existing result, `run.ts
 | Allocated cores | 1, 4, 12 or 32, in separate jobs | Same | Same |
 | Minimum MAPQ | 30, except native timed Picard | 30 | 20 for profiling and GC estimation |
 | Included fragment lengths | 30-1000 bp inclusive | Requested 30-1000 bp inclusive | 100-200 bp inclusive for profiling |
-| Chromosome selection | All BAM contigs, except named autosome configurations | All BAM contigs, except cfDNAPro reference compatibility and named autosome configuration | Chromosomes in the supplied site set |
+| Chromosome selection | All BAM contigs, plus the autosome-only coverage run | All BAM contigs, except cfDNAPro reference compatibility | Chromosomes in the supplied site set |
 | Production repetitions | 1 warmup, then 3 measurements | Same | Same for cfDNAlab. Griffin uses an untimed 1000-site demo, then 3 measurements |
 
 The variables in the calls correspond to the job settings:
@@ -233,14 +233,14 @@ Method `cfdnalab`:
 
 ### cfDNAPro
 
-Method `cfdnapro`, with the final argument selecting native coordinate curation:
+Method `cfdnapro` uses native coordinate curation:
 
 ```bash
 "$apptainer" exec --cleanenv --containall \
     --bind "$BENCH_WORK:/work" --pwd /work \
     "$cfdnapro_image" Rscript --vanilla /work/cfdnapro_lengths.R \
     /work/sample.bam /work/output/lengths.tsv \
-    "$min_length" "$max_length" "$min_mapq" "$genome" TRUE
+    "$min_length" "$max_length" "$min_mapq" "$genome"
 ```
 
 The native R calculation is shown under [cfDNAPro BAM reading and calculations](#cfdnapro-bam-reading-and-calculations). This function has no native thread option. The allocated CPU set still applies to the complete container/R process.
@@ -292,19 +292,13 @@ Once after all timed measurements, the following untimed pipeline in [picard_fil
 
 The comparator reads only `concordance.metrics.txt`, selects the all-reads FR histogram, and limits it to the requested length range. The timed `metrics.txt` is retained separately.
 
-### Additional length configurations
+### Proper-pair concordance
 
-| Method | Exact change |
-| --- | --- |
-| `cfdnalab-autosomes` | cfDNAlab call with `--chromosomes "$autosomes"` instead of `all` |
-| `cfdnalab-proper` | cfDNAlab all-contig call plus `--require-proper-pair` |
-| `cfdnapro-outer-span` | cfDNAPro container call with its final argument changed from `TRUE` to `FALSE` |
-
-cfDNAlab uses directional paired spans. Curated cfDNAPro also uses directional spans, while its uncurated diagnostic uses outer alignment spans. FinaleToolkit, samtools and Picard use native TLEN-based selection and can retain different fragment populations.
+`cfdnalab-proper` appends `--require-proper-pair` to the normal all-contig cfDNAlab call. It runs once at 32 cores to compare with FinaleToolkit. The normal cfDNAlab and curated cfDNAPro calls use directional paired spans. FinaleToolkit, samtools and Picard use native TLEN-based selection and can retain different fragment populations.
 
 ## End motifs
 
-The [end-motif runner](ends/benchmark_end_motifs.sh) uses `k=$BENCH_K`. The four-mer comparison selects `cfdnalab-reference`, `cfdnalab-reference-proper`, `finaletoolkit` and `cfdnapro`. Every selected tool can be allocated each requested core setting, including tools without a native thread option.
+The [end-motif runner](ends/benchmark_end_motifs.sh) uses `k=$BENCH_K`. The four-mer timing comparison selects `cfdnalab-reference`, `finaletoolkit` and `cfdnapro` at all four core settings. The `cfdnalab-reference-proper` check runs once at 32 cores for concordance with FinaleToolkit.
 
 ### cfDNAlab reference motifs
 
@@ -320,19 +314,6 @@ Method `cfdnalab-reference`:
 ```
 
 Method `cfdnalab-reference-proper` runs this same call with `--require-proper-pair` appended.
-
-### cfDNAlab aligned read motifs
-
-Method `cfdnalab-read-aligned`:
-
-```bash
-"$cfdna" ends --bam "$bam" --output-dir "$output" \
-    --k-inside "$k" --k-outside 0 --all-motifs \
-    --min-mapq "$min_mapq" \
-    --min-fragment-length "$min_length" --max-fragment-length "$max_length" \
-    --n-threads "$cores" --source-inside read --clip-strategy aligned \
-    --chromosomes all
-```
 
 ### FinaleToolkit
 
@@ -361,21 +342,11 @@ Method `cfdnapro`:
 
 The native R calculation below selects reference-derived left ends. Reference loading, BAM reading, curation, motif calling and output/provenance writing are timed. The package's bundled reference is selected by `BENCH_GENOME`, normally `hg38`. Sequence identity with the supplied alignment reference remains to be established before interpreting differences solely as tool differences.
 
-### Additional motif configurations
-
-| Method | Exact change |
-| --- | --- |
-| `cfdnalab-read` | Aligned-read call with `--clip-strategy skip` |
-| `cfdnalab-read-include` | Aligned-read call with `--clip-strategy include-at-aligned-boundary` |
-| `cfdnalab-reference-autosomes` | Reference call with `--chromosomes "$autosomes"` instead of `all` |
-
-These configurations are only run when explicitly selected in `BENCH_METHODS`.
-
 ## cfDNAPro BAM reading and calculations
 
 The complete R helpers are [cfdnapro_lengths.R](lengths/cfdnapro_lengths.R) and [cfdnapro_end_motifs.R](ends/cfdnapro_end_motifs.R). Their computational calls are expanded here so the container invocation does not hide the filtering or calculation. Argument parsing and error checks remain in the linked helpers.
 
-The length helper reads the BAM with the following options. The motif helper uses the same call with `chromosome_to_keep = retained_contigs`, computed from the BAM and reference headers as shown below. `bam_path`, `genome_label`, `minimum_mapq`, `minimum_length` and `maximum_length` are their positional command-line arguments. `curate_coordinates` is `TRUE` for normal lengths and motifs, and `FALSE` only for `cfdnapro-outer-span`.
+The length helper reads the BAM with the following options. The motif helper uses the same call with `chromosome_to_keep = retained_contigs`, computed from the BAM and reference headers as shown below. `bam_path`, `genome_label`, `minimum_mapq`, `minimum_length` and `maximum_length` are their positional command-line arguments. Both helpers use native coordinate curation.
 
 ```r
 suppressPackageStartupMessages(library(cfDNAPro))
@@ -384,7 +355,7 @@ fragments <- readBam(
     bamfile = bam_path,
     genome_label = genome_label,
     chromosome_to_keep = FALSE,
-    curate_start_and_end = curate_coordinates,
+    curate_start_and_end = TRUE,
     galp_mapqFilter = minimum_mapq,
     galp_flag = Rsamtools::scanBamFlag(
         isPaired = TRUE,
@@ -415,6 +386,7 @@ The **motif** calculation applies user-side R subsetting for inclusive length bo
 ```r
 fragment_lengths <- BiocGenerics::width(fragments)
 fragments <- fragments[fragment_lengths >= minimum_length & fragment_lengths <= maximum_length]
+rm(fragment_lengths)
 counts <- callMotif(
     frag_obj = fragments,
     motif_type = "s",
@@ -443,7 +415,9 @@ dropped_contigs <- setdiff(bam_contigs, retained_contigs)
 
 The dropped contigs are logged and saved in `contig_scope.tsv`. The motif timing scope is `bam-contigs-in-cfdnapro-reference`, which excludes chrEBV for this BAM. Other tools keep whole-BAM scope. The length benchmark keeps every BAM contig.
 
-The motif helper also writes `reference.tsv` from the native fragment object's reference metadata. Both reads and writes occur inside the R process timer.
+The motif helper also writes `reference.tsv` from the native fragment object's reference metadata. Both reads and writes occur inside the R process timer. Native `readBam()` calls `readGAlignmentPairs()` and materializes paired alignments before returning curated fragments, following the authors' `readBam()` then `callMotif()` workflow. The benchmark adds the inclusive length subsetting shown above.
+
+Every successful motif invocation saves `runs/<run_order>/cfdnapro-stage-timings.tsv`, including warmups. The stages are `package_and_reference_setup`, `read_bam_and_curate`, `length_filter`, `call_motif` and `write_outputs`. Each row has `elapsed_seconds` and `fraction_of_r_elapsed`. Stage clocks surround the existing operations, with no repeated calculation or forced garbage collection. Fractions exclude R/container startup and stage-table writing. The complete command remains timed by GNU time. These stage measurements expose the benchmark filter's contribution without adding an unfiltered run or changing the comparison population.
 
 ## Midpoint profiles
 

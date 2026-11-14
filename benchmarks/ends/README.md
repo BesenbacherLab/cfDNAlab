@@ -10,9 +10,6 @@ The main comparison uses all 256 inward-oriented 5' 4-mers, MAPQ >=30 and fragme
 | --- | --- | --- | --- |
 | FinaleToolkit `d16632ec` | `end-motifs BAM REF -k 4 --strand both --min-length 30 --max-length 1000 --min-mapq 30 --threads C` | Reference/aligned cfDNAlab with matching bounds | Applies inclusive length bounds and midpoint window ownership. Proper read1/TLEN selection remains native. |
 | cfDNAPro 1.7.4 | Curated `readBam()` with explicit MAPQ/flag selection, user-side inclusive R width subsetting, then `callMotif(motif_type="s", motif_length=4)` | Reference/aligned cfDNAlab, normal pairs/all contigs, matching MAPQ/length bounds except cfDNAPro reference compatibility | Leftmost reference bases only. Uses the selected bundled BSgenome reference and native pair/orientation/reference-bound checks. The reference manifest is retained. Comparison against both ends assumes mirrored side frequencies. |
-| cfDNAFE, commit `90c6979` | `cfDNAFE bam` | No equivalent configuration for the inspected counting code | Apparent end-motif counting error, detailed below. Excluded from equivalent-output timing pending a correction. |
-
-The original Lo-group FRAGMA paper's [Methods and availability section](https://pmc.ncbi.nlm.nih.gov/articles/PMC9636966/) did not identify a runnable original software release. FRAGMA is therefore excluded. The [epifluidlab repository](https://github.com/epifluidlab/FRAGMA) calls itself a reimplementation for FinaleMe review and is not substituted for original software.
 
 ### FinaleToolkit differences
 
@@ -32,67 +29,24 @@ The [R entry point](cfdnapro_end_motifs.R) uses the BAM contigs present in its s
 
 Sources: pinned [callMotif](https://github.com/hw538/cfDNAPro/blob/ab9eeb166b8614b9ec2ce4ceda190dc295c65a7c/R/callMotif.R), [sequence extraction](https://github.com/hw538/cfDNAPro/blob/ab9eeb166b8614b9ec2ce4ceda190dc295c65a7c/R/internalFunctions.R#L676-L734), [reference provenance](https://github.com/hw538/cfDNAPro/blob/ab9eeb166b8614b9ec2ce4ceda190dc295c65a7c/R/genomeReference.R).
 
-### cfDNAFE source audit
-
-At commit `90c6979a98ef9424a7659ac88522b2a8f6e0578f`, [the counting code](https://github.com/Cuiwanxin1998/cfDNAFE/blob/90c6979a98ef9424a7659ac88522b2a8f6e0578f/src/cfDNAFE/utils.py#L195-L237) calls `get_End_motif(End_motif, forward_end3, forward_end3)`. It supplies the right-end sequence twice, then complements one copy without reversing it. This is not the conventional left plus reverse-complemented right profile. No upstream source is patched for the benchmark.
-
-Other differences include proper-pair selection, rejecting both mates when either contains S/H/P CIGAR operations, strict length inequalities and a default chromosome list omitting chr17. Parallelism distributes BAM files rather than splitting a single BAM. Its `bam` command also writes fragment BED, GC values, breakpoint motifs and MDS. Motif counts are accumulated before its BED blacklist subtraction.
+Each successful cfDNAPro invocation saves `runs/<run_order>/cfdnapro-stage-timings.tsv`. It reports elapsed seconds and the fraction of R elapsed time for package/reference setup, native `readBam()` and curation, the benchmark's inclusive length filter, native `callMotif()`, and output writing. The clocks surround the existing operations without repeating them or forcing garbage collection. Native `readBam()` materializes the paired alignments and curated fragment object in memory, as in the authors' [quick start](https://github.com/hw538/cfDNAPro#quick-start-1). The benchmark filter then subsets that object. The complete container/R process remains the end-to-end timing result, including startup and the small stage-timing table. Stage fractions exclude R/container startup and timing-table writing, so they describe the cost within R rather than a second timing benchmark.
 
 ## Install and run
 
 [../install_tools.sh](../install_tools.sh) installs all coverage and end-motif benchmark tools, with separate environments for each tool and for reading outputs. It builds the current cfDNAlab checkout. Tool versions and source revisions are pinned for reproducibility, as listed in the [installation reference](../README.md#installation). Installation is separate from timing. Both benchmarks use the same FinaleToolkit archive.
 
-```bash
-bash benchmarks/install_tools.sh /path/to/benchmark-tools
+Use the commented [production run procedure](../README.md#runs-and-budgets) for paths, submissions at 1/4/12/32 cores, fresh result directories and accounting. It times `cfdnalab-reference`, `finaletoolkit` and `cfdnapro` with `BENCH_K=4`. A separate `cfdnalab-reference-proper` run at 32 cores checks concordance with FinaleToolkit once and is excluded from timing summaries.
 
-export BENCH_BAM=/path/to/BH01.hg38.paired.15x.bam
-export BENCH_REF_2BIT=/path/to/the-alignment-reference.2bit
-export BENCH_CFDNA=/path/to/benchmark-tools/envs/cfdnalab/bin/cfdna
-export BENCH_FINALE_ARCHIVE=/path/to/benchmark-tools/finaletoolkit.tar.gz
-export BENCH_CFDNAPRO_IMAGE=/path/to/benchmark-tools/cfdnapro-1.7.4.sif
-export BENCH_GENOME=hg38
-export BENCH_SAMTOOLS_ARCHIVE=/path/to/benchmark-tools/samtools.tar.gz
-export BENCH_COMPARE_PYTHON=/path/to/benchmark-tools/envs/comparison/bin/python
-# The batch job uses TMPDIR supplied on the compute node
+Full runs automatically write `concordance.tsv` after all tool attempts finish, using the job's `BENCH_K`. This comparison is outside every tool's timing and step memory measurements. Single-method jobs retain their profile and explain that there is no pair to compare. A comparison failure fails the job, with details in `concordance-error.log`, while preserving completed timings and profiles.
 
-# 4-mer pilot: native tool outputs and cfDNAlab configurations for concordance
-export BENCH_RESULTS=/path/to/end-motif-pilot
-export BENCH_K=4
-export BENCH_CORES="1"
-export BENCH_PILOT=1
-export BENCH_METHODS="cfdnalab-read cfdnalab-read-aligned cfdnalab-read-include cfdnalab-reference cfdnalab-reference-proper cfdnalab-reference-autosomes finaletoolkit cfdnapro"
-bash benchmarks/submit_benchmark.sh ends --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET
-
-# The job writes concordance.tsv automatically after timing
-```
-
-Pilots and full runs automatically write `concordance.tsv` after all tool attempts finish, using the job's `BENCH_K`. This comparison is outside every tool's timing and step memory measurements. Single-method jobs retain their profile and explain that there is no pair to compare. A comparison failure fails the job, with details in `concordance-error.log`, while preserving completed timings and profiles.
-
-The cfDNAlab run labels select these configurations. They are not additional competing tools:
+The cfDNAlab run labels select the timing configuration and its proper-pair concordance check:
 
 | Run label | Configuration |
 | --- | --- |
 | `cfdnalab-reference` | Reference bases, aligned boundaries, normal pairing, all BAM contigs. |
 | `cfdnalab-reference-proper` | Same, adding `--require-proper-pair` as a diagnostic comparison. |
-| `cfdnalab-read` | Read bases, `--clip-strategy skip`. Omit a soft-clipped end while retaining the other usable end. |
-| `cfdnalab-read-aligned` | Read bases, `--clip-strategy aligned`. Compare against reference/aligned to quantify read/reference differences. |
-| `cfdnalab-read-include` | Read bases, `--clip-strategy include-at-aligned-boundary`. Include terminal soft-clipped bases, keeping aligned spans for length filtering. |
-| `cfdnalab-reference-autosomes` | Reference/aligned, selecting the BAM's actual autosome names. Its output and runtime have a smaller scope than whole-reference calls. |
 
-For timing, choose the tool calls and cfDNAlab configuration supported by the concordance pilot. For example:
-
-```bash
-export BENCH_RESULTS=/path/to/end-motif-timing-4cores
-export BENCH_K=4
-export BENCH_CORES=4
-export BENCH_PILOT=0
-export BENCH_WARMUPS=1
-export BENCH_REPETITIONS=3
-export BENCH_METHODS="cfdnalab-reference cfdnalab-reference-proper finaletoolkit cfdnapro"
-bash benchmarks/submit_benchmark.sh ends --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET
-```
-
-Set wall time from the full-matrix pilot. Split by core budget and then by method as needed to fit the allocation limit, using matched hardware as described in [the shared run controls](../README.md#runs-and-budgets). For full runs, the submission launcher reserves an exclusive node and all its memory. Pilots allow shared nodes and request 50 GB unless `--mem` is passed. The runner stages input copies and environments locally and uses sequential `srun --jobid` steps with the requested binding. It records the actual hostname and logical/physical CPU IDs and rejects unexpected placement. Hard CPU confinement also depends on the cluster's Slurm cgroup configuration. Source files are not modified and no sample is downloaded.
+For full runs, the submission launcher reserves an exclusive node and all its memory. The runner stages input copies and environments locally and uses sequential `srun --jobid` steps with the requested binding. It records the actual hostname and logical/physical CPU IDs and rejects unexpected placement. Hard CPU confinement also depends on the cluster's Slurm cgroup configuration. Source files are not modified and no sample is downloaded.
 
 Submit separate jobs for the other core settings, each with a new results directory. Methods run in contiguous blocks with warmups before measurements at the job's single core count. All attempted runs, including warmups, remain in `timings.tsv`. Native command startup, internal reference staging, counting and native output writing are timed. Scheduler startup, input staging, profile preservation and cleanup are outside the timer. No cache eviction is performed. One native profile per run label is retained from the first measured repetition. Other temporary outputs and logs are removed. Failed diagnostics are retained, the remaining repetitions of that method are skipped and other selected methods continue. The job exits nonzero after those methods finish. See the [shared failure and timeout behavior](../README.md#timing-and-slurm-memory).
 
@@ -108,14 +62,14 @@ The tables below contain no measured results. Fill them from the saved concordan
 | cfDNAlab reference/native vs FinaleToolkit `d16632ec` | 4 | [ ] | [ ] / [ ] | [ ] / [ ] | Above differences plus proper-pair selection. |
 | cfDNAlab reference/native vs cfDNAPro left | 4 | [ ] | [ ] / [ ] | [ ] / [ ] | Approximate side mirroring, reference identity and native selection. |
 
-All rows request all contigs, MAPQ >=30 and inclusive lengths 30-1000 bp, with the exceptions noted. Report clipping/read-source diagnostic results separately if useful for explaining differences.
+All rows request all contigs, MAPQ >=30 and inclusive lengths 30-1000 bp, with the exceptions noted.
 
 | Tool / configuration | Cores | Warmups / measured | Mean process+flush, s | SD seconds | Slurm peak, KiB | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | cfDNAlab reference/native | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] | 4-mers, normal pairing. |
-| cfDNAlab reference/proper | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] | 4-mers, flag 0x2 required. |
+| cfDNAlab reference/proper | 32 | 0 / 1 | Not a timing result | Not a timing result | [ ] | Concordance diagnostic only, flag 0x2 required. |
 | FinaleToolkit `d16632ec` | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] | 4-mers, native inclusive length bounds. |
-| cfDNAPro 1.7.4 | Report selected settings, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] | Reference-derived left motifs, full BAM-to-profile process. No native thread argument. |
+| cfDNAPro 1.7.4 | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] | Reference-derived left motifs, full BAM-to-profile process. No native thread argument. |
 
 Expand timing rows to a core budget per row for the final A4 supplementary table. Keep long notes below the table if needed. GNU time's maximum RSS is not the simultaneous total memory of a multiprocessing tree. Retain the native CLI versions and dependency environment archives with the benchmark record.
 

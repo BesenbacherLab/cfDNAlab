@@ -2,8 +2,10 @@
 
 # Read the BAM and call cfDNAPro's native reference-derived left-end motifs
 # The runner times the whole process, including loading R and the reference
+# Stage timings distinguish the benchmark's length filter from native tool work
 # Usage: Rscript --vanilla cfdnapro_end_motifs.R BAM OUTPUT MIN MAX MAPQ GENOME K
 
+script_started <- proc.time()[["elapsed"]]
 arguments <- commandArgs(trailingOnly = TRUE)
 if (length(arguments) != 7L) {
     stop("Expected BAM OUTPUT MIN MAX MAPQ GENOME K")
@@ -37,10 +39,12 @@ if (length(retained_contigs) == 0L) {
 dropped_contigs <- setdiff(bam_contigs, retained_contigs)
 message("Contigs excluded because they are absent from cfDNAPro's reference: ",
         if (length(dropped_contigs)) paste(dropped_contigs, collapse = ", ") else "none")
+setup_finished <- proc.time()[["elapsed"]]
 
 # Match MAPQ and flag exclusions without requiring proper pairs or autosomes
 # Native curation uses directional fragment spans. Both mates must survive
 # Native alignment fields and NM/MD tag loading are left at their defaults
+# readBam() itself materializes the paired alignments and curated fragments
 fragments <- readBam(
     bamfile = bam_path,
     genome_label = genome_label,
@@ -58,10 +62,14 @@ fragments <- readBam(
     ),
     outdir = NA
 )
+reading_finished <- proc.time()[["elapsed"]]
+
 # cfDNAPro has no motif length-filter argument. This user-side R subsetting stays
 # inside timing, after native fragment curation and before motif extraction
 fragment_lengths <- BiocGenerics::width(fragments)
 fragments <- fragments[fragment_lengths >= minimum_length & fragment_lengths <= maximum_length]
+rm(fragment_lengths)
+filtering_finished <- proc.time()[["elapsed"]]
 if (length(fragments) == 0L) {
     stop("No fragments remain within the requested length bounds")
 }
@@ -75,6 +83,7 @@ counts <- callMotif(
     integrate_mut = FALSE,
     downsample_ref = FALSE
 )
+motifs_finished <- proc.time()[["elapsed"]]
 if (!dir.exists(output_directory)) {
     dir.create(output_directory, recursive = TRUE)
 }
@@ -95,4 +104,19 @@ reference_table$label <- reference$label
 reference_table$package <- reference$package
 reference_table$package_version <- reference$package_version
 write.table(reference_table, file.path(output_directory, "reference.tsv"),
+            sep = "\t", quote = FALSE, row.names = FALSE)
+output_finished <- proc.time()[["elapsed"]]
+
+# Measure the existing operations once, without rerunning them or forcing GC
+# Fractions use elapsed time within this R script, excluding R/container startup
+# The outer GNU timer still includes startup, every stage and this small table
+stage_seconds <- diff(c(script_started, setup_finished, reading_finished,
+                        filtering_finished, motifs_finished, output_finished))
+stage_timings <- data.frame(
+    stage = c("package_and_reference_setup", "read_bam_and_curate", "length_filter",
+              "call_motif", "write_outputs"),
+    elapsed_seconds = stage_seconds,
+    fraction_of_r_elapsed = stage_seconds / sum(stage_seconds)
+)
+write.table(stage_timings, file.path(output_directory, "stage_timings.tsv"),
             sep = "\t", quote = FALSE, row.names = FALSE)

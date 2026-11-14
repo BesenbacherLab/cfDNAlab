@@ -11,7 +11,7 @@ Compare global histograms with one bin per fragment length from **30 through 100
 | samtools stats (full QC report, insert-size section extracted) 1.25 | `stats --input-fmt-option 'filter=mapq >= 30' -f 1 -F 3852 -m 1 -i 1001`, using its `IS` inward-pair column and retaining lengths 30-1000 afterward | Established compiled baseline | Uses absolute TLEN. The last bin collects lengths at or above its maximum, hence 1001 rather than 1000. Counts passing alignments, halves each bin and truncates the integer result, so independently filtering mates can change counts. Computes many additional QC statistics. |
 | Picard 3.5.0 | `picard -Xmx2g CollectInsertSizeMetrics I=sample.bam O=metrics.txt HISTOGRAM_WIDTH=1000` | Native insert-size timing | No MAPQ or QC-fail prefilter inside timing. Concordance uses the separately generated, untimed filtered histogram. No PDF. |
 
-For cfDNAlab, use `lengths --length-bins 30:1001:1 --indel-mode ignore --clip-mode aligned --min-mapq 30`. Use the same explicit chromosome selection on both sides. Keep a separate `cfdnalab-autosomes` run when reporting whole-reference tools alongside cfDNAlab's usual autosome selection. A separately labeled `--require-proper-pair` run can diagnose FinaleToolkit's selection difference. It should not replace the normal cfDNAlab run.
+For cfDNAlab, use `lengths --length-bins 30:1001:1 --indel-mode ignore --clip-mode aligned --min-mapq 30`. Use the same explicit chromosome selection on both sides. The production comparison uses all BAM contigs. A separately labeled `--require-proper-pair` run diagnoses FinaleToolkit's selection difference once at 32 cores for concordance. Normal cfDNAlab runs supply the timing comparison at all four core settings.
 
 ## cfDNAPro settings and definition
 
@@ -22,8 +22,7 @@ Read the BAM explicitly with the shared MAPQ and flag settings, then pass its fr
 ```r
 library(cfDNAPro)
 
-# Select all BAM contigs. For the autosome comparison, supply their actual names
-# instead, for example paste0("chr", 1:22) for a UCSC-style human BAM
+# Select all BAM contigs to match the production comparison scope
 # Choose the genome label matching the alignment reference
 fragments <- readBam(
     bamfile = "sample.bam",
@@ -56,27 +55,15 @@ The runner times the complete R process, including package loading, BAM reading,
 
 Keep the native cfDNAPro filters visible. Its default `scanBamFlag` excludes unmapped, secondary, supplementary and duplicate records, but does not explicitly exclude QC-fail records. The benchmark supplies `isNotPassingQualityControls=FALSE` and `hasUnmappedMate=FALSE` through `readBam(galp_flag=...)` to match cfDNAlab's exclusions. Alignment fields and NM/MD tag loading retain the package defaults. Its strict 1-based 5'-end comparison is equivalent to `forward.pos < reverse.reference_end - 1`, whereas cfDNAlab additionally requires `forward.pos <= reverse.pos`. Overlapping pairs with the reverse alignment starting first can therefore remain a source of differences even with matched flags. GenomicAlignments pairing and reference-bound checks can also affect selection.
 
-## How much does the fragment definition matter in this sample?
-
-Include `cfdnapro-outer-span` in the concordance pilot. This uses the same cfDNAPro version, MAPQ, flag selection and pairing, changing only `curate_start_and_end` to `FALSE`. The native uncurated `granges(galp)` uses the outer alignment span, from the minimum mate start to the maximum mate end. This is a diagnostic configuration of the same tool, not another competing tool or version.
-
-Compare `cfdnapro` against `cfdnapro-outer-span` to measure the effect on this sample's histogram. Report total retained counts, frequency errors and correlation, mean length, mode, the fraction <=150 bp, and Wasserstein distance in bp. A small Wasserstein distance and small changes in those summaries indicate a small distribution-level effect in this sample. The result does not establish that the definitions are interchangeable in other samples.
-
-Length inclusion is applied after choosing the span, so a changed definition can move fragments into or out of the requested range. Native reference-bound checks also run after curation. The comparison therefore reports count changes as well as normalized distributions. It does not infer the fraction of individual fragments whose lengths changed from aggregate histograms.
-
-The outer-span diagnostic does not test whether the aligner's stored TLEN equals that outer span. The samtools, Picard and FinaleToolkit comparisons assess the observed distributions from TLEN-based tools, but also include their selection differences. Do not attribute their entire discrepancy to the fragment definition.
-
 For ordinary inward bwa mem alignments, stored TLEN spans the forward `pos` through the reverse `reference_end`, matching the directional aligned length. This is not a guarantee for arbitrary aligners or abnormal pairs. [bwa 0.7.19 source](https://github.com/lh3/bwa/blob/v0.7.19/bwamem.c#L887-L892) supplies the inspected rule. Record the actual remapping version. samtools inward selection uses forward/reverse start order, allowing coincident starts. Picard's FR rule instead compares 5' positions with <=, equivalent to `forward.pos < reverse.reference_end`. Its one-base boundary difference from cfDNAPro is outside this benchmark's >=10 bp range.
 
-## Other tools and timing scope
+## Timing scope
 
 samtools `stats` has no dedicated MAPQ switch. Its `-q` controls base-quality trimming. The runner uses HTSlib's general `--input-fmt-option 'filter=mapq >= 30'` instead, applying MAPQ in the same BAM read pass. Select the `IS` inward-pair column after timing. This does not establish that both mates pass MAPQ or reproduce cfDNAlab pairing. Timing includes the full native command needed to obtain the histogram, including its other statistics.
 
 Picard timing uses its documented standalone `picard -Xmx2g CollectInsertSizeMetrics I=sample.bam O=metrics.txt HISTOGRAM_WIDTH=1000` call. It has no MAPQ option, so timed output retains low-MAPQ and QC-fail pairs and timing rows record `min_mapq=NA`. Once after the timed runs, an untimed `samtools view -u -q 30 -f 1 -F 3852 | picard -Xmx2g CollectInsertSizeMetrics I=/dev/stdin ...` pipeline writes `concordance.metrics.txt`. Only that filtered histogram enters concordance. The extra pass adds job wall time but no reported tool time. Picard's optional PDF is omitted because picard-slim lacks R. cfDNAlab's default QC plot remains timed.
 
-deepTools `bamPEFragmentSize` is lower priority. It samples genomic regions by default. `--distanceBetweenBins 0 --outRawFragmentLengths lengths.tsv` removes the sampling gaps, but its indexed queries can count alignments crossing chunk boundaries more than once. Its native selection also lacks the MAPQ/duplicate/QC-fail filtering needed here and falls back to other mapped reads in chunks without proper read1 records. These differences make it a less direct full-histogram comparison.
-
-For production timing, use the established exclusive-node, local-scratch procedure. Use **1, 4, 12 and 32 cores in separate jobs** for parallel methods. First measure cfDNAPro and FinaleToolkit lengths at 1 versus 4 cores, also in separate jobs. If wall time and CPU use show no consistent benefit, stop higher-core measurements for this workload. If they improve, add 12/32-core jobs. The runner executes every explicitly selected method and does not automatically skip tools. cfDNAlab's `--n-threads` and samtools `-@` receive the allocated core count directly, including the samtools filter in the separate untimed Picard concordance pipeline. Picard has no thread option and receives no JVM processor override. No numerical-library thread overrides are added. The timing TSV records `NA` for a command without an explicit native thread setting.
+Use the commented [production run procedure](../README.md#runs-and-budgets) for the complete 1/4/12/32-core matrix. It times the five normal configurations at each core setting, including cfDNAPro and FinaleToolkit. The proper-pair cfDNAlab configuration runs once at 32 cores for concordance and is excluded from timing summaries. The runner executes every explicitly selected method and does not automatically skip tools. cfDNAlab's `--n-threads` and samtools `-@` receive the allocated core count directly, including the samtools filter in the separate untimed Picard concordance pipeline. Picard has no thread option and receives no JVM processor override. No numerical-library thread overrides are added. The timing TSV records `NA` for a command without an explicit native thread setting.
 
 Plot wall time against allocated cores for every method. Calculate effective cores as `(user_seconds + system_seconds) / wall_seconds` and allocated CPU utilization as that value divided by `cores`. This shows actual utilization without assuming that a tool will or will not scale. Picard's utilization reflects its standalone native call, and cfDNAPro's includes container startup. Include native output generation in timing and perform concordance calculations afterward.
 
@@ -86,41 +73,9 @@ Compare raw totals and per-bin count differences as well as normalized frequenci
 
 Use the shared [../install_tools.sh](../install_tools.sh). It installs the authors' cfDNAPro 1.7.4 Apptainer image by immutable digest, including its R dependencies and reference packages. Picard 3.5.0 uses Bioconda's `picard-slim` package with Java 17 under `envs/picard`. It contains the official JAR but omits R, which this command only needs for its optional PDF. samtools 1.25 uses a separate Bioconda environment under `envs/samtools`, packed as `samtools.tar.gz` with its shared libraries. The runner copies the image and packed environments locally. It records the actual cfDNAPro package version and image SHA-256 in each timing row. Apptainer must already be available on the cluster. See the [installation audit](../README.md#installation) for sources and deliberate adaptations.
 
-```bash
-bash benchmarks/install_tools.sh /path/to/benchmark-tools
+The shared [production run procedure](../README.md#runs-and-budgets) contains the local path settings, commented submissions, new result directories and accounting commands. `BENCH_INDEX` can override the usual `.bam.bai` path. `BENCH_MIN_LENGTH`, `BENCH_MAX_LENGTH` and `BENCH_MIN_MAPQ` override the common filters. The automatic comparison uses the same bounds. `BENCH_GENOME=hg38` selects cfDNAPro's UCSC hg38 reference label and must match the alignment reference and chromosome naming. The input remains a coordinate-sorted BAM with its original non-autosomes and alignment flags.
 
-export BENCH_BAM=/path/to/BH01.hg38.paired.15x.bam
-export BENCH_CFDNA=/path/to/benchmark-tools/envs/cfdnalab/bin/cfdna
-export BENCH_SAMTOOLS_ARCHIVE=/path/to/benchmark-tools/samtools.tar.gz
-export BENCH_FINALE_ARCHIVE=/path/to/benchmark-tools/finaletoolkit.tar.gz
-export BENCH_CFDNAPRO_IMAGE=/path/to/benchmark-tools/cfdnapro-1.7.4.sif
-export BENCH_PICARD_ARCHIVE=/path/to/benchmark-tools/picard.tar.gz
-export BENCH_COMPARE_PYTHON=/path/to/benchmark-tools/envs/comparison/bin/python
-# The batch job uses TMPDIR supplied on the compute node
-export BENCH_GENOME=hg38
-
-# Run the four comparisons and the outer-span/proper-pair diagnostics once
-export BENCH_RESULTS=/path/to/lengths-pilot
-export BENCH_CORES="1"
-export BENCH_PILOT=1
-export BENCH_METHODS="cfdnalab cfdnalab-autosomes cfdnalab-proper cfdnapro cfdnapro-outer-span finaletoolkit samtools picard"
-bash benchmarks/submit_benchmark.sh lengths --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET
-
-# The job writes concordance.tsv automatically after timing
-
-# Submit a separate job and results directory for each core setting and method block
-export BENCH_RESULTS=/path/to/lengths-timing-4cores-parallel
-export BENCH_CORES=4
-export BENCH_PILOT=0
-export BENCH_WARMUPS=1
-export BENCH_REPETITIONS=3
-export BENCH_METHODS="cfdnalab cfdnalab-autosomes samtools picard"
-bash benchmarks/submit_benchmark.sh lengths --constraint=gen6 --time=YOUR_PILOT_BASED_BUDGET
-```
-
-Set wall time from pilots at each core setting. Each job uses a single core count. Split methods further as needed to fit the allocation limit, using matched hardware as described in [the shared run controls](../README.md#runs-and-budgets). The example times the other length methods at 4 cores. Submit cfDNAPro and FinaleToolkit separately at 1 and 4 cores, and decide on higher-core runs after inspecting their measurements. `BENCH_INDEX` can override the usual `.bam.bai` path. `BENCH_MIN_LENGTH`, `BENCH_MAX_LENGTH` and `BENCH_MIN_MAPQ` override the common filters. The automatic comparison uses the same nondefault length bounds. `BENCH_GENOME` selects cfDNAPro's reference label and must match the alignment reference and chromosome naming. The default `hg38` means UCSC-style names. The input remains a coordinate-sorted BAM with its original non-autosomes and alignment flags.
-
-For full runs, the submission launcher reserves an exclusive node and all its memory. Pilots allow shared nodes and request 50 GB unless `--mem` is passed. Every sequential `srun --jobid` attaches to that allocation and checks the actual hostname and logical/physical CPU IDs. Hard confinement also depends on the cluster's Slurm cgroup configuration. Prefer the same physical node for split jobs when available, as described in the shared run controls. Each method runs as a contiguous block at the job's core count, retaining actual order in `timings.tsv`. There are a warmup followed by three measured repetitions by default. No caches are evicted.
+For full runs, the submission launcher reserves an exclusive node and all its memory. Every sequential `srun --jobid` attaches to that allocation and checks the actual hostname and logical/physical CPU IDs. Hard confinement also depends on the cluster's Slurm cgroup configuration. Each method runs as a contiguous block at the job's core count, retaining actual order in `timings.tsv`. Normal timing jobs use a warmup followed by three measured repetitions. The proper-pair concordance job runs once without a warmup at 32 cores. No caches are evicted.
 
 The timing result is a single `timings.tsv`, with a row for every attempted run, including warmups and failures. A native histogram per method is retained under `profiles/` from the first measured repetition at the job's single core count. These small files support concordance analysis. Other temporary outputs and logs are deleted. Failed diagnostics are retained, the remaining repetitions of that method are skipped and other selected methods continue. The job exits nonzero after those methods finish. See the [shared failure and timeout behavior](../README.md#timing-and-slurm-memory). Input staging, scheduler startup, profile copying, cleanup and concordance calculation are outside the timer. Native startup and output generation remain timed, including cfDNAlab's default QC plot and cfDNAPro's Apptainer launch. GNU time's maximum RSS is not the simultaneous total memory of a process tree.
 
@@ -137,21 +92,13 @@ The tables below contain no measured results. Fill them from the saved concordan
 | samtools stats (full QC report, insert-size section extracted) 1.25 | [ ] | [ ] / [ ] | [ ] | [ ] | TLEN, per-record filters and halved counts. |
 | Picard 3.5.0 | [ ] | [ ] / [ ] | [ ] | [ ] | TLEN from read2 and orientation classification. |
 
-All rows use whole-reference counts, MAPQ >=30 and lengths 30-1000 bp. MAE/RMSE use within-range frequencies. Count differences are cfDNAlab minus comparator. Interpret the separately labeled autosome run as a different scope.
-
-| Span definition in cfDNAPro | Retained fragments | Mean, bp | Mode, bp | Fraction <=150 bp |
-| --- | --- | --- | --- | --- |
-| Directional, curated | [ ] | [ ] | [ ] | [ ] |
-| Outer alignment span | [ ] | [ ] | [ ] | [ ] |
-
-Report the definition diagnostic's Pearson r, frequency MAE/RMSE and Wasserstein distance alongside these rows. Both configurations use the same native pair/flag/MAPQ settings. Scope the conclusion to this sample and length range.
+All rows use whole-reference counts, MAPQ >=30 and lengths 30-1000 bp. MAE/RMSE use within-range frequencies. Count differences are cfDNAlab minus comparator.
 
 | Tool / configuration | Cores | Warmups / measured | Mean process+flush, s | SD seconds | Effective cores |
 | --- | --- | --- | --- | --- | --- |
 | cfDNAlab, all contigs | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] |
-| cfDNAlab, autosomes | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] |
-| cfDNAPro 1.7.4 | 1 / 4, separate jobs, then decide | 1 / 3 each | [ ] | [ ] | [ ] |
-| FinaleToolkit `d16632ec` | 1 / 4, separate jobs, then decide | 1 / 3 each | [ ] | [ ] | [ ] |
+| cfDNAPro 1.7.4 | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] |
+| FinaleToolkit `d16632ec` | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] |
 | samtools stats (full QC report, insert-size section extracted) 1.25 | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] |
 | Picard 3.5.0 | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] |
 
@@ -164,7 +111,5 @@ Expand timing rows to a core budget per row in the final A4 supplement. Put work
 - FinaleToolkit: [histogram implementation](https://github.com/epifluidlab/FinaleToolkit/blob/d16632ec5ae8999e774234457f6b0f9405c8f590/src/finaletoolkit/frag/_frag_length.py), [alignment reader](https://github.com/epifluidlab/FinaleToolkit/blob/d16632ec5ae8999e774234457f6b0f9405c8f590/src/finaletoolkit/io/alignment.py).
 - samtools: [stats manual](https://www.htslib.org/doc/samtools-stats.html), [1.25 counting and output](https://github.com/samtools/samtools/blob/1.25/stats.c), [HTSlib input filter parsing](https://github.com/samtools/htslib/blob/1.25/hts.c), [filtering during BAM reads](https://github.com/samtools/htslib/blob/1.25/sam.c).
 - Picard: [3.5.0 release](https://github.com/broadinstitute/picard/releases/tag/3.5.0), [command](https://github.com/broadinstitute/picard/blob/3.5.0/src/main/java/picard/analysis/CollectInsertSizeMetrics.java), [collector](https://github.com/broadinstitute/picard/blob/3.5.0/src/main/java/picard/analysis/directed/InsertSizeMetricsCollector.java).
-- deepTools: [4.0.0 fragment sampling and filtering](https://github.com/deeptools/deepTools/blob/4.0.0/pydeeptools/deeptools/getFragmentAndReadSize.py).
-- Outer-span diagnostic: [cfDNAPro's curation toggle](https://github.com/hw538/cfDNAPro/blob/ab9eeb166b8614b9ec2ce4ceda190dc295c65a7c/R/readBam.R), [GenomicAlignments range union](https://github.com/Bioconductor/GenomicAlignments/blob/devel/R/GAlignmentPairs-class.R).
 
 Join completed Slurm step memory after the job. Timing rows also record filesystem flush time, process-plus-flush time and output bytes. See the [shared timing TSV documentation](../README.md) for units and measurement limits. Submit from the repository root so helper scripts can be staged before warmups.
