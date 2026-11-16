@@ -14,11 +14,11 @@ from pathlib import Path
 import sys
 
 import numpy as np
-import pandas as pd
+from scipy.stats import pearsonr, spearmanr
 
 # The shared checks live in benchmarks/, above this feature's script directory
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from benchmark_metrics import checked_metric, pearson_correlation
+from benchmark_metrics import checked_metric
 
 
 def load_profile(directory, motifs):
@@ -142,10 +142,10 @@ def main():
         right_frequency, right_total, right_ends = profiles[right_name]
         difference = left_frequency - right_frequency
         # Correlation is undefined for constant profiles, even if they are equal
-        correlation = pearson_correlation(left_frequency, right_frequency)
-        left_ranks = pd.Series(left_frequency).rank().to_numpy()
-        right_ranks = pd.Series(right_frequency).rank().to_numpy()
-        rank_correlation = pearson_correlation(left_ranks, right_ranks)
+        correlation = rank_correlation = "NA"
+        if np.ptp(left_frequency) > 0 and np.ptp(right_frequency) > 0:
+            correlation = pearsonr(left_frequency, right_frequency).statistic
+            rank_correlation = spearmanr(left_frequency, right_frequency).statistic
         # Include a motif when either profile reaches 1e-4. Zero on the other
         # side gives an infinite ratio, without introducing a pseudocount
         abundant = np.maximum(left_frequency, right_frequency) >= 1e-4

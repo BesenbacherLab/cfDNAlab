@@ -21,7 +21,7 @@ The benchmark runs selected native commands repeatedly, records timing and Slurm
 | Coverage comparison, installation and input regression tests | [test_benchmarks.py](tests/test_benchmarks.py) |
 | Submission, setup checks, concordance, pilot budgets and native-format regression tests | [test_review_regressions.py](tests/test_review_regressions.py) |
 
-The commented production matrix, submissions and completed-job commands are maintained in the [benchmark README](README.md#run-the-benchmarks).
+The [benchmark README](README.md#run-the-benchmarks) lists the tools and core settings to run, with commented commands for submitting jobs and collecting results.
 
 ## Installation
 
@@ -95,9 +95,9 @@ The input header is preserved. Existing output BAM/BAI paths are rejected, outpu
 
 `BENCH_INTERVALS` supplies the midpoint site BED. Coordinates, groups and strands come from this file. The runner preserves repeated and overlapping sites, derives window width from the intervals and applies no biological site selection.
 
-The production site source is Griffin's [public paper set](https://github.com/adoebley/Griffin_analyses/tree/75467e438a88029206d8d778ddce05eb0ab6efa8/sites/TFBS/10000_unfiltered_sites_CIS_BP_v2), pinned to revision `75467e438a88029206d8d778ddce05eb0ab6efa8`. Retain the supplied BED's derivation and verify actual file/site counts before reporting them. This public, large site set is distinct from the 1000-site release demo used only for Griffin warmup. Window width and normalization are recorded explicitly for each experiment.
+The midpoint site source is Griffin's [public paper set](https://github.com/adoebley/Griffin_analyses/tree/75467e438a88029206d8d778ddce05eb0ab6efa8/sites/TFBS/10000_unfiltered_sites_CIS_BP_v2), pinned to revision `75467e438a88029206d8d778ddce05eb0ab6efa8`. Retain the supplied BED's derivation and verify actual file/site counts before reporting them. This public, large site set is distinct from the 1000-site release demo used only for Griffin warmup. Window width and normalization are recorded explicitly for each experiment.
 
-Rows require chromosome, start, end and group. BED5 uses field 5 as strand, BED6 uses field 6, BED4 is unstranded. Supply equal-width windows on the alignment reference. Both odd and even widths are supported. Production profiles use approximately 10 kb windows. BED `[center-5000, center+5000)` is 10,000 bp, while a symmetric window including the central base is 10,001 bp. The submission launcher samples only the first five lines for tab-separated columns and integer coordinates. The native tools perform input validation.
+Rows require chromosome, start, end and group. BED5 uses field 5 as strand, BED6 uses field 6, BED4 is unstranded. Supply equal-width windows on the alignment reference. Both odd and even widths are supported. The benchmark profiles use approximately 10 kb windows. BED `[center-5000, center+5000)` is 10,000 bp, while a symmetric window including the central base is 10,001 bp. The submission launcher samples only the first five lines for tab-separated columns and integer coordinates. The native tools perform input validation.
 
 Setup retains all rows, including repeats and overlaps, sorts chromosome/start/end and writes normalized BED6 with score zero. Griffin receives per-group anchors and half-open relative bounds that recover the supplied intervals exactly. The anchor is `start + floor(width/2)` for forward/unstranded sites and `end - floor(width/2)` for reverse sites. Its relative bounds are `[-floor(width/2), width-floor(width/2))`. This converts the supplied windows to native formats without adding coordinate or strand checks. The normalized BED and source SHA-256 are retained with results.
 
@@ -143,11 +143,11 @@ All runners use the samtools archive for header preparation and setup Python for
 
 ## Scheduling and placement
 
-Jobs request one node, one task, `BENCH_CORES` CPUs per task, one hardware thread per core and no requeue. The submission launcher adds `--exclusive --mem=0` only when `BENCH_PILOT=0`. Pilots allow shared nodes and request 50 GB with `--mem=50G`, overridable with an explicit `--mem`. CPU count, exclusivity and memory requests are chosen before submission rather than set unconditionally in the job headers. Additional arguments go to `sbatch` for cluster-specific partition, node, wall-time and memory choices. There is no universal production wall-time allocation. Shared-node pilots provide execution checks and rough resource estimates, and remain excluded from production summaries.
+Jobs request one node, one task, `BENCH_CORES` CPUs per task, one hardware thread per core and no requeue. The submission launcher adds `--exclusive --mem=0` only when `BENCH_PILOT=0`. Pilots allow shared nodes and request 50 GB with `--mem=50G`, overridable with an explicit `--mem`. CPU count, exclusivity and memory requests are chosen before submission rather than set unconditionally in the job headers. Additional arguments go to `sbatch` for cluster-specific partition, node, wall-time and memory choices. The time limit must allow the selected commands to finish on the cluster. Shared-node debugging runs (`BENCH_PILOT=1`) remain excluded from the default timing summaries.
 
-Each job uses exactly one core setting. Every selected method runs as a contiguous block at that setting. Its warmup repetitions precede measurements, with actual order retained in the timing TSV. Normally production repetition 1 is a warmup and 2-4 are measured.
+Each job uses exactly one core setting. Every selected method runs as a contiguous block at that setting. Its warmup repetitions precede measurements, with actual order retained in the timing TSV. Normally repetition 1 is a warmup and 2-4 are measured.
 
-Griffin must be selected alone with `BENCH_METHODS=griffin-gc`. Each timed repetition includes sample GC estimation and profiling. Both raw and corrected tables are preserved from the measured run. There is no separate timed `griffin` method. The release's 1000-site demo is an untimed warmup in a separate Slurm step, using production filters/windows and a unit GC table. Full-input warmups are zero. A single production measurement follows, numbered 1. The supplied site BED remains unchanged. A failed demo preserves logs and stops before measurement.
+Griffin must be selected alone with `BENCH_METHODS=griffin-gc`. Each timed repetition includes sample GC estimation and profiling. Both raw and corrected tables are preserved from the measured run. There is no separate timed `griffin` method. The release's 1000-site demo is an untimed warmup in a separate Slurm step, using the measured run's filters and window settings with a unit GC table. Full-input warmups are zero. A single full-input measurement follows, numbered 1. The supplied site BED remains unchanged. A failed demo preserves logs and stops before measurement.
 
 No method is automatically excluded. The documented timing matrix runs the normal selected configurations at 1, 4, 12 and 32 cores, including cfDNAPro and FinaleToolkit lengths. Four proper-pair diagnostics run once each at 32 cores, without warmups, in three separate concordance jobs. Their result paths are outside the timing-summary inputs. Method lists are explicit. Picard's timed standalone call includes the JVM. Its separate filtered concordance pipeline also uses samtools outside timing.
 
@@ -161,7 +161,7 @@ Series use separate jobs per core setting, with feature/method blocks to fit ava
 
 GNU time measures the native command or documented complete pipeline, including startup, output writing/compression, compulsory calculations and enabled default plots. Setup, scheduler startup, placement checks, profile copying, cleanup and concordance are outside the process timer.
 
-After native success, a second timer measures `sync -f` on the output filesystem. This can include other filesystem writes and is a filesystem flush boundary, not exact per-tool durable-write latency. `du -sb` measures apparent native output-directory size including required intermediates. Staging writes are flushed before the first invocation.
+After native success, a second timer measures `sync -f` on the output filesystem. This can include other filesystem writes and is a filesystem flush boundary, not exact per-tool durable-write latency. `du -sb` measures the whole output directory's apparent size after the run, including final results and intermediate files still present. It excludes files outside that directory, deleted files and repeated writes. Staging writes are flushed before the first invocation.
 
 | Measurement | Meaning |
 | --- | --- |
@@ -170,7 +170,7 @@ After native success, a second timer measures `sync -f` on the output filesystem
 | `tool_exit_code` | Shell-observed native/timeout exit status, including signal exits. `NA` when a wrong CPU placement stopped the step before the command ran |
 | `flush_seconds` | Post-command filesystem flush duration |
 | `process_plus_flush_seconds` | Process wall plus flush, the selected end-to-end result |
-| `output_bytes` | Apparent output-directory bytes from `du -sb` |
+| `output_directory_bytes` | Total apparent output-directory bytes after the run from `du -sb`, including remaining intermediates. This measures file sizes, excluding filesystem allocation overhead and cumulative writes |
 | `step_exit_code` | Scheduler-step status including placement/output/flush failures |
 
 Rows additionally record run order, repetition, warmup/pilot labels, method/version, core/native workers, feature filters/scope, node/CPU placement, job/step IDs and UTC start. Schemas have 31 coverage, 30 lengths, 35 ends and 33 midpoint columns, listed in each feature's `commands.sh`.
@@ -193,7 +193,7 @@ Comparison errors fail the job, keep `concordance-error.log` and print its conte
 
 Coverage keeps every processed chromosome in the saved tracks for all tools. Full native output is generated inside timing. PanDepth's compressed positions are copied intact, and samtools text is compressed after its Slurm step. Each per-base coverage profile has its processed `chrom.sizes`, and regional outputs share saved `regions.bed`. All-contig comparisons therefore evaluate the full BAM reference scope.
 
-Midpoints also retains normalized `sites.bed` and source `sites.sha256`. The original input BED remains unchanged. Griffin jobs additionally retain `griffin-warmup.log`, `griffin-warmup-error.log`, the demo source SHA-256 and its warmup policy in `run.tsv`. The untimed demo has no timing row and does not enter summaries or production comparisons. Additional `cfdnalab-gc` and `griffin-gc` workloads each estimate sample GC bias and apply it inside every timing. Reference-only inputs are staged beforehand. cfDNAlab's reference is calculated once with native defaults and reused, with native sample-estimation windows and chromosome selection. Each midpoint job selects a single workload and core setting. Corrected runs retain reference paths and the first measured sample estimate with its diagnostics. Corrected Griffin also retains its estimation BED/checksum. Their timing rows carry `gc_correction=corrected`, while baseline rows carry `none`.
+Midpoints also retains normalized `sites.bed` and source `sites.sha256`. The original input BED remains unchanged. Griffin jobs additionally retain `griffin-warmup.log`, `griffin-warmup-error.log`, the demo source SHA-256 and its warmup policy in `run.tsv`. The untimed demo has no timing row and does not enter summaries or output comparisons. Additional `cfdnalab-gc` and `griffin-gc` workloads each estimate sample GC bias and apply it inside every timing. Reference-only inputs are staged beforehand. cfDNAlab's reference is calculated once with native defaults and reused, with native sample-estimation windows and chromosome selection. Each midpoint job selects a single workload and core setting. Corrected runs retain reference paths and the first measured sample estimate with its diagnostics. Corrected Griffin also retains its estimation BED/checksum. Their timing rows carry `gc_correction=corrected`, while baseline rows carry `none`.
 
 ## Slurm accounting and summaries
 
@@ -201,7 +201,7 @@ Collect accounting once after completion using `sacct --parsable2 --units=K --fo
 
 The primary memory result is `slurm_max_rss_kib` under the site's documented accounting policy. Its step includes shell/time wrappers, the native command and children, flush and size measurement. Staging and profile copying are outside it. Plugin, frequency, descendant coverage and file-cache treatment must be established on the cluster. See [sacct](https://slurm.schedmd.com/sacct.html) and [cgroup v2 limitations](https://slurm.schedmd.com/cgroup_v2.html#limitations).
 
-Production summaries select successful `warmup=false`, `pilot=0` rows. Native and step statuses must be zero. Known accounting must be `COMPLETED` and `0:0`. Missing accounting does not invalidate process timings. Versions, nodes and recorded command settings remain separate groups. TSVs supplied together are expected to belong to the same feature/experiment and biological input.
+By default, timing summaries include only successful measured runs (`warmup=false`, `pilot=0`). Native and step statuses must be zero. Known accounting must be `COMPLETED` and `0:0`. Missing accounting does not invalidate process timings. Versions, nodes and recorded command settings remain separate groups. TSVs supplied together are expected to belong to the same feature/experiment and biological input.
 
 Per configuration, process-plus-flush time, process/flush separately, Slurm/GNU memory, output bytes and effective cores each report `n`, mean, sample SD, median and inclusive lower/upper quartiles. A singleton has undefined sample SD. Missing metrics have a smaller `n`. Effective cores use `(user_seconds + system_seconds) / wall_seconds`, with zero wall time yielding `NA`. Allocated utilization divides effective cores by the core budget.
 
@@ -211,8 +211,8 @@ Per configuration, process-plus-flush time, process/flush separately, Slurm/GNU 
 
 `--estimate` summarizes successful measured pilot rows and defaults to a planned warmup, three planned measurements and a 25% margin. Each observed configuration reports `planned_runs`, `pilot_failures`, `budget_minutes` and `budget_status`. Budgets multiply the mean process-plus-flush time by four normally, or three for Griffin, and apply the margin. Griffin never budgets full-input warmups. Failed configurations without a successful measured pilot have an `NA` budget. Any unsuccessful pilot leaves the configuration incomplete even if another attempt succeeded. The utility writes useful rows and an explicitly incomplete successful subtotal before returning nonzero. Absent configurations cannot be estimated. Staging/cleanup and Griffin's short demo are added separately, and each core setting still requires separate jobs.
 
-The estimate mode remains available for debugging records. The production run procedure uses no pilot jobs or assumed linear-scaling runtime table. Its six job limits cover setup, all selected repetitions and concordance where applicable.
+The estimate mode remains available for debugging records. The documented run procedure uses no pilot jobs or assumed linear-scaling runtime table. Its six job limits cover setup, all selected repetitions and concordance where applicable.
 
-## Validation before production runs
+## Check the installed tools before benchmarking
 
-Validate complete Linux environment solves, relocation, native command outputs, plotting/fonts and Slurm placement/accounting on the compute node. Real-tool validation uses each selected native tool and its comparator on a small input. Runtime, memory and scratch requirements depend on the production input and method set. Source inspection and syntax checks alone do not establish runtime correctness. See [regression tests and validation](README.md#checking-the-benchmark-code) for the local test command and its scope.
+Validate complete Linux environment solves, relocation, native command outputs, plotting/fonts and Slurm placement/accounting on the compute node. Real-tool validation uses each selected native tool and its comparator on a small input. Runtime, memory and scratch requirements depend on the input and selected methods. Source inspection and syntax checks alone do not establish runtime correctness. See [regression tests and validation](README.md#checking-the-benchmark-code) for the local test command and its scope.

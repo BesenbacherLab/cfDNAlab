@@ -47,9 +47,9 @@ The four `*-regions` methods form a separate **regional read-depth** comparison 
 
 For a regional-only job, select `BENCH_METHODS="cfdnalab-regions mosdepth-regions samtools-regions pandepth-regions"`. Submit separate jobs at 1, 4, 12 and 32 cores. Each command writes regional output directly without a per-base table. samtools bedcov has no thread option and records `tool_threads=NA`. Its paired/TLEN filter is samtools' global HTSlib input option, also used for length or MAPQ filtering by depth and stats. PanDepth has no equivalent length filter and records `length_filter=unsupported`.
 
-## Production measurements
+## Timing runs
 
-The shared production procedure uses exclusive nodes, a full-input warmup and three measurements for every normal timing configuration at each core count. The two proper-pair configurations run once without a warmup at 32 cores for concordance. `BENCH_MIN_MAPQ`, `BENCH_MIN_LENGTH` and `BENCH_MAX_LENGTH` override the filters. The timing TSV records applied/unsupported length filtering, proper-pair selection and scope.
+The shared procedure uses exclusive nodes, a full-input warmup and three measurements for every normal timing configuration at each core count. The two proper-pair configurations run once without a warmup at 32 cores for concordance. `BENCH_MIN_MAPQ`, `BENCH_MIN_LENGTH` and `BENCH_MAX_LENGTH` override the filters. The timing TSV records applied/unsupported length filtering, proper-pair selection and scope.
 
 Keep process-plus-filesystem-flush time, output bytes and the joined Slurm peak alongside process time and GNU time RSS. Native positional output costs stay in the comparison. Include sample size, SD and median/quartiles and retain all measured points. The table below is a result template, not measured concordance data.
 

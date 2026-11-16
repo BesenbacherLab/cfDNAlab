@@ -2,8 +2,8 @@
 
 Bounds allow an absolute overshoot of 1e-5 before clipping. Undefined metrics
 are handled by their calculators, so unexpected NaN and infinity always fail here.
-Only the small-array Pearson calculation needs NumPy. Coverage can use the
-scalar checks without installing it or expanding coverage into genomic arrays.
+Profile arrays use SciPy's Pearson calculation. Coverage uses its accumulated
+weighted covariance and variances without expanding genomic runs into arrays.
 """
 
 import math
@@ -29,10 +29,11 @@ def checked_metric(value, name, minimum=0.0, maximum=None):
 
 
 def correlation_value(covariance, left_variance, right_variance):
-    """Check covariance and variances, then calculate and validate Pearson r.
+    """Finish coverage's weighted correlation from its streaming accumulators.
 
     Zero variance gives an undefined correlation. Nonfinite accumulators and
     negative variances indicate invalid arithmetic and must raise an error.
+    These checks apply to the coverage accumulator, not SciPy's array calculation.
     """
     if (
         not all(
@@ -50,25 +51,3 @@ def correlation_value(covariance, left_variance, right_variance):
     # Dividing by each square root avoids overflowing the product of variances
     value = covariance / math.sqrt(left_variance) / math.sqrt(right_variance)
     return checked_metric(value, "correlation value", minimum=-1.0, maximum=1.0)
-
-
-def pearson_correlation(left, right):
-    """Calculate Pearson for small profiles and check r before clipping.
-
-    NumPy's corrcoef clips internally, which would hide excessive overshoots.
-    Covariance leaves the raw calculation available for the shared bounds check.
-    """
-    import numpy as np
-
-    left, right = np.asarray(left, dtype=float), np.asarray(right, dtype=float)
-    if left.ndim != 1 or right.ndim != 1 or left.shape != right.shape or left.size == 0:
-        raise ValueError("Expected two nonempty, equally sized profiles for correlation")
-    if not np.isfinite(left).all() or not np.isfinite(right).all():
-        raise ValueError("Nonfinite profile values in correlation")
-    # Exact equality identifies constant profiles even when their mean rounds
-    if (left == left[0]).all() or (right == right[0]).all():
-        return "NA"
-    covariance = np.cov(left, right, ddof=0)
-    if covariance[0, 0] == 0 or covariance[1, 1] == 0:
-        raise RuntimeError("Invalid correlation value: nonconstant profile has zero variance")
-    return correlation_value(covariance[0, 1], covariance[0, 0], covariance[1, 1])

@@ -31,7 +31,7 @@ EXCLUSION_FILENAMES = (
 class SubmissionTests(unittest.TestCase):
     """Check allocation requests without contacting Slurm or running a benchmark."""
 
-    def test_only_production_submissions_request_the_whole_node(self):
+    def test_only_non_pilot_submissions_request_the_whole_node(self):
         for feature, job_filename in (
             ("coverage", "benchmark_coverage.sh"),
             ("lengths", "benchmark_lengths.sh"),
@@ -496,7 +496,7 @@ class PilotBudgetTests(unittest.TestCase):
                     flush_seconds="NA",
                     process_plus_flush_seconds="NA",
                     max_rss_kib="NA",
-                    output_bytes="NA",
+                    output_directory_bytes="NA",
                     tool_exit_code="124",
                     step_exit_code="124",
                 )
@@ -514,7 +514,7 @@ class PilotBudgetTests(unittest.TestCase):
                             "flush_seconds": "0",
                             "process_plus_flush_seconds": "60",
                             "max_rss_kib": "10",
-                            "output_bytes": "100",
+                            "output_directory_bytes": "100",
                             "tool_exit_code": "0",
                             "step_exit_code": "0",
                         }
@@ -580,6 +580,50 @@ class NativeComparatorTests(unittest.TestCase):
             comparator.summarize_profile(
                 np.array([1e308, 1e308]), np.array([30, 31])
             )
+
+    def test_length_frequency_correlations_keep_constant_profiles_undefined(self):
+        comparator = self.comparator("lengths/compare_lengths.py")
+        for left_counts, right_counts, expected_correlation, expected_variation in (
+            ([2], [3], "NA", 0),
+            ([2, 2, 2], [0, 1, 2], "NA", 1 / 3),
+            ([1, 2, 3], [2, 4, 6], 1, 0),
+        ):
+            with (
+                self.subTest(left=left_counts, right=right_counts),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = Path(temporary)
+                (root / "cfdnapro").mkdir()
+                (root / "picard").mkdir()
+                (root / "cfdnapro/lengths.tsv").write_text(
+                    "insert_size\tAll_Reads.fr_count\n" + "".join(
+                        f"{length}\t{count}\n" for length, count in enumerate(left_counts, start=30)
+                    )
+                )
+                (root / "picard/concordance.metrics.txt").write_text(
+                    "## HISTOGRAM\tjava.lang.Integer\ninsert_size\tAll_Reads.fr_count\n" + "".join(
+                        f"{length}\t{count}\n" for length, count in enumerate(right_counts, start=30)
+                    )
+                )
+                output = StringIO()
+                with (
+                    mock.patch.object(sys, "argv", [
+                        "compare_lengths.py", str(root), "--min-length", "30",
+                        "--max-length", str(30 + len(left_counts) - 1),
+                    ]),
+                    redirect_stdout(output),
+                ):
+                    comparator.main()
+
+                row = next(csv.DictReader(output.getvalue().splitlines(), delimiter="\t"))
+                # Flat frequencies, including a single bin, have undefined r
+                # Proportional, nonconstant counts give identical frequencies and r=1
+                if expected_correlation == "NA":
+                    self.assertEqual(row["pearson_r"], "NA")
+                else:
+                    self.assertAlmostEqual(float(row["pearson_r"]), expected_correlation)
+                self.assertEqual(row["status"], "ok")
+                self.assertAlmostEqual(float(row["total_variation"]), expected_variation)
 
     def test_motif_normalization_rejects_an_overflowed_total(self):
         comparator = self.comparator("ends/compare_end_motifs.py")

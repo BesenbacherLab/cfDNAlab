@@ -15,11 +15,12 @@ import sys
 
 import numpy as np
 import pandas as pd
+from scipy.stats import pearsonr
 from cfdnalab import read_midpoints
 
 # The shared checks live in benchmarks/, above this feature's script directory
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from benchmark_metrics import checked_metric, pearson_correlation
+from benchmark_metrics import checked_metric
 
 
 def read_cfdnalab(path):
@@ -263,8 +264,9 @@ def main():
         if row["status"] == "ok":
             normalized = (counts / count_mean)[saved_bins]
             difference = normalized - griffin_profile
-            row["pearson_r"] = pearson_correlation(normalized, griffin_profile)
-            if row["pearson_r"] != "NA":
+            # Constant profiles retain NA for both r and r squared
+            if np.ptp(normalized) > 0 and np.ptp(griffin_profile) > 0:
+                row["pearson_r"] = pearsonr(normalized, griffin_profile).statistic
                 row["pearson_r_squared"] = checked_metric(
                     row["pearson_r"] ** 2, "midpoint Pearson r squared", maximum=1.0
                 )

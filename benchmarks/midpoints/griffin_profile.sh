@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-# This script runs Griffin's two profiling scripts for demo or production sites
-# Demo and production calls share filters and window settings. Sites, chromosomes,
+# This script runs Griffin's two profiling scripts for the demo warmup and measured runs
+# Demo and measured calls share filters and window settings. Sites, chromosomes,
 # output paths and the supplied GC bias can vary
 # Usage: bash griffin_profile.sh CORES SITES_YAML CHROM_SIZES CHROMOSOMES OUTPUT [GC_BIAS]
 
@@ -11,7 +11,7 @@ sites_yaml=${2:?Supply the Griffin site-list YAML}
 chromosome_sizes=${3:?Supply chromosome sizes}
 chromosome_names=${4:?Supply comma-separated chromosome names}
 output_directory=${5:?Supply the output directory}
-# The untimed demo uses unit weights. Production passes freshly estimated bias
+# The untimed demo uses unit weights. Measured runs pass freshly estimated bias
 gc_bias=${6:-$BENCH_WORK/unit_gc_bias.tsv}
 environment="$BENCH_WORK/griffin-env"
 scripts="$environment/share/griffin"

@@ -45,7 +45,7 @@ timing_columns=(
     node cpu_model cpu_ids physical_core_ids job_id step_id started_utc
     gc_correction
     wall_seconds user_seconds system_seconds max_rss_kib tool_exit_code
-    flush_seconds process_plus_flush_seconds output_bytes pilot step_exit_code
+    flush_seconds process_plus_flush_seconds output_directory_bytes pilot step_exit_code
 )
 
 # Sets the native command for a method and its settings for timings.tsv

@@ -19,11 +19,12 @@ import sys
 
 import numpy as np
 import pandas as pd
+from scipy.stats import pearsonr
 from cfdnalab import read_lengths
 
 # The shared checks live in benchmarks/, above this feature's script directory
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from benchmark_metrics import checked_metric, pearson_correlation
+from benchmark_metrics import checked_metric
 
 
 def read_cfdnalab(directory):
@@ -292,7 +293,9 @@ def main():
         if left_frequency is not None and right_frequency is not None:
             difference = left_frequency - right_frequency
             cumulative_difference = np.cumsum(difference)
-            row["pearson_r"] = pearson_correlation(left_frequency, right_frequency)
+            # Keep NA for a constant frequency profile, including a single length bin
+            if np.ptp(left_frequency) > 0 and np.ptp(right_frequency) > 0:
+                row["pearson_r"] = pearsonr(left_frequency, right_frequency).statistic
             row.update(
                 {
                     "mae_frequency": float(np.abs(difference).mean()),

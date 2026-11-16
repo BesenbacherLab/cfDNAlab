@@ -11,7 +11,7 @@ Compare global histograms with one bin per fragment length from **30 through 100
 | samtools stats (full QC report, insert-size section extracted) 1.25 | `stats --input-fmt-option 'filter=mapq >= 30' -f 1 -F 3852 -m 1 -i 1001`, using its `IS` inward-pair column and retaining lengths 30-1000 afterward | Established compiled baseline | Uses absolute TLEN. The last bin collects lengths at or above its maximum, hence 1001 rather than 1000. Counts passing alignments, halves each bin and truncates the integer result, so independently filtering mates can change counts. Computes many additional QC statistics. |
 | Picard 3.5.0 | `picard -Xmx2g CollectInsertSizeMetrics I=sample.bam O=metrics.txt HISTOGRAM_WIDTH=1000` | Native insert-size timing | No MAPQ or QC-fail prefilter inside timing. Concordance uses the separately generated, untimed filtered histogram. No PDF. |
 
-For cfDNAlab, use `lengths --length-bins 30:1001:1 --indel-mode ignore --clip-mode aligned --min-mapq 30`. Use the same explicit chromosome selection on both sides. The production comparison uses all BAM contigs. A separately labeled `--require-proper-pair` run diagnoses FinaleToolkit's selection difference once at 32 cores for concordance. Normal cfDNAlab runs supply the timing comparison at all four core settings.
+For cfDNAlab, use `lengths --length-bins 30:1001:1 --indel-mode ignore --clip-mode aligned --min-mapq 30`. Use the same explicit chromosome selection on both sides. The comparison uses all BAM contigs. A separately labeled `--require-proper-pair` run diagnoses FinaleToolkit's selection difference once at 32 cores for concordance. Normal cfDNAlab runs supply the timing comparison at all four core settings.
 
 ## cfDNAPro settings and definition
 
@@ -22,7 +22,7 @@ Read the BAM explicitly with the shared MAPQ and flag settings, then pass its fr
 ```r
 library(cfDNAPro)
 
-# Select all BAM contigs to match the production comparison scope
+# Select all BAM contigs to match the comparison scope
 # Choose the genome label matching the alignment reference
 fragments <- readBam(
     bamfile = "sample.bam",

@@ -41,7 +41,7 @@ timing_columns=(
     node cpu_model cpu_ids physical_core_ids job_id step_id started_utc
     min_mapq min_length max_length scope proper_pair length_filter
     wall_seconds user_seconds system_seconds max_rss_kib tool_exit_code
-    flush_seconds process_plus_flush_seconds output_bytes pilot step_exit_code
+    flush_seconds process_plus_flush_seconds output_directory_bytes pilot step_exit_code
 )
 
 # Prints the quantity a coverage method measures

@@ -42,7 +42,7 @@ IDENTITY_AND_MEASUREMENT_COLUMNS = {
     "run_order", "repetition", "warmup", "method", "cores", "job_id", "pilot",
     "step_exit_code", "step_id", "node", "cpu_model", "cpu_ids", "physical_core_ids",
     "started_utc", "wall_seconds", "user_seconds", "system_seconds", "max_rss_kib",
-    "tool_exit_code", "flush_seconds", "process_plus_flush_seconds", "output_bytes",
+    "tool_exit_code", "flush_seconds", "process_plus_flush_seconds", "output_directory_bytes",
 }
 
 
@@ -1002,7 +1002,7 @@ class MeasureCommandTests(unittest.TestCase):
         self.assertEqual(names, [
             "step_id", "node", "cpu_model", "cpu_ids", "physical_core_ids", "started_utc",
             "wall_seconds", "user_seconds", "system_seconds", "max_rss_kib", "tool_exit_code",
-            "flush_seconds", "process_plus_flush_seconds", "output_bytes",
+            "flush_seconds", "process_plus_flush_seconds", "output_directory_bytes",
         ])
         record = self.record()
         self.assertEqual(record["step_id"], "7")
@@ -1016,7 +1016,7 @@ class MeasureCommandTests(unittest.TestCase):
             float(record["wall_seconds"]) + float(record["flush_seconds"]), places=3,
         )
         # The output directory holds at least the 13 bytes of "native result"
-        self.assertGreaterEqual(int(record["output_bytes"]), 13)
+        self.assertGreaterEqual(int(record["output_directory_bytes"]), 13)
         self.assertEqual((self.work / "tool-stdout.log").read_text(), "printed\n")
         self.assertEqual((self.work / "tool-stderr.log").read_text(), "warning\n")
 
@@ -1032,7 +1032,7 @@ class MeasureCommandTests(unittest.TestCase):
                 self.assertEqual(record["tool_exit_code"], str(expected_status))
                 self.assertIn("wall_seconds", record)
                 self.assertNotIn("flush_seconds", record)
-                self.assertNotIn("output_bytes", record)
+                self.assertNotIn("output_directory_bytes", record)
 
     def test_time_limit_wraps_the_command_inside_gnu_time(self):
         # Only the outbound timeout program is faked, avoiding clock-dependent waits
@@ -1060,7 +1060,7 @@ class MeasureCommandTests(unittest.TestCase):
         self.assertIn("expected output is missing", missing.stderr)
         # The command itself succeeded and was fully measured
         self.assertEqual(self.record()["tool_exit_code"], "0")
-        self.assertIn("output_bytes", self.record())
+        self.assertIn("output_directory_bytes", self.record())
 
         for allowed, expected_status in (("false", 1), ("true", 0)):
             with self.subTest(empty_output_allowed=allowed):
@@ -1083,7 +1083,7 @@ class MeasureCommandTests(unittest.TestCase):
         record = self.record()
         self.assertEqual(record["tool_exit_code"], "0")
         self.assertIn("flush_seconds", record)
-        self.assertNotIn("output_bytes", record)
+        self.assertNotIn("output_directory_bytes", record)
 
     def test_wrong_placement_stops_before_running_the_command(self):
         # The step can use a single CPU, but the job expects two cores or another node
@@ -1403,12 +1403,12 @@ class GriffinJobTests(unittest.TestCase):
             fasta = root / "reference.fa"
             fasta.touch()
             Path(str(fasta) + ".fai").write_text("chr1\t6000\t0\t6000\t6001\n")
-            intervals = root / "production.bed"
-            production_sites = (
-                "chr1\t1000\t3001\tproduction\t+\nchr1\t1000\t3001\tproduction\t+\n"
+            intervals = root / "benchmark.bed"
+            benchmark_sites = (
+                "chr1\t1000\t3001\tbenchmark\t+\nchr1\t1000\t3001\tbenchmark\t+\n"
                 "chr1\t1000\t3001\treverse\t-\nchr1\t1000\t3001\tunstranded\t.\n"
             )
-            intervals.write_text(production_sites)
+            intervals.write_text(benchmark_sites)
             references = root / "references"
             references.mkdir()
             for filename in EXCLUSION_FILENAMES:
@@ -1494,7 +1494,7 @@ class GriffinJobTests(unittest.TestCase):
             self.assertIn("--size_range 15 500 --CPU 1", trace)
             self.assertIn("griffin_merge_sites.py", trace)
             self.assertNotIn("warmup-sites.yaml", trace)
-            self.assertEqual(intervals.read_text(), production_sites)
+            self.assertEqual(intervals.read_text(), benchmark_sites)
             self.assertEqual(len((results / "sites.bed").read_text().splitlines()), 4)
             self.assertIn("warmups\t0\n", (results / "run.tsv").read_text())
             self.assertIn("repetitions\t1\n", (results / "run.tsv").read_text())

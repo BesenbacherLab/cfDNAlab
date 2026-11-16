@@ -9,7 +9,7 @@
 #
 # Submit from the repository root: bash benchmarks/submit_benchmark.sh ends
 # The launcher requests an exclusive node for full runs and allows shared pilots
-# See README.md for the production settings and known differences
+# See README.md for the settings and known differences
 #
 # The job:
 #   1. Checks the settings

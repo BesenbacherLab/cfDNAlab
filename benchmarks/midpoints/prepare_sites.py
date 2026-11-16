@@ -101,7 +101,7 @@ def write_griffin_demo(work, bam_contigs):
     Write the inputs for Griffin's untimed demo warmup.
 
     The release's fixed 1000-site CTCF demo gives Griffin a short warmup without
-    changing the supplied production windows. It uses the same copied BAM and
+    changing the supplied windows. It uses the same copied BAM and
     reference as the measured runs.
     """
     demo_path = work / "griffin-env/share/griffin/CTCF.hg38.1000.txt"

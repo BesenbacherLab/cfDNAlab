@@ -1,6 +1,6 @@
 # Benchmark methods and concordance specification
 
-This reference describes native tool configurations, counting differences, output formats and concordance metrics. Installation, execution, accounting and inputs are specified in [benchmarks_spec.md](benchmarks_spec.md). The selected production matrix and commented run commands are maintained in [README.md](README.md#run-the-benchmarks).
+This reference describes native tool configurations, counting differences, output formats and concordance metrics. Installation, execution, accounting and inputs are specified in [benchmarks_spec.md](benchmarks_spec.md). The selected tools, core settings and commented run commands are maintained in [README.md](README.md#run-the-benchmarks).
 
 Fragment coverage, read depth, regional fragment counts, global length histograms, end-motif frequencies and midpoint profiles are separate quantities. Normalized agreement does not establish equal total counts or individual fragment selection. Speed claims apply to the configurations actually timed, including their native compulsory work and filter differences.
 
@@ -12,7 +12,7 @@ Normal settings request MAPQ >=30 and inclusive fragment lengths 30-1000 bp. Mid
 
 Coverage, lengths and end motifs do not add GC correction, blacklists or genomic scaling. Midpoints use the shared exclusion BEDs, with Griffin also applying its zero-mappability mask. The `griffin-gc` workload estimates sample GC bias and retains both raw and corrected profiles. Those tables are compared with uncorrected `cfdnalab` and corrected `cfdnalab-gc`, respectively. Unit GC weights are used only by Griffin's untimed demo warmup. Default enabled cfDNAlab plots remain timed. Competitor source is unmodified.
 
-Calculated metrics must be finite and respect their mathematical bounds. Correlations use [-1, 1]. Fractions, total variation, maximum CDF difference and normalized motif diversity use [0, 1]. Absolute boundary overshoots up to 1e-5 are clipped, and larger errors fail the comparison. Correlations are checked before clipping, including when calculated from NumPy covariance. Constant profiles retain `NA` correlation. Existing undefined metrics retain `NA`, and motif log ratios retain `Inf` when an abundant motif has zero frequency in either profile. Normalization totals must be finite before frequencies are calculated.
+Calculated metrics must be finite and respect their mathematical bounds. Correlations use [-1, 1]. Fractions, total variation, maximum CDF difference and normalized motif diversity use [0, 1]. The shared bounds check clips absolute overshoots up to 1e-5, and larger errors fail the comparison. Profile arrays use SciPy's `pearsonr`. Coverage calculates weighted Pearson from streaming covariance and variances, checking its coefficient before clipping. Constant profiles retain `NA` correlation. Existing undefined metrics retain `NA`, and motif log ratios retain `Inf` when an abundant motif has zero frequency in either profile. Normalization totals must be finite before frequencies are calculated.
 
 ## Coverage
 
@@ -161,7 +161,7 @@ Sources: [runner](midpoints/benchmark_midpoints.sh), [commands](midpoints/comman
 
 Select `cfdnalab`, `cfdnalab-gc` and `griffin-gc` in separate jobs. Only the latter two form a timed comparison. Griffin's full workflow also writes the raw table used for uncorrected concordance. All midpoint jobs use MAPQ >=20, inclusive 100-200 bp fragments, supplied 9,990 bp windows and 15 bp bins. No extra site selection or proper-pair requirement is added. Site derivation is documented in [the command report](experiment_commands.md#site-preparation).
 
-Griffin gets one short untimed warmup using its release's 1000-site CTCF demo, the same production BAM/reference, length/MAPQ/window settings and core allocation. Its separate Slurm step and output are excluded from measured timings, memory and concordance. A single full-input measurement follows at each core setting, with no full-input warmup. Production site coordinates are unchanged. This is a practical warmup intended to give Griffin a fair start without another full production run.
+Griffin gets one short untimed warmup using its release's 1000-site CTCF demo, with the same BAM, reference, length/MAPQ/window settings and core allocation as the measured run. Its separate Slurm step and output are excluded from measured timings, memory and concordance. A single full-input measurement follows at each core setting, with no full-input warmup. Supplied site coordinates are unchanged. This is a practical warmup intended to give Griffin a fair start without another full-input run.
 
 cfDNAlab uses `midpoints --length-bins MIN MAX+1 --bin-size 15`, default smoothing and the shared exclusion BEDs, actual-pair checks and deterministic choice between the two central bases of even fragments. Griffin retains forward-record/TLEN selection and the right central base. Fragment/filter populations can differ.
 

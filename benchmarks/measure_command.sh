@@ -8,7 +8,7 @@
 #   1. Checks that the step really got the job's node and BENCH_CORES physical cores
 #   2. Runs the native command under GNU time (elapsed time, CPU time, peak memory)
 #   3. Times the wait for the command's output to be written to disk
-#   4. Measures the size of the output directory
+#   4. Measures the whole output directory, including intermediate files still present
 #   5. Checks that the expected output exists
 #
 # Each value is appended to $BENCH_WORK/measurement.tsv as a "name<TAB>value" line
@@ -162,10 +162,12 @@ record process_plus_flush_seconds "$process_plus_flush_seconds"
 # 4. Output size
 # ---------------------------------------------------------------------------
 
-# The size includes intermediate files that a tool's workflow writes, such as
-# Griffin's temporary bigWig tracks
-output_bytes=$(du -sb "$output_directory" | cut -f 1)
-record output_bytes "$output_bytes"
+# Measure the whole output directory after the run, including final results and
+# intermediate files still present, such as Griffin's temporary bigWig tracks
+# This is the apparent size in bytes. It excludes deleted files, repeated writes
+# and files outside this directory, so it does not measure cumulative bytes written
+output_directory_bytes=$(du -sb "$output_directory" | cut -f 1)
+record output_directory_bytes "$output_directory_bytes"
 
 # ---------------------------------------------------------------------------
 # 5. Expected output

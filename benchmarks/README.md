@@ -188,7 +188,7 @@ export BENCH_K=4 BENCH_GENOME=hg38
 # Create a new series and feature parents, leaving each job's directory uncreated
 # The runners reject existing BENCH_RESULTS directories and create their own
 mkdir -p "$benchmark_root/results"
-results_root=$(mktemp -d "$benchmark_root/results/production-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")
+results_root=$(mktemp -d "$benchmark_root/results/run-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")
 results_root=$(cd "$results_root" && pwd)
 mkdir -p "$results_root"/{coverage,lengths,ends,midpoints,concordance,slurm}
 mkdir -p "$results_root/midpoints"/{cfdnalab,cfdnalab-gc,griffin-gc}
@@ -436,7 +436,7 @@ The measurements distinguish the command's runtime from the time needed to finis
 | `wall_seconds`, `user_seconds`, `system_seconds` | GNU time's elapsed seconds, CPU seconds in user code and CPU seconds in the operating system, respectively. These measure the complete command or pipeline, including writing and compressing its outputs. |
 | `flush_seconds` | Time for `sync -f` to finish pending writes on the output filesystem after the command exits. This can include other filesystem writes. |
 | `process_plus_flush_seconds` | Command elapsed time plus the time spent finishing filesystem writes. The flush covers the filesystem, so it can include writes from other processes as well as the tool. |
-| `output_bytes` | Size of the tool's output directory in bytes, measured with `du -sb`. This includes intermediate files the tool needs to produce its result. |
+| `output_directory_bytes` | Total size in bytes of the output directory after the run, including final results and intermediate files still present, such as Griffin's temporary bigWig tracks. Measured with `du -sb`, using file sizes rather than allocated disk space. Files outside this directory, deleted files and repeated writes are excluded. |
 | `max_rss_kib` | Peak resident memory (RSS) reported by GNU time, in KiB. It is kept separately from Slurm's memory measurement. |
 | `tool_exit_code`, `step_exit_code`, `pilot` | Exit statuses for the command and Slurm step, and whether the run used shared-node debugging mode (`pilot=1`). Unavailable measurements are `NA`. |
 

@@ -392,7 +392,7 @@ run_in_slurm_step() {
     fi
     for name in step_id node cpu_model cpu_ids physical_core_ids started_utc \
         wall_seconds user_seconds system_seconds max_rss_kib tool_exit_code \
-        flush_seconds process_plus_flush_seconds output_bytes; do
+        flush_seconds process_plus_flush_seconds output_directory_bytes; do
         row[$name]=${measured[$name]:-NA}
     done
 }

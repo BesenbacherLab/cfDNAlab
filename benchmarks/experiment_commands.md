@@ -12,7 +12,7 @@ Normal timing runs use 1, 4, 12 and 32 cores. The four proper-pair checks run on
 | Minimum MAPQ | 30, except native timed Picard | 30 | 20 for profiling and GC estimation |
 | Included fragment lengths | 30-1000 bp inclusive | Requested 30-1000 bp inclusive | 100-200 bp inclusive for profiling |
 | Chromosome selection | All BAM contigs, plus the autosome-only coverage run | All BAM contigs, except cfDNAPro reference compatibility | Chromosomes in the supplied site set |
-| Production repetitions | 1 warmup, then 3 measurements | Same | Same for cfDNAlab. Griffin uses an untimed 1000-site demo, then a single measurement per core setting |
+| Repetitions | 1 warmup, then 3 measurements | Same | Same for cfDNAlab. Griffin uses an untimed 1000-site demo, then a single measurement per core setting |
 
 The variables in the calls correspond to the job settings:
 
@@ -487,7 +487,7 @@ Method `cfdnalab` supplies cfDNAlab's uncorrected profiles, which are compared w
 
 ### Griffin profiling calls
 
-Method `griffin-gc` times GC estimation followed by both native profiling scripts in [griffin_profile.sh](midpoints/griffin_profile.sh). The following variables express that helper's production arguments:
+Method `griffin-gc` times GC estimation followed by both native profiling scripts in [griffin_profile.sh](midpoints/griffin_profile.sh). The following variables express that helper's arguments for measured runs:
 
 ```bash
 griffin_python="$BENCH_WORK/griffin-env/bin/python"
@@ -594,6 +594,6 @@ bash "$BENCH_WORK/griffin_profile.sh" "$cores" \
     "$warmup_chromosomes" "$BENCH_WORK/warmup-output"
 ```
 
-`warmup_chromosomes` lists the demo's chromosomes. The helper uses the same BAM, reference, profile width, length bounds, MAPQ and core allocation as production, with unit GC bias and the demo's own sites. No sample GC estimate is fitted for this warmup. The demo has a separate untimed Slurm step, and its outputs are removed before production measurements. There is no full-input Griffin warmup.
+`warmup_chromosomes` lists the demo's chromosomes. The helper uses the same BAM, reference, profile width, length bounds, MAPQ and core allocation as measured runs, with unit GC bias and the demo's own sites. No sample GC estimate is fitted for this warmup. The demo has a separate untimed Slurm step, and its outputs are removed before measurements. There is no full-input Griffin warmup.
 
 mosdepth stays in exact mode to match cfDNAlab's mate-overlap and deletion handling, although its help recommends fast mode for many uses. PanDepth per-base timing includes its native single-threaded gzip after worker calculations. samtools lengths is labeled "samtools stats (full QC report, insert-size section extracted)". Griffin's final plotting rule is omitted, while its GC-bias plots and compulsory FFT features remain timed.

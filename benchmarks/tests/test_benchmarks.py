@@ -10,8 +10,10 @@ allocation are needed for these small fixtures.
 """
 
 import csv
+from contextlib import redirect_stderr
 import gzip
 import importlib.util
+from io import StringIO
 from itertools import product
 import math
 import os
@@ -547,11 +549,104 @@ class TimingTests(unittest.TestCase):
             self.assertEqual(rows[1]["slurm_max_rss_kib"], "NA")
 
     def test_sample_statistics_use_sample_sd_and_inclusive_quartiles(self):
-        self.assertEqual(timings.distribution([1, 3, 5]), [3, 3, 2, 3, 2, 4])
-        self.assertEqual(timings.distribution([4]), [1, 4, "NA", 4, 4, 4])
+        self.assertEqual(timings.distribution([1, 3, 5]), {
+            "n": 3, "mean": 3, "sd": 2, "median": 3, "q1": 2, "q3": 4,
+        })
+        self.assertEqual(timings.distribution([4]), {
+            "n": 1, "mean": 4, "sd": "NA", "median": 4, "q1": 4, "q3": 4,
+        })
+        self.assertEqual(timings.distribution([]), {
+            "n": 0, "mean": "NA", "sd": "NA", "median": "NA", "q1": "NA", "q3": "NA",
+        })
+
+    def test_grouping_treats_an_absent_setting_as_na(self):
+        missing_scope = {"method": "cfdnalab"}
+        all_contigs = {"method": "cfdnalab", "scope": "all"}
+        explicit_na = {"method": "cfdnalab", "scope": "NA"}
+
+        groups = [
+            (settings, list(runs))
+            for settings, runs in timings.group_runs_by_settings(
+                [missing_scope, all_contigs, explicit_na], ["method", "scope"]
+            )
+        ]
+
+        self.assertEqual(groups, [
+            (("cfdnalab", "NA"), [missing_scope, explicit_na]),
+            (("cfdnalab", "all"), [all_contigs]),
+        ])
+
+    def test_summary_groups_matching_settings_and_excludes_unmeasured_or_failed_runs(self):
+        # Only these five fields describe the configuration. The other fields
+        # identify a repetition, decide whether it succeeded, or measure its cost
+        first_run = dict(
+            method="cfdnalab", tool_version="checkout", cores="4", node="node-a",
+            min_length="30", run_order="1", repetition="1", job_id="123", step_id="0",
+            cpu_ids="0-3", physical_core_ids="0:0,0:1,0:2,0:3", started_utc="first",
+            source_tsv="first.tsv", warmup="false", pilot="0",
+            tool_exit_code="0", step_exit_code="0", slurm_state="NA", slurm_exit_code="NA",
+            wall_seconds="10", user_seconds="8", system_seconds="2", flush_seconds="1",
+            process_plus_flush_seconds="11", output_directory_bytes="100",
+            slurm_max_rss_kib="NA", max_rss_kib="NA",
+        )
+        second_run = {
+            **first_run, "run_order": "2", "repetition": "2", "job_id": "456", "step_id": "5",
+            "cpu_ids": "4-7", "physical_core_ids": "0:4,0:5,0:6,0:7", "started_utc": "second",
+            "source_tsv": "second.tsv", "wall_seconds": "20", "user_seconds": "16",
+            "system_seconds": "4", "flush_seconds": "2", "process_plus_flush_seconds": "22",
+            "output_directory_bytes": "300", "slurm_max_rss_kib": "2048",
+        }
+        # Each change to a configuration field must produce a separate group
+        other_configurations = [
+            {**first_run, **change}
+            for change in (
+                {"method": "competitor"}, {"tool_version": "other"}, {"cores": "12"},
+                {"node": "node-b"}, {"min_length": "100"},
+            )
+        ]
+        excluded_runs = [
+            {**first_run, "wall_seconds": "999", **change}
+            for change in (
+                {"warmup": "true"}, {"pilot": "1"}, {"tool_exit_code": "1"},
+                {"step_exit_code": "1"}, {"slurm_state": "OUT_OF_MEMORY"},
+                {"slurm_exit_code": "0:9"},
+            )
+        ]
+        # Matching repetitions are deliberately separated in the input
+        runs = [first_run, *other_configurations, *excluded_runs, second_run]
+        diagnostics = StringIO()
+        with redirect_stderr(diagnostics):
+            setting_columns, columns, summaries = timings.summarize(runs)
+
+        self.assertEqual(setting_columns, ["cores", "method", "min_length", "node", "tool_version"])
+        self.assertEqual(len(summaries), 6)
+        matching_summaries = [
+            summary for summary in summaries
+            if all(summary[column] == first_run[column] for column in setting_columns)
+        ]
+        self.assertEqual(len(matching_summaries), 1)
+        summary = matching_summaries[0]
+        # For [10, 20], sample SD is sqrt(50), with inclusive quartiles 12.5 and 17.5
+        self.assertEqual(summary["wall_seconds_n"], 2)
+        self.assertEqual(summary["wall_seconds_mean"], 15)
+        self.assertAlmostEqual(summary["wall_seconds_sd"], math.sqrt(50))
+        self.assertEqual(summary["wall_seconds_median"], 15)
+        self.assertEqual(summary["wall_seconds_q1"], 12.5)
+        self.assertEqual(summary["wall_seconds_q3"], 17.5)
+        self.assertEqual(summary["output_directory_bytes_mean"], 200)
+        self.assertEqual(summary["effective_cores_mean"], 1)
+        # Missing memory must not become zero or reduce another metric's sample size
+        self.assertEqual(summary["slurm_max_rss_kib_n"], 1)
+        self.assertEqual(summary["slurm_max_rss_kib_mean"], 2048)
+        self.assertEqual(summary["slurm_max_rss_kib_sd"], "NA")
+        self.assertEqual(summary["max_rss_kib_n"], 0)
+        self.assertEqual(summary["max_rss_kib_mean"], "NA")
+        self.assertIn("output_directory_bytes_mean", columns)
+        self.assertIn("Excluded 4 failed runs", diagnostics.getvalue())
+        self.assertEqual(len(runs), 13)
 
     def test_two_method_budget_includes_a_warmup_and_three_measurements(self):
-        columns = "run_order repetition warmup pilot method tool_version cores node wall_seconds user_seconds system_seconds flush_seconds process_plus_flush_seconds output_bytes max_rss_kib tool_exit_code step_exit_code job_id step_id".split()
+        columns = "run_order repetition warmup pilot method tool_version cores node wall_seconds user_seconds system_seconds flush_seconds process_plus_flush_seconds output_directory_bytes max_rss_kib tool_exit_code step_exit_code job_id step_id".split()
         values = [
             "1 1 false 1 cfdnalab checkout 1 node 720 700 20 0 720 100 200 0 0 123 0".split(),
             "2 1 false 1 slow release 1 node 7200 7000 200 0 7200 100 200 0 0 123 1".split(),
@@ -576,6 +671,12 @@ class TimingTests(unittest.TestCase):
             # 4*(720+7200) = 31680 seconds = 8.8 hours, or 11 with 25% margin
             self.assertIn("8.80 h raw", result.stderr)
             self.assertIn("11.00 h with margin", result.stderr)
+            # Each method has a single 100-byte directory-size measurement
+            summaries = list(csv.DictReader(result.stdout.splitlines(), delimiter="\t"))
+            self.assertEqual(len(summaries), 2)
+            for summary in summaries:
+                self.assertEqual(summary["output_directory_bytes_n"], "1")
+                self.assertEqual(float(summary["output_directory_bytes_mean"]), 100)
 
     def test_griffin_budget_never_adds_a_full_input_warmup(self):
         # At 30 h per run, three Griffin measurements take 90 h raw or 112.5 h
@@ -872,6 +973,32 @@ class BiologicalInputTests(unittest.TestCase):
 
 class MotifTests(unittest.TestCase):
     """Compare motif frequencies while preserving native counts and end selection."""
+
+    def test_constant_motif_frequencies_have_na_correlations(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name in ("flat", "peaked"):
+                directory = root / name
+                directory.mkdir()
+                with (directory / "motifs.tsv").open("w") as destination:
+                    for bases in product("ACGT", repeat=3):
+                        motif = "".join(bases)
+                        frequency = 1 / 64 if name == "flat" else int(motif == "AAA")
+                        destination.write(f"{motif}\t{frequency}\n")
+
+            result = subprocess.run(
+                [sys.executable, str(BENCHMARKS / "ends/compare_end_motifs.py"),
+                 str(root), "--k", "3"],
+                text=True, capture_output=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            row = next(csv.DictReader(result.stdout.splitlines(), delimiter="\t"))
+            # A constant profile has no correlation, but its distribution is valid
+            # The 63 absent motifs each move 1/64 of the mass to AAA
+            self.assertEqual(row["pearson_r"], "NA")
+            self.assertEqual(row["spearman_r"], "NA")
+            self.assertAlmostEqual(float(row["total_variation"]), 63 / 64)
 
     def test_absent_abundant_motif_retains_an_infinite_log_ratio(self):
         with tempfile.TemporaryDirectory() as temporary:
