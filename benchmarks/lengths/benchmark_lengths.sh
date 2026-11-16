@@ -73,7 +73,7 @@ if [[ "$needs_picard" == true ]]; then : "${BENCH_PICARD_ARCHIVE:?Set the packed
 # 2. Copy inputs and tools to the compute node (untimed)
 # ---------------------------------------------------------------------------
 
-BENCH_WORK=$(mktemp -d "$TMPDIR/lengths-${SLURM_JOB_ID}.XXXXXX")
+BENCH_WORK=$(mktemp -d "$BENCH_SCRATCH_ROOT/lengths-${SLURM_JOB_ID}.XXXXXX")
 trap 'rm -rf "$BENCH_WORK"' EXIT
 BENCH_NODE=$(hostname)
 export BENCH_WORK BENCH_NODE

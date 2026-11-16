@@ -38,7 +38,13 @@ source "$benchmarks/midpoints/commands.sh"
 
 : "${BENCH_INTERVALS:?Set the grouped fixed-size BED path}"
 BENCH_WARMUPS=${BENCH_WARMUPS:-1}
-BENCH_REPETITIONS=${BENCH_REPETITIONS:-3}
+# Griffin's full workflow can take days, so default to a single measurement
+# Other midpoint workloads retain three measurements. Explicit overrides are honored
+if [[ ${BENCH_METHODS:-} =~ ^[[:space:]]*griffin-gc[[:space:]]*$ ]]; then
+    BENCH_REPETITIONS=${BENCH_REPETITIONS:-1}
+else
+    BENCH_REPETITIONS=${BENCH_REPETITIONS:-3}
+fi
 export BENCH_MIN_MAPQ=${BENCH_MIN_MAPQ:-20}
 export BENCH_MIN_LENGTH=${BENCH_MIN_LENGTH:-100}
 export BENCH_MAX_LENGTH=${BENCH_MAX_LENGTH:-200}
@@ -90,7 +96,7 @@ fi
 # 2. Copy inputs and tools to the compute node, and prepare the sites (untimed)
 # ---------------------------------------------------------------------------
 
-BENCH_WORK=$(mktemp -d "$TMPDIR/midpoints-${SLURM_JOB_ID}.XXXXXX")
+BENCH_WORK=$(mktemp -d "$BENCH_SCRATCH_ROOT/midpoints-${SLURM_JOB_ID}.XXXXXX")
 trap 'rm -rf "$BENCH_WORK"' EXIT
 BENCH_NODE=$(hostname)
 export BENCH_WORK BENCH_NODE

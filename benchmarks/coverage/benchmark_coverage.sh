@@ -38,7 +38,7 @@
 #   export BENCH_SAMTOOLS_ARCHIVE=/path/to/benchmark-tools/samtools.tar.gz
 #   export BENCH_PANDEPTH=/path/to/pandepth
 #   export BENCH_FINALE_ARCHIVE=/path/to/benchmark-tools/finaletoolkit.tar.gz
-#   The batch job uses TMPDIR supplied on the compute node
+#   export LOCAL_SCRATCH_VAR=TMPDIR  # Variable supplying scratch on the compute node
 #   export BENCH_RESULTS=/faststorage/project/coverage-results
 #   export BENCH_CORES=4
 #   export BENCH_METHODS="cfdnalab mosdepth"
@@ -104,7 +104,7 @@ if [[ "$needs_finale" == true ]]; then : "${BENCH_FINALE_ARCHIVE:?Set the packed
 # 2. Copy inputs and tools to the compute node (untimed)
 # ---------------------------------------------------------------------------
 
-BENCH_WORK=$(mktemp -d "$TMPDIR/coverage-${SLURM_JOB_ID}.XXXXXX")
+BENCH_WORK=$(mktemp -d "$BENCH_SCRATCH_ROOT/coverage-${SLURM_JOB_ID}.XXXXXX")
 trap 'rm -rf "$BENCH_WORK"' EXIT
 BENCH_NODE=$(hostname)
 export BENCH_WORK BENCH_NODE

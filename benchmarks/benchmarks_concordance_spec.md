@@ -1,6 +1,6 @@
 # Benchmark methods and concordance specification
 
-This reference describes native tool configurations, counting differences, output formats and concordance metrics. Installation, execution, accounting and inputs are specified in [benchmarks_spec.md](benchmarks_spec.md). The selected production matrix and commented run commands are maintained in [README.md](README.md#runs-and-budgets).
+This reference describes native tool configurations, counting differences, output formats and concordance metrics. Installation, execution, accounting and inputs are specified in [benchmarks_spec.md](benchmarks_spec.md). The selected production matrix and commented run commands are maintained in [README.md](README.md#run-the-benchmarks).
 
 Fragment coverage, read depth, regional fragment counts, global length histograms, end-motif frequencies and midpoint profiles are separate quantities. Normalized agreement does not establish equal total counts or individual fragment selection. Speed claims apply to the configurations actually timed, including their native compulsory work and filter differences.
 
@@ -161,7 +161,7 @@ Sources: [runner](midpoints/benchmark_midpoints.sh), [commands](midpoints/comman
 
 Select `cfdnalab`, `cfdnalab-gc` and `griffin-gc` in separate jobs. Only the latter two form a timed comparison. Griffin's full workflow also writes the raw table used for uncorrected concordance. All midpoint jobs use MAPQ >=20, inclusive 100-200 bp fragments, supplied 9,990 bp windows and 15 bp bins. No extra site selection or proper-pair requirement is added. Site derivation is documented in [the command report](experiment_commands.md#site-preparation).
 
-Griffin gets one short untimed warmup using its release's 1000-site CTCF demo, the same production BAM/reference, length/MAPQ/window settings and core allocation. Its separate Slurm step and output are excluded from measured timings, memory and concordance. There are no full-input Griffin warmups. Production site coordinates are unchanged. This is a practical warmup intended to give Griffin a fair start without another full production run.
+Griffin gets one short untimed warmup using its release's 1000-site CTCF demo, the same production BAM/reference, length/MAPQ/window settings and core allocation. Its separate Slurm step and output are excluded from measured timings, memory and concordance. A single full-input measurement follows at each core setting, with no full-input warmup. Production site coordinates are unchanged. This is a practical warmup intended to give Griffin a fair start without another full production run.
 
 cfDNAlab uses `midpoints --length-bins MIN MAX+1 --bin-size 15`, default smoothing and the shared exclusion BEDs, actual-pair checks and deterministic choice between the two central bases of even fragments. Griffin retains forward-record/TLEN selection and the right central base. Fragment/filter populations can differ.
 

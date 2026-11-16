@@ -74,7 +74,7 @@ def clean_environment(**variables):
     """Return the test environment without benchmark or Slurm settings from the caller."""
     environment = {
         name: value for name, value in os.environ.items()
-        if not name.startswith(("BENCH_", "SLURM_"))
+        if not name.startswith(("BENCH_", "SLURM_")) and name != "LOCAL_SCRATCH_VAR"
     }
     environment.update(variables)
     return environment
@@ -901,6 +901,10 @@ class JobSettingsTests(unittest.TestCase):
             ({"BENCH_CORES": "8"}, "exceeds allocated CPUs"),
             ({"BENCH_METHODS": None}, "BENCH_METHODS"),
             ({"TMPDIR": None}, "TMPDIR"),
+            # The selector is a variable name, without a dollar sign or subscripts
+            ({"LOCAL_SCRATCH_VAR": ""}, "LOCAL_SCRATCH_VAR must name"),
+            ({"LOCAL_SCRATCH_VAR": "$TMPDIR"}, "LOCAL_SCRATCH_VAR must name"),
+            ({"LOCAL_SCRATCH_VAR": "TMPDIR[0]"}, "LOCAL_SCRATCH_VAR must name"),
             ({"BENCH_RESULTS": "existing"}, "already exists"),
             ({"SLURM_JOB_NUM_NODES": "2"}, "one allocated node"),
             ({"BENCH_PILOT": "yes"}, "BENCH_PILOT"),
@@ -1352,7 +1356,7 @@ class LengthsJobTests(unittest.TestCase):
 class GriffinJobTests(unittest.TestCase):
     """Run benchmark_midpoints.sh for griffin-gc with fake Griffin scripts and srun."""
 
-    def test_demo_warmup_is_a_separate_step_before_three_measured_repetitions(self):
+    def test_griffin_defaults_to_a_demo_step_and_a_single_measured_run(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             fake_bin = root / "bin"
@@ -1440,7 +1444,6 @@ class GriffinJobTests(unittest.TestCase):
                     BENCH_CORES="1",
                     # Griffin's full-input warmups are replaced by the demo
                     BENCH_WARMUPS="10",
-                    BENCH_REPETITIONS="3",
                     BENCH_PILOT="0",
                     BENCH_SETUP_PYTHON=sys.executable,
                     SRUN_LOG=str(root / "srun.log"),
@@ -1451,10 +1454,10 @@ class GriffinJobTests(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
-            # The demo is the first of four steps. It runs Griffin's profiling helper
-            # directly, while the three measured runs go through measure_command.sh
+            # The demo and measurement require exactly two steps
+            # Only the measurement goes through measure_command.sh
             steps = [line.split("\t") for line in (root / "srun.log").read_text().splitlines()]
-            self.assertEqual(len(steps), 4)
+            self.assertEqual(len(steps), 2)
             self.assertTrue(steps[0][9].endswith("/griffin_profile.sh"))
             self.assertIn("--cpus-per-task=1", steps[0])
             self.assertTrue(all(step[9].endswith("/measure_command.sh") for step in steps[1:]))
@@ -1471,9 +1474,9 @@ class GriffinJobTests(unittest.TestCase):
             measured_scripts = [call[0] for call in calls if call not in demo_calls]
             self.assertEqual(measured_scripts, [
                 "griffin_GC_counts.py", "griffin_GC_bias.py", "griffin_coverage.py", "griffin_merge_sites.py",
-            ] * 3)
+            ])
             rows = read_timings(results / "timings.tsv")
-            self.assertEqual([row["repetition"] for row in rows], ["1", "2", "3"])
+            self.assertEqual([row["repetition"] for row in rows], ["1"])
             for row in rows:
                 self.assertEqual(
                     (row["warmup"], row["window_bp"], row["gc_correction"], row["tool_threads"], row["step_exit_code"]),
@@ -1494,6 +1497,7 @@ class GriffinJobTests(unittest.TestCase):
             self.assertEqual(intervals.read_text(), production_sites)
             self.assertEqual(len((results / "sites.bed").read_text().splitlines()), 4)
             self.assertIn("warmups\t0\n", (results / "run.tsv").read_text())
+            self.assertIn("repetitions\t1\n", (results / "run.tsv").read_text())
 
 
 if __name__ == "__main__":

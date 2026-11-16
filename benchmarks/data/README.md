@@ -40,4 +40,4 @@ Supply the midpoint site BED through `BENCH_INTERVALS`. The benchmark uses its c
 
 Use Griffin's [public paper TFBS set](https://github.com/adoebley/Griffin_analyses/tree/75467e438a88029206d8d778ddce05eb0ab6efa8/sites/TFBS/10000_unfiltered_sites_CIS_BP_v2), pinned at `75467e438a88029206d8d778ddce05eb0ab6efa8`, as the production source. Record the supplied BED's derivation, window width and actual site/group counts. The runner does not choose or resize those production sites. Griffin's separate 1000-site release demo is used only for its short warmup.
 
-Use the [production run procedure](../README.md#runs-and-budgets) after these inputs are prepared. Benchmark jobs copy the existing input files and do not repeat preparation or select a new production site set.
+Use the [benchmark commands](../README.md#run-the-benchmarks) after these inputs are prepared. Benchmark jobs copy the existing input files and do not repeat preparation or select a new production site set.

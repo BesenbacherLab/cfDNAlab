@@ -21,7 +21,7 @@ The benchmark runs selected native commands repeatedly, records timing and Slurm
 | Coverage comparison, installation and input regression tests | [test_benchmarks.py](tests/test_benchmarks.py) |
 | Submission, setup checks, concordance, pilot budgets and native-format regression tests | [test_review_regressions.py](tests/test_review_regressions.py) |
 
-The commented production matrix, submissions and completed-job commands are maintained in the [benchmark README](README.md#runs-and-budgets).
+The commented production matrix, submissions and completed-job commands are maintained in the [benchmark README](README.md#run-the-benchmarks).
 
 ## Installation
 
@@ -115,12 +115,13 @@ Submit from the repository root on the login node with `bash benchmarks/submit_b
 | --- | --- |
 | `BENCH_BAM` | Required existing BAM |
 | `BENCH_INDEX` | `<BENCH_BAM>.bai` |
-| `TMPDIR` | Node-local scratch supplied on the compute node at job startup. Each runner creates its working directory below it, then sets `TMPDIR` to that working directory's `tmp/` for tool temporary files |
+| `LOCAL_SCRATCH_VAR` | `TMPDIR`. Name of the variable supplying node-local scratch, such as `SLURM_TMPDIR`. Export the name at submission and resolve its value on the compute node. Require a valid variable name and a nonempty value naming an existing, writable directory |
+| `TMPDIR` | Each runner sets this to its working directory's `tmp/` for tool temporary files. The working directory is created below the directory supplied by `LOCAL_SCRATCH_VAR` |
 | `BENCH_RESULTS` | Required new results directory |
 | `BENCH_METHODS` | Required feature-specific space-separated method labels, without duplicates or a default |
 | `BENCH_CORES` | Required single positive core count per job. Planned settings: 1, 4, 12, 32 in separate jobs |
 | `BENCH_WARMUPS` | **1** per scheduled method/core. Griffin uses no full-input warmups |
-| `BENCH_REPETITIONS` | **3 measured** per scheduled method/core |
+| `BENCH_REPETITIONS` | **3 measured** per scheduled method/core, except Griffin defaults to **1** |
 | `BENCH_PILOT` | `0`, or `1` for a shared-node submission with zero full-input warmups and one measurement. Griffin retains its short demo warmup |
 | `BENCH_RUN_TIMEOUT_SECONDS` | `0` disables timeouts. A positive integer enables GNU timeout with an additional 60-second kill grace |
 | `BENCH_SETUP_PYTHON` | `python3`, untimed setup/relocation only |
@@ -146,7 +147,7 @@ Jobs request one node, one task, `BENCH_CORES` CPUs per task, one hardware threa
 
 Each job uses exactly one core setting. Every selected method runs as a contiguous block at that setting. Its warmup repetitions precede measurements, with actual order retained in the timing TSV. Normally production repetition 1 is a warmup and 2-4 are measured.
 
-Griffin must be selected alone with `BENCH_METHODS=griffin-gc`. Each timed repetition includes sample GC estimation and profiling. Both raw and corrected tables are preserved from the first measured run. There is no separate timed `griffin` method. The release's 1000-site demo is an untimed warmup in a separate Slurm step, using production filters/windows and a unit GC table. Full-input warmups are zero. Three production measurements follow, numbered 1-3. The supplied site BED remains unchanged. A failed demo preserves logs and stops before measurements.
+Griffin must be selected alone with `BENCH_METHODS=griffin-gc`. Each timed repetition includes sample GC estimation and profiling. Both raw and corrected tables are preserved from the measured run. There is no separate timed `griffin` method. The release's 1000-site demo is an untimed warmup in a separate Slurm step, using production filters/windows and a unit GC table. Full-input warmups are zero. A single production measurement follows, numbered 1. The supplied site BED remains unchanged. A failed demo preserves logs and stops before measurement.
 
 No method is automatically excluded. The documented timing matrix runs the normal selected configurations at 1, 4, 12 and 32 cores, including cfDNAPro and FinaleToolkit lengths. Four proper-pair diagnostics run once each at 32 cores, without warmups, in three separate concordance jobs. Their result paths are outside the timing-summary inputs. Method lists are explicit. Picard's timed standalone call includes the JVM. Its separate filtered concordance pipeline also uses samtools outside timing.
 
@@ -154,7 +155,7 @@ Sequential single-task `srun` calls attach to the existing allocation with exact
 
 Inputs/environments are staged once before warmups. Packed environments are relocated with `conda-unpack` through setup Python. FinaleToolkit's CLI entrypoint is invoked with the packed environment's own Python for version checks and measured commands, avoiding interpreter lookup through PATH. Host caches are not explicitly evicted. Allocate N cores and pass N directly to every available native thread/core/worker option, including options counting additional decoding threads. Any proposed reduction requires an explicit instruction in the tool's documentation and discussion before changing the benchmark. Tools without a native option still run at their selected settings. There are no feature-specific numerical-library thread overrides. Native worker/thread settings remain distinct from allocated cores.
 
-Series use separate jobs per core setting, with feature/method blocks to fit available allocations. Griffin has its own jobs and must be allowed to finish beyond 24 hours. Exact repetition splitting is an experimental choice, using existing repetition controls. Every new Griffin job receives its demo warmup. Prefer the same physical node using `--nodelist` and `BENCH_EXPECTED_NODE` when available. Otherwise use matched hardware and retain node identity, acknowledging variation between nodes in cross-core comparisons. Scripts do not coordinate multiple jobs. The [production procedure](README.md#runs-and-budgets) names each complete job's wall-time setting and leaves cluster-specific limits explicit. No complete-matrix runtime is established there.
+Series use separate jobs per core setting, with feature/method blocks to fit available allocations. Griffin has its own jobs, with a single full-input measurement per core setting, and must be allowed to finish beyond 24 hours. Every new Griffin job receives its demo warmup. Prefer the same physical node using `--nodelist` and `BENCH_EXPECTED_NODE` when available. Otherwise use matched hardware and retain node identity, acknowledging variation between nodes in cross-core comparisons. Scripts do not coordinate multiple jobs. The [benchmark commands](README.md#run-the-benchmarks) names each complete job's wall-time setting and leaves cluster-specific limits explicit. No complete-matrix runtime is established there.
 
 ## Measurement and failures
 
@@ -182,7 +183,7 @@ When enabled, GNU `timeout --verbose --kill-after=60` wraps each native command 
 
 The result directory, `timings.tsv` header and `run.tsv` are created before input staging. `progress.log` records setup stages, run starts and completed saves, and its messages also go to Slurm's output. Coverage and lengths validate tool versions before copying the BAM. A setup failure therefore leaves an inspectable record even when no timed command has started.
 
-`timings.tsv` is written incrementally and keeps warmups, pilots and failures. Skipped repetitions have no invented timing rows. `run.tsv` records feature, node, requested methods/cores, repetitions, run timeout, benchmark commit/dirty flag and input paths. Optional installation/build TSVs are copied beside it. Available Slurm configuration is captured once per job, with diagnostics and a warning if unavailable. Completed timing rows and saved measured profiles survive later failures or allocation termination. A hard termination can prevent the active run's final bookkeeping and profile copy.
+`timings.tsv` is written incrementally and keeps warmups, pilots and failures. Skipped repetitions have no invented timing rows. `run.tsv` records feature, node, requested methods/cores, repetitions, run timeout, the scratch variable's name and resolved directory, benchmark commit/dirty flag and input paths. Optional installation/build TSVs are copied beside it. Available Slurm configuration is captured once per job, with diagnostics and a warning if unavailable. Completed timing rows and saved measured profiles survive later failures or allocation termination. A hard termination can prevent the active run's final bookkeeping and profile copy.
 
 One native output per method is preserved from the first measured repetition at the job's core setting. Copying happens after `srun`, outside tool-step memory accounting. Other temporary outputs are removed. cfDNAPro motifs retain native counts and a reference manifest together in `profiles/cfdnapro/`. Every successful cfDNAPro motif invocation also keeps `runs/<run_order>/cfdnapro-stage-timings.tsv`, copied after the tool step. It separates package/reference setup, native BAM reading/curation, benchmark length filtering, native motif counting and output writing. Stage fractions describe elapsed time within R and exclude R/container startup and stage-table writing. GNU time still measures the complete invocation.
 
@@ -214,4 +215,4 @@ The estimate mode remains available for debugging records. The production run pr
 
 ## Validation before production runs
 
-Validate complete Linux environment solves, relocation, native command outputs, plotting/fonts and Slurm placement/accounting on the compute node. Real-tool validation uses each selected native tool and its comparator on a small input. Runtime, memory and scratch requirements depend on the production input and method set. Source inspection and syntax checks alone do not establish runtime correctness. See [regression tests and validation](README.md#regression-tests-and-validation) for the local test command and its scope.
+Validate complete Linux environment solves, relocation, native command outputs, plotting/fonts and Slurm placement/accounting on the compute node. Real-tool validation uses each selected native tool and its comparator on a small input. Runtime, memory and scratch requirements depend on the production input and method set. Source inspection and syntax checks alone do not establish runtime correctness. See [regression tests and validation](README.md#checking-the-benchmark-code) for the local test command and its scope.

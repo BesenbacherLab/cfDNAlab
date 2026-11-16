@@ -22,6 +22,8 @@
 #     BENCH_NODE       The compute node's name
 #     output           The run's output directory, $BENCH_WORK/output
 #     run_order        Counts the runs in this job. run_in_slurm_step increases it
+#   Set by check_job_settings:
+#     BENCH_SCRATCH_ROOT  Node-local directory read from LOCAL_SCRATCH_VAR
 #   Set when commands.sh is loaded:
 #     timing_columns   The timings.tsv columns, in order
 #   Set by prepare_command in commands.sh, before each run:
@@ -55,14 +57,32 @@ declare -gA row=()
 #   $1  Feature name, used in error messages (coverage, lengths, ends or midpoints)
 # Sets:
 #   methods          The methods from BENCH_METHODS, as an array
+#   LOCAL_SCRATCH_VAR, BENCH_SCRATCH_ROOT
+#                    The scratch variable's name and its value on the compute node
 #   BENCH_WARMUPS, BENCH_REPETITIONS
 #                    Set to 0 and 1 for a pilot (BENCH_PILOT=1)
 check_job_settings() {
     local feature=$1
     : "${SLURM_JOB_ID:?Submit with bash benchmarks/submit_benchmark.sh $feature}"
     : "${BENCH_BAM:?Set the input BAM path}"
-    # Slurm sets TMPDIR to node-local scratch when the job starts
-    : "${TMPDIR:?The compute node must provide TMPDIR for node-local scratch}"
+    # Clusters use different variable names for node-local scratch. Resolve the
+    # selected name here, because its value may only exist on the compute node
+    LOCAL_SCRATCH_VAR=${LOCAL_SCRATCH_VAR-TMPDIR}
+    if [[ ! "$LOCAL_SCRATCH_VAR" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+        echo 'LOCAL_SCRATCH_VAR must name a variable, such as TMPDIR or SLURM_TMPDIR, without a dollar sign.' >&2
+        return 1
+    fi
+    # Indirect expansion reads the selected variable without evaluating shell code
+    # Keep this root separate because each runner later sets TMPDIR for its tools
+    BENCH_SCRATCH_ROOT=${!LOCAL_SCRATCH_VAR:-}
+    if [[ -z "$BENCH_SCRATCH_ROOT" ]]; then
+        echo "The compute node must provide $LOCAL_SCRATCH_VAR for node-local scratch. It is unset or empty." >&2
+        return 1
+    fi
+    if [[ ! -d "$BENCH_SCRATCH_ROOT" || ! -w "$BENCH_SCRATCH_ROOT" ]]; then
+        echo "The scratch directory selected by $LOCAL_SCRATCH_VAR must exist and be writable: $BENCH_SCRATCH_ROOT" >&2
+        return 1
+    fi
     : "${BENCH_RESULTS:?Set a new results directory}"
     : "${BENCH_CORES:?Set a single core budget for this job: 1, 4, 12 or 32}"
     : "${BENCH_METHODS:?Set the methods for this job explicitly in BENCH_METHODS}"
@@ -220,6 +240,7 @@ record_job_setup() {
         printf 'methods\t%s\ncores\t%s\n' "$BENCH_METHODS" "$BENCH_CORES"
         printf 'warmups\t%s\nmeasured_repetitions\t%s\n' "$BENCH_WARMUPS" "$BENCH_REPETITIONS"
         printf 'run_timeout_seconds\t%s\n' "$BENCH_RUN_TIMEOUT_SECONDS"
+        printf 'local_scratch_variable\t%s\nlocal_scratch_directory\t%s\n' "$LOCAL_SCRATCH_VAR" "$BENCH_SCRATCH_ROOT"
         printf 'benchmark_commit\t%s\n' "$commit"
         if [[ -n "$uncommitted_changes" ]]; then
             printf 'benchmark_dirty\ttrue\n'

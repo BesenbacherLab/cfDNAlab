@@ -243,16 +243,25 @@ class AutomaticConcordanceTests(unittest.TestCase):
 class SetupAndScopeTests(unittest.TestCase):
     """Reject incomplete setup before staging or decompressing native data."""
 
-    def test_each_runner_uses_the_compute_nodes_tmpdir_before_staging(self):
+    def test_each_runner_uses_the_selected_compute_node_scratch_before_staging(self):
         for feature, filename, directory_prefix in (
             ("coverage", "benchmark_coverage.sh", "coverage"),
             ("lengths", "benchmark_lengths.sh", "lengths"),
             ("ends", "benchmark_end_motifs.sh", "end-motifs"),
             ("midpoints", "benchmark_midpoints.sh", "midpoints"),
         ):
-            for scratch_available in (True, False):
+            for scratch_variable, scratch_state, tmpdir_available in (
+                (None, "directory", True),
+                (None, "unset", False),
+                ("SLURM_TMPDIR", "directory", False),
+                ("SLURM_TMPDIR", "directory", True),
+                ("SLURM_TMPDIR", "unset", True),
+                ("SLURM_TMPDIR", "empty", True),
+                ("SLURM_TMPDIR", "missing", True),
+            ):
                 with (
-                    self.subTest(feature=feature, scratch_available=scratch_available),
+                    self.subTest(feature=feature, scratch_variable=scratch_variable,
+                                 scratch_state=scratch_state, tmpdir_available=tmpdir_available),
                     tempfile.TemporaryDirectory() as temporary,
                 ):
                     root = Path(temporary)
@@ -293,16 +302,30 @@ class SetupAndScopeTests(unittest.TestCase):
                         "SCRATCH_CALL_LOG": str(call_log),
                     }
                     environment.pop("BENCH_LOCAL_ROOT", None)
+                    environment.pop("LOCAL_SCRATCH_VAR", None)
+                    environment.pop("SLURM_TMPDIR", None)
                     environment.pop("TMPDIR", None)
-                    if scratch_available:
-                        environment["TMPDIR"] = str(scratch)
+                    # An alternate selector must win over an inherited TMPDIR
+                    inherited_tmp = root / "other scratch"
+                    inherited_tmp.mkdir()
+                    if tmpdir_available:
+                        environment["TMPDIR"] = str(inherited_tmp)
+                    if scratch_variable is not None:
+                        environment["LOCAL_SCRATCH_VAR"] = scratch_variable
+                    selected_variable = scratch_variable or "TMPDIR"
+                    if scratch_state == "directory":
+                        environment[selected_variable] = str(scratch)
+                    elif scratch_state == "empty":
+                        environment[selected_variable] = ""
+                    elif scratch_state == "missing":
+                        environment[selected_variable] = str(root / "missing scratch")
                     result = subprocess.run(
                         ["bash", str(BENCHMARKS / feature / filename)],
                         env=environment,
                         text=True,
                         capture_output=True,
                     )
-                    if scratch_available:
+                    if scratch_state == "directory":
                         self.assertEqual(result.returncode, 9, result.stderr)
                         self.assertEqual(
                             call_log.read_text().splitlines(),
@@ -310,10 +333,11 @@ class SetupAndScopeTests(unittest.TestCase):
                         )
                     else:
                         self.assertNotEqual(result.returncode, 0)
-                        self.assertIn("TMPDIR", result.stderr)
+                        self.assertIn(selected_variable, result.stderr)
                         self.assertFalse(call_log.exists())
                     self.assertFalse((root / "results").exists())
                     self.assertEqual(list(scratch.iterdir()), [])
+                    self.assertEqual(list(inherited_tmp.iterdir()), [])
 
     def test_each_runner_requires_an_explicit_method_block_before_staging(self):
         for feature, filename in (
@@ -335,6 +359,7 @@ class SetupAndScopeTests(unittest.TestCase):
                     "BENCH_INDEX": "/unused/input.bam.bai",
                     "BENCH_INTERVALS": "/unused/sites.bed",
                     "BENCH_SAMTOOLS_ARCHIVE": "/unused/samtools.tar.gz",
+                    "LOCAL_SCRATCH_VAR": "TMPDIR",
                     "TMPDIR": temporary,
                     "BENCH_RESULTS": temporary + "/results",
                 }
@@ -369,6 +394,7 @@ class SetupAndScopeTests(unittest.TestCase):
                     "BENCH_PILOT": "0",
                     "BENCH_BAM": "/unused/input.bam",
                     "BENCH_INTERVALS": "/unused/sites.bed",
+                    "LOCAL_SCRATCH_VAR": "TMPDIR",
                     "TMPDIR": temporary,
                     "BENCH_RESULTS": temporary + "/results",
                     "BENCH_EXPECTED_NODE": "",

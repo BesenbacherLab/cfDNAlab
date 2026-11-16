@@ -81,7 +81,7 @@ if [[ "$needs_reference" == true ]]; then : "${BENCH_REF_2BIT:?Set the matching 
 # 2. Copy inputs and tools to the compute node (untimed)
 # ---------------------------------------------------------------------------
 
-BENCH_WORK=$(mktemp -d "$TMPDIR/end-motifs-${SLURM_JOB_ID}.XXXXXX")
+BENCH_WORK=$(mktemp -d "$BENCH_SCRATCH_ROOT/end-motifs-${SLURM_JOB_ID}.XXXXXX")
 trap 'rm -rf "$BENCH_WORK"' EXIT
 BENCH_NODE=$(hostname)
 export BENCH_WORK BENCH_NODE

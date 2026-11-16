@@ -12,7 +12,7 @@ Normal timing runs use 1, 4, 12 and 32 cores. The four proper-pair checks run on
 | Minimum MAPQ | 30, except native timed Picard | 30 | 20 for profiling and GC estimation |
 | Included fragment lengths | 30-1000 bp inclusive | Requested 30-1000 bp inclusive | 100-200 bp inclusive for profiling |
 | Chromosome selection | All BAM contigs, plus the autosome-only coverage run | All BAM contigs, except cfDNAPro reference compatibility | Chromosomes in the supplied site set |
-| Production repetitions | 1 warmup, then 3 measurements | Same | Same for cfDNAlab. Griffin uses an untimed 1000-site demo, then 3 measurements |
+| Production repetitions | 1 warmup, then 3 measurements | Same | Same for cfDNAlab. Griffin uses an untimed 1000-site demo, then a single measurement per core setting |
 
 The variables in the calls correspond to the job settings:
 
@@ -41,7 +41,7 @@ cfdnapro_image="$BENCH_WORK/cfdnapro.sif"
 apptainer=$(command -v apptainer)
 ```
 
-`BENCH_WORK` is the job's temporary directory under the compute node's `$TMPDIR`. The runners copy the BAM, index, selected tools and required references there before timing. `output` is created empty for every repetition. Container paths under `/work` refer to the same directory through an Apptainer bind mount.
+`BENCH_WORK` is the job's temporary directory under the compute node's local scratch directory. `LOCAL_SCRATCH_VAR` names the variable supplying that directory and defaults to `TMPDIR`, as described in the [settings instructions](README.md#set-the-input-and-tool-paths). The runners copy the BAM, index, selected tools and required references there before timing. `output` is created empty for every repetition. Container paths under `/work` refer to the same directory through an Apptainer bind mount.
 
 Every available native thread/core/worker option receives `cores` directly. Commands without a native thread option still run within the allocated CPU set. This also applies to samtools inside the Picard pipeline.
 
