@@ -81,13 +81,20 @@ def read_griffin(path, width, bin_size):
     # At 15 bp this is [-990, 990), containing 132 bins
     saved_half_width = (1000 // bin_size) * bin_size
     if width // 2 < saved_half_width:
-        raise ValueError("cfDNAlab's normalization window must cover Griffin's saved window")
-    position_columns = [str(position) for position in range(-saved_half_width, saved_half_width, bin_size)]
+        raise ValueError(
+            "cfDNAlab's normalization window must cover Griffin's saved window"
+        )
+    position_columns = [
+        str(position)
+        for position in range(-saved_half_width, saved_half_width, bin_size)
+    ]
     native_positions = {
         column for column in table.columns if column.lstrip("-").isdigit()
     }
     if native_positions != set(position_columns):
-        raise ValueError("Griffin position labels do not match its official saved window")
+        raise ValueError(
+            "Griffin position labels do not match its official saved window"
+        )
     profiles = {}
     for row_index, row in table.iterrows():
         group = row["site_name"]
@@ -100,7 +107,9 @@ def read_griffin(path, width, bin_size):
         ):
             raise ValueError(f"Duplicate group or invalid site count: {group}")
         if str(row["CNA_normalization"]).lower() != "false":
-            raise ValueError("Expected Griffin's default without site-wise CNA normalization")
+            raise ValueError(
+                "Expected Griffin's default without site-wise CNA normalization"
+            )
         # Griffin writes an empty field for a NaN, including an empty group's
         # undefined mean-one profile. Preserve that distinction from a real zero
         profile = pd.to_numeric(row[position_columns].replace("", np.nan)).to_numpy(
@@ -189,7 +198,8 @@ def main():
         "profiles", type=Path, help="The benchmark results/profiles directory"
     )
     parser.add_argument(
-        "--gc-corrected", action="store_true",
+        "--gc-corrected",
+        action="store_true",
         help="Compare cfdnalab-gc with griffin-gc, using Griffin's GC-corrected output",
     )
     arguments = parser.parse_args()
@@ -237,10 +247,14 @@ def main():
         griffin_profile, griffin_sites, griffin_mean = griffin[group]
         # cfDNAlab reports eligible intervals. Griffin reports the full site-list
         # size, including masked sites. Preserve both native meanings
-        count_mean = checked_metric(float(counts.mean()), f"midpoint mean for {group}", minimum=None)
+        count_mean = checked_metric(
+            float(counts.mean()), f"midpoint mean for {group}", minimum=None
+        )
         signed_positions = np.arange(len(counts)) * bin_size - width // 2
         saved_half_width = (1000 // bin_size) * bin_size
-        saved_bins = (signed_positions >= -saved_half_width) & (signed_positions < saved_half_width)
+        saved_bins = (signed_positions >= -saved_half_width) & (
+            signed_positions < saved_half_width
+        )
         row = {
             "group": group,
             "cfdnalab_sites": site_count,
@@ -250,15 +264,22 @@ def main():
             "normalization_window_bp": width,
             "resolution_bp": bin_size,
             "gc_correction": "corrected" if arguments.gc_corrected else "none",
-            "cfdnalab_mean_midpoints_per_site_bp": count_mean / site_count if site_count else "NA",
-            "griffin_mean_midpoints_per_site_bp": griffin_mean if np.isfinite(griffin_mean) else "NA",
+            "cfdnalab_mean_midpoints_per_site_bp": count_mean / site_count
+            if site_count
+            else "NA",
+            "griffin_mean_midpoints_per_site_bp": griffin_mean
+            if np.isfinite(griffin_mean)
+            else "NA",
             "pearson_r": "NA",
             "pearson_r_squared": "NA",
             "mae_mean_one": "NA",
             "rmse_mean_one": "NA",
             "max_abs_mean_one": "NA",
             "status": STATUS_BY_CASE[
-                (cfdnalab_profile_state(count_mean), griffin_profile_state(griffin_profile, griffin_mean))
+                (
+                    cfdnalab_profile_state(count_mean),
+                    griffin_profile_state(griffin_profile, griffin_mean),
+                )
             ],
         }
         if row["status"] == "ok":

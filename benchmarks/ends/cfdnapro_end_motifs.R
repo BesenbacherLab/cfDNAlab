@@ -23,8 +23,7 @@ suppressPackageStartupMessages(library(cfDNAPro))
 # callMotif() needs every fragment contig to exist in its selected reference
 # Use the intersection of the two headers, preserving every compatible BAM contig
 # This is usually all contigs except chrEBV for the hg38 no-alt analysis set
-reference_package <- switch(
-    genome_label,
+reference_package <- switch(genome_label,
     hg19 = "BSgenome.Hsapiens.UCSC.hg19",
     hg38 = "BSgenome.Hsapiens.UCSC.hg38",
     `hg38-NCBI` = "BSgenome.Hsapiens.NCBI.GRCh38",
@@ -37,8 +36,10 @@ if (length(retained_contigs) == 0L) {
     stop("The BAM and cfDNAPro reference have no contigs in common")
 }
 dropped_contigs <- setdiff(bam_contigs, retained_contigs)
-message("Contigs excluded because they are absent from cfDNAPro's reference: ",
-        if (length(dropped_contigs)) paste(dropped_contigs, collapse = ", ") else "none")
+message(
+    "Contigs excluded because they are absent from cfDNAPro's reference: ",
+    if (length(dropped_contigs)) paste(dropped_contigs, collapse = ", ") else "none"
+)
 setup_finished <- proc.time()[["elapsed"]]
 
 # Match MAPQ and flag exclusions without requiring proper pairs or autosomes
@@ -88,10 +89,12 @@ if (!dir.exists(output_directory)) {
     dir.create(output_directory, recursive = TRUE)
 }
 write.table(counts, file.path(output_directory, "cfdnapro-motifs.tsv"),
-            sep = "\t", quote = FALSE, row.names = FALSE)
+    sep = "\t", quote = FALSE, row.names = FALSE
+)
 write.table(data.frame(chromosome = bam_contigs, retained = bam_contigs %in% retained_contigs),
-            file.path(output_directory, "contig_scope.tsv"),
-            sep = "\t", quote = FALSE, row.names = FALSE)
+    file.path(output_directory, "contig_scope.tsv"),
+    sep = "\t", quote = FALSE, row.names = FALSE
+)
 
 # Retain the native reference manifest so package identity and scope are visible
 # Sequence identity with the alignment reference still needs separate verification
@@ -104,19 +107,25 @@ reference_table$label <- reference$label
 reference_table$package <- reference$package
 reference_table$package_version <- reference$package_version
 write.table(reference_table, file.path(output_directory, "reference.tsv"),
-            sep = "\t", quote = FALSE, row.names = FALSE)
+    sep = "\t", quote = FALSE, row.names = FALSE
+)
 output_finished <- proc.time()[["elapsed"]]
 
 # Measure the existing operations once, without rerunning them or forcing GC
 # Fractions use elapsed time within this R script, excluding R/container startup
 # The outer GNU timer still includes startup, every stage and this small table
-stage_seconds <- diff(c(script_started, setup_finished, reading_finished,
-                        filtering_finished, motifs_finished, output_finished))
+stage_seconds <- diff(c(
+    script_started, setup_finished, reading_finished,
+    filtering_finished, motifs_finished, output_finished
+))
 stage_timings <- data.frame(
-    stage = c("package_and_reference_setup", "read_bam_and_curate", "length_filter",
-              "call_motif", "write_outputs"),
+    stage = c(
+        "package_and_reference_setup", "read_bam_and_curate", "length_filter",
+        "call_motif", "write_outputs"
+    ),
     elapsed_seconds = stage_seconds,
     fraction_of_r_elapsed = stage_seconds / sum(stage_seconds)
 )
 write.table(stage_timings, file.path(output_directory, "stage_timings.tsv"),
-            sep = "\t", quote = FALSE, row.names = FALSE)
+    sep = "\t", quote = FALSE, row.names = FALSE
+)

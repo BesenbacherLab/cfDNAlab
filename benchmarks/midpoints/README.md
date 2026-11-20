@@ -6,10 +6,10 @@ Compare `cfdna midpoints` with Griffin's native BAM-to-profile workflow on the s
 
 The benchmark uses the same grouped sites, inclusive fragment lengths 100-200 bp and MAPQ >=20 for both profilers. Both sample GC estimators use MAPQ >=20 and the native estimation ranges described below. Supply 9,990 bp BED windows (`center - 4995`, `center + 4995`). cfDNAlab saves all 666 bins of 15 bp. Griffin normalizes over that same window but saves its official central 132 bins, `[-990, 990)`. Both use native 165 bp order-3 Savitzky-Golay smoothing. No per-site CNA correction or fragment-count weights are added.
 
-| Tool | Settings | Expected differences |
-| --- | --- | --- |
-| cfDNAlab | `midpoints --length-bins 100 201 --min-mapq 20 --bin-size 15`, default smoothing, shared exclusion BEDs | Uses paired spans from `forward.pos` to `reverse.reference_end`, checks both mates and applies native blacklist filtering. Even-length fragments reproducibly choose either central base. Writes group sums averaged across the bases in each bin. |
-| Griffin v0.2.0 | `griffin_coverage.py`, then `griffin_merge_sites.py`, native exclusion BEDs, zero-mappability masking, outlier removal and 165 bp smoothing | Uses forward records with positive TLEN and the right central base for even lengths. Averages sites and normalizes the combined group profile to mean one. |
+| Tool           | Settings                                                                                                                                    | Expected differences                                                                                                                                                                                                                               |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| cfDNAlab       | `midpoints --length-bins 100 201 --min-mapq 20 --bin-size 15`, default smoothing, shared exclusion BEDs                                     | Uses paired spans from `forward.pos` to `reverse.reference_end`, checks both mates and applies native blacklist filtering. Even-length fragments reproducibly choose either central base. Writes group sums averaged across the bases in each bin. |
+| Griffin v0.2.0 | `griffin_coverage.py`, then `griffin_merge_sites.py`, native exclusion BEDs, zero-mappability masking, outlier removal and 165 bp smoothing | Uses forward records with positive TLEN and the right central base for even lengths. Averages sites and normalizes the combined group profile to mean one.                                                                                         |
 
 Griffin receives a centered anchor per site. Its normalization window is `[-4995, 4995)`, matching cfDNAlab's complete BED window. Its official `--save_window -1000 1000` rounds inward to `[-990, 990)` at the 15 bp step. Saving the central window excludes Griffin's polynomial smoothing edge bins and does not change its full-window normalization. The runner never resizes the supplied BED. Misaligned bin coordinates fail comparison.
 
@@ -41,10 +41,10 @@ The timed Griffin workload is `griffin-gc`: sample GC counting, bias fitting and
 
 Run `cfdnalab-gc` and `griffin-gc` in separate jobs for the timing comparison. Each timed repetition estimates sample GC bias and produces corrected profiles. Only reference GC distributions are precomputed. Run uncorrected `cfdnalab` separately if raw-profile concordance is also wanted, using the uncorrected table already saved by `griffin-gc`.
 
-| Workload | Commands inside each timing |
-| --- | --- |
-| `cfdnalab-gc` | `cfdna gc-bias`, then `cfdna midpoints --gc-file ... --ref-2bit ...` |
-| `griffin-gc` | Native `griffin_GC_counts.py --size_range 15 500`, `griffin_GC_bias.py --size_range 15 500`, then `griffin_coverage.py` with the profiling range and `griffin_merge_sites.py`. Retains `sample.GC_corrected.coverage.tsv` |
+| Workload      | Commands inside each timing                                                                                                                                                                                               |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cfdnalab-gc` | `cfdna gc-bias`, then `cfdna midpoints --gc-file ... --ref-2bit ...`                                                                                                                                                      |
+| `griffin-gc`  | Native `griffin_GC_counts.py --size_range 15 500`, `griffin_GC_bias.py --size_range 15 500`, then `griffin_coverage.py` with the profiling range and `griffin_merge_sites.py`. Retains `sample.GC_corrected.coverage.tsv` |
 
 Both workflows keep native bias fitting, smoothing, exclusion rules and diagnostic plots. Correction algorithms are not forced to match. cfDNAlab uses directional paired spans, GC percentages and its native reference end offset (10 bp by default). Griffin uses record/TLEN selection, whole-fragment GC counts and its native smoothing. Its estimator counts qualifying forward and reverse records independently. Corrected-profile differences therefore reflect both bias estimates and midpoint counting. Mean per-site/per-bp values represent weighted midpoint counts in this comparison.
 
@@ -98,16 +98,16 @@ Timing includes native startup, counting, output writing and Griffin's bigWig-to
 
 The tables below contain no measured results. Fill them from the saved concordance metrics and completed timing/accounting records.
 
-| Group | cfDNAlab eligible sites / Griffin listed sites | Pearson r / r squared, 15 bp | MAE / RMSE, mean-one | Max. difference | Mean midpoint density, cfDNAlab / Griffin |
-| --- | --- | --- | --- | --- | --- |
-| [group] | [ ] | [ ] | [ ] / [ ] | [ ] | [ ] / [ ] |
+| Group   | cfDNAlab eligible sites / Griffin listed sites | Pearson r / r squared, 15 bp | MAE / RMSE, mean-one | Max. difference | Mean midpoint density, cfDNAlab / Griffin |
+| ------- | ---------------------------------------------- | ---------------------------- | -------------------- | --------------- | ----------------------------------------- |
+| [group] | [ ]                                            | [ ]                          | [ ] / [ ]            | [ ]             | [ ] / [ ]                                 |
 
 Expected differences: even-length midpoint choices, actual paired spans versus TLEN, filtering, and Griffin's five-decimal output. Coordinate axes must agree. The cfDNAlab count is eligible intervals. The Griffin count is sites in its selected site list, including masked sites.
 
-| Tool | Cores | Warmups / measured | Mean process+flush, s | SD seconds | Slurm peak, KiB |
-| --- | --- | --- | --- | --- | --- |
-| cfDNAlab | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] |
-| Griffin v0.2.0 | 1 / 4 / 12 / 32, separate jobs | 1000-site demo / 1 full-input each | [ ] | NA | [ ] |
+| Tool           | Cores                          | Warmups / measured                 | Mean process+flush, s | SD seconds | Slurm peak, KiB |
+| -------------- | ------------------------------ | ---------------------------------- | --------------------- | ---------- | --------------- |
+| cfDNAlab       | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each                         | [ ]                   | [ ]        | [ ]             |
+| Griffin v0.2.0 | 1 / 4 / 12 / 32, separate jobs | 1000-site demo / 1 full-input each | [ ]                   | NA         | [ ]             |
 
 Expand the timing rows to a core budget per row for the final A4 supplement. Report the shared site set, groups, window width, 15 bp resolution and 100-200 bp length range alongside the table, and place the workload notes below it.
 

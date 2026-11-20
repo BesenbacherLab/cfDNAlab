@@ -73,9 +73,7 @@ def read_samtools(directory):
     """
     with (directory / "stats.txt").open() as source:
         entries = [
-            line.rstrip("\n").split("\t")
-            for line in source
-            if line.startswith("IS\t")
+            line.rstrip("\n").split("\t") for line in source if line.startswith("IS\t")
         ]
     if not entries:
         raise ValueError("samtools did not report an IS histogram")
@@ -181,8 +179,10 @@ def summarize_profile(counts, lengths):
     frequencies = counts / total
     summaries = {
         "mean_bp": checked_metric(
-            float(np.dot(lengths, frequencies)), "mean fragment length",
-            minimum=float(lengths[0]), maximum=float(lengths[-1]),
+            float(np.dot(lengths, frequencies)),
+            "mean fragment length",
+            minimum=float(lengths[0]),
+            maximum=float(lengths[-1]),
         ),
         "mode_bp": int(lengths[np.argmax(counts)]),
         "short_fraction": checked_metric(
@@ -270,7 +270,8 @@ def main():
                     left_total - right_total, "net count difference", minimum=None
                 ),
                 "sum_abs_count_difference": checked_metric(
-                    float(np.abs(count_difference).sum()), "sum of absolute count differences"
+                    float(np.abs(count_difference).sum()),
+                    "sum of absolute count differences",
                 ),
                 "mae_counts": checked_metric(
                     float(np.abs(count_difference).mean()), "count MAE"
@@ -279,7 +280,9 @@ def main():
                     float(np.sqrt(np.mean(count_difference**2))), "count RMSE"
                 ),
                 "fraction_identical_bins": checked_metric(
-                    float(np.mean(count_difference == 0)), "identical bin fraction", maximum=1.0
+                    float(np.mean(count_difference == 0)),
+                    "identical bin fraction",
+                    maximum=1.0,
                 ),
                 "status": "zero-count-profile",
             }
@@ -318,7 +321,8 @@ def main():
             ):
                 row[metric] = checked_metric(row[metric], metric, maximum=1.0)
             row["wasserstein_bp"] = checked_metric(
-                row["wasserstein_bp"], "Wasserstein distance",
+                row["wasserstein_bp"],
+                "Wasserstein distance",
                 maximum=float(lengths[-1] - lengths[0]),
             )
         writer.writerow(row)

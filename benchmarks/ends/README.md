@@ -6,10 +6,10 @@ The main comparison uses all 256 inward-oriented 5' 4-mers, MAPQ >=30 and fragme
 
 ## Tools and matching settings
 
-| CLI tool | Native command and settings | Closest cfDNAlab settings | Expected differences |
-| --- | --- | --- | --- |
-| FinaleToolkit `d16632ec` | `end-motifs BAM REF -k 4 --strand both --min-length 30 --max-length 1000 --min-mapq 30 --threads C` | Reference/aligned cfDNAlab with matching bounds | Applies inclusive length bounds and midpoint window ownership. Proper read1/TLEN selection remains native. |
-| cfDNAPro 1.7.4 | Curated `readBam()` with explicit MAPQ/flag selection, user-side inclusive R width subsetting, then `callMotif(motif_type="s", motif_length=4)` | Reference/aligned cfDNAlab, normal pairs/all contigs, matching MAPQ/length bounds except cfDNAPro reference compatibility | Leftmost reference bases only. Uses the selected bundled BSgenome reference and native pair/orientation/reference-bound checks. The reference manifest is retained. Comparison against both ends assumes mirrored side frequencies. |
+| CLI tool                 | Native command and settings                                                                                                                     | Closest cfDNAlab settings                                                                                                 | Expected differences                                                                                                                                                                                                                |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| FinaleToolkit `d16632ec` | `end-motifs BAM REF -k 4 --strand both --min-length 30 --max-length 1000 --min-mapq 30 --threads C`                                             | Reference/aligned cfDNAlab with matching bounds                                                                           | Applies inclusive length bounds and midpoint window ownership. Proper read1/TLEN selection remains native.                                                                                                                          |
+| cfDNAPro 1.7.4           | Curated `readBam()` with explicit MAPQ/flag selection, user-side inclusive R width subsetting, then `callMotif(motif_type="s", motif_length=4)` | Reference/aligned cfDNAlab, normal pairs/all contigs, matching MAPQ/length bounds except cfDNAPro reference compatibility | Leftmost reference bases only. Uses the selected bundled BSgenome reference and native pair/orientation/reference-bound checks. The reference manifest is retained. Comparison against both ends assumes mirrored side frequencies. |
 
 ### FinaleToolkit differences
 
@@ -41,10 +41,10 @@ Full runs automatically write `concordance.tsv` after all tool attempts finish, 
 
 The cfDNAlab run labels select the timing configuration and its proper-pair concordance check:
 
-| Run label | Configuration |
-| --- | --- |
-| `cfdnalab-reference` | Reference bases, aligned boundaries, normal pairing, all BAM contigs. |
-| `cfdnalab-reference-proper` | Same, adding `--require-proper-pair` as a diagnostic comparison. |
+| Run label                   | Configuration                                                         |
+| --------------------------- | --------------------------------------------------------------------- |
+| `cfdnalab-reference`        | Reference bases, aligned boundaries, normal pairing, all BAM contigs. |
+| `cfdnalab-reference-proper` | Same, adding `--require-proper-pair` as a diagnostic comparison.      |
 
 For full runs, the submission launcher reserves an exclusive node and all its memory. The runner stages input copies and environments locally and uses sequential `srun --jobid` steps with the requested binding. It records the actual hostname and logical/physical CPU IDs and rejects unexpected placement. Hard CPU confinement also depends on the cluster's Slurm cgroup configuration. Source files are not modified and no sample is downloaded.
 
@@ -56,20 +56,20 @@ The comparator reports Pearson/Spearman r, maximum absolute log2 ratio for motif
 
 The tables below contain no measured results. Fill them from the saved concordance metrics and completed timing/accounting records.
 
-| Tool comparison | k | Pearson r | MAE / RMSE | Max. diff. / TV | Expected differences |
-| --- | --- | --- | --- | --- | --- |
-| cfDNAlab reference/proper vs FinaleToolkit `d16632ec` | 4 | [ ] | [ ] / [ ] | [ ] / [ ] | Both-mate filtering, actual span vs TLEN, CIGAR and query boundaries. |
-| cfDNAlab reference/native vs FinaleToolkit `d16632ec` | 4 | [ ] | [ ] / [ ] | [ ] / [ ] | Above differences plus proper-pair selection. |
-| cfDNAlab reference/native vs cfDNAPro left | 4 | [ ] | [ ] / [ ] | [ ] / [ ] | Approximate side mirroring, reference identity and native selection. |
+| Tool comparison                                       | k   | Pearson r | MAE / RMSE | Max. diff. / TV | Expected differences                                                  |
+| ----------------------------------------------------- | --- | --------- | ---------- | --------------- | --------------------------------------------------------------------- |
+| cfDNAlab reference/proper vs FinaleToolkit `d16632ec` | 4   | [ ]       | [ ] / [ ]  | [ ] / [ ]       | Both-mate filtering, actual span vs TLEN, CIGAR and query boundaries. |
+| cfDNAlab reference/native vs FinaleToolkit `d16632ec` | 4   | [ ]       | [ ] / [ ]  | [ ] / [ ]       | Above differences plus proper-pair selection.                         |
+| cfDNAlab reference/native vs cfDNAPro left            | 4   | [ ]       | [ ] / [ ]  | [ ] / [ ]       | Approximate side mirroring, reference identity and native selection.  |
 
 All rows request all contigs, MAPQ >=30 and inclusive lengths 30-1000 bp, with the exceptions noted.
 
-| Tool / configuration | Cores | Warmups / measured | Mean process+flush, s | SD seconds | Slurm peak, KiB | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| cfDNAlab reference/native | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] | 4-mers, normal pairing. |
-| cfDNAlab reference/proper | 32 | 0 / 1 | Not a timing result | Not a timing result | [ ] | Concordance diagnostic only, flag 0x2 required. |
-| FinaleToolkit `d16632ec` | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] | 4-mers, native inclusive length bounds. |
-| cfDNAPro 1.7.4 | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] | Reference-derived left motifs, full BAM-to-profile process. No native thread argument. |
+| Tool / configuration      | Cores                          | Warmups / measured | Mean process+flush, s | SD seconds          | Slurm peak, KiB | Notes                                                                                  |
+| ------------------------- | ------------------------------ | ------------------ | --------------------- | ------------------- | --------------- | -------------------------------------------------------------------------------------- |
+| cfDNAlab reference/native | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each         | [ ]                   | [ ]                 | [ ]             | 4-mers, normal pairing.                                                                |
+| cfDNAlab reference/proper | 32                             | 0 / 1              | Not a timing result   | Not a timing result | [ ]             | Concordance diagnostic only, flag 0x2 required.                                        |
+| FinaleToolkit `d16632ec`  | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each         | [ ]                   | [ ]                 | [ ]             | 4-mers, native inclusive length bounds.                                                |
+| cfDNAPro 1.7.4            | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each         | [ ]                   | [ ]                 | [ ]             | Reference-derived left motifs, full BAM-to-profile process. No native thread argument. |
 
 Expand timing rows to a core budget per row for the final A4 supplementary table. Keep long notes below the table if needed. GNU time's maximum RSS is not the simultaneous total memory of a multiprocessing tree. Retain the native CLI versions and dependency environment archives with the benchmark record.
 

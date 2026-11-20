@@ -20,23 +20,23 @@ Sources: [runner](coverage/benchmark_coverage.sh), [commands](coverage/commands.
 
 ### Methods
 
-| Method | Configuration and native output |
-| --- | --- |
-| `cfdnalab-fragment` | `fcoverage` including inter-mate gaps, normal pairs/all contigs. `fcoverage.per_position.bedgraph.zst` |
-| `cfdnalab-fragment-proper` | Same plus `--require-proper-pair` |
-| `cfdnalab` | `fcoverage --ignore-gap`, paired read depth with overlap merged |
-| `cfdnalab-autosomes` | Read-depth configuration restricted to actual BAM autosomes |
-| `mosdepth-fragment` | `--fragment-mode --include-flag 1 --flag 3852`, requested MAPQ/lengths. `coverage.per-base.bed.gz` |
-| `mosdepth` | Same native filters without fragment mode |
-| `samtools-depth` | `depth -s -q 0 -Q MAPQ -G 3852 --require-flags 1` with HTSlib inclusive absolute TLEN bounds, uncompressed positions |
-| `pandepth` | `-a -q MAPQ -x 3852 -t CORES`, compressed SiteDepth and summaries |
-| `cfdnalab-regions` | `fcoverage --ignore-gap --by-size 500000 --per-window total`, requested MAPQ/lengths/all contigs. `fcoverage.total.tsv.zst` |
-| `mosdepth-regions` | Ordinary mosdepth filters plus `--by 500000 --no-per-base`, `MOSDEPTH_PRECISION=5`. `coverage.regions.bed.gz` |
-| `samtools-regions` | `bedcov -j -Q MAPQ -G 3852`, HTSlib paired/TLEN filter without threads. `samtools.bedcov.tsv` |
-| `pandepth-regions` | `-w 500000` native fixed windows, `-q MAPQ -x 3852 -t CORES`, no `-a`. `pandepth.win.stat.gz` |
-| `cfdnalab-region-counts` | `fcoverage --by-size 500000 --per-window total --normalize-by-length`, requested MAPQ/lengths, all contigs. `length_normalized.fcoverage.total.tsv.zst` |
-| `cfdnalab-region-counts-proper` | Same normalized totals plus proper-pair requirement |
-| `finaletoolkit-coverage` | `coverage` with native midpoint assignment and unit scale, requested MAPQ/lengths, no normalization. Compressed BED |
+| Method                          | Configuration and native output                                                                                                                         |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cfdnalab-fragment`             | `fcoverage` including inter-mate gaps, normal pairs/all contigs. `fcoverage.per_position.bedgraph.zst`                                                  |
+| `cfdnalab-fragment-proper`      | Same plus `--require-proper-pair`                                                                                                                       |
+| `cfdnalab`                      | `fcoverage --ignore-gap`, paired read depth with overlap merged                                                                                         |
+| `cfdnalab-autosomes`            | Read-depth configuration restricted to actual BAM autosomes                                                                                             |
+| `mosdepth-fragment`             | `--fragment-mode --include-flag 1 --flag 3852`, requested MAPQ/lengths. `coverage.per-base.bed.gz`                                                      |
+| `mosdepth`                      | Same native filters without fragment mode                                                                                                               |
+| `samtools-depth`                | `depth -s -q 0 -Q MAPQ -G 3852 --require-flags 1` with HTSlib inclusive absolute TLEN bounds, uncompressed positions                                    |
+| `pandepth`                      | `-a -q MAPQ -x 3852 -t CORES`, compressed SiteDepth and summaries                                                                                       |
+| `cfdnalab-regions`              | `fcoverage --ignore-gap --by-size 500000 --per-window total`, requested MAPQ/lengths/all contigs. `fcoverage.total.tsv.zst`                             |
+| `mosdepth-regions`              | Ordinary mosdepth filters plus `--by 500000 --no-per-base`, `MOSDEPTH_PRECISION=5`. `coverage.regions.bed.gz`                                           |
+| `samtools-regions`              | `bedcov -j -Q MAPQ -G 3852`, HTSlib paired/TLEN filter without threads. `samtools.bedcov.tsv`                                                           |
+| `pandepth-regions`              | `-w 500000` native fixed windows, `-q MAPQ -x 3852 -t CORES`, no `-a`. `pandepth.win.stat.gz`                                                           |
+| `cfdnalab-region-counts`        | `fcoverage --by-size 500000 --per-window total --normalize-by-length`, requested MAPQ/lengths, all contigs. `length_normalized.fcoverage.total.tsv.zst` |
+| `cfdnalab-region-counts-proper` | Same normalized totals plus proper-pair requirement                                                                                                     |
+| `finaletoolkit-coverage`        | `coverage` with native midpoint assignment and unit scale, requested MAPQ/lengths, no normalization. Compressed BED                                     |
 
 Choose methods explicitly through `BENCH_METHODS`. A complete whole-reference baseline contains `cfdnalab-fragment`, `mosdepth-fragment`, `cfdnalab`, `mosdepth`, `samtools-depth`, `pandepth`, `cfdnalab-regions`, `mosdepth-regions`, `samtools-regions`, `pandepth-regions`, `cfdnalab-region-counts`, `finaletoolkit-coverage`, split into feasible jobs at each core setting. The `cfdnalab-autosomes` coverage run additionally measures cfDNAlab's usual chromosome scope. The two proper-pair diagnostics run once each at 32 cores for concordance only. Normal configurations supply timing results at all four core settings. Every available native thread/worker option receives the allocated core count directly, including the decoding options in mosdepth and samtools.
 
@@ -71,17 +71,17 @@ RMSE, signed mean, identical fraction, nonzero-union metrics, base-resolution Pe
 
 Segment weights are genomic lengths and signed differences are left minus right:
 
-| Fields | Meaning |
-| --- | --- |
-| `mae` | **Primary:** base-resolution mean absolute depth difference |
-| `bases`, `fraction_identical` | Evaluated bases and exact equal-depth fraction |
-| `rmse` | Base-resolution root mean squared depth difference |
-| `mean_signed_difference` | Base-weighted mean left minus right |
-| `fraction_left_below`, `fraction_left_above` | Base fractions with negative/positive differences |
-| `left_integrated_depth`, `right_integrated_depth` | Sum of depth times segment length |
-| `nonzero_union_bases` | Bases with either depth nonzero |
-| `union_fraction_identical`, `union_mae`, `union_rmse` | Nonzero-union metrics, `NA` for empty union |
-| `pearson_r_1bp` | Pearson correlation of individual-base depths |
+| Fields                                                | Meaning                                                     |
+| ----------------------------------------------------- | ----------------------------------------------------------- |
+| `mae`                                                 | **Primary:** base-resolution mean absolute depth difference |
+| `bases`, `fraction_identical`                         | Evaluated bases and exact equal-depth fraction              |
+| `rmse`                                                | Base-resolution root mean squared depth difference          |
+| `mean_signed_difference`                              | Base-weighted mean left minus right                         |
+| `fraction_left_below`, `fraction_left_above`          | Base fractions with negative/positive differences           |
+| `left_integrated_depth`, `right_integrated_depth`     | Sum of depth times segment length                           |
+| `nonzero_union_bases`                                 | Bases with either depth nonzero                             |
+| `union_fraction_identical`, `union_mae`, `union_rmse` | Nonzero-union metrics, `NA` for empty union                 |
+| `pearson_r_1bp`                                       | Pearson correlation of individual-base depths               |
 
 Pearson uses online covariance/variance weighted by genomic run lengths. This equals correlation over individual bases without expanding genomic arrays. Constant profiles have `NA` correlation, including equal zero profiles. Tile-split equal runs do not create errors.
 
@@ -105,14 +105,14 @@ Regional read-depth inputs use cfDNAlab total_coverage, samtools bedcov's final 
 
 Sources: [runner](lengths/benchmark_lengths.sh), [commands](lengths/commands.sh), [R call](lengths/cfdnapro_lengths.R), [comparator](lengths/compare_lengths.py), [definition notes](lengths/README.md).
 
-| Method | Configuration |
-| --- | --- |
-| `cfdnalab` | Global `lengths --length-bins MIN:MAX+1:1 --indel-mode ignore --clip-mode aligned`, all contigs |
-| `cfdnalab-proper` | All-contig histogram plus proper-pair requirement |
-| `cfdnapro` | Explicit `readBam(curate_start_and_end=TRUE)`, requested MAPQ and paired/mapped/mate-mapped/nonsecondary/nonsupplementary/nonduplicate/QC-pass flags, then `callLength(frag_obj=...)` |
-| `finaletoolkit` | `frag-length-bins --bin-size 1` with requested inclusive bounds/MAPQ |
-| `samtools` | Full `stats`, `filter=mapq >= MAPQ`, `-f 1 -F 3852 -m 1 -i MAX+1` |
-| `picard` | Timed standalone `picard -Xmx2g CollectInsertSizeMetrics I=sample.bam O=metrics.txt HISTOGRAM_WIDTH=MAX`, no MAPQ/QC-fail prefilter or PDF. Concordance reads the untimed filtered `concordance.metrics.txt` |
+| Method            | Configuration                                                                                                                                                                                                |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `cfdnalab`        | Global `lengths --length-bins MIN:MAX+1:1 --indel-mode ignore --clip-mode aligned`, all contigs                                                                                                              |
+| `cfdnalab-proper` | All-contig histogram plus proper-pair requirement                                                                                                                                                            |
+| `cfdnapro`        | Explicit `readBam(curate_start_and_end=TRUE)`, requested MAPQ and paired/mapped/mate-mapped/nonsecondary/nonsupplementary/nonduplicate/QC-pass flags, then `callLength(frag_obj=...)`                        |
+| `finaletoolkit`   | `frag-length-bins --bin-size 1` with requested inclusive bounds/MAPQ                                                                                                                                         |
+| `samtools`        | Full `stats`, `filter=mapq >= MAPQ`, `-f 1 -F 3852 -m 1 -i MAX+1`                                                                                                                                            |
+| `picard`          | Timed standalone `picard -Xmx2g CollectInsertSizeMetrics I=sample.bam O=metrics.txt HISTOGRAM_WIDTH=MAX`, no MAPQ/QC-fail prefilter or PDF. Concordance reads the untimed filtered `concordance.metrics.txt` |
 
 Choose methods explicitly through `BENCH_METHODS`. The normal timing matrix contains cfDNAlab, cfDNAPro, FinaleToolkit, samtools and Picard. The proper-pair cfDNAlab diagnostic runs once at 32 cores for concordance with FinaleToolkit. samtools is labeled "samtools stats (full QC report, insert-size section extracted)". Plain Picard and R/container startup remain timed. After timing, the common-filter `samtools view -@ CORES -u -q MAPQ -f 1 -F 3852 | picard -Xmx2g ...` pipeline generates Picard's concordance histogram once. The timed native histogram is retained separately. Picard's PDF is omitted, while cfDNAlab's native QC plot stays timed.
 
@@ -132,12 +132,12 @@ Sources: [runner](ends/benchmark_end_motifs.sh), [commands](ends/commands.sh), [
 
 cfDNAlab uses `ends --k-inside K --k-outside 0 --all-motifs` with requested filters:
 
-| Method | Source, clipping, pairs and scope |
-| --- | --- |
-| `cfdnalab-reference` | Reference, aligned boundaries, normal pairs, all contigs |
-| `cfdnalab-reference-proper` | Same with proper pairs |
-| `finaletoolkit` | Reference `end-motifs --strand both`, requested K/bounds/MAPQ and allocated workers |
-| `cfdnapro` | Curated `readBam()` followed by reference-derived left-end `callMotif(motif_type="s")` |
+| Method                      | Source, clipping, pairs and scope                                                      |
+| --------------------------- | -------------------------------------------------------------------------------------- |
+| `cfdnalab-reference`        | Reference, aligned boundaries, normal pairs, all contigs                               |
+| `cfdnalab-reference-proper` | Same with proper pairs                                                                 |
+| `finaletoolkit`             | Reference `end-motifs --strand both`, requested K/bounds/MAPQ and allocated workers    |
+| `cfdnapro`                  | Curated `readBam()` followed by reference-derived left-end `callMotif(motif_type="s")` |
 
 The 4-mer timing comparison includes reference/native, FinaleToolkit and cfDNAPro. Reference/proper runs once at 32 cores for concordance with FinaleToolkit, outside timing summaries. `BENCH_METHODS` must be supplied explicitly. Both-end cfDNAlab/FinaleToolkit profiles and native left-end cfDNAPro profiles retain their end selection labels.
 

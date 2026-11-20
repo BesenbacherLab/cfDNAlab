@@ -158,9 +158,12 @@ def main():
             else:
                 # Separate logarithms avoid overflow in a ratio of positive frequencies
                 log_ratio = checked_metric(
-                    float(np.abs(
-                        np.log2(left_frequency[abundant]) - np.log2(right_frequency[abundant])
-                    ).max()),
+                    float(
+                        np.abs(
+                            np.log2(left_frequency[abundant])
+                            - np.log2(right_frequency[abundant])
+                        ).max()
+                    ),
                     "absolute motif log2 ratio",
                 )
         left_mds = motif_diversity(left_frequency)

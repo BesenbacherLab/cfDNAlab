@@ -35,7 +35,9 @@ from pathlib import Path
 def read_bam_contigs(path):
     """Return the BAM's contig lengths from a two-column chrom.sizes file."""
     with path.open() as source:
-        return {fields[0]: int(fields[1]) for fields in csv.reader(source, delimiter="\t")}
+        return {
+            fields[0]: int(fields[1]) for fields in csv.reader(source, delimiter="\t")
+        }
 
 
 def read_sites(path):
@@ -52,7 +54,13 @@ def read_sites(path):
             if not fields or fields[0].startswith("#"):
                 continue
             chromosome, start, end, group = fields[:4]
-            strand = fields[5] if len(fields) >= 6 else fields[4] if len(fields) == 5 else "."
+            strand = (
+                fields[5]
+                if len(fields) >= 6
+                else fields[4]
+                if len(fields) == 5
+                else "."
+            )
             rows.append((chromosome, int(start), int(end), group, 0, strand))
     if not rows:
         raise ValueError("No midpoint sites in the BED")
@@ -111,9 +119,13 @@ def write_griffin_demo(work, bam_contigs):
             demo_rows.append((row["Chrom"], int(row["position"]), "."))
     if len(demo_rows) != 1000:
         raise ValueError("Expected exactly 1000 sites in the pinned Griffin demo")
-    write_table(work / "warmup-sites.tsv", demo_rows, header=("Chrom", "position", "Strand"))
+    write_table(
+        work / "warmup-sites.tsv", demo_rows, header=("Chrom", "position", "Strand")
+    )
     with (work / "warmup-sites.yaml").open("w") as destination:
-        json.dump({"site_lists": {"CTCF-demo": str(work / "warmup-sites.tsv")}}, destination)
+        json.dump(
+            {"site_lists": {"CTCF-demo": str(work / "warmup-sites.tsv")}}, destination
+        )
     demo_chromosomes = sorted(set(row[0] for row in demo_rows))
     write_table(
         work / "warmup.chrom.sizes",
@@ -133,14 +145,18 @@ def write_unit_gc_bias(work, min_length, max_length):
         for fragment_length in range(min_length, max_length + 1)
         for gc_count in range(fragment_length + 1)
     ]
-    write_table(work / "unit_gc_bias.tsv", rows, header=("length", "num_GC", "smoothed_GC_bias"))
+    write_table(
+        work / "unit_gc_bias.tsv", rows, header=("length", "num_GC", "smoothed_GC_bias")
+    )
 
 
 def main():
     """Prepare both tools' site inputs and print the site summary."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("work_directory", type=Path)
-    parser.add_argument("--griffin", action="store_true", help="Also prepare Griffin's demo warmup")
+    parser.add_argument(
+        "--griffin", action="store_true", help="Also prepare Griffin's demo warmup"
+    )
     parser.add_argument("--min-length", type=int, required=True)
     parser.add_argument("--max-length", type=int, required=True)
     arguments = parser.parse_args()
@@ -159,13 +175,23 @@ def main():
     # Griffin sorts intervals lexicographically. Its bigWig header uses that same
     # contig order, so the exported entries stay correctly ordered
     chromosomes = sorted(set(row[0] for row in rows))
-    write_table(work / "chrom.sizes", [(chromosome, bam_contigs[chromosome]) for chromosome in chromosomes])
+    write_table(
+        work / "chrom.sizes",
+        [(chromosome, bam_contigs[chromosome]) for chromosome in chromosomes],
+    )
 
     if arguments.griffin:
         write_griffin_demo(work, bam_contigs)
         write_unit_gc_bias(work, arguments.min_length, arguments.max_length)
 
-    print(window_width, half_width, len(rows), group_count, ",".join(chromosomes), sep="\t")
+    print(
+        window_width,
+        half_width,
+        len(rows),
+        group_count,
+        ",".join(chromosomes),
+        sep="\t",
+    )
 
 
 if __name__ == "__main__":

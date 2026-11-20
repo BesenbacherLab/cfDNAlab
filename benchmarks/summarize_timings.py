@@ -113,7 +113,9 @@ def read_runs(paths, accounting):
                 identifiers.add(unique_identifier)
                 record = accounting.get(step_identifier, {})
                 if record.get("NTasks", "") not in ("", "1"):
-                    raise ValueError(f"Expected a single-task Slurm step: {step_identifier}")
+                    raise ValueError(
+                        f"Expected a single-task Slurm step: {step_identifier}"
+                    )
                 row["slurm_max_rss_kib"] = memory_kib(record.get("MaxRSS", ""))
                 row["slurm_state"] = record.get("State") or "NA"
                 row["slurm_exit_code"] = record.get("ExitCode") or "NA"
@@ -159,7 +161,9 @@ def distribution(values):
         lower_quartile = upper_quartile = values[0]
         standard_deviation = "NA"
     else:
-        lower_quartile, _, upper_quartile = statistics.quantiles(values, n=4, method="inclusive")
+        lower_quartile, _, upper_quartile = statistics.quantiles(
+            values, n=4, method="inclusive"
+        )
         standard_deviation = statistics.stdev(values)
     return {
         "n": len(values),
@@ -177,6 +181,7 @@ def group_runs_by_settings(runs, setting_columns):
     A setting absent from a feature's TSV is treated as NA. Each group contains
     the setting values and an iterator over the matching runs.
     """
+
     def setting_values(run):
         return tuple(run.get(column, "NA") for column in setting_columns)
 
@@ -240,7 +245,9 @@ def summarize(runs, estimate=False):
         for statistic in STATISTIC_NAMES
     ]
     summaries = []
-    for settings, matching_runs in group_runs_by_settings(selected_runs, setting_columns):
+    for settings, matching_runs in group_runs_by_settings(
+        selected_runs, setting_columns
+    ):
         # Reuse the same repetitions for each measurement without exhausting the iterator
         repetitions = list(matching_runs)
         summary = dict(zip(setting_columns, settings))
@@ -275,7 +282,9 @@ def pilot_budgets(runs, setting_columns, summaries, warmups, repetitions, margin
         raise ValueError("No pilot configurations found")
 
     budgets = []
-    for settings, matching_runs in group_runs_by_settings(debugging_runs, setting_columns):
+    for settings, matching_runs in group_runs_by_settings(
+        debugging_runs, setting_columns
+    ):
         attempts = list(matching_runs)
         summary = summary_by_settings.get(settings)
         failures = sum(not successful(run) for run in attempts)
@@ -419,7 +428,12 @@ def main():
             repetitions=arguments.repetitions,
             margin=arguments.margin,
         )
-        summary_columns += ["planned_runs", "pilot_failures", "budget_minutes", "budget_status"]
+        summary_columns += [
+            "planned_runs",
+            "pilot_failures",
+            "budget_minutes",
+            "budget_status",
+        ]
     write_tsv(sys.stdout, summary_columns, output_rows)
 
     # Keep every original row, including warmups and failures, in the optional

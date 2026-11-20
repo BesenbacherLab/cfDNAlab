@@ -6,13 +6,13 @@ Normal timing runs use 1, 4, 12 and 32 cores. The four proper-pair checks run on
 
 ## Shared settings and timing
 
-| Setting | Coverage and lengths | End motifs | Midpoints |
-| --- | --- | --- | --- |
-| Allocated cores | 1, 4, 12 or 32, in separate jobs | Same | Same |
-| Minimum MAPQ | 30, except native timed Picard | 30 | 20 for profiling and GC estimation |
-| Included fragment lengths | 30-1000 bp inclusive | Requested 30-1000 bp inclusive | 100-200 bp inclusive for profiling |
-| Chromosome selection | All BAM contigs, plus the autosome-only coverage run | All BAM contigs, except cfDNAPro reference compatibility | Chromosomes in the supplied site set |
-| Repetitions | 1 warmup, then 3 measurements | Same | Same for cfDNAlab. Griffin uses an untimed 1000-site demo, then a single measurement per core setting |
+| Setting                   | Coverage and lengths                                 | End motifs                                               | Midpoints                                                                                             |
+| ------------------------- | ---------------------------------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Allocated cores           | 1, 4, 12 or 32, in separate jobs                     | Same                                                     | Same                                                                                                  |
+| Minimum MAPQ              | 30, except native timed Picard                       | 30                                                       | 20 for profiling and GC estimation                                                                    |
+| Included fragment lengths | 30-1000 bp inclusive                                 | Requested 30-1000 bp inclusive                           | 100-200 bp inclusive for profiling                                                                    |
+| Chromosome selection      | All BAM contigs, plus the autosome-only coverage run | All BAM contigs, except cfDNAPro reference compatibility | Chromosomes in the supplied site set                                                                  |
+| Repetitions               | 1 warmup, then 3 measurements                        | Same                                                     | Same for cfDNAlab. Griffin uses an untimed 1000-site demo, then a single measurement per core setting |
 
 The variables in the calls correspond to the job settings:
 
@@ -208,11 +208,11 @@ cfDNAlab gives each fragment total weight 1 before output rounding, split across
 
 ### Additional coverage configurations
 
-| Method | Exact change to the corresponding call above |
-| --- | --- |
-| `cfdnalab-autosomes` | Read-depth call, replacing `--chromosomes all` with `--chromosomes "$autosomes"` |
-| `cfdnalab-fragment-proper` | Fragment-coverage call plus `--require-proper-pair` |
-| `cfdnalab-region-counts-proper` | Normalized regional-count call plus `--require-proper-pair` |
+| Method                          | Exact change to the corresponding call above                                     |
+| ------------------------------- | -------------------------------------------------------------------------------- |
+| `cfdnalab-autosomes`            | Read-depth call, replacing `--chromosomes all` with `--chromosomes "$autosomes"` |
+| `cfdnalab-fragment-proper`      | Fragment-coverage call plus `--require-proper-pair`                              |
+| `cfdnalab-region-counts-proper` | Normalized regional-count call plus `--require-proper-pair`                      |
 
 `autosomes` is the comma-separated set of BAM contigs named `chr1` through `chr22`, or `1` through `22`.
 

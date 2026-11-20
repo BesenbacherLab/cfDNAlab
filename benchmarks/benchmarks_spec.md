@@ -6,20 +6,20 @@ The benchmark runs selected native commands repeatedly, records timing and Slurm
 
 ## Implementation
 
-| Responsibility | Source |
-| --- | --- |
-| Installer and explicit reinstall controls | [install_tools.sh](install_tools.sh) |
-| Shared setting checks, staging, run records and the concordance call | [common.sh](common.sh) |
-| Placement check and measurement inside each Slurm step | [measure_command.sh](measure_command.sh) |
-| Coverage job, and its native commands and saved files | [benchmark_coverage.sh](coverage/benchmark_coverage.sh), [commands.sh](coverage/commands.sh) |
-| Lengths job, and its native commands and saved files | [benchmark_lengths.sh](lengths/benchmark_lengths.sh), [commands.sh](lengths/commands.sh) |
-| End-motif job, and its native commands and saved files | [benchmark_end_motifs.sh](ends/benchmark_end_motifs.sh), [commands.sh](ends/commands.sh) |
-| Midpoint job, and its native commands and saved files | [benchmark_midpoints.sh](midpoints/benchmark_midpoints.sh), [commands.sh](midpoints/commands.sh) |
-| Summaries, accounting join and estimates | [summarize_timings.py](summarize_timings.py) |
-| BAM preparation utility | [prepare_snyder.py](data/prepare_snyder.py) |
-| Native commands, saved files, measurement and whole-job tests | [test_runners.py](tests/test_runners.py) |
-| Coverage comparison, installation and input regression tests | [test_benchmarks.py](tests/test_benchmarks.py) |
-| Submission, setup checks, concordance, pilot budgets and native-format regression tests | [test_review_regressions.py](tests/test_review_regressions.py) |
+| Responsibility                                                                          | Source                                                                                           |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Installer and explicit reinstall controls                                               | [install_tools.sh](install_tools.sh)                                                             |
+| Shared setting checks, staging, run records and the concordance call                    | [common.sh](common.sh)                                                                           |
+| Placement check and measurement inside each Slurm step                                  | [measure_command.sh](measure_command.sh)                                                         |
+| Coverage job, and its native commands and saved files                                   | [benchmark_coverage.sh](coverage/benchmark_coverage.sh), [commands.sh](coverage/commands.sh)     |
+| Lengths job, and its native commands and saved files                                    | [benchmark_lengths.sh](lengths/benchmark_lengths.sh), [commands.sh](lengths/commands.sh)         |
+| End-motif job, and its native commands and saved files                                  | [benchmark_end_motifs.sh](ends/benchmark_end_motifs.sh), [commands.sh](ends/commands.sh)         |
+| Midpoint job, and its native commands and saved files                                   | [benchmark_midpoints.sh](midpoints/benchmark_midpoints.sh), [commands.sh](midpoints/commands.sh) |
+| Summaries, accounting join and estimates                                                | [summarize_timings.py](summarize_timings.py)                                                     |
+| BAM preparation utility                                                                 | [prepare_snyder.py](data/prepare_snyder.py)                                                      |
+| Native commands, saved files, measurement and whole-job tests                           | [test_runners.py](tests/test_runners.py)                                                         |
+| Coverage comparison, installation and input regression tests                            | [test_benchmarks.py](tests/test_benchmarks.py)                                                   |
+| Submission, setup checks, concordance, pilot budgets and native-format regression tests | [test_review_regressions.py](tests/test_review_regressions.py)                                   |
 
 The [benchmark README](README.md#run-the-benchmarks) lists the tools and core settings to run, with commented commands for submitting jobs and collecting results.
 
@@ -31,19 +31,19 @@ Installation targets Linux x86_64 with Bash 4 or later. Conda, Apptainer, Git, w
 
 Before invoking Conda, the installer sets `CONDA_PKGS_DIRS=<root>/cache/conda/pkgs` and `CONDA_ENVS_PATH=<root>/envs`. Pip, Cargo, Apptainer and Matplotlib caches also use `<root>/cache`. Apptainer and XDG configuration use `<root>/config`, and XDG application data uses `<root>/share`. `TMPDIR`, `TMP`, `TEMP` and `APPTAINER_TMPDIR` use `<root>/tmp`, which is also bound as `/tmp` for the installer's container version checks. wget keeps its HTTPS host records under `<root>/cache`. Conda environment registration in the home directory is disabled, and Python bytecode caching in the existing Conda installation is disabled. Pip user installs are disabled and inherited pip prefix/target overrides are removed. These settings apply only to the installer and its children. Existing files in other caches are not moved or deleted.
 
-| Installation ID | Requested version/source | Main retained artifact |
-| --- | --- | --- |
-| `packaging` | conda-pack 0.9.2, Python 3.11 | `envs/packaging/bin/conda-pack` |
-| `cfdnalab` | Current checkout, version from Cargo.toml | `envs/cfdnalab/bin/cfdna`, `cfdnalab-build.tsv` |
-| `mosdepth` | 0.3.14 | Authors' standalone executable |
-| `samtools` | 1.25 | Conda executable and `samtools.tar.gz` |
-| `pandepth` | 2.26 | Authors' Linux release executable |
-| `finaletoolkit` | Commit `d16632ec5ae8999e774234457f6b0f9405c8f590`, Python 3.11 | Conda executable and `finaletoolkit.tar.gz` |
-| `cfdnapro` | 1.7.4, source `ab9eeb166b8614b9ec2ce4ceda190dc295c65a7c` | Apptainer image pinned by digest |
-| `picard` | 3.5.0, Java 17 | Conda launcher and `picard.tar.gz` |
-| `griffin` | v0.2.0 | Unmodified scripts and `griffin.tar.gz` |
-| `comparison` | Local py-cfdnalab checkout, Python 3.11 and zstd | `envs/comparison/bin/python` |
-| `snyder-preparation` | pysam 0.24.1, Python 3.11 | `envs/snyder-preparation/bin/python` |
+| Installation ID      | Requested version/source                                       | Main retained artifact                          |
+| -------------------- | -------------------------------------------------------------- | ----------------------------------------------- |
+| `packaging`          | conda-pack 0.9.2, Python 3.11                                  | `envs/packaging/bin/conda-pack`                 |
+| `cfdnalab`           | Current checkout, version from Cargo.toml                      | `envs/cfdnalab/bin/cfdna`, `cfdnalab-build.tsv` |
+| `mosdepth`           | 0.3.14                                                         | Authors' standalone executable                  |
+| `samtools`           | 1.25                                                           | Conda executable and `samtools.tar.gz`          |
+| `pandepth`           | 2.26                                                           | Authors' Linux release executable               |
+| `finaletoolkit`      | Commit `d16632ec5ae8999e774234457f6b0f9405c8f590`, Python 3.11 | Conda executable and `finaletoolkit.tar.gz`     |
+| `cfdnapro`           | 1.7.4, source `ab9eeb166b8614b9ec2ce4ceda190dc295c65a7c`       | Apptainer image pinned by digest                |
+| `picard`             | 3.5.0, Java 17                                                 | Conda launcher and `picard.tar.gz`              |
+| `griffin`            | v0.2.0                                                         | Unmodified scripts and `griffin.tar.gz`         |
+| `comparison`         | Local py-cfdnalab checkout, Python 3.11 and zstd               | `envs/comparison/bin/python`                    |
+| `snyder-preparation` | pysam 0.24.1, Python 3.11                                      | `envs/snyder-preparation/bin/python`            |
 
 The cfDNAPro image digest is `sha256:26a28821a272856e77fdf3d13d902ce8ca5c1e60475b1d4f2f076ef2ac3e2b45`.
 
@@ -63,15 +63,15 @@ Picard's version probe accepts status 0 or 1 only with a `Version:3.5.0` field. 
 
 The installer saves the following exported paths in `tool_paths.sh`. The submission and collection command blocks load this file directly, before the user settings in `benchmarks/local_settings.sh`.
 
-| Variable loaded from `tool_paths.sh` | What it supplies |
-| --- | --- |
-| `BENCH_CFDNA`, `BENCH_MOSDEPTH`, `BENCH_PANDEPTH` | cfDNAlab, mosdepth and PanDepth executables |
-| `BENCH_SAMTOOLS_ARCHIVE`, `BENCH_FINALE_ARCHIVE`, `BENCH_PICARD_ARCHIVE`, `BENCH_GRIFFIN_ARCHIVE`, `BENCH_CFDNAPRO_IMAGE`, `BENCH_COMPARE_PYTHON` | Environment archives, cfDNAPro container image and Python for comparing outputs |
-| `BENCH_GRIFFIN_REF_DIR` | Griffin's bundled `Griffin-source/Ref` directory. All three midpoint jobs use its five exclusion BEDs, including the cfDNAlab jobs |
-| `BENCH_GRIFFIN_GC_REGIONS`, `BENCH_GRIFFIN_REF_GC` | Griffin's GC-estimation BED and reference GC tables, used by `griffin-gc` jobs |
-| `BENCH_GRIFFIN_MAPPABILITY_BW` | hg38 k100 Umap bigWig, downloaded by the installer. Griffin uses it to exclude bins containing positions with zero mappability. Mappability correction is disabled |
-| `BENCH_PREPARE_PYTHON` | Python with pysam for BAM preparation |
-| `BENCH_INSTALL_MANIFEST`, `BENCH_CFDNA_BUILD` | Installation and cfDNAlab build records copied into each job's results |
+| Variable loaded from `tool_paths.sh`                                                                                                              | What it supplies                                                                                                                                                   |
+| ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `BENCH_CFDNA`, `BENCH_MOSDEPTH`, `BENCH_PANDEPTH`                                                                                                 | cfDNAlab, mosdepth and PanDepth executables                                                                                                                        |
+| `BENCH_SAMTOOLS_ARCHIVE`, `BENCH_FINALE_ARCHIVE`, `BENCH_PICARD_ARCHIVE`, `BENCH_GRIFFIN_ARCHIVE`, `BENCH_CFDNAPRO_IMAGE`, `BENCH_COMPARE_PYTHON` | Environment archives, cfDNAPro container image and Python for comparing outputs                                                                                    |
+| `BENCH_GRIFFIN_REF_DIR`                                                                                                                           | Griffin's bundled `Griffin-source/Ref` directory. All three midpoint jobs use its five exclusion BEDs, including the cfDNAlab jobs                                 |
+| `BENCH_GRIFFIN_GC_REGIONS`, `BENCH_GRIFFIN_REF_GC`                                                                                                | Griffin's GC-estimation BED and reference GC tables, used by `griffin-gc` jobs                                                                                     |
+| `BENCH_GRIFFIN_MAPPABILITY_BW`                                                                                                                    | hg38 k100 Umap bigWig, downloaded by the installer. Griffin uses it to exclude bins containing positions with zero mappability. Mappability correction is disabled |
+| `BENCH_PREPARE_PYTHON`                                                                                                                            | Python with pysam for BAM preparation                                                                                                                              |
+| `BENCH_INSTALL_MANIFEST`, `BENCH_CFDNA_BUILD`                                                                                                     | Installation and cfDNAlab build records copied into each job's results                                                                                             |
 
 ### Resumption and explicit controls
 
@@ -131,31 +131,31 @@ Its own `timings.tsv`, exact command/logs, reference and blacklist checksums, be
 
 Submit from the repository root on the login node with `bash benchmarks/submit_benchmark.sh FEATURE [sbatch options]`, choosing `coverage`, `lengths`, `ends` or `midpoints`. This preserves `SLURM_SUBMIT_DIR` so it locates helpers. Nodes need Slurm, GNU time at `/usr/bin/time`, GNU coreutils, `ldd` and setup Python 3. Selected tool paths/archives and bundled Griffin reference paths come from the installer's `tool_paths.sh`.
 
-| Variable | Default and behavior |
-| --- | --- |
-| `BENCH_BAM` | Required existing BAM |
-| `BENCH_INDEX` | `<BENCH_BAM>.bai` |
-| `LOCAL_SCRATCH_VAR` | `TMPDIR`. Name of the variable supplying node-local scratch, such as `SLURM_TMPDIR`. Export the name at submission and resolve its value on the compute node. Require a valid variable name and a nonempty value naming an existing, writable directory |
-| `TMPDIR` | Each runner sets this to its working directory's `tmp/` for tool temporary files. The working directory is created below the directory supplied by `LOCAL_SCRATCH_VAR` |
-| `BENCH_RESULTS` | Required new results directory |
-| `BENCH_METHODS` | Required feature-specific space-separated method labels, without duplicates or a default |
-| `BENCH_CORES` | Required single positive core count per job. Planned settings: 1, 4, 12, 32 in separate jobs |
-| `BENCH_WARMUPS` | **1** per scheduled method/core. Griffin uses no full-input warmups |
-| `BENCH_REPETITIONS` | **3 measured** per scheduled method/core, except Griffin defaults to **1** |
-| `BENCH_PILOT` | `0`, or `1` for a shared-node submission with zero full-input warmups and one measurement. Griffin retains its short demo warmup |
-| `BENCH_RUN_TIMEOUT_SECONDS` | `0` disables timeouts. A positive integer enables GNU timeout with an additional 60-second kill grace |
-| `BENCH_SETUP_PYTHON` | `python3`, untimed setup/relocation only |
-| `BENCH_COMPARE_PYTHON` | Comparison Python printed by the installer. Required and checked before staging when multiple methods are selected |
-| `BENCH_EXPECTED_NODE` | Optional exact hostname check before staging |
-| `BENCH_MIN_MAPQ` | 30, or 20 for midpoints. Timed Picard applies no MAPQ threshold |
-| `BENCH_MIN_LENGTH`, `BENCH_MAX_LENGTH` | Inclusive 30-1000 bp, midpoint defaults 100-200 bp |
-| `BENCH_K` | Ends only, 4 with 3 also accepted |
-| `BENCH_GENOME` | cfDNAPro label, `hg38` |
-| `BENCH_FASTA_INDEX` | `<BENCH_REF_FASTA>.fai` for Griffin |
-| `BENCH_GRIFFIN_GC_REGIONS` | `griffin-gc` only. Installer-exported `Griffin-source/Ref/k100_minus_exclusion_lists.mappable_regions.hg38.bed`, already downloaded with Griffin |
-| `BENCH_REF_2BIT`, `BENCH_CFDNA_REF_GC` | `cfdnalab-gc` only. Matching reference 2bit and the package path published by the separate reference-preparation job. The package uses the same five exclusion BEDs as sample estimation and profiling |
-| `BENCH_GRIFFIN_REF_GC` | `griffin-gc` only. Installer-exported `Griffin-source/Ref/genome_GC_frequency`. Setup copies the bundled 15-500 bp tables for native GC estimation, independently of the profiling range |
-| `BENCH_INSTALL_MANIFEST`, `BENCH_CFDNA_BUILD` | Optional records copied beside results |
+| Variable                                      | Default and behavior                                                                                                                                                                                                                                    |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BENCH_BAM`                                   | Required existing BAM                                                                                                                                                                                                                                   |
+| `BENCH_INDEX`                                 | `<BENCH_BAM>.bai`                                                                                                                                                                                                                                       |
+| `LOCAL_SCRATCH_VAR`                           | `TMPDIR`. Name of the variable supplying node-local scratch, such as `SLURM_TMPDIR`. Export the name at submission and resolve its value on the compute node. Require a valid variable name and a nonempty value naming an existing, writable directory |
+| `TMPDIR`                                      | Each runner sets this to its working directory's `tmp/` for tool temporary files. The working directory is created below the directory supplied by `LOCAL_SCRATCH_VAR`                                                                                  |
+| `BENCH_RESULTS`                               | Required new results directory                                                                                                                                                                                                                          |
+| `BENCH_METHODS`                               | Required feature-specific space-separated method labels, without duplicates or a default                                                                                                                                                                |
+| `BENCH_CORES`                                 | Required single positive core count per job. Planned settings: 1, 4, 12, 32 in separate jobs                                                                                                                                                            |
+| `BENCH_WARMUPS`                               | **1** per scheduled method/core. Griffin uses no full-input warmups                                                                                                                                                                                     |
+| `BENCH_REPETITIONS`                           | **3 measured** per scheduled method/core, except Griffin defaults to **1**                                                                                                                                                                              |
+| `BENCH_PILOT`                                 | `0`, or `1` for a shared-node submission with zero full-input warmups and one measurement. Griffin retains its short demo warmup                                                                                                                        |
+| `BENCH_RUN_TIMEOUT_SECONDS`                   | `0` disables timeouts. A positive integer enables GNU timeout with an additional 60-second kill grace                                                                                                                                                   |
+| `BENCH_SETUP_PYTHON`                          | `python3`, untimed setup/relocation only                                                                                                                                                                                                                |
+| `BENCH_COMPARE_PYTHON`                        | Comparison Python printed by the installer. Required and checked before staging when multiple methods are selected                                                                                                                                      |
+| `BENCH_EXPECTED_NODE`                         | Optional exact hostname check before staging                                                                                                                                                                                                            |
+| `BENCH_MIN_MAPQ`                              | 30, or 20 for midpoints. Timed Picard applies no MAPQ threshold                                                                                                                                                                                         |
+| `BENCH_MIN_LENGTH`, `BENCH_MAX_LENGTH`        | Inclusive 30-1000 bp, midpoint defaults 100-200 bp                                                                                                                                                                                                      |
+| `BENCH_K`                                     | Ends only, 4 with 3 also accepted                                                                                                                                                                                                                       |
+| `BENCH_GENOME`                                | cfDNAPro label, `hg38`                                                                                                                                                                                                                                  |
+| `BENCH_FASTA_INDEX`                           | `<BENCH_REF_FASTA>.fai` for Griffin                                                                                                                                                                                                                     |
+| `BENCH_GRIFFIN_GC_REGIONS`                    | `griffin-gc` only. Installer-exported `Griffin-source/Ref/k100_minus_exclusion_lists.mappable_regions.hg38.bed`, already downloaded with Griffin                                                                                                        |
+| `BENCH_REF_2BIT`, `BENCH_CFDNA_REF_GC`        | `cfdnalab-gc` only. Matching reference 2bit and the package path published by the separate reference-preparation job. The package uses the same five exclusion BEDs as sample estimation and profiling                                                  |
+| `BENCH_GRIFFIN_REF_GC`                        | `griffin-gc` only. Installer-exported `Griffin-source/Ref/genome_GC_frequency`. Setup copies the bundled 15-500 bp tables for native GC estimation, independently of the profiling range                                                                |
+| `BENCH_INSTALL_MANIFEST`, `BENCH_CFDNA_BUILD` | Optional records copied beside results                                                                                                                                                                                                                  |
 
 Methods must be nonempty. Exactly one positive core count is required and must fit the allocation. Integer filters and repetitions are validated, measured repetitions must be positive, MAPQ is within 0-255, and fragment bounds satisfy `10 <= min <= max <= 50000`.
 
@@ -183,15 +183,15 @@ GNU time measures the native command or documented complete pipeline, including 
 
 After native success, a second timer measures `sync -f` on the output filesystem. This can include other filesystem writes and is a filesystem flush boundary, not exact per-tool durable-write latency. `du -sb` measures the whole output directory's apparent size after the run, including final results and intermediate files still present. It excludes files outside that directory, deleted files and repeated writes. Staging writes are flushed before the first invocation.
 
-| Measurement | Meaning |
-| --- | --- |
-| `wall_seconds`, `user_seconds`, `system_seconds` | Native process/pipeline GNU time |
-| `max_rss_kib` | GNU time maximum RSS, separate from Slurm memory |
-| `tool_exit_code` | Shell-observed native/timeout exit status, including signal exits. `NA` when a wrong CPU placement stopped the step before the command ran |
-| `flush_seconds` | Post-command filesystem flush duration |
-| `process_plus_flush_seconds` | Process wall plus flush, the selected end-to-end result |
-| `output_directory_bytes` | Total apparent output-directory bytes after the run from `du -sb`, including remaining intermediates. This measures file sizes, excluding filesystem allocation overhead and cumulative writes |
-| `step_exit_code` | Scheduler-step status including placement/output/flush failures |
+| Measurement                                      | Meaning                                                                                                                                                                                        |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `wall_seconds`, `user_seconds`, `system_seconds` | Native process/pipeline GNU time                                                                                                                                                               |
+| `max_rss_kib`                                    | GNU time maximum RSS, separate from Slurm memory                                                                                                                                               |
+| `tool_exit_code`                                 | Shell-observed native/timeout exit status, including signal exits. `NA` when a wrong CPU placement stopped the step before the command ran                                                     |
+| `flush_seconds`                                  | Post-command filesystem flush duration                                                                                                                                                         |
+| `process_plus_flush_seconds`                     | Process wall plus flush, the selected end-to-end result                                                                                                                                        |
+| `output_directory_bytes`                         | Total apparent output-directory bytes after the run from `du -sb`, including remaining intermediates. This measures file sizes, excluding filesystem allocation overhead and cumulative writes |
+| `step_exit_code`                                 | Scheduler-step status including placement/output/flush failures                                                                                                                                |
 
 Rows additionally record run order, repetition, warmup/pilot labels, method/version, core/native workers, feature filters/scope, node/CPU placement, job/step IDs and UTC start. Schemas have 31 coverage, 30 lengths, 35 ends and 33 midpoint columns, listed in each feature's `commands.sh`.
 

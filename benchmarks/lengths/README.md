@@ -4,12 +4,12 @@ Compare cfDNAlab against **cfDNAPro, FinaleToolkit, samtools and Picard**. cfDNA
 
 Compare global histograms with one bin per fragment length from **30 through 1000 bp inclusive**, MAPQ >=30, and no GC correction, genomic scaling or blacklists. These are bins on the fragment length axis, not genomic intervals. Keep the prepared BAM unchanged and let each tool apply its filters.
 
-| Tool | Native calculation and settings | Role | Expected differences |
-| --- | --- | --- | --- |
-| cfDNAPro 1.7.4 | `readBam(curate_start_and_end=TRUE, galp_mapqFilter=30)`, with explicit matching flag exclusions, then `callLength(frag_obj=..., isize_min=30L, isize_max=1000L)` | Primary definition check | Uses the same directional aligned span as cfDNAlab. Overlapping outward-pair handling and native pairing can differ, as described below. Neither tool needs proper-pair filtering for this comparison. |
-| FinaleToolkit `d16632ec` | `frag-length-bins BAM --bin-size 1 --min-length 30 --max-length 1000 --min-mapq 30 --output lengths.tsv` | Direct cfDNA CLI comparator | Uses absolute TLEN from read1 and requires proper pairs. Does not verify both mates' MAPQ. This command has no worker-count option. |
-| samtools stats (full QC report, insert-size section extracted) 1.25 | `stats --input-fmt-option 'filter=mapq >= 30' -f 1 -F 3852 -m 1 -i 1001`, using its `IS` inward-pair column and retaining lengths 30-1000 afterward | Established compiled baseline | Uses absolute TLEN. The last bin collects lengths at or above its maximum, hence 1001 rather than 1000. Counts passing alignments, halves each bin and truncates the integer result, so independently filtering mates can change counts. Computes many additional QC statistics. |
-| Picard 3.5.0 | `picard -Xmx2g CollectInsertSizeMetrics I=sample.bam O=metrics.txt HISTOGRAM_WIDTH=1000` | Native insert-size timing | No MAPQ or QC-fail prefilter inside timing. Concordance uses the separately generated, untimed filtered histogram. No PDF. |
+| Tool                                                                | Native calculation and settings                                                                                                                                   | Role                          | Expected differences                                                                                                                                                                                                                                                             |
+| ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| cfDNAPro 1.7.4                                                      | `readBam(curate_start_and_end=TRUE, galp_mapqFilter=30)`, with explicit matching flag exclusions, then `callLength(frag_obj=..., isize_min=30L, isize_max=1000L)` | Primary definition check      | Uses the same directional aligned span as cfDNAlab. Overlapping outward-pair handling and native pairing can differ, as described below. Neither tool needs proper-pair filtering for this comparison.                                                                           |
+| FinaleToolkit `d16632ec`                                            | `frag-length-bins BAM --bin-size 1 --min-length 30 --max-length 1000 --min-mapq 30 --output lengths.tsv`                                                          | Direct cfDNA CLI comparator   | Uses absolute TLEN from read1 and requires proper pairs. Does not verify both mates' MAPQ. This command has no worker-count option.                                                                                                                                              |
+| samtools stats (full QC report, insert-size section extracted) 1.25 | `stats --input-fmt-option 'filter=mapq >= 30' -f 1 -F 3852 -m 1 -i 1001`, using its `IS` inward-pair column and retaining lengths 30-1000 afterward               | Established compiled baseline | Uses absolute TLEN. The last bin collects lengths at or above its maximum, hence 1001 rather than 1000. Counts passing alignments, halves each bin and truncates the integer result, so independently filtering mates can change counts. Computes many additional QC statistics. |
+| Picard 3.5.0                                                        | `picard -Xmx2g CollectInsertSizeMetrics I=sample.bam O=metrics.txt HISTOGRAM_WIDTH=1000`                                                                          | Native insert-size timing     | No MAPQ or QC-fail prefilter inside timing. Concordance uses the separately generated, untimed filtered histogram. No PDF.                                                                                                                                                       |
 
 For cfDNAlab, use `lengths --length-bins 30:1001:1 --indel-mode ignore --clip-mode aligned --min-mapq 30`. Use the same explicit chromosome selection on both sides. The comparison uses all BAM contigs. A separately labeled `--require-proper-pair` run diagnoses FinaleToolkit's selection difference once at 32 cores for concordance. Normal cfDNAlab runs supply the timing comparison at all four core settings.
 
@@ -85,22 +85,22 @@ Pilots and full runs automatically write `concordance.tsv` after all tool attemp
 
 The tables below contain no measured results. Fill them from the saved concordance metrics and completed timing/accounting records.
 
-| cfDNAlab vs tool | Pearson r | MAE / RMSE | Count difference | Wasserstein, bp | Main expected differences |
-| --- | --- | --- | --- | --- | --- |
-| cfDNAPro 1.7.4 | [ ] | [ ] / [ ] | [ ] | [ ] | Pair selection and overlapping outward-pair checks. |
-| FinaleToolkit `d16632ec` | [ ] | [ ] / [ ] | [ ] | [ ] | Proper-pair selection, read1 MAPQ and TLEN. |
-| samtools stats (full QC report, insert-size section extracted) 1.25 | [ ] | [ ] / [ ] | [ ] | [ ] | TLEN, per-record filters and halved counts. |
-| Picard 3.5.0 | [ ] | [ ] / [ ] | [ ] | [ ] | TLEN from read2 and orientation classification. |
+| cfDNAlab vs tool                                                    | Pearson r | MAE / RMSE | Count difference | Wasserstein, bp | Main expected differences                           |
+| ------------------------------------------------------------------- | --------- | ---------- | ---------------- | --------------- | --------------------------------------------------- |
+| cfDNAPro 1.7.4                                                      | [ ]       | [ ] / [ ]  | [ ]              | [ ]             | Pair selection and overlapping outward-pair checks. |
+| FinaleToolkit `d16632ec`                                            | [ ]       | [ ] / [ ]  | [ ]              | [ ]             | Proper-pair selection, read1 MAPQ and TLEN.         |
+| samtools stats (full QC report, insert-size section extracted) 1.25 | [ ]       | [ ] / [ ]  | [ ]              | [ ]             | TLEN, per-record filters and halved counts.         |
+| Picard 3.5.0                                                        | [ ]       | [ ] / [ ]  | [ ]              | [ ]             | TLEN from read2 and orientation classification.     |
 
 All rows use whole-reference counts, MAPQ >=30 and lengths 30-1000 bp. MAE/RMSE use within-range frequencies. Count differences are cfDNAlab minus comparator.
 
-| Tool / configuration | Cores | Warmups / measured | Mean process+flush, s | SD seconds | Effective cores |
-| --- | --- | --- | --- | --- | --- |
-| cfDNAlab, all contigs | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] |
-| cfDNAPro 1.7.4 | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] |
-| FinaleToolkit `d16632ec` | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] |
-| samtools stats (full QC report, insert-size section extracted) 1.25 | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] |
-| Picard 3.5.0 | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each | [ ] | [ ] | [ ] |
+| Tool / configuration                                                | Cores                          | Warmups / measured | Mean process+flush, s | SD seconds | Effective cores |
+| ------------------------------------------------------------------- | ------------------------------ | ------------------ | --------------------- | ---------- | --------------- |
+| cfDNAlab, all contigs                                               | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each         | [ ]                   | [ ]        | [ ]             |
+| cfDNAPro 1.7.4                                                      | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each         | [ ]                   | [ ]        | [ ]             |
+| FinaleToolkit `d16632ec`                                            | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each         | [ ]                   | [ ]        | [ ]             |
+| samtools stats (full QC report, insert-size section extracted) 1.25 | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each         | [ ]                   | [ ]        | [ ]             |
+| Picard 3.5.0                                                        | 1 / 4 / 12 / 32, separate jobs | 1 / 3 each         | [ ]                   | [ ]        | [ ]             |
 
 Expand timing rows to a core budget per row in the final A4 supplement. Put workload notes below the table and report maximum RSS separately if needed.
 
