@@ -83,8 +83,11 @@ prepare_command() {
             command=("$cfdna" midpoints --bam "$bam" --output-dir "$output"
                 --intervals "$BENCH_WORK/sites.bed" --chromosomes "$BENCH_CHROMOSOMES"
                 --length-bins "$min_length" "$length_end"
-                --min-mapq "$min_mapq" --bin-size 15 --n-threads "$cores"
-                --blacklist "${exclusions[@]}")
+                --min-mapq "$min_mapq" --bin-size 15 --n-threads "$cores")
+            # Repeat the option so each exclusion BED is explicit in the saved command
+            for exclusion_file in "${exclusions[@]}"; do
+                command+=(--blacklist "$exclusion_file")
+            done
             expected_output="$output/midpoint_profiles.zarr"
             row[tool_version]=$cfdna_version
             row[midpoint_policy]=coordinate-random-even

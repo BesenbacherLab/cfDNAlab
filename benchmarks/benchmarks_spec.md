@@ -121,6 +121,12 @@ The midpoint input is the supplied 9,990 bp BED (`center - 4995` to `center + 49
 
 `BENCH_GRIFFIN_REF_DIR` supplies the five release exclusion BEDs for either tool. Griffin also reads `BENCH_GRIFFIN_MAPPABILITY_BW` to exclude bins containing zero-mappability positions, independently of mappability correction, which stays off. When Griffin is selected, the installer downloads the hg38 k100 Umap bigWig into `Griffin-source/Ref/k100.Umap.MultiTrackMappability.bw` if it is missing or empty. This also runs when the completed Griffin environment is reused. Downloads use a temporary file that replaces the final path only on success. The installer exports the reference directory and track path through `tool_paths.sh`. Reference files must exist before submission. Their downloading and staging remain outside timing.
 
+### Reference GC preparation
+
+`midpoints/prepare_reference_gc.sh` calculates cfDNAlab's reference package in a separate Slurm job, using the same five exclusion BEDs as sample estimation and midpoint profiling. It reserves an exclusive node and uses an explicit core count, the shared CPU-binding checks and node-local scratch. The main README submits a single 32-core run. The job writes `griffin_blacklisted.ref_gc_package.zarr` into a new `BENCH_RESULTS` directory, independent of any previous `BENCH_CFDNA_REF_GC` path, and publishes the package only after successful calculation.
+
+Its own `timings.tsv`, exact command/logs, reference and blacklist checksums, benchmark revision and Slurm allocation details stay with the package. Input staging and copying the package to persistent storage are outside the measured step. These records are separate from the feature timing summaries. The README block waits for preparation to succeed, then prints the published package path for subsequent submissions.
+
 ## Run controls
 
 Submit from the repository root on the login node with `bash benchmarks/submit_benchmark.sh FEATURE [sbatch options]`, choosing `coverage`, `lengths`, `ends` or `midpoints`. This preserves `SLURM_SUBMIT_DIR` so it locates helpers. Nodes need Slurm, GNU time at `/usr/bin/time`, GNU coreutils, `ldd` and setup Python 3. Selected tool paths/archives and bundled Griffin reference paths come from the installer's `tool_paths.sh`.
@@ -147,7 +153,7 @@ Submit from the repository root on the login node with `bash benchmarks/submit_b
 | `BENCH_GENOME` | cfDNAPro label, `hg38` |
 | `BENCH_FASTA_INDEX` | `<BENCH_REF_FASTA>.fai` for Griffin |
 | `BENCH_GRIFFIN_GC_REGIONS` | `griffin-gc` only. Installer-exported `Griffin-source/Ref/k100_minus_exclusion_lists.mappable_regions.hg38.bed`, already downloaded with Griffin |
-| `BENCH_REF_2BIT`, `BENCH_CFDNA_REF_GC` | `cfdnalab-gc` only. Matching reference 2bit and reference GC Zarr calculated once with native defaults, then reused across runs |
+| `BENCH_REF_2BIT`, `BENCH_CFDNA_REF_GC` | `cfdnalab-gc` only. Matching reference 2bit and the package path published by the separate reference-preparation job. The package uses the same five exclusion BEDs as sample estimation and profiling |
 | `BENCH_GRIFFIN_REF_GC` | `griffin-gc` only. Installer-exported `Griffin-source/Ref/genome_GC_frequency`. Setup copies the bundled 15-500 bp tables for native GC estimation, independently of the profiling range |
 | `BENCH_INSTALL_MANIFEST`, `BENCH_CFDNA_BUILD` | Optional records copied beside results |
 
@@ -207,7 +213,7 @@ Comparison errors fail the job, keep `concordance-error.log` and print its conte
 
 Coverage keeps every processed chromosome in the saved tracks for all tools. Full native output is generated inside timing. PanDepth's compressed positions are copied intact, and samtools text is compressed after its Slurm step. Each per-base coverage profile has its processed `chrom.sizes`, and regional outputs share saved `regions.bed`. All-contig comparisons therefore evaluate the full BAM reference scope.
 
-Midpoints also retains normalized `sites.bed` and source `sites.sha256`. The original input BED remains unchanged. Griffin jobs additionally retain `griffin-warmup.log`, `griffin-warmup-error.log`, the demo source SHA-256 and its warmup policy in `run.tsv`. The untimed demo has no timing row and does not enter summaries or output comparisons. Additional `cfdnalab-gc` and `griffin-gc` workloads each estimate sample GC bias and apply it inside every timing. Reference-only inputs are staged beforehand. cfDNAlab's reference is calculated once with native defaults and reused, with native sample-estimation windows and chromosome selection. Each midpoint job selects a single workload and core setting. Corrected runs retain reference paths and the first measured sample estimate with its diagnostics. Corrected Griffin also retains its estimation BED/checksum. Their timing rows carry `gc_correction=corrected`, while baseline rows carry `none`.
+Midpoints also retains normalized `sites.bed` and source `sites.sha256`. The original input BED remains unchanged. Griffin jobs additionally retain `griffin-warmup.log`, `griffin-warmup-error.log`, the demo source SHA-256 and its warmup policy in `run.tsv`. The untimed demo has no timing row and does not enter summaries or output comparisons. Additional `cfdnalab-gc` and `griffin-gc` workloads each estimate sample GC bias and apply it inside every timing. Reference-only inputs are staged beforehand. cfDNAlab's reference is calculated once before the benchmark jobs with the same five exclusion BEDs as sample estimation and midpoint profiling, then reused for that reference and blacklist set. Other reference counting settings, sample-estimation windows and chromosome selection retain native defaults. Each midpoint job selects a single workload and core setting. Corrected runs retain reference paths and the first measured sample estimate with its diagnostics. Corrected Griffin also retains its estimation BED/checksum. Their timing rows carry `gc_correction=corrected`, while baseline rows carry `none`.
 
 ## Slurm accounting and summaries
 

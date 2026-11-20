@@ -22,19 +22,27 @@ case "$method" in
         # Sample estimation keeps native windows and chromosome selection, and
         # inherits the reference's full length range. Profiling uses the agreed
         # midpoint length range below
+        # Reference preparation, sample estimation and profiling must exclude the
+        # same positions. Pass each BED as a separate --blacklist option
+        blacklist_arguments=(
+            --blacklist "$BENCH_WORK/exclusions/encode_unified_GRCh38_exclusion_list.bed"
+            --blacklist "$BENCH_WORK/exclusions/hg38_centromeres.bed"
+            --blacklist "$BENCH_WORK/exclusions/hg38_gaps.bed"
+            --blacklist "$BENCH_WORK/exclusions/hg38_fix_patches.bed"
+            --blacklist "$BENCH_WORK/exclusions/hg38_alternative_haplotypes.bed"
+        )
         "$BENCH_WORK/bin/cfdna" gc-bias \
             --bam "$BENCH_WORK/sample.bam" --output-dir "$bias_directory" \
             --ref-2bit "$BENCH_WORK/reference.2bit" \
             --ref-gc-file "$BENCH_WORK/reference-gc.zarr" \
-            --min-mapq "$BENCH_MIN_MAPQ" --n-threads "$cores"
+            --min-mapq "$BENCH_MIN_MAPQ" --n-threads "$cores" \
+            "${blacklist_arguments[@]}"
         "$BENCH_WORK/bin/cfdna" midpoints \
             --bam "$BENCH_WORK/sample.bam" --output-dir "$BENCH_WORK/output" \
             --intervals "$BENCH_WORK/sites.bed" --chromosomes "$BENCH_CHROMOSOMES" \
             --length-bins "$BENCH_MIN_LENGTH" "$((BENCH_MAX_LENGTH + 1))" \
             --min-mapq "$BENCH_MIN_MAPQ" --bin-size 15 --n-threads "$cores" \
-            --blacklist "$BENCH_WORK/exclusions/encode_unified_GRCh38_exclusion_list.bed" \
-            "$BENCH_WORK/exclusions/hg38_centromeres.bed" "$BENCH_WORK/exclusions/hg38_gaps.bed" \
-            "$BENCH_WORK/exclusions/hg38_fix_patches.bed" "$BENCH_WORK/exclusions/hg38_alternative_haplotypes.bed" \
+            "${blacklist_arguments[@]}" \
             --ref-2bit "$BENCH_WORK/reference.2bit" \
             --gc-file "$bias_directory/gc_bias_correction.zarr"
         ;;

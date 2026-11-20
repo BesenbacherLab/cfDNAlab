@@ -7,6 +7,7 @@ estimator writes a distinct bias value so profiling must use the current result.
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -125,16 +126,39 @@ class CorrectedMidpointWorkflowTests(unittest.TestCase):
         for stage, arguments in calls:
             self.assertEqual(arguments[arguments.index("--n-threads") + 1], "4")
             self.assertEqual(arguments[arguments.index("--min-mapq") + 1], "30")
+            # Each command must receive the same five BEDs as separate options
+            blacklist_paths = [
+                arguments[index + 1]
+                for index, argument in enumerate(arguments) if argument == "--blacklist"
+            ]
+            self.assertEqual(blacklist_paths, [str(self.work / "exclusions" / filename) for filename in (
+                "encode_unified_GRCh38_exclusion_list.bed", "hg38_centromeres.bed",
+                "hg38_gaps.bed", "hg38_fix_patches.bed", "hg38_alternative_haplotypes.bed",
+            )])
             if stage == "midpoints":
                 length_index = arguments.index("--length-bins")
                 self.assertEqual(arguments[length_index + 1:length_index + 3], ["100", "201"])
                 self.assertEqual(arguments[arguments.index("--bin-size") + 1], "15")
                 self.assertNotIn("--smoothing", arguments)
             else:
-                # Estimation uses native defaults, independently of the TFBS
-                # windows and Griffin's estimation BED
+                # Estimation retains native windows, chromosomes and length range,
+                # independently of the TFBS windows and Griffin's estimation BED
                 for option in ("--by-bed", "--chromosomes", "--min-fragment-length", "--max-fragment-length"):
                     self.assertNotIn(option, arguments)
+
+    def test_reference_preparation_is_a_separate_job_from_benchmark_submission(self):
+        # Reference preparation is submitted explicitly once. Reusing the benchmark
+        # submission block must never trigger another reference calculation
+        readme = (BENCHMARKS / "README.md").read_text()
+        submission = readme.split("### Submit the jobs", 1)[1].split("### Collect and compare the results", 1)[0]
+        self.assertNotIn("ref-gc-bias", submission)
+        self.assertNotIn("prepare_reference_gc.sh", submission)
+        reference_block = next(
+            block for block in re.findall(r"```bash\n(.*?)```", readme, re.DOTALL)
+            if "prepare_reference_gc.sh" in block
+        )
+        self.assertIn("--wait", reference_block)
+        self.assertNotIn('dirname "$BENCH_CFDNA_REF_GC"', reference_block)
 
     def test_griffin_reestimates_bias_before_each_corrected_profile(self):
         for expected_generation in (1, 5):

@@ -161,8 +161,9 @@ else
     cp "$benchmarks/midpoints/gc_corrected_profile.sh" "$BENCH_WORK/gc_corrected_profile.sh"
 fi
 if [[ "$method" == cfdnalab-gc ]]; then
-    # The default reference package is reused. Native GC loading checks reference
-    # compatibility, and midpoint correction checks that its range is covered
+    # Reuse a reference package calculated with these same exclusion BEDs
+    # Native GC loading checks reference compatibility, and midpoint correction
+    # checks that the requested fragment length range is covered
     log_progress "Copying cfDNAlab reference GC inputs to node-local scratch"
     cp -L "$BENCH_REF_2BIT" "$BENCH_WORK/reference.2bit"
     cp -RL "$BENCH_CFDNA_REF_GC" "$BENCH_WORK/reference-gc.zarr"

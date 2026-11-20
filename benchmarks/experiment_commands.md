@@ -482,7 +482,11 @@ Method `cfdnalab` supplies cfDNAlab's uncorrected profiles, which are compared w
     --intervals "$BENCH_WORK/sites.bed" --chromosomes "$BENCH_CHROMOSOMES" \
     --length-bins "$min_length" "$length_end" \
     --min-mapq "$min_mapq" --bin-size 15 --n-threads "$cores" \
-    --blacklist "${exclusions[@]}"
+    --blacklist "$BENCH_WORK/exclusions/encode_unified_GRCh38_exclusion_list.bed" \
+    --blacklist "$BENCH_WORK/exclusions/hg38_centromeres.bed" \
+    --blacklist "$BENCH_WORK/exclusions/hg38_gaps.bed" \
+    --blacklist "$BENCH_WORK/exclusions/hg38_fix_patches.bed" \
+    --blacklist "$BENCH_WORK/exclusions/hg38_alternative_haplotypes.bed"
 ```
 
 ### Griffin profiling calls
@@ -537,6 +541,20 @@ The `griffin-gc` workload retains both `sample.uncorrected.coverage.tsv` and `sa
 
 ### cfDNAlab with GC correction
 
+Before the benchmark jobs, [prepare_reference_gc.sh](midpoints/prepare_reference_gc.sh) calculates the reference package in a separate Slurm job. It stages the executable, reference and five BEDs on local scratch, then measures this command once with an explicit thread count and temporary directory:
+
+```bash
+"$BENCH_WORK/bin/cfdna" ref-gc-bias \
+    --ref-2bit "$BENCH_WORK/reference.2bit" \
+    --output-dir "$output" --output-prefix griffin_blacklisted \
+    --n-threads "$BENCH_CORES" --temp-dir "$BENCH_WORK/tmp" \
+    --blacklist "$BENCH_WORK/exclusions/encode_unified_GRCh38_exclusion_list.bed" \
+    --blacklist "$BENCH_WORK/exclusions/hg38_centromeres.bed" \
+    --blacklist "$BENCH_WORK/exclusions/hg38_gaps.bed" \
+    --blacklist "$BENCH_WORK/exclusions/hg38_fix_patches.bed" \
+    --blacklist "$BENCH_WORK/exclusions/hg38_alternative_haplotypes.bed"
+```
+
 Method `cfdnalab-gc` times the following two calls together:
 
 ```bash
@@ -545,18 +563,27 @@ bias_directory="$output/gc-bias"
 "$cfdna" gc-bias --bam "$bam" --output-dir "$bias_directory" \
     --ref-2bit "$reference_2bit" \
     --ref-gc-file "$BENCH_WORK/reference-gc.zarr" \
-    --min-mapq "$min_mapq" --n-threads "$cores"
+    --min-mapq "$min_mapq" --n-threads "$cores" \
+    --blacklist "$BENCH_WORK/exclusions/encode_unified_GRCh38_exclusion_list.bed" \
+    --blacklist "$BENCH_WORK/exclusions/hg38_centromeres.bed" \
+    --blacklist "$BENCH_WORK/exclusions/hg38_gaps.bed" \
+    --blacklist "$BENCH_WORK/exclusions/hg38_fix_patches.bed" \
+    --blacklist "$BENCH_WORK/exclusions/hg38_alternative_haplotypes.bed"
 
 "$cfdna" midpoints --bam "$bam" --output-dir "$output" \
     --intervals "$BENCH_WORK/sites.bed" --chromosomes "$BENCH_CHROMOSOMES" \
     --length-bins "$min_length" "$length_end" \
     --min-mapq "$min_mapq" --bin-size 15 --n-threads "$cores" \
-    --blacklist "${exclusions[@]}" \
+    --blacklist "$BENCH_WORK/exclusions/encode_unified_GRCh38_exclusion_list.bed" \
+    --blacklist "$BENCH_WORK/exclusions/hg38_centromeres.bed" \
+    --blacklist "$BENCH_WORK/exclusions/hg38_gaps.bed" \
+    --blacklist "$BENCH_WORK/exclusions/hg38_fix_patches.bed" \
+    --blacklist "$BENCH_WORK/exclusions/hg38_alternative_haplotypes.bed" \
     --ref-2bit "$reference_2bit" \
     --gc-file "$bias_directory/gc_bias_correction.zarr"
 ```
 
-The reference GC package is prepared once beforehand and supplied through `BENCH_CFDNA_REF_GC`. The runner stages it as `reference-gc.zarr`. It does not calculate reference bias during repetitions. Sample bias is recalculated for every repetition with native settings, including its native windows/chromosome selection and the reference package's default 30-1000 bp range. Profiling still uses 100-200 bp. Native default diagnostic plots remain timed.
+The reference GC package is [prepared once before the benchmark jobs](README.md#prepare-the-cfdnalab-gc-reference-once) with these same five exclusion BEDs and supplied through `BENCH_CFDNA_REF_GC`. Its separate Slurm job uses explicit cores and node-local scratch, with the same measurement and CPU-placement checks as the sample jobs. Its own `timings.tsv`, command/logs, input checksums and Slurm allocation details stay beside the new prefixed package, outside the sample-estimation and profiling timing summaries. The runner stages it as `reference-gc.zarr`. It does not calculate reference bias during repetitions. Sample bias is recalculated for every repetition with the same blacklists, native windows/chromosome selection and the reference package's default 30-1000 bp range. Profiling still uses 100-200 bp. Native default diagnostic plots remain timed.
 
 ### Griffin with GC correction
 

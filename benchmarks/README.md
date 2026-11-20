@@ -81,7 +81,7 @@ Submit each row in the table at **1, 4, 12 and 32 cores**, giving **24 jobs**. T
 
 Each tool configuration runs once as a warmup, then three times for measurement. The warmup uses the same inputs and is recorded but excluded from the reported averages. Griffin instead runs its short, untimed release demo followed by a single measured run per core setting.
 
-Four additional checks, described under [When tools include different fragments](#when-tools-include-different-fragments), share three extra jobs at 32 cores. This brings the total to **27 jobs**.
+Four additional checks, described under [When tools include different fragments](#when-tools-include-different-fragments), share three extra jobs at 32 cores. This brings the total to **27 benchmark jobs**.
 
 `MAPQ` is the mapping-quality score recorded by the aligner. The fragment length bounds below include both endpoints. Matching these thresholds reduces selection differences, but tools can still use different pairing rules or lack a corresponding filter, as explained below.
 
@@ -100,7 +100,7 @@ For fragment lengths, cfDNAlab measures the span from the forward alignment's st
 
 The midpoint jobs compare cfDNAlab against Griffin twice: without GC correction and with GC correction. All three jobs use the same BAM and sites. They count fragment midpoints around sites supplied in a BED file, with a label identifying each site's group. Both tools use 9,990 bp windows around these sites, 15 bp bins and 165 bp smoothing.
 
-The GC-corrected midpoint jobs first estimate the sample's GC bias, then apply that estimate when counting midpoints. Estimation uses a wider fragment length range than profiling: normally 30-1000 bp for cfDNAlab, inherited from its reference GC distribution, and 15-500 bp for Griffin. Both tools calculate the profiles from 100-200 bp fragments. Each estimator keeps its tool's usual range because that range determines which data are used to fit and smooth the bias estimate. The [midpoint README](midpoints/README.md#gc-corrected-comparison) describes the calculations and reference files.
+The GC-corrected midpoint jobs first estimate the sample's GC bias, then apply that estimate when counting midpoints. cfDNAlab uses the same exclusion BEDs for its reference GC calculation, sample GC estimation and midpoint profiles. Estimation uses a wider fragment length range than profiling: normally 30-1000 bp for cfDNAlab, inherited from its reference GC distribution, and 15-500 bp for Griffin. Both tools calculate the profiles from 100-200 bp fragments. Each estimator keeps its tool's usual range because that range determines which data are used to fit and smooth the bias estimate. The [midpoint README](midpoints/README.md#gc-corrected-comparison) describes the calculations and reference files.
 
 #### When tools include different fragments
 
@@ -134,7 +134,7 @@ Create `benchmarks/local_settings.sh` to record the paths to your [prepared inpu
 | `BENCH_BAM` | Prepared, coordinate-sorted hg38 BAM. Its index defaults to `<BAM>.bai`, or can be set with `BENCH_INDEX`. Coverage, lengths and motifs require a BAI index |
 | `BENCH_REF_2BIT`, `BENCH_REF_FASTA` | Matching alignment reference in 2bit and uncompressed FASTA formats. Griffin requires an existing `<FASTA>.fai`, overridable with `BENCH_FASTA_INDEX` |
 | `BENCH_INTERVALS` | Prepared grouped 9,990 bp site BED described in the [midpoint input instructions](midpoints/README.md#inputs-and-run) |
-| `BENCH_CFDNA_REF_GC` | cfDNAlab's reference GC distribution in Zarr format. Calculate it once and reuse it, following the [GC reference instructions](midpoints/README.md#gc-corrected-comparison) |
+| `BENCH_CFDNA_REF_GC` | Package path printed by the [reference-preparation job](#prepare-the-cfdnalab-gc-reference-once). Add it to this settings file after preparation finishes, then reuse it for benchmark submissions |
 
 Each benchmark job uses temporary storage on the compute node for its input files, tools and intermediate files. The cluster makes the path to this storage available through an environment variable, commonly `TMPDIR` or `SLURM_TMPDIR`. Tell the benchmark which variable to read by setting `LOCAL_SCRATCH_VAR` in `benchmarks/local_settings.sh` to its name, without a `$`:
 
@@ -144,6 +144,55 @@ export LOCAL_SCRATCH_VAR=TMPDIR
 ```
 
 If the cluster uses `SLURM_TMPDIR`, set `export LOCAL_SCRATCH_VAR=SLURM_TMPDIR` instead. Each job reads the selected variable on the compute node, so its directory need not be known on the login node. The job stops if the variable is unset or empty, or its directory is missing or not writable. Each runner creates its own working directory there and sets `TMPDIR` to its `tmp/` subdirectory for the tools. The selected variable name and directory are saved in `run.tsv`.
+
+### Prepare the cfDNAlab GC reference once
+
+Submit this separate preparation job once before the GC-corrected midpoint benchmarks. It calculates the reference distribution with the same five exclusion BEDs used by sample GC estimation and midpoint profiling. Reuse the resulting package for later submissions with the same alignment reference and blacklist set. Griffin's reference GC tables are supplied by the installer.
+
+The job reserves an exclusive node, runs a single calculation with 32 physical cores, and stages the reference, blacklists and executable on local scratch. The calculation uses an explicit thread count and temporary directory. It uses the same timing and CPU-binding checks as the benchmark jobs. Input staging and saving the completed package are outside its measured time. Its `timings.tsv`, exact command, logs, input checksums and Slurm allocation details stay in the new reference-results directory, outside the feature timing summaries.
+
+Run the block in **Bash 4 or later from the repository root on the login node**. Choose a new output directory and adjust the time limit and node constraint for the cluster. The block waits for the job to finish successfully, then prints the `export BENCH_CFDNA_REF_GC=...` assignment to put in `benchmarks/local_settings.sh` before submitting the benchmark jobs.
+
+```bash
+# Copy the whole block, including the surrounding parentheses
+(
+set -euo pipefail
+# Load tool paths from the directory passed to install_tools.sh
+# Replace /path/to/benchmark-tools with that directory's absolute path
+source /path/to/benchmark-tools/tool_paths.sh
+source benchmarks/local_settings.sh
+: "${benchmark_root:?Set benchmark_root in benchmarks/local_settings.sh}"
+
+# Choose a new directory explicitly. Existing packages do not determine this path
+reference_results="$benchmark_root/references/griffin-blacklisted"
+reference_cores=32
+# Allow enough time for staging, calculation and saving the package
+reference_wall_time="00:30:00"
+if [[ -e "$reference_results" ]]; then
+    echo "Reference results already exist: $reference_results. Reuse the package or choose a new directory." >&2
+    exit 1
+fi
+mkdir -p "$benchmark_root/references/slurm"
+reference_slurm_options=(
+    --export=ALL --parsable --wait --exclusive --mem=0
+    --cpus-per-task="$reference_cores" --time="$reference_wall_time"
+    --constraint=gen6
+    --output="$benchmark_root/references/slurm/reference-gc-%j.out"
+    --error="$benchmark_root/references/slurm/reference-gc-%j.err"
+)
+if [[ -n ${BENCH_EXPECTED_NODE:-} ]]; then
+    reference_slurm_options+=(--nodelist="$BENCH_EXPECTED_NODE")
+fi
+# --wait returns only after this preparation job succeeds or fails
+BENCH_CORES="$reference_cores" BENCH_RESULTS="$reference_results" \
+    sbatch "${reference_slurm_options[@]}" benchmarks/midpoints/prepare_reference_gc.sh
+
+# Read the path actually published by the job, including its output prefix
+package_path=$(awk -F '\t' '$1 == "reference_gc_package" {print $2}' "$reference_results/run.tsv")
+[[ -d "$package_path" ]] || { echo "The preparation job did not publish a GC reference package." >&2; exit 1; }
+printf 'Add this assignment to benchmarks/local_settings.sh:\nexport BENCH_CFDNA_REF_GC=%q\n' "$package_path"
+)
+```
 
 ### Submit the jobs
 

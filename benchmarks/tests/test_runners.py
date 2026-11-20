@@ -554,7 +554,7 @@ class MidpointCommandTests(unittest.TestCase):
             "--output-dir", f"{WORK}/output", "--intervals", f"{WORK}/sites.bed",
             "--chromosomes", "chr1,chr2", "--length-bins", "100", "201",
             "--min-mapq", "20", "--bin-size", "15", "--n-threads", "4",
-            "--blacklist", *MIDPOINT_EXCLUSIONS,
+            *[argument for path in MIDPOINT_EXCLUSIONS for argument in ("--blacklist", path)],
         ])
         row = prepared["row"]
         self.assertEqual(
@@ -1207,6 +1207,144 @@ def write_archive(path, environment_directory):
     (environment_directory / "bin/conda-unpack").write_text("# Relocation fixture\n")
     with tarfile.open(path, "w:gz") as destination:
         destination.add(environment_directory, arcname=".")
+
+
+@requires_measurement
+class ReferenceGCJobTests(unittest.TestCase):
+    """Run reference preparation with real measurement and fake Slurm/native tools."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.fake_bin = self.root / "bin"
+        (self.root / "scratch").mkdir()
+        write_executable(self.fake_bin / "srun", f"#!{sys.executable}\n" + FAKE_SRUN)
+        write_executable(self.fake_bin / "ldd", "#!/usr/bin/env bash\necho 'statically linked'\n")
+        write_executable(self.fake_bin / "scontrol", "#!/usr/bin/env bash\necho reference-job-fixture\n")
+        write_executable(self.fake_bin / "cfdna", f"#!{sys.executable}\n" + textwrap.dedent(r'''
+            import json
+            import os
+            from pathlib import Path
+            import sys
+
+            arguments = sys.argv[1:]
+            if arguments == ['--version']:
+                print('cfdna reference fixture')
+                raise SystemExit(0)
+            Path(os.environ['NATIVE_CALL_LOG']).write_text(json.dumps(arguments))
+            if os.environ.get('FAIL_REFERENCE') == '1':
+                print('reference calculation failed', file=sys.stderr)
+                raise SystemExit(17)
+            output = Path(arguments[arguments.index('--output-dir') + 1])
+            prefix = arguments[arguments.index('--output-prefix') + 1]
+            package = output / (prefix + '.ref_gc_package.zarr')
+            package.mkdir()
+            (package / 'zarr.json').write_text('reference fixture\n')
+        '''))
+        self.reference = self.root / "reference.2bit"
+        self.reference.write_text("reference fixture\n")
+        self.exclusions = self.root / "exclusions"
+        self.exclusions.mkdir()
+        for filename in EXCLUSION_FILENAMES:
+            (self.exclusions / filename).write_text("chr1\t10\t20\n")
+        # An old package with an unrelated name must never determine the new path
+        self.old_package = self.root / "old-reference/custom-name.zarr"
+        self.old_package.mkdir(parents=True)
+        (self.old_package / "keep.txt").write_text("old package\n")
+        self.results = self.root / "new-reference-results"
+
+    def run_job(self, **overrides):
+        """Run the preparation job in a fake single-core Slurm allocation."""
+        environment = clean_environment(
+            PATH=f"{self.fake_bin}:{os.environ['PATH']}",
+            SLURM_SUBMIT_DIR=str(BENCHMARKS.parent), SLURM_JOB_ID="71",
+            SLURM_JOB_NUM_NODES="1", SLURM_CPUS_PER_TASK="1",
+            BENCH_CORES="1", BENCH_RESULTS=str(self.results),
+            BENCH_CFDNA=str(self.fake_bin / "cfdna"), BENCH_REF_2BIT=str(self.reference),
+            BENCH_GRIFFIN_REF_DIR=str(self.exclusions),
+            BENCH_CFDNA_REF_GC=str(self.old_package),
+            LOCAL_SCRATCH_VAR="REFERENCE_TEST_SCRATCH",
+            REFERENCE_TEST_SCRATCH=str(self.root / "scratch"),
+            SRUN_LOG=str(self.root / "srun.log"), NATIVE_CALL_LOG=str(self.root / "native.json"),
+        )
+        environment.update(overrides)
+        return subprocess.run(
+            ["bash", str(BENCHMARKS / "midpoints/prepare_reference_gc.sh")],
+            env=environment, text=True, capture_output=True,
+        )
+
+    def test_records_one_bound_run_and_publishes_a_new_prefixed_package(self):
+        result = self.run_job()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        package = self.results / "griffin_blacklisted.ref_gc_package.zarr"
+        self.assertEqual((package / "zarr.json").read_text(), "reference fixture\n")
+        self.assertEqual((self.old_package / "keep.txt").read_text(), "old package\n")
+        arguments = json.loads((self.root / "native.json").read_text())
+        self.assertEqual(arguments[0], "ref-gc-bias")
+        self.assertEqual(argument_after(arguments, "--n-threads"), "1")
+        self.assertEqual(argument_after(arguments, "--output-prefix"), "griffin_blacklisted")
+        temporary = Path(argument_after(arguments, "--temp-dir"))
+        self.assertEqual(temporary.parent.parent, self.root / "scratch")
+        self.assertEqual(Path(argument_after(arguments, "--output-dir")), temporary.parent / "output")
+        self.assertEqual([
+            Path(arguments[index + 1]).name
+            for index, argument in enumerate(arguments) if argument == "--blacklist"
+        ], list(EXCLUSION_FILENAMES))
+        rows = read_timings(self.results / "timings.tsv")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(
+            [rows[0][name] for name in ("method", "warmup", "cores", "tool_threads", "step_exit_code")],
+            ["ref-gc-bias", "false", "1", "1", "0"],
+        )
+        self.assertEqual(len(rows[0]["physical_core_ids"].split(',')), 1)
+        self.assertNotEqual(rows[0]["physical_core_ids"], "NA")
+        setup = dict(read_record(self.results / "run.tsv"))
+        self.assertEqual(setup["reference_gc_package"], str(package))
+        self.assertEqual(setup["local_scratch_variable"], "REFERENCE_TEST_SCRATCH")
+        self.assertEqual(setup["input_reference_2bit"], str(self.reference))
+        self.assertTrue((self.results / "runs/1/command.sh").exists())
+        self.assertIn("reference-job-fixture", (self.results / "slurm-job.txt").read_text())
+        self.assertEqual(len((self.results / "blacklists.sha256").read_text().splitlines()), 5)
+        self.assertEqual(list((self.root / "scratch").iterdir()), [])
+
+    def test_failed_calculation_keeps_records_without_publishing_a_package(self):
+        result = self.run_job(FAIL_REFERENCE="1")
+
+        self.assertEqual(result.returncode, 17, result.stderr)
+        rows = read_timings(self.results / "timings.tsv")
+        self.assertEqual(rows[0]["tool_exit_code"], "17")
+        self.assertEqual(rows[0]["step_exit_code"], "17")
+        self.assertIn("reference calculation failed", (self.results / "runs/1/stderr.log").read_text())
+        self.assertFalse((self.results / "griffin_blacklisted.ref_gc_package.zarr").exists())
+        self.assertEqual((self.old_package / "keep.txt").read_text(), "old package\n")
+
+    def test_existing_results_are_rejected_before_any_native_call(self):
+        self.results.mkdir()
+        (self.results / "keep.txt").write_text("existing results\n")
+
+        result = self.run_job()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("already exists", result.stderr)
+        self.assertEqual((self.results / "keep.txt").read_text(), "existing results\n")
+        self.assertFalse((self.root / "native.json").exists())
+
+    def test_invalid_resources_or_scratch_fail_before_calculation(self):
+        for overrides, message in (
+            ({"BENCH_CORES": "2"}, "SLURM_CPUS_PER_TASK"),
+            ({"BENCH_CORES": "0"}, "BENCH_CORES"),
+            ({"LOCAL_SCRATCH_VAR": "invalid-name"}, "LOCAL_SCRATCH_VAR"),
+            ({"REFERENCE_TEST_SCRATCH": ""}, "writable scratch"),
+        ):
+            with self.subTest(overrides=overrides):
+                result = self.run_job(**overrides)
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+                self.assertFalse((self.root / "native.json").exists())
+                self.assertFalse(self.results.exists())
 
 
 @requires_measurement

@@ -48,34 +48,17 @@ Run `cfdnalab-gc` and `griffin-gc` in separate jobs for the timing comparison. E
 
 Both workflows keep native bias fitting, smoothing, exclusion rules and diagnostic plots. Correction algorithms are not forced to match. cfDNAlab uses directional paired spans, GC percentages and its native reference end offset (10 bp by default). Griffin uses record/TLEN selection, whole-fragment GC counts and its native smoothing. Its estimator counts qualifying forward and reverse records independently. Corrected-profile differences therefore reflect both bias estimates and midpoint counting. Mean per-site/per-bp values represent weighted midpoint counts in this comparison.
 
-cfDNAlab uses its default reference and sample GC-estimation settings. Its reference package is calculated once per alignment reference and reused across all BAMs, repetitions and core settings. The default package covers 30-1000 bp, and sample GC estimation inherits that range. The midpoint profiles use the 100-200 bp range.
+cfDNAlab uses the same five exclusion BEDs for its reference GC distribution, sample GC estimation and midpoint profiles. The reference distribution must account for the regions excluded from sample estimation. Calculate the reference package once per alignment reference and blacklist set, then reuse it across BAMs, repetitions and core settings. Other reference and sample-estimation counting settings retain their defaults. The reference package covers 30-1000 bp, and sample GC estimation inherits that range. The midpoint profiles use the 100-200 bp range.
 
 Griffin's downloaded source already includes its hg38 GC-estimation BED and precomputed reference GC-frequency tables under `Griffin-source/Ref/`. The installer saves their paths as `BENCH_GRIFFIN_GC_REGIONS` and `BENCH_GRIFFIN_REF_GC` in `tool_paths.sh`, which the shared benchmark commands load. Use these bundled inputs for the hg38 benchmark. Its estimator uses `chr1` through `chr22` and handles the supplied estimation regions itself. This BED is only used by `griffin-gc`. It does not replace or modify `BENCH_INTERVALS` or restrict cfDNAlab's reference calculation.
 
 Griffin's GC estimation uses its release's [15-500 bp range](https://github.com/adoebley/Griffin/blob/v0.2.0/snakemakes/griffin_GC_and_mappability_correction/config/config.yaml), independently of 100-200 bp profiling. Setup stages every reference table from 15 through 500 bp and records the bounds. Restricting estimation to the profiling range would remove records and neighbouring lengths used in native smoothing. Both estimation paths and both profilers use MAPQ >=20 for this comparison.
 
-For cfDNAlab's GC correction, add these reference paths to `benchmarks/local_settings.sh`, alongside the BAM, site and FASTA paths. Reuse `BENCH_REF_2BIT` if it is already exported for end motifs:
+For cfDNAlab's GC correction, set `BENCH_REF_2BIT` to the alignment reference in `benchmarks/local_settings.sh`. Reuse it if it is already exported for end motifs. The [separate reference-preparation job](../README.md#prepare-the-cfdnalab-gc-reference-once) writes a new package and prints its full path, including the `griffin_blacklisted` prefix. Add that path as `BENCH_CFDNA_REF_GC` in the settings file for subsequent benchmark submissions.
 
-```bash
-# cfDNAlab's alignment reference and precomputed reference GC distribution
-export BENCH_REF_2BIT=/path/to/the-alignment-reference.2bit
-export BENCH_CFDNA_REF_GC=/path/to/cfdnalab-reference-gc/ref_gc_package.zarr
-```
+The FASTA and 2bit must contain the same alignment reference. `BENCH_CFDNA_REF_GC` points to the reference package calculated with the five shared exclusion BEDs. Native loading checks reference compatibility, and midpoint correction checks that the requested length range is covered. Griffin expects a file named `<GC_BED_basename_without_extension>.<length>bp.GC_frequency.txt` for every length from 15 through 500 bp in `BENCH_GRIFFIN_REF_GC`. The pinned release includes all of these tables. They must correspond to the supplied reference, estimation BED and read length. A supplied reference table from another assembly or region set is not interchangeable.
 
-The FASTA and 2bit must contain the same alignment reference. `BENCH_CFDNA_REF_GC` points to the reusable default reference package. Native loading checks reference compatibility, and midpoint correction checks that the requested length range is covered. Griffin expects a file named `<GC_BED_basename_without_extension>.<length>bp.GC_frequency.txt` for every length from 15 through 500 bp in `BENCH_GRIFFIN_REF_GC`. The pinned release includes all of these tables. They must correspond to the supplied reference, estimation BED and read length. A supplied reference table from another assembly or region set is not interchangeable.
-
-Run cfDNAlab's reference calculation once in a compute allocation, outside benchmark measurements. From the repository root in Bash 4 or later, load the paths and run the command below. It uses the default calculation settings. Keep this calculation outside the settings file:
-
-```bash
-# Load tool paths from the directory passed to install_tools.sh
-# Replace /path/to/benchmark-tools with that directory's absolute path
-source /path/to/benchmark-tools/tool_paths.sh
-# Load the input paths and cluster settings saved in this repository
-source benchmarks/local_settings.sh
-"$BENCH_CFDNA" ref-gc-bias \
-    --ref-2bit "$BENCH_REF_2BIT" \
-    --output-dir "$(dirname "$BENCH_CFDNA_REF_GC")"
-```
+The reference-preparation job records its own `timings.tsv`, command, node/CPU placement, Slurm allocation and input checksums. Those records stay with the package, outside the feature timing summaries.
 
 No separate Griffin reference-generation job is needed for the bundled hg38 tables. Its native [reference generator](https://github.com/adoebley/Griffin/blob/v0.2.0/scripts/griffin_calc_GC_frequency.py) is only needed for a different reference or estimation region set. It runs once per fragment length with an explicit read length. Its chromosome-boundary branches contain an undefined `chrom_sizes_dict` variable, which can make custom reference preparation fail upstream. The bundled tables avoid rerunning that generator.
 
