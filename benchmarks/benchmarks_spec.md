@@ -125,7 +125,7 @@ The midpoint input is the supplied 9,990 bp BED (`center - 4995` to `center + 49
 
 `midpoints/prepare_reference_gc.sh` calculates cfDNAlab's reference package in a separate Slurm job, using the same five exclusion BEDs as sample estimation and midpoint profiling. It reserves an exclusive node and uses an explicit core count, the shared CPU-binding checks and node-local scratch. The main README submits a single 32-core run. The job writes `griffin_blacklisted.ref_gc_package.zarr` into a new `BENCH_RESULTS` directory, independent of any previous `BENCH_CFDNA_REF_GC` path, and publishes the package only after successful calculation.
 
-Its own `timings.tsv`, exact command/logs, reference and blacklist checksums, benchmark revision and Slurm allocation details stay with the package. Input staging and copying the package to persistent storage are outside the measured step. These records are separate from the feature timing summaries. The README block waits for preparation to succeed, then prints the published package path for subsequent submissions.
+Its own `timings.tsv`, exact command/logs, reference and blacklist checksums, benchmark revision and Slurm allocation details stay with the package. Input staging and copying the package to persistent storage are outside the measured step. These records are separate from the feature timing summaries. The README block returns after submission and prints the deterministic package path. Subsequent benchmark jobs use that path after preparation succeeds.
 
 ## Run controls
 

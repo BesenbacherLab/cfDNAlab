@@ -157,7 +157,8 @@ class CorrectedMidpointWorkflowTests(unittest.TestCase):
             block for block in re.findall(r"```bash\n(.*?)```", readme, re.DOTALL)
             if "prepare_reference_gc.sh" in block
         )
-        self.assertIn("--wait", reference_block)
+        self.assertNotIn("--wait", reference_block)
+        self.assertIn('"$reference_results/griffin_blacklisted.ref_gc_package.zarr"', reference_block)
         self.assertNotIn('dirname "$BENCH_CFDNA_REF_GC"', reference_block)
 
     def test_griffin_reestimates_bias_before_each_corrected_profile(self):

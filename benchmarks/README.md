@@ -134,7 +134,7 @@ Create `benchmarks/local_settings.sh` to record the paths to your [prepared inpu
 | `BENCH_BAM` | Prepared, coordinate-sorted hg38 BAM. Its index defaults to `<BAM>.bai`, or can be set with `BENCH_INDEX`. Coverage, lengths and motifs require a BAI index |
 | `BENCH_REF_2BIT`, `BENCH_REF_FASTA` | Matching alignment reference in 2bit and uncompressed FASTA formats. Griffin requires an existing `<FASTA>.fai`, overridable with `BENCH_FASTA_INDEX` |
 | `BENCH_INTERVALS` | Prepared grouped 9,990 bp site BED described in the [midpoint input instructions](midpoints/README.md#inputs-and-run) |
-| `BENCH_CFDNA_REF_GC` | Package path printed by the [reference-preparation job](#prepare-the-cfdnalab-gc-reference-once). Add it to this settings file after preparation finishes, then reuse it for benchmark submissions |
+| `BENCH_CFDNA_REF_GC` | Package path printed when the [reference-preparation job](#prepare-the-cfdnalab-gc-reference-once) is submitted. Add it to this settings file and use it after preparation succeeds, then reuse it for later benchmark submissions |
 
 Each benchmark job uses temporary storage on the compute node for its input files, tools and intermediate files. The cluster makes the path to this storage available through an environment variable, commonly `TMPDIR` or `SLURM_TMPDIR`. Tell the benchmark which variable to read by setting `LOCAL_SCRATCH_VAR` in `benchmarks/local_settings.sh` to its name, without a `$`:
 
@@ -151,7 +151,7 @@ Submit this separate preparation job once before the GC-corrected midpoint bench
 
 The job reserves an exclusive node, runs a single calculation with 32 physical cores, and stages the reference, blacklists and executable on local scratch. The calculation uses an explicit thread count and temporary directory. It uses the same timing and CPU-binding checks as the benchmark jobs. Input staging and saving the completed package are outside its measured time. Its `timings.tsv`, exact command, logs, input checksums and Slurm allocation details stay in the new reference-results directory, outside the feature timing summaries.
 
-Run the block in **Bash 4 or later from the repository root on the login node**. Choose a new output directory and adjust the time limit and node constraint for the cluster. The block waits for the job to finish successfully, then prints the `export BENCH_CFDNA_REF_GC=...` assignment to put in `benchmarks/local_settings.sh` before submitting the benchmark jobs.
+Run the block in **Bash 4 or later from the repository root on the login node**. Choose a new output directory and adjust the time limit and node constraint for the cluster. The block returns after submission, printing the job ID and the deterministic package path. Put the printed `export BENCH_CFDNA_REF_GC=...` assignment in `benchmarks/local_settings.sh`, and use the package after preparation succeeds.
 
 ```bash
 # Copy the whole block, including the surrounding parentheses
@@ -174,7 +174,7 @@ if [[ -e "$reference_results" ]]; then
 fi
 mkdir -p "$benchmark_root/references/slurm"
 reference_slurm_options=(
-    --export=ALL --parsable --wait --exclusive --mem=0
+    --export=ALL --parsable --exclusive --mem=0
     --cpus-per-task="$reference_cores" --time="$reference_wall_time"
     --constraint=gen6
     --output="$benchmark_root/references/slurm/reference-gc-%j.out"
@@ -183,14 +183,13 @@ reference_slurm_options=(
 if [[ -n ${BENCH_EXPECTED_NODE:-} ]]; then
     reference_slurm_options+=(--nodelist="$BENCH_EXPECTED_NODE")
 fi
-# --wait returns only after this preparation job succeeds or fails
+# Submit preparation without waiting for a node or for the calculation to finish
 BENCH_CORES="$reference_cores" BENCH_RESULTS="$reference_results" \
     sbatch "${reference_slurm_options[@]}" benchmarks/midpoints/prepare_reference_gc.sh
 
-# Read the path actually published by the job, including its output prefix
-package_path=$(awk -F '\t' '$1 == "reference_gc_package" {print $2}' "$reference_results/run.tsv")
-[[ -d "$package_path" ]] || { echo "The preparation job did not publish a GC reference package." >&2; exit 1; }
-printf 'Add this assignment to benchmarks/local_settings.sh:\nexport BENCH_CFDNA_REF_GC=%q\n' "$package_path"
+# The package name is fixed by prepare_reference_gc.sh
+# Add this assignment to local_settings.sh and use it after the job succeeds
+printf 'export BENCH_CFDNA_REF_GC=%q\n' "$reference_results/griffin_blacklisted.ref_gc_package.zarr"
 )
 ```
 
