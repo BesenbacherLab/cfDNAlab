@@ -127,8 +127,7 @@ picard_version=NA
 cfdnapro_version=NA
 if [[ "$needs_cfdna" == true ]]; then cfdna_version=$("$cfdna" --version | tr '\t\n' '  '); fi
 if [[ "$needs_finale" == true ]]; then
-    finale_version=$("$finale_python" "$finale" --version | tr '\t\n' '  ')
-    finale_version+=" commit:$(cat "$BENCH_WORK/finale-env/share/finaletoolkit/revision.txt")"
+    finale_version=$(benchmark_finaletoolkit_version "$finale_python" "$finale" "$BENCH_FINALE_ARCHIVE")
 fi
 samtools_version=$("$samtools" --version-only | tr '\t\n' '  ')
 if [[ "$needs_picard" == true ]]; then picard_version=$(benchmark_picard_version "$picard"); fi

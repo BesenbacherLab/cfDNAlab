@@ -8,7 +8,9 @@ Install the tools below, then follow [Run the benchmarks](#run-the-benchmarks) t
 
 ## Installation
 
-Run `bash benchmarks/install_tools.sh /path/to/benchmark-tools` on Linux x86_64 with Bash 4 or later. Use a directory reserved for these tools. The installer puts Conda environments under `envs/`, with downloaded executables, source code, environment archives and the cfDNAPro container image beside that directory. It prints the paths to use when running the benchmarks. Conda, Apptainer, Git, wget and tar must already be installed. Building cfDNAlab also needs GNU make and C/C++ compilers.
+From the repository root, run `bash benchmarks/install_tools.sh /path/to/benchmark-tools` on Linux x86_64 with Bash 4 or later. Replace `/path/to/benchmark-tools` with the absolute path to a directory reserved for these tools. Use that same directory wherever `/path/to/benchmark-tools` appears in the commands below. Conda, Apptainer, Git, wget and tar must already be installed. Building cfDNAlab also needs GNU make and C/C++ compilers.
+
+The installer puts Conda environments under `envs/`, with downloaded executables, source code, environment archives and the cfDNAPro container image beside that directory. When installation finishes, it writes `tool_paths.sh` in the installation directory. This file contains the paths to the installed tools and Griffin's reference files. The [benchmark commands](#run-the-benchmarks) load these paths before submitting jobs or collecting results.
 
 Installation files stay under the directory passed to the installer. `cache/` holds downloaded packages, Rust dependencies, container layers and font caches. `tmp/` holds temporary build and unpacking files. Configuration and application data use `config/` and `share/`. The installer sets these locations before running Conda because `--prefix` alone only selects where the environment is installed. It does not move Conda's download cache. The installer also disables registration in `~/.conda/environments.txt`. These settings affect the installer and programs it starts, leaving the calling shell and any existing caches unchanged.
 
@@ -22,7 +24,7 @@ The installation choices below were checked against the linked guides and packag
 | mosdepth 0.3.14 | Authors' standalone Linux executable | The [guide](https://github.com/brentp/mosdepth#installation) recommends this download. It is statically linked, so it runs without a Conda environment or separate shared libraries. |
 | samtools 1.25 | Bioconda, `envs/samtools` | The [Bioconda package](https://anaconda.org/bioconda/samtools) installs samtools with HTSlib and its required libraries. |
 | PanDepth 2.26 | Authors' Linux x86_64 release archive | Follows the executable download in the [guide](https://github.com/HuiyangYu/PanDepth#1-install), using version 2.26. This avoids compiling PanDepth. |
-| FinaleToolkit `d16632ec` | Git source installed with pip, dependencies from Conda, Python 3.11 | Uses commit `d16632ec5ae8999e774234457f6b0f9405c8f590`, which includes [PR #194](https://github.com/epifluidlab/FinaleToolkit/pull/194). The fix makes motif length filtering work and assigns each fragment to a single counting window. The source commit is recorded with the timing results. `pip check` checks dependency requirements, and Conda and pip package lists record the installed versions. |
+| FinaleToolkit `d16632ec` | Git source installed with pip, dependencies from Conda, Python 3.11 | Uses commit `d16632ec5ae8999e774234457f6b0f9405c8f590`, which includes [PR #194](https://github.com/epifluidlab/FinaleToolkit/pull/194). The fix makes motif length filtering work and assigns each fragment to a single counting window. Timing rows record the actual installed commit from pip's `direct_url.json` metadata. `pip check` checks dependency requirements, and Conda and pip package lists record the installed versions. |
 | cfDNAPro 1.7.4 | Authors' Apptainer image, identified by its content checksum | Follows the [recommended container installation](https://github.com/hw538/cfDNAPro#installation). The image contains R and the reference packages. Its labels identify source commit `ab9eeb1` and version 1.7.4, built on October 26, 2026. Bioconductor and [Bioconda](https://anaconda.org/bioconda/bioconductor-cfdnapro) use a different version numbering system. The benchmark uses the image from the authors' guide. |
 | Picard 3.5.0 | Bioconda `picard-slim`, Java 17, `envs/picard` | The [recipe](https://github.com/bioconda/bioconda-recipes/blob/master/recipes/picard-slim/meta.yaml) installs the official Java program without R. [CollectInsertSizeMetrics](https://github.com/broadinstitute/picard/blob/3.5.0/src/main/java/picard/analysis/CollectInsertSizeMetrics.java) needs R only for its optional PDF histogram. The benchmark saves the count table without requesting a PDF. |
 | Griffin v0.2.0 | Release scripts and Conda dependencies, `envs/griffin` | Uses the library versions in the [wiki](https://github.com/adoebley/Griffin/wiki), including `nomkl`, which selects libraries without Intel MKL. Python 3.7.12 replaces the unavailable 3.7.4. Bioconda supplies pybedtools 0.8.0 and pysam 0.19.0 without compiling them locally. PyYAML 5.3.1 is included because Griffin imports it, and Matplotlib-base 3.4.3 is needed for its GC-bias plots. The archive includes profiling and GC-estimation scripts. Installing this combination on Linux remains to be checked. The benchmark calls the scripts directly, so it does not install Snakemake or samtools in this environment. |
@@ -63,7 +65,7 @@ bash benchmarks/install_tools.sh /path/to/benchmark-tools --force finaletoolkit
 bash benchmarks/install_tools.sh /path/to/benchmark-tools --mark-outdated cfdnalab
 ```
 
-Use `--force all` to reinstall every tool. If source code or dependencies change without a version change, use `--force` or `--mark-outdated` for the affected tool because the installer does not detect those changes automatically. `--only` limits the selected tools, and `--force` applies within that selection. Without `--only`, all tools are selected. Installed package lists and the container image's identity stay under `records/`. `cfdnalab-build.tsv` records the installed cfDNAlab commit and whether it contained uncommitted changes at build time. The installer prints `BENCH_INSTALL_MANIFEST` and `BENCH_CFDNA_BUILD` so jobs can copy these records beside the results. Keep the complete installation records with the benchmark results.
+Use `--force all` to reinstall every tool. If source code or dependencies change without a version change, use `--force` or `--mark-outdated` for the affected tool because the installer does not detect those changes automatically. `--only` limits the selected tools, and `--force` applies within that selection. Without `--only`, all tools are selected. Installed package lists and the container image's identity stay under `records/`. `cfdnalab-build.tsv` records the installed cfDNAlab commit and whether it contained uncommitted changes at build time. The installer includes `BENCH_INSTALL_MANIFEST` and `BENCH_CFDNA_BUILD` in `tool_paths.sh` so jobs can copy these records beside the results. Keep the complete installation records with the benchmark results.
 
 Picard can return exit status 1 for its version command. The installer accepts that documented behavior only when the output identifies version 3.5.0. The FinaleToolkit dependencies and the environments made with conda-pack 0.9.2 still need to be installed and run on Linux to verify that they work together.
 
@@ -121,25 +123,18 @@ The tools cannot all apply the listed filters in the same way. PanDepth has no f
 
 Each successful cfDNAPro motif run saves [times for its individual steps](ends/README.md#cfdnapro-motifs) in `runs/<run_order>/cfdnapro-stage-timings.tsv`. This shows how much time the benchmark's R length filter adds to cfDNAPro's BAM reading, fragment construction and motif counting. The total runtime includes that filtering cost.
 
-### Set the input and tool paths
+### Set the input paths and cluster settings
 
-After [preparing the inputs](data/README.md) and installing the tools, run the commands in **Bash 4 or later from the repository root on the login node**. Put the machine-specific absolute paths in `benchmarks/local_settings.sh`, which should be excluded from Git. This file sets `benchmark_root` and exports the variables below, so the benchmark commands can be reused without editing paths in several places. Keep downloads, reference calculations and job submissions outside this settings file.
+Create `benchmarks/local_settings.sh` to record the paths to your [prepared inputs](data/README.md), where results should be saved and which temporary storage to use on the cluster. Set the variables below using `export NAME=value` so submitted jobs receive them. Keep this file out of Git. Put only settings in it, and run preparation commands and job submissions separately.
 
-Load the settings into the current Bash session with `source benchmarks/local_settings.sh`. The `BENCH_*` variables and `LOCAL_SCRATCH_VAR` in the file must use `export` so submitted jobs receive them. Both the submission and result-collection blocks below start by sourcing this file. Source it again after editing it or starting a new shell.
-
-| Variable | What it sets |
+| Variable to set in `benchmarks/local_settings.sh` | What it sets |
 | --- | --- |
 | `benchmark_root` | Parent directory for the new results series |
 | `LOCAL_SCRATCH_VAR` | Name of the variable holding the compute node's local scratch directory. Defaults to `TMPDIR` |
 | `BENCH_BAM` | Prepared, coordinate-sorted hg38 BAM. Its index defaults to `<BAM>.bai`, or can be set with `BENCH_INDEX`. Coverage, lengths and motifs require a BAI index |
-| `BENCH_CFDNA`, `BENCH_MOSDEPTH`, `BENCH_PANDEPTH` | Executable paths printed by the installer |
-| `BENCH_SAMTOOLS_ARCHIVE`, `BENCH_FINALE_ARCHIVE`, `BENCH_PICARD_ARCHIVE`, `BENCH_GRIFFIN_ARCHIVE`, `BENCH_CFDNAPRO_IMAGE`, `BENCH_COMPARE_PYTHON` | Environment archives, cfDNAPro container image and Python for comparing outputs. Use the paths printed by the installer |
 | `BENCH_REF_2BIT`, `BENCH_REF_FASTA` | Matching alignment reference in 2bit and uncompressed FASTA formats. Griffin requires an existing `<FASTA>.fai`, overridable with `BENCH_FASTA_INDEX` |
 | `BENCH_INTERVALS` | Prepared grouped 9,990 bp site BED described in the [midpoint input instructions](midpoints/README.md#inputs-and-run) |
 | `BENCH_CFDNA_REF_GC` | cfDNAlab's reference GC distribution in Zarr format. Calculate it once and reuse it, following the [GC reference instructions](midpoints/README.md#gc-corrected-comparison) |
-| `BENCH_GRIFFIN_REF_DIR`, `BENCH_GRIFFIN_GC_REGIONS`, `BENCH_GRIFFIN_REF_GC`, `BENCH_GRIFFIN_MAPPABILITY_BW` | Griffin's files for excluding regions, estimating GC bias and masking positions with zero mappability. These include BED files, reference GC tables and the hg38 k100 Umap bigWig. Follow the [midpoint instructions](midpoints/README.md) for each path |
-
-`BENCH_SETUP_PYTHON` defaults to `python3` and is used only for setup before timing. Optional `BENCH_INSTALL_MANIFEST` and `BENCH_CFDNA_BUILD` let each job save the installation and build records with its results.
 
 Each benchmark job uses temporary storage on the compute node for its input files, tools and intermediate files. The cluster makes the path to this storage available through an environment variable, commonly `TMPDIR` or `SLURM_TMPDIR`. Tell the benchmark which variable to read by setting `LOCAL_SCRATCH_VAR` in `benchmarks/local_settings.sh` to its name, without a `$`:
 
@@ -152,16 +147,23 @@ If the cluster uses `SLURM_TMPDIR`, set `export LOCAL_SCRATCH_VAR=SLURM_TMPDIR` 
 
 ### Submit the jobs
 
+Once the inputs and settings are ready, adjust the time limits and Slurm options described below for your cluster. Then run the submission block in **Bash 4 or later from the repository root on the login node**.
+
 The six time limits below apply to **complete jobs**, including setup, every selected command's repetitions and any output comparison. For example, the coverage limit covers cfDNAlab and all selected coverage competitors together. Each midpoint limit covers its separate job. These values specify how long Slurm allows the jobs to run. They are not measured runtimes, and each must allow its job to finish at the slowest core setting. The extra 32-core checks reuse their feature's limit but run only once.
 
 Griffin needs enough time for the demo, setup, sample GC estimation and profiling. If that takes more than 47 hours, select a Slurm partition and time limit that allow it to finish. If the other tools cannot all finish within a partition's job limit, divide their method list between separate jobs with new result directories, keeping every selected tool and core setting.
 
 `--constraint=gen6` selects the node generation used for these benchmarks. Change it and add a Slurm partition to `slurm_options` as needed for the cluster. Use the same physical node when available. Setting `BENCH_EXPECTED_NODE` both adds `--nodelist` below and makes each job check its hostname. If jobs use different nodes, choose equivalent hardware and keep their recorded node names with the results, because differences between machines can affect timing.
 
-`BENCH_METHODS` names the tool configurations to run. For example, in coverage, `cfdnalab` measures read depth and `cfdnalab-fragment` measures fragment coverage using the same executable.
-
 ```bash
+# Copy the whole block, including the surrounding parentheses
+# The parentheses keep the error settings below out of your interactive shell
+(
 set -euo pipefail
+# Load tool paths from the directory passed to install_tools.sh
+# Replace /path/to/benchmark-tools with that directory's absolute path
+source /path/to/benchmark-tools/tool_paths.sh
+# Load the input paths and cluster settings saved in this repository
 source benchmarks/local_settings.sh
 : "${benchmark_root:?Set benchmark_root in benchmarks/local_settings.sh}"
 
@@ -192,7 +194,7 @@ results_root=$(mktemp -d "$benchmark_root/results/run-$(date -u +%Y%m%dT%H%M%SZ)
 results_root=$(cd "$results_root" && pwd)
 mkdir -p "$results_root"/{coverage,lengths,ends,midpoints,concordance,slurm}
 mkdir -p "$results_root/midpoints"/{cfdnalab,cfdnalab-gc,griffin-gc}
-# Save this assignment so a later shell can find these results
+# Run this printed assignment in your shell before collecting results
 printf 'results_root=%q\n' "$results_root"
 
 # --parsable prints job IDs, saved below to retrieve memory and status records
@@ -207,6 +209,8 @@ if [[ -n ${BENCH_EXPECTED_NODE:-} ]]; then
     slurm_options+=(--nodelist="$BENCH_EXPECTED_NODE")
 fi
 
+# Each list names the tool configurations to pass to BENCH_METHODS below
+# Several configurations can use the same tool, such as cfDNAlab's read depth and fragment coverage
 coverage_methods=(
     # Read depth, counting overlapping mates once where the tool supports it
     cfdnalab mosdepth samtools-depth pandepth
@@ -310,6 +314,7 @@ BENCH_RESULTS="$results_root/concordance/ends" \
     bash benchmarks/submit_benchmark.sh ends \
     "${slurm_options[@]}" --job-name=ends-proper-concordance-32cores \
     --time="$end_motifs_wall_time" | tee -a "$results_root/job-ids.txt"
+)
 ```
 
 Each job creates a new results directory with the following files:
@@ -326,14 +331,20 @@ Coverage, lengths and motifs compare their saved outputs automatically after all
 
 ### Collect and compare the results
 
-Run this block **after all submitted jobs have finished**. It retrieves Slurm's memory and exit-status records, matches them to each tool run, writes timing summaries, and compares outputs saved in separate jobs. Slurm keeps these resource records in its accounting database, and final values can arrive after a job ends. Collecting them here keeps this work outside the tool measurements.
+After all submitted jobs have finished, run the collection block in **Bash 4 or later from the repository root on the login node**. It retrieves Slurm's memory and exit-status records, matches them to each tool run, writes timing summaries, and compares outputs saved in separate jobs. Slurm keeps these resource records in its accounting database, and final values can arrive after a job ends. Collecting them here keeps this work outside the tool measurements.
 
 ```bash
+# First run the results_root=... assignment printed by the submission block
+# Copy this whole block, including the surrounding parentheses
+# The parentheses keep the error settings below out of your interactive shell
+(
 set -euo pipefail
-# Load the input and tool settings into this Bash session
+# Load tool paths from the directory passed to install_tools.sh
+# Replace /path/to/benchmark-tools with that directory's absolute path
+source /path/to/benchmark-tools/tool_paths.sh
+# Load the input paths and cluster settings saved in this repository
 source benchmarks/local_settings.sh
-# In a new Bash session, restore the results_root=... assignment printed by the
-# submission block before running the remaining commands
+: "${results_root:?Run the results_root=... assignment printed by the submission block}"
 
 # Keep the downloaded Slurm records with the summaries calculated from them
 # --runs-output also requires a new file, so each analysis gets a new directory
@@ -417,6 +428,7 @@ for cores in 1 4 12 32; do
         "$comparison/profiles" --gc-corrected \
         > "$comparison/concordance-corrected.tsv"
 done
+)
 ```
 
 If Slurm has not supplied a memory value yet, it is recorded as `NA`. Rerun the collection block later to retrieve delayed values and create another summary directory. Failed commands and scheduler steps remain in `runs-with-memory.tsv`, but are excluded from the averages of successful runs. Keep each summary directory with the benchmark results.

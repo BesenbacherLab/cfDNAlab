@@ -243,6 +243,52 @@ class AutomaticConcordanceTests(unittest.TestCase):
 class SetupAndScopeTests(unittest.TestCase):
     """Reject incomplete setup before staging or decompressing native data."""
 
+    def test_motif_reference_check_reports_contig_names_lengths_and_source_paths(self):
+        runner = (BENCHMARKS / "ends/benchmark_end_motifs.sh").read_text()
+        header_check = runner.split("<<'PYHEADER'\n", 1)[1].split("\nPYHEADER", 1)[0]
+        for reference_contigs, matches in (
+            ({"shared": 50, "bam-only": 200, "chr1": 100}, True),
+            ({"shared": 50, "reference-only": 300, "chr1": 110}, False),
+        ):
+            with self.subTest(matches=matches), tempfile.TemporaryDirectory() as temporary:
+                modules = Path(temporary)
+                # Replace only the external file readers. The actual header check
+                # still decides whether these contigs describe the same reference
+                (modules / "pysam.py").write_text(
+                    "from contextlib import contextmanager\nfrom types import SimpleNamespace\n"
+                    "@contextmanager\ndef AlignmentFile(*arguments):\n"
+                    "    yield SimpleNamespace(references=('chr1', 'bam-only', 'shared'), lengths=(100, 200, 50))\n"
+                )
+                (modules / "py2bit.py").write_text(
+                    "from contextlib import contextmanager\nfrom types import SimpleNamespace\n"
+                    "@contextmanager\ndef open(*arguments):\n"
+                    f"    yield SimpleNamespace(chroms=lambda: {reference_contigs!r})\n"
+                )
+                result = subprocess.run(
+                    [sys.executable, "-c", header_check],
+                    env={
+                        **os.environ, "PYTHONPATH": str(modules), "BENCH_WORK": "/scratch/job",
+                        "BENCH_BAM": "/inputs/sample.bam", "BENCH_REF_2BIT": "/references/genome.2bit",
+                    },
+                    text=True, capture_output=True,
+                )
+
+                if matches:
+                    # Contig order is irrelevant when all names and lengths match
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stderr, "")
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("BAM: /inputs/sample.bam", result.stderr)
+                    self.assertIn("2bit: /references/genome.2bit", result.stderr)
+                    self.assertIn("Missing from the 2bit reference (1):", result.stderr)
+                    self.assertIn("bam-only: BAM length 200 bp", result.stderr)
+                    self.assertIn("Missing from the BAM (1):", result.stderr)
+                    self.assertIn("reference-only: 2bit length 300 bp", result.stderr)
+                    self.assertIn("Different lengths (1):", result.stderr)
+                    self.assertIn("chr1: BAM 100 bp, 2bit 110 bp", result.stderr)
+                    self.assertNotIn("shared:", result.stderr)
+
     def test_each_runner_uses_the_selected_compute_node_scratch_before_staging(self):
         for feature, filename, directory_prefix in (
             ("coverage", "benchmark_coverage.sh", "coverage"),

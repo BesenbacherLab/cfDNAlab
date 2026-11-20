@@ -150,8 +150,7 @@ if [[ "$needs_cfdna" == true ]]; then cfdna_version=$("$cfdna" --version | tr '\
 if [[ "$needs_mosdepth" == true ]]; then mosdepth_version=$("$mosdepth" --version | tr '\t\n' '  '); fi
 samtools_version=$("$samtools" --version-only | tr '\t\n' '  ')
 if [[ "$needs_finale" == true ]]; then
-    finale_version=$("$finale_python" "$finale" --version | tr '\t\n' '  ')
-    finale_version+=" commit:$(cat "$BENCH_WORK/finale-env/share/finaletoolkit/revision.txt")"
+    finale_version=$(benchmark_finaletoolkit_version "$finale_python" "$finale" "$BENCH_FINALE_ARCHIVE")
 fi
 if [[ "$needs_pandepth" == true ]]; then
     # PanDepth has no version option. Its help text contains "show this help [vX.Y]"

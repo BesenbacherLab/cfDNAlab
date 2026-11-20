@@ -13,7 +13,7 @@ The benchmark uses the same grouped sites, inclusive fragment lengths 100-200 bp
 
 Griffin receives a centered anchor per site. Its normalization window is `[-4995, 4995)`, matching cfDNAlab's complete BED window. Its official `--save_window -1000 1000` rounds inward to `[-990, 990)` at the 15 bp step. Saving the central window excludes Griffin's polynomial smoothing edge bins and does not change its full-window normalization. The runner never resizes the supplied BED. Misaligned bin coordinates fail comparison.
 
-Griffin keeps its official center feature window `[-30, 30)`, FFT window `[-960, 960)` and FFT index 10. FFT feature calculation is compulsory and remains timed. Mappability correction is off, while zero-mappability exclusion is on. Both tools use the guide's 15 bp step and MAPQ 20. Griffin's final plotting rule is omitted. Its GC-bias plots and cfDNAlab's native QC plots remain timed.
+Griffin keeps its official center feature window `[-30, 30)`, FFT window `[-960, 960)` and FFT index 10. FFT feature calculation is compulsory and remains timed. Mappability correction is off. Griffin still applies its zero-mappability filter, which excludes a bin if any position in it has zero mappability in the Umap reference track. Both tools use the guide's 15 bp step and MAPQ 20. Griffin's final plotting rule is omitted. Its GC-bias plots and cfDNAlab's native QC plots remain timed.
 
 The comparator divides cfDNAlab's complete 666-bin group profile by its full-window mean, then selects the same 132 central bins as Griffin. It never renormalizes the saved subset. Griffin's cropped output therefore need not have mean one. cfDNAlab averages per-bp counts within bins, while Griffin sums them. This constant factor cancels during normalization. cfDNAlab smooths before binning and Griffin bins before smoothing over 11 bins. The comparator adds no smoothing, shifting or rebinning. It reports signed Pearson r, r squared, MAE/RMSE and maximum absolute difference.
 
@@ -50,36 +50,38 @@ Both workflows keep native bias fitting, smoothing, exclusion rules and diagnost
 
 cfDNAlab uses its default reference and sample GC-estimation settings. Its reference package is calculated once per alignment reference and reused across all BAMs, repetitions and core settings. The default package covers 30-1000 bp, and sample GC estimation inherits that range. The midpoint profiles use the 100-200 bp range.
 
-Griffin's downloaded source already includes its hg38 GC-estimation BED and precomputed reference GC-frequency tables under `Griffin-source/Ref/`. Use these bundled inputs for the hg38 benchmark. Its estimator uses `chr1` through `chr22` and handles the supplied estimation regions itself. This BED is only used by `griffin-gc`. It does not replace or modify `BENCH_INTERVALS` or restrict cfDNAlab's reference calculation.
+Griffin's downloaded source already includes its hg38 GC-estimation BED and precomputed reference GC-frequency tables under `Griffin-source/Ref/`. The installer saves their paths as `BENCH_GRIFFIN_GC_REGIONS` and `BENCH_GRIFFIN_REF_GC` in `tool_paths.sh`, which the shared benchmark commands load. Use these bundled inputs for the hg38 benchmark. Its estimator uses `chr1` through `chr22` and handles the supplied estimation regions itself. This BED is only used by `griffin-gc`. It does not replace or modify `BENCH_INTERVALS` or restrict cfDNAlab's reference calculation.
 
 Griffin's GC estimation uses its release's [15-500 bp range](https://github.com/adoebley/Griffin/blob/v0.2.0/snakemakes/griffin_GC_and_mappability_correction/config/config.yaml), independently of 100-200 bp profiling. Setup stages every reference table from 15 through 500 bp and records the bounds. Restricting estimation to the profiling range would remove records and neighbouring lengths used in native smoothing. Both estimation paths and both profilers use MAPQ >=20 for this comparison.
 
-Add these paths to the local settings file, in addition to the existing BAM, site, FASTA and tool paths. Reuse `BENCH_REF_2BIT` if it is already exported for end motifs:
+For cfDNAlab's GC correction, add these reference paths to `benchmarks/local_settings.sh`, alongside the BAM, site and FASTA paths. Reuse `BENCH_REF_2BIT` if it is already exported for end motifs:
 
 ```bash
-# cfDNAlab
+# cfDNAlab's alignment reference and precomputed reference GC distribution
 export BENCH_REF_2BIT=/path/to/the-alignment-reference.2bit
 export BENCH_CFDNA_REF_GC=/path/to/cfdnalab-reference-gc/ref_gc_package.zarr
-# Griffin
-export BENCH_GRIFFIN_GC_REGIONS=/path/to/benchmark-tools/Griffin-source/Ref/k100_minus_exclusion_lists.mappable_regions.hg38.bed
-export BENCH_GRIFFIN_REF_GC=/path/to/benchmark-tools/Griffin-source/Ref/genome_GC_frequency
 ```
 
 The FASTA and 2bit must contain the same alignment reference. `BENCH_CFDNA_REF_GC` points to the reusable default reference package. Native loading checks reference compatibility, and midpoint correction checks that the requested length range is covered. Griffin expects a file named `<GC_BED_basename_without_extension>.<length>bp.GC_frequency.txt` for every length from 15 through 500 bp in `BENCH_GRIFFIN_REF_GC`. The pinned release includes all of these tables. They must correspond to the supplied reference, estimation BED and read length. A supplied reference table from another assembly or region set is not interchangeable.
 
-Run cfDNAlab's reference calculation once in a compute allocation, outside benchmark measurements. The following command supplies only the required paths, leaving all calculation settings at their defaults. Keep this command outside the settings file, which should only export paths:
+Run cfDNAlab's reference calculation once in a compute allocation, outside benchmark measurements. From the repository root in Bash 4 or later, load the paths and run the command below. It uses the default calculation settings. Keep this calculation outside the settings file:
 
 ```bash
+# Load tool paths from the directory passed to install_tools.sh
+# Replace /path/to/benchmark-tools with that directory's absolute path
+source /path/to/benchmark-tools/tool_paths.sh
+# Load the input paths and cluster settings saved in this repository
+source benchmarks/local_settings.sh
 "$BENCH_CFDNA" ref-gc-bias \
     --ref-2bit "$BENCH_REF_2BIT" \
     --output-dir "$(dirname "$BENCH_CFDNA_REF_GC")"
 ```
 
-Griffin's bundled hg38 reference tables are already downloaded by the installer, which prints both Griffin input exports. No separate Griffin reference-generation job is needed for these inputs. Its native [reference generator](https://github.com/adoebley/Griffin/blob/v0.2.0/scripts/griffin_calc_GC_frequency.py) is only needed for a different reference or estimation region set. It runs once per fragment length with an explicit read length. Its chromosome-boundary branches contain an undefined `chrom_sizes_dict` variable, which can make custom reference preparation fail upstream. The bundled tables avoid rerunning that generator.
+No separate Griffin reference-generation job is needed for the bundled hg38 tables. Its native [reference generator](https://github.com/adoebley/Griffin/blob/v0.2.0/scripts/griffin_calc_GC_frequency.py) is only needed for a different reference or estimation region set. It runs once per fragment length with an explicit read length. Its chromosome-boundary branches contain an undefined `chrom_sizes_dict` variable, which can make custom reference preparation fail upstream. The bundled tables avoid rerunning that generator.
 
-The Griffin archive must contain its GC scripts and matplotlib for native bias plots. If those files are missing, rerun `bash benchmarks/install_tools.sh ROOT --only griffin`. All installation files remain under ROOT.
+The Griffin archive must contain its GC scripts and matplotlib for native bias plots. If those files are missing, rerun `bash benchmarks/install_tools.sh /path/to/benchmark-tools --only griffin` from the repository root, using the same installation directory as before.
 
-With those references prepared, use the commented [benchmark commands](../README.md#run-the-benchmarks). It submits uncorrected cfDNAlab, GC-corrected cfDNAlab and GC-corrected Griffin as three separate midpoint jobs at each of 1, 4, 12 and 32 cores. Each midpoint job has its own result directory and an explicitly named midpoint wall-time variable.
+With those references prepared, use the commented [benchmark commands](../README.md#run-the-benchmarks). They submit uncorrected cfDNAlab, GC-corrected cfDNAlab and GC-corrected Griffin as three separate midpoint jobs at each of 1, 4, 12 and 32 cores. Each midpoint job has its own result directory and time limit.
 
 Griffin keeps its short, untimed demo with unit weights, without estimating sample bias during that demo. Every measured `griffin-gc` repetition performs the full sample estimation and profiling on the supplied sites. Its first measured estimation has no preceding estimation warmup in that job. Full `cfdnalab-gc` runs warm up the entire corrected workflow. The first measured bias estimate and its diagnostics are retained under `profiles/<method>/sample-gc-bias/`. Inputs are staged before timing, and both `run.tsv` and the timing rows distinguish corrected runs from the uncorrected baseline.
 
@@ -89,16 +91,11 @@ The shared [completed-job commands](../README.md#collect-and-compare-the-results
 
 ## Inputs and run
 
-The same exclusion BEDs are used by both tools. Point `BENCH_GRIFFIN_REF_DIR` to the existing installation's `Griffin-source/Ref` directory. It contains the five BEDs used by Griffin's release config. Griffin additionally needs the hg38 k100 Umap bigWig. Download that reference once outside timed jobs:
+Both tools use the five exclusion BEDs bundled with Griffin. The benchmark commands find them through `BENCH_GRIFFIN_REF_DIR`, which the installer's `tool_paths.sh` sets to the `Griffin-source/Ref` directory.
 
-```bash
-export BENCH_GRIFFIN_REF_DIR=/path/to/benchmark-tools/Griffin-source/Ref
-export BENCH_GRIFFIN_MAPPABILITY_BW="$BENCH_GRIFFIN_REF_DIR/k100.Umap.MultiTrackMappability.bw"
-wget -O "$BENCH_GRIFFIN_MAPPABILITY_BW" \
-    https://hgdownload.soe.ucsc.edu/gbdb/hg38/hoffmanMappability/k100.Umap.MultiTrackMappability.bw
-```
+Griffin also reads the hg38 k100 Umap bigWig to identify zero-mappability positions for its bin filter, even though mappability correction is disabled. The installer downloads this track from [UCSC](https://hgdownload.soe.ucsc.edu/gbdb/hg38/hoffmanMappability/) into `Griffin-source/Ref` and saves its path as `BENCH_GRIFFIN_MAPPABILITY_BW` in `tool_paths.sh`. The benchmark command blocks load that file along with the other installed tool paths.
 
-Keep the two exports in the local settings file. Downloading is a separate preparation command. No environment reinstall is required for an existing Griffin installation. The launcher checks reference-file existence before submission. Benchmark jobs copy these references to node-local scratch before timing.
+To add the track to an existing installation, run `bash benchmarks/install_tools.sh /path/to/benchmark-tools --only griffin` from the repository root, replacing `/path/to/benchmark-tools` with the existing installation directory. The installer reuses a completed Griffin environment with matching versions and files, and downloads the track if it is missing. The launcher checks reference-file existence before submission. Jobs copy these references to local scratch before timing, so downloading and copying are excluded from the measurements.
 
 Supply the prepared coordinate-sorted BAM and its index, the matching **uncompressed FASTA plus existing `.fai`** for Griffin, and your BED-like file with `chromosome, start, end, group` through `BENCH_INTERVALS`. Use tab-separated rows without a header. BED4 is unstranded. Optional strands follow cfDNAlab's BED5/BED6 convention. Supply equal-width windows within their chromosomes. Use BED `[center-4995, center+4995)`, 9,990 bp total, to align both tools' 15 bp bins. Reverse-stranded windows are reversed by both tools. The runner retains all supplied site rows, including repeats and overlaps, without selecting or resizing sites. Before submission, the launcher checks only the first five lines for the expected columns and integer coordinates. Input validation belongs to the native tools.
 

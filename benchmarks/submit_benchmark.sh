@@ -45,7 +45,7 @@ if [[ "$feature" == midpoints ]]; then
     if [[ " ${BENCH_METHODS:-} " == *" griffin"* ]]; then
         griffin_mappability=${BENCH_GRIFFIN_MAPPABILITY_BW:-$BENCH_GRIFFIN_REF_DIR/k100.Umap.MultiTrackMappability.bw}
         if [[ ! -f "$griffin_mappability" ]]; then
-            echo "Missing Griffin mappability track: $griffin_mappability. Set BENCH_GRIFFIN_MAPPABILITY_BW to the hg38 k100 Umap bigWig." >&2
+            echo "Missing Griffin zero-mappability mask: $griffin_mappability. Rerun benchmarks/install_tools.sh with the existing installation directory and --only griffin, then source its tool_paths.sh." >&2
             exit 1
         fi
     fi

@@ -41,7 +41,7 @@ cfdnapro_image="$BENCH_WORK/cfdnapro.sif"
 apptainer=$(command -v apptainer)
 ```
 
-`BENCH_WORK` is the job's temporary directory under the compute node's local scratch directory. `LOCAL_SCRATCH_VAR` names the variable supplying that directory and defaults to `TMPDIR`, as described in the [settings instructions](README.md#set-the-input-and-tool-paths). The runners copy the BAM, index, selected tools and required references there before timing. `output` is created empty for every repetition. Container paths under `/work` refer to the same directory through an Apptainer bind mount.
+`BENCH_WORK` is the job's temporary directory under the compute node's local scratch directory. `LOCAL_SCRATCH_VAR` names the variable supplying that directory and defaults to `TMPDIR`, as described in the [settings instructions](README.md#set-the-input-paths-and-cluster-settings). The runners copy the BAM, index, selected tools and required references there before timing. `output` is created empty for every repetition. Container paths under `/work` refer to the same directory through an Apptainer bind mount.
 
 Every available native thread/core/worker option receives `cores` directly. Commands without a native thread option still run within the allocated CPU set. This also applies to samtools inside the Picard pipeline.
 

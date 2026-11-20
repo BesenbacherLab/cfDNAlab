@@ -788,6 +788,11 @@ fi
 '''
                 )
                 executable.chmod(0o755)
+                # Selecting only comparison must not download references for
+                # an unrelated, previously completed Griffin installation
+                download = fake_bin / "wget"
+                download.write_text("#!/usr/bin/env bash\nexit 9\n")
+                download.chmod(0o755)
                 (installation / "envs/comparison/bin").mkdir(parents=True)
                 if reason != "missing":
                     (installation / "envs/comparison/bin/python").touch()
@@ -797,6 +802,25 @@ fi
                 manifest.write_text(
                     f"tool\tversion\tstatus\tartifacts\ncomparison\t{version}\t{status}\tenvs/comparison/bin/python\n"
                 )
+                if reason == "complete":
+                    # A previous Griffin installation must contribute its paths
+                    # even when this invocation selects only the comparison environment
+                    griffin_files = (
+                        "envs/griffin/share/griffin/version.txt",
+                        "envs/griffin/share/griffin/CTCF.hg38.1000.txt",
+                        "envs/griffin/share/griffin/griffin_GC_bias.py",
+                        "envs/griffin/share/griffin/griffin_GC_counts.py",
+                        "envs/griffin/share/griffin/griffin_calc_GC_frequency.py",
+                        "griffin.tar.gz",
+                        "Griffin-source/Ref/k100_minus_exclusion_lists.mappable_regions.hg38.bed",
+                    )
+                    for filename in griffin_files:
+                        path = installation / filename
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.touch()
+                    (installation / "Griffin-source/Ref/genome_GC_frequency").mkdir()
+                    with manifest.open("a") as destination:
+                        destination.write("griffin\tv0.2.0\tcomplete\tfixture\n")
                 command = [
                     "bash",
                     str(BENCHMARKS / "install_tools.sh"),
@@ -833,8 +857,33 @@ fi
                 if reason == "complete":
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertIn("Keeping comparison checkout", result.stdout)
+                    # Sourcing the generated file must export the real paths to
+                    # child processes, preserving the installation's spaces
+                    paths_file = installation / "tool_paths.sh"
+                    loaded = subprocess.run(
+                        ["bash", "-euc", r'''
+source "$TOOLS_FILE"
+bash -euc 'printf "%s\n" "$BENCH_COMPARE_PYTHON" "$BENCH_INSTALL_MANIFEST" "$BENCH_GRIFFIN_REF_DIR" "$BENCH_GRIFFIN_GC_REGIONS" "$BENCH_GRIFFIN_REF_GC" "$BENCH_GRIFFIN_MAPPABILITY_BW"'
+'''],
+                        env={
+                            **{name: value for name, value in os.environ.items()
+                               if not name.startswith("BENCH_")},
+                            "TOOLS_FILE": str(paths_file),
+                        },
+                        text=True, capture_output=True,
+                    )
+                    self.assertEqual(loaded.returncode, 0, loaded.stderr)
+                    self.assertEqual(loaded.stdout.splitlines(), [
+                        str(installation.resolve() / "envs/comparison/bin/python"),
+                        str(installation.resolve() / "manifest.tsv"),
+                        str(installation.resolve() / "Griffin-source/Ref"),
+                        str(installation.resolve() / "Griffin-source/Ref/k100_minus_exclusion_lists.mappable_regions.hg38.bed"),
+                        str(installation.resolve() / "Griffin-source/Ref/genome_GC_frequency"),
+                        str(installation.resolve() / "Griffin-source/Ref/k100.Umap.MultiTrackMappability.bw"),
+                    ])
                 else:
                     self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse((installation / "tool_paths.sh").exists())
                     self.assertIn(
                         "comparison\tcheckout\toutdated\t", manifest.read_text()
                     )
@@ -867,6 +916,100 @@ fi
                 self.assertEqual(storage["PIP_TARGET"], "")
                 self.assertEqual(storage["HOME"], os.environ["HOME"])
                 self.assertFalse((root / "outside-installation").exists())
+
+    def test_installer_downloads_griffin_mask_without_rebuilding_environment(self):
+        # A completed Griffin environment needs only its external Umap reference
+        # Reusing that reference must avoid downloading it again, and a failed
+        # download must leave no final file that a later run could reuse
+        for scenario in ("download", "empty", "reuse", "failure"):
+            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                installation = root / "installation with spaces"
+                fake_bin = root / "bin"
+                fake_bin.mkdir()
+                conda_base = root / "conda"
+                (conda_base / "etc/profile.d").mkdir(parents=True)
+                (conda_base / "etc/profile.d/conda.sh").write_text("# Conda fixture\n")
+                # Only Conda's location query is allowed. Rebuilding an environment
+                # or cloning Griffin would fail rather than use real external tools
+                replacements = {
+                    "conda": '#!/usr/bin/env bash\n[[ "$*" == "info --base" ]] || exit 9\nprintf "%s\\n" "$BENCH_FAKE_CONDA_BASE"\n',
+                    "git": "#!/usr/bin/env bash\nexit 9\n",
+                    "wget": r'''#!/usr/bin/env bash
+printf '%s\n' "$@" > "$BENCH_DOWNLOAD_CALLS"
+printf '%s' 'downloaded mask' > "$3"
+exit "$BENCH_DOWNLOAD_STATUS"
+''',
+                }
+                for name, content in replacements.items():
+                    executable = fake_bin / name
+                    executable.write_text(content)
+                    executable.chmod(0o755)
+                for filename in (
+                    "envs/packaging/bin/conda-pack",
+                    "envs/griffin/share/griffin/version.txt",
+                    "envs/griffin/share/griffin/CTCF.hg38.1000.txt",
+                    "envs/griffin/share/griffin/griffin_GC_bias.py",
+                    "envs/griffin/share/griffin/griffin_GC_counts.py",
+                    "envs/griffin/share/griffin/griffin_calc_GC_frequency.py",
+                    "griffin.tar.gz",
+                    "Griffin-source/Ref/k100_minus_exclusion_lists.mappable_regions.hg38.bed",
+                ):
+                    artifact = installation / filename
+                    artifact.parent.mkdir(parents=True, exist_ok=True)
+                    artifact.touch()
+                (installation / "Griffin-source/Ref/genome_GC_frequency").mkdir()
+                (installation / "manifest.tsv").write_text(
+                    "tool\tversion\tstatus\tartifacts\n"
+                    "packaging\t0.9.2\tcomplete\tfixture\n"
+                    "griffin\tv0.2.0\tcomplete\tfixture\n"
+                )
+                mask = installation / "Griffin-source/Ref/k100.Umap.MultiTrackMappability.bw"
+                if scenario == "reuse":
+                    mask.write_text("existing mask")
+                elif scenario == "empty":
+                    mask.touch()
+                calls = root / "download-arguments.txt"
+
+                result = subprocess.run(
+                    ["bash", str(BENCHMARKS / "install_tools.sh"), str(installation), "--only", "griffin"],
+                    env={
+                        **os.environ,
+                        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                        "BENCH_FAKE_CONDA_BASE": str(conda_base),
+                        "BENCH_DOWNLOAD_CALLS": str(calls),
+                        "BENCH_DOWNLOAD_STATUS": "8" if scenario == "failure" else "0",
+                    },
+                    capture_output=True, text=True,
+                )
+
+                self.assertIn("Keeping griffin v0.2.0", result.stdout)
+                paths_file = installation / "tool_paths.sh"
+                if scenario == "failure":
+                    self.assertEqual(result.returncode, 8, result.stderr)
+                    self.assertFalse(mask.exists())
+                    self.assertFalse(paths_file.exists())
+                    self.assertIn("Installation failed for griffin", result.stderr)
+                    continue
+                self.assertEqual(result.returncode, 0, result.stderr)
+                if scenario == "reuse":
+                    self.assertFalse(calls.exists())
+                    self.assertEqual(mask.read_text(), "existing mask")
+                else:
+                    self.assertEqual(mask.read_text(), "downloaded mask")
+                    self.assertEqual(calls.read_text().splitlines(), [
+                        f"--hsts-file={installation.resolve() / 'cache/wget-hsts'}",
+                        "-O", str(mask) + ".tmp",
+                        "https://hgdownload.soe.ucsc.edu/gbdb/hg38/hoffmanMappability/k100.Umap.MultiTrackMappability.bw",
+                    ])
+                    self.assertFalse(Path(str(mask) + ".tmp").exists())
+                loaded = subprocess.run(
+                    ["bash", "-euc", 'source "$TOOLS_FILE"; bash -euc \'printf "%s\\n" "$BENCH_GRIFFIN_MAPPABILITY_BW"\''],
+                    env={**os.environ, "TOOLS_FILE": str(paths_file)},
+                    capture_output=True, text=True,
+                )
+                self.assertEqual(loaded.returncode, 0, loaded.stderr)
+                self.assertEqual(loaded.stdout.strip(), str(mask.resolve()))
 
     def test_finaletoolkit_installs_loess_with_pip_before_packing(self):
         # Local shell functions replace Conda, Python and FinaleToolkit
@@ -920,17 +1063,14 @@ install_finaletoolkit
                 )
                 commands = calls.read_text().splitlines()
                 self.assertIn(pip_command, commands)
-                revision_file = root / "envs/finaletoolkit/share/finaletoolkit/revision.txt"
                 if pip_status:
                     self.assertEqual(result.returncode, pip_status, result.stderr)
                     self.assertNotIn("pack", commands)
                     self.assertNotIn("version", commands)
-                    self.assertFalse(revision_file.exists())
                 else:
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertLess(commands.index(pip_command), commands.index("python -m pip check"))
                     self.assertLess(commands.index("python -m pip check"), commands.index("pack"))
-                    self.assertEqual(revision_file.read_text(), revision + "\n")
                     self.assertEqual(
                         (root / "records/finaletoolkit.pip.txt").read_text(),
                         "loess==2.1.2\n",

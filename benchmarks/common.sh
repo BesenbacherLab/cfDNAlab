@@ -179,6 +179,43 @@ check_job_settings() {
     fi
 }
 
+# Prints FinaleToolkit's CLI version and its installed Git commit
+#
+# Pip records the actual source commit in the package's direct_url.json metadata,
+# which travels with the packed environment. Read that record from the same Python
+# that runs FinaleToolkit so the timing rows identify the code that actually runs
+#
+# Parameters:
+#   $1  Python in the extracted FinaleToolkit environment
+#   $2  FinaleToolkit's CLI launcher in that environment
+#   $3  Original archive path, included in errors so an incorrect archive can be found
+benchmark_finaletoolkit_version() {
+    local python=$1 executable=$2 archive=$3 version_output
+    # Callers capture this function's output. Check assignment failures explicitly,
+    # because Bash can disable automatic stopping inside command substitutions
+    version_output=$("$python" "$executable" --version) || return
+    "$python" - "$version_output" "$archive" <<'PY'
+from importlib.metadata import distribution, PackageNotFoundError
+import json
+import sys
+
+version = ' '.join(sys.argv[1].split())
+archive = sys.argv[2]
+try:
+    source = distribution('FinaleToolkit').read_text('direct_url.json')
+    metadata = json.loads(source or '{}')
+except (PackageNotFoundError, json.JSONDecodeError) as error:
+    raise SystemExit(f'Cannot read FinaleToolkit pip VCS commit from {archive}: {error}')
+commit = metadata.get('vcs_info', {}).get('commit_id')
+if not commit:
+    raise SystemExit(
+        f'FinaleToolkit archive has no pip VCS commit record: {archive}. '
+        'Use the archive made by the pinned FinaleToolkit installation.'
+    )
+print(f'{version} commit:{commit}')
+PY
+}
+
 # Checks that Picard is the version selected for this benchmark and prints it
 #
 # Picard prints a valid --version result but exits with status 1, normally an error

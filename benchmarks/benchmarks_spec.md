@@ -27,7 +27,7 @@ The [benchmark README](README.md#run-the-benchmarks) lists the tools and core se
 
 ### Platform and versions
 
-Installation targets Linux x86_64 with Bash 4 or later. Conda, Apptainer, Git, wget, tar, GNU make and C/C++ build tools are external prerequisites. A dedicated installation root contains `envs/`, current attempt logs under `logs/`, dependency records under `records/`, and standalone binaries, source checkouts, images and archives at the root.
+Installation targets Linux x86_64 with Bash 4 or later. Conda, Apptainer, Git, wget, tar, GNU make and C/C++ build tools are external prerequisites. A dedicated installation root contains `envs/`, current attempt logs under `logs/`, dependency records under `records/`, and standalone binaries, source checkouts, images and archives at the root. After a successful invocation, the installer writes `tool_paths.sh` with exported paths for every completed installation, including Griffin's bundled reference files. The README command blocks source it directly before loading input paths and cluster settings from `benchmarks/local_settings.sh`.
 
 Before invoking Conda, the installer sets `CONDA_PKGS_DIRS=<root>/cache/conda/pkgs` and `CONDA_ENVS_PATH=<root>/envs`. Pip, Cargo, Apptainer and Matplotlib caches also use `<root>/cache`. Apptainer and XDG configuration use `<root>/config`, and XDG application data uses `<root>/share`. `TMPDIR`, `TMP`, `TEMP` and `APPTAINER_TMPDIR` use `<root>/tmp`, which is also bound as `/tmp` for the installer's container version checks. wget keeps its HTTPS host records under `<root>/cache`. Conda environment registration in the home directory is disabled, and Python bytecode caching in the existing Conda installation is disabled. Pip user installs are disabled and inherited pip prefix/target overrides are removed. These settings apply only to the installer and its children. Existing files in other caches are not moved or deleted.
 
@@ -58,6 +58,20 @@ Its packed archive includes the unmodified release demo `CTCF.hg38.1000.txt`. A 
 Conda creates use explicit channels, `--override-channels` and strict channel priority. Python user packages and inherited Python import paths are disabled during installation and job setup.
 
 Picard's version probe accepts status 0 or 1 only with a `Version:3.5.0` field. Missing/wrong versions or other statuses fail. The installer and lengths setup share this behavior.
+
+### Installed tool paths
+
+The installer saves the following exported paths in `tool_paths.sh`. The submission and collection command blocks load this file directly, before the user settings in `benchmarks/local_settings.sh`.
+
+| Variable loaded from `tool_paths.sh` | What it supplies |
+| --- | --- |
+| `BENCH_CFDNA`, `BENCH_MOSDEPTH`, `BENCH_PANDEPTH` | cfDNAlab, mosdepth and PanDepth executables |
+| `BENCH_SAMTOOLS_ARCHIVE`, `BENCH_FINALE_ARCHIVE`, `BENCH_PICARD_ARCHIVE`, `BENCH_GRIFFIN_ARCHIVE`, `BENCH_CFDNAPRO_IMAGE`, `BENCH_COMPARE_PYTHON` | Environment archives, cfDNAPro container image and Python for comparing outputs |
+| `BENCH_GRIFFIN_REF_DIR` | Griffin's bundled `Griffin-source/Ref` directory. All three midpoint jobs use its five exclusion BEDs, including the cfDNAlab jobs |
+| `BENCH_GRIFFIN_GC_REGIONS`, `BENCH_GRIFFIN_REF_GC` | Griffin's GC-estimation BED and reference GC tables, used by `griffin-gc` jobs |
+| `BENCH_GRIFFIN_MAPPABILITY_BW` | hg38 k100 Umap bigWig, downloaded by the installer. Griffin uses it to exclude bins containing positions with zero mappability. Mappability correction is disabled |
+| `BENCH_PREPARE_PYTHON` | Python with pysam for BAM preparation |
+| `BENCH_INSTALL_MANIFEST`, `BENCH_CFDNA_BUILD` | Installation and cfDNAlab build records copied into each job's results |
 
 ### Resumption and explicit controls
 
@@ -105,11 +119,11 @@ Setup retains all rows, including repeats and overlaps, sorts chromosome/start/e
 
 The midpoint input is the supplied 9,990 bp BED (`center - 4995` to `center + 4995`). Both methods use MAPQ 20, 15 bp bins and native 165 bp smoothing. cfDNAlab saves all 666 normalization bins. Griffin normalizes over that full window and saves its official central 132 bins, `[-990, 990)`. The comparator normalizes cfDNAlab over all 666 bins before selecting the same central bins. Griffin retains exclusion BEDs, zero-mappability masking, outlier removal and compulsory FFT features. The same BEDs enter cfDNAlab's native blacklist handling. Per-site CNA correction and fragment-count weights stay off. `cfdnalab_sites` counts eligible intervals; `griffin_sites` counts input sites, including masked sites.
 
-`BENCH_GRIFFIN_REF_DIR` supplies the five release exclusion BEDs for either tool. Griffin also uses `BENCH_GRIFFIN_MAPPABILITY_BW`, defaulting to `k100.Umap.MultiTrackMappability.bw` under that directory. The installer prints the reference directory without reinstalling completed tools. Reference files must exist before submission. Their staging remains outside timing.
+`BENCH_GRIFFIN_REF_DIR` supplies the five release exclusion BEDs for either tool. Griffin also reads `BENCH_GRIFFIN_MAPPABILITY_BW` to exclude bins containing zero-mappability positions, independently of mappability correction, which stays off. When Griffin is selected, the installer downloads the hg38 k100 Umap bigWig into `Griffin-source/Ref/k100.Umap.MultiTrackMappability.bw` if it is missing or empty. This also runs when the completed Griffin environment is reused. Downloads use a temporary file that replaces the final path only on success. The installer exports the reference directory and track path through `tool_paths.sh`. Reference files must exist before submission. Their downloading and staging remain outside timing.
 
 ## Run controls
 
-Submit from the repository root on the login node with `bash benchmarks/submit_benchmark.sh FEATURE [sbatch options]`, choosing `coverage`, `lengths`, `ends` or `midpoints`. This preserves `SLURM_SUBMIT_DIR` so it locates helpers. Nodes need Slurm, GNU time at `/usr/bin/time`, GNU coreutils, `ldd` and setup Python 3. Selected tool paths/archives come from installer exports.
+Submit from the repository root on the login node with `bash benchmarks/submit_benchmark.sh FEATURE [sbatch options]`, choosing `coverage`, `lengths`, `ends` or `midpoints`. This preserves `SLURM_SUBMIT_DIR` so it locates helpers. Nodes need Slurm, GNU time at `/usr/bin/time`, GNU coreutils, `ldd` and setup Python 3. Selected tool paths/archives and bundled Griffin reference paths come from the installer's `tool_paths.sh`.
 
 | Variable | Default and behavior |
 | --- | --- |
@@ -153,7 +167,7 @@ No method is automatically excluded. The documented timing matrix runs the norma
 
 Sequential single-task `srun` calls attach to the existing allocation with exact resources and thread binding. Inside each step, hostname and logical/physical CPU counts must match the expected node and core budget. Affinity and socket:core IDs are recorded. Hard confinement and descendant accounting depend on cluster configuration.
 
-Inputs/environments are staged once before warmups. Packed environments are relocated with `conda-unpack` through setup Python. FinaleToolkit's CLI entrypoint is invoked with the packed environment's own Python for version checks and measured commands, avoiding interpreter lookup through PATH. Host caches are not explicitly evicted. Allocate N cores and pass N directly to every available native thread/core/worker option, including options counting additional decoding threads. Any proposed reduction requires an explicit instruction in the tool's documentation and discussion before changing the benchmark. Tools without a native option still run at their selected settings. There are no feature-specific numerical-library thread overrides. Native worker/thread settings remain distinct from allocated cores.
+Inputs/environments are staged once before warmups. Packed environments are relocated with `conda-unpack` through setup Python. FinaleToolkit's CLI entrypoint is invoked with the packed environment's own Python for version checks and measured commands, avoiding interpreter lookup through PATH. Its installed source commit is read from pip's `direct_url.json` in that same environment and recorded in the timing rows. Host caches are not explicitly evicted. Allocate N cores and pass N directly to every available native thread/core/worker option, including options counting additional decoding threads. Any proposed reduction requires an explicit instruction in the tool's documentation and discussion before changing the benchmark. Tools without a native option still run at their selected settings. There are no feature-specific numerical-library thread overrides. Native worker/thread settings remain distinct from allocated cores.
 
 Series use separate jobs per core setting, with feature/method blocks to fit available allocations. Griffin has its own jobs, with a single full-input measurement per core setting, and must be allowed to finish beyond 24 hours. Every new Griffin job receives its demo warmup. Prefer the same physical node using `--nodelist` and `BENCH_EXPECTED_NODE` when available. Otherwise use matched hardware and retain node identity, acknowledging variation between nodes in cross-core comparisons. Scripts do not coordinate multiple jobs. The [benchmark commands](README.md#run-the-benchmarks) names each complete job's wall-time setting and leaves cluster-specific limits explicit. No complete-matrix runtime is established there.
 

@@ -922,6 +922,66 @@ class JobSettingsTests(unittest.TestCase):
                 self.assertEqual(result.stdout, "")
 
 
+class FinaleToolkitVersionTests(unittest.TestCase):
+    """Read the installed Git revision from pip metadata, without a custom sidecar."""
+
+    def test_version_uses_the_installed_commit_and_propagates_failures(self):
+        source_commit = "0123456789abcdef0123456789abcdef01234567"
+        vcs_metadata = {"vcs_info": {"vcs": "git", "requested_revision": "release-tag",
+                                     "commit_id": source_commit}}
+        for metadata, cli_status, expected_status in (
+            (vcs_metadata, 0, 0),
+            (None, 0, 1),
+            ({"url": "https://example.org/package.whl", "archive_info": {}}, 0, 1),
+            (vcs_metadata, 7, 7),
+        ):
+            with (
+                self.subTest(metadata=metadata, cli_status=cli_status),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = Path(temporary)
+                package_metadata = root / "finaletoolkit-0.0.0.dist-info"
+                package_metadata.mkdir()
+                (package_metadata / "METADATA").write_text(
+                    "Metadata-Version: 2.1\nName: FinaleToolkit\nVersion: 0.0.0\n"
+                )
+                if metadata is not None:
+                    (package_metadata / "direct_url.json").write_text(json.dumps(metadata))
+                launcher = root / "finaletoolkit"
+                launcher.write_text(
+                    "import os\nimport sys\n"
+                    "if os.environ['VERSION_EXIT'] != '0':\n"
+                    "    sys.exit(int(os.environ['VERSION_EXIT']))\n"
+                    "print('FinaleToolkit, version 0.0.0')\n"
+                )
+                archive = "/installation with spaces/finaletoolkit.tar.gz"
+                result = subprocess.run(
+                    ["bash", "-euc", r'''
+set -o pipefail
+source "$COMMON"
+version=$(benchmark_finaletoolkit_version "$PYTHON" "$LAUNCHER" "$ARCHIVE")
+printf '%s\n' "$version"
+'''],
+                    env=clean_environment(
+                        COMMON=str(COMMON), PYTHON=sys.executable, LAUNCHER=str(launcher),
+                        ARCHIVE=archive, PYTHONPATH=str(root), VERSION_EXIT=str(cli_status),
+                    ),
+                    text=True, capture_output=True,
+                )
+
+                self.assertEqual(result.returncode, expected_status, result.stderr)
+                if expected_status == 0:
+                    # The installed commit is authoritative, not the requested tag
+                    self.assertEqual(
+                        result.stdout, f"FinaleToolkit, version 0.0.0 commit:{source_commit}\n"
+                    )
+                else:
+                    self.assertEqual(result.stdout, "")
+                    if cli_status == 0:
+                        self.assertIn("pip VCS commit", result.stderr)
+                        self.assertIn(archive, result.stderr)
+
+
 class TimingRowTests(unittest.TestCase):
     """write_timing_row writes the row by column name and refuses incomplete rows."""
 

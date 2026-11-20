@@ -131,8 +131,35 @@ work = os.environ['BENCH_WORK']
 with pysam.AlignmentFile(work + '/sample.bam', 'rb') as bam:
     bam_contigs = dict(zip(bam.references, bam.lengths))
 with py2bit.open(work + '/reference.2bit') as reference:
-    if bam_contigs != reference.chroms():
-        raise SystemExit('BAM and 2bit contig names/lengths differ.')
+    reference_contigs = reference.chroms()
+# Report the original input paths because the job removes its temporary copies
+# Show missing names separately from length mismatches so the reference can be corrected
+missing_reference = sorted(bam_contigs.keys() - reference_contigs.keys())
+missing_bam = sorted(reference_contigs.keys() - bam_contigs.keys())
+different_lengths = sorted(
+    chromosome for chromosome in bam_contigs.keys() & reference_contigs.keys()
+    if bam_contigs[chromosome] != reference_contigs[chromosome]
+)
+if missing_reference or missing_bam or different_lengths:
+    details = [
+        'BAM and 2bit contig names/lengths differ.',
+        'BAM: ' + os.environ['BENCH_BAM'],
+        '2bit: ' + os.environ['BENCH_REF_2BIT'],
+    ]
+    if missing_reference:
+        details.append(f'Missing from the 2bit reference ({len(missing_reference)}):')
+        details.extend(f'  {name}: BAM length {bam_contigs[name]} bp' for name in missing_reference)
+    if missing_bam:
+        details.append(f'Missing from the BAM ({len(missing_bam)}):')
+        details.extend(f'  {name}: 2bit length {reference_contigs[name]} bp' for name in missing_bam)
+    if different_lengths:
+        details.append(f'Different lengths ({len(different_lengths)}):')
+        details.extend(
+            f'  {name}: BAM {bam_contigs[name]} bp, 2bit {reference_contigs[name]} bp'
+            for name in different_lengths
+        )
+    details.append('Use a 2bit reference with the same contig names and lengths as the BAM.')
+    raise SystemExit('\n'.join(details))
 for chromosome, length in bam_contigs.items():
     if length % 1000000 == 0:
         raise SystemExit('The pinned FinaleToolkit window builder omits its last window for this contig length: ' + chromosome)
@@ -154,8 +181,7 @@ finale_version=NA
 cfdnapro_version=NA
 if [[ "$needs_cfdna" == true ]]; then cfdna_version=$("$cfdna" --version | tr '\t\n' '  '); fi
 if [[ "$needs_finale" == true ]]; then
-    finale_version=$("$finale_python" "$finale" --version | tr '\t\n' '  ')
-    finale_version+=" commit:$(cat "$BENCH_WORK/finale-env/share/finaletoolkit/revision.txt")"
+    finale_version=$(benchmark_finaletoolkit_version "$finale_python" "$finale" "$BENCH_FINALE_ARCHIVE")
 fi
 if [[ "$needs_cfdnapro" == true ]]; then
     cfdnapro_version=$("$apptainer" exec --cleanenv --containall "$cfdnapro_image" Rscript --vanilla -e 'cat(as.character(packageVersion("cfDNAPro")))')
