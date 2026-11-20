@@ -917,6 +917,98 @@ bash -euc 'printf "%s\n" "$BENCH_COMPARE_PYTHON" "$BENCH_INSTALL_MANIFEST" "$BEN
                 self.assertEqual(storage["HOME"], os.environ["HOME"])
                 self.assertFalse((root / "outside-installation").exists())
 
+    def test_paths_only_writes_exports_without_installation_or_downloads(self):
+        # Only the comparison installation is complete. The outdated mosdepth
+        # record must remain untouched instead of triggering a replacement
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            installation = root / "installation with spaces"
+            comparison = installation / "envs/comparison/bin/python"
+            comparison.parent.mkdir(parents=True)
+            comparison.write_text("existing comparison environment")
+            manifest = installation / "manifest.tsv"
+            manifest_contents = (
+                "tool\tversion\tstatus\tartifacts\n"
+                "comparison\tcheckout\tcomplete\tenvs/comparison/bin/python\n"
+                "mosdepth\t0.3.14\toutdated\tmosdepth-0.3.14/mosdepth\n"
+            )
+            manifest.write_text(manifest_contents)
+            paths_file = installation / "tool_paths.sh"
+            paths_file.write_text("# Previous paths file\n")
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            external_calls = root / "external-calls.txt"
+            # These tools must never be invoked, including Conda's location query
+            for tool in ("conda", "cargo", "git", "wget", "apptainer"):
+                executable = fake_bin / tool
+                executable.write_text(
+                    '#!/usr/bin/env bash\nprintf "%s\\n" "$0" >> "$BENCH_EXTERNAL_CALLS"\nexit 9\n'
+                )
+                executable.chmod(0o755)
+
+            result = subprocess.run(
+                ["bash", str(BENCHMARKS / "install_tools.sh"), str(installation), "--paths-only"],
+                env={
+                    **os.environ,
+                    "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                    "BENCH_EXTERNAL_CALLS": str(external_calls),
+                },
+                capture_output=True, text=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(external_calls.exists())
+            self.assertEqual(manifest.read_text(), manifest_contents)
+            self.assertEqual(comparison.read_text(), "existing comparison environment")
+            self.assertEqual(
+                {path.name for path in installation.iterdir()},
+                {"envs", "manifest.tsv", "tool_paths.sh"},
+            )
+            loaded = subprocess.run(
+                ["bash", "-euc", r'''
+source "$TOOLS_FILE"
+bash -euc 'printf "%s\n" "$BENCH_COMPARE_PYTHON" "$BENCH_INSTALL_MANIFEST" "${BENCH_MOSDEPTH-unset}"'
+'''],
+                env={
+                    **{name: value for name, value in os.environ.items() if not name.startswith("BENCH_")},
+                    "TOOLS_FILE": str(paths_file),
+                },
+                capture_output=True, text=True,
+            )
+            self.assertEqual(loaded.returncode, 0, loaded.stderr)
+            self.assertEqual(loaded.stdout.splitlines(), [
+                str(comparison.resolve()), str(manifest.resolve()), "unset",
+            ])
+
+    def test_paths_only_rejects_missing_installations_and_install_options(self):
+        # Generating paths cannot create an installation or alter its records
+        for scenario, options in (
+            ("missing-directory", []),
+            ("missing-manifest", []),
+            ("only", ["--only", "comparison"]),
+            ("only-all", ["--only", "all"]),
+            ("force", ["--force", "comparison"]),
+            ("mark-outdated", ["--mark-outdated", "comparison"]),
+        ):
+            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as temporary:
+                installation = Path(temporary) / "tools"
+                if scenario != "missing-directory":
+                    installation.mkdir()
+                command = ["bash", str(BENCHMARKS / "install_tools.sh"), str(installation), "--paths-only"]
+                command.extend(options)
+
+                result = subprocess.run(command, capture_output=True, text=True)
+
+                self.assertNotEqual(result.returncode, 0)
+                if scenario.startswith("missing-"):
+                    self.assertIn("existing installation with manifest.tsv", result.stderr)
+                else:
+                    self.assertIn("Use --paths-only without", result.stderr)
+                if scenario == "missing-directory":
+                    self.assertFalse(installation.exists())
+                else:
+                    self.assertEqual(list(installation.iterdir()), [])
+
     def test_installer_downloads_griffin_mask_without_rebuilding_environment(self):
         # A completed Griffin environment needs only its external Umap reference
         # Reusing that reference must avoid downloading it again, and a failed
